@@ -1,11 +1,11 @@
 use smithay_client_toolkit::{
     delegate_compositor, delegate_output, delegate_registry, delegate_seat, delegate_shm,
-    delegate_xdg_shell, delegate_xdg_window, delegate_xdg_popup,
+    delegate_xdg_popup, delegate_xdg_shell, delegate_xdg_window,
 };
-use wayland_client::{Connection, QueueHandle, Dispatch};
+use wayland_client::{Connection, Dispatch, QueueHandle};
 
-use crate::AppData;
 use crate::components::menu::{sc_layer_shell_v1, sc_layer_v1};
+use crate::AppData;
 
 // Delegate macros
 delegate_compositor!(AppData);
@@ -41,4 +41,3 @@ impl Dispatch<sc_layer_v1::ScLayerV1, ()> for AppData {
     ) {
     }
 }
-

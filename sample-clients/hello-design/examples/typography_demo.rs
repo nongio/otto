@@ -59,12 +59,22 @@ impl App for TypographyDemo {
             // Caption
             let font = styles::CAPTION.font();
             let caption_paint = Paint::new(skia_safe::Color4f::new(0.4, 0.4, 0.4, 1.0), None);
-            canvas.draw_str("Caption - Helper text and metadata", (x, y), &font, &caption_paint);
+            canvas.draw_str(
+                "Caption - Helper text and metadata",
+                (x, y),
+                &font,
+                &caption_paint,
+            );
 
             // Footer text
             y += 80.0;
             let footer_font = styles::CAPTION.font();
-            canvas.draw_str("All text uses Inter font with font caching", (x, y), &footer_font, &caption_paint);
+            canvas.draw_str(
+                "All text uses Inter font with font caching",
+                (x, y),
+                &footer_font,
+                &caption_paint,
+            );
         });
 
         self.window = Some(window);

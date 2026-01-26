@@ -207,5 +207,3 @@ mod tests {
         // If we get here without panic, fonts loaded successfully
     }
 }
-
-

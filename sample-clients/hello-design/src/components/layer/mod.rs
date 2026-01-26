@@ -5,7 +5,7 @@ pub use surface::LayerSurface;
 use skia_safe::Canvas;
 
 // Re-export sc-layer protocol from menu component
-pub use crate::components::menu::{sc_layer_shell_v1, sc_layer_v1};
+pub use crate::components::menu::sc_layer_v1;
 
 /// Layer component - a drawable subsurface that can be positioned on top of a parent surface
 ///

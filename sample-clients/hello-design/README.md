@@ -69,12 +69,6 @@ window.on_draw(|canvas| {
 - `cargo run --example rounded_corners` - Demonstrates default rounded corners
 - `cargo run --example simple_app` - Window with custom layer effects
 
-### SimpleWindow
-
-A basic window component with simple rendering capabilities (legacy, prefer using Window).
-
-**Run example:** `cargo run --example simple_window`
-
 ### Typography System
 
 A design system with font caching and predefined text styles using Inter font.

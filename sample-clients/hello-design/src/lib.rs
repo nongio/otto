@@ -7,7 +7,7 @@ pub mod typography;
 // Re-export commonly used items
 pub use components::layer::{surface::LayerSurface, Layer};
 pub use components::menu_bar::{surface::MenuBarSurface, MenuBar, MenuBarItem};
-pub use components::window::{SimpleWindow, Window};
+pub use components::window::Window;
 
 // Re-export new surface types
 pub use surfaces::{

@@ -44,6 +44,7 @@ impl ToplevelSurface {
     /// * `height` - Initial height in logical pixels
     /// * `compositor` - Compositor state
     /// * `xdg_shell` - XDG shell state
+    /// * `sc_layer_shell` - Optional SC layer shell for augmentation
     /// * `qh` - Queue handle for creating objects
     pub fn new<D>(
         title: &str,
@@ -51,6 +52,7 @@ impl ToplevelSurface {
         height: i32,
         compositor: &CompositorState,
         xdg_shell: &XdgShell,
+        sc_layer_shell: Option<&sc_layer_shell_v1::ScLayerShellV1>,
         qh: &QueueHandle<D>,
     ) -> Result<Self, SurfaceError>
     where
@@ -79,6 +81,9 @@ impl ToplevelSurface {
         let buffer_scale = 2;
         wl_surface.set_buffer_scale(buffer_scale);
 
+        // Create sc_layer immediately if sc_layer_shell is available
+        let sc_layer = sc_layer_shell.map(|shell| shell.get_layer(&wl_surface, qh, ()));
+
         // Commit to trigger initial configure
         wl_surface.commit();
 
@@ -90,7 +95,7 @@ impl ToplevelSurface {
             height,
             configured: false,
             buffer_scale,
-            sc_layer: None,
+            sc_layer,
         };
 
         Ok(window)
@@ -221,8 +226,7 @@ impl Surface for ToplevelSurface {
 
 impl ScLayerAugment for ToplevelSurface {
     fn has_sc_layer(&self) -> bool {
-        use crate::app_runner::AppContext;
-        AppContext::sc_layer_shell().is_some()
+        self.sc_layer.is_some()
     }
 
     fn sc_layer_mut(&mut self) -> Option<&mut Option<sc_layer_v1::ScLayerV1>> {
@@ -240,38 +244,32 @@ impl ScLayerAugment for ToplevelSurface {
 }
 
 impl ToplevelSurface {
-    /// Apply sc_layer augmentation with queue handle
+    /// Get direct access to the sc_layer
+    ///
+    /// Returns None if sc_layer_shell was not available when creating the surface
+    pub fn layer(&self) -> Option<&sc_layer_v1::ScLayerV1> {
+        self.sc_layer.as_ref()
+    }
+
+    /// Apply sc_layer augmentation with queue handle (deprecated - use layer() directly)
     ///
     /// This version can be called from the configure handler where
     /// we have access to the queue handle.
+    #[deprecated(note = "Use layer() directly instead")]
     pub fn augment_with_qh<F, D>(
         &mut self,
         augment_fn: F,
-        qh: &QueueHandle<D>,
+        _qh: &QueueHandle<D>,
     ) -> Result<(), SurfaceError>
     where
         F: FnOnce(&sc_layer_v1::ScLayerV1),
         D: Dispatch<sc_layer_v1::ScLayerV1, ()> + 'static,
     {
-        use crate::app_runner::AppContext;
-
-        if !self.configured {
-            return Err(SurfaceError::NotConfigured);
-        }
-
-        let sc_layer_shell =
-            AppContext::sc_layer_shell().ok_or(SurfaceError::ScLayerNotAvailable)?;
-
-        // Create sc_layer if not exists
-        if self.sc_layer.is_none() {
-            let layer = sc_layer_shell.get_layer(&self.wl_surface, qh, ());
-            self.sc_layer = Some(layer);
-        }
-
         if let Some(ref layer) = self.sc_layer {
             augment_fn(layer);
+            Ok(())
+        } else {
+            Err(SurfaceError::ScLayerNotAvailable)
         }
-
-        Ok(())
     }
 }

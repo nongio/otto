@@ -92,7 +92,7 @@ impl Menu {
         xdg_shell: &XdgShell,
         sc_layer_shell: Option<&sc_layer_shell_v1::ScLayerShellV1>,
         _conn: &Connection,
-        display_ptr: *mut std::ffi::c_void,
+        _display_ptr: *mut std::ffi::c_void,
     ) -> Result<(), MenuError>
     where
         D: wayland_client::Dispatch<wl_surface::WlSurface, SurfaceData>

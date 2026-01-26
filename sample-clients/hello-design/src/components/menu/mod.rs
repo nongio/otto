@@ -12,7 +12,7 @@ mod sc_layer_protocol {
     wayland_scanner::generate_client_code!("../../protocols/sc-layer-v1.xml");
 }
 
-pub use data::{Anchor, Gravity, MenuItem, MenuItemBuilder, MenuItemId, MenuStyle, Position};
+pub use data::{MenuItem, MenuItemId, Position};
 pub use sc_layer_protocol::{sc_layer_shell_v1, sc_layer_v1};
 pub use surface::Menu;
 

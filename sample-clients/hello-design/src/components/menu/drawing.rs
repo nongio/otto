@@ -17,8 +17,8 @@ pub fn draw_menu(
         // Draw background
         let height = style.calculate_menu_height(items);
         let bg = style.background_color;
-        let bg_paint = Paint::new(Color4f::new(bg[0], bg[1], bg[2], bg[3]), None);
-        let bg_rect = RRect::new_rect_xy(
+        let _bg_paint = Paint::new(Color4f::new(bg[0], bg[1], bg[2], bg[3]), None);
+        let _bg_rect = RRect::new_rect_xy(
             Rect::from_xywh(0.0, 0.0, width, height),
             style.corner_radius,
             style.corner_radius,

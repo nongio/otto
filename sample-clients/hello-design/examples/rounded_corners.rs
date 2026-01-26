@@ -27,9 +27,11 @@ impl App for RoundedWindowDemo {
             );
 
             // Draw a colored box near the corners to make the rounding visible
-            let corner_paint =
-                Paint::new(skia_safe::Color4f::new(0.2, 0.6, 0.8, 0.3), None);
-            canvas.draw_rect(skia_safe::Rect::from_xywh(0.0, 0.0, 100.0, 100.0), &corner_paint);
+            let corner_paint = Paint::new(skia_safe::Color4f::new(0.2, 0.6, 0.8, 0.3), None);
+            canvas.draw_rect(
+                skia_safe::Rect::from_xywh(0.0, 0.0, 100.0, 100.0),
+                &corner_paint,
+            );
             canvas.draw_rect(
                 skia_safe::Rect::from_xywh(400.0, 0.0, 100.0, 100.0),
                 &corner_paint,
