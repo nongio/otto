@@ -178,15 +178,9 @@ impl ToplevelSurface {
         self.configured
     }
 
-    /// Get the window object
+    /// Get the window object (used by Menu component)
     pub fn window(&self) -> &Window {
         &self.window
-    }
-
-    /// Request window close
-    pub fn request_close(&self) {
-        // The compositor will send a close request event
-        // which the app should handle via WindowHandler
     }
 }
 
@@ -249,27 +243,5 @@ impl ToplevelSurface {
     /// Returns None if sc_layer_shell was not available when creating the surface
     pub fn layer(&self) -> Option<&sc_layer_v1::ScLayerV1> {
         self.sc_layer.as_ref()
-    }
-
-    /// Apply sc_layer augmentation with queue handle (deprecated - use layer() directly)
-    ///
-    /// This version can be called from the configure handler where
-    /// we have access to the queue handle.
-    #[deprecated(note = "Use layer() directly instead")]
-    pub fn augment_with_qh<F, D>(
-        &mut self,
-        augment_fn: F,
-        _qh: &QueueHandle<D>,
-    ) -> Result<(), SurfaceError>
-    where
-        F: FnOnce(&sc_layer_v1::ScLayerV1),
-        D: Dispatch<sc_layer_v1::ScLayerV1, ()> + 'static,
-    {
-        if let Some(ref layer) = self.sc_layer {
-            augment_fn(layer);
-            Ok(())
-        } else {
-            Err(SurfaceError::ScLayerNotAvailable)
-        }
     }
 }
