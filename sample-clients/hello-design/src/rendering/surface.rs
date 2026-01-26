@@ -3,6 +3,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use wayland_client::{backend::ObjectId, protocol::wl_surface, Proxy};
 
+use crate::app_runner::AppContext;
+
 /// EGL resources stored separately in global HashMap
 /// Only accessed during commit, resize, and cleanup
 pub struct EglSurfaceResources {
@@ -43,7 +45,7 @@ impl SkiaSurface {
             width,
             height,
         };
-        crate::app_runner::AppContext::insert_egl_resources(surface_id.clone(), resources);
+        AppContext::insert_egl_resources(surface_id.clone(), resources);
 
         Self {
             surface_id,
@@ -53,7 +55,7 @@ impl SkiaSurface {
 
     /// Resize the surface
     pub fn resize(&mut self, width: i32, height: i32) {
-        crate::app_runner::AppContext::with_egl_resources(&self.surface_id, |res| {
+        AppContext::with_egl_resources(&self.surface_id, |res| {
             res.width = width;
             res.height = height;
             res.wl_egl_surface.resize(width, height, 0, 0);
@@ -91,7 +93,7 @@ impl SkiaSurface {
 
     /// Initialize the Skia surface (cold path - called once)
     fn initialize_skia_surface(&self, ctx: &mut super::SkiaContext) {
-        crate::app_runner::AppContext::with_egl_resources(&self.surface_id, |res| {
+        AppContext::with_egl_resources(&self.surface_id, |res| {
             unsafe {
                 // Load EGL - this is cached internally after first load, so cheap
                 let egl =
@@ -141,7 +143,7 @@ impl SkiaSurface {
 
     /// Swap buffers after drawing (cold path)
     pub fn swap_buffers(&self, ctx: &mut super::SkiaContext) {
-        crate::app_runner::AppContext::with_egl_resources(&self.surface_id, |res| {
+        AppContext::with_egl_resources(&self.surface_id, |res| {
             unsafe {
                 // Flush to GPU
                 ctx.skia_context().flush_and_submit();
@@ -155,7 +157,7 @@ impl SkiaSurface {
 
     /// Commit the surface and mark damage
     pub fn commit(&self) {
-        crate::app_runner::AppContext::with_egl_resources(&self.surface_id, |res| {
+        AppContext::with_egl_resources(&self.surface_id, |res| {
             res.wl_surface.damage_buffer(0, 0, res.width, res.height);
             res.wl_surface.commit();
         });
@@ -163,22 +165,17 @@ impl SkiaSurface {
 
     /// Get the underlying Wayland surface
     pub fn wl_surface(&self) -> wl_surface::WlSurface {
-        crate::app_runner::AppContext::with_egl_resources(&self.surface_id, |res| {
-            res.wl_surface.clone()
-        })
-        .unwrap()
+        AppContext::with_egl_resources(&self.surface_id, |res| res.wl_surface.clone()).unwrap()
     }
 
     /// Get current width
     pub fn width(&self) -> i32 {
-        crate::app_runner::AppContext::with_egl_resources(&self.surface_id, |res| res.width)
-            .unwrap_or(0)
+        AppContext::with_egl_resources(&self.surface_id, |res| res.width).unwrap_or(0)
     }
 
     /// Get current height
     pub fn height(&self) -> i32 {
-        crate::app_runner::AppContext::with_egl_resources(&self.surface_id, |res| res.height)
-            .unwrap_or(0)
+        AppContext::with_egl_resources(&self.surface_id, |res| res.height).unwrap_or(0)
     }
 
     /// Get surface ID
@@ -190,6 +187,6 @@ impl SkiaSurface {
 impl Drop for SkiaSurface {
     fn drop(&mut self) {
         // Clean up EGL resources from HashMap
-        crate::app_runner::AppContext::remove_egl_resources(&self.surface_id);
+        AppContext::remove_egl_resources(&self.surface_id);
     }
 }
