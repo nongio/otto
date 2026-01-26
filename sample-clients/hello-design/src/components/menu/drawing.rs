@@ -23,14 +23,14 @@ pub fn draw_menu(
             style.corner_radius,
             style.corner_radius,
         );
-        canvas.draw_rrect(&bg_rect, &bg_paint);
+        // canvas.draw_rrect(&bg_rect, &bg_paint);
 
         // Draw border
         let mut border_paint = Paint::new(Color4f::new(0.0, 0.0, 0.0, 0.1), None);
         border_paint.set_style(PaintStyle::Stroke);
         border_paint.set_stroke_width(1.0);
         border_paint.set_anti_alias(true);
-        canvas.draw_rrect(&bg_rect, &border_paint);
+        // canvas.draw_rrect(&bg_rect, &border_paint);
     }
 
     // Setup fonts

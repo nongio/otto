@@ -41,11 +41,62 @@ A popup menu component with support for items, separators, and submenus.
 
 **Run example:** `cargo run --example simple_menu`
 
+### Window
+
+A high-level window component using AppRunner framework.
+
+**Features:**
+- Automatic Wayland protocol handling via AppRunner
+- Default rounded corners (12px radius)
+- Simple API for rendering custom content
+- Support for layer customization (opacity, blur, borders, etc.)
+
+**Example:**
+```rust
+let mut window = Window::new::<MyApp>("My Window", 800, 600)?;
+window.set_background(Color::from_rgb(255, 255, 255));
+
+window.on_draw(|canvas| {
+    // Draw your content here
+    let font = styles::H1.font();
+    let paint = Paint::new(Color::from_rgb(0, 0, 0), None);
+    canvas.draw_str("Hello World", (x, y), &font, &paint);
+});
+```
+
+**Run examples:** 
+- `cargo run --example simple_window` - Basic window
+- `cargo run --example rounded_corners` - Demonstrates default rounded corners
+- `cargo run --example simple_app` - Window with custom layer effects
+
 ### SimpleWindow
 
-A basic window component with simple rendering capabilities.
+A basic window component with simple rendering capabilities (legacy, prefer using Window).
 
 **Run example:** `cargo run --example simple_window`
+
+### Typography System
+
+A design system with font caching and predefined text styles using Inter font.
+
+**Features:**
+- Thread-local font cache for performance
+- Predefined text styles: Display, H1-H3, Title, Body, Label, Caption
+- Automatic fallback to system fonts if Inter is not available
+- Subpixel antialiasing enabled by default
+
+**Example:**
+```rust
+use hello_design::prelude::*;
+
+window.on_draw(|canvas| {
+    let font = styles::H1.font();
+    let paint = Paint::new(Color::from_rgb(0, 0, 0), None);
+    canvas.draw_str("Hello World", (x, y), &font, &paint);
+});
+```
+
+**Run example:** `cargo run --example typography_demo`
 
 ## Architecture
 

@@ -30,10 +30,11 @@ impl App for MyApp {
             canvas.draw_rect(rect, &paint);
         });
 
+        // Customize the layer appearance (overrides default rounded corners)
         window.on_layer(|layer| {
             layer.set_opacity(1.0);
             layer.set_background_color(0.9, 0.9, 0.95, 0.9);
-            layer.set_corner_radius(48.0);
+            layer.set_corner_radius(48.0); // Larger radius than default
             layer.set_masks_to_bounds(1);
             layer.set_blend_mode(sc_layer_v1::BlendMode::BackgroundBlur);
             layer.set_border(1.0, 0.9, 0.9, 0.9, 0.9);

@@ -20,10 +20,9 @@ version = "=0.88"
 features = ["gl", "textlayout"]
 
 [[example]]
-name = "simple_window"
-path = "examples/simple_window.rs"
+name = "simple_app"
+path = "examples/simple_app.rs"
 
 [[example]]
-name = "menu_bar"
-path = "examples/menu_bar.rs"
-
+name = "simple_menu"
+path = "examples/simple_menu.rs"

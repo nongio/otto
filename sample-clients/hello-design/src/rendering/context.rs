@@ -115,39 +115,6 @@ impl SkiaContext {
         }
     }
 
-    /// Create a new surface that shares this context
-    // pub fn create_surface(
-    //     &self,
-    //     wl_surface: wl_surface::WlSurface,
-    //     width: i32,
-    //     height: i32,
-    // ) -> Result<super::SkiaSurface, String> {
-    //     println!("SkiaContexts::create_surface");
-    //     unsafe {
-    //         let egl = khronos_egl::DynamicInstance::<khronos_egl::EGL1_4>::load_required()
-    //             .map_err(|e| format!("Failed to load EGL: {}", e))?;
-
-    //         // Create WlEglSurface
-    //         let wl_egl_surface = wayland_egl::WlEglSurface::new(wl_surface.id(), width, height)
-    //             .map_err(|e| format!("Failed to create WlEglSurface: {:?}", e))?;
-
-    //         // Create EGL surface
-    //         // let egl_surface = egl.create_window_surface(
-    //         //     self.egl_display,
-    //         //     self.egl_config,
-    //         //     wl_egl_surface.ptr() as khronos_egl::NativeWindowType,
-    //         //     None,
-    //         // ).map_err(|e| format!("Failed to create EGL surface: {}", e))?;
-
-    //         Ok(super::SkiaSurface::new_from_parts(
-    //             wl_surface,
-    //             egl_surface,
-    //             width,
-    //             height,
-    //         ))
-    //     }
-    // }
-
     pub fn egl_display(&self) -> khronos_egl::Display {
         self.egl_display
     }
@@ -158,5 +125,62 @@ impl SkiaContext {
 
     pub fn skia_context(&mut self) -> &mut skia_safe::gpu::DirectContext {
         &mut self.skia_context
+    }
+
+    /// Create a new SkiaSurface from this context for a new Wayland surface
+    ///
+    /// This allows multiple surfaces to share the same EGL/Skia context
+    pub fn create_surface(
+        &self,
+        wl_surface: &wl_surface::WlSurface,
+        width: i32,
+        height: i32,
+    ) -> Result<super::SkiaSurface, String> {
+        unsafe {
+            let egl = khronos_egl::DynamicInstance::<khronos_egl::EGL1_4>::load_required()
+                .map_err(|e| format!("Failed to load EGL: {}", e))?;
+
+            // Get the same config used for the context
+            let config_attribs = [
+                khronos_egl::RED_SIZE,
+                8,
+                khronos_egl::GREEN_SIZE,
+                8,
+                khronos_egl::BLUE_SIZE,
+                8,
+                khronos_egl::ALPHA_SIZE,
+                8,
+                khronos_egl::RENDERABLE_TYPE,
+                khronos_egl::OPENGL_ES2_BIT,
+                khronos_egl::NONE,
+            ];
+
+            let config = egl
+                .choose_first_config(self.egl_display, &config_attribs)
+                .map_err(|e| format!("Failed to choose config: {}", e))?
+                .ok_or("No suitable EGL config found")?;
+
+            // Create WlEglSurface
+            let wl_egl_surface = wayland_egl::WlEglSurface::new(wl_surface.id(), width, height)
+                .map_err(|e| format!("Failed to create WlEglSurface: {:?}", e))?;
+
+            // Create EGL surface
+            let egl_surface = egl
+                .create_window_surface(
+                    self.egl_display,
+                    config,
+                    wl_egl_surface.ptr() as khronos_egl::NativeWindowType,
+                    None,
+                )
+                .map_err(|e| format!("Failed to create EGL surface: {}", e))?;
+
+            Ok(super::SkiaSurface::new_from_parts(
+                wl_surface.clone(),
+                egl_surface,
+                wl_egl_surface,
+                width,
+                height,
+            ))
+        }
     }
 }
