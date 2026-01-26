@@ -17,12 +17,9 @@ use crate::rendering::SkiaSurface;
 /// to be part of a window but managed separately.
 pub struct SubsurfaceSurface {
     wl_surface: wl_surface::WlSurface,
-    subsurface: wl_subsurface::WlSubsurface,
     skia_surface: Option<SkiaSurface>,
     width: i32,
     height: i32,
-    x: i32,
-    y: i32,
     buffer_scale: i32,
     // sc_layer support
     sc_layer: Option<sc_layer_v1::ScLayerV1>,
@@ -83,12 +80,9 @@ impl SubsurfaceSurface {
 
         let mut subsurface_surface = Self {
             wl_surface: wl_surface.clone(),
-            subsurface,
             skia_surface: Some(skia_surface),
             width,
             height,
-            x,
-            y,
             buffer_scale,
             sc_layer: None,
         };
@@ -103,52 +97,6 @@ impl SubsurfaceSurface {
         }
 
         Ok(subsurface_surface)
-    }
-
-    /// Update the position of the subsurface
-    pub fn set_position(&mut self, x: i32, y: i32) {
-        self.x = x;
-        self.y = y;
-        self.subsurface.set_position(x, y);
-    }
-
-    /// Get current position
-    pub fn position(&self) -> (i32, i32) {
-        (self.x, self.y)
-    }
-
-    /// Resize the subsurface
-    pub fn resize(&mut self, width: i32, height: i32) -> Result<(), SurfaceError> {
-        use crate::app_runner::AppContext;
-
-        if self.width == width && self.height == height {
-            return Ok(());
-        }
-
-        self.width = width;
-        self.height = height;
-
-        // Recreate Skia surface with new dimensions using shared context
-        let new_surface = AppContext::skia_context(|ctx| {
-            ctx.create_surface(
-                &self.wl_surface,
-                width * self.buffer_scale,
-                height * self.buffer_scale,
-            )
-        })
-        .ok_or(SurfaceError::SkiaError(
-            "SkiaContext not initialized".to_string(),
-        ))?
-        .map_err(|e| SurfaceError::SkiaError(e))?;
-
-        self.skia_surface = Some(new_surface);
-
-        Ok(())
-    }
-
-    /// Get the subsurface object
-    pub fn subsurface(&self) -> &wl_subsurface::WlSubsurface {
-        &self.subsurface
     }
 }
 
