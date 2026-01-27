@@ -16,6 +16,8 @@ background_image = "./resources/background.jpg"
 keyboard_repeat_delay = 300
 keyboard_repeat_rate = 30
 
+use_10bit_color = false
+
 # Display profiles (optional)
 [displays.named."winit"]
 resolution = { width = 1280, height = 1000 }
