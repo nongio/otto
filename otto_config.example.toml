@@ -3,17 +3,6 @@ screen_scale = 2.0
 compositor_mode = "drm"
 locales = ["en"]  # Language preferences for app names/desktop entries (e.g., ["fr", "en"])
 
-[displays.named."winit"]
-resolution = { width = 1280, height = 1000 }
-refresh_hz = 60.0
-position = { x = 0, y = 0 }
-
-[[displays.generic]]
-match = { connector_prefix = "HDMI" }
-resolution = { width = 1920, height = 1080 }
-refresh_hz = 60.0
-position = { x = 1920, y = 0 }
-
 # Theme
 cursor_size = 24
 font_family = "Inter"
@@ -26,6 +15,18 @@ background_image = "./resources/background.jpg"
 # Inputs
 keyboard_repeat_delay = 300
 keyboard_repeat_rate = 30
+
+# Display profiles (optional)
+[displays.named."winit"]
+resolution = { width = 1280, height = 1000 }
+refresh_hz = 60.0
+position = { x = 0, y = 0 }
+
+[[displays.generic]]
+match = { connector_prefix = "HDMI" }
+resolution = { width = 1920, height = 1080 }
+refresh_hz = 60.0
+position = { x = 1920, y = 0 }
 
 [input]
 # Touchpad tap-to-click (1-finger = left click, 2-finger = right click, 3-finger = middle click)
