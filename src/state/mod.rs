@@ -1044,129 +1044,129 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     }
 
     /// Update a layer shell surface's lay_rs layer with current buffer content
-    pub fn update_layer_surface(&mut self, surface_id: &ObjectId) {
-        let Some(layer_shell_surface) = self.layer_surfaces.get(surface_id) else {
-            return;
-        };
+    // pub fn update_layer_surface(&mut self, surface_id: &ObjectId) {
+    //     let Some(layer_shell_surface) = self.layer_surfaces.get(surface_id) else {
+    //         return;
+    //     };
 
-        let scale_factor = Config::with(|c| c.screen_scale);
-        let wl_surface = layer_shell_surface.layer_surface().wl_surface();
+    //     let scale_factor = Config::with(|c| c.screen_scale);
+    //     let wl_surface = layer_shell_surface.layer_surface().wl_surface();
 
-        // Get the output geometry to compute surface placement
-        let output_geometry = self
-            .workspaces
-            .output_geometry(layer_shell_surface.output())
-            .unwrap_or_default();
+    //     // Get the output geometry to compute surface placement
+    //     let output_geometry = self
+    //         .workspaces
+    //         .output_geometry(layer_shell_surface.output())
+    //         .unwrap_or_default();
 
-        // Compute the layer surface geometry based on anchors/margins
-        let geometry = layer_shell_surface.compute_geometry(output_geometry);
+    //     // Compute the layer surface geometry based on anchors/margins
+    //     let geometry = layer_shell_surface.compute_geometry(output_geometry);
 
-        // Collect render elements from the surface tree
-        let mut render_elements: Vec<WindowViewSurface> = Vec::new();
-        let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> =
-            (0.0, 0.0).into();
+    //     // Collect render elements from the surface tree
+    //     let mut render_elements: Vec<WindowViewSurface> = Vec::new();
+    //     let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> =
+    //         (0.0, 0.0).into();
 
-        smithay::wayland::compositor::with_surface_tree_downward(
-            wl_surface,
-            initial_location,
-            |_, states, location| {
-                let mut location = *location;
-                let data = states
-                    .data_map
-                    .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>(
-                );
-                let mut cached_state = states.cached_state.get::<SurfaceCachedState>();
-                let cached_state = cached_state.current();
-                let surface_geometry = cached_state.geometry.unwrap_or_default();
+    //     smithay::wayland::compositor::with_surface_tree_downward(
+    //         wl_surface,
+    //         initial_location,
+    //         |_, states, location| {
+    //             let mut location = *location;
+    //             let data = states
+    //                 .data_map
+    //                 .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>(
+    //             );
+    //             let mut cached_state = states.cached_state.get::<SurfaceCachedState>();
+    //             let cached_state = cached_state.current();
+    //             let surface_geometry = cached_state.geometry.unwrap_or_default();
 
-                if let Some(data) = data {
-                    let data = data.lock().unwrap();
-                    if let Some(view) = data.view() {
-                        location += view.offset.to_f64().to_physical(scale_factor);
-                        location -= surface_geometry.loc.to_f64().to_physical(scale_factor);
-                        TraversalAction::DoChildren(location)
-                    } else {
-                        TraversalAction::SkipChildren
-                    }
-                } else {
-                    TraversalAction::SkipChildren
-                }
-            },
-            |surface, states, location| {
-                if let Some(wvs) =
-                    self.window_view_for_surface(surface, states, location, scale_factor)
-                {
-                    render_elements.push(wvs);
-                }
-            },
-            |_, _, _| true,
-        );
+    //             if let Some(data) = data {
+    //                 let data = data.lock().unwrap();
+    //                 if let Some(view) = data.view() {
+    //                     location += view.offset.to_f64().to_physical(scale_factor);
+    //                     location -= surface_geometry.loc.to_f64().to_physical(scale_factor);
+    //                     TraversalAction::DoChildren(location)
+    //                 } else {
+    //                     TraversalAction::SkipChildren
+    //                 }
+    //             } else {
+    //                 TraversalAction::SkipChildren
+    //             }
+    //         },
+    //         |surface, states, location| {
+    //             if let Some(wvs) =
+    //                 self.window_view_for_surface(surface, states, location, scale_factor)
+    //             {
+    //                 render_elements.push(wvs);
+    //             }
+    //         },
+    //         |_, _, _| true,
+    //     );
 
-        // Update the lay_rs layer position and size
-        let layer = &layer_shell_surface.layer;
-        layer.set_position(
-            layers::types::Point {
-                x: (geometry.loc.x as f64 * scale_factor) as f32,
-                y: (geometry.loc.y as f64 * scale_factor) as f32,
-            },
-            None,
-        );
-        layer.set_size(
-            layers::types::Size::points(
-                (geometry.size.w as f64 * scale_factor) as f32,
-                (geometry.size.h as f64 * scale_factor) as f32,
-            ),
-            None,
-        );
+    //     // Update the lay_rs layer position and size
+    //     let layer = &layer_shell_surface.layer;
+    //     layer.set_position(
+    //         layers::types::Point {
+    //             x: (geometry.loc.x as f64 * scale_factor) as f32,
+    //             y: (geometry.loc.y as f64 * scale_factor) as f32,
+    //         },
+    //         None,
+    //     );
+    //     layer.set_size(
+    //         layers::types::Size::points(
+    //             (geometry.size.w as f64 * scale_factor) as f32,
+    //             (geometry.size.h as f64 * scale_factor) as f32,
+    //         ),
+    //         None,
+    //     );
 
-        // If we have render elements, set up the drawing
-        if !render_elements.is_empty() {
-            // Clone what we need for the draw closure
-            let elements = render_elements.clone();
-            let width = (geometry.size.w as f64 * scale_factor) as f32;
-            let height = (geometry.size.h as f64 * scale_factor) as f32;
+    //     // If we have render elements, set up the drawing
+    //     if !render_elements.is_empty() {
+    //         // Clone what we need for the draw closure
+    //         let elements = render_elements.clone();
+    //         let width = (geometry.size.w as f64 * scale_factor) as f32;
+    //         let height = (geometry.size.h as f64 * scale_factor) as f32;
 
-            layer.set_draw_content(move |canvas: &layers::skia::Canvas, _w, _h| {
-                for wvs in &elements {
-                    if wvs.phy_dst_w <= 0.0 || wvs.phy_dst_h <= 0.0 {
-                        continue;
-                    }
-                    let tex = crate::textures_storage::get(&wvs.id);
-                    if let Some(tex) = tex {
-                        let src_h = (wvs.phy_src_h - wvs.phy_src_y).max(1.0);
-                        let src_w = (wvs.phy_src_w - wvs.phy_src_x).max(1.0);
-                        let scale_y = wvs.phy_dst_h / src_h;
-                        let scale_x = wvs.phy_dst_w / src_w;
-                        let mut matrix = layers::skia::Matrix::new_identity();
-                        matrix.pre_translate((-wvs.phy_src_x, -wvs.phy_src_y));
-                        matrix.pre_scale((scale_x, scale_y), None);
+    //         layer.set_draw_content(move |canvas: &layers::skia::Canvas, _w, _h| {
+    //             for wvs in &elements {
+    //                 if wvs.phy_dst_w <= 0.0 || wvs.phy_dst_h <= 0.0 {
+    //                     continue;
+    //                 }
+    //                 let tex = crate::textures_storage::get(&wvs.id);
+    //                 if let Some(tex) = tex {
+    //                     let src_h = (wvs.phy_src_h - wvs.phy_src_y).max(1.0);
+    //                     let src_w = (wvs.phy_src_w - wvs.phy_src_x).max(1.0);
+    //                     let scale_y = wvs.phy_dst_h / src_h;
+    //                     let scale_x = wvs.phy_dst_w / src_w;
+    //                     let mut matrix = layers::skia::Matrix::new_identity();
+    //                     matrix.pre_translate((-wvs.phy_src_x, -wvs.phy_src_y));
+    //                     matrix.pre_scale((scale_x, scale_y), None);
 
-                        let sampling = layers::skia::SamplingOptions::from(
-                            layers::skia::CubicResampler::catmull_rom(),
-                        );
-                        let mut paint = layers::skia::Paint::new(
-                            layers::skia::Color4f::new(1.0, 1.0, 1.0, 1.0),
-                            None,
-                        );
-                        paint.set_shader(tex.image.to_shader(
-                            (layers::skia::TileMode::Clamp, layers::skia::TileMode::Clamp),
-                            sampling,
-                            &matrix,
-                        ));
+    //                     let sampling = layers::skia::SamplingOptions::from(
+    //                         layers::skia::CubicResampler::catmull_rom(),
+    //                     );
+    //                     let mut paint = layers::skia::Paint::new(
+    //                         layers::skia::Color4f::new(1.0, 1.0, 1.0, 1.0),
+    //                         None,
+    //                     );
+    //                     paint.set_shader(tex.image.to_shader(
+    //                         (layers::skia::TileMode::Clamp, layers::skia::TileMode::Clamp),
+    //                         sampling,
+    //                         &matrix,
+    //                     ));
 
-                        let dst_rect = layers::skia::Rect::from_xywh(
-                            wvs.phy_dst_x,
-                            wvs.phy_dst_y,
-                            wvs.phy_dst_w,
-                            wvs.phy_dst_h,
-                        );
-                        canvas.draw_rect(dst_rect, &paint);
-                    }
-                }
-                layers::skia::Rect::from_xywh(0.0, 0.0, width, height)
-            });
-        }
-    }
+    //                     let dst_rect = layers::skia::Rect::from_xywh(
+    //                         wvs.phy_dst_x,
+    //                         wvs.phy_dst_y,
+    //                         wvs.phy_dst_w,
+    //                         wvs.phy_dst_h,
+    //                     );
+    //                     canvas.draw_rect(dst_rect, &paint);
+    //                 }
+    //             }
+    //             layers::skia::Rect::from_xywh(0.0, 0.0, width, height)
+    //         });
+    //     }
+    // }
 
     pub fn quit_appswitcher_app(&mut self) {
         self.workspaces.quit_appswitcher_app();

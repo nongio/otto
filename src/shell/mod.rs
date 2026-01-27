@@ -134,6 +134,7 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
                 }
             }
         });
+        self.create_layer_for_surface(surface);
     }
 
     fn commit(&mut self, surface: &WlSurface) {
@@ -146,8 +147,6 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
         if !sync {
             // Check if this is a layer shell surface first
             if self.layer_surfaces.contains_key(&surface_id) {
-                self.update_layer_surface(&surface_id);
-
                 // Don't recalculate here - it causes deadlock since layer_map is borrowed
                 // Recalculation will happen during arrange in ensure_initial_configure
             } else {
@@ -185,6 +184,20 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
 
                 if let Some(window) = window {
                     window.on_commit();
+                    
+                    // Build warm_cache for this window if it doesn't exist yet
+                    if let Some(root_id) = root_id.as_ref() {
+                        self.build_cache_for_view(root_id, &surface_id);
+                        
+                        // Inject the warm cache into the window view if it exists
+                        if let Some(view) = self.workspaces.get_window_view(root_id) {
+                            if let Some(cache) = self.view_warm_cache.remove(root_id) {
+                                tracing::debug!("💉 Injected warm_cache into WindowView for {:?} with {} entries", root_id, cache.len());
+                                view.view_content.set_viewlayer_node_map(cache);
+                            }
+                        }
+                    }
+                    
                     self.update_window_view(&window);
 
                     // Update foreign toplevel list only if title or app_id actually changed
@@ -222,6 +235,9 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
         self.schedule_event_loop_dispatch();
     }
     fn destroyed(&mut self, surface: &WlSurface) {
+        // Clean up the layer for this surface
+        self.destroy_layer_for_surface(&surface.id());
+        
         // Find root surface for this destroyed surface
         // 1. Check popup cache first (O(1)) - entry removal happens in popup_destroyed
         // 2. Try PopupManager for popups

@@ -150,14 +150,13 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         );
         self.foreign_toplevels.insert(surface_id.clone(), handles);
 
-        // Pre-populate surface_layers for toplevel and all subsurfaces
-        self.prepopulate_surface_layers(surface.wl_surface());
+        // Create a layer for the toplevel surface
+        self.create_layer_for_surface(surface.wl_surface());
 
         // Inject warm cache into WindowView's content view
         if let Some(view) = self.workspaces.get_window_view(&surface_id) {
             if let Some(cache) = self.view_warm_cache.remove(&surface_id) {
                 view.view_content.set_viewlayer_node_map(cache);
-                tracing::debug!("Injected warm cache into WindowView for {:?}", surface_id);
             }
         }
 
@@ -236,12 +235,8 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         if let Ok(root) = find_popup_root_surface(&popup_kind) {
             self.popup_root_cache.insert(popup_id.clone(), root.id());
 
-            // Pre-create layer for popup with matching key format
-            let popup_layer = self.layers_engine.new_layer();
-            popup_layer.set_key(format!("surface_{:?}", popup_id));
-
-            // Pre-populate for popup and subsurfaces
-            self.prepopulate_surface_layers(popup_surface);
+            // Create layer for popup surface
+            self.create_layer_for_surface(popup_surface);
         }
 
         if let Err(err) = self.popups.track_popup(popup_kind) {
@@ -253,10 +248,11 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         // Use cached root lookup - O(1) instead of traversing popup tree
         let popup_id = popup_surface.wl_surface().id();
 
-        // Remove from popup overlay layer and unregister surface layers
+        // Remove from popup overlay layer
         self.workspaces.popup_overlay.remove_popup(&popup_id);
 
-        self.surface_layers.remove(&popup_id);
+        // Clean up layers for this popup surface
+        self.destroy_layer_for_surface(&popup_id);
         // Also clean up any sc-layers attached to these surfaces
         self.sc_layers.remove(&popup_id);
 
@@ -1222,44 +1218,82 @@ impl<BackendData: Backend> Otto<BackendData> {
         });
     }
 
-    /// Pre-populate surface_layers for a surface and all its subsurfaces
-    /// This allows sc-layer to attach immediately without waiting for buffer commit
-    /// Also builds a warm cache for the View's layer lookup
-    fn prepopulate_surface_layers(&mut self, surface: &WlSurface) {
+    /// Create a layer for this surface
+    /// The warm cache will be built later during commit when we know the surface tree structure
+    pub(crate) fn create_layer_for_surface(&mut self, surface: &WlSurface) {
+        let key = format!("surface_{:?}", surface.id());
+        self.surface_layers.entry(surface.id().clone())
+            .or_insert_with(|| {
+                let layer = self.layers_engine.new_layer();
+                layer.set_key(&key);
+                tracing::debug!("🆕 Created rendering layer {:?} for surface {:?}", layer.id, surface.id());
+                layer
+            });
+    }
+
+    /// Destroy the layer associated with a surface
+    /// Removes from surface_layers hashmap and marks for deletion in layers_engine
+    pub(crate) fn destroy_layer_for_surface(&mut self, surface_id: &smithay::reexports::wayland_server::backend::ObjectId) {
+        if let Some(layer) = self.surface_layers.remove(surface_id) {
+            self.layers_engine.mark_for_delete(layer.id);
+            tracing::debug!("🗑️  Destroyed rendering layer {:?} for surface {:?}", layer.id, surface_id);
+        }
+    }
+
+    /// Build the layer cache for a window view by walking its subsurface tree
+    /// This is called during commit when we know the full surface hierarchy
+    /// Note: Popups are handled separately - they get added when they commit via update_window_view
+    pub(crate) fn build_cache_for_view(&mut self, root_id: &smithay::reexports::wayland_server::backend::ObjectId, surface_id: &smithay::reexports::wayland_server::backend::ObjectId) {
         use smithay::wayland::compositor::with_surface_tree_downward;
-        use smithay::wayland::compositor::TraversalAction;
         use std::collections::{HashMap, VecDeque};
 
-        let surface_id = surface.id();
+        // Optimization: if cache exists and current surface is already in it, nothing to do
+        if let Some(existing_cache) = self.view_warm_cache.get(root_id) {
+            let key = format!("surface_{:?}", surface_id);
+            if existing_cache.contains_key(&key) {
+                tracing::debug!("⚡ Cache already contains surface {:?}, skipping rebuild", surface_id);
+                return;
+            }
+        }
+
+        // Check if we already have a warm cache for this root
+        if self.view_warm_cache.contains_key(root_id) {
+            return;
+        }
+
+        // Get the root surface
+        let Some(root_surface) = self.workspaces.get_window_for_surface(root_id)
+            .and_then(|w| w.wl_surface())
+            .map(|s| s.clone().into_owned())
+        else {
+            return;
+        };
+
         let mut cache: HashMap<String, VecDeque<layers::prelude::NodeRef>> = HashMap::new();
 
-        // Walk the surface tree and create layers for each surface + subsurfaces
+        // Walk the toplevel and its subsurfaces (popups are handled separately when they commit)
         with_surface_tree_downward(
-            surface,
+            &root_surface,
             (),
-            |_, _, _| TraversalAction::DoChildren(()),
-            |sub_surface, _, _| {
-                let sub_id = sub_surface.id();
+            |_, _, _| smithay::wayland::compositor::TraversalAction::DoChildren(()),
+            |surface, _, _| {
+                let surface_id = surface.id();
+                let key = format!("surface_{:?}", surface_id);
 
-                // Create a layer for this surface with matching key format
-                let layer = self.layers_engine.new_layer();
-                let key = format!("surface_{:?}", sub_id);
-                layer.set_key(&key);
-
-                // Register in surface_layers for sc-layer attachment
-                self.surface_layers.insert(sub_id.clone(), layer.clone());
-
-                // Add to warm cache for View
-                let mut deque = VecDeque::new();
-                deque.push_back(layer.id);
-                cache.insert(key, deque);
-
-                tracing::debug!("Pre-populated surface_layer for {:?}", sub_id);
+                // Get the layer we created earlier in create_layer_for_surface
+                if let Some(layer) = self.surface_layers.get(&surface_id) {
+                    let mut deque = VecDeque::new();
+                    deque.push_back(layer.id);
+                    cache.insert(key.clone(), deque);
+                    tracing::debug!("📦 Added to warm_cache: {} -> layer {:?}", key, layer.id);
+                }
             },
             |_, _, _| true,
         );
 
-        // Store the warm cache indexed by main surface ID
-        self.view_warm_cache.insert(surface_id, cache);
+        if !cache.is_empty() {
+            tracing::debug!("✅ Built warm_cache for root {:?} with {} entries", root_id, cache.len());
+            self.view_warm_cache.insert(root_id.clone(), cache);
+        }
     }
 }
