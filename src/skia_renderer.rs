@@ -4,10 +4,10 @@ use std::{
     collections::HashMap,
     ffi::{c_char, CStr},
     rc::Rc,
-    time::Duration,
+    sync::atomic::Ordering,
 };
 
-use layers::skia;
+use layers::{sb, skia};
 
 use smithay::{
     backend::{
@@ -16,16 +16,7 @@ use smithay::{
             format::{has_alpha, FormatSet},
             Buffer as DmaBuffer, Fourcc,
         },
-        egl::{
-            self,
-            display::{EGLBufferReader, EGLDisplayHandle},
-            fence::EGLFence,
-            ffi::egl::{
-                types::{EGLImage, EGLSync},
-                CreateSync, SYNC_FENCE,
-            },
-            wrap_egl_call, wrap_egl_call_ptr, EGLContext, EGLDisplay, EGLSurface,
-        },
+        egl::{self, display::EGLBufferReader, fence::EGLFence, EGLContext, EGLSurface},
         renderer::{
             gles::{
                 ffi::{
@@ -35,10 +26,9 @@ use smithay::{
                 format::{fourcc_to_gl_formats, gl_internal_format_to_fourcc},
                 Capability, GlesError, GlesRenderbuffer, GlesRenderer, GlesTexture,
             },
-            sync::{Fence, Interrupted, SyncPoint},
+            sync::SyncPoint,
             Bind, Blit, Color32F, DebugFlags, ExportMem, Frame, ImportDma, ImportDmaWl, ImportEgl,
-            ImportMem, ImportMemWl, Offscreen, Renderer, Texture, TextureFilter, TextureMapping,
-            Unbind,
+            ImportMem, ImportMemWl, Offscreen, Renderer, Texture, TextureFilter, Unbind,
         },
     },
     reexports::wayland_server::{protocol::wl_buffer::WlBuffer, DisplayHandle},
@@ -46,125 +36,16 @@ use smithay::{
     wayland::compositor::SurfaceData,
 };
 
-#[derive(Clone)]
-pub struct SkiaSurface {
-    pub gr_context: skia::gpu::DirectContext,
-    pub surface: skia::Surface,
-}
-impl SkiaSurface {
-    pub fn canvas(&mut self) -> &skia::Canvas {
-        self.surface.canvas()
-    }
-}
-impl SkiaSurface {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_with_fbo(
-        width: impl Into<i32>,
-        height: impl Into<i32>,
-        sample_count: impl Into<usize>,
-        stencil_bits: impl Into<usize>,
-        fboid: impl Into<u32>,
-        color_type: skia::ColorType,
-        context: Option<&skia::gpu::DirectContext>,
-        origin: skia::gpu::SurfaceOrigin,
-        gl_internal_format: u32,
-    ) -> Self {
-        let fb_info = {
-            skia::gpu::gl::FramebufferInfo {
-                fboid: fboid.into(),
-                format: gl_internal_format,
-                ..Default::default()
-            }
-        };
-        let backend_render_target = skia::gpu::backend_render_targets::make_gl(
-            (width.into(), height.into()),
-            sample_count.into(),
-            stencil_bits.into(),
-            fb_info,
-        );
+use crate::renderer::{
+    egl_context::EGLSurfaceWrapper,
+    skia_surface::SkiaSurface,
+    sync::{finished_proc, FlushInfo2, SkiaSync, FINISHED_PROC_STATE},
+    textures::{SkiaFrame, SkiaTexture, SkiaTextureMapping},
+};
 
-        let mut gr_context: skia::gpu::DirectContext = if let Some(context) = context {
-            context.clone()
-        } else {
-            let interface = skia::gpu::gl::Interface::new_native().unwrap();
-            skia::gpu::direct_contexts::make_gl(interface, None).unwrap()
-        };
-        gr_context.reset(None);
-        let surface = skia::gpu::surfaces::wrap_backend_render_target(
-            &mut gr_context,
-            &backend_render_target,
-            origin,
-            color_type,
-            None,
-            Some(&skia::SurfaceProps::new(
-                Default::default(),
-                skia::PixelGeometry::BGRH, // for font rendering optimisations
-            )),
-        )
-        .unwrap();
+// Re-export types that are part of the public API
+pub use crate::renderer::textures::{SkiaGLesFbo, SkiaTextureImage};
 
-        Self {
-            gr_context,
-            surface,
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_with_texture(
-        width: impl Into<i32>,
-        height: impl Into<i32>,
-        sample_cnt: impl Into<usize>,
-        texid: impl Into<u32>,
-        color_type: skia::ColorType,
-        context: Option<&skia::gpu::DirectContext>,
-        origin: skia::gpu::SurfaceOrigin,
-    ) -> Self {
-        let sample_cnt = sample_cnt.into();
-        let gl_info = skia::gpu::gl::TextureInfo {
-            target: ffi::TEXTURE_2D,
-            id: texid.into(),
-            format: skia::gpu::gl::Format::RGBA8.into(),
-            ..Default::default()
-        };
-        let backend_texture = unsafe {
-            skia::gpu::backend_textures::make_gl(
-                (width.into(), height.into()),
-                skia::gpu::Mipmapped::No,
-                gl_info,
-                "",
-            )
-        };
-        let mut gr_context: skia::gpu::DirectContext = if let Some(context) = context {
-            context.clone()
-        } else {
-            let interface = skia::gpu::gl::Interface::new_native().unwrap();
-            skia::gpu::direct_contexts::make_gl(interface, None).unwrap()
-        };
-        gr_context.reset(None);
-        let surface = skia::gpu::surfaces::wrap_backend_texture(
-            &mut gr_context,
-            &backend_texture,
-            origin,
-            sample_cnt,
-            color_type,
-            None,
-            Some(&skia::SurfaceProps::new(
-                Default::default(),
-                skia::PixelGeometry::BGRH, // for font rendering optimisations
-            )),
-        )
-        .unwrap();
-
-        Self {
-            gr_context,
-            surface,
-        }
-    }
-
-    pub fn surface(&self) -> skia::Surface {
-        self.surface.clone()
-    }
-}
 pub struct SkiaRenderer {
     gl_renderer: GlesRenderer,
     gl: ffi::Gles2,
@@ -175,14 +56,6 @@ pub struct SkiaRenderer {
     pub context: Option<skia::gpu::DirectContext>,
 
     dmabuf_cache: std::collections::HashMap<WeakDmabuf, SkiaTexture>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SkiaGLesFbo {
-    pub fbo: u32,
-    pub tex_id: u32,
-    pub format: Fourcc,
-    pub origin: skia::gpu::SurfaceOrigin,
 }
 
 impl From<GlesRenderer> for SkiaRenderer {
@@ -218,74 +91,6 @@ impl From<GlesRenderer> for SkiaRenderer {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct SkiaTexture {
-    pub texture: GlesTexture,
-    pub image: skia::Image,
-    pub has_alpha: bool,
-    pub format: Option<Fourcc>,
-    pub egl_images: Option<Vec<EGLImage>>,
-    pub is_external: bool,
-    pub damage: Option<Vec<Rectangle<i32, Buffer>>>,
-}
-
-unsafe impl Send for SkiaTexture {}
-
-#[derive(Debug, Clone)]
-pub struct SkiaTextureImage {
-    pub tid: u32,
-    pub image: skia::Image,
-    pub has_alpha: bool,
-    pub format: Option<Fourcc>,
-    pub damage: Option<Vec<Rectangle<i32, Buffer>>>,
-}
-
-impl From<SkiaTexture> for SkiaTextureImage {
-    fn from(value: SkiaTexture) -> Self {
-        SkiaTextureImage {
-            tid: value.texture.tex_id(),
-            image: value.image,
-            has_alpha: value.has_alpha,
-            format: value.format,
-            damage: value.damage,
-        }
-    }
-}
-
-pub struct SkiaFrame<'frame> {
-    size: Size<i32, Physical>,
-    pub skia_surface: SkiaSurface,
-    renderer: &'frame mut SkiaRenderer,
-    id: usize,
-}
-
-#[derive(Debug, Clone)]
-pub struct SkiaTextureMapping {
-    pub fourcc_format: Fourcc,
-    pub flipped: bool,
-    pub width: u32,
-    pub height: u32,
-    pub fbo_info: SkiaGLesFbo,
-    pub region: Rectangle<i32, Buffer>,
-    pub image: RefCell<Option<skia::Image>>,
-    pub data: RefCell<Option<Vec<u8>>>,
-}
-
-#[derive(Debug, Clone)]
-struct EGLSurfaceWrapper(pub Rc<EGLSurface>);
-
-impl PartialEq for EGLSurfaceWrapper {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.get_surface_handle() == other.0.get_surface_handle()
-    }
-}
-impl std::cmp::Eq for EGLSurfaceWrapper {}
-
-impl std::hash::Hash for EGLSurfaceWrapper {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.0.get_surface_handle().hash(state);
-    }
-}
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SkiaTarget {
     // EGLSurface(smithay::backend::egl::ffi::egl::types::EGLSurface),
@@ -666,17 +471,6 @@ impl SkiaRenderer {
         Ok(tex)
     }
 }
-impl Texture for SkiaTexture {
-    fn width(&self) -> u32 {
-        self.image.width() as u32
-    }
-    fn height(&self) -> u32 {
-        self.image.height() as u32
-    }
-    fn format(&self) -> Option<Fourcc> {
-        self.format
-    }
-}
 
 impl Frame for SkiaFrame<'_> {
     type Error = GlesError;
@@ -904,125 +698,6 @@ impl Frame for SkiaFrame<'_> {
     }
 }
 
-// this is a "hack" to expose finished_proc and submitted_proc
-// until a PR is made to skia-bindings
-use layers::sb;
-
-#[repr(C)]
-#[allow(dead_code, non_snake_case)]
-#[derive(Debug)]
-pub struct FlushInfo2 {
-    pub fNumSemaphores: usize,
-    pub fGpuStatsFlags: sb::skgpu_GpuStatsFlags,
-    pub fSignalSemaphores: *mut sb::GrBackendSemaphore,
-    pub fFinishedProc: sb::GrGpuFinishedProc,
-    pub fFinishedWithStatsProc: sb::GrGpuFinishedWithStatsProc,
-    pub fFinishedContext: sb::GrGpuFinishedContext,
-    pub fSubmittedProc: sb::GrGpuSubmittedProc,
-    pub fSubmittedContext: sb::GrGpuSubmittedContext,
-}
-
-use std::sync::atomic::{AtomicBool, Ordering};
-
-static FINISHED_PROC_STATE: AtomicBool = AtomicBool::new(false);
-
-unsafe extern "C" fn finished_proc(_: *mut ::core::ffi::c_void) {
-    FINISHED_PROC_STATE.store(true, Ordering::SeqCst);
-}
-
-#[derive(Debug, Clone)]
-struct InnerSkiaFence {
-    display_handle: std::sync::Arc<EGLDisplayHandle>,
-    handle: EGLSync,
-    // native: bool,
-}
-
-unsafe impl Send for InnerSkiaFence {}
-unsafe impl Sync for InnerSkiaFence {}
-
-#[derive(Debug, Clone)]
-struct SkiaSync(std::sync::Arc<InnerSkiaFence>);
-
-impl SkiaSync {
-    pub fn create(display: &EGLDisplay) -> Result<Self, egl::Error> {
-        let display_handle = display.get_display_handle();
-        let handle = wrap_egl_call_ptr(|| unsafe {
-            CreateSync(**display_handle, SYNC_FENCE, std::ptr::null())
-        })
-        .map_err(egl::Error::CreationFailed)?;
-
-        Ok(Self(std::sync::Arc::new(InnerSkiaFence {
-            display_handle,
-            handle,
-            // native: false,
-        })))
-    }
-}
-impl Drop for InnerSkiaFence {
-    fn drop(&mut self) {
-        // Best-effort destroy of the EGLSync fence to avoid leaking kernel objects/FDs.
-        // Safe if called once at last Arc drop; ignored by drivers if already destroyed.
-        unsafe {
-            // Use the raw egl ffi to destroy the sync; ignore errors.
-            let _ =
-                smithay::backend::egl::ffi::egl::DestroySync(**self.display_handle, self.handle);
-        }
-    }
-}
-impl Fence for SkiaSync {
-    fn export(&self) -> Option<std::os::unix::prelude::OwnedFd> {
-        None
-    }
-    fn is_exportable(&self) -> bool {
-        false
-    }
-    fn is_signaled(&self) -> bool {
-        FINISHED_PROC_STATE.load(Ordering::SeqCst)
-    }
-    fn wait(&self) -> Result<(), Interrupted> {
-        use smithay::backend::egl::ffi;
-
-        let timeout = Some(Duration::from_millis(2))
-            .map(|t| t.as_nanos() as ffi::egl::types::EGLuint64KHR)
-            .unwrap_or(ffi::egl::FOREVER);
-
-        let flush = false;
-        let flags = if flush {
-            ffi::egl::SYNC_FLUSH_COMMANDS_BIT as ffi::egl::types::EGLint
-        } else {
-            0
-        };
-        let _status = wrap_egl_call(
-            || unsafe {
-                ffi::egl::ClientWaitSync(**self.0.display_handle, self.0.handle, flags, timeout)
-            },
-            ffi::egl::FALSE as ffi::egl::types::EGLint,
-        )
-        .map_err(|err| {
-            tracing::warn!(?err, "Waiting for fence was interrupted");
-            Interrupted
-        })?;
-
-        // FIXME do we need to destroy the sync?
-        // wrap_egl_call(
-        //     || unsafe {
-        //         ffi::egl::DestroySync(**self.0.display_handle, self.0.handle) as i32
-        //     },
-        //     ffi::egl::FALSE as ffi::egl::types::EGLint,
-        // )
-        // .map_err(|err| {
-        //     tracing::warn!(?err, "Waiting for fence was interrupted");
-        //     Interrupted
-        // })?;
-        Ok(())
-        // while !self.is_signaled() {
-        //     if start.elapsed() >=  {
-        //         break;
-        //     }
-        // }
-        // while !self.is_signaled() {}
-    }
-}
 impl Renderer for SkiaRenderer {
     type Error = GlesError;
     type TextureId = SkiaTexture;
@@ -1509,26 +1184,6 @@ impl BorrowMut<GlesRenderer> for SkiaRenderer {
     }
 }
 
-impl TextureMapping for SkiaTextureMapping {
-    fn flipped(&self) -> bool {
-        self.flipped
-    }
-    fn format(&self) -> Fourcc {
-        self.fourcc_format
-    }
-}
-
-impl Texture for SkiaTextureMapping {
-    fn width(&self) -> u32 {
-        self.width
-    }
-    fn height(&self) -> u32 {
-        self.height
-    }
-    fn format(&self) -> Option<Fourcc> {
-        Some(self.fourcc_format)
-    }
-}
 impl ExportMem for SkiaRenderer {
     type TextureMapping = SkiaTextureMapping;
 
@@ -1715,32 +1370,14 @@ impl Bind<Dmabuf> for SkiaRenderer {
                         rbo,
                     );
 
-                    // Add a depth buffer to make the framebuffer complete
-                    // (required for rendering, even if depth testing is disabled)
-                    let mut depth_rbo = 0;
-                    self.gl.GenRenderbuffers(1, &mut depth_rbo as *mut _);
-                    self.gl.BindRenderbuffer(ffi::RENDERBUFFER, depth_rbo);
-                    self.gl.RenderbufferStorage(
-                        ffi::RENDERBUFFER,
-                        ffi::DEPTH_COMPONENT16,
-                        _width,
-                        _height,
-                    );
-                    self.gl.FramebufferRenderbuffer(
-                        ffi::FRAMEBUFFER,
-                        ffi::DEPTH_ATTACHMENT,
-                        ffi::RENDERBUFFER,
-                        depth_rbo,
-                    );
-                    self.gl.BindRenderbuffer(ffi::RENDERBUFFER, 0);
-
                     let status = self.gl.CheckFramebufferStatus(ffi::FRAMEBUFFER);
+                    self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
 
                     if status != ffi::FRAMEBUFFER_COMPLETE {
-                        panic!("Framebuffer incomplete for dmabuf: status 0x{:X}", status);
+                        //TODO wrap image and drop here
+                        println!("framebuffer incomplete");
+                        // return Err(GlesError::FramebufferBindingError);
                     }
-
-                    self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
                     SkiaGLesFbo {
                         fbo,
                         tex_id: texture,

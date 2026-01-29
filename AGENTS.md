@@ -77,7 +77,11 @@ The state module also contains protocol handler implementations (`*_handler.rs` 
 
 1. **Scene Graph**: `lay-rs` engine manages the scene tree and Taffy-based layout
 2. **Element Building**: `src/render.rs` produces `OutputRenderElements` per output
-3. **Skia Renderer**: `src/skia_renderer.rs` wraps Smithay's GlesRenderer with Skia for drawing
+3. **Skia Renderer**: `src/skia_renderer.rs` with modular sub-components:
+   - `src/renderer/skia_surface.rs` — Skia surface creation and management
+   - `src/renderer/textures.rs` — Texture types combining OpenGL and Skia
+   - `src/renderer/sync.rs` — GPU synchronization using EGL fences
+   - `src/renderer/egl_context.rs` — EGL surface wrappers
 4. **Damage Tracking**: `OutputDamageTracker` from Smithay renders only damaged regions
 5. **Frame Submission**: Backend submits the composed buffer (dmabuf on DRM, presented on winit/x11)
 

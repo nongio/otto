@@ -15,6 +15,7 @@ pub mod interactive_view;
 pub mod render;
 pub mod render_elements;
 pub mod render_metrics;
+pub mod renderer;
 pub mod sc_layer_shell;
 pub mod screenshare;
 pub mod settings_service;
