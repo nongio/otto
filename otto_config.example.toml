@@ -79,7 +79,7 @@ max_right = 50      # Right side panels
 "Ctrl+Esc" = "Quit"
 "Ctrl+Return" = { run = { cmd = "terminator", args = [] } }
 # "Logo+Space" = { run = { cmd = "dolphin", args = [] } }
-# "Logo+Shift+B" = { open_default = "browser" }
+# "Logo+Shift+B" = { run = { cmd = "firefox", args = [] } }
 
 "Ctrl+1" = { builtin = "Workspace", index = 0 }
 "Ctrl+2" = { builtin = "Workspace", index = 1 }

@@ -122,10 +122,6 @@ pub enum BuiltinAction {
     ExposeShowAll,
     WorkspaceNum { index: usize },
     SceneSnapshot,
-    RunTerminal,
-    RunFileManager,
-    RunBrowser,
-    RunLayersDebug,
 }
 
 #[derive(Debug, Error)]
@@ -225,10 +221,6 @@ fn parse_builtin(name: &str, index: Option<usize>) -> Result<BuiltinAction, Shor
         "ExposeShowDesktop" => BuiltinAction::ExposeShowDesktop,
         "ExposeShowAll" => BuiltinAction::ExposeShowAll,
         "SceneSnapshot" => BuiltinAction::SceneSnapshot,
-        "RunTerminal" => BuiltinAction::RunTerminal,
-        "RunFileManager" => BuiltinAction::RunFileManager,
-        "RunBrowser" => BuiltinAction::RunBrowser,
-        "RunLayersDebug" => BuiltinAction::RunLayersDebug,
         "Screen" => {
             let index = index.ok_or_else(|| ShortcutError::MissingIndex(name.to_string()))?;
             BuiltinAction::Screen { index }

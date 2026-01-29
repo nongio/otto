@@ -168,15 +168,6 @@ max_right = 50      # Right side panels
 
 ### Application Defaults
 
-Configure default applications for quick launch:
-
-```toml
-terminal_bin = "weston-terminal"
-file_manager_bin = "dolphin"
-browser_bin = "google-chrome-stable"
-browser_args = [""]
-```
-
 ---
 
 ### Keyboard Shortcuts
@@ -236,7 +227,7 @@ Define custom keyboard shortcuts:
 "Alt+F" = "ExposeShowAll"
 
 # Debug
-"Logo+Shift+I" = "RunLayersDebug"
+"Logo+Shift+I" = { run = { cmd = "layers_debug", args = [] } }
 "Alt+J" = "SceneSnapshot"
 ```
 
