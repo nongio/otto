@@ -620,6 +620,9 @@ impl SkiaRenderer {
     ) -> Option<skia::Image> {
         #[cfg(feature = "profile-with-puffin")]
         profiling::scope!("import_skia_image_from_texture");
+        
+        // Check if we have a current renderer before borrowing context
+        let has_current_renderer = self.current_skia_renderer().is_some();
         let context = self.context.as_mut().unwrap();
 
         let target = if is_external {
@@ -652,10 +655,13 @@ impl SkiaRenderer {
                 ffi::RGBA16F => Some(skia::ColorType::RGBAF16),
                 _ => None,
             };
+            let skia_format = skia_format?;
+            let skia_color = skia_color?;
+            
             let texture_info = skia::gpu::gl::TextureInfo {
                 target,
                 id: texture.tex_id(),
-                format: skia_format.unwrap().into(),
+                format: skia_format.into(),
                 ..Default::default()
             };
 
@@ -670,16 +676,14 @@ impl SkiaRenderer {
                 context,
                 &texture,
                 skia::gpu::SurfaceOrigin::TopLeft,
-                skia_color.unwrap(),
+                skia_color,
                 skia::AlphaType::Premul,
                 None,
-            )
-            .unwrap();
-            if let Some(surface) = self.current_skia_renderer() {
-                let mut ctx = surface.gr_context.clone();
-                ctx.flush_and_submit_image(&image);
-                // ctx.flush_submit_and_sync_cpu();
-                // println!("flush image");
+            )?;
+            
+            // Flush the image if we have a current rendering surface
+            if has_current_renderer {
+                context.flush_and_submit_image(&image);
             }
             Some(image)
         }
