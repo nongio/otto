@@ -478,11 +478,8 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
                     data.space.map_element(self.window.clone(), location, true);
                 }
 
-                x11.configure(Rectangle::from_loc_and_size(
-                    location,
-                    self.last_window_size,
-                ))
-                .unwrap();
+                x11.configure(Rectangle::new(location.into(), self.last_window_size))
+                    .unwrap();
             }
         }
     }
@@ -539,11 +536,8 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(x11) => {
                     let location = state.space.element_location(&self.window).unwrap();
-                    x11.configure(Rectangle::from_loc_and_size(
-                        location,
-                        self.last_window_size,
-                    ))
-                    .unwrap();
+                    x11.configure(Rectangle::new(location.into(), self.last_window_size))
+                        .unwrap();
 
                     let Some(surface) = self.window.wl_surface() else {
                         // X11 Window got unmapped, abort
@@ -723,11 +717,8 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11) => {
                 let location = state.space.element_location(&self.window).unwrap();
-                x11.configure(Rectangle::from_loc_and_size(
-                    location,
-                    self.last_window_size,
-                ))
-                .unwrap();
+                x11.configure(Rectangle::new(location.into(), self.last_window_size))
+                    .unwrap();
 
                 let Some(surface) = self.window.wl_surface() else {
                     // X11 Window got unmapped, abort
@@ -868,11 +859,8 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
                     data.space.map_element(self.window.clone(), location, true);
                 }
 
-                x11.configure(Rectangle::from_loc_and_size(
-                    location,
-                    self.last_window_size,
-                ))
-                .unwrap();
+                x11.configure(Rectangle::new(location.into(), self.last_window_size))
+                    .unwrap();
             }
         }
     }

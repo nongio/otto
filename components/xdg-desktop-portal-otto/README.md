@@ -72,10 +72,10 @@ Current functionality:
 
 ## Debugging
 
-Logs are written to `/tmp/portal-sc.log`. To monitor in real-time:
+Logs are written to `/tmp/portal-otto.log`. To monitor in real-time:
 
 ```bash
-tail -f /tmp/portal-sc.log
+tail -f /tmp/portal-otto.log
 ```
 
 The portal logs:

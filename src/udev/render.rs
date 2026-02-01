@@ -6,9 +6,10 @@
 // - Direct scanout optimization
 // - Screenshare integration
 
+#[cfg(feature = "metrics")]
+use std::sync::Arc;
 use std::{
     io,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -20,7 +21,6 @@ use crate::{
     render_elements::workspace_render_elements::WorkspaceRenderElements,
     render_elements::{output_render_elements::OutputRenderElements, scene_element::SceneElement},
     shell::{WindowElement, WindowRenderElement},
-    skia_renderer::SkiaGLesFbo,
     state::{post_repaint, take_presentation_feedback, SurfaceDmabufFeedback},
 };
 
@@ -30,7 +30,6 @@ use smithay::{
         renderer::element::{AsRenderElements, Kind},
         SwapBuffersError,
     },
-    input::pointer::CursorImageStatus,
     output::Output,
     reexports::{
         calloop::{
@@ -46,10 +45,21 @@ use smithay::{
 };
 use tracing::{debug, trace, warn};
 
-use super::types::{
-    RenderOutcome, SurfaceCompositorRenderResult, SurfaceData, UdevData, UdevOutputId, UdevRenderer,
-};
+use super::types::{RenderOutcome, SurfaceData, UdevData, UdevOutputId, UdevRenderer};
 use crate::state::Otto;
+
+// Type alias for the framebuffer returned when binding a Dmabuf with UdevRenderer
+// type UdevFramebuffer<'a> = smithay::backend::renderer::multigpu::MultiFramebuffer<
+//     'a,
+//     smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<
+//         crate::skia_renderer::SkiaRenderer,
+//         smithay::backend::drm::DrmDeviceFd,
+//     >,
+//     smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<
+//         crate::skia_renderer::SkiaRenderer,
+//         smithay::backend::drm::DrmDeviceFd,
+//     >,
+// >;
 
 impl Otto<UdevData> {
     pub(super) fn frame_finish(
@@ -89,86 +99,78 @@ impl Otto<UdevData> {
             return;
         };
 
-        let schedule_render = match surface.compositor.frame_submitted() {
-            Ok(user_data) => {
-                if let Some(mut feedback) = user_data.flatten() {
-                    let tp = metadata.as_ref().and_then(|metadata| match metadata.time {
-                        smithay::backend::drm::DrmEventTime::Monotonic(tp) => Some(tp),
-                        smithay::backend::drm::DrmEventTime::Realtime(_) => None,
-                    });
-                    let seq = metadata
-                        .as_ref()
-                        .map(|metadata| metadata.sequence)
-                        .unwrap_or(0);
+        let schedule_render =
+            match surface.compositor.frame_submitted() {
+                Ok(user_data) => {
+                    if let Some(mut feedback) = user_data.flatten() {
+                        let tp = metadata.as_ref().and_then(|metadata| match metadata.time {
+                            smithay::backend::drm::DrmEventTime::Monotonic(tp) => Some(tp),
+                            smithay::backend::drm::DrmEventTime::Realtime(_) => None,
+                        });
+                        let seq = metadata
+                            .as_ref()
+                            .map(|metadata| metadata.sequence)
+                            .unwrap_or(0);
 
-                    let (clock, flags) = if let Some(tp) = tp {
-                        (
-                            tp.into(),
-                            wp_presentation_feedback::Kind::Vsync
-                                | wp_presentation_feedback::Kind::HwClock
-                                | wp_presentation_feedback::Kind::HwCompletion,
-                        )
-                    } else {
-                        (self.clock.now(), wp_presentation_feedback::Kind::Vsync)
-                    };
+                        let (clock, flags) = if let Some(tp) = tp {
+                            (
+                                tp.into(),
+                                wp_presentation_feedback::Kind::Vsync
+                                    | wp_presentation_feedback::Kind::HwClock
+                                    | wp_presentation_feedback::Kind::HwCompletion,
+                            )
+                        } else {
+                            (self.clock.now(), wp_presentation_feedback::Kind::Vsync)
+                        };
 
-                    feedback.presented(
-                        clock,
-                        output
-                            .current_mode()
-                            .map(|mode| {
-                                Refresh::fixed(Duration::from_nanos(
-                                    1_000_000_000_000 / mode.refresh as u64,
-                                ))
-                            })
-                            .unwrap_or(Refresh::Unknown),
-                        seq as u64,
-                        flags,
-                    );
-                }
-
-                true
-            }
-            Err(err) => {
-                // Log as debug for DeviceInactive (expected during suspend), warn for others
-                let is_device_inactive = matches!(
-                    &err,
-                    SwapBuffersError::TemporaryFailure(e)
-                        if matches!(e.downcast_ref::<DrmError>(), Some(&DrmError::DeviceInactive))
-                );
-
-                if is_device_inactive {
-                    debug!(
-                        "Device inactive during rendering (expected during suspend): {:?}",
-                        err
-                    );
-                } else {
-                    warn!("Error during rendering: {:?}", err);
-                }
-
-                match err {
-                    SwapBuffersError::AlreadySwapped => true,
-                    // If the device has been deactivated do not reschedule, this will be done
-                    // by session resume
-                    SwapBuffersError::TemporaryFailure(err)
-                        if matches!(
-                            err.downcast_ref::<DrmError>(),
-                            Some(&DrmError::DeviceInactive)
-                        ) =>
-                    {
-                        false
+                        feedback.presented(
+                            clock,
+                            output
+                                .current_mode()
+                                .map(|mode| {
+                                    Refresh::fixed(Duration::from_nanos(
+                                        1_000_000_000_000 / mode.refresh as u64,
+                                    ))
+                                })
+                                .unwrap_or(Refresh::Unknown),
+                            seq as u64,
+                            flags,
+                        );
                     }
-                    SwapBuffersError::TemporaryFailure(err) => matches!(
-                        err.downcast_ref::<DrmError>(),
-                        Some(DrmError::Access(DrmAccessError {
-                            source,
-                            ..
-                        })) if source.kind() == io::ErrorKind::PermissionDenied
-                    ),
-                    SwapBuffersError::ContextLost(err) => panic!("Rendering loop lost: {}", err),
+
+                    true
                 }
-            }
-        };
+                Err(err) => {
+                    use smithay::backend::drm::compositor::FrameError;
+
+                    // Log as debug for DeviceInactive (expected during suspend), warn for others
+                    let is_device_inactive =
+                        matches!(&err, FrameError::DrmError(DrmError::DeviceInactive));
+
+                    if is_device_inactive {
+                        debug!(
+                            "Device inactive during rendering (expected during suspend): {:?}",
+                            err
+                        );
+                    } else {
+                        warn!("Error during rendering: {:?}", err);
+                    }
+
+                    match err {
+                        FrameError::DrmError(DrmError::DeviceInactive) => {
+                            // If the device has been deactivated do not reschedule, this will be done
+                            // by session resume
+                            false
+                        }
+                        FrameError::DrmError(DrmError::Access(DrmAccessError {
+                            source, ..
+                        })) if source.kind() == io::ErrorKind::PermissionDenied => true,
+                        _ => {
+                            panic!("Rendering loop lost: {}", err);
+                        }
+                    }
+                }
+            };
 
         if schedule_render {
             let output_refresh = match output.current_mode() {
@@ -301,7 +303,6 @@ impl Otto<UdevData> {
         let _config_scale = Config::with(|c| c.screen_scale);
 
         let scene_has_damage = self.scene_element.update();
-        let pointer_scale = 1.0;
         let all_window_elements: Vec<&WindowElement> = self.workspaces.spaces_elements().collect();
 
         // Determine if direct scanout should be allowed:
@@ -326,9 +327,7 @@ impl Otto<UdevData> {
             self.pointer.current_location(),
             &self.cursor_manager,
             &self.cursor_texture_cache,
-            pointer_scale,
             self.dnd_icon.as_ref(),
-            &mut self.cursor_status.lock().unwrap(),
             &self.clock,
             self.scene_element.clone(),
             scene_has_damage,
@@ -374,6 +373,7 @@ impl Otto<UdevData> {
             if outcome.rendered && !self.screenshare_sessions.is_empty() {
                 let scale = Scale::from(output.current_scale().fractional_scale());
 
+                // Get the source framebuffer that was just rendered to
                 // Blit to PipeWire buffers on main thread
                 for session in self.screenshare_sessions.values() {
                     // Check if we should render cursor for this session
@@ -392,10 +392,8 @@ impl Otto<UdevData> {
 
                     // Build cursor elements for screenshare if needed
                     let cursor_elements: Vec<WorkspaceRenderElements<_>> = if should_render_cursor {
-                        let output_geometry = Rectangle::from_loc_and_size(
-                            (0, 0),
-                            output.current_mode().unwrap().size,
-                        );
+                        let output_geometry =
+                            Rectangle::new((0, 0).into(), output.current_mode().unwrap().size);
                         let output_scale = output.current_scale().fractional_scale();
                         let pointer_location = self.pointer.current_location();
 
@@ -501,10 +499,10 @@ impl Otto<UdevData> {
                                     );
                                 }
 
-                                // Blit framebuffer and render cursor on top
+                                // Blit from source framebuffer and render cursor on top
                                 let blit_result = crate::screenshare::fullscreen_to_dmabuf(
                                     &mut renderer,
-                                    available.dmabuf.clone(),
+                                    &mut available.dmabuf.clone(),
                                     size,
                                     damage_to_use,
                                     &cursor_elements,
@@ -530,7 +528,7 @@ impl Otto<UdevData> {
                             }
                         }
                     }
-                }
+                } // Close for session loop
             }
         }
 
@@ -619,28 +617,25 @@ pub(super) fn render_surface<'a>(
     pointer_location: Point<f64, Logical>,
     cursor_manager: &CursorManager,
     cursor_texture_cache: &CursorTextureCache,
-    _pointer_scale: f64,
     dnd_icon: Option<&wl_surface::WlSurface>,
-    _cursor_status: &mut CursorImageStatus,
     clock: &Clock<Monotonic>,
     scene_element: SceneElement,
     scene_has_damage: bool,
     fullscreen_window: Option<&WindowElement>,
 ) -> Result<RenderOutcome, SwapBuffersError> {
     // Start frame timing
+    #[cfg(feature = "metrics")]
     let _frame_timer = surface
         .render_metrics
         .as_ref()
         .map(|m: &Arc<_>| m.start_frame());
 
-    let output_geometry = Rectangle::from_loc_and_size((0, 0), output.current_mode().unwrap().size);
+    let output_geometry = Rectangle::new((0, 0).into(), output.current_mode().unwrap().size);
     let scale = Scale::from(output.current_scale().fractional_scale());
 
     let mut workspace_render_elements: Vec<WorkspaceRenderElements<_>> = Vec::new();
 
     let output_scale = output.current_scale().fractional_scale();
-
-    let _cursor_config_size = Config::with(|c| c.cursor_size);
     let dnd_needs_draw = dnd_icon.map(|surface| surface.alive()).unwrap_or(false);
 
     let pointer_in_output = output_geometry
@@ -693,21 +688,6 @@ pub(super) fn render_surface<'a>(
                 workspace_render_elements.push(WorkspaceRenderElements::from(elem));
             }
         }
-
-        // draw the dnd icon if applicable
-        // {
-        //     if let Some(wl_surface) = dnd_icon.as_ref() {
-        //         if wl_surface.alive() {
-        //             custom_elements.extend(AsRenderElements::<UdevRenderer<'a>>::render_elements(
-        //                 &SurfaceTree::from_surface(wl_surface),
-        //                 renderer,
-        //                 cursor_pos_scaled,
-        //                 scale,
-        //                 1.0,
-        //             ));
-        //         }
-        //     }
-        // }
     }
 
     #[cfg(feature = "fps_ticker")]
@@ -785,38 +765,61 @@ pub(super) fn render_surface<'a>(
         return Ok(RenderOutcome::skipped());
     }
 
-    let SurfaceCompositorRenderResult {
-        rendered,
-        states,
-        sync,
-        damage,
-        // dmabuf: _rendered_dmabuf,
-    } = surface.compositor.render_frame::<_, _, SkiaGLesFbo>(
-        renderer,
-        &output_elements,
-        clear_color,
-    )?;
+    let render_frame_result = surface
+        .compositor
+        .render_frame(
+            renderer,
+            &output_elements,
+            clear_color,
+            smithay::backend::drm::compositor::FrameFlags::empty(),
+        )
+        .map_err(|err| match err {
+            smithay::backend::drm::compositor::RenderFrameError::PrepareFrame(err) => err.into(),
+            smithay::backend::drm::compositor::RenderFrameError::RenderFrame(
+                smithay::backend::renderer::damage::Error::Rendering(err),
+            ) => err.into(),
+            other => {
+                tracing::error!("Unexpected render frame error: {:?}", other);
+                SwapBuffersError::ContextLost(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Render frame error: {:?}", other),
+                )))
+            }
+        })?;
+
+    #[cfg(feature = "renderer_sync")]
+    {
+        use smithay::backend::drm::compositor::PrimaryPlaneElement;
+        if let PrimaryPlaneElement::Swapchain(element) = render_frame_result.primary_element {
+            let _ = element.sync.wait();
+        }
+    }
+
+    let rendered = !render_frame_result.is_empty;
+    let states = render_frame_result.states;
+    let damage: Option<Vec<Rectangle<i32, Physical>>> = None; // DRM compositor doesn't provide damage info
 
     // Record damage metrics if available
+    #[cfg(feature = "metrics")]
     if let Some(ref metrics) = surface.render_metrics {
         let mode = output.current_mode().unwrap();
         let output_size = (mode.size.w, mode.size.h);
 
-        if let Some(damage_rects) = damage {
+        if let Some(ref damage_rects) = damage {
             // Have actual damage information
             metrics.as_ref().record_damage(output_size, damage_rects);
         } else if rendered {
             // No damage info available (DRM compositor mode), but frame was rendered
             // Record full frame as damage as approximation
-            let full_screen = vec![Rectangle::from_loc_and_size(
-                (0, 0),
-                (mode.size.w, mode.size.h),
+            let full_screen = vec![Rectangle::new(
+                (0, 0).into(),
+                (mode.size.w, mode.size.h).into(),
             )];
             metrics.as_ref().record_damage(output_size, &full_screen);
         }
     }
 
-    let damage_for_return = damage.map(|d| d.to_vec());
+    let damage_for_return = damage.clone();
 
     // In direct scanout mode, only send frame callbacks to the fullscreen window
     // This prevents off-workspace windows from generating damage that causes glitches
@@ -843,13 +846,15 @@ pub(super) fn render_surface<'a>(
     if rendered {
         let output_presentation_feedback =
             take_presentation_feedback(output, &post_repaint_elements, &states);
-        let damage = damage.cloned();
         surface
             .compositor
-            .queue_frame(sync, damage, Some(output_presentation_feedback))?;
+            .queue_frame(Some(output_presentation_feedback))?;
     }
 
-    Ok(RenderOutcome::with_frame(rendered, damage_for_return))
+    Ok(RenderOutcome {
+        rendered,
+        damage: damage_for_return,
+    })
 }
 
 pub(super) fn initial_render(
@@ -858,8 +863,23 @@ pub(super) fn initial_render(
 ) -> Result<(), SwapBuffersError> {
     surface
         .compositor
-        .render_frame::<_, WorkspaceRenderElements<_>, SkiaGLesFbo>(renderer, &[], CLEAR_COLOR)?;
-    surface.compositor.queue_frame(None, None, None)?;
+        .render_frame::<_, WorkspaceRenderElements<_>>(
+            renderer,
+            &[],
+            CLEAR_COLOR,
+            smithay::backend::drm::compositor::FrameFlags::empty(),
+        )
+        .map_err(|err| match err {
+            smithay::backend::drm::compositor::RenderFrameError::PrepareFrame(err) => err.into(),
+            smithay::backend::drm::compositor::RenderFrameError::RenderFrame(
+                smithay::backend::renderer::damage::Error::Rendering(err),
+            ) => err.into(),
+            other => SwapBuffersError::ContextLost(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Render frame error: {:?}", other),
+            ))),
+        })?;
+    surface.compositor.queue_frame(None)?;
     surface.compositor.reset_buffers();
 
     Ok(())

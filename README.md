@@ -9,6 +9,10 @@ Otto is a Wayland compositor and stacking window manager, built in Rust on top o
 While many features are ready for daily use, there is still some work required for full stability. 
 Testing is valuable therefore you are invited to play around with Otto.
 
+Feedback and questions are welcome in the Matrix chat: 
+[`#otto-compositor:matrix.org`](https://matrix.to/#/#otto-compositor:matrix.org).
+
+
  ## :framed_picture: What does Otto look like?
 
 <video src="https://github.com/user-attachments/assets/9abad978-319d-4699-a5a4-f34f8b3e3560" autoplay muted loop playsinline></video>
@@ -116,10 +120,18 @@ then you'll need to install the following packages as well:
 
 You can run Otto with cargo after having cloned this repository:
 
-```
-cd otto;
+```bash
+cd otto
 
-cargo run -- --{backend}
+# Run with default features (lean)
+cargo run -- --winit
+
+# Run with development features (debugger, profiler)
+cargo run --features "dev" -- --winit
+
+# Release build
+cargo build --release
+cargo run --release -- --winit
 ```
 
 Current available backends:

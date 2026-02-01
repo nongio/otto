@@ -14,6 +14,7 @@ pub mod input_handler;
 pub mod interactive_view;
 pub mod render;
 pub mod render_elements;
+#[cfg(feature = "metrics")]
 pub mod render_metrics;
 pub mod renderer;
 pub mod sc_layer_shell;

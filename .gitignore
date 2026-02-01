@@ -9,3 +9,9 @@ otto_config.toml
 otto_config.*.toml
 
 wlcs/CMakeFiles/**/*
+
+# Product docs inbox (scratch space, not committed)
+docs/inbox/
+
+# Code investigations (scratch space, not committed)
+docs/investigations/

@@ -275,6 +275,7 @@ pub fn run_x11() {
             subpixel: Subpixel::Unknown,
             make: "Smithay".into(),
             model: "X11".into(),
+            serial_number: None,
         },
     );
     let _global = output.create_global::<Otto<X11Data>>(&display.handle());

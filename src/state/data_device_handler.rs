@@ -2,7 +2,7 @@ use smithay::{
     delegate_data_control, delegate_data_device,
     reexports::wayland_server::protocol::wl_data_device_manager::DndAction,
     wayland::selection::{
-        data_device::{DataDeviceHandler, DataDeviceState},
+        data_device::{DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler},
         wlr_data_control::{DataControlHandler, DataControlState},
     },
 };
@@ -10,8 +10,8 @@ use smithay::{
 use super::{Backend, Otto};
 
 impl<BackendData: Backend> DataDeviceHandler for Otto<BackendData> {
-    fn data_device_state(&self) -> &DataDeviceState {
-        &self.data_device_state
+    fn data_device_state(&mut self) -> &mut DataDeviceState {
+        &mut self.data_device_state
     }
     fn action_choice(
         &mut self,
@@ -43,9 +43,11 @@ impl<BackendData: Backend> DataDeviceHandler for Otto<BackendData> {
     }
 }
 
+impl<BackendData: Backend> WaylandDndGrabHandler for Otto<BackendData> {}
+
 impl<BackendData: Backend> DataControlHandler for Otto<BackendData> {
-    fn data_control_state(&self) -> &DataControlState {
-        &self.data_control_state
+    fn data_control_state(&mut self) -> &mut DataControlState {
+        &mut self.data_control_state
     }
 }
 

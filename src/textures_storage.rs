@@ -3,7 +3,7 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
-use crate::skia_renderer::SkiaTextureImage;
+use crate::renderer::SkiaTextureImage;
 use smithay::reexports::wayland_server::backend::ObjectId;
 
 static TEXTURES_STORAGE: OnceLock<Mutex<HashMap<ObjectId, SkiaTextureImage>>> = OnceLock::new();

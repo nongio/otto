@@ -12,7 +12,7 @@ use smithay::{
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::{
             multigpu::{gbm::GbmGlesBackend, GpuManager},
-            DebugFlags, ImportDma, ImportMemWl,
+            ImportDma, ImportMemWl, Renderer,
         },
         session::{libseat::LibSeatSession, Event as SessionEvent, Session},
         udev::{all_gpus, primary_gpu, UdevBackend, UdevEvent},
@@ -213,6 +213,7 @@ pub fn run_udev() {
     let gpus =
         GpuManager::new(GbmGlesBackend::with_context_priority(ContextPriority::High)).unwrap();
 
+    // // Context ID will be obtained after devices are initialized
     let data = UdevData {
         dh: display_handle.clone(),
         dmabuf_state: None,
@@ -222,7 +223,8 @@ pub fn run_udev() {
         backends: HashMap::new(),
         #[cfg(feature = "fps_ticker")]
         fps_texture: None,
-        debug_flags: DebugFlags::empty(),
+
+        context_id: None, // Will be set after device initialization
     };
     let mut state = Otto::init(display, event_loop.handle(), data, true);
 
@@ -319,6 +321,12 @@ pub fn run_udev() {
             error!("Skipping device {device_id}: {err}");
         }
     }
+
+    // Now that devices are added, set the context_id
+    if let Ok(renderer) = state.backend_data.gpus.single_renderer(&primary_gpu) {
+        state.backend_data.context_id = Some(renderer.context_id());
+    }
+
     state.shm_state.update_formats(
         state
             .backend_data
@@ -460,6 +468,7 @@ pub fn run_udev() {
         } else {
             display_handle.flush_clients().unwrap();
             // Log rendering metrics periodically
+            #[cfg(feature = "metrics")]
             state.render_metrics.maybe_log_stats(false);
         }
     }

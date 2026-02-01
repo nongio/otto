@@ -9,7 +9,7 @@ use smithay::{
                 RescaleRenderElement,
             },
         },
-        ImportAll, ImportMem, Renderer,
+        ImportAll, ImportMem, Renderer, RendererSuper,
     },
     desktop::space::{constrain_space_element, ConstrainBehavior, ConstrainReference, Space},
     output::Output,
@@ -30,7 +30,7 @@ pub fn space_preview_elements<'a, R, C>(
 ) -> impl Iterator<Item = C> + 'a
 where
     R: Renderer + ImportAll + ImportMem,
-    R::TextureId: Clone + 'static,
+    <R as RendererSuper>::TextureId: Clone + 'static,
     C: From<CropRenderElement<RelocateRenderElement<RescaleRenderElement<WindowRenderElement<R>>>>>
         + 'a,
 {
@@ -74,7 +74,7 @@ where
                 preview_padding + (preview_padding + preview_size.w) * column as i32,
                 preview_padding + (preview_padding + preview_size.h) * row as i32,
             ));
-            let constrain = Rectangle::from_loc_and_size(preview_location, preview_size);
+            let constrain = Rectangle::new(preview_location, preview_size);
             constrain_space_element(
                 renderer,
                 window,
@@ -102,7 +102,7 @@ pub fn output_elements<'a, 'frame, R>(
 )
 where
     R: Renderer + ImportAll + ImportMem,
-    R::TextureId: Clone + 'static,
+    <R as RendererSuper>::TextureId: Clone + 'static,
 {
     let mut output_render_elements = Vec::new();
     let _dnd_element = dnd.map(|dnd| {
@@ -135,12 +135,14 @@ pub fn render_output<'frame, R>(
     >,
     dnd: Option<&wl_surface::WlSurface>,
     renderer: &mut R,
+    framebuffer: &mut <R as RendererSuper>::Framebuffer<'frame>,
     damage_tracker: &'frame mut OutputDamageTracker,
     age: usize,
-) -> Result<RenderOutputResult<'frame>, OutputDamageTrackerError<R>>
+) -> Result<RenderOutputResult<'frame>, OutputDamageTrackerError<<R as RendererSuper>::Error>>
 where
     R: Renderer + ImportAll + ImportMem + 'frame,
-    R::TextureId: Clone + 'static,
+    <R as RendererSuper>::TextureId: Clone + 'static,
+    <R as RendererSuper>::Error: std::error::Error,
     SceneElement: smithay::backend::renderer::element::RenderElement<R>,
 {
     let (elements, clear_color) = output_elements(
@@ -151,7 +153,7 @@ where
         renderer,
     );
 
-    let result = damage_tracker.render_output(renderer, age, &elements, clear_color);
+    let result = damage_tracker.render_output(renderer, framebuffer, age, &elements, clear_color);
 
     result
 }

@@ -15,7 +15,7 @@ use zbus::zvariant::{OwnedFd, OwnedObjectPath, OwnedValue};
 use crate::otto_client::OttoClient;
 use crate::portal::{
     build_streams_value_from_descriptors, make_output_mapping_id, PortalState, Request, Session,
-    SessionState, StreamDescriptor, CURSOR_MODE_EMBEDDED, CURSOR_MODE_HIDDEN, SOURCE_TYPE_MONITOR,
+    SessionState, StreamDescriptor, CURSOR_MODE_EMBEDDED, SOURCE_TYPE_MONITOR,
     SUPPORTED_CURSOR_MODES,
 };
 use zbus::zvariant::Str;

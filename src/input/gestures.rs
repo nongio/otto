@@ -283,12 +283,11 @@ impl crate::Otto<crate::udev::UdevData> {
 
 #[cfg(all(test, feature = "udev"))]
 mod tests {
-    use super::*;
 
     #[test]
     fn test_gesture_swipe_velocity_calculation() {
         // Test velocity averaging
-        let samples = vec![100.0, 200.0, 300.0];
+        let samples = [100.0, 200.0, 300.0];
         let avg = samples.iter().sum::<f64>() / samples.len() as f64;
         assert_eq!(avg, 200.0);
     }

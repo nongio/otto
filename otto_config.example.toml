@@ -1,6 +1,5 @@
 # Display
 screen_scale = 2.0
-compositor_mode = "drm"
 locales = ["en"]  # Language preferences for app names/desktop entries (e.g., ["fr", "en"])
 
 # Theme

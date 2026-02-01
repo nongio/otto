@@ -21,7 +21,7 @@ use smithay::{
             damage::{Error as OutputDamageTrackerError, OutputDamageTracker},
             element::Kind,
             utils::{import_surface, RendererSurfaceState},
-            ImportDma, ImportMemWl,
+            ContextId, ImportDma, ImportMemWl, Renderer,
         },
         winit::{self, WinitEvent, WinitGraphicsBackend},
         SwapBuffersError,
@@ -34,18 +34,19 @@ use smithay::{
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::{protocol::wl_surface, Display},
         winit::{
-            dpi::LogicalSize, dpi::Size, platform::pump_events::PumpStatus,
+            dpi::{LogicalSize, Size},
+            platform::pump_events::PumpStatus,
             window::WindowAttributes,
         },
     },
     utils::{IsAlive, Scale, Transform},
-    wayland::presentation::Refresh,
     wayland::{
         compositor::{self, with_states},
         dmabuf::{
             DmabufFeedback, DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState,
             ImportNotifier,
         },
+        presentation::Refresh,
     },
 };
 use tracing::{error, info, warn};
@@ -54,6 +55,7 @@ use crate::{
     config::{Config, DisplayDescriptor, DisplayKind, DisplayResolution, WINIT_DISPLAY_ID},
     render::*,
     render_elements::workspace_render_elements::WorkspaceRenderElements,
+    renderer::SkiaTexture,
     shell::WindowElement,
     skia_renderer::{SkiaRenderer, SkiaTextureImage},
     state::{post_repaint, take_presentation_feedback, Backend, Otto},
@@ -152,6 +154,7 @@ pub struct WinitData {
     damage_tracker: OutputDamageTracker,
     dmabuf_state: (DmabufState, DmabufGlobal, Option<DmabufFeedback>),
     full_redraw: u8,
+    context_id: ContextId<SkiaTexture>,
     #[cfg(feature = "fps_ticker")]
     pub fps: fps_ticker::Fps,
 }
@@ -201,7 +204,8 @@ impl Backend for WinitData {
         &self,
         render_surface: &RendererSurfaceState,
     ) -> Option<SkiaTextureImage> {
-        let tex = render_surface.texture::<SkiaRenderer>(99);
+        let id = self.context_id.clone();
+        let tex = render_surface.texture::<SkiaTexture>(id);
         tex.map(|t| t.clone().into())
     }
     fn set_cursor(&mut self, _image: &CursorImageStatus) {}
@@ -254,6 +258,7 @@ pub fn run_winit() {
             subpixel: Subpixel::Unknown,
             make: "Otto".into(),
             model: "Winit".into(),
+            serial_number: "0".into(),
         },
     );
     let _global = output.create_global::<Otto<WinitData>>(&display.handle());
@@ -335,7 +340,7 @@ pub fn run_winit() {
 
     let data = {
         let damage_tracker = OutputDamageTracker::from_output(&output);
-
+        let context_id = backend.renderer().context_id();
         WinitData {
             backend,
             damage_tracker,
@@ -343,6 +348,7 @@ pub fn run_winit() {
             full_redraw: 0,
             #[cfg(feature = "fps_ticker")]
             fps: fps_ticker::Fps::default(),
+            context_id,
         }
     };
     let mut state = Otto::init(display, event_loop.handle(), data, true);
@@ -479,13 +485,15 @@ pub fn run_winit() {
 
             if should_draw {
                 // Start frame timing
+                #[cfg(feature = "metrics")]
                 let _frame_timer = state.render_metrics.start_frame();
 
-                let render_res = backend.bind().and_then(|_| {
-                    #[cfg(feature = "debug")]
+                #[cfg(feature = "debug")]
+                {
+                    let handle = backend.renderer().egl_context().get_context_handle();
                     if let Some(renderdoc) = renderdoc.as_mut() {
                         renderdoc.start_frame_capture(
-                            backend.renderer().egl_context().get_context_handle(),
+                            handle,
                             backend
                                 .window()
                                 .window_handle()
@@ -499,13 +507,19 @@ pub fn run_winit() {
                                 .unwrap_or_else(|_| std::ptr::null_mut()),
                         );
                     }
-                    let age = if *full_redraw > 0 {
-                        0
-                    } else {
-                        backend.buffer_age().unwrap_or(0)
-                    };
+                }
+                let age = if *full_redraw > 0 {
+                    0
+                } else {
+                    backend.buffer_age().unwrap_or(0)
+                };
+                let render_res = backend.bind().and_then(|(renderer, mut framebuffer)| {
+                    #[cfg(feature = "profile-with-puffin")]
+                    profiling::puffin::profile_scope!("render_output");
 
-                    let renderer = backend.renderer();
+                    // Get all window elements from all workspaces
+                    let all_window_elements: Vec<&WindowElement> =
+                        state.workspaces.spaces_elements().collect();
 
                     let mut elements = Vec::<WorkspaceRenderElements<_>>::new();
 
@@ -548,19 +562,13 @@ pub fn run_winit() {
                     let scene_element = state.scene_element.clone();
                     elements.push(WorkspaceRenderElements::Scene(scene_element));
 
-                    #[cfg(feature = "profile-with-puffin")]
-                    profiling::puffin::profile_scope!("render_output");
-
-                    // Get all window elements from all workspaces
-                    let all_window_elements: Vec<&WindowElement> =
-                        state.workspaces.spaces_elements().collect();
-
                     render_output(
                         &output,
                         &all_window_elements,
                         elements,
                         state.dnd_icon.as_ref(),
                         renderer,
+                        &mut framebuffer,
                         damage_tracker,
                         age,
                     )
@@ -576,9 +584,12 @@ pub fn run_winit() {
                         let mut frame_submitted = false;
                         if let Some(damage) = render_output_result.damage {
                             // Record damage metrics
-                            let mode = output.current_mode().unwrap();
-                            let output_size = (mode.size.w, mode.size.h);
-                            state.render_metrics.record_damage(output_size, damage);
+                            #[cfg(feature = "metrics")]
+                            {
+                                let mode = output.current_mode().unwrap();
+                                let output_size = (mode.size.w, mode.size.h);
+                                state.render_metrics.record_damage(output_size, damage);
+                            }
 
                             match backend.submit(Some(damage)) {
                                 Ok(_) => {
@@ -679,6 +690,7 @@ pub fn run_winit() {
         log_frame_stats();
 
         // Log rendering metrics periodically
+        #[cfg(feature = "metrics")]
         state.render_metrics.maybe_log_stats(false);
 
         // Rendering Done, prepare loop

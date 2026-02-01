@@ -52,17 +52,13 @@ features = ["export-taffy"]
 [dependencies.smithay-drm-extras]
 # path = "../smithay/smithay-drm-extras"
 git = "https://github.com/Smithay/smithay"
-# Updated to include fix for viewporter data race (PR #1623)
-# Fixes Chrome crashes when scrolling/fullscreen: https://github.com/smithay/smithay/issues/1622
-rev = "5186cf7dec2472a91e3c248772954b1141dab7f2"
+rev = "f9d4d7ffd82d743fb89737b3ffaed57505b477d1"
 optional = true
 
 [dependencies.smithay]
 # path = "../smithay"
 git = "https://github.com/Smithay/smithay"
-# Updated to include fix for viewporter data race (PR #1623)
-# Fixes Chrome crashes when scrolling/fullscreen: https://github.com/smithay/smithay/issues/1622
-rev= "5186cf7dec2472a91e3c248772954b1141dab7f2"
+rev = "f9d4d7ffd82d743fb89737b3ffaed57505b477d1"
 default-features = false
 features = [
     "backend_winit",
@@ -86,13 +82,15 @@ version = "0.12.0"
 
 [features]
 perf-counters = []
-default = ["egl", "winit", "x11", "udev", "debug", "profile", "debugger", "renderer_sync"]
+default = ["egl", "winit", "udev", "renderer_sync"]
+dev = ["debug", "profile", "debugger"]
 debug = ["image/png", "renderdoc", "debugger"] # "fps_ticker", 
 debugger = ["laye-rs/debugger"]
 profile = ["profile-with-puffin", "laye-rs/profile-with-puffin"]
 ticker = ["fps_ticker"]
+metrics = []
 egl = ["smithay/use_system_lib", "smithay/backend_egl"]
-test_all_features = ["default", "debug"]
+test_all_features = ["default", "dev"]
 udev = [
     "smithay-drm-extras",
     "smithay/backend_libinput",
@@ -124,6 +122,13 @@ profile-with-puffin = ["profiling/profile-with-puffin", "puffin_http"]
 profile-with-tracy = ["profiling/profile-with-tracy"]
 profile-with-tracy-mem = ["profile-with-tracy"]
 renderer_sync = []
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"
 
 [workspace]
 members = [

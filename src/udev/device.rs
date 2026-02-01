@@ -8,9 +8,8 @@ use std::{collections::HashMap, path::Path};
 use smithay::{
     backend::{
         allocator::gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
-        drm::{DrmDevice, DrmDeviceFd, DrmEvent, DrmNode, GbmBufferedSurface},
+        drm::{exporter::gbm::GbmFramebufferExporter, DrmDevice, DrmDeviceFd, DrmEvent, DrmNode},
         egl::{EGLDevice, EGLDisplay},
-        renderer::damage::OutputDamageTracker,
         session::Session,
     },
     output::{Mode as WlMode, Output, PhysicalProperties, Subpixel},
@@ -35,7 +34,7 @@ use crate::{config::Config, state::Otto};
 use super::{
     feedback::get_surface_dmabuf_feedback,
     types::{
-        BackendData, DeviceAddError, SurfaceComposition, SurfaceData, UdevData, UdevOutputId,
+        BackendData, DeviceAddError, GbmDrmCompositor, SurfaceData, UdevData, UdevOutputId,
         SUPPORTED_FORMATS, SUPPORTED_FORMATS_8BIT_ONLY,
     },
 };
@@ -397,6 +396,7 @@ impl Otto<UdevData> {
                 subpixel,
                 make: make.to_string(),
                 model: model.to_string(),
+                serial_number: String::new(),
             },
         );
 
@@ -480,6 +480,7 @@ impl Otto<UdevData> {
                 fps_element,
                 dmabuf_feedback,
                 was_direct_scanout: false,
+                #[cfg(feature = "metrics")]
                 render_metrics: Some(self.render_metrics.clone()),
             };
 
@@ -499,70 +500,53 @@ impl Otto<UdevData> {
         color_formats: &[smithay::backend::allocator::Fourcc],
         render_formats: smithay::backend::allocator::format::FormatSet,
         output: &Output,
-    ) -> Option<SurfaceComposition> {
+    ) -> Option<GbmDrmCompositor> {
         let device = self.backend_data.backends.get_mut(&node)?;
 
-        if Config::with(|c| c.compositor_mode == "surface") {
-            let gbm_surface =
-                match GbmBufferedSurface::new(surface, allocator, color_formats, render_formats) {
-                    Ok(renderer) => renderer,
-                    Err(err) => {
-                        warn!("Failed to create rendering surface: {}", err);
-                        return None;
-                    }
-                };
-            Some(SurfaceComposition::Surface {
-                surface: gbm_surface,
-                damage_tracker: OutputDamageTracker::from_output(output),
-                debug_flags: self.backend_data.debug_flags,
-            })
-        } else {
-            let driver = match device.drm.get_driver() {
-                Ok(driver) => driver,
-                Err(err) => {
-                    warn!("Failed to query drm driver: {}", err);
-                    return None;
-                }
-            };
+        let driver = match device.drm.get_driver() {
+            Ok(driver) => driver,
+            Err(err) => {
+                warn!("Failed to query drm driver: {}", err);
+                return None;
+            }
+        };
 
-            let mut planes = surface.planes().clone();
+        let mut planes = surface.planes().clone();
 
-            // Using an overlay plane on a nvidia card breaks
-            if driver
-                .name()
+        // Using an overlay plane on a nvidia card breaks
+        if driver
+            .name()
+            .to_string_lossy()
+            .to_lowercase()
+            .contains("nvidia")
+            || driver
+                .description()
                 .to_string_lossy()
                 .to_lowercase()
                 .contains("nvidia")
-                || driver
-                    .description()
-                    .to_string_lossy()
-                    .to_lowercase()
-                    .contains("nvidia")
-            {
-                planes.overlay = vec![];
-            }
-
-            tracing::debug!("Max cursor size: {:?}", device.drm.cursor_size());
-            let mut compositor = match smithay::backend::drm::compositor::DrmCompositor::new(
-                output,
-                surface,
-                Some(planes),
-                allocator,
-                device.gbm.clone(),
-                color_formats,
-                render_formats,
-                device.drm.cursor_size(),
-                Some(device.gbm.clone()),
-            ) {
-                Ok(compositor) => compositor,
-                Err(err) => {
-                    warn!("Failed to create drm compositor: {}", err);
-                    return None;
-                }
-            };
-            compositor.set_debug_flags(self.backend_data.debug_flags);
-            Some(SurfaceComposition::Compositor(compositor))
+        {
+            planes.overlay = vec![];
         }
+
+        tracing::debug!("Max cursor size: {:?}", device.drm.cursor_size());
+        let compositor = match smithay::backend::drm::compositor::DrmCompositor::new(
+            output,
+            surface,
+            Some(planes),
+            allocator,
+            GbmFramebufferExporter::new(device.gbm.clone(), device.render_node.into()),
+            color_formats.iter().copied(),
+            render_formats,
+            device.drm.cursor_size(),
+            Some(device.gbm.clone()),
+        ) {
+            Ok(compositor) => compositor,
+            Err(err) => {
+                warn!("Failed to create drm compositor: {}", err);
+                return None;
+            }
+        };
+        Some(compositor)
     }
 
     /// Handles connector disconnection events
