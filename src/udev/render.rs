@@ -743,6 +743,7 @@ pub(super) fn render_surface<'a>(
             workspace_render_elements.push(WorkspaceRenderElements::Scene(scene_element));
 
             // Render if scene has damage, dnd icon needs drawing, or cursor is visible
+            // Hardware cursor plane (ALLOW_CURSOR_PLANE_SCANOUT flag) will handle cursor independently when possible
             let cursor_needs_draw = pointer_in_output;
             let should_draw = scene_has_damage || dnd_needs_draw || cursor_needs_draw;
             if !should_draw {
@@ -774,7 +775,8 @@ pub(super) fn render_surface<'a>(
             renderer,
             &output_elements,
             clear_color,
-            smithay::backend::drm::compositor::FrameFlags::empty(),
+            smithay::backend::drm::compositor::FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT
+                | smithay::backend::drm::compositor::FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY,
         )
         .map_err(|err| match err {
             smithay::backend::drm::compositor::RenderFrameError::PrepareFrame(err) => err.into(),
@@ -870,7 +872,8 @@ pub(super) fn initial_render(
             renderer,
             &[],
             CLEAR_COLOR,
-            smithay::backend::drm::compositor::FrameFlags::empty(),
+            smithay::backend::drm::compositor::FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT
+                | smithay::backend::drm::compositor::FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY,
         )
         .map_err(|err| match err {
             smithay::backend::drm::compositor::RenderFrameError::PrepareFrame(err) => err.into(),
