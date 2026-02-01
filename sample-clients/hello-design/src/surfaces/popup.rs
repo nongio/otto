@@ -9,7 +9,7 @@ use smithay_client_toolkit::{
 use wayland_client::{Dispatch, Proxy};
 use wayland_protocols::xdg::shell::client::{xdg_popup, xdg_surface};
 
-use super::common::{sc_layer_shell_v1, sc_layer_v1, ScLayerAugment, Surface, SurfaceError};
+use super::common::{sc_layer_shell_v1, sc_layer_v1, ScLayerAugment, SkiaBackedSurface, Surface, SurfaceCore, SurfaceError};
 use crate::rendering::SkiaSurface;
 
 /// Manages an XDG popup surface with Skia rendering
@@ -19,15 +19,9 @@ use crate::rendering::SkiaSurface;
 /// configuration, provides a Skia canvas for drawing, and supports
 /// sc_layer augmentation for visual effects.
 pub struct PopupSurface {
-    wl_surface: wl_surface::WlSurface,
+    core: SurfaceCore,
     popup: Option<Popup>,
-    skia_surface: Option<SkiaSurface>,
-    width: i32,
-    height: i32,
     configured: bool,
-    buffer_scale: i32,
-    // sc_layer support
-    sc_layer: Option<sc_layer_v1::ScLayerV1>,
 }
 
 impl PopupSurface {
@@ -70,36 +64,26 @@ impl PopupSurface {
         )
         .map_err(|_| SurfaceError::CreationFailed)?;
 
-        // Set window geometry
-        // popup.xdg_surface().set_window_geometry(0, 0, width, height);
-
         // Use 2x buffer for HiDPI rendering
         let buffer_scale = 2;
         wl_surface.set_buffer_scale(buffer_scale);
 
         // Create Skia surface using shared context
+        let mut core = SurfaceCore::new(wl_surface, width, height, buffer_scale);
+        
         use crate::app_runner::AppContext;
-        let skia_surface = AppContext::skia_context(|ctx| {
-            ctx.create_surface(&wl_surface, width * buffer_scale, height * buffer_scale)
-        })
-        .ok_or(SurfaceError::SkiaError(
-            "SkiaContext not initialized".to_string(),
-        ))?
-        .map_err(|e| SurfaceError::SkiaError(e))?;
+        core.sc_layer = AppContext::sc_layer_shell()
+            .map(|shell| shell.get_layer(core.wl_surface(), qh, ()));
+        core.create_skia_surface()?;
 
         let popup_surface = Self {
-            wl_surface: wl_surface.clone(),
+            core,
             popup: Some(popup),
-            skia_surface: Some(skia_surface),
-            width,
-            height,
             configured: false,
-            buffer_scale,
-            sc_layer: None,
         };
 
         // Commit the surface to trigger configure event from compositor
-        wl_surface.commit();
+        popup_surface.core.wl_surface().commit();
 
         Ok(popup_surface)
     }
@@ -145,11 +129,11 @@ impl PopupSurface {
     /// Use this to hide the popup without losing the EGL context
     pub fn close(&mut self) {
         // Destroy the wl_surface to fully reset for next show()
-        self.wl_surface.destroy();
+        self.core.wl_surface().destroy();
 
         // Drop the popup - this will destroy xdg_popup and xdg_surface
         self.popup.take();
-        self.sc_layer.take();
+        self.core.sc_layer.take();
         self.configured = false;
     }
 
@@ -175,34 +159,23 @@ impl PopupSurface {
         }
 
         // If surface was destroyed, recreate everything
-        if !self.wl_surface.is_alive() {
+        if !self.core.wl_surface().is_alive() {
             use crate::app_runner::AppContext;
 
             // Create new wl_surface
-            self.wl_surface = compositor.create_surface(qh);
-            self.wl_surface.set_buffer_scale(self.buffer_scale);
+            let new_surface = compositor.create_surface(qh);
+            new_surface.set_buffer_scale(self.core.buffer_scale);
+            self.core.wl_surface = new_surface.clone();
 
             // Recreate Skia surface using shared context
-            let skia_surface = AppContext::skia_context(|ctx| {
-                ctx.create_surface(
-                    &self.wl_surface,
-                    self.width * self.buffer_scale,
-                    self.height * self.buffer_scale,
-                )
-            })
-            .ok_or(SurfaceError::SkiaError(
-                "SkiaContext not initialized".to_string(),
-            ))?
-            .map_err(|e| SurfaceError::SkiaError(e))?;
-
-            self.skia_surface = Some(skia_surface);
+            self.core.create_skia_surface()?;
 
             // Create new popup on the new wl_surface
             let popup = Popup::from_surface(
                 Some(parent_surface),
                 positioner,
                 qh,
-                self.wl_surface.clone(),
+                new_surface,
                 xdg_shell,
             )
             .map_err(|_| SurfaceError::CreationFailed)?;
@@ -212,15 +185,16 @@ impl PopupSurface {
 
         // Set window geometry
         if let Some(popup) = &self.popup {
+            let (width, height) = self.core.dimensions();
             popup
                 .xdg_surface()
-                .set_window_geometry(0, 0, self.width, self.height);
+                .set_window_geometry(0, 0, width, height);
         }
 
         self.configured = false;
 
         // Commit to trigger configure
-        self.wl_surface.commit();
+        self.core.wl_surface().commit();
 
         Ok(())
     }
@@ -240,45 +214,49 @@ impl PopupSurface {
     }
 }
 
+impl SkiaBackedSurface for PopupSurface {
+    fn skia_surface(&self) -> Option<&SkiaSurface> {
+        self.core.skia_surface.as_ref()
+    }
+
+    fn can_draw(&self) -> bool {
+        self.configured
+    }
+
+    fn layer_node(&self) -> Option<layers::prelude::Layer> {
+        self.core.layer_node.clone()
+    }
+}
+
 impl Surface for PopupSurface {
     fn draw<F>(&self, draw_fn: F)
     where
         F: FnOnce(&skia_safe::Canvas),
     {
-        use crate::app_runner::AppContext;
-
         if !self.configured {
             eprintln!("Warning: Drawing on unconfigured PopupSurface");
             return;
         }
 
-        if let Some(surface) = &self.skia_surface {
-            AppContext::skia_context(|ctx| {
-                surface.draw(ctx, |canvas| {
-                    draw_fn(canvas);
-                });
-                surface.swap_buffers(ctx);
-                surface.commit();
-            });
-        }
+        self.draw_skia(draw_fn);
     }
 
     fn wl_surface(&self) -> &wl_surface::WlSurface {
-        &self.wl_surface
+        self.core.wl_surface()
     }
 
     fn dimensions(&self) -> (i32, i32) {
-        (self.width, self.height)
+        self.core.dimensions()
     }
 }
 
 impl ScLayerAugment for PopupSurface {
     fn has_sc_layer(&self) -> bool {
-        self.sc_layer.is_some()
+        self.core.sc_layer().is_some()
     }
 
     fn sc_layer_mut(&mut self) -> Option<&mut Option<sc_layer_v1::ScLayerV1>> {
-        Some(&mut self.sc_layer)
+        Some(&mut self.core.sc_layer)
     }
 
     fn sc_layer_shell(&self) -> Option<&sc_layer_shell_v1::ScLayerShellV1> {

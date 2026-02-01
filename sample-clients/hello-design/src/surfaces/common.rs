@@ -4,6 +4,108 @@ use wayland_client::{protocol::wl_surface, Dispatch, QueueHandle};
 // Re-export sc-layer protocol from menu component for convenience
 pub use crate::components::menu::{sc_layer_shell_v1, sc_layer_v1};
 
+use crate::rendering::SkiaSurface;
+
+/// Core surface fields shared by all surface types
+/// 
+/// This struct contains the common fields and methods used by
+/// ToplevelSurface, SubsurfaceSurface, and PopupSurface.
+#[derive(Clone)]
+pub struct SurfaceCore {
+    pub(super) wl_surface: wl_surface::WlSurface,
+    pub(super) skia_surface: Option<SkiaSurface>,
+    pub(super) width: i32,
+    pub(super) height: i32,
+    pub(super) buffer_scale: i32,
+    pub(super) sc_layer: Option<sc_layer_v1::ScLayerV1>,
+    pub(super) layer_node: Option<layers::prelude::Layer>,
+}
+
+impl SurfaceCore {
+    /// Create a new surface core
+    pub fn new(
+        wl_surface: wl_surface::WlSurface,
+        width: i32,
+        height: i32,
+        buffer_scale: i32,
+    ) -> Self {
+        Self {
+            wl_surface,
+            skia_surface: None,
+            width,
+            height,
+            buffer_scale,
+            sc_layer: None,
+            layer_node: None,
+        }
+    }
+
+    /// Create the Skia surface using shared context
+    pub fn create_skia_surface(&mut self) -> Result<(), SurfaceError> {
+        use crate::app_runner::AppContext;
+        use crate::rendering::SkiaContext;
+        
+        let surface = AppContext::skia_context(|ctx| {
+            ctx.create_surface(
+                &self.wl_surface,
+                self.width * self.buffer_scale,
+                self.height * self.buffer_scale,
+            )
+        });
+        
+        if let Some(result) = surface {
+            // Shared context exists, use it
+            self.skia_surface = Some(result.map_err(|e| SurfaceError::SkiaError(e.to_string()))?);
+        } else {
+            // No shared context yet - create it with this first surface
+            let (new_ctx, new_surface) = SkiaContext::new(
+                AppContext::display_ptr(),
+                &self.wl_surface,
+                self.width * self.buffer_scale,
+                self.height * self.buffer_scale,
+            )
+            .map_err(|e| SurfaceError::SkiaError(e.to_string()))?;
+
+            AppContext::set_skia_context(new_ctx);
+            self.skia_surface = Some(new_surface);
+        }
+        
+        Ok(())
+    }
+
+    /// Resize the surface and recreate Skia surface
+    pub fn resize(&mut self, width: i32, height: i32) {
+        self.width = width;
+        self.height = height;
+        let _ = self.create_skia_surface(); // Ignore errors on resize
+    }
+
+    /// Get the Wayland surface
+    pub fn wl_surface(&self) -> &wl_surface::WlSurface {
+        &self.wl_surface
+    }
+
+    /// Get the sc_layer if available
+    pub fn sc_layer(&self) -> Option<&sc_layer_v1::ScLayerV1> {
+        self.sc_layer.as_ref()
+    }
+
+    /// Set the layer node for layers engine rendering
+    pub fn set_layer_node(&mut self, layer: layers::prelude::Layer) {
+        self.layer_node = Some(layer);
+    }
+
+    /// Get the layer node
+    pub fn layer_node(&self) -> Option<&layers::prelude::Layer> {
+        self.layer_node.as_ref()
+    }
+
+    /// Get dimensions
+    pub fn dimensions(&self) -> (i32, i32) {
+        (self.width, self.height)
+    }
+}
+
 /// Error type for surface operations
 #[derive(Debug)]
 pub enum SurfaceError {
@@ -35,6 +137,69 @@ impl fmt::Display for SurfaceError {
 }
 
 impl std::error::Error for SurfaceError {}
+
+/// Trait for surfaces with Skia rendering support
+/// 
+/// Provides default implementation for drawing using SkiaSurface.
+/// Surfaces only need to implement `skia_surface()` to get full drawing support.
+/// 
+/// Also supports rendering layers from the layers engine.
+pub trait SkiaBackedSurface {
+    /// Get reference to the SkiaSurface
+    fn skia_surface(&self) -> Option<&SkiaSurface>;
+    
+    /// Get reference to the layer node to render (if any)
+    fn layer_node(&self) -> Option<layers::prelude::Layer> {
+        None // Default: no layer
+    }
+    
+    /// Check if surface should allow drawing (e.g., is configured)
+    fn can_draw(&self) -> bool {
+        true // Default: always allow drawing
+    }
+    
+    /// Draw on the surface using the shared Skia context
+    /// 
+    /// The draw_fn callback is called BEFORE layers are rendered,
+    /// allowing you to clear the background or draw content underneath.
+    fn draw_skia<F>(&self, draw_fn: F)
+    where
+        F: FnOnce(&skia_safe::Canvas),
+    {
+        use crate::app_runner::AppContext;
+
+        if !self.can_draw() {
+            return;
+        }
+        if let Some(surface) = self.skia_surface() {
+            AppContext::skia_context(|ctx| {
+                surface.draw(ctx, |canvas| {
+                    // Call custom draw function FIRST (e.g., to clear background)
+                    draw_fn(canvas);
+
+                    if let Some(engine) = AppContext::layers_engine() {
+                    // Update engine animations/layout once per frame
+                        if let Some(layer) = self.layer_node() {
+                            let needs_redraw = AppContext::layers_renderer(|renderer| {
+                                renderer.update()
+                            });
+                            let needs_redraw = needs_redraw.unwrap_or(false);
+
+                            // Render the assigned layer node from the shared engine
+
+                            if !needs_redraw {
+                                // return;
+                            }
+                            layers::prelude::draw_scene(canvas, engine.scene(), layer.id());
+                        }
+                    }
+                });
+                surface.swap_buffers(ctx);
+                surface.commit();
+            });
+        }
+    }
+}
 
 /// Common trait for all surface types
 pub trait Surface {

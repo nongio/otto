@@ -7,7 +7,7 @@ use wayland_client::{
     Dispatch,
 };
 
-use super::common::{sc_layer_shell_v1, sc_layer_v1, ScLayerAugment, Surface, SurfaceError};
+use super::common::{sc_layer_shell_v1, sc_layer_v1, ScLayerAugment, SkiaBackedSurface, Surface, SurfaceCore, SurfaceError};
 use crate::rendering::SkiaSurface;
 
 /// Manages a Wayland subsurface with Skia rendering
@@ -16,13 +16,7 @@ use crate::rendering::SkiaSurface;
 /// It's useful for elements like menubars, decorations, or overlays that need
 /// to be part of a window but managed separately.
 pub struct SubsurfaceSurface {
-    wl_surface: wl_surface::WlSurface,
-    skia_surface: Option<SkiaSurface>,
-    width: i32,
-    height: i32,
-    buffer_scale: i32,
-    // sc_layer support
-    sc_layer: Option<sc_layer_v1::ScLayerV1>,
+    core: SurfaceCore,
 }
 
 impl SubsurfaceSurface {
@@ -68,35 +62,64 @@ impl SubsurfaceSurface {
         let buffer_scale = 2;
         wl_surface.set_buffer_scale(buffer_scale);
 
-        // Create Skia surface using shared context
+        // Apply sc_layer augmentation if available
         use crate::app_runner::AppContext;
-        let skia_surface = AppContext::skia_context(|ctx| {
-            ctx.create_surface(&wl_surface, width * buffer_scale, height * buffer_scale)
-        })
-        .ok_or(SurfaceError::SkiaError(
-            "SkiaContext not initialized".to_string(),
-        ))?
-        .map_err(|e| SurfaceError::SkiaError(e))?;
-
-        let mut subsurface_surface = Self {
-            wl_surface: wl_surface.clone(),
-            skia_surface: Some(skia_surface),
-            width,
-            height,
-            buffer_scale,
-            sc_layer: None,
-        };
+        let sc_layer = AppContext::sc_layer_shell()
+            .map(|shell| shell.get_layer(&wl_surface, qh, ()));
 
         // Commit the surface
         wl_surface.commit();
 
-        // Apply sc_layer augmentation if available
-        if let Some(sc_layer_shell) = AppContext::sc_layer_shell() {
-            let layer = sc_layer_shell.get_layer(&wl_surface, qh, ());
-            subsurface_surface.sc_layer = Some(layer);
-        }
+        let mut core = SurfaceCore::new(wl_surface, width, height, buffer_scale);
+        core.sc_layer = sc_layer;
+        core.create_skia_surface()?;
 
-        Ok(subsurface_surface)
+        Ok(Self { core })
+    }
+
+    /// Resize the subsurface
+    pub fn resize(&mut self, width: i32, height: i32) {
+        self.core.resize(width, height);
+    }
+
+    /// Set position relative to parent surface
+    pub fn set_position(&self, x: i32, y: i32) {
+        // Note: subsurface handle is not stored, position must be set during creation
+        // This method is kept for API compatibility but does nothing
+    }
+
+    /// Commit changes to the subsurface
+    pub fn commit(&self) {
+        self.core.wl_surface().commit();
+    }
+
+    /// Get direct access to the sc_layer
+    pub fn layer(&self) -> Option<&sc_layer_v1::ScLayerV1> {
+        self.core.sc_layer()
+    }
+
+    /// Assign a layer node to render in this surface
+    pub fn set_layer_node(&mut self, layer: layers::prelude::Layer) {
+        self.core.set_layer_node(layer);
+    }
+
+    /// Get the layer node assigned to this surface
+    pub fn layer_node(&self) -> Option<&layers::prelude::Layer> {
+        self.core.layer_node()
+    }
+}
+
+impl SkiaBackedSurface for SubsurfaceSurface {
+    fn skia_surface(&self) -> Option<&SkiaSurface> {
+        self.core.skia_surface.as_ref()
+    }
+
+    fn can_draw(&self) -> bool {
+        self.core.skia_surface.is_some()
+    }
+
+    fn layer_node(&self) -> Option<layers::prelude::Layer> {
+        self.core.layer_node.clone()
     }
 }
 
@@ -105,35 +128,25 @@ impl Surface for SubsurfaceSurface {
     where
         F: FnOnce(&skia_safe::Canvas),
     {
-        use crate::app_runner::AppContext;
-
-        if let Some(surface) = &self.skia_surface {
-            AppContext::skia_context(|ctx| {
-                surface.draw(ctx, |canvas| {
-                    draw_fn(canvas);
-                });
-                surface.swap_buffers(ctx);
-                surface.commit();
-            });
-        }
+        self.draw_skia(draw_fn);
     }
 
     fn wl_surface(&self) -> &wl_surface::WlSurface {
-        &self.wl_surface
+        self.core.wl_surface()
     }
 
     fn dimensions(&self) -> (i32, i32) {
-        (self.width, self.height)
+        self.core.dimensions()
     }
 }
 
 impl ScLayerAugment for SubsurfaceSurface {
     fn has_sc_layer(&self) -> bool {
-        self.sc_layer.is_some()
+        self.core.sc_layer().is_some()
     }
 
     fn sc_layer_mut(&mut self) -> Option<&mut Option<sc_layer_v1::ScLayerV1>> {
-        Some(&mut self.sc_layer)
+        Some(&mut self.core.sc_layer)
     }
 
     fn sc_layer_shell(&self) -> Option<&sc_layer_shell_v1::ScLayerShellV1> {

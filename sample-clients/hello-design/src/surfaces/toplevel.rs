@@ -13,8 +13,8 @@ use wayland_client::Dispatch;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel};
 
-use super::common::{sc_layer_shell_v1, sc_layer_v1, ScLayerAugment, Surface, SurfaceError};
-use crate::rendering::{SkiaContext, SkiaSurface};
+use super::common::{sc_layer_shell_v1, sc_layer_v1, ScLayerAugment, SkiaBackedSurface, Surface, SurfaceCore, SurfaceError};
+use crate::rendering::SkiaSurface;
 
 /// Manages an XDG toplevel window surface with Skia rendering
 ///
@@ -24,15 +24,9 @@ use crate::rendering::{SkiaContext, SkiaSurface};
 
 #[derive(Clone)]
 pub struct ToplevelSurface {
-    wl_surface: wl_surface::WlSurface,
+    core: SurfaceCore,
     window: Window,
-    skia_surface: Option<SkiaSurface>,
-    width: i32,
-    height: i32,
     configured: bool,
-    buffer_scale: i32,
-    // sc_layer support
-    sc_layer: Option<sc_layer_v1::ScLayerV1>,
 }
 
 impl ToplevelSurface {
@@ -87,18 +81,16 @@ impl ToplevelSurface {
         // Commit to trigger initial configure
         wl_surface.commit();
 
-        let window = Self {
-            wl_surface,
+        let mut core = SurfaceCore::new(wl_surface, width, height, buffer_scale);
+        core.sc_layer = sc_layer;
+
+        let toplevel = Self {
+            core,
             window,
-            skia_surface: None,
-            width,
-            height,
             configured: false,
-            buffer_scale,
-            sc_layer,
         };
 
-        Ok(window)
+        Ok(toplevel)
     }
 
     /// Handle window configure event
@@ -110,65 +102,21 @@ impl ToplevelSurface {
         configure: WindowConfigure,
         _serial: u32,
     ) -> Result<(), SurfaceError> {
-        use crate::app_runner::AppContext;
-
         // Get configured size or use initial size
-        println!("ToplevelSurface handling configure: {:?}", self.configured);
         let (width, height) = match configure.new_size {
             (Some(w), Some(h)) => (w.get() as i32, h.get() as i32),
-            _ => (self.width, self.height),
+            _ => self.core.dimensions(),
         };
 
         // Initialize or resize Skia surface
         if !self.configured {
-            // First configure - check if we need to initialize shared context
-            let surface = AppContext::skia_context(|ctx| {
-                // Context exists, create surface from it
-                ctx.create_surface(
-                    &self.wl_surface,
-                    width * self.buffer_scale,
-                    height * self.buffer_scale,
-                )
-            });
-
-            if let Some(result) = surface {
-                // Shared context exists, use it
-                self.skia_surface =
-                    Some(result.map_err(|e| SurfaceError::SkiaError(e.to_string()))?);
-            } else {
-                // No shared context yet - create it with this first surface
-                let (new_ctx, new_surface) = SkiaContext::new(
-                    AppContext::display_ptr(),
-                    &self.wl_surface,
-                    width * self.buffer_scale,
-                    height * self.buffer_scale,
-                )
-                .map_err(|e| SurfaceError::SkiaError(e.to_string()))?;
-
-                // Store the shared context
-                AppContext::set_skia_context(new_ctx);
-                self.skia_surface = Some(new_surface);
-            }
+            self.core.create_skia_surface()?;
             self.configured = true;
-        } else if width != self.width || height != self.height {
-            // Resize - recreate surface using shared context
-            let surface = AppContext::skia_context(|ctx| {
-                ctx.create_surface(
-                    &self.wl_surface,
-                    width * self.buffer_scale,
-                    height * self.buffer_scale,
-                )
-            })
-            .ok_or(SurfaceError::SkiaError(
-                "SkiaContext not initialized".to_string(),
-            ))?
-            .map_err(|e| SurfaceError::SkiaError(e.to_string()))?;
-
-            self.skia_surface = Some(surface);
         }
-
-        self.width = width;
-        self.height = height;
+        
+        if width != self.core.width || height != self.core.height {
+            self.core.resize(width, height);
+        }
 
         Ok(())
     }
@@ -177,10 +125,19 @@ impl ToplevelSurface {
     pub fn is_configured(&self) -> bool {
         self.configured
     }
+}
 
-    /// Get the window object (used by Menu component)
-    pub fn window(&self) -> &Window {
-        &self.window
+impl SkiaBackedSurface for ToplevelSurface {
+    fn skia_surface(&self) -> Option<&SkiaSurface> {
+        self.core.skia_surface.as_ref()
+    }
+    
+    fn can_draw(&self) -> bool {
+        self.configured
+    }
+    
+    fn layer_node(&self) -> Option<layers::prelude::Layer> {
+        self.core.layer_node.clone()
     }
 }
 
@@ -189,42 +146,30 @@ impl Surface for ToplevelSurface {
     where
         F: FnOnce(&skia_safe::Canvas),
     {
-        use crate::app_runner::AppContext;
-
         if !self.configured {
             eprintln!("Warning: Drawing on unconfigured ToplevelSurface");
             return;
         }
-
-        if let Some(surface) = &self.skia_surface {
-            AppContext::skia_context(|ctx| {
-                surface.draw(ctx, |canvas| {
-                    draw_fn(canvas);
-                });
-                surface.swap_buffers(ctx);
-                surface.commit();
-            });
-        }
+        
+        self.draw_skia(draw_fn);
     }
 
     fn wl_surface(&self) -> &wl_surface::WlSurface {
-        // Note: This returns a reference to the stored wl_surface in self
-        // The actual wl_surface is stored in EGL resources, but we keep a clone here
-        &self.wl_surface
+        self.core.wl_surface()
     }
 
     fn dimensions(&self) -> (i32, i32) {
-        (self.width, self.height)
+        self.core.dimensions()
     }
 }
 
 impl ScLayerAugment for ToplevelSurface {
     fn has_sc_layer(&self) -> bool {
-        self.sc_layer.is_some()
+        self.core.sc_layer().is_some()
     }
 
     fn sc_layer_mut(&mut self) -> Option<&mut Option<sc_layer_v1::ScLayerV1>> {
-        Some(&mut self.sc_layer)
+        Some(&mut self.core.sc_layer)
     }
 
     fn sc_layer_shell(&self) -> Option<&sc_layer_shell_v1::ScLayerShellV1> {
@@ -238,10 +183,33 @@ impl ScLayerAugment for ToplevelSurface {
 }
 
 impl ToplevelSurface {
+    /// Get window dimensions
+    pub fn dimensions(&self) -> (i32, i32) {
+        self.core.dimensions()
+    }
+
+    /// Resize the surface manually
+    pub fn resize(&mut self, width: i32, height: i32) {
+        self.core.resize(width, height);
+    }
+
+    /// Get the window object (used by Menu component)
+    pub fn window(&self) -> &Window {
+        &self.window
+    }
+
     /// Get direct access to the sc_layer
-    ///
-    /// Returns None if sc_layer_shell was not available when creating the surface
     pub fn layer(&self) -> Option<&sc_layer_v1::ScLayerV1> {
-        self.sc_layer.as_ref()
+        self.core.sc_layer()
+    }
+    
+    /// Assign a layer node to render in this surface
+    pub fn set_layer_node(&mut self, layer: layers::prelude::Layer) {
+        self.core.set_layer_node(layer);
+    }
+    
+    /// Get the layer node assigned to this surface
+    pub fn layer_node(&self) -> Option<&layers::prelude::Layer> {
+        self.core.layer_node()
     }
 }
