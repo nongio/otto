@@ -102,6 +102,7 @@ pub fn get_font_with_fallback(family: &str, style: FontStyle, size: f32) -> Font
 }
 
 /// Predefined text styles for a consistent design system
+#[derive(Debug, Clone, Copy)]
 pub struct TextStyle {
     pub family: &'static str,
     pub weight: i32,
@@ -109,80 +110,174 @@ pub struct TextStyle {
 }
 
 impl TextStyle {
-    /// Create a Skia Font from this text style
+    /// Create a Skia Font from this text style with proper antialiasing
     pub fn font(&self) -> Font {
         use skia::font_style::{Slant, Weight, Width};
         let weight = Weight::from(self.weight);
         let style = FontStyle::new(weight, Width::NORMAL, Slant::Upright);
-        get_font_with_fallback(self.family, style, self.size)
+        let mut font = get_font_with_fallback(self.family, style, self.size);
+        font.set_subpixel(true);
+        font.set_edging(skia::font::Edging::SubpixelAntiAlias);
+        font
     }
 }
 
-/// Design system typography scale
+/// Design system typography scale (based on macOS HIG)
 pub mod styles {
     use super::*;
 
-    /// Display - Extra large text for hero sections
-    pub const DISPLAY: TextStyle = TextStyle {
+    /// Large Title - Window titles, primary headings (26pt)
+    pub const LARGE_TITLE: TextStyle = TextStyle {
+        family: "Inter",
+        weight: 400, // Regular
+        size: 26.0,
+    };
+
+    /// Large Title Emphasized - Bold variant (26pt)
+    pub const LARGE_TITLE_EMPHASIZED: TextStyle = TextStyle {
         family: "Inter",
         weight: 700, // Bold
-        size: 57.0,
+        size: 26.0,
     };
 
-    /// Headline 1 - Page titles
-    pub const H1: TextStyle = TextStyle {
+    /// Title 1 - Section headers (22pt)
+    pub const TITLE_1: TextStyle = TextStyle {
+        family: "Inter",
+        weight: 400, // Regular
+        size: 22.0,
+    };
+
+    /// Title 1 Emphasized - Bold variant (22pt)
+    pub const TITLE_1_EMPHASIZED: TextStyle = TextStyle {
         family: "Inter",
         weight: 700, // Bold
-        size: 32.0,
+        size: 22.0,
     };
 
-    /// Headline 2 - Section headers
-    pub const H2: TextStyle = TextStyle {
+    /// Title 2 - Subsection headers (17pt)
+    pub const TITLE_2: TextStyle = TextStyle {
+        family: "Inter",
+        weight: 400, // Regular
+        size: 17.0,
+    };
+
+    /// Title 2 Emphasized - Bold variant (17pt)
+    pub const TITLE_2_EMPHASIZED: TextStyle = TextStyle {
         family: "Inter",
         weight: 700, // Bold
-        size: 28.0,
+        size: 17.0,
     };
 
-    /// Headline 3 - Subsection headers
-    pub const H3: TextStyle = TextStyle {
+    /// Title 3 - Tertiary headers (15pt)
+    pub const TITLE_3: TextStyle = TextStyle {
+        family: "Inter",
+        weight: 400, // Regular
+        size: 15.0,
+    };
+
+    /// Title 3 Emphasized - Semibold variant (15pt)
+    pub const TITLE_3_EMPHASIZED: TextStyle = TextStyle {
+        family: "Inter",
+        weight: 600, // Semibold
+        size: 15.0,
+    };
+
+    /// Headline - List headers, group labels (13pt)
+    pub const HEADLINE: TextStyle = TextStyle {
         family: "Inter",
         weight: 700, // Bold
-        size: 24.0,
+        size: 13.0,
     };
 
-    /// Title - Card titles, dialog titles
-    pub const TITLE: TextStyle = TextStyle {
+    /// Headline Emphasized - Heavy variant (13pt)
+    pub const HEADLINE_EMPHASIZED: TextStyle = TextStyle {
         family: "Inter",
-        weight: 400, // Normal
-        size: 20.0,
+        weight: 800, // Heavy
+        size: 13.0,
     };
 
-    /// Body - Default text
+    /// Body - Default text, paragraphs (13pt)
     pub const BODY: TextStyle = TextStyle {
         family: "Inter",
-        weight: 400, // Normal
-        size: 16.0,
+        weight: 400, // Regular
+        size: 13.0,
     };
 
-    /// Body Small - Secondary text
-    pub const BODY_SMALL: TextStyle = TextStyle {
+    /// Body Emphasized - Semibold variant (13pt)
+    pub const BODY_EMPHASIZED: TextStyle = TextStyle {
         family: "Inter",
-        weight: 400, // Normal
-        size: 14.0,
+        weight: 600, // Semibold
+        size: 13.0,
     };
 
-    /// Label - Button text, form labels
-    pub const LABEL: TextStyle = TextStyle {
+    /// Callout - Highlighted text, tooltips (12pt)
+    pub const CALLOUT: TextStyle = TextStyle {
         family: "Inter",
-        weight: 400, // Normal
-        size: 14.0,
-    };
-
-    /// Caption - Helper text, metadata
-    pub const CAPTION: TextStyle = TextStyle {
-        family: "Inter",
-        weight: 400, // Normal
+        weight: 400, // Regular
         size: 12.0,
+    };
+
+    /// Callout Emphasized - Semibold variant (12pt)
+    pub const CALLOUT_EMPHASIZED: TextStyle = TextStyle {
+        family: "Inter",
+        weight: 600, // Semibold
+        size: 12.0,
+    };
+
+    /// Subheadline - Secondary labels (11pt)
+    pub const SUBHEADLINE: TextStyle = TextStyle {
+        family: "Inter",
+        weight: 400, // Regular
+        size: 11.0,
+    };
+
+    /// Subheadline Emphasized - Semibold variant (11pt)
+    pub const SUBHEADLINE_EMPHASIZED: TextStyle = TextStyle {
+        family: "Inter",
+        weight: 600, // Semibold
+        size: 11.0,
+    };
+
+    /// Footnote - Helper text, status text (10pt)
+    pub const FOOTNOTE: TextStyle = TextStyle {
+        family: "Inter",
+        weight: 400, // Regular
+        size: 10.0,
+    };
+
+    /// Footnote Emphasized - Semibold variant (10pt)
+    pub const FOOTNOTE_EMPHASIZED: TextStyle = TextStyle {
+        family: "Inter",
+        weight: 600, // Semibold
+        size: 10.0,
+    };
+
+    /// Caption 1 - Metadata, timestamps (10pt)
+    pub const CAPTION_1: TextStyle = TextStyle {
+        family: "Inter",
+        weight: 400, // Regular
+        size: 10.0,
+    };
+
+    /// Caption 1 Emphasized - Medium variant (10pt)
+    pub const CAPTION_1_EMPHASIZED: TextStyle = TextStyle {
+        family: "Inter",
+        weight: 500, // Medium
+        size: 10.0,
+    };
+
+    /// Caption 2 - Fine print (10pt)
+    pub const CAPTION_2: TextStyle = TextStyle {
+        family: "Inter",
+        weight: 500, // Medium
+        size: 10.0,
+    };
+
+    /// Caption 2 Emphasized - Semibold variant (10pt)
+    pub const CAPTION_2_EMPHASIZED: TextStyle = TextStyle {
+        family: "Inter",
+        weight: 600, // Semibold
+        size: 10.0,
     };
 }
 
@@ -201,9 +296,9 @@ mod tests {
 
     #[test]
     fn test_text_styles() {
-        let _h1 = styles::H1.font();
+        let _title = styles::TITLE_1.font();
         let _body = styles::BODY.font();
-        let _caption = styles::CAPTION.font();
+        let _caption = styles::CAPTION_1.font();
         // If we get here without panic, fonts loaded successfully
     }
 }
