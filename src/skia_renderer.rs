@@ -4,10 +4,9 @@ use std::{
     collections::HashMap,
     ffi::{c_char, CStr},
     rc::Rc,
-    sync::atomic::Ordering,
 };
 
-use layers::{sb, skia};
+use layers::skia;
 
 use smithay::{
     backend::{
@@ -27,8 +26,8 @@ use smithay::{
                 Capability, GlesError, GlesRenderbuffer, GlesRenderer, GlesTexture,
             },
             sync::SyncPoint,
-            Bind, Blit, Color32F, DebugFlags, ExportMem, Frame, ImportDma, ImportDmaWl, ImportEgl,
-            ImportMem, ImportMemWl, Offscreen, Renderer, Texture, TextureFilter, Unbind,
+            Bind, Blit, ContextId, DebugFlags, ExportMem, ImportDma, ImportDmaWl, ImportEgl,
+            ImportMem, ImportMemWl, Offscreen, Renderer, RendererSuper, Texture, TextureFilter,
         },
     },
     reexports::wayland_server::{protocol::wl_buffer::WlBuffer, DisplayHandle},
@@ -36,19 +35,17 @@ use smithay::{
     wayland::compositor::SurfaceData,
 };
 
-use crate::renderer::{
-    egl_context::EGLSurfaceWrapper,
-    skia_surface::SkiaSurface,
-    sync::{finished_proc, FlushInfo2, SkiaSync, FINISHED_PROC_STATE},
-    textures::{SkiaFrame, SkiaTexture, SkiaTextureMapping},
-};
+// Import and re-export types from renderer module
+use crate::renderer::EGLSurfaceWrapper;
 
-// Re-export types that are part of the public API
-pub use crate::renderer::textures::{SkiaGLesFbo, SkiaTextureImage};
+// Re-export public types from renderer module
+pub use crate::renderer::{
+    SkiaFrame, SkiaGLesFbo, SkiaSurface, SkiaTexture, SkiaTextureImage, SkiaTextureMapping,
+};
 
 pub struct SkiaRenderer {
     gl_renderer: GlesRenderer,
-    gl: ffi::Gles2,
+    pub(crate) gl: ffi::Gles2,
 
     target_renderer: HashMap<SkiaTarget, SkiaSurface>,
     current_target: Option<SkiaTarget>,
@@ -56,6 +53,7 @@ pub struct SkiaRenderer {
     pub context: Option<skia::gpu::DirectContext>,
 
     dmabuf_cache: std::collections::HashMap<WeakDmabuf, SkiaTexture>,
+    smithay_context_id: ContextId<SkiaTexture>,
 }
 
 impl From<GlesRenderer> for SkiaRenderer {
@@ -87,6 +85,7 @@ impl From<GlesRenderer> for SkiaRenderer {
             current_target: None,
             context,
             dmabuf_cache: std::collections::HashMap::new(),
+            smithay_context_id: ContextId::new(),
         }
     }
 }
@@ -212,6 +211,7 @@ impl SkiaRenderer {
             current_target: None,
             context,
             dmabuf_cache: std::collections::HashMap::new(),
+            smithay_context_id: ContextId::new(),
         })
     }
 
@@ -310,6 +310,8 @@ impl SkiaRenderer {
             tex_id: texture,
             format,
             origin: skia::gpu::SurfaceOrigin::TopLeft,
+            width,
+            height,
         }
     }
 
@@ -317,7 +319,7 @@ impl SkiaRenderer {
         &mut self,
         dmabuf: &Dmabuf,
         damage: Option<&[Rectangle<i32, Buffer>]>,
-    ) -> Result<<Self as Renderer>::TextureId, <Self as Renderer>::Error> {
+    ) -> Result<<Self as RendererSuper>::TextureId, <Self as RendererSuper>::Error> {
         use smithay::backend::allocator::Buffer;
         let damage = damage.map(|damage| damage.to_vec());
 
@@ -472,239 +474,19 @@ impl SkiaRenderer {
     }
 }
 
-impl Frame for SkiaFrame<'_> {
+impl RendererSuper for SkiaRenderer {
     type Error = GlesError;
     type TextureId = SkiaTexture;
-
-    fn id(&self) -> usize {
-        // self.renderer.id()
-        self.id
-    }
-    fn clear(
-        &mut self,
-        color: Color32F,
-        at: &[Rectangle<i32, Physical>],
-    ) -> Result<(), Self::Error> {
-        self.draw_solid(Rectangle::from_loc_and_size((0, 0), self.size), at, color)?;
-        Ok(())
-    }
-    fn draw_solid(
-        &mut self,
-        dst: Rectangle<i32, Physical>,
-        damage: &[Rectangle<i32, Physical>],
-        color: Color32F,
-    ) -> Result<(), Self::Error> {
-        if damage.is_empty() {
-            return Ok(());
-        }
-
-        let dest_rect = skia::Rect::from_xywh(
-            dst.loc.x as f32,
-            dst.loc.y as f32,
-            dst.size.w as f32,
-            dst.size.h as f32,
-        );
-
-        let color = skia::Color4f::new(color.r(), color.g(), color.b(), color.a());
-        let mut paint = skia::Paint::new(color, None);
-        paint.set_blend_mode(skia::BlendMode::Src);
-
-        let mut surface = self.skia_surface.clone();
-        let canvas = surface.canvas();
-
-        // Render each damage rect with clipping for true partial rendering
-        for rect in damage.iter() {
-            let rect_constrained_loc = rect
-                .loc
-                .constrain(Rectangle::from_extemities((0, 0), dst.size.to_point()));
-            let rect_clamped_size = rect.size.clamp(
-                (0, 0),
-                (dst.size.to_point() - rect_constrained_loc).to_size(),
-            );
-
-            if rect_clamped_size.w <= 0 || rect_clamped_size.h <= 0 {
-                continue;
-            }
-
-            let clip_rect = skia::Rect::from_xywh(
-                (dst.loc.x + rect_constrained_loc.x) as f32,
-                (dst.loc.y + rect_constrained_loc.y) as f32,
-                rect_clamped_size.w as f32,
-                rect_clamped_size.h as f32,
-            );
-
-            canvas.save();
-            canvas.clip_rect(clip_rect, None, None);
-            canvas.draw_rect(dest_rect, &paint);
-            canvas.restore();
-        }
-
-        Ok(())
-    }
-    #[profiling::function]
-    fn render_texture_from_to(
-        &mut self,
-        texture: &Self::TextureId,
-        src: Rectangle<f64, Buffer>,
-        dst: Rectangle<i32, Physical>,
-        damage: &[Rectangle<i32, Physical>],
-        _opaque_regions: &[Rectangle<i32, Physical>],
-        src_transform: Transform,
-        alpha: f32,
-    ) -> Result<(), Self::Error> {
-        if damage.is_empty() {
-            return Ok(());
-        }
-
-        let image = &texture.image;
-
-        let mut paint = skia::Paint::new(skia::Color4f::new(1.0, 1.0, 1.0, alpha), None);
-        paint.set_blend_mode(skia::BlendMode::SrcOver);
-
-        let mut matrix = skia::Matrix::new_identity();
-
-        let mut surface = self.skia_surface.clone();
-        let canvas = surface.canvas();
-
-        let scale_x = dst.size.w as f32 / src.size.w as f32;
-        let scale_y = dst.size.h as f32 / src.size.h as f32;
-
-        match src_transform {
-            Transform::Normal => {
-                matrix.pre_scale((scale_x, scale_y), None);
-                matrix.pre_translate((
-                    dst.loc.x as f32 / scale_x - (src.loc.x as f32),
-                    dst.loc.y as f32 / scale_y - (src.loc.y as f32),
-                ));
-            }
-            Transform::Flipped180 => {
-                matrix.pre_scale((scale_x, -scale_y), None);
-                matrix.pre_translate((
-                    dst.loc.x as f32 / scale_x - src.loc.x as f32,
-                    -dst.loc.y as f32 / scale_y + src.loc.y as f32,
-                ));
-            }
-            Transform::Flipped90 => {
-                panic!("unhandled transform {:?}", src_transform);
-            }
-            Transform::Flipped270 => {
-                panic!("unhandled transform {:?}", src_transform);
-            }
-            _ => {
-                panic!("unhandled transform {:?}", src_transform);
-            }
-        }
-
-        // Setup shader once outside loop
-        paint.set_shader(image.to_shader(
-            (skia::TileMode::Repeat, skia::TileMode::Repeat),
-            skia::SamplingOptions::default(),
-            &matrix,
-        ));
-
-        let draw_rect = skia::Rect::from_xywh(
-            dst.loc.x as f32,
-            dst.loc.y as f32,
-            dst.size.w as f32,
-            dst.size.h as f32,
-        );
-
-        // Render only damaged regions with per-rect clipping
-        for rect in damage.iter() {
-            let rect_constrained_loc = rect
-                .loc
-                .constrain(Rectangle::from_extemities((0, 0), dst.size.to_point()));
-            let rect_clamped_size = rect.size.clamp(
-                (0, 0),
-                (dst.size.to_point() - rect_constrained_loc).to_size(),
-            );
-
-            if rect_clamped_size.w <= 0 || rect_clamped_size.h <= 0 {
-                continue;
-            }
-
-            let clip_rect = skia::Rect::from_xywh(
-                (dst.loc.x + rect_constrained_loc.x) as f32,
-                (dst.loc.y + rect_constrained_loc.y) as f32,
-                rect_clamped_size.w as f32,
-                rect_clamped_size.h as f32,
-            );
-
-            canvas.save();
-            canvas.clip_rect(clip_rect, None, None);
-            canvas.draw_rect(draw_rect, &paint);
-            canvas.restore();
-        }
-
-        Ok(())
-    }
-    fn transformation(&self) -> Transform {
-        // self.frame.transformation()
-        Transform::Normal
-    }
-    #[profiling::function]
-    fn finish(self) -> Result<SyncPoint, Self::Error> {
-        let mut surface = self.skia_surface;
-
-        let info = FlushInfo2 {
-            fNumSemaphores: 0,
-            fGpuStatsFlags: 0,
-            fSignalSemaphores: std::ptr::null_mut(),
-            fFinishedProc: Some(finished_proc),
-            fFinishedWithStatsProc: None,
-            fFinishedContext: std::ptr::null_mut(),
-            fSubmittedProc: None,
-            fSubmittedContext: std::ptr::null_mut(),
-        };
-
-        // Transmute flushinfo2 into flushinfo
-        let info = unsafe {
-            let native = &*(&info as *const FlushInfo2 as *const sb::GrFlushInfo);
-            &*(native as *const sb::GrFlushInfo as *const layers::skia::gpu::FlushInfo)
-        };
-
-        FINISHED_PROC_STATE.store(false, Ordering::SeqCst);
-
-        let semaphores = surface.gr_context.flush(info);
-
-        // FIXME review sync logic
-        let syncpoint = if semaphores == skia::gpu::SemaphoresSubmitted::Yes {
-            profiling::scope!("FINISHED_PROC_STATE");
-            let skia_sync = SkiaSync::create(self.renderer.egl_context().display())
-                .map_err(|_err| GlesError::FramebufferBindingError)?;
-            SyncPoint::from(skia_sync)
-        } else {
-            SyncPoint::signaled()
-        };
-
-        {
-            profiling::scope!("context_submit");
-            surface.gr_context.submit(None);
-            // surface
-            //     .gr_context
-            //     .flush_and_submit_surface(&mut surface.surface, GrSyncCpu::Yes);
-        }
-
-        Ok(syncpoint)
-    }
-
-    fn wait(
-        &mut self,
-        sync: &smithay::backend::renderer::sync::SyncPoint,
-    ) -> Result<(), Self::Error> {
-        sync.wait()
-            .map_err(|_| GlesError::FramebufferBindingError)?;
-        Ok(())
-    }
+    type Framebuffer<'buffer> = SkiaGLesFbo;
+    type Frame<'frame, 'buffer>
+        = SkiaFrame<'frame>
+    where
+        'buffer: 'frame;
 }
 
 impl Renderer for SkiaRenderer {
-    type Error = GlesError;
-    type TextureId = SkiaTexture;
-    type Frame<'a> = SkiaFrame<'a>;
-
-    fn id(&self) -> usize {
-        99
+    fn context_id(&self) -> ContextId<Self::TextureId> {
+        self.smithay_context_id.clone()
     }
     fn downscale_filter(&mut self, filter: TextureFilter) -> Result<(), Self::Error> {
         self.gl_renderer.downscale_filter(filter)
@@ -719,12 +501,15 @@ impl Renderer for SkiaRenderer {
         self.gl_renderer.debug_flags()
     }
     #[profiling::function]
-    fn render(
-        &mut self,
+    fn render<'frame, 'buffer>(
+        &'frame mut self,
+        _framebuffer: &'frame mut Self::Framebuffer<'buffer>,
         output_size: Size<i32, Physical>,
         _dst_transform: Transform,
-    ) -> Result<Self::Frame<'_>, Self::Error> {
-        let id = self.id();
+    ) -> Result<Self::Frame<'frame, 'buffer>, Self::Error>
+    where
+        'buffer: 'frame,
+    {
         let current_target = self.current_target.as_ref().unwrap();
         let buffer = self.buffers.get(current_target).unwrap();
 
@@ -788,7 +573,7 @@ impl Renderer for SkiaRenderer {
             skia_surface: surface.clone(),
             size: output_size,
             renderer: self,
-            id,
+            // id,
         })
     }
 
@@ -835,6 +620,9 @@ impl SkiaRenderer {
     ) -> Option<skia::Image> {
         #[cfg(feature = "profile-with-puffin")]
         profiling::scope!("import_skia_image_from_texture");
+
+        // Check if we have a current renderer before borrowing context
+        let has_current_renderer = self.current_skia_renderer().is_some();
         let context = self.context.as_mut().unwrap();
 
         let target = if is_external {
@@ -867,10 +655,13 @@ impl SkiaRenderer {
                 ffi::RGBA16F => Some(skia::ColorType::RGBAF16),
                 _ => None,
             };
+            let skia_format = skia_format?;
+            let skia_color = skia_color?;
+
             let texture_info = skia::gpu::gl::TextureInfo {
                 target,
                 id: texture.tex_id(),
-                format: skia_format.unwrap().into(),
+                format: skia_format.into(),
                 ..Default::default()
             };
 
@@ -885,16 +676,14 @@ impl SkiaRenderer {
                 context,
                 &texture,
                 skia::gpu::SurfaceOrigin::TopLeft,
-                skia_color.unwrap(),
+                skia_color,
                 skia::AlphaType::Premul,
                 None,
-            )
-            .unwrap();
-            if let Some(surface) = self.current_skia_renderer() {
-                let mut ctx = surface.gr_context.clone();
-                ctx.flush_and_submit_image(&image);
-                // ctx.flush_submit_and_sync_cpu();
-                // println!("flush image");
+            )?;
+
+            // Flush the image if we have a current rendering surface
+            if has_current_renderer {
+                context.flush_and_submit_image(&image);
             }
             Some(image)
         }
@@ -1009,7 +798,7 @@ impl ImportMemWl for SkiaRenderer {
         buffer: &WlBuffer,
         surface: Option<&SurfaceData>,
         damage: &[Rectangle<i32, Buffer>],
-    ) -> Result<<Self as Renderer>::TextureId, <Self as Renderer>::Error> {
+    ) -> Result<<Self as RendererSuper>::TextureId, <Self as RendererSuper>::Error> {
         let texture = self
             .gl_renderer
             .import_shm_buffer(buffer, surface, damage)?;
@@ -1058,7 +847,7 @@ impl ImportEgl for SkiaRenderer {
         buffer: &WlBuffer,
         surface: Option<&SurfaceData>,
         damage: &[Rectangle<i32, Buffer>],
-    ) -> Result<<Self as Renderer>::TextureId, <Self as Renderer>::Error> {
+    ) -> Result<<Self as RendererSuper>::TextureId, <Self as RendererSuper>::Error> {
         let texture = self
             .gl_renderer
             .import_egl_buffer(buffer, surface, damage)?;
@@ -1098,7 +887,7 @@ impl ImportDma for SkiaRenderer {
         &mut self,
         dmabuf: &Dmabuf,
         damage: Option<&[Rectangle<i32, Buffer>]>,
-    ) -> Result<<Self as Renderer>::TextureId, <Self as Renderer>::Error> {
+    ) -> Result<<Self as RendererSuper>::TextureId, <Self as RendererSuper>::Error> {
         // self.gl_renderer.import_dmabuf(dmabuf, damage)
         let texture = self.import_dmabuf_internal(dmabuf, damage)?;
         Ok(texture)
@@ -1114,7 +903,7 @@ impl ImportDmaWl for SkiaRenderer {
         buffer: &smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer,
         _surface: Option<&smithay::wayland::compositor::SurfaceData>,
         damage: &[Rectangle<i32, Buffer>],
-    ) -> Result<<Self as Renderer>::TextureId, <Self as Renderer>::Error> {
+    ) -> Result<<Self as RendererSuper>::TextureId, <Self as RendererSuper>::Error> {
         let dmabuf = smithay::wayland::dmabuf::get_dmabuf(buffer)
             .expect("import_dma_buffer without checking buffer type?");
         self.import_dmabuf(dmabuf, Some(damage))
@@ -1129,7 +918,7 @@ impl ImportMem for SkiaRenderer {
         format: Fourcc,
         size: Size<i32, Buffer>,
         flipped: bool,
-    ) -> Result<<Self as Renderer>::TextureId, <Self as Renderer>::Error> {
+    ) -> Result<<Self as RendererSuper>::TextureId, <Self as RendererSuper>::Error> {
         let texture = self
             .gl_renderer
             .import_memory(data, format, size, flipped)?;
@@ -1163,10 +952,10 @@ impl ImportMem for SkiaRenderer {
     }
     fn update_memory(
         &mut self,
-        texture: &<Self as Renderer>::TextureId,
+        texture: &<Self as RendererSuper>::TextureId,
         data: &[u8],
         region: Rectangle<i32, Buffer>,
-    ) -> Result<(), <Self as Renderer>::Error> {
+    ) -> Result<(), <Self as RendererSuper>::Error> {
         self.gl_renderer
             .update_memory(&texture.texture, data, region)
     }
@@ -1183,21 +972,21 @@ impl BorrowMut<GlesRenderer> for SkiaRenderer {
         &mut self.gl_renderer
     }
 }
-
 impl ExportMem for SkiaRenderer {
     type TextureMapping = SkiaTextureMapping;
 
     // Copies a region of the framebuffer into a texture and returns a TextureMapping
     fn copy_framebuffer(
         &mut self,
+        _target: &Self::Framebuffer<'_>,
         region: Rectangle<i32, Buffer>,
-        fourcc: Fourcc,
-    ) -> Result<Self::TextureMapping, <Self as Renderer>::Error> {
+        fourcc_format: Fourcc,
+    ) -> Result<Self::TextureMapping, Self::Error> {
         // Just store the FBO info - don't create image or read pixels yet
         let fbo_info = self.get_current_fbo()?.clone();
 
         Ok(Self::TextureMapping {
-            fourcc_format: fourcc,
+            fourcc_format,
             flipped: false,
             width: region.size.w as u32,
             height: region.size.h as u32,
@@ -1219,7 +1008,7 @@ impl ExportMem for SkiaRenderer {
     fn map_texture<'a>(
         &mut self,
         texture_mapping: &'a Self::TextureMapping,
-    ) -> Result<&'a [u8], <Self as Renderer>::Error> {
+    ) -> Result<&'a [u8], <Self as RendererSuper>::Error> {
         // Lazy-load the pixel data if not already loaded
         let mut data_opt = texture_mapping.data.borrow_mut();
 
@@ -1270,10 +1059,46 @@ impl ExportMem for SkiaRenderer {
     }
 }
 
-impl Bind<Rc<EGLSurface>> for SkiaRenderer {
-    fn bind(&mut self, surface: Rc<EGLSurface>) -> Result<(), <Self as Renderer>::Error> {
+impl Bind<EGLSurface> for SkiaRenderer {
+    fn bind(
+        &mut self,
+        surface: &mut EGLSurface,
+    ) -> Result<SkiaGLesFbo, <Self as RendererSuper>::Error> {
+        // Make the surface current first
         unsafe {
-            self.egl_context().make_current_with_surface(&surface)?;
+            self.egl_context().make_current_with_surface(surface)?;
+            self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
+        }
+
+        // Delegate to GlesRenderer to get framebuffer info
+        let gles_framebuffer = self.gl_renderer.bind(surface)?;
+
+        // Create the framebuffer descriptor
+        let sfbo = SkiaGLesFbo {
+            fbo: 0,
+            tex_id: 0,
+            format: gles_framebuffer.format().unwrap_or(Fourcc::Argb8888),
+            origin: skia::gpu::SurfaceOrigin::BottomLeft,
+            width: gles_framebuffer.width() as i32,
+            height: gles_framebuffer.height() as i32,
+        };
+
+        // Set this as the current render target using the FBO as the key
+        let render_target = SkiaTarget::Fbo(sfbo.clone());
+        self.current_target = Some(render_target.clone());
+        self.buffers.insert(render_target, sfbo.clone());
+
+        Ok(sfbo)
+    }
+}
+
+impl Bind<Rc<EGLSurface>> for SkiaRenderer {
+    fn bind(
+        &mut self,
+        surface: &mut Rc<EGLSurface>,
+    ) -> Result<SkiaGLesFbo, <Self as RendererSuper>::Error> {
+        unsafe {
+            self.egl_context().make_current_with_surface(surface)?;
             self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
         }
         let egl_surface = EGLSurfaceWrapper(surface.clone());
@@ -1292,27 +1117,35 @@ impl Bind<Rc<EGLSurface>> for SkiaRenderer {
                 tex_id: 0,
                 format: gl_internal_format_to_fourcc(format).unwrap(),
                 origin: skia::gpu::SurfaceOrigin::BottomLeft,
+                width: 0,
+                height: 0,
             };
-            self.buffers.insert(render_target.clone(), sfbo);
+            self.buffers.insert(render_target.clone(), sfbo.clone());
         }
-        self.current_target = Some(render_target);
+        self.current_target = Some(render_target.clone());
 
-        Ok(())
+        Ok(self.buffers.get(&render_target).unwrap().clone())
     }
 }
 
 impl Bind<SkiaGLesFbo> for SkiaRenderer {
-    fn bind(&mut self, texture: SkiaGLesFbo) -> Result<(), <Self as Renderer>::Error> {
+    fn bind(
+        &mut self,
+        texture: &mut SkiaGLesFbo,
+    ) -> Result<SkiaGLesFbo, <Self as RendererSuper>::Error> {
         self.current_target = Some(SkiaTarget::Fbo(texture.clone()));
         self.buffers
-            .insert(SkiaTarget::Fbo(texture.clone()), texture);
+            .insert(SkiaTarget::Fbo(texture.clone()), texture.clone());
 
-        Ok(())
+        Ok(texture.clone())
     }
 }
 
 impl Bind<GlesTexture> for SkiaRenderer {
-    fn bind(&mut self, texture: GlesTexture) -> Result<(), <Self as Renderer>::Error> {
+    fn bind(
+        &mut self,
+        texture: &mut GlesTexture,
+    ) -> Result<SkiaGLesFbo, <Self as RendererSuper>::Error> {
         self.current_target = Some(SkiaTarget::Texture(texture.tex_id()));
         // let res = self.gl_renderer.bind(texture);
         unimplemented!("bind GlesTexture")
@@ -1322,29 +1155,32 @@ impl Bind<GlesTexture> for SkiaRenderer {
 }
 
 impl Bind<GlesRenderbuffer> for SkiaRenderer {
-    fn bind(&mut self, target: GlesRenderbuffer) -> Result<(), <Self as Renderer>::Error> {
-        self.current_target = Some(SkiaTarget::Renderbuffer(&target));
+    fn bind(
+        &mut self,
+        target: &mut GlesRenderbuffer,
+    ) -> Result<SkiaGLesFbo, <Self as RendererSuper>::Error> {
+        self.current_target = Some(SkiaTarget::Renderbuffer(target));
         // let res = self.gl_renderer.bind(target);
         unimplemented!("bind GlesRenderbuffer")
     }
 }
 
 impl Bind<Dmabuf> for SkiaRenderer {
-    fn bind(&mut self, dmabuf: Dmabuf) -> Result<(), <Self as Renderer>::Error> {
+    fn bind(&mut self, dmabuf: &mut Dmabuf) -> Result<SkiaGLesFbo, <Self as RendererSuper>::Error> {
         let target = SkiaTarget::Dmabuf(dmabuf.clone());
-        self.current_target = Some(target);
+        self.current_target = Some(target.clone());
         let egl_display = self.egl_context().display().clone();
         #[allow(clippy::mutable_key_type)]
         let buffers = self.buffers.borrow_mut();
-        buffers
+        let fbo = buffers
             .entry(SkiaTarget::Dmabuf(dmabuf.clone()))
             .or_insert_with(|| {
-                let image = egl_display.create_image_from_dmabuf(&dmabuf).unwrap();
+                let image = egl_display.create_image_from_dmabuf(dmabuf).unwrap();
                 let mut texture = 0;
                 // .map_err(GlesError::BindBufferEGLError)?;
                 let size = dmabuf.size();
-                let _width = size.w;
-                let _height = size.h;
+                let width = size.w;
+                let height = size.h;
 
                 unsafe {
                     self.gl.GenTextures(1, &mut texture);
@@ -1370,31 +1206,86 @@ impl Bind<Dmabuf> for SkiaRenderer {
                         rbo,
                     );
 
+                    // Add a depth buffer to make the framebuffer complete
+                    // (required for rendering, even if depth testing is disabled)
+                    let mut depth_rbo = 0;
+                    self.gl.GenRenderbuffers(1, &mut depth_rbo as *mut _);
+                    self.gl.BindRenderbuffer(ffi::RENDERBUFFER, depth_rbo);
+                    self.gl.RenderbufferStorage(
+                        ffi::RENDERBUFFER,
+                        ffi::DEPTH_COMPONENT16,
+                        width,
+                        height,
+                    );
+                    self.gl.FramebufferRenderbuffer(
+                        ffi::FRAMEBUFFER,
+                        ffi::DEPTH_ATTACHMENT,
+                        ffi::RENDERBUFFER,
+                        depth_rbo,
+                    );
+                    self.gl.BindRenderbuffer(ffi::RENDERBUFFER, 0);
+
                     let status = self.gl.CheckFramebufferStatus(ffi::FRAMEBUFFER);
-                    self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
 
                     if status != ffi::FRAMEBUFFER_COMPLETE {
-                        //TODO wrap image and drop here
-                        println!("framebuffer incomplete");
-                        // return Err(GlesError::FramebufferBindingError);
+                        panic!("Framebuffer incomplete for dmabuf: status 0x{:X}", status);
                     }
+
+                    self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
                     SkiaGLesFbo {
                         fbo,
                         tex_id: texture,
                         format: Fourcc::Abgr8888,
                         origin: skia::gpu::SurfaceOrigin::TopLeft,
+                        width,
+                        height,
                     }
                 }
-            });
-        Ok(())
+            })
+            .clone();
+        Ok(fbo)
     }
 }
 
-impl Unbind for SkiaRenderer {
-    fn unbind(&mut self) -> Result<(), <Self as Renderer>::Error> {
-        self.current_target = None;
-        self.egl_context().unbind()?;
-        Ok(())
+impl Blit for SkiaRenderer {
+    #[profiling::function]
+    fn blit(
+        &mut self,
+        from: &SkiaGLesFbo,
+        to: &mut SkiaGLesFbo,
+        src: Rectangle<i32, Physical>,
+        dst: Rectangle<i32, Physical>,
+        filter: TextureFilter,
+    ) -> Result<SyncPoint, <Self as RendererSuper>::Error> {
+        // Direct FBO-to-FBO blit using OpenGL
+        unsafe {
+            self.gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, from.fbo);
+            self.gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, to.fbo);
+
+            let gl_filter = match filter {
+                TextureFilter::Nearest => ffi::NEAREST,
+                TextureFilter::Linear => ffi::LINEAR,
+            };
+
+            self.gl.BlitFramebuffer(
+                src.loc.x,
+                src.loc.y,
+                src.loc.x + src.size.w,
+                src.loc.y + src.size.h,
+                dst.loc.x,
+                dst.loc.y,
+                dst.loc.x + dst.size.w,
+                dst.loc.y + dst.size.h,
+                ffi::COLOR_BUFFER_BIT,
+                gl_filter,
+            );
+
+            self.gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, 0);
+            self.gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, 0);
+        }
+
+        // Create a sync point (no actual sync needed for immediate blit)
+        Ok(SyncPoint::signaled())
     }
 }
 
@@ -1407,107 +1298,5 @@ impl Offscreen<SkiaGLesFbo> for SkiaRenderer {
     ) -> Result<SkiaGLesFbo, GlesError> {
         let lfbo = self.create_texture_and_framebuffer(size.w, size.h, format);
         Ok(lfbo)
-    }
-}
-
-impl<'a> AsRef<SkiaFrame<'a>> for SkiaFrame<'a> {
-    fn as_ref(&self) -> &SkiaFrame<'a> {
-        self
-    }
-}
-
-impl<'a> AsMut<SkiaFrame<'a>> for SkiaFrame<'a> {
-    fn as_mut(&mut self) -> &mut SkiaFrame<'a> {
-        self
-    }
-}
-
-impl Blit<Dmabuf> for SkiaRenderer {
-    #[profiling::function]
-    fn blit_to(
-        &mut self,
-        to: Dmabuf,
-        src: Rectangle<i32, Physical>,
-        dst: Rectangle<i32, Physical>,
-        _filter: TextureFilter,
-    ) -> Result<(), <Self as Renderer>::Error> {
-        // Get source FBO from current render target
-        let src_fbo = self.get_current_fbo()?.fbo;
-
-        // Bind destination dmabuf to get its FBO
-        self.bind(to.clone())?;
-        let dst_fbo = self
-            .buffers
-            .get(&SkiaTarget::Dmabuf(to))
-            .ok_or(GlesError::FramebufferBindingError)?
-            .fbo;
-
-        // Direct FBO-to-FBO blit (GPU only)
-        unsafe {
-            self.gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, src_fbo);
-            self.gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, dst_fbo);
-
-            self.gl.BlitFramebuffer(
-                src.loc.x,
-                src.loc.y,
-                src.loc.x + src.size.w,
-                src.loc.y + src.size.h,
-                dst.loc.x,
-                dst.loc.y,
-                dst.loc.x + dst.size.w,
-                dst.loc.y + dst.size.h,
-                ffi::COLOR_BUFFER_BIT,
-                ffi::LINEAR,
-            );
-
-            self.gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, 0);
-            self.gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, 0);
-        }
-
-        Ok(())
-    }
-
-    #[profiling::function]
-    fn blit_from(
-        &mut self,
-        from: Dmabuf,
-        src: Rectangle<i32, Physical>,
-        dst: Rectangle<i32, Physical>,
-        _filter: TextureFilter,
-    ) -> Result<(), <Self as Renderer>::Error> {
-        // Get destination FBO from current render target
-        let dst_fbo = self.get_current_fbo()?.fbo;
-
-        // Bind source dmabuf to get its FBO
-        self.bind(from.clone())?;
-        let src_fbo = self
-            .buffers
-            .get(&SkiaTarget::Dmabuf(from))
-            .ok_or(GlesError::FramebufferBindingError)?
-            .fbo;
-
-        // Direct FBO-to-FBO blit (GPU only)
-        unsafe {
-            self.gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, src_fbo);
-            self.gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, dst_fbo);
-
-            self.gl.BlitFramebuffer(
-                src.loc.x,
-                src.loc.y,
-                src.loc.x + src.size.w,
-                src.loc.y + src.size.h,
-                dst.loc.x,
-                dst.loc.y,
-                dst.loc.x + dst.size.w,
-                dst.loc.y + dst.size.h,
-                ffi::COLOR_BUFFER_BIT,
-                ffi::LINEAR,
-            );
-
-            self.gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, 0);
-            self.gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, 0);
-        }
-
-        Ok(())
     }
 }

@@ -27,6 +27,23 @@ pub struct SkiaGLesFbo {
     pub tex_id: u32,
     pub format: Fourcc,
     pub origin: skia::gpu::SurfaceOrigin,
+    pub width: i32,
+    pub height: i32,
+    // pub size: Size<i32, Buffer>,
+}
+
+impl Texture for SkiaGLesFbo {
+    fn width(&self) -> u32 {
+        self.width as u32
+    }
+
+    fn height(&self) -> u32 {
+        self.height as u32
+    }
+
+    fn format(&self) -> Option<Fourcc> {
+        Some(self.format)
+    }
 }
 
 /// A GPU texture that can be used with both OpenGL and Skia.
@@ -133,5 +150,4 @@ pub struct SkiaFrame<'frame> {
     pub(crate) size: Size<i32, Physical>,
     pub skia_surface: SkiaSurface,
     pub(crate) renderer: &'frame mut crate::skia_renderer::SkiaRenderer,
-    pub(crate) id: usize,
 }

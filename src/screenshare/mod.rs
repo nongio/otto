@@ -2,7 +2,7 @@
 //!
 //! This module provides the compositor-side support for screen casting via the
 //! xdg-desktop-portal protocol. It exposes a D-Bus service that the portal
-//! backend (`xdg-desktop-portal-sc`) communicates with to:
+//! backend (`xdg-desktop-portal-otto`) communicates with to:
 //!
 //! - Enumerate available outputs
 //! - Create screencast sessions
@@ -46,6 +46,8 @@ use smithay::reexports::calloop::channel::{
     channel, Event as ChannelEvent, Sender as ChannelSender,
 };
 use zbus::zvariant::OwnedFd;
+
+use crate::renderer::BlitCurrentFrame;
 
 /// Active screencast session state (compositor side).
 ///
@@ -410,56 +412,49 @@ fn handle_screenshare_command<B: crate::state::Backend + 'static>(
 
 /// Copy compositor framebuffer to PipeWire buffer with cursor rendering
 ///
-/// Blits the framebuffer first, then renders cursor elements on top
+/// Blits the current frame to destination dmabuf, then renders cursor elements on top
 pub fn fullscreen_to_dmabuf<R, E>(
     renderer: &mut R,
-    dest_dmabuf: smithay::backend::allocator::dmabuf::Dmabuf,
+    dst_dmabuf: &mut smithay::backend::allocator::dmabuf::Dmabuf,
     size: smithay::utils::Size<i32, smithay::utils::Physical>,
     damage: Option<&[smithay::utils::Rectangle<i32, smithay::utils::Physical>]>,
     cursor_elements: &[E],
     scale: smithay::utils::Scale<f64>,
 ) -> Result<(), String>
 where
-    R: smithay::backend::renderer::Blit<smithay::backend::allocator::dmabuf::Dmabuf>
-        + smithay::backend::renderer::Bind<smithay::backend::allocator::dmabuf::Dmabuf>
-        + smithay::backend::renderer::Renderer,
-    <R as smithay::backend::renderer::Renderer>::TextureId: Clone + 'static,
+    R: smithay::backend::renderer::Renderer
+        + smithay::backend::renderer::Bind<smithay::backend::allocator::dmabuf::Dmabuf>,
+    R: BlitCurrentFrame,
     E: smithay::backend::renderer::element::RenderElement<R>,
 {
     use smithay::utils::Physical;
-
-    // Step 1: Blit framebuffer (without cursor since it's on hardware plane)
+    // Step 1: Blit from current frame to destination dmabuf
     match damage {
         Some(rects) if !rects.is_empty() => {
             for rect in rects {
                 renderer
-                    .blit_to(
-                        dest_dmabuf.clone(),
-                        *rect,
-                        *rect,
-                        smithay::backend::renderer::TextureFilter::Linear,
-                    )
+                    .blit_current_frame(dst_dmabuf, *rect, *rect)
                     .map_err(|e| format!("Blit failed: {:?}", e))?;
             }
         }
         _ => {
-            let rect = smithay::utils::Rectangle::<i32, Physical>::from_loc_and_size((0, 0), size);
+            let rect = smithay::utils::Rectangle::<i32, Physical>::from_size(size);
             renderer
-                .blit_to(
-                    dest_dmabuf.clone(),
-                    rect,
-                    rect,
-                    smithay::backend::renderer::TextureFilter::Linear,
-                )
+                .blit_current_frame(dst_dmabuf, rect, rect)
                 .map_err(|e| format!("Blit failed: {:?}", e))?;
         }
     }
 
     // Step 2: Render cursor elements on top of blitted content
     if !cursor_elements.is_empty() {
-        let mut frame = renderer
-            .render(size, smithay::utils::Transform::Normal)
-            .map_err(|e| format!("Failed to create frame for cursor: {:?}", e))?;
+        // Bind the destination dmabuf to create a frame for rendering cursors
+        let mut dmabuf_fb = renderer
+            .bind(dst_dmabuf)
+            .map_err(|e| format!("Failed to bind dmabuf: {:?}", e))?;
+
+        let mut cursor_frame = renderer
+            .render(&mut dmabuf_fb, size, smithay::utils::Transform::Normal)
+            .map_err(|e| format!("Failed to create cursor frame: {:?}", e))?;
 
         // Render each cursor element
         for element in cursor_elements.iter() {
@@ -467,17 +462,16 @@ where
             let dst = element.geometry(scale);
 
             // Calculate damage rect (entire element area)
-            let output_rect =
-                smithay::utils::Rectangle::<i32, Physical>::from_loc_and_size((0, 0), size);
+            let output_rect = smithay::utils::Rectangle::<i32, Physical>::from_size(size);
             if let Some(mut damage) = output_rect.intersection(dst) {
                 damage.loc -= dst.loc;
                 element
-                    .draw(&mut frame, src, dst, &[damage], &[])
+                    .draw(&mut cursor_frame, src, dst, &[damage], &[])
                     .map_err(|e| format!("Failed to draw cursor element: {:?}", e))?;
             }
         }
 
-        std::mem::drop(frame);
+        std::mem::drop(cursor_frame);
     }
 
     Ok(())

@@ -14,7 +14,7 @@ use smithay::{
         element::{
             solid::SolidColorRenderElement, surface::WaylandSurfaceRenderElement, AsRenderElements,
         },
-        ImportAll, ImportMem, Renderer, Texture,
+        ImportAll, ImportMem, Renderer, RendererSuper, Texture,
     },
     desktop::{
         space::SpaceElement, utils::OutputPresentationFeedback, Window, WindowSurface,
@@ -22,7 +22,10 @@ use smithay::{
     },
     output::Output,
     reexports::{
-        wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
+        wayland_protocols::{
+            wp::presentation_time::server::wp_presentation_feedback,
+            xdg::shell::server::xdg_toplevel,
+        },
         wayland_server::{backend::ObjectId, protocol::wl_surface::WlSurface, Resource},
     },
     render_elements,
@@ -410,18 +413,10 @@ impl WindowElement {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
     pub fn xdg_is_fullscreen(&self) -> bool {
-        self.wl_surface()
-            .map(|window_surface| {
-                smithay::wayland::compositor::with_states(&window_surface, |states| {
-                    states
-                        .data_map
-                        .get::<XdgToplevelSurfaceData>()
-                        .unwrap()
-                        .lock()
-                        .unwrap()
-                        .current
-                        .fullscreen_output
-                        .is_some()
+        self.toplevel()
+            .map(|toplevel| {
+                toplevel.with_committed_state(|current| {
+                    current.is_some_and(|s| s.states.contains(xdg_toplevel::State::Fullscreen))
                 })
             })
             .unwrap_or(false)
@@ -515,7 +510,7 @@ impl<R: Renderer> std::fmt::Debug for WindowRenderElement<R> {
 impl<R> AsRenderElements<R> for WindowElement
 where
     R: Renderer + ImportAll + ImportMem,
-    <R as Renderer>::TextureId: Clone + Texture + 'static,
+    <R as RendererSuper>::TextureId: Clone + Texture + 'static,
 {
     type RenderElement = WindowRenderElement<R>;
 

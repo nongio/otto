@@ -13,7 +13,7 @@ use smithay::{
 
 use crate::skia_renderer::SkiaRenderer;
 
-use super::types::{DrmSurfaceDmabufFeedback, SurfaceComposition};
+use super::types::{DrmSurfaceDmabufFeedback, GbmDrmCompositor};
 
 /// Constructs dmabuf feedback for a surface
 ///
@@ -27,7 +27,7 @@ pub fn get_surface_dmabuf_feedback(
     primary_gpu: DrmNode,
     render_node: DrmNode,
     gpus: &mut GpuManager<GbmGlesBackend<SkiaRenderer, smithay::backend::drm::DrmDeviceFd>>,
-    composition: &SurfaceComposition,
+    composition: &GbmDrmCompositor,
 ) -> Option<DrmSurfaceDmabufFeedback> {
     let primary_formats = gpus.single_renderer(&primary_gpu).ok()?.dmabuf_formats();
     let render_formats = gpus.single_renderer(&render_node).ok()?.dmabuf_formats();

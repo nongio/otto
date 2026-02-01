@@ -329,12 +329,13 @@ impl Workspaces {
     pub fn get_logical_rect(&self) -> smithay::utils::Rectangle<i32, smithay::utils::Logical> {
         self.with_model(|model| {
             let scale = model.scale as f32;
-            smithay::utils::Rectangle::from_loc_and_size(
-                (0, 0),
+            smithay::utils::Rectangle::new(
+                (0, 0).into(),
                 (
-                    (model.width as f32 / scale) as i32,
-                    (model.height as f32 / scale) as i32,
-                ),
+                    ((model.width as f32 / scale) as i32),
+                    ((model.height as f32 / scale) as i32),
+                )
+                    .into(),
             )
         })
     }
@@ -1480,7 +1481,7 @@ impl Workspaces {
                 let zone = map.non_exclusive_zone();
                 tracing::info!("new_window_placement: non_exclusive_zone = {:?}", zone);
 
-                let mut adjusted = Rectangle::from_loc_and_size(geo.loc + zone.loc, zone.size);
+                let mut adjusted = Rectangle::new(geo.loc + zone.loc, zone.size);
                 tracing::info!("new_window_placement: adjusted geometry (geo.loc + zone.loc, zone.size) = {:?}", adjusted);
 
                 // Account for the dock geometry (internal compositor UI, not layer-shell)
@@ -1500,7 +1501,7 @@ impl Workspaces {
 
                 Some(adjusted)
             })
-            .unwrap_or_else(|| Rectangle::from_loc_and_size((0, 0), (800, 800)));
+            .unwrap_or_else(|| Rectangle::new((0, 0).into(), (800, 800).into()));
 
         let num_open_windows = self.spaces_elements().count();
         let window_index = num_open_windows + 1; // Index of the new window
@@ -1660,15 +1661,20 @@ impl Workspaces {
         if self.dock.alive() {
             let bounds = self.dock.bar_layer.render_bounds_transformed();
             let scale = Config::with(|c| c.screen_scale) as f32;
-            Rectangle::from_loc_and_size(
-                ((bounds.x() / scale) as i32, (bounds.y() / scale) as i32 - 2),
+            Rectangle::new(
+                (
+                    ((bounds.x() / scale) as i32),
+                    ((bounds.y() / scale) as i32) - 2,
+                )
+                    .into(),
                 (
                     (bounds.width() / scale).ceil() as i32,
                     (bounds.height() / scale).ceil() as i32,
-                ),
+                )
+                    .into(),
             )
         } else {
-            Rectangle::from_loc_and_size((0, 0), (0, 0))
+            Rectangle::new((0, 0).into(), (0, 0).into())
         }
     }
 

@@ -14,11 +14,11 @@ pub use init::run_udev;
 
 // Re-export public types
 pub use types::{
-    DeviceAddError, RenderOutcome, SurfaceComposition, SurfaceCompositorRenderResult, UdevData,
-    UdevOutputId, UdevRenderer, SUPPORTED_FORMATS, SUPPORTED_FORMATS_8BIT_ONLY,
+    DeviceAddError, RenderOutcome, UdevData, UdevOutputId, UdevRenderer, SUPPORTED_FORMATS,
+    SUPPORTED_FORMATS_8BIT_ONLY,
 };
 
-use crate::skia_renderer::SkiaTextureImage;
+use crate::renderer::{SkiaTexture, SkiaTextureImage};
 use crate::{
     skia_renderer::SkiaRenderer,
     state::{Backend, Otto},
@@ -30,7 +30,11 @@ use smithay::{
     backend::{
         allocator::dmabuf::Dmabuf,
         drm::{DrmDevice, DrmDeviceFd, DrmNode},
-        renderer::{multigpu::gbm::GbmGlesBackend, utils::import_surface, ImportDma},
+        renderer::{
+            multigpu::{gbm::GbmGlesBackend, MultiTexture},
+            utils::import_surface,
+            ImportDma,
+        },
         session::{libseat::LibSeatSession, Session},
         udev::UdevBackend,
     },
@@ -117,13 +121,13 @@ impl Backend for UdevData {
         &self,
         surface: &smithay::backend::renderer::utils::RendererSurfaceState,
     ) -> Option<SkiaTextureImage> {
-        let tex = surface.texture::<UdevRenderer>(99);
+        let id = self.context_id.as_ref().cloned()?;
+        let tex = surface.texture::<MultiTexture>(id.clone());
         if let Some(multitexture) = tex {
-            let texture =
-                multitexture.get::<GbmGlesBackend<SkiaRenderer, DrmDeviceFd>>(&self.primary_gpu);
-            if let Some(texture) = texture {
-                return Some(texture.into());
-            }
+            // Convert ContextId<MultiTexture> to ContextId<SkiaTexture>
+            let skia_id: smithay::backend::renderer::ContextId<SkiaTexture> = id.map();
+            let texture = multitexture.get::<GbmGlesBackend<SkiaRenderer, DrmDeviceFd>>(&skia_id);
+            return texture.map(|t| t.into());
         }
         None
     }

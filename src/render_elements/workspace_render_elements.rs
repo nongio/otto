@@ -51,14 +51,14 @@ impl Element for PhantomElement<'_> {
     }
 
     fn src(&self) -> smithay::utils::Rectangle<f64, smithay::utils::Buffer> {
-        smithay::utils::Rectangle::from_loc_and_size((0, 0), (0, 0)).to_f64()
+        smithay::utils::Rectangle::new((0, 0).into(), (0, 0).into()).to_f64()
     }
 
     fn geometry(
         &self,
         scale: smithay::utils::Scale<f64>,
     ) -> smithay::utils::Rectangle<i32, smithay::utils::Physical> {
-        smithay::utils::Rectangle::from_loc_and_size(self.location(scale), (0, 0))
+        smithay::utils::Rectangle::new(self.location(scale), (0, 0).into())
     }
 
     fn current_commit(&self) -> CommitCounter {
@@ -70,10 +70,7 @@ impl Element for PhantomElement<'_> {
         scale: Scale<f64>,
         _commit: Option<CommitCounter>,
     ) -> smithay::backend::renderer::utils::DamageSet<i32, Physical> {
-        DamageSet::from_slice(&[Rectangle::from_loc_and_size(
-            (0, 0),
-            self.geometry(scale).size,
-        )])
+        DamageSet::from_slice(&[Rectangle::new((0, 0).into(), self.geometry(scale).size)])
     }
     fn alpha(&self) -> f32 {
         0.0
@@ -87,12 +84,12 @@ where
 {
     fn draw(
         &self,
-        _frame: &mut <R as smithay::backend::renderer::Renderer>::Frame<'_>,
+        _frame: &mut <R as smithay::backend::renderer::RendererSuper>::Frame<'_, '_>,
         _src: smithay::utils::Rectangle<f64, smithay::utils::Buffer>,
         _dst: smithay::utils::Rectangle<i32, smithay::utils::Physical>,
         _damage: &[smithay::utils::Rectangle<i32, smithay::utils::Physical>],
         _opaque_regions: &[Rectangle<i32, Physical>],
-    ) -> Result<(), <R as smithay::backend::renderer::Renderer>::Error> {
+    ) -> Result<(), <R as smithay::backend::renderer::RendererSuper>::Error> {
         Ok(())
     }
 }

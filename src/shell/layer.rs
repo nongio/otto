@@ -230,7 +230,7 @@ impl LayerShellSurface {
         width = width.max(0);
         height = height.max(0);
 
-        Rectangle::from_loc_and_size((x, y), (width, height))
+        Rectangle::new((x, y).into(), (width, height).into())
     }
 }
 

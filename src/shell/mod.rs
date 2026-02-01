@@ -499,7 +499,7 @@ pub fn fixup_positions(workspaces: &mut Workspaces, pointer_location: Point<f64,
             let geo = workspaces.output_geometry(o)?;
             let map = layer_map_for_output(o);
             let zone = map.non_exclusive_zone();
-            Some(Rectangle::from_loc_and_size(geo.loc + zone.loc, zone.size))
+            Some(Rectangle::new(geo.loc + zone.loc, zone.size))
         })
         .collect::<Vec<_>>();
     for window in workspaces.spaces_elements() {

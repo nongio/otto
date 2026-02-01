@@ -40,39 +40,21 @@ fn streams_value_encodes_required_metadata() {
         u32::try_from(props.get("source_type").unwrap().try_clone().unwrap()).unwrap();
     assert_eq!(source_type, SOURCE_TYPE_MONITOR);
 
-    let id_value: Value = props
-        .get("id")
-        .unwrap()
-        .try_clone()
-        .unwrap()
-        .try_into()
-        .unwrap();
+    let id_value: Value = props.get("id").unwrap().try_clone().unwrap().into();
     let id = match id_value {
         Value::Str(s) => s.to_string(),
         other => panic!("unexpected id value: {other:?}"),
     };
     assert_eq!(id, descriptor.stream_id);
 
-    let mapping_value: Value = props
-        .get("mapping_id")
-        .unwrap()
-        .try_clone()
-        .unwrap()
-        .try_into()
-        .unwrap();
+    let mapping_value: Value = props.get("mapping_id").unwrap().try_clone().unwrap().into();
     let mapping = match mapping_value {
         Value::Str(s) => s.to_string(),
         other => panic!("unexpected mapping value: {other:?}"),
     };
     assert_eq!(mapping, mapping_id);
 
-    let size_value: Value = props
-        .get("size")
-        .unwrap()
-        .try_clone()
-        .unwrap()
-        .try_into()
-        .unwrap();
+    let size_value: Value = props.get("size").unwrap().try_clone().unwrap().into();
     let size: (i32, i32) = size_value.try_into().unwrap();
     assert_eq!(
         size,
@@ -81,13 +63,7 @@ fn streams_value_encodes_required_metadata() {
             descriptor.height.unwrap() as i32
         )
     );
-    let position_value: Value = props
-        .get("position")
-        .unwrap()
-        .try_clone()
-        .unwrap()
-        .try_into()
-        .unwrap();
+    let position_value: Value = props.get("position").unwrap().try_clone().unwrap().into();
     let position: (i32, i32) = position_value.try_into().unwrap();
     assert_eq!(position, descriptor.position.unwrap());
 }

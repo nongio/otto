@@ -9,7 +9,7 @@ use smithay::{
     backend::renderer::{
         element::{Element, Id, RenderElement},
         utils::{CommitCounter, DamageBag, DamageSet},
-        Renderer,
+        RendererSuper,
     },
     utils::{Buffer, Physical, Point, Rectangle, Scale},
 };
@@ -80,15 +80,17 @@ impl SceneElement {
         if has_damage {
             self.commit_counter.increment();
             let safe = 0;
-            let damage = Rectangle::from_loc_and_size(
+            let damage = Rectangle::new(
                 (
                     scene_damage.x() as i32 - safe,
                     scene_damage.y() as i32 - safe,
-                ),
+                )
+                    .into(),
                 (
                     scene_damage.width() as i32 + safe * 2,
                     scene_damage.height() as i32 + safe * 2,
-                ),
+                )
+                    .into(),
             );
             self.damage.borrow_mut().add(vec![damage]);
         }
@@ -173,18 +175,18 @@ impl Element for SceneElement {
     }
 
     fn src(&self) -> Rectangle<f64, Buffer> {
-        Rectangle::from_loc_and_size((0, 0), (100, 100)).to_f64()
+        Rectangle::new((0, 0).into(), (100, 100).into()).to_f64()
     }
 
     fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
         if let Some(root) = self.root_layer() {
             let bounds = root.render_bounds_transformed();
-            Rectangle::from_loc_and_size(
+            Rectangle::new(
                 self.location(scale),
-                (bounds.width() as i32, bounds.height() as i32),
+                (bounds.width() as i32, bounds.height() as i32).into(),
             )
         } else {
-            Rectangle::from_loc_and_size(self.location(scale), (0, 0))
+            Rectangle::new(self.location(scale), (0, 0).into())
         }
     }
 
@@ -203,7 +205,7 @@ impl Element for SceneElement {
         match damage {
             Some(rects) if !rects.is_empty() => DamageSet::from_slice(&rects),
             None if geometry_size.w > 0 && geometry_size.h > 0 => {
-                let full_damage = Rectangle::from_loc_and_size((0, 0), geometry_size);
+                let full_damage = Rectangle::new((0, 0).into(), geometry_size);
                 DamageSet::from_slice(&[full_damage])
             }
             _ => DamageSet::default(),
@@ -217,26 +219,26 @@ impl Element for SceneElement {
 impl<'renderer> RenderElement<UdevRenderer<'renderer>> for SceneElement {
     fn draw(
         &self,
-        frame: &mut <UdevRenderer<'renderer> as Renderer>::Frame<'_>,
+        frame: &mut <UdevRenderer<'renderer> as RendererSuper>::Frame<'_, '_>,
         src: Rectangle<f64, Buffer>,
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
-    ) -> Result<(), <UdevRenderer<'renderer> as Renderer>::Error> {
+    ) -> Result<(), <UdevRenderer<'renderer> as RendererSuper>::Error> {
         RenderElement::<SkiaRenderer>::draw(self, frame.as_mut(), src, dst, damage, opaque_regions)
             .map_err(|e| e.into())
     }
 }
 
 impl RenderElement<SkiaRenderer> for SceneElement {
-    fn draw(
+    fn draw<'frame>(
         &self,
-        frame: &mut <SkiaRenderer as Renderer>::Frame<'_>,
+        frame: &mut <SkiaRenderer as RendererSuper>::Frame<'frame, 'frame>,
         _src: Rectangle<f64, Buffer>,
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         _opaque_regions: &[Rectangle<i32, Physical>],
-    ) -> Result<(), <SkiaRenderer as Renderer>::Error> {
+    ) -> Result<(), <SkiaRenderer as RendererSuper>::Error> {
         #[cfg(feature = "profile-with-puffin")]
         profiling::puffin::profile_scope!("render_scene");
         let mut surface = frame.skia_surface.clone();
