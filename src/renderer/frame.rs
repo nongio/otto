@@ -5,12 +5,7 @@
 
 use layers::{sb, skia};
 use smithay::{
-    backend::{
-        renderer::{
-            gles::GlesError,
-            sync::SyncPoint, Color32F, ContextId, Frame, Renderer,
-        },
-    },
+    backend::renderer::{gles::GlesError, sync::SyncPoint, Color32F, ContextId, Frame, Renderer},
     utils::{Buffer, Physical, Rectangle, Transform},
 };
 use std::sync::atomic::Ordering;
@@ -29,7 +24,7 @@ impl Frame for SkiaFrame<'_> {
         color: Color32F,
         at: &[Rectangle<i32, Physical>],
     ) -> Result<(), Self::Error> {
-        self.draw_solid(Rectangle::new((0,0).into(), self.size), at, color)?;
+        self.draw_solid(Rectangle::new((0, 0).into(), self.size), at, color)?;
         Ok(())
     }
     fn draw_solid(

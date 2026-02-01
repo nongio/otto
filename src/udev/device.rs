@@ -480,6 +480,7 @@ impl Otto<UdevData> {
                 fps_element,
                 dmabuf_feedback,
                 was_direct_scanout: false,
+                #[cfg(feature = "metrics")]
                 render_metrics: Some(self.render_metrics.clone()),
             };
 

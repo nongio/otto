@@ -283,7 +283,6 @@ impl crate::Otto<crate::udev::UdevData> {
 
 #[cfg(all(test, feature = "udev"))]
 mod tests {
-    
 
     #[test]
     fn test_gesture_swipe_velocity_calculation() {

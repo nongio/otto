@@ -440,7 +440,10 @@ impl<BackendData: Backend> Otto<BackendData> {
                             initial_window_location = (new_x as i32, new_y as i32).into();
 
                             window
-                                .configure(Rectangle::new(initial_window_location.into(), old_geo.size))
+                                .configure(Rectangle::new(
+                                    initial_window_location.into(),
+                                    old_geo.size,
+                                ))
                                 .unwrap();
                         } else {
                             // Fallback: use touch location if no old geometry

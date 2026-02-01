@@ -1,4 +1,6 @@
-use std::{collections::hash_map::HashMap, sync::Arc};
+use std::collections::hash_map::HashMap;
+#[cfg(feature = "metrics")]
+use std::sync::Arc;
 
 use smithay::{
     backend::{
@@ -109,6 +111,7 @@ pub struct SurfaceData {
     /// Used to reset buffers when transitioning between modes
     pub(super) was_direct_scanout: bool,
     /// Rendering metrics
+    #[cfg(feature = "metrics")]
     pub(super) render_metrics: Option<Arc<crate::render_metrics::RenderMetrics>>,
 }
 

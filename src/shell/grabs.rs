@@ -479,7 +479,7 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
                 }
 
                 x11.configure(Rectangle::new(location.into(), self.last_window_size))
-                .unwrap();
+                    .unwrap();
             }
         }
     }
@@ -537,7 +537,7 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
                 WindowSurface::X11(x11) => {
                     let location = state.space.element_location(&self.window).unwrap();
                     x11.configure(Rectangle::new(location.into(), self.last_window_size))
-                    .unwrap();
+                        .unwrap();
 
                     let Some(surface) = self.window.wl_surface() else {
                         // X11 Window got unmapped, abort
@@ -718,7 +718,7 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
             WindowSurface::X11(x11) => {
                 let location = state.space.element_location(&self.window).unwrap();
                 x11.configure(Rectangle::new(location.into(), self.last_window_size))
-                .unwrap();
+                    .unwrap();
 
                 let Some(surface) = self.window.wl_surface() else {
                     // X11 Window got unmapped, abort
@@ -860,7 +860,7 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
                 }
 
                 x11.configure(Rectangle::new(location.into(), self.last_window_size))
-                .unwrap();
+                    .unwrap();
             }
         }
     }

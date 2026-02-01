@@ -132,7 +132,9 @@ where
             let digit_size = Size::<i32, Logical>::from((22, 35))
                 .to_f64()
                 .to_physical(scale);
-            let dst = Rectangle::new(digit_location.to_i32_round().into(), ((digit_size.to_point() + digit_location).to_i32_round()
+            let dst = Rectangle::new(
+                digit_location.to_i32_round().into(),
+                ((digit_size.to_point() + digit_location).to_i32_round()
                     - digit_location.to_i32_round())
                 .to_size(),
             );

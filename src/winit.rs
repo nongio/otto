@@ -485,6 +485,7 @@ pub fn run_winit() {
 
             if should_draw {
                 // Start frame timing
+                #[cfg(feature = "metrics")]
                 let _frame_timer = state.render_metrics.start_frame();
 
                 #[cfg(feature = "debug")]
@@ -583,9 +584,12 @@ pub fn run_winit() {
                         let mut frame_submitted = false;
                         if let Some(damage) = render_output_result.damage {
                             // Record damage metrics
-                            let mode = output.current_mode().unwrap();
-                            let output_size = (mode.size.w, mode.size.h);
-                            state.render_metrics.record_damage(output_size, damage);
+                            #[cfg(feature = "metrics")]
+                            {
+                                let mode = output.current_mode().unwrap();
+                                let output_size = (mode.size.w, mode.size.h);
+                                state.render_metrics.record_damage(output_size, damage);
+                            }
 
                             match backend.submit(Some(damage)) {
                                 Ok(_) => {
@@ -686,6 +690,7 @@ pub fn run_winit() {
         log_frame_stats();
 
         // Log rendering metrics periodically
+        #[cfg(feature = "metrics")]
         state.render_metrics.maybe_log_stats(false);
 
         // Rendering Done, prepare loop

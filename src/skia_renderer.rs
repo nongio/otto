@@ -620,7 +620,7 @@ impl SkiaRenderer {
     ) -> Option<skia::Image> {
         #[cfg(feature = "profile-with-puffin")]
         profiling::scope!("import_skia_image_from_texture");
-        
+
         // Check if we have a current renderer before borrowing context
         let has_current_renderer = self.current_skia_renderer().is_some();
         let context = self.context.as_mut().unwrap();
@@ -657,7 +657,7 @@ impl SkiaRenderer {
             };
             let skia_format = skia_format?;
             let skia_color = skia_color?;
-            
+
             let texture_info = skia::gpu::gl::TextureInfo {
                 target,
                 id: texture.tex_id(),
@@ -680,7 +680,7 @@ impl SkiaRenderer {
                 skia::AlphaType::Premul,
                 None,
             )?;
-            
+
             // Flush the image if we have a current rendering surface
             if has_current_renderer {
                 context.flush_and_submit_image(&image);
@@ -1166,10 +1166,7 @@ impl Bind<GlesRenderbuffer> for SkiaRenderer {
 }
 
 impl Bind<Dmabuf> for SkiaRenderer {
-    fn bind(
-        &mut self,
-        dmabuf: &mut Dmabuf,
-    ) -> Result<SkiaGLesFbo, <Self as RendererSuper>::Error> {
+    fn bind(&mut self, dmabuf: &mut Dmabuf) -> Result<SkiaGLesFbo, <Self as RendererSuper>::Error> {
         let target = SkiaTarget::Dmabuf(dmabuf.clone());
         self.current_target = Some(target.clone());
         let egl_display = self.egl_context().display().clone();

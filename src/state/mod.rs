@@ -251,6 +251,7 @@ pub struct Otto<BackendData: Backend + 'static> {
         HashMap<ObjectId, HashMap<String, std::collections::VecDeque<layers::prelude::NodeRef>>>,
 
     // Rendering metrics
+    #[cfg(feature = "metrics")]
     pub render_metrics: Arc<crate::render_metrics::RenderMetrics>,
 }
 
@@ -533,6 +534,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         layers_engine.start_debugger();
 
         // Get backend name before moving backend_data
+        #[cfg(feature = "metrics")]
         let backend_name = backend_data.backend_name();
 
         Otto {
@@ -613,6 +615,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             view_warm_cache: HashMap::new(),
 
             // render metrics
+            #[cfg(feature = "metrics")]
             render_metrics: Arc::new(crate::render_metrics::RenderMetrics::new(backend_name)),
         }
     }

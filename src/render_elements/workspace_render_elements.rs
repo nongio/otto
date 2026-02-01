@@ -70,9 +70,7 @@ impl Element for PhantomElement<'_> {
         scale: Scale<f64>,
         _commit: Option<CommitCounter>,
     ) -> smithay::backend::renderer::utils::DamageSet<i32, Physical> {
-        DamageSet::from_slice(&[Rectangle::new((0,0).into(),
-            self.geometry(scale).size,
-        )])
+        DamageSet::from_slice(&[Rectangle::new((0, 0).into(), self.geometry(scale).size)])
     }
     fn alpha(&self) -> f32 {
         0.0

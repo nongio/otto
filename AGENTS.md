@@ -5,14 +5,24 @@ This file provides guidance to agents when working with code in this repository.
 ## Build & Run Commands for Otto
 
 ```sh
-# Development (debug build, faster compilation)
+# Development build
 cargo build
 cargo run -- --winit   # Run in windowed mode (Wayland/X11 session)
+
+# Development with debugging/profiling tools
+cargo build --features "dev"
+cargo run --features "dev" -- --winit
+
+# Run on different backends
 cargo run -- --x11     # Run as X11 client
 cargo run -- --tty-udev # Run on bare metal (DRM/GBM, requires root or libseat)
 
-# Release build
+# Release build (optimized)
 cargo build --release
+cargo run --release -- --winit
+
+# Release build with optional features
+cargo build --release --features "metrics,ticker"
 
 # Linting and formatting
 cargo fmt --all -- --check   # Check formatting

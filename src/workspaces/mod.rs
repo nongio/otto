@@ -330,11 +330,12 @@ impl Workspaces {
         self.with_model(|model| {
             let scale = model.scale as f32;
             smithay::utils::Rectangle::new(
-            (0, 0).into(),
-            (
+                (0, 0).into(),
+                (
                     ((model.width as f32 / scale) as i32),
                     ((model.height as f32 / scale) as i32),
-                ).into(),
+                )
+                    .into(),
             )
         })
     }
@@ -1661,14 +1662,16 @@ impl Workspaces {
             let bounds = self.dock.bar_layer.render_bounds_transformed();
             let scale = Config::with(|c| c.screen_scale) as f32;
             Rectangle::new(
-            (
+                (
                     ((bounds.x() / scale) as i32),
-                    ((bounds.y() / scale) as i32) - 2
-                ).into(),
+                    ((bounds.y() / scale) as i32) - 2,
+                )
+                    .into(),
                 (
                     (bounds.width() / scale).ceil() as i32,
                     (bounds.height() / scale).ceil() as i32,
-                ).into(),
+                )
+                    .into(),
             )
         } else {
             Rectangle::new((0, 0).into(), (0, 0).into())

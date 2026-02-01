@@ -468,6 +468,7 @@ pub fn run_udev() {
         } else {
             display_handle.flush_clients().unwrap();
             // Log rendering metrics periodically
+            #[cfg(feature = "metrics")]
             state.render_metrics.maybe_log_stats(false);
         }
     }
