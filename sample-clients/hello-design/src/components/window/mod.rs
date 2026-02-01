@@ -1,10 +1,13 @@
+mod application_window;
+
 use smithay_client_toolkit::shell::xdg::window::WindowConfigure;
 use std::sync::{Arc, Mutex, RwLock};
 
 use crate::app_runner::{App, AppContext};
 pub use crate::components::menu::sc_layer_v1;
 use crate::surfaces::{Surface, SurfaceError, ToplevelSurface};
-use crate::ScLayerAugment;
+
+pub use application_window::{ApplicationWindow, WindowLayout};
 
 /// Default layer augmentation - applies rounded corners
 fn default_layer_augmentation(layer: &sc_layer_v1::ScLayerV1) {
@@ -19,6 +22,9 @@ fn default_layer_augmentation(layer: &sc_layer_v1::ScLayerV1) {
 ///
 /// By default, windows have rounded corners (12px radius). Use `on_layer()`
 /// to customize or override the default layer augmentation.
+///
+/// Window uses the shared layers rendering engine from AppContext.
+/// Assign a Layer node to this window to render it.
 ///
 /// Window is Clone-able, allowing it to be shared across the application.
 #[derive(Clone)]
@@ -111,6 +117,34 @@ impl Window {
         *self.on_draw_fn.lock().unwrap() = Some(Box::new(draw_fn));
     }
 
+    /// Assign a layer node to render in this window
+    ///
+    /// The layer and all its children will be rendered when the window draws.
+    ///
+    /// # Example
+    /// ```no_run
+    /// let layer = LayerFrame::new();
+    /// layer.set_size(200.0, 100.0);
+    /// window.set_layer_node(layer.layer().clone());
+    /// ```
+    pub fn set_layer_node(&mut self, layer: layers::prelude::Layer) {
+        if let Ok(mut surface_guard) = self.surface.write() {
+            if let Some(ref mut surface) = *surface_guard {
+                surface.set_layer_node(layer);
+            }
+        }
+    }
+
+    /// Get the layer node assigned to this window
+    pub fn layer_node(&self) -> Option<layers::prelude::Layer> {
+        if let Ok(surface_guard) = self.surface.read() {
+            if let Some(ref surface) = *surface_guard {
+                return surface.layer_node().cloned();
+            }
+        }
+        None
+    }
+
     /// Get direct access to the sc_layer for configuration
     ///
     /// Returns None if sc_layer_shell was not available when the window was created.
@@ -137,7 +171,12 @@ impl Window {
     }
 
     /// Render the window content
-    pub fn render(&self) {
+    /// 
+    /// Optionally provide a callback to render subsurfaces or other content
+    pub fn render_with<F>(&self, render_extra: F)
+    where
+        F: FnOnce(),
+    {
         if let Ok(surface_guard) = self.surface.read() {
             if let Some(ref surface) = *surface_guard {
                 if !surface.is_configured() {
@@ -149,15 +188,23 @@ impl Window {
                 surface.draw(|canvas| {
                     canvas.clear(self.background_color);
 
-                    // Draw custom content if provided
+                    // Draw custom content on top if provided
                     if let Ok(mut draw_fn_guard) = on_draw_fn.lock() {
                         if let Some(ref mut content_fn) = *draw_fn_guard {
                             content_fn(canvas);
                         }
                     }
                 });
+                
+                // Render extra content (e.g., subsurfaces)
+                render_extra();
             }
         }
+    }
+    
+    /// Render the window content
+    pub fn render(&self) {
+        self.render_with(|| {});
     }
 
     /// Get the underlying ToplevelSurface
