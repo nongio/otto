@@ -90,7 +90,7 @@ where
         } else {
             3
         };
-        Rectangle::from_loc_and_size((0, 0), (24 * digits, 35)).to_f64()
+        Rectangle::new((0, 0).into(), (24 * digits, 35).into()).to_f64()
     }
 
     fn geometry(&self, _scale: Scale<f64>) -> Rectangle<i32, Physical> {
@@ -101,7 +101,7 @@ where
         } else {
             3
         };
-        Rectangle::from_loc_and_size((0, 0), (24 * digits, 35)).to_physical_precise_round(1.0)
+        Rectangle::new((0, 0).into(), (24 * digits, 35).into()).to_physical_precise_round(1.0)
     }
 
     fn current_commit(&self) -> CommitCounter {
@@ -110,14 +110,14 @@ where
 }
 
 #[cfg(feature = "fps_ticker")]
-impl<R> RenderElement<R> for FpsElement<<R as Renderer>::TextureId>
+impl<R> RenderElement<R> for FpsElement<<R as RendererSuper>::TextureId>
 where
     R: Renderer + ImportAll,
-    <R as Renderer>::TextureId: 'static,
+    <R as RendererSuper>::TextureId: 'static,
 {
     fn draw(
         &self,
-        frame: &mut <R as Renderer>::Frame<'_>,
+        frame: &mut <R as RendererSuper>::Frame<'_, '_>,
         _src: Rectangle<f64, Buffer>,
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
@@ -132,8 +132,8 @@ where
             let digit_size = Size::<i32, Logical>::from((22, 35))
                 .to_f64()
                 .to_physical(scale);
-            let dst = Rectangle::from_loc_and_size(
-                digit_location.to_i32_round(),
+            let dst = Rectangle::new(
+                digit_location.to_i32_round().into(),
                 ((digit_size.to_point() + digit_location).to_i32_round()
                     - digit_location.to_i32_round())
                 .to_size(),
@@ -148,16 +148,16 @@ where
                 })
                 .collect::<Vec<_>>();
             let texture_src: Rectangle<i32, Buffer> = match digit {
-                9 => Rectangle::from_loc_and_size((0, 0), (22, 35)),
-                6 => Rectangle::from_loc_and_size((22, 0), (22, 35)),
-                3 => Rectangle::from_loc_and_size((44, 0), (22, 35)),
-                1 => Rectangle::from_loc_and_size((66, 0), (22, 35)),
-                8 => Rectangle::from_loc_and_size((0, 35), (22, 35)),
-                0 => Rectangle::from_loc_and_size((22, 35), (22, 35)),
-                2 => Rectangle::from_loc_and_size((44, 35), (22, 35)),
-                7 => Rectangle::from_loc_and_size((0, 70), (22, 35)),
-                4 => Rectangle::from_loc_and_size((22, 70), (22, 35)),
-                5 => Rectangle::from_loc_and_size((44, 70), (22, 35)),
+                9 => Rectangle::new((0, 0).into(), (22, 35).into()),
+                6 => Rectangle::new((22, 0).into(), (22, 35).into()),
+                3 => Rectangle::new((44, 0).into(), (22, 35).into()),
+                1 => Rectangle::new((66, 0).into(), (22, 35).into()),
+                8 => Rectangle::new((0, 35).into(), (22, 35).into()),
+                0 => Rectangle::new((22, 35).into(), (22, 35).into()),
+                2 => Rectangle::new((44, 35).into(), (22, 35).into()),
+                7 => Rectangle::new((0, 70).into(), (22, 35).into()),
+                4 => Rectangle::new((22, 70).into(), (22, 35).into()),
+                5 => Rectangle::new((44, 70).into(), (22, 35).into()),
                 _ => unreachable!(),
             };
 

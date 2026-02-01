@@ -5,14 +5,24 @@ This file provides guidance to agents when working with code in this repository.
 ## Build & Run Commands for Otto
 
 ```sh
-# Development (debug build, faster compilation)
+# Development build
 cargo build
 cargo run -- --winit   # Run in windowed mode (Wayland/X11 session)
+
+# Development with debugging/profiling tools
+cargo build --features "dev"
+cargo run --features "dev" -- --winit
+
+# Run on different backends
 cargo run -- --x11     # Run as X11 client
 cargo run -- --tty-udev # Run on bare metal (DRM/GBM, requires root or libseat)
 
-# Release build
+# Release build (optimized)
 cargo build --release
+cargo run --release -- --winit
+
+# Release build with optional features
+cargo build --release --features "metrics,ticker"
 
 # Linting and formatting
 cargo fmt --all -- --check   # Check formatting
@@ -122,7 +132,18 @@ See `otto_config.example.toml` for all options.
 
 ## Documentation
 
-Detailed design docs in `docs/developer/`:
+Otto maintains two documentation tiers:
+- `docs/user/` — End-user configuration and usage guides
+- `docs/developer/` — Architecture, design docs, and implementation details
+- `website/` — Hugo static site generator (auto-builds from markdown)
+
+**For detailed guidance on writing and updating documentation, see:**
+- [`.github/instructions/documentation.instructions.md`](./.github/instructions/documentation.instructions.md)
+
+**For code review guidelines, see:**
+- [`.github/instructions/review.instructions.md`](./.github/instructions/review.instructions.md)
+
+Key developer docs:
 - `rendering.md`, `render_loop.md` — Rendering pipeline
 - `wayland.md` — Protocol implementation details
 - `screenshare.md` — Screen sharing architecture and D-Bus API
@@ -132,3 +153,4 @@ Detailed design docs in `docs/developer/`:
 User documentation in `docs/user/`:
 - `configuration.md` — Configuration options
 - `clipboard.md` — Clipboard usage
+- `project-structure.md` — Codebase organization

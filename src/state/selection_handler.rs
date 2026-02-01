@@ -63,8 +63,8 @@ impl<BackendData: Backend> SelectionHandler for Otto<BackendData> {
 }
 
 impl<BackendData: Backend> PrimarySelectionHandler for Otto<BackendData> {
-    fn primary_selection_state(&self) -> &PrimarySelectionState {
-        &self.primary_selection_state
+    fn primary_selection_state(&mut self) -> &mut PrimarySelectionState {
+        &mut self.primary_selection_state
     }
 }
 

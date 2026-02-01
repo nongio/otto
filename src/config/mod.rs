@@ -27,7 +27,6 @@ pub struct Config {
     pub dock: DockConfig,
     #[serde(default)]
     pub layer_shell: LayerShellConfig,
-    pub compositor_mode: String,
     pub font_family: String,
     pub keyboard_repeat_delay: i32,
     pub keyboard_repeat_rate: i32,
@@ -56,7 +55,6 @@ impl Default for Config {
             input: InputConfig::default(),
             dock: DockConfig::default(),
             layer_shell: LayerShellConfig::default(),
-            compositor_mode: "drm".to_string(),
             font_family: "Inter".to_string(),
             keyboard_repeat_delay: 300,
             keyboard_repeat_rate: 30,

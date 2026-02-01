@@ -120,10 +120,18 @@ then you'll need to install the following packages as well:
 
 You can run Otto with cargo after having cloned this repository:
 
-```
-cd otto;
+```bash
+cd otto
 
-cargo run -- --{backend}
+# Run with default features (lean)
+cargo run -- --winit
+
+# Run with development features (debugger, profiler)
+cargo run --features "dev" -- --winit
+
+# Release build
+cargo build --release
+cargo run --release -- --winit
 ```
 
 Current available backends:

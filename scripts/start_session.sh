@@ -89,7 +89,7 @@ if [ "$EUID" -ne 0 ] && [ -z "$LIBSEAT_BACKEND" ]; then
 fi
 
 # Start compositor in background first
-RUST_LOG=$LOG_LEVEL target/release/otto --tty-udev > "$COMPOSITOR_LOG" 2>&1 &
+RUST_LOG=$LOG_LEVEL target/release/otto --tty-udev 2> "$COMPOSITOR_LOG" &
 COMPOSITOR_PID=$!
 log_info "Compositor started in background PID: $COMPOSITOR_PID"
 
