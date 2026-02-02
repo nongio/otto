@@ -5,8 +5,8 @@ use smithay::xwayland::XWaylandClientData;
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
     desktop::{
-        find_popup_root_surface, layer_map_for_output, LayerSurface, PopupKind, WindowSurface,
-        WindowSurfaceType,
+        find_popup_root_surface, layer_map_for_output, utils::with_surfaces_surface_tree,
+        LayerSurface, PopupKind, WindowSurface, WindowSurfaceType,
     },
     output::Output,
     reexports::{
@@ -134,6 +134,9 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
                 }
             }
         });
+        
+        // Note: Layers are created lazily via get_or_create_layer_for_surface when needed
+        // Layer shells will have already registered their workspace layer before this point
     }
 
     fn commit(&mut self, surface: &WlSurface) {
@@ -144,10 +147,10 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
         let surface_id = surface.id();
 
         if !sync {
-            // Check if this is a layer shell surface first
-            if self.layer_surfaces.contains_key(&surface_id) {
-                self.update_layer_surface(&surface_id);
-
+            if let Some(_layer_shell_surf) = self.layer_surfaces.get(&surface_id) {
+                // Layer shells don't need build_cache_for_view - they use the workspace layer directly
+                self.update_layer_shell_surface(&surface_id);
+                
                 // Don't recalculate here - it causes deadlock since layer_map is borrowed
                 // Recalculation will happen during arrange in ensure_initial_configure
             } else {
@@ -178,37 +181,52 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
                         }
                     });
 
-                let window = root_id
+                // Check if the root is a layer shell surface
+                let is_layer_shell = root_id
                     .as_ref()
-                    .and_then(|id| self.workspaces.get_window_for_surface(id).cloned())
-                    .or_else(|| self.workspaces.get_window_for_surface(&surface_id).cloned());
+                    .map(|id| self.layer_surfaces.contains_key(id))
+                    .or_else(|| Some(self.layer_surfaces.contains_key(&surface_id)))
+                    .unwrap_or(false);
 
-                if let Some(window) = window {
-                    window.on_commit();
-                    self.update_window_view(&window);
+                if is_layer_shell {
+                    // Popup belongs to a layer shell - update the layer shell to render the popup
+                    let layer_id = root_id.as_ref().unwrap_or(&surface_id);
+                    self.update_layer_shell_surface(layer_id);
+                } else {
+                    // Handle regular window popups
+                    let window = root_id
+                        .as_ref()
+                        .and_then(|id| self.workspaces.get_window_for_surface(id).cloned())
+                        .or_else(|| self.workspaces.get_window_for_surface(&surface_id).cloned());
 
-                    // Update foreign toplevel list only if title or app_id actually changed
-                    if let Some(handle) = root_id
-                        .or(Some(surface_id))
-                        .and_then(|id| self.foreign_toplevels.get(&id))
-                    {
-                        let title = window.xdg_title();
-                        let app_id = window.xdg_app_id();
+                    if let Some(window) = window {
+                        window.on_commit();
 
-                        // Only send updates if the values have changed
-                        // Note: send_title/send_app_id internally check if values changed
-                        // but we still need to avoid sending unnecessary done events
-                        let title_changed = handle.title() != title;
-                        let app_id_changed = handle.app_id() != app_id;
+                        self.update_window_view(&window);
 
-                        if title_changed || app_id_changed {
-                            if title_changed {
-                                handle.send_title(&title);
+                        // Update foreign toplevel list only if title or app_id actually changed
+                        if let Some(handle) = root_id
+                            .or(Some(surface_id))
+                            .and_then(|id| self.foreign_toplevels.get(&id))
+                        {
+                            let title = window.xdg_title();
+                            let app_id = window.xdg_app_id();
+
+                            // Only send updates if the values have changed
+                            // Note: send_title/send_app_id internally check if values changed
+                            // but we still need to avoid sending unnecessary done events
+                            let title_changed = handle.title() != title;
+                            let app_id_changed = handle.app_id() != app_id;
+
+                            if title_changed || app_id_changed {
+                                if title_changed {
+                                    handle.send_title(&title);
+                                }
+                                if app_id_changed {
+                                    handle.send_app_id(&app_id);
+                                }
+                                handle.send_done();
                             }
-                            if app_id_changed {
-                                handle.send_app_id(&app_id);
-                            }
-                            handle.send_done();
                         }
                     }
                 }
@@ -222,6 +240,9 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
         self.schedule_event_loop_dispatch();
     }
     fn destroyed(&mut self, surface: &WlSurface) {
+        // Clean up the layer for this surface
+        self.destroy_layer_for_surface(&surface.id());
+        
         // Find root surface for this destroyed surface
         // 1. Check popup cache first (O(1)) - entry removal happens in popup_destroyed
         // 2. Try PopupManager for popups
@@ -264,6 +285,206 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
     }
 }
 
+impl<BackendData: Backend> Otto<BackendData> {
+    fn update_layer_shell_surface(
+        &mut self,
+        surface_id: &smithay::reexports::wayland_server::backend::ObjectId,
+    ) {
+        // Extract needed data first to avoid borrow conflicts
+        let (geometry, wl_surface) = {
+            let Some(layer_shell_surf) = self.layer_surfaces.get(surface_id) else {
+                return;
+            };
+            
+            let output = layer_shell_surf.output().clone();
+            let Some(output_geo) = self.workspaces.output_geometry(&output) else {
+                return;
+            };
+            let geometry = layer_shell_surf.compute_geometry(output_geo);
+            let wl_surface = layer_shell_surf.layer_surface().wl_surface().clone();
+            
+            (geometry, wl_surface)
+        };
+        
+        let scale_factor = crate::config::Config::with(|c| c.screen_scale);
+
+        // Handle popups for this layer shell surface (e.g., waybar calendar)
+        let layer_position = layers::types::Point {
+            x: (geometry.loc.x as f64 * scale_factor) as f32,
+            y: (geometry.loc.y as f64 * scale_factor) as f32,
+        };
+
+        use smithay::desktop::PopupManager;
+
+        PopupManager::popups_for_surface(&wl_surface).for_each(|(popup, popup_offset)| {
+            let offset: smithay::utils::Point<f64, smithay::utils::Physical> =
+                popup_offset.to_physical_precise_round(scale_factor);
+            let popup_surface = popup.wl_surface();
+            let popup_id = popup_surface.id();
+
+            // Calculate absolute popup position (layer shell position + popup offset)
+            let popup_position = layers::types::Point {
+                x: layer_position.x + offset.x as f32,
+                y: layer_position.y + offset.y as f32,
+            };
+
+            // Collect surfaces for this popup
+            let mut popup_surfaces = Vec::new();
+            let popup_origin: smithay::utils::Point<f64, smithay::utils::Physical> =
+                (0.0, 0.0).into();
+            with_surfaces_surface_tree(popup_surface, |surface, states| {
+                if let Some(window_view) =
+                    self.window_view_for_surface(surface, states, &popup_origin, scale_factor, None)
+                {
+                    popup_surfaces.push(window_view);
+                }
+            });
+
+            // Send popup to the overlay layer and register its surface layers
+            #[allow(clippy::mutable_key_type)]
+            let popup_layers = self.workspaces.popup_overlay.update_popup(
+                &popup_id,
+                surface_id,
+                popup_position,
+                popup_surfaces,
+                None,
+                &self.layers_engine,
+                &self.surface_layers,
+            );
+
+            self.surface_layers.extend(popup_layers);
+        });
+
+        // Ensure all surfaces in the tree have rendering layers
+        self.ensure_surface_tree_layers(&wl_surface);
+        
+        // Collect render elements from the surface tree (same as update_window_view)
+        let mut render_elements = std::collections::VecDeque::new();
+        let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> = (0.0, 0.0).into();
+        let initial_context = (initial_location, initial_location, None);
+        
+        // Collect all surfaces and build parent-child map
+        #[allow(clippy::mutable_key_type, clippy::type_complexity)]
+        let mut surface_info: std::collections::HashMap<
+            smithay::reexports::wayland_server::backend::ObjectId,
+            (
+                WlSurface,
+                smithay::utils::Point<f64, smithay::utils::Physical>,
+                Option<smithay::reexports::wayland_server::backend::ObjectId>,
+            ),
+        > = std::collections::HashMap::new();
+        
+        smithay::wayland::compositor::with_surface_tree_downward(
+            &wl_surface,
+            initial_context,
+            |surface, states, (location, _parent_location, _parent_id)| {
+                let mut location = *location;
+                let data = states
+                    .data_map
+                    .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>(
+                );
+                let mut cached_state = states
+                    .cached_state
+                    .get::<smithay::wayland::shell::xdg::SurfaceCachedState>();
+                let cached_state = cached_state.current();
+                let surface_geometry = cached_state.geometry.unwrap_or_default();
+                
+                if let Some(data) = data {
+                    let data = data.lock().unwrap();
+                    if let Some(view) = data.view() {
+                        location += view.offset.to_f64().to_physical(scale_factor);
+                        location -= surface_geometry.loc.to_f64().to_physical(scale_factor);
+                        smithay::wayland::compositor::TraversalAction::DoChildren((
+                            location,
+                            location,
+                            Some(surface.id()),
+                        ))
+                    } else {
+                        smithay::wayland::compositor::TraversalAction::SkipChildren
+                    }
+                } else {
+                    smithay::wayland::compositor::TraversalAction::SkipChildren
+                }
+            },
+            |surface, states, (location, parent_location, parent_id)| {
+                let relative_offset = if parent_id.is_some() {
+                    *location - *parent_location
+                } else {
+                    *location
+                };
+                
+                if let Some(wvs) = self.window_view_for_surface(
+                    surface,
+                    states,
+                    &relative_offset,
+                    scale_factor,
+                    parent_id.clone(),
+                ) {
+                    render_elements.push_front(wvs.clone());
+                    surface_info.insert(
+                        surface.id(),
+                        (surface.clone(), *location, parent_id.clone()),
+                    );
+                }
+            },
+            |_, _, _| true,
+        );
+
+        // Now sync the layer hierarchy to match the surface tree (same as windows)
+        for (surface_id, (_surface, _pos, parent_id)) in surface_info.iter() {
+            let surface_layer =
+                self.get_or_create_layer_for_surface(&surface_info.get(surface_id).unwrap().0);
+
+            // Set key for proper opacity inheritance (like window content layers)
+            surface_layer.set_key(format!("layer_shell_surface_{:?}", surface_id));
+
+            if let Some(wvs) = render_elements.iter().find(|e| &e.id == surface_id) {
+                // Configure layer with all properties and draw callback
+                crate::workspaces::utils::configure_surface_layer(&surface_layer, wvs);
+
+                // Set up parent-child relationship
+                // Only append if there's a parent - root surface is handled separately below
+                if let Some(parent_id) = parent_id {
+                    if surface_id != parent_id {
+                        if let Some(parent_layer) = self.surface_layers.get(parent_id) {
+                            self.layers_engine
+                                .append_layer(&surface_layer, parent_layer.id());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Update the container layer with size and position
+        let layer = {
+            let Some(layer_shell_surf) = self.layer_surfaces.get(surface_id) else {
+                return;
+            };
+            layer_shell_surf.layer.clone()
+        };
+
+        layer.set_size(
+            layers::types::Size::points(
+                (geometry.size.w as f64 * scale_factor) as f32,
+                (geometry.size.h as f64 * scale_factor) as f32,
+            ),
+            None,
+        );
+        layer.set_position(
+            (
+                (geometry.loc.x as f64 * scale_factor) as f32,
+                (geometry.loc.y as f64 * scale_factor) as f32,
+            ),
+            None,
+        );
+        layer.set_hidden(false);
+
+        // For layer shells, the workspace layer IS the surface layer
+        // Don't try to append it to itself - it's already added in create_layer_shell_layer
+        // (Regular windows would need to append surface layers to window container layer here)
+    }
+}
+
 impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
     fn shell_state(&mut self) -> &mut WlrLayerShellState {
         &mut self.layer_shell_state
@@ -284,22 +505,27 @@ impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
         // Create the Smithay LayerSurface wrapper
         let layer_surface = LayerSurface::new(surface.clone(), namespace.clone());
 
-        // Create a lay_rs layer for rendering
+        // Create a lay_rs layer for rendering (container layer for the layer shell surface)
         let layer = self
             .workspaces
             .create_layer_shell_layer(wlr_layer, &namespace);
 
+        // For layer shells, the workspace layer IS the rendering layer
+        // Register it in surface_layers so get_or_create_layer_for_surface returns it
+        let surface_id = surface.wl_surface().id();
+        self.surface_layers
+            .insert(surface_id.clone(), layer.clone());
+
         // Create our compositor-owned wrapper
         let layer_shell_surface = LayerShellSurface::new(
             layer_surface.clone(),
-            layer,
+            layer.clone(),
             output.clone(),
             wlr_layer,
             namespace,
         );
 
         // Store in our map
-        let surface_id = surface.wl_surface().id();
         self.layer_surfaces.insert(surface_id, layer_shell_surface);
 
         // Also register with Smithay's layer map for protocol compliance
@@ -322,6 +548,13 @@ impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
         // Remove from our compositor map and clean up lay_rs layer
         if let Some(layer_shell_surface) = self.layer_surfaces.remove(&surface_id) {
             let output = layer_shell_surface.output().clone();
+            
+            // Clear the warm cache for this surface to prevent dangling layer references
+            self.view_warm_cache.remove(&surface_id);
+            
+            // Clear the surface_layers cache entry for the layer shell
+            self.surface_layers.remove(&surface_id);
+            
             self.workspaces
                 .remove_layer_shell_layer(&layer_shell_surface.layer);
             tracing::info!(

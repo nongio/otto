@@ -18,7 +18,7 @@ use smithay::{
     },
     utils::{Rectangle, Serial},
     wayland::{
-        compositor::with_states,
+        compositor::{with_states, with_surface_tree_downward, TraversalAction},
         seat::WaylandFocus,
         shell::xdg::{
             Configure, PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler,
@@ -150,16 +150,8 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         );
         self.foreign_toplevels.insert(surface_id.clone(), handles);
 
-        // Pre-populate surface_layers for toplevel and all subsurfaces
-        self.prepopulate_surface_layers(surface.wl_surface());
-
-        // Inject warm cache into WindowView's content view
-        if let Some(view) = self.workspaces.get_window_view(&surface_id) {
-            if let Some(cache) = self.view_warm_cache.remove(&surface_id) {
-                view.view_content.set_viewlayer_node_map(cache);
-                tracing::debug!("Injected warm cache into WindowView for {:?}", surface_id);
-            }
-        }
+        // Create the rendering layer for sc_layers to find
+        self.get_or_create_layer_for_surface(surface.wl_surface());
 
         let keyboard = self.seat.get_keyboard().unwrap();
         keyboard.set_focus(self, Some(window_element.into()), Serial::from(0));
@@ -202,7 +194,11 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             handle.send_closed();
         }
 
-        // Clean up surface_layers and sc_layers for removed popup surfaces
+        // Clean up surface_layers and sc_layers for the main window and removed popup surfaces
+        self.surface_layers.remove(&id);
+        self.sc_layers.remove(&id);
+        self.view_warm_cache.remove(&id);
+        
         for surface_id in removed_surface_ids {
             self.surface_layers.remove(&surface_id);
             self.sc_layers.remove(&surface_id);
@@ -235,13 +231,6 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         // Cache the root surface mapping for fast lookup during commit/destroy
         if let Ok(root) = find_popup_root_surface(&popup_kind) {
             self.popup_root_cache.insert(popup_id.clone(), root.id());
-
-            // Pre-create layer for popup with matching key format
-            let popup_layer = self.layers_engine.new_layer();
-            popup_layer.set_key(format!("surface_{:?}", popup_id));
-
-            // Pre-populate for popup and subsurfaces
-            self.prepopulate_surface_layers(popup_surface);
         }
 
         if let Err(err) = self.popups.track_popup(popup_kind) {
@@ -253,10 +242,11 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         // Use cached root lookup - O(1) instead of traversing popup tree
         let popup_id = popup_surface.wl_surface().id();
 
-        // Remove from popup overlay layer and unregister surface layers
+        // Remove from popup overlay layer
         self.workspaces.popup_overlay.remove_popup(&popup_id);
 
-        self.surface_layers.remove(&popup_id);
+        // Clean up layers for this popup surface
+        self.destroy_layer_for_surface(&popup_id);
         // Also clean up any sc-layers attached to these surfaces
         self.sc_layers.remove(&popup_id);
 
@@ -1216,44 +1206,49 @@ impl<BackendData: Backend> Otto<BackendData> {
         });
     }
 
-    /// Pre-populate surface_layers for a surface and all its subsurfaces
-    /// This allows sc-layer to attach immediately without waiting for buffer commit
-    /// Also builds a warm cache for the View's layer lookup
-    fn prepopulate_surface_layers(&mut self, surface: &WlSurface) {
-        use smithay::wayland::compositor::with_surface_tree_downward;
-        use smithay::wayland::compositor::TraversalAction;
-        use std::collections::{HashMap, VecDeque};
-
+    /// Get or create a layer for a surface
+    /// Returns existing layer from cache if available, otherwise creates a new one
+    pub(crate) fn get_or_create_layer_for_surface(&mut self, surface: &WlSurface) -> Layer {
         let surface_id = surface.id();
-        let mut cache: HashMap<String, VecDeque<layers::prelude::NodeRef>> = HashMap::new();
+        
+        if let Some(layer) = self.surface_layers.get(&surface_id) {
+            return layer.clone();
+        }
+        
+        let key = format!("surface_{:?}", surface_id);
+        let layer = self.layers_engine.new_layer();
+        layer.set_key(&key);
 
-        // Walk the surface tree and create layers for each surface + subsurfaces
+        self.surface_layers
+            .insert(surface_id.clone(), layer.clone());
+        layer
+    }
+
+    /// Ensure all surfaces in the tree have rendering layers
+    /// This is called during rendering to lazily create layers as needed
+    /// Note: get_or_create_layer_for_surface already handles cache insertion
+    pub(crate) fn ensure_surface_tree_layers(&mut self, surface: &WlSurface) {
         with_surface_tree_downward(
             surface,
             (),
             |_, _, _| TraversalAction::DoChildren(()),
-            |sub_surface, _, _| {
-                let sub_id = sub_surface.id();
-
-                // Create a layer for this surface with matching key format
-                let layer = self.layers_engine.new_layer();
-                let key = format!("surface_{:?}", sub_id);
-                layer.set_key(&key);
-
-                // Register in surface_layers for sc-layer attachment
-                self.surface_layers.insert(sub_id.clone(), layer.clone());
-
-                // Add to warm cache for View
-                let mut deque = VecDeque::new();
-                deque.push_back(layer.id);
-                cache.insert(key, deque);
-
-                tracing::debug!("Pre-populated surface_layer for {:?}", sub_id);
+            |surface, _states, _| {
+                // This will create and cache the layer if it doesn't exist
+                // If it exists, it just returns it without modifying the cache
+                let _ = self.get_or_create_layer_for_surface(surface);
             },
             |_, _, _| true,
         );
+    }
 
-        // Store the warm cache indexed by main surface ID
-        self.view_warm_cache.insert(surface_id, cache);
+    /// Destroy the layer associated with a surface
+    /// Removes from surface_layers hashmap and marks for deletion in layers_engine
+    pub(crate) fn destroy_layer_for_surface(
+        &mut self,
+        surface_id: &smithay::reexports::wayland_server::backend::ObjectId,
+    ) {
+        if let Some(layer) = self.surface_layers.remove(surface_id) {
+            self.layers_engine.mark_for_delete(layer.id);
+        }
     }
 }
