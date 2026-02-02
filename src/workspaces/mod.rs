@@ -2611,12 +2611,9 @@ impl Workspaces {
                 self.layer_shell_background.add_sublayer(&layer);
             }
             WlrLayer::Bottom => {
-                // Bottom layers go just above background, below workspaces
-                // For now, add to background container (we can refine z-order later)
                 self.layer_shell_background.add_sublayer(&layer);
             }
             WlrLayer::Top => {
-                // Top layers go above windows, below overlay
                 self.layer_shell_overlay.add_sublayer(&layer);
             }
             WlrLayer::Overlay => {
