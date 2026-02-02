@@ -150,8 +150,8 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         );
         self.foreign_toplevels.insert(surface_id.clone(), handles);
 
-        // Create a layer for the toplevel surface
-        self.create_layer_for_surface(surface.wl_surface());
+        // Layer will be created lazily when needed for rendering
+        // self.get_or_create_layer_for_surface(surface.wl_surface());
 
         // Inject warm cache into WindowView's content view
         if let Some(view) = self.workspaces.get_window_view(&surface_id) {
@@ -235,8 +235,8 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         if let Ok(root) = find_popup_root_surface(&popup_kind) {
             self.popup_root_cache.insert(popup_id.clone(), root.id());
 
-            // Create layer for popup surface
-            self.create_layer_for_surface(popup_surface);
+            // Layer will be created lazily when needed
+            // self.get_or_create_layer_for_surface(popup_surface);
         }
 
         if let Err(err) = self.popups.track_popup(popup_kind) {
@@ -1212,17 +1212,21 @@ impl<BackendData: Backend> Otto<BackendData> {
         });
     }
 
-    /// Create a layer for this surface
-    /// The warm cache will be built later during commit when we know the surface tree structure
-    pub(crate) fn create_layer_for_surface(&mut self, surface: &WlSurface) {
-        let key = format!("surface_{:?}", surface.id());
-        self.surface_layers.entry(surface.id().clone())
-            .or_insert_with(|| {
-                let layer = self.layers_engine.new_layer();
-                layer.set_key(&key);
-                tracing::debug!("🆕 Created rendering layer {:?} for surface {:?}", layer.id, surface.id());
-                layer
-            });
+    /// Get or create a layer for a surface
+    /// Returns existing layer from cache if available, otherwise creates a new one
+    pub(crate) fn get_or_create_layer_for_surface(&mut self, surface: &WlSurface) -> Layer {
+        let surface_id = surface.id();
+        
+        if let Some(layer) = self.surface_layers.get(&surface_id) {
+            return layer.clone();
+        }
+        
+        let key = format!("surface_{:?}", surface_id);
+        let layer = self.layers_engine.new_layer();
+        layer.set_key(&key);
+        
+        self.surface_layers.insert(surface_id, layer.clone());
+        layer
     }
 
     /// Destroy the layer associated with a surface
@@ -1230,7 +1234,6 @@ impl<BackendData: Backend> Otto<BackendData> {
     pub(crate) fn destroy_layer_for_surface(&mut self, surface_id: &smithay::reexports::wayland_server::backend::ObjectId) {
         if let Some(layer) = self.surface_layers.remove(surface_id) {
             self.layers_engine.mark_for_delete(layer.id);
-            tracing::debug!("🗑️  Destroyed rendering layer {:?} for surface {:?}", layer.id, surface_id);
         }
     }
 
@@ -1241,52 +1244,58 @@ impl<BackendData: Backend> Otto<BackendData> {
         use smithay::wayland::compositor::with_surface_tree_downward;
         use std::collections::{HashMap, VecDeque};
 
-        // Optimization: if cache exists and current surface is already in it, nothing to do
         if let Some(existing_cache) = self.view_warm_cache.get(root_id) {
             let key = format!("surface_{:?}", surface_id);
             if existing_cache.contains_key(&key) {
-                tracing::debug!("⚡ Cache already contains surface {:?}, skipping rebuild", surface_id);
                 return;
             }
         }
 
-        // Check if we already have a warm cache for this root
         if self.view_warm_cache.contains_key(root_id) {
             return;
         }
 
-        // Get the root surface
-        let Some(root_surface) = self.workspaces.get_window_for_surface(root_id)
-            .and_then(|w| w.wl_surface())
-            .map(|s| s.clone().into_owned())
-        else {
+        let root_surface = if let Some(layer_shell) = self.layer_surfaces.get(root_id) {
+            Some(layer_shell.layer_surface().wl_surface().clone())
+        } else if let Some(window) = self.workspaces.get_window_for_surface(root_id) {
+            // It's a regular window
+            window.wl_surface().map(|s| s.clone().into_owned())
+        } else {
+            None
+        };
+        
+        let Some(root_surface) = root_surface else {
             return;
         };
 
         let mut cache: HashMap<String, VecDeque<layers::prelude::NodeRef>> = HashMap::new();
 
-        // Walk the toplevel and its subsurfaces (popups are handled separately when they commit)
         with_surface_tree_downward(
             &root_surface,
-            (),
-            |_, _, _| smithay::wayland::compositor::TraversalAction::DoChildren(()),
-            |surface, _, _| {
+            None,
+            |surface, _, parent_layer: &Option<Layer>| {
+                let layer = self.get_or_create_layer_for_surface(surface);
+                
+                if let Some(parent) = parent_layer {
+                    parent.add_sublayer(&layer);
+                }
+                
+                smithay::wayland::compositor::TraversalAction::DoChildren(Some(layer))
+            },
+            |surface, _, current_layer: &Option<Layer>| {
                 let surface_id = surface.id();
                 let key = format!("surface_{:?}", surface_id);
 
-                // Get the layer we created earlier in create_layer_for_surface
-                if let Some(layer) = self.surface_layers.get(&surface_id) {
+                if let Some(layer) = current_layer {
                     let mut deque = VecDeque::new();
                     deque.push_back(layer.id);
                     cache.insert(key.clone(), deque);
-                    tracing::debug!("📦 Added to warm_cache: {} -> layer {:?}", key, layer.id);
                 }
             },
             |_, _, _| true,
         );
 
         if !cache.is_empty() {
-            tracing::debug!("✅ Built warm_cache for root {:?} with {} entries", root_id, cache.len());
             self.view_warm_cache.insert(root_id.clone(), cache);
         }
     }

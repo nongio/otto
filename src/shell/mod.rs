@@ -134,7 +134,9 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
                 }
             }
         });
-        self.create_layer_for_surface(surface);
+        
+        // Note: Layers are created lazily via get_or_create_layer_for_surface when needed
+        // Layer shells will have already registered their workspace layer before this point
     }
 
     fn commit(&mut self, surface: &WlSurface) {
@@ -145,8 +147,10 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
         let surface_id = surface.id();
 
         if !sync {
-            // Check if this is a layer shell surface first
-            if self.layer_surfaces.contains_key(&surface_id) {
+            if let Some(layer_shell_surf) = self.layer_surfaces.get(&surface_id) {
+                self.build_cache_for_view(&surface_id, &surface_id);
+                self.update_layer_shell_surface(&surface_id);
+                
                 // Don't recalculate here - it causes deadlock since layer_map is borrowed
                 // Recalculation will happen during arrange in ensure_initial_configure
             } else {
@@ -182,19 +186,16 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
                     .and_then(|id| self.workspaces.get_window_for_surface(id).cloned())
                     .or_else(|| self.workspaces.get_window_for_surface(&surface_id).cloned());
 
+                let effective_root_id = root_id.clone().unwrap_or_else(|| surface_id.clone());
+
                 if let Some(window) = window {
                     window.on_commit();
                     
-                    // Build warm_cache for this window if it doesn't exist yet
-                    if let Some(root_id) = root_id.as_ref() {
-                        self.build_cache_for_view(root_id, &surface_id);
-                        
-                        // Inject the warm cache into the window view if it exists
-                        if let Some(view) = self.workspaces.get_window_view(root_id) {
-                            if let Some(cache) = self.view_warm_cache.remove(root_id) {
-                                tracing::debug!("💉 Injected warm_cache into WindowView for {:?} with {} entries", root_id, cache.len());
-                                view.view_content.set_viewlayer_node_map(cache);
-                            }
+                    self.build_cache_for_view(&effective_root_id, &surface_id);
+                    
+                    if let Some(view) = self.workspaces.get_window_view(&effective_root_id) {
+                        if let Some(cache) = self.view_warm_cache.remove(&effective_root_id) {
+                            view.view_content.set_viewlayer_node_map(cache);
                         }
                     }
                     
@@ -280,6 +281,116 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
     }
 }
 
+impl<BackendData: Backend> Otto<BackendData> {
+    fn update_layer_shell_surface(&mut self, surface_id: &smithay::reexports::wayland_server::backend::ObjectId) {
+        let Some(layer_shell_surf) = self.layer_surfaces.get(surface_id) else {
+            return;
+        };
+        
+        let scale_factor = crate::config::Config::with(|c| c.screen_scale);
+        let output = layer_shell_surf.output().clone();
+        let Some(output_geo) = self.workspaces.output_geometry(&output) else {
+            return;
+        };
+        let geometry = layer_shell_surf.compute_geometry(output_geo);
+        let wl_surface = layer_shell_surf.layer_surface().wl_surface();
+        
+        // Collect render elements from the surface tree (similar to update_window_view)
+        let mut render_elements: Vec<crate::workspaces::WindowViewSurface> = Vec::new();
+        let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> = (0.0, 0.0).into();
+        
+        smithay::wayland::compositor::with_surface_tree_downward(
+            wl_surface,
+            initial_location,
+            |_, states, location| {
+                let mut location = *location;
+                let data = states.data_map.get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>();
+                let mut cached_state = states.cached_state.get::<smithay::wayland::shell::xdg::SurfaceCachedState>();
+                let cached_state = cached_state.current();
+                let surface_geometry = cached_state.geometry.unwrap_or_default();
+                
+                if let Some(data) = data {
+                    let data = data.lock().unwrap();
+                    if let Some(view) = data.view() {
+                        location += view.offset.to_f64().to_physical(scale_factor);
+                        location -= surface_geometry.loc.to_f64().to_physical(scale_factor);
+                        smithay::wayland::compositor::TraversalAction::DoChildren(location)
+                    } else {
+                        smithay::wayland::compositor::TraversalAction::SkipChildren
+                    }
+                } else {
+                    smithay::wayland::compositor::TraversalAction::SkipChildren
+                }
+            },
+            |surface, states, location| {
+                if let Some(wvs) = self.window_view_for_surface(surface, states, location, scale_factor, None) {
+                    render_elements.push(wvs);
+                }
+            },
+            |_, _, _| true,
+        );
+        
+        // Update the workspace layer with size and position
+        let layer = &layer_shell_surf.layer;
+        layer.set_size(layers::types::Size::points(
+            (geometry.size.w as f64 * scale_factor) as f32,
+            (geometry.size.h as f64 * scale_factor) as f32
+        ), None);
+        layer.set_position((
+            (geometry.loc.x as f64 * scale_factor) as f32,
+            (geometry.loc.y as f64 * scale_factor) as f32
+        ), None);
+        layer.set_hidden(false);
+        
+        // Use the view_render_elements approach to set up rendering
+        if !render_elements.is_empty() {
+            let elements = render_elements.clone();
+            let width = (geometry.size.w as f64 * scale_factor) as f32;
+            let height = (geometry.size.h as f64 * scale_factor) as f32;
+            
+            layer.set_draw_content(move |canvas: &layers::skia::Canvas, _w, _h| {
+                for wvs in &elements {
+                    if wvs.phy_dst_w <= 0.0 || wvs.phy_dst_h <= 0.0 {
+                        continue;
+                    }
+                    let tex = crate::textures_storage::get(&wvs.id);
+                    if let Some(tex) = tex {
+                        let src_h = (wvs.phy_src_h - wvs.phy_src_y).max(1.0);
+                        let src_w = (wvs.phy_src_w - wvs.phy_src_x).max(1.0);
+                        let scale_y = wvs.phy_dst_h / src_h;
+                        let scale_x = wvs.phy_dst_w / src_w;
+                        let mut matrix = layers::skia::Matrix::new_identity();
+                        matrix.pre_translate((-wvs.phy_src_x, -wvs.phy_src_y));
+                        matrix.pre_scale((scale_x, scale_y), None);
+
+                        let sampling = layers::skia::SamplingOptions::from(
+                            layers::skia::CubicResampler::catmull_rom(),
+                        );
+                        let mut paint = layers::skia::Paint::new(
+                            layers::skia::Color4f::new(1.0, 1.0, 1.0, 1.0),
+                            None,
+                        );
+                        paint.set_shader(tex.image.to_shader(
+                            (layers::skia::TileMode::Clamp, layers::skia::TileMode::Clamp),
+                            sampling,
+                            &matrix,
+                        ));
+
+                        let dst_rect = layers::skia::Rect::from_xywh(
+                            wvs.phy_dst_x,
+                            wvs.phy_dst_y,
+                            wvs.phy_dst_w,
+                            wvs.phy_dst_h,
+                        );
+                        canvas.draw_rect(dst_rect, &paint);
+                    }
+                }
+                layers::skia::Rect::from_xywh(0.0, 0.0, width, height)
+            });
+        }
+    }
+}
+
 impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
     fn shell_state(&mut self) -> &mut WlrLayerShellState {
         &mut self.layer_shell_state
@@ -305,17 +416,22 @@ impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
             .workspaces
             .create_layer_shell_layer(wlr_layer, &namespace);
 
+        // Register the workspace layer in surface_layers cache IMMEDIATELY
+        // This must happen before any other handlers that might call get_or_create_layer_for_surface
+        let surface_id = surface.wl_surface().id();
+        tracing::info!("📌 Registering layer shell layer {:?} for surface {:?}", layer.id, surface_id);
+        self.surface_layers.insert(surface_id.clone(), layer.clone());
+
         // Create our compositor-owned wrapper
         let layer_shell_surface = LayerShellSurface::new(
             layer_surface.clone(),
-            layer,
+            layer.clone(),
             output.clone(),
             wlr_layer,
             namespace,
         );
 
         // Store in our map
-        let surface_id = surface.wl_surface().id();
         self.layer_surfaces.insert(surface_id, layer_shell_surface);
 
         // Also register with Smithay's layer map for protocol compliance
