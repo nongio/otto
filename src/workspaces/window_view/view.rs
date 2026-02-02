@@ -3,16 +3,16 @@ use layers::{
     prelude::{taffy, Layer, Transition},
     skia,
     types::Point,
-    view::{RenderLayerTree, View},
+    view::RenderLayerTree,
 };
 use smithay::{reexports::wayland_server::backend::ObjectId, utils::Logical};
 use std::sync::{atomic::AtomicBool, Arc};
 
-use crate::{shell::WindowElement, workspaces::utils::view_render_elements_wrapper};
+use crate::shell::WindowElement;
 
 use super::{
     effects::GenieEffect,
-    model::{WindowViewBaseModel, WindowViewSurface},
+    model::WindowViewBaseModel,
     render::view_window_shadow,
 };
 
@@ -21,7 +21,6 @@ pub struct WindowView {
     pub window_id: ObjectId,
     // views
     pub view_base: layers::prelude::View<WindowViewBaseModel>,
-    pub view_content: layers::prelude::View<Vec<WindowViewSurface>>,
 
     // layers
     pub window_layer: layers::prelude::Layer,
@@ -59,7 +58,6 @@ impl WindowView {
         layers_engine.append_layer(&shadow_layer, layer.id());
         layers_engine.append_layer(&content_layer, layer.id());
 
-        let render_elements = Vec::new();
         let base_rect = WindowViewBaseModel {
             x: 0.0,
             y: 0.0,
@@ -75,12 +73,6 @@ impl WindowView {
         view_base.mount_layer(shadow_layer.clone());
         let mirror_layer = window.mirror_layer().clone();
         mirror_layer.set_size(shadow_layer.render_layer().bounds.size(), None);
-        let view_content = View::new(
-            "window_content",
-            render_elements,
-            view_render_elements_wrapper,
-        );
-        view_content.mount_layer(content_layer.clone());
 
         layer.set_image_cached(true);
 
@@ -89,8 +81,6 @@ impl WindowView {
         Self {
             window_id,
             view_base,
-            view_content,
-            // state,
             window_layer: layer,
             content_layer,
             shadow_layer,
@@ -207,7 +197,6 @@ impl std::fmt::Debug for WindowView {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WindowView")
             .field("view_base", &self.view_base)
-            .field("view_content", &self.view_content)
             .field("window_layer", &self.window_layer)
             .field("content_layer", &self.content_layer)
             .finish()

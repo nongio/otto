@@ -8,6 +8,7 @@ use std::hash::{Hash, Hasher};
 #[derive(Clone)]
 pub struct WindowViewSurface {
     pub(crate) id: ObjectId,
+    pub(crate) parent_id: Option<ObjectId>, // Parent surface ID for hierarchy
     pub(crate) phy_src_x: f32,
     pub(crate) phy_src_y: f32,
     pub(crate) phy_src_w: f32,
@@ -26,6 +27,7 @@ impl fmt::Debug for WindowViewSurface {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("WindowViewSurface")
             .field("id", &self.id)
+            .field("parent_id", &self.parent_id)
             .field("src_x", &self.phy_src_x)
             .field("src_y", &self.phy_src_y)
             .field("src_w", &self.phy_src_w)
@@ -71,6 +73,9 @@ impl Hash for WindowViewSurface {
             tid.hash(state);
         }
         self.id.hash(state);
+        if let Some(ref parent_id) = self.parent_id {
+            parent_id.hash(state);
+        }
         self.phy_src_x.to_bits().hash(state);
         self.phy_src_y.to_bits().hash(state);
         self.phy_src_w.to_bits().hash(state);
