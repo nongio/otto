@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
@@ -81,20 +82,59 @@ impl Config {
         let mut merged =
             toml::Value::try_from(Self::default()).expect("default config is always valid toml");
 
+        let mut found_any_config = false;
+
+        // Load config files in order of priority (lowest to highest)
+        // 1. System config
+        if let Some(system_config) = get_system_config_path() {
+            if let Ok(content) = std::fs::read_to_string(&system_config) {
+                match content.parse::<toml::Value>() {
+                    Ok(value) => {
+                        merge_value(&mut merged, value);
+                        found_any_config = true;
+                        tracing::info!("Loaded system config from {}", system_config.display());
+                    }
+                    Err(err) => warn!("Failed to parse {}: {err}", system_config.display()),
+                }
+            }
+        }
+
+        // 2. User config (XDG)
+        if let Some(user_config) = get_user_config_path() {
+            if let Ok(content) = std::fs::read_to_string(&user_config) {
+                match content.parse::<toml::Value>() {
+                    Ok(value) => {
+                        merge_value(&mut merged, value);
+                        found_any_config = true;
+                        tracing::info!("Loaded user config from {}", user_config.display());
+                    }
+                    Err(err) => warn!("Failed to parse {}: {err}", user_config.display()),
+                }
+            }
+        }
+
+        // 3. Current directory (dev override)
         if let Ok(content) = std::fs::read_to_string("otto_config.toml") {
             match content.parse::<toml::Value>() {
-                Ok(value) => merge_value(&mut merged, value),
+                Ok(value) => {
+                    merge_value(&mut merged, value);
+                    found_any_config = true;
+                    tracing::info!("Loaded local config from ./otto_config.toml");
+                }
                 Err(err) => warn!("Failed to parse otto_config.toml: {err}"),
             }
         }
 
+        // 4. Backend overrides (highest priority)
         if let Ok(backend) = std::env::var("SCREEN_COMPOSER_BACKEND") {
             for candidate in backend_override_candidates(&backend) {
-                println!("Trying to load backend override config: {}", &candidate);
+                tracing::debug!("Trying to load backend override config: {}", &candidate);
                 if let Ok(content) = std::fs::read_to_string(&candidate) {
                     match content.parse::<toml::Value>() {
                         Ok(value) => {
                             merge_value(&mut merged, value);
+                            found_any_config = true;
+                            tracing::info!("Loaded backend override config from {}", &candidate);
                             break;
                         }
                         Err(err) => {
@@ -102,6 +142,14 @@ impl Config {
                         }
                     }
                 }
+            }
+        }
+
+        // If no config was found, copy example config to current directory
+        if !found_any_config {
+            warn!("No configuration file found, using default config");
+            if let Err(e) = copy_example_config() {
+                warn!("Failed to copy example config: {e}");
             }
         }
 
@@ -153,6 +201,44 @@ fn merge_value(base: &mut toml::Value, overrides: toml::Value) {
             *base_value = override_value;
         }
     }
+}
+
+fn get_system_config_path() -> Option<PathBuf> {
+    let path = PathBuf::from("/etc/otto/config.toml");
+    if path.exists() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn get_user_config_path() -> Option<PathBuf> {
+    let config_dir = std::env::var("XDG_CONFIG_HOME")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|home| PathBuf::from(home).join(".config"))
+        })?;
+
+    let path = config_dir.join("otto").join("config.toml");
+    if path.exists() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn copy_example_config() -> std::io::Result<()> {
+    const EXAMPLE_CONFIG: &str = include_str!("../../otto_config.example.toml");
+
+    let target_path = PathBuf::from("otto_config.toml");
+    if !target_path.exists() {
+        std::fs::write(&target_path, EXAMPLE_CONFIG)?;
+        tracing::info!("Created example config at ./otto_config.toml");
+    }
+    Ok(())
 }
 
 fn backend_override_candidates(backend: &str) -> Vec<String> {
@@ -501,6 +587,8 @@ fn equals_ignore_case(actual: &str, expected: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
+    use std::fs;
 
     #[test]
     fn theme_scheme_defaults_to_light() {
@@ -516,5 +604,173 @@ mod tests {
 
         let config: Config = toml::from_str(overrides).expect("Config should deserialize");
         assert!(matches!(config.theme_scheme, ThemeScheme::Dark));
+    }
+
+    #[test]
+    fn test_get_user_config_path_with_xdg_config_home() {
+        let temp_dir = std::env::temp_dir().join("otto_test_xdg");
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        // Set XDG_CONFIG_HOME temporarily
+        let old_xdg = env::var("XDG_CONFIG_HOME").ok();
+        env::set_var("XDG_CONFIG_HOME", &temp_dir);
+
+        // Create the config file
+        let config_dir = temp_dir.join("otto");
+        fs::create_dir_all(&config_dir).unwrap();
+        let config_file = config_dir.join("config.toml");
+        fs::write(&config_file, "# test config").unwrap();
+
+        let path = get_user_config_path();
+        assert!(path.is_some());
+        assert_eq!(path.unwrap(), config_file);
+
+        // Cleanup
+        fs::remove_dir_all(&temp_dir).ok();
+        if let Some(old) = old_xdg {
+            env::set_var("XDG_CONFIG_HOME", old);
+        } else {
+            env::remove_var("XDG_CONFIG_HOME");
+        }
+    }
+
+    #[test]
+    fn test_get_user_config_path_without_file() {
+        let temp_dir = std::env::temp_dir().join("otto_test_no_file");
+
+        // Set XDG_CONFIG_HOME to a dir without config
+        let old_xdg = env::var("XDG_CONFIG_HOME").ok();
+        env::set_var("XDG_CONFIG_HOME", &temp_dir);
+
+        let path = get_user_config_path();
+        assert!(path.is_none());
+
+        // Cleanup
+        if let Some(old) = old_xdg {
+            env::set_var("XDG_CONFIG_HOME", old);
+        } else {
+            env::remove_var("XDG_CONFIG_HOME");
+        }
+    }
+
+    #[test]
+    fn test_get_system_config_path() {
+        // System config path is fixed
+        let path = get_system_config_path();
+
+        // Only returns Some if the file exists
+        if let Some(p) = path {
+            assert_eq!(p, PathBuf::from("/etc/otto/config.toml"));
+        }
+    }
+
+    #[test]
+    fn test_config_merge_priority() {
+        // Test that config values merge correctly with priority
+        let mut base =
+            toml::Value::try_from(Config::default()).expect("default config is valid toml");
+
+        // Override with custom values
+        let override_toml = r#"
+            screen_scale = 3.0
+            font_family = "Custom Font"
+        "#;
+        let override_value: toml::Value = override_toml.parse().unwrap();
+
+        merge_value(&mut base, override_value);
+
+        let config: Config = base.try_into().unwrap();
+        assert_eq!(config.screen_scale, 3.0);
+        assert_eq!(config.font_family, "Custom Font");
+    }
+
+    #[test]
+    fn test_config_partial_override() {
+        // Test that partial overrides work correctly
+        let mut base =
+            toml::Value::try_from(Config::default()).expect("default config is valid toml");
+
+        // Override only screen_scale, leave other values
+        let override_toml = r#"
+            screen_scale = 1.5
+        "#;
+        let override_value: toml::Value = override_toml.parse().unwrap();
+
+        merge_value(&mut base, override_value);
+
+        let config: Config = base.try_into().unwrap();
+        assert_eq!(config.screen_scale, 1.5);
+        // Other defaults should remain
+        assert_eq!(config.cursor_theme, "Notwaita-Black");
+    }
+
+    #[test]
+    fn test_copy_example_config() {
+        // Test in a temporary directory
+        let temp_dir = std::env::temp_dir().join("otto_test_copy_example");
+        fs::create_dir_all(&temp_dir).ok();
+
+        let original_dir = env::current_dir().unwrap();
+        env::set_current_dir(&temp_dir).unwrap();
+
+        // Ensure no config exists
+        let _ = fs::remove_file("otto_config.toml");
+
+        // Copy example config
+        copy_example_config().expect("Should copy example config");
+
+        // Verify file was created
+        assert!(PathBuf::from("otto_config.toml").exists());
+
+        // Verify it's valid TOML
+        let content = fs::read_to_string("otto_config.toml").unwrap();
+        let _: toml::Value = content.parse().expect("Should be valid TOML");
+
+        // Cleanup
+        env::set_current_dir(original_dir).unwrap();
+        fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_copy_example_config_does_not_overwrite() {
+        // Test in a temporary directory
+        let temp_dir = std::env::temp_dir().join("otto_test_no_overwrite");
+        fs::create_dir_all(&temp_dir).ok();
+
+        let original_dir = env::current_dir().unwrap();
+        env::set_current_dir(&temp_dir).unwrap();
+
+        // Create existing config
+        let existing_content = "# existing config";
+        fs::write("otto_config.toml", existing_content).unwrap();
+
+        // Try to copy example config
+        copy_example_config().expect("Should not error");
+
+        // Verify file was NOT overwritten
+        let content = fs::read_to_string("otto_config.toml").unwrap();
+        assert_eq!(content, existing_content);
+
+        // Cleanup
+        env::set_current_dir(original_dir).unwrap();
+        fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_backend_override_candidates() {
+        let winit = backend_override_candidates("winit");
+        assert_eq!(winit, vec!["otto_config.winit.toml"]);
+
+        let udev = backend_override_candidates("tty-udev");
+        assert_eq!(
+            udev,
+            vec!["otto_config.tty-udev.toml", "otto_config.udev.toml"]
+        );
+
+        let x11 = backend_override_candidates("x11");
+        assert_eq!(x11, vec!["otto_config.x11.toml", "otto_config.udev.toml"]);
+
+        let custom = backend_override_candidates("custom");
+        assert_eq!(custom, vec!["otto_config.custom.toml"]);
     }
 }
