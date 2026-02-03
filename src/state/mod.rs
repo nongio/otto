@@ -237,6 +237,12 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// Manager for the screenshare D-Bus service (started lazily when needed).
     pub screenshare_manager: Option<crate::screenshare::ScreenshareManager>,
 
+    // gamma animation state
+    /// Active gamma transitions: (output_name, from_lut, to_lut, start_time, duration)
+    pub gamma_transitions: HashMap<String, (Vec<u16>, Vec<u16>, Vec<u16>, Vec<u16>, Vec<u16>, Vec<u16>, std::time::Instant, std::time::Duration)>,
+    /// Currently applied gamma per output: (output_name, red_lut, green_lut, blue_lut)
+    pub current_gamma: HashMap<String, (Vec<u16>, Vec<u16>, Vec<u16>)>,
+
     // foreign toplevel list - maps surface ObjectId to unified toplevel handles (both protocols)
     pub foreign_toplevels: HashMap<ObjectId, foreign_toplevel_shared::ForeignToplevelHandles>,
 
@@ -628,6 +634,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             screenshare_sessions: HashMap::new(),
             screenshare_manager: None,
 
+            // gamma transitions
+            gamma_transitions: HashMap::new(),
+            current_gamma: HashMap::new(),
+
             // foreign toplevel list
             foreign_toplevels: HashMap::new(),
 
@@ -742,7 +752,66 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     }
 
     /// Apply gamma LUT to an output (udev backend only)
-    pub fn apply_gamma(&self, output: &Output, red: &[u16], green: &[u16], blue: &[u16]) -> Result<(), String> {
+    /// This version animates the transition over 500ms
+    pub fn apply_gamma(&mut self, output: &Output, red: &[u16], green: &[u16], blue: &[u16]) -> Result<(), String> {
+        #[cfg(feature = "udev")]
+        {
+            use crate::udev::UdevData;
+            if let Some(udev_data) = (&self.backend_data as &dyn std::any::Any).downcast_ref::<UdevData>() {
+                use crate::udev::UdevOutputId;
+                let output_id = output.user_data().get::<UdevOutputId>()
+                    .ok_or_else(|| "Output has no UdevOutputId".to_string())?;
+                let _ = udev_data.backends.get(&output_id.device_id)
+                    .ok_or_else(|| "Backend not found".to_string())?;
+                
+                // Get current gamma as starting point
+                let gamma_size = red.len();
+                let current = if let Some((current_r, current_g, current_b)) = 
+                    self.current_gamma.get(&output.name()) 
+                {
+                    // Use actual current gamma from last apply
+                    (current_r.clone(), current_g.clone(), current_b.clone())
+                } else if let Some((from_r, from_g, from_b, _, _, _, _, _)) = 
+                    self.gamma_transitions.get(&output.name()) 
+                {
+                    // Use the start of ongoing transition as new start
+                    (from_r.clone(), from_g.clone(), from_b.clone())
+                } else {
+                    // Generate linear gamma as default start (first time only)
+                    let linear: Vec<u16> = (0..gamma_size)
+                        .map(|i| ((i as f64 / (gamma_size - 1) as f64) * 65535.0) as u16)
+                        .collect();
+                    (linear.clone(), linear.clone(), linear)
+                };
+                
+                // Store transition
+                self.gamma_transitions.insert(
+                    output.name(),
+                    (
+                        current.0, current.1, current.2,
+                        red.to_vec(), green.to_vec(), blue.to_vec(),
+                        std::time::Instant::now(),
+                        std::time::Duration::from_millis(500),
+                    ),
+                );
+                
+                // Trigger render loop to start animation
+                self.schedule_event_loop_dispatch();
+                
+                Ok(())
+            } else {
+                Err("Not a udev backend".to_string())
+            }
+        }
+        #[cfg(not(feature = "udev"))]
+        {
+            let _ = (output, red, green, blue);
+            Err("Gamma control not supported on this backend".to_string())
+        }
+    }
+
+    /// Apply gamma immediately without animation (for internal use)
+    pub fn apply_gamma_immediate(&self, output: &Output, red: &[u16], green: &[u16], blue: &[u16]) -> Result<(), String> {
         #[cfg(feature = "udev")]
         {
             use crate::udev::UdevData;
@@ -765,22 +834,59 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         }
     }
 
+    /// Tick gamma transitions (called from render loop)
+    pub fn tick_gamma_transitions(&mut self) {
+        let mut completed = Vec::new();
+        
+        for (output_name, (from_r, from_g, from_b, to_r, to_g, to_b, start, duration)) in 
+            self.gamma_transitions.iter() 
+        {
+            let elapsed = start.elapsed();
+            let progress = (elapsed.as_secs_f64() / duration.as_secs_f64()).min(1.0);
+            
+            // Interpolate each color channel
+            let current_r: Vec<u16> = from_r.iter().zip(to_r.iter())
+                .map(|(f, t)| (*f as f64 + (*t as f64 - *f as f64) * progress) as u16)
+                .collect();
+            let current_g: Vec<u16> = from_g.iter().zip(to_g.iter())
+                .map(|(f, t)| (*f as f64 + (*t as f64 - *f as f64) * progress) as u16)
+                .collect();
+            let current_b: Vec<u16> = from_b.iter().zip(to_b.iter())
+                .map(|(f, t)| (*f as f64 + (*t as f64 - *f as f64) * progress) as u16)
+                .collect();
+            
+            // Apply to output
+            if let Some(output) = self.workspaces.outputs().find(|o| &o.name() == output_name) {
+                let _ = self.apply_gamma_immediate(&output, &current_r, &current_g, &current_b);
+                
+                // Update current_gamma tracker
+                self.current_gamma.insert(
+                    output_name.clone(),
+                    (current_r.clone(), current_g.clone(), current_b.clone())
+                );
+            }
+            
+            // Mark as completed if done
+            if progress >= 1.0 {
+                completed.push(output_name.clone());
+            }
+        }
+        
+        // Remove completed transitions
+        for name in completed {
+            self.gamma_transitions.remove(&name);
+        }
+    }
+
     /// Reset gamma to neutral for an output (udev backend only)
-    pub fn reset_gamma(&self, output: &Output) -> Result<(), String> {
+    pub fn reset_gamma(&mut self, output: &Output) -> Result<(), String> {
         #[cfg(feature = "udev")]
         {
-            use crate::udev::UdevData;
-            if let Some(udev_data) = (&self.backend_data as &dyn std::any::Any).downcast_ref::<UdevData>() {
-                use crate::udev::UdevOutputId;
-                let output_id = output.user_data().get::<UdevOutputId>()
-                    .ok_or_else(|| "Output has no UdevOutputId".to_string())?;
-                let backend = udev_data.backends.get(&output_id.device_id)
-                    .ok_or_else(|| "Backend not found".to_string())?;
-                let drm_fd = backend.drm.device_fd();
-                crate::udev::gamma::reset_gamma(drm_fd, output_id.crtc)
-            } else {
-                Err("Not a udev backend".to_string())
-            }
+            // Generate neutral 6500K gamma LUT
+            let size = self.get_gamma_size(output).ok_or("Failed to get gamma size")? as usize;
+            let neutral = crate::udev::gamma::generate_gamma_lut(6500, size);
+            // Use animated apply_gamma for smooth transition back to neutral
+            self.apply_gamma(output, &neutral.0, &neutral.1, &neutral.2)
         }
         #[cfg(not(feature = "udev"))]
         {

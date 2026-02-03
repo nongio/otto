@@ -12,7 +12,7 @@ use tracing::{debug, warn};
 /// 
 /// temperature: 1000-10000 (lower = warmer/more red, higher = cooler/more blue)
 /// size: number of entries in the LUT (typically 256 or 1024)
-fn generate_gamma_lut(temperature: u32, size: usize) -> (Vec<u16>, Vec<u16>, Vec<u16>) {
+pub fn generate_gamma_lut(temperature: u32, size: usize) -> (Vec<u16>, Vec<u16>, Vec<u16>) {
     let temp_f = temperature as f64;
     
     // Simple color temperature calculation
