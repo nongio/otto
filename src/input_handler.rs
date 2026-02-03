@@ -125,6 +125,12 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
                 KeyAction::WorkspaceNum(n) => {
                     self.handle_workspace_num(n);
                 }
+                KeyAction::BrightnessUp => {
+                    self.handle_brightness_up();
+                }
+                KeyAction::BrightnessDown => {
+                    self.handle_brightness_down();
+                }
 
                 action => match action {
                     KeyAction::None
@@ -336,6 +342,12 @@ impl Otto<UdevData> {
                 }
                 KeyAction::WorkspaceNum(index) => {
                     self.handle_workspace_num(index);
+                }
+                KeyAction::BrightnessUp => {
+                    self.handle_brightness_up();
+                }
+                KeyAction::BrightnessDown => {
+                    self.handle_brightness_down();
                 }
                 action => match action {
                     KeyAction::None

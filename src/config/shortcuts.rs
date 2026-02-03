@@ -122,6 +122,8 @@ pub enum BuiltinAction {
     ExposeShowAll,
     WorkspaceNum { index: usize },
     SceneSnapshot,
+    BrightnessUp,
+    BrightnessDown,
 }
 
 #[derive(Debug, Error)]
@@ -221,6 +223,8 @@ fn parse_builtin(name: &str, index: Option<usize>) -> Result<BuiltinAction, Shor
         "ExposeShowDesktop" => BuiltinAction::ExposeShowDesktop,
         "ExposeShowAll" => BuiltinAction::ExposeShowAll,
         "SceneSnapshot" => BuiltinAction::SceneSnapshot,
+        "BrightnessUp" => BuiltinAction::BrightnessUp,
+        "BrightnessDown" => BuiltinAction::BrightnessDown,
         "Screen" => {
             let index = index.ok_or_else(|| ShortcutError::MissingIndex(name.to_string()))?;
             BuiltinAction::Screen { index }

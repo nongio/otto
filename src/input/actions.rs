@@ -1,5 +1,6 @@
 use std::{fs, process::Command, sync::atomic::Ordering};
 
+use brightness::blocking::Brightness;
 use smithay::{
     reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1,
     wayland::{compositor::with_states, shell::xdg::XdgToplevelSurfaceData},
@@ -42,6 +43,8 @@ pub enum KeyAction {
     ExposeShowAll,
     WorkspaceNum(usize),
     SceneSnapshot,
+    BrightnessUp,
+    BrightnessDown,
     /// Do nothing more
     None,
 }
@@ -201,6 +204,45 @@ impl<BackendData: Backend> Otto<BackendData> {
     pub(crate) fn handle_workspace_num(&mut self, n: usize) {
         self.set_current_workspace_index(n);
     }
+
+    pub(crate) fn handle_brightness_up(&mut self) {
+        adjust_brightness(10);
+    }
+
+    pub(crate) fn handle_brightness_down(&mut self) {
+        adjust_brightness(-10);
+    }
+}
+
+fn adjust_brightness(delta: i32) {
+    std::thread::spawn(move || {
+        for device in brightness::blocking::brightness_devices() {
+            match device {
+                Ok(device) => {
+                    if let Ok(device_name) = device.device_name() {
+                        if let Ok(current) = device.get() {
+                            let new_value = (current as i32 + delta).clamp(0, 100) as u32;
+
+                            info!(
+                                device = %device_name,
+                                current = current,
+                                delta = delta,
+                                new = new_value,
+                                "Adjusting brightness"
+                            );
+
+                            if let Err(e) = device.set(new_value) {
+                                error!(device = %device_name, error = %e, "Failed to set brightness");
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!(error = %e, "Failed to get brightness device");
+                }
+            }
+        }
+    });
 }
 
 pub fn resolve_shortcut_action(config: &Config, action: &ShortcutAction) -> Option<KeyAction> {
@@ -224,6 +266,8 @@ pub fn resolve_shortcut_action(config: &Config, action: &ShortcutAction) -> Opti
             BuiltinAction::ExposeShowAll => Some(KeyAction::ExposeShowAll),
             BuiltinAction::WorkspaceNum { index } => Some(KeyAction::WorkspaceNum(*index)),
             BuiltinAction::SceneSnapshot => Some(KeyAction::SceneSnapshot),
+            BuiltinAction::BrightnessUp => Some(KeyAction::BrightnessUp),
+            BuiltinAction::BrightnessDown => Some(KeyAction::BrightnessDown),
         },
         ShortcutAction::RunCommand(run) => {
             Some(KeyAction::Run((run.cmd.clone(), run.args.clone())))
