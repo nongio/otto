@@ -75,7 +75,7 @@ pub struct UdevData {
     pub(super) dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
     pub(super) primary_gpu: DrmNode,
     pub(super) gpus: GpuManager<GbmGlesBackend<SkiaRenderer, DrmDeviceFd>>,
-    pub(super) backends: HashMap<DrmNode, BackendData>,
+    pub backends: HashMap<DrmNode, BackendData>,
     #[cfg(feature = "fps_ticker")]
     pub(super) fps_texture: Option<smithay::backend::renderer::multigpu::MultiTexture>,
     pub context_id: Option<ContextId<MultiTexture>>,
@@ -88,7 +88,7 @@ pub struct BackendData {
     pub(super) leasing_global: Option<DrmLeaseState>,
     pub(super) active_leases: Vec<smithay::wayland::drm_lease::DrmLease>,
     pub(super) gbm: GbmDevice<DrmDeviceFd>,
-    pub(super) drm: DrmDevice,
+    pub drm: DrmDevice,
     pub(super) drm_scanner: DrmScanner,
     pub(super) render_node: DrmNode,
     pub(super) registration_token: RegistrationToken,

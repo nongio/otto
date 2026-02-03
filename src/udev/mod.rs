@@ -5,6 +5,7 @@
 
 pub mod device;
 pub mod feedback;
+pub mod gamma;
 pub mod init;
 pub mod render;
 pub mod types;

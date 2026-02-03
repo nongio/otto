@@ -194,6 +194,7 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub wlr_foreign_toplevel_state: wlr_foreign_toplevel::WlrForeignToplevelManagerState,
     pub cursor_shape_manager_state: CursorShapeManagerState,
     pub virtual_keyboard_manager_state: VirtualKeyboardManagerState,
+    pub gamma_control_manager: gamma_control::GammaControlManagerState,
 
     #[cfg(feature = "xwayland")]
     pub xwayland_shell_state: xwayland_shell::XWaylandShellState,
@@ -260,6 +261,7 @@ pub mod dnd_grab_handler;
 pub mod foreign_toplevel_list_handler;
 pub mod foreign_toplevel_shared;
 pub mod fractional_scale_handler;
+pub mod gamma_control;
 pub mod input_method_handler;
 pub mod seat_handler;
 pub mod security_context_handler;
@@ -360,6 +362,19 @@ delegate_xdg_shell!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_layer_shell!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_presentation!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_xdg_foreign!(@<BackendData: Backend + 'static> Otto<BackendData>);
+
+// Gamma control protocol delegation
+smithay::reexports::wayland_server::delegate_global_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
+    gamma_control::gen::zwlr_gamma_control_manager_v1::ZwlrGammaControlManagerV1: ()
+] => gamma_control::GammaControlManagerState);
+
+smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
+    gamma_control::gen::zwlr_gamma_control_manager_v1::ZwlrGammaControlManagerV1: ()
+] => gamma_control::GammaControlManagerState);
+
+smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
+    gamma_control::gen::zwlr_gamma_control_v1::ZwlrGammaControlV1: gamma_control::GammaControlState
+] => gamma_control::GammaControlManagerState);
 
 impl<BackendData: Backend + 'static> Otto<BackendData> {
     pub fn init(
@@ -472,6 +487,13 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let foreign_toplevel_list_state = ForeignToplevelListState::new::<Self>(&dh);
         let wlr_foreign_toplevel_state =
             wlr_foreign_toplevel::WlrForeignToplevelManagerState::new::<Self>(&dh);
+        let gamma_control_manager = gamma_control::GammaControlManagerState::new();
+        
+        // Register gamma control global
+        dh.create_global::<Self, gamma_control::gen::zwlr_gamma_control_manager_v1::ZwlrGammaControlManagerV1, _>(
+            1,
+            (),
+        );
 
         // Create minimal sc_layer shell global
         crate::sc_layer_shell::create_layer_shell_global::<BackendData>(&dh);
@@ -570,6 +592,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             wlr_foreign_toplevel_state,
             cursor_shape_manager_state,
             virtual_keyboard_manager_state,
+            gamma_control_manager,
             dnd_icon: None,
             suppressed_keys: Vec::new(),
             current_modifiers: ModifiersState::default(),
@@ -694,6 +717,76 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         }
 
         self.exclusive_zones.insert(output_name.clone(), zones);
+    }
+
+    /// Get gamma size for an output (udev backend only)
+    pub fn get_gamma_size(&self, output: &Output) -> Option<u32> {
+        #[cfg(feature = "udev")]
+        {
+            use crate::udev::UdevData;
+            if let Some(udev_data) = (&self.backend_data as &dyn std::any::Any).downcast_ref::<UdevData>() {
+                use crate::udev::UdevOutputId;
+                let output_id = output.user_data().get::<UdevOutputId>()?;
+                let backend = udev_data.backends.get(&output_id.device_id)?;
+                let drm_fd = backend.drm.device_fd();
+                crate::udev::gamma::get_gamma_size(drm_fd, output_id.crtc).ok()
+            } else {
+                None
+            }
+        }
+        #[cfg(not(feature = "udev"))]
+        {
+            let _ = output;
+            None
+        }
+    }
+
+    /// Apply gamma LUT to an output (udev backend only)
+    pub fn apply_gamma(&self, output: &Output, red: &[u16], green: &[u16], blue: &[u16]) -> Result<(), String> {
+        #[cfg(feature = "udev")]
+        {
+            use crate::udev::UdevData;
+            if let Some(udev_data) = (&self.backend_data as &dyn std::any::Any).downcast_ref::<UdevData>() {
+                use crate::udev::UdevOutputId;
+                let output_id = output.user_data().get::<UdevOutputId>()
+                    .ok_or_else(|| "Output has no UdevOutputId".to_string())?;
+                let backend = udev_data.backends.get(&output_id.device_id)
+                    .ok_or_else(|| "Backend not found".to_string())?;
+                let drm_fd = backend.drm.device_fd();
+                crate::udev::gamma::apply_gamma_lut(drm_fd, output_id.crtc, red, green, blue)
+            } else {
+                Err("Not a udev backend".to_string())
+            }
+        }
+        #[cfg(not(feature = "udev"))]
+        {
+            let _ = (output, red, green, blue);
+            Err("Gamma control not supported on this backend".to_string())
+        }
+    }
+
+    /// Reset gamma to neutral for an output (udev backend only)
+    pub fn reset_gamma(&self, output: &Output) -> Result<(), String> {
+        #[cfg(feature = "udev")]
+        {
+            use crate::udev::UdevData;
+            if let Some(udev_data) = (&self.backend_data as &dyn std::any::Any).downcast_ref::<UdevData>() {
+                use crate::udev::UdevOutputId;
+                let output_id = output.user_data().get::<UdevOutputId>()
+                    .ok_or_else(|| "Output has no UdevOutputId".to_string())?;
+                let backend = udev_data.backends.get(&output_id.device_id)
+                    .ok_or_else(|| "Backend not found".to_string())?;
+                let drm_fd = backend.drm.device_fd();
+                crate::udev::gamma::reset_gamma(drm_fd, output_id.crtc)
+            } else {
+                Err("Not a udev backend".to_string())
+            }
+        }
+        #[cfg(not(feature = "udev"))]
+        {
+            let _ = output;
+            Err("Gamma control not supported on this backend".to_string())
+        }
     }
 
     pub fn schedule_event_loop_dispatch(&self) {
