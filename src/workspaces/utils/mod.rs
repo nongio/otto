@@ -164,7 +164,8 @@ pub fn draw_balloon_rect(
 /// - Picture caching (disabled)
 /// - Draw content callback with texture rendering
 pub fn configure_surface_layer(layer: &Layer, wvs: &WindowViewSurface) {
-    // Calculate position relative to parent (or origin for root)
+    // Position calculation: phy_dst is the buffer viewport offset, log_offset is from tree traversal
+    // log_offset is now relative to parent (or absolute for root surfaces)
     let pos_x = wvs.phy_dst_x + wvs.log_offset_x;
     let pos_y = wvs.phy_dst_y + wvs.log_offset_y;
 
