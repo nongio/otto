@@ -131,6 +131,15 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
                 KeyAction::BrightnessDown => {
                     self.handle_brightness_down();
                 }
+                KeyAction::VolumeUp => {
+                    self.handle_volume_up();
+                }
+                KeyAction::VolumeDown => {
+                    self.handle_volume_down();
+                }
+                KeyAction::VolumeMute => {
+                    self.handle_volume_mute();
+                }
 
                 action => match action {
                     KeyAction::None
@@ -348,6 +357,15 @@ impl Otto<UdevData> {
                 }
                 KeyAction::BrightnessDown => {
                     self.handle_brightness_down();
+                }
+                KeyAction::VolumeUp => {
+                    self.handle_volume_up();
+                }
+                KeyAction::VolumeDown => {
+                    self.handle_volume_down();
+                }
+                KeyAction::VolumeMute => {
+                    self.handle_volume_mute();
                 }
                 action => match action {
                     KeyAction::None

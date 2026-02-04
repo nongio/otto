@@ -124,6 +124,9 @@ pub enum BuiltinAction {
     SceneSnapshot,
     BrightnessUp,
     BrightnessDown,
+    VolumeUp,
+    VolumeDown,
+    VolumeMute,
 }
 
 #[derive(Debug, Error)]
@@ -225,6 +228,9 @@ fn parse_builtin(name: &str, index: Option<usize>) -> Result<BuiltinAction, Shor
         "SceneSnapshot" => BuiltinAction::SceneSnapshot,
         "BrightnessUp" => BuiltinAction::BrightnessUp,
         "BrightnessDown" => BuiltinAction::BrightnessDown,
+        "VolumeUp" => BuiltinAction::VolumeUp,
+        "VolumeDown" => BuiltinAction::VolumeDown,
+        "VolumeMute" => BuiltinAction::VolumeMute,
         "Screen" => {
             let index = index.ok_or_else(|| ShortcutError::MissingIndex(name.to_string()))?;
             BuiltinAction::Screen { index }

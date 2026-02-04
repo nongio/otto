@@ -81,6 +81,7 @@ Otto implements a comprehensive set of Wayland protocols, including:
 - Input: pointer gestures, relative pointer, keyboard shortcuts inhibit, text input, input method
 - Selection: primary selection, data control (wlr-data-control)
 - XDG foreign: cross-client surface identification
+- Display control: `wlr_gamma_control_v1` (color temperature/night shift with hardware gamma tables)
 
 For a complete and up-to-date list, see [docs/developer/wayland.md](./docs/developer/wayland.md).
 
