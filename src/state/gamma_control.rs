@@ -94,7 +94,7 @@ impl<BackendData: Backend> Dispatch<ZwlrGammaControlManagerV1, (), Otto<BackendD
             zwlr_gamma_control_manager_v1::Request::GetGammaControl { id, output } => {
                 // Find the smithay Output for this wl_output
                 let smithay_output = Output::from_resource(&output);
-                
+
                 let gamma_size = if let Some(smithay_output) = smithay_output {
                     // Get gamma size from backend
                     state.get_gamma_size(&smithay_output).unwrap_or(0)
@@ -116,11 +116,7 @@ impl<BackendData: Backend> Dispatch<ZwlrGammaControlManagerV1, (), Otto<BackendD
                 }
 
                 // Check if output already has a gamma control
-                if state
-                    .gamma_control_manager
-                    .controls
-                    .contains_key(&output)
-                {
+                if state.gamma_control_manager.controls.contains_key(&output) {
                     let control = data_init.init(
                         id,
                         GammaControlState {
@@ -152,10 +148,7 @@ impl<BackendData: Backend> Dispatch<ZwlrGammaControlManagerV1, (), Otto<BackendD
                 // Send gamma size
                 control.gamma_size(gamma_size);
 
-                debug!(
-                    "Gamma control created for output with size {}",
-                    gamma_size
-                );
+                debug!("Gamma control created for output with size {}", gamma_size);
             }
             zwlr_gamma_control_manager_v1::Request::Destroy => {
                 // Manager destroyed, controls remain active
@@ -186,7 +179,7 @@ impl<BackendData: Backend> Dispatch<ZwlrGammaControlV1, GammaControlState, Otto<
                 let mut buffer = vec![0u8; table_size];
 
                 use std::io::Read;
-                
+
                 let mut file = std::fs::File::from(fd);
                 let result = file.read_exact(&mut buffer);
 
@@ -196,10 +189,11 @@ impl<BackendData: Backend> Dispatch<ZwlrGammaControlV1, GammaControlState, Otto<
                     return;
                 }
 
-                // Parse into u16 arrays
-                let u16_data: &[u16] = unsafe {
-                    std::slice::from_raw_parts(buffer.as_ptr() as *const u16, gamma_size * 3)
-                };
+                // Parse into u16 arrays without relying on potentially unaligned casts
+                let u16_data: Vec<u16> = buffer
+                    .chunks_exact(std::mem::size_of::<u16>())
+                    .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+                    .collect();
 
                 let red = &u16_data[0..gamma_size];
                 let green = &u16_data[gamma_size..gamma_size * 2];
