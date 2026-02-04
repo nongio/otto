@@ -1,8 +1,10 @@
-//! Audio volume control via PipeWire
+//! Audio control via PipeWire and MPRIS
 //!
 //! This module provides native PipeWire integration for audio volume control,
-//! allowing real-time volume adjustment and state tracking for OSD display.
+//! and MPRIS D-Bus integration for media player control.
 
+pub mod media_control;
 pub mod volume;
 
+pub use media_control::{MediaController, MediaError};
 pub use volume::{AudioManager, AudioState, VolumeError};

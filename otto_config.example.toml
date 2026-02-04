@@ -99,6 +99,10 @@ max_right = 50      # Right side panels
 "XF86AudioRaiseVolume" = "VolumeUp"        # Audio volume up
 "XF86AudioLowerVolume" = "VolumeDown"      # Audio volume down
 "XF86AudioMute" = "VolumeMute"             # Audio mute toggle
+"XF86AudioPlay" = "MediaPlayPause"         # Media play/pause
+"XF86AudioNext" = "MediaNext"              # Media next track
+"XF86AudioPrev" = "MediaPrev"              # Media previous track
+"XF86AudioStop" = "MediaStop"              # Media stop
 
 [dock]
 size = 1.0  # Dock size multiplier (0.5 - 2.0, default: 1.0)

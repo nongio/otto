@@ -8,6 +8,7 @@ use smithay::{
 use tracing::{error, info};
 
 use crate::{
+    audio::MediaController,
     config::{
         default_apps,
         shortcuts::{BuiltinAction, ShortcutAction},
@@ -48,6 +49,10 @@ pub enum KeyAction {
     VolumeUp,
     VolumeDown,
     VolumeMute,
+    MediaPlayPause,
+    MediaNext,
+    MediaPrev,
+    MediaStop,
     /// Do nothing more
     None,
 }
@@ -239,6 +244,30 @@ impl<BackendData: Backend> Otto<BackendData> {
             }
         }
     }
+
+    pub(crate) fn handle_media_play_pause(&mut self) {
+        if let Err(e) = MediaController::play_pause() {
+            error!("Failed to toggle media play/pause: {}", e);
+        }
+    }
+
+    pub(crate) fn handle_media_next(&mut self) {
+        if let Err(e) = MediaController::next() {
+            error!("Failed to skip to next track: {}", e);
+        }
+    }
+
+    pub(crate) fn handle_media_prev(&mut self) {
+        if let Err(e) = MediaController::previous() {
+            error!("Failed to skip to previous track: {}", e);
+        }
+    }
+
+    pub(crate) fn handle_media_stop(&mut self) {
+        if let Err(e) = MediaController::stop() {
+            error!("Failed to stop media playback: {}", e);
+        }
+    }
 }
 
 fn adjust_brightness(delta: i32) {
@@ -298,6 +327,10 @@ pub fn resolve_shortcut_action(config: &Config, action: &ShortcutAction) -> Opti
             BuiltinAction::VolumeUp => Some(KeyAction::VolumeUp),
             BuiltinAction::VolumeDown => Some(KeyAction::VolumeDown),
             BuiltinAction::VolumeMute => Some(KeyAction::VolumeMute),
+            BuiltinAction::MediaPlayPause => Some(KeyAction::MediaPlayPause),
+            BuiltinAction::MediaNext => Some(KeyAction::MediaNext),
+            BuiltinAction::MediaPrev => Some(KeyAction::MediaPrev),
+            BuiltinAction::MediaStop => Some(KeyAction::MediaStop),
         },
         ShortcutAction::RunCommand(run) => {
             Some(KeyAction::Run((run.cmd.clone(), run.args.clone())))
