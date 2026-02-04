@@ -127,6 +127,10 @@ pub enum BuiltinAction {
     VolumeUp,
     VolumeDown,
     VolumeMute,
+    MediaPlayPause,
+    MediaNext,
+    MediaPrev,
+    MediaStop,
 }
 
 #[derive(Debug, Error)]
@@ -231,6 +235,10 @@ fn parse_builtin(name: &str, index: Option<usize>) -> Result<BuiltinAction, Shor
         "VolumeUp" => BuiltinAction::VolumeUp,
         "VolumeDown" => BuiltinAction::VolumeDown,
         "VolumeMute" => BuiltinAction::VolumeMute,
+        "MediaPlayPause" => BuiltinAction::MediaPlayPause,
+        "MediaNext" => BuiltinAction::MediaNext,
+        "MediaPrev" => BuiltinAction::MediaPrev,
+        "MediaStop" => BuiltinAction::MediaStop,
         "Screen" => {
             let index = index.ok_or_else(|| ShortcutError::MissingIndex(name.to_string()))?;
             BuiltinAction::Screen { index }

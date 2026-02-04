@@ -43,6 +43,7 @@ pipewire = "0.9"
 memfd = "0.6"
 memmap2 = "0.9"
 brightness = "0.8.0"
+mpris = "2.0"
 
 [dependencies.laye-rs]
 # path = "../layers"
