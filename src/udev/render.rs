@@ -255,6 +255,9 @@ impl Otto<UdevData> {
     pub(super) fn render_surface(&mut self, node: DrmNode, crtc: crtc::Handle) {
         profiling::scope!("render_surface", &format!("{crtc:?}"));
 
+        // Tick gamma transitions before rendering
+        self.tick_gamma_transitions();
+
         // Get screenshare sessions before borrowing backend_data
         // let _has_screenshare = !self.screenshare_sessions.is_empty();
 
