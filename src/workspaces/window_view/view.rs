@@ -10,11 +10,7 @@ use std::sync::{atomic::AtomicBool, Arc};
 
 use crate::shell::WindowElement;
 
-use super::{
-    effects::GenieEffect,
-    model::WindowViewBaseModel,
-    render::view_window_shadow,
-};
+use super::{effects::GenieEffect, model::WindowViewBaseModel, render::view_window_shadow};
 
 #[derive(Clone)]
 pub struct WindowView {

@@ -3,7 +3,7 @@ use layers::{
     prelude::{taffy, Layer},
     types::Point,
 };
-use smithay::{reexports::wayland_server::backend::ObjectId};
+use smithay::reexports::wayland_server::backend::ObjectId;
 use std::{collections::HashMap, sync::Arc};
 
 use crate::workspaces::WindowViewSurface;
@@ -89,6 +89,7 @@ impl PopupOverlayView {
 
     /// Update popup position and surfaces
     #[allow(clippy::mutable_key_type)]
+    #[allow(clippy::too_many_arguments)]
     pub fn update_popup(
         &mut self,
         popup_id: &ObjectId,
@@ -122,7 +123,7 @@ impl PopupOverlayView {
             };
 
             // Configure layer with all properties and draw callback
-            crate::workspaces::utils::configure_surface_layer(&layer, &wvs);
+            crate::workspaces::utils::configure_surface_layer(&layer, wvs);
 
             // Set up parent-child relationship
             if let Some(ref parent_id) = wvs.parent_id {

@@ -155,7 +155,7 @@ pub fn draw_balloon_rect(
 }
 
 /// Configure a surface layer with all rendering properties and draw callback
-/// 
+///
 /// This sets up:
 /// - Position (relative to parent)
 /// - Size
@@ -185,7 +185,7 @@ pub fn configure_surface_layer(layer: &Layer, wvs: &WindowViewSurface) {
     );
 
     layer.set_pointer_events(false);
-    layer.set_picture_cached(true);  // Enable picture caching for proper opacity inheritance
+    layer.set_picture_cached(true); // Enable picture caching for proper opacity inheritance
 
     // Set the draw content callback for texture rendering
     let draw_wvs = wvs.clone();
@@ -233,13 +233,10 @@ pub fn configure_surface_layer(layer: &Layer, wvs: &WindowViewSurface) {
             Transform::Flipped270 => {}
         }
 
-        let sampling = layers::skia::SamplingOptions::from(
-            layers::skia::CubicResampler::catmull_rom(),
-        );
-        let mut paint = layers::skia::Paint::new(
-            layers::skia::Color4f::new(1.0, 1.0, 1.0, 1.0),
-            None,
-        );
+        let sampling =
+            layers::skia::SamplingOptions::from(layers::skia::CubicResampler::catmull_rom());
+        let mut paint =
+            layers::skia::Paint::new(layers::skia::Color4f::new(1.0, 1.0, 1.0, 1.0), None);
         paint.set_shader(tex.image.to_shader(
             (layers::skia::TileMode::Clamp, layers::skia::TileMode::Clamp),
             sampling,

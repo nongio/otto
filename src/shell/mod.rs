@@ -134,7 +134,7 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
                 }
             }
         });
-        
+
         // Note: Layers are created lazily via get_or_create_layer_for_surface when needed
         // Layer shells will have already registered their workspace layer before this point
     }
@@ -150,7 +150,7 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
             if let Some(_layer_shell_surf) = self.layer_surfaces.get(&surface_id) {
                 // Layer shells don't need build_cache_for_view - they use the workspace layer directly
                 self.update_layer_shell_surface(&surface_id);
-                
+
                 // Don't recalculate here - it causes deadlock since layer_map is borrowed
                 // Recalculation will happen during arrange in ensure_initial_configure
             } else {
@@ -242,7 +242,7 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
     fn destroyed(&mut self, surface: &WlSurface) {
         // Clean up the layer for this surface
         self.destroy_layer_for_surface(&surface.id());
-        
+
         // Find root surface for this destroyed surface
         // 1. Check popup cache first (O(1)) - entry removal happens in popup_destroyed
         // 2. Try PopupManager for popups
@@ -295,17 +295,17 @@ impl<BackendData: Backend> Otto<BackendData> {
             let Some(layer_shell_surf) = self.layer_surfaces.get(surface_id) else {
                 return;
             };
-            
+
             let output = layer_shell_surf.output().clone();
             let Some(output_geo) = self.workspaces.output_geometry(&output) else {
                 return;
             };
             let geometry = layer_shell_surf.compute_geometry(output_geo);
             let wl_surface = layer_shell_surf.layer_surface().wl_surface().clone();
-            
+
             (geometry, wl_surface)
         };
-        
+
         let scale_factor = crate::config::Config::with(|c| c.screen_scale);
 
         // Handle popups for this layer shell surface (e.g., waybar calendar)
@@ -357,12 +357,13 @@ impl<BackendData: Backend> Otto<BackendData> {
 
         // Ensure all surfaces in the tree have rendering layers
         self.ensure_surface_tree_layers(&wl_surface);
-        
+
         // Collect render elements from the surface tree (same as update_window_view)
         let mut render_elements = std::collections::VecDeque::new();
-        let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> = (0.0, 0.0).into();
+        let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> =
+            (0.0, 0.0).into();
         let initial_context = (initial_location, initial_location, None);
-        
+
         // Collect all surfaces and build parent-child map
         #[allow(clippy::mutable_key_type, clippy::type_complexity)]
         let mut surface_info: std::collections::HashMap<
@@ -373,7 +374,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                 Option<smithay::reexports::wayland_server::backend::ObjectId>,
             ),
         > = std::collections::HashMap::new();
-        
+
         smithay::wayland::compositor::with_surface_tree_downward(
             &wl_surface,
             initial_context,
@@ -388,7 +389,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                     .get::<smithay::wayland::shell::xdg::SurfaceCachedState>();
                 let cached_state = cached_state.current();
                 let surface_geometry = cached_state.geometry.unwrap_or_default();
-                
+
                 if let Some(data) = data {
                     let data = data.lock().unwrap();
                     if let Some(view) = data.view() {
@@ -412,7 +413,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                 } else {
                     *location
                 };
-                
+
                 if let Some(wvs) = self.window_view_for_surface(
                     surface,
                     states,
@@ -548,13 +549,13 @@ impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
         // Remove from our compositor map and clean up lay_rs layer
         if let Some(layer_shell_surface) = self.layer_surfaces.remove(&surface_id) {
             let output = layer_shell_surface.output().clone();
-            
+
             // Clear the warm cache for this surface to prevent dangling layer references
             self.view_warm_cache.remove(&surface_id);
-            
+
             // Clear the surface_layers cache entry for the layer shell
             self.surface_layers.remove(&surface_id);
-            
+
             self.workspaces
                 .remove_layer_shell_layer(&layer_shell_surface.layer);
             tracing::info!(

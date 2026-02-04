@@ -92,6 +92,7 @@ use smithay::{
 
 use crate::cursor::{CursorManager, CursorTextureCache};
 use crate::{
+    audio::AudioManager,
     config::Config,
     focus::KeyboardFocusTarget,
     render_elements::scene_element::SceneElement,
@@ -212,6 +213,29 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub clock: Clock<Monotonic>,
     pub pointer: PointerHandle<Otto<BackendData>>,
 
+    pub gamma_control_manager: gamma_control::GammaControlManagerState,
+    pub audio_manager: Option<crate::audio::AudioManager>,
+
+    // gamma animation state
+    /// Active gamma transitions: (output_name, from_lut, to_lut, start_time, duration)
+    #[allow(clippy::type_complexity)]
+    pub gamma_transitions: HashMap<
+        String,
+        (
+            Vec<u16>,
+            Vec<u16>,
+            Vec<u16>,
+            Vec<u16>,
+            Vec<u16>,
+            Vec<u16>,
+            std::time::Instant,
+            std::time::Duration,
+        ),
+    >,
+    /// Currently applied gamma per output: (output_name, red_lut, green_lut, blue_lut)
+    #[allow(clippy::type_complexity)]
+    pub current_gamma: HashMap<String, (Vec<u16>, Vec<u16>, Vec<u16>)>,
+
     #[cfg(feature = "xwayland")]
     pub xwm: Option<X11Wm>,
     #[cfg(feature = "xwayland")]
@@ -260,6 +284,7 @@ pub mod dnd_grab_handler;
 pub mod foreign_toplevel_list_handler;
 pub mod foreign_toplevel_shared;
 pub mod fractional_scale_handler;
+pub mod gamma_control;
 pub mod input_method_handler;
 pub mod seat_handler;
 pub mod security_context_handler;
@@ -360,6 +385,19 @@ delegate_xdg_shell!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_layer_shell!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_presentation!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_xdg_foreign!(@<BackendData: Backend + 'static> Otto<BackendData>);
+
+// Gamma control protocol delegation
+smithay::reexports::wayland_server::delegate_global_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
+    gamma_control::gen::zwlr_gamma_control_manager_v1::ZwlrGammaControlManagerV1: ()
+] => gamma_control::GammaControlManagerState);
+
+smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
+    gamma_control::gen::zwlr_gamma_control_manager_v1::ZwlrGammaControlManagerV1: ()
+] => gamma_control::GammaControlManagerState);
+
+smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
+    gamma_control::gen::zwlr_gamma_control_v1::ZwlrGammaControlV1: gamma_control::GammaControlState
+] => gamma_control::GammaControlManagerState);
 
 impl<BackendData: Backend + 'static> Otto<BackendData> {
     pub fn init(
@@ -472,6 +510,13 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let foreign_toplevel_list_state = ForeignToplevelListState::new::<Self>(&dh);
         let wlr_foreign_toplevel_state =
             wlr_foreign_toplevel::WlrForeignToplevelManagerState::new::<Self>(&dh);
+        let gamma_control_manager = gamma_control::GammaControlManagerState::new();
+
+        // Register gamma control global
+        dh.create_global::<Self, gamma_control::gen::zwlr_gamma_control_manager_v1::ZwlrGammaControlManagerV1, _>(
+            1,
+            (),
+        );
 
         // Create minimal sc_layer shell global
         crate::sc_layer_shell::create_layer_shell_global::<BackendData>(&dh);
@@ -581,6 +626,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             seat,
             pointer,
             clock,
+            gamma_control_manager,
+            audio_manager: AudioManager::new().ok(),
+            gamma_transitions: HashMap::new(),
+            current_gamma: HashMap::new(),
             #[cfg(feature = "xwayland")]
             xwayland_shell_state,
             #[cfg(feature = "xwayland")]
@@ -846,7 +895,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 } else {
                     *location
                 };
-                
+
                 if let Some(window_view) = self.window_view_for_surface(
                     surface,
                     states,
@@ -869,7 +918,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             let cursor_position = self.get_cursor_position();
 
             let scale = Config::with(|c| c.screen_scale);
-            
+
             // Build both render_elements and surface_info (like windows do)
             let mut render_elements = VecDeque::new();
             #[allow(clippy::mutable_key_type)]
@@ -877,10 +926,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 ObjectId,
                 (WlSurface, Option<ObjectId>),
             > = std::collections::HashMap::new();
-            
-            let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> = (0.0, 0.0).into();
+
+            let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> =
+                (0.0, 0.0).into();
             let initial_context = (initial_location, initial_location, None);
-            
+
             smithay::wayland::compositor::with_surface_tree_downward(
                 &dnd_surface,
                 initial_context,
@@ -910,7 +960,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     } else {
                         *location
                     };
-                    
+
                     if let Some(wvs) = self.window_view_for_surface(
                         surface,
                         states,
@@ -924,15 +974,15 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 },
                 |_, _, _| true,
             );
-            
+
             // Now build layers from surface_info (like windows)
             for (surface_id, (surface, parent_id)) in surface_info.iter() {
                 let layer = self.get_or_create_layer_for_surface(surface);
-                
+
                 // Configure layer with all properties
                 if let Some(wvs) = render_elements.iter().find(|e| &e.id == surface_id) {
                     crate::workspaces::utils::configure_surface_layer(&layer, wvs);
-                    
+
                     // Build parent-child hierarchy
                     if let Some(parent_id) = parent_id {
                         if let Some(parent_layer) = self.surface_layers.get(parent_id) {
@@ -940,7 +990,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                         }
                     } else {
                         // Root surface - attach to DnD content layer
-                        self.layers_engine.append_layer(&layer, self.workspaces.dnd_view.content_layer.id());
+                        self.layers_engine
+                            .append_layer(&layer, self.workspaces.dnd_view.content_layer.id());
                     }
                 }
             }
@@ -964,7 +1015,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             },
             |_, _, _| true,
         );
-        
+
         for surface_id in to_remove {
             if let Some(layer) = self.surface_layers.remove(&surface_id) {
                 layer.remove();
@@ -1147,7 +1198,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     } else {
                         *location
                     };
-                    
+
                     if let Some(window_view) = self.window_view_for_surface(
                         surface,
                         states,
@@ -1467,6 +1518,209 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             if keyboard.is_grabbed() {
                 keyboard.unset_grab(self);
             }
+        }
+    }
+
+    pub fn get_gamma_size(&self, output: &Output) -> Option<u32> {
+        #[cfg(feature = "udev")]
+        {
+            use crate::udev::UdevData;
+            if let Some(udev_data) =
+                (&self.backend_data as &dyn std::any::Any).downcast_ref::<UdevData>()
+            {
+                use crate::udev::UdevOutputId;
+                let output_id = output.user_data().get::<UdevOutputId>()?;
+                let backend = udev_data.backends.get(&output_id.device_id)?;
+                let drm_fd = backend.drm.device_fd();
+                crate::udev::gamma::get_gamma_size(drm_fd, output_id.crtc).ok()
+            } else {
+                None
+            }
+        }
+        #[cfg(not(feature = "udev"))]
+        {
+            let _ = output;
+            None
+        }
+    }
+
+    /// Apply gamma LUT to an output (udev backend only)
+    /// This version animates the transition over 500ms
+    pub fn apply_gamma(
+        &mut self,
+        output: &Output,
+        red: &[u16],
+        green: &[u16],
+        blue: &[u16],
+    ) -> Result<(), String> {
+        #[cfg(feature = "udev")]
+        {
+            use crate::udev::UdevData;
+            if let Some(udev_data) =
+                (&self.backend_data as &dyn std::any::Any).downcast_ref::<UdevData>()
+            {
+                use crate::udev::UdevOutputId;
+                let output_id = output
+                    .user_data()
+                    .get::<UdevOutputId>()
+                    .ok_or_else(|| "Output has no UdevOutputId".to_string())?;
+                let _ = udev_data
+                    .backends
+                    .get(&output_id.device_id)
+                    .ok_or_else(|| "Backend not found".to_string())?;
+
+                // Get current gamma as starting point
+                let gamma_size = red.len();
+                let current = if let Some((current_r, current_g, current_b)) =
+                    self.current_gamma.get(&output.name())
+                {
+                    // Use actual current gamma from last apply
+                    (current_r.clone(), current_g.clone(), current_b.clone())
+                } else if let Some((from_r, from_g, from_b, _, _, _, _, _)) =
+                    self.gamma_transitions.get(&output.name())
+                {
+                    // Use the start of ongoing transition as new start
+                    (from_r.clone(), from_g.clone(), from_b.clone())
+                } else {
+                    // Generate linear gamma as default start (first time only)
+                    let linear: Vec<u16> = (0..gamma_size)
+                        .map(|i| ((i as f64 / (gamma_size - 1) as f64) * 65535.0) as u16)
+                        .collect();
+                    (linear.clone(), linear.clone(), linear)
+                };
+
+                // Store transition
+                self.gamma_transitions.insert(
+                    output.name(),
+                    (
+                        current.0,
+                        current.1,
+                        current.2,
+                        red.to_vec(),
+                        green.to_vec(),
+                        blue.to_vec(),
+                        std::time::Instant::now(),
+                        std::time::Duration::from_millis(500),
+                    ),
+                );
+
+                // Trigger render loop to start animation
+                self.schedule_event_loop_dispatch();
+
+                Ok(())
+            } else {
+                Err("Not a udev backend".to_string())
+            }
+        }
+        #[cfg(not(feature = "udev"))]
+        {
+            let _ = (output, red, green, blue);
+            Err("Gamma control not supported on this backend".to_string())
+        }
+    }
+
+    /// Apply gamma immediately without animation (for internal use)
+    pub fn apply_gamma_immediate(
+        &self,
+        output: &Output,
+        red: &[u16],
+        green: &[u16],
+        blue: &[u16],
+    ) -> Result<(), String> {
+        #[cfg(feature = "udev")]
+        {
+            use crate::udev::UdevData;
+            if let Some(udev_data) =
+                (&self.backend_data as &dyn std::any::Any).downcast_ref::<UdevData>()
+            {
+                use crate::udev::UdevOutputId;
+                let output_id = output
+                    .user_data()
+                    .get::<UdevOutputId>()
+                    .ok_or_else(|| "Output has no UdevOutputId".to_string())?;
+                let backend = udev_data
+                    .backends
+                    .get(&output_id.device_id)
+                    .ok_or_else(|| "Backend not found".to_string())?;
+                let drm_fd = backend.drm.device_fd();
+                crate::udev::gamma::apply_gamma_lut(drm_fd, output_id.crtc, red, green, blue)
+            } else {
+                Err("Not a udev backend".to_string())
+            }
+        }
+        #[cfg(not(feature = "udev"))]
+        {
+            let _ = (output, red, green, blue);
+            Err("Gamma control not supported on this backend".to_string())
+        }
+    }
+
+    /// Reset gamma to neutral for an output (udev backend only)
+    pub fn reset_gamma(&mut self, output: &Output) -> Result<(), String> {
+        #[cfg(feature = "udev")]
+        {
+            // Generate neutral 6500K gamma LUT
+            let size = self
+                .get_gamma_size(output)
+                .ok_or("Failed to get gamma size")? as usize;
+            let neutral = crate::udev::gamma::generate_gamma_lut(6500, size);
+            // Use animated apply_gamma for smooth transition back to neutral
+            self.apply_gamma(output, &neutral.0, &neutral.1, &neutral.2)
+        }
+        #[cfg(not(feature = "udev"))]
+        {
+            let _ = output;
+            Err("Gamma control not supported on this backend".to_string())
+        }
+    }
+
+    /// Tick gamma transitions (called from render loop)
+    pub fn tick_gamma_transitions(&mut self) {
+        let mut completed = Vec::new();
+
+        for (output_name, (from_r, from_g, from_b, to_r, to_g, to_b, start, duration)) in
+            self.gamma_transitions.iter()
+        {
+            let elapsed = start.elapsed();
+            let progress = (elapsed.as_secs_f64() / duration.as_secs_f64()).min(1.0);
+
+            // Interpolate each color channel
+            let current_r: Vec<u16> = from_r
+                .iter()
+                .zip(to_r.iter())
+                .map(|(f, t)| (*f as f64 + (*t as f64 - *f as f64) * progress) as u16)
+                .collect();
+            let current_g: Vec<u16> = from_g
+                .iter()
+                .zip(to_g.iter())
+                .map(|(f, t)| (*f as f64 + (*t as f64 - *f as f64) * progress) as u16)
+                .collect();
+            let current_b: Vec<u16> = from_b
+                .iter()
+                .zip(to_b.iter())
+                .map(|(f, t)| (*f as f64 + (*t as f64 - *f as f64) * progress) as u16)
+                .collect();
+
+            // Apply to output
+            if let Some(output) = self.workspaces.outputs().find(|o| &o.name() == output_name) {
+                let _ = self.apply_gamma_immediate(output, &current_r, &current_g, &current_b);
+
+                // Update current_gamma tracker
+                self.current_gamma.insert(
+                    output_name.clone(),
+                    (current_r.clone(), current_g.clone(), current_b.clone()),
+                );
+            }
+
+            // Mark as completed if done
+            if progress >= 1.0 {
+                completed.push(output_name.clone());
+            }
+        }
+
+        // Remove completed transitions
+        for name in completed {
+            self.gamma_transitions.remove(&name);
         }
     }
 }

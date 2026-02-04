@@ -198,7 +198,7 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         self.surface_layers.remove(&id);
         self.sc_layers.remove(&id);
         self.view_warm_cache.remove(&id);
-        
+
         for surface_id in removed_surface_ids {
             self.surface_layers.remove(&surface_id);
             self.sc_layers.remove(&surface_id);
@@ -1210,11 +1210,11 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// Returns existing layer from cache if available, otherwise creates a new one
     pub(crate) fn get_or_create_layer_for_surface(&mut self, surface: &WlSurface) -> Layer {
         let surface_id = surface.id();
-        
+
         if let Some(layer) = self.surface_layers.get(&surface_id) {
             return layer.clone();
         }
-        
+
         let key = format!("surface_{:?}", surface_id);
         let layer = self.layers_engine.new_layer();
         layer.set_key(&key);

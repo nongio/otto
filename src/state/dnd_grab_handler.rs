@@ -70,7 +70,7 @@ impl<BackendData: Backend> DndGrabHandler for Otto<BackendData> {
         if let Some(ref surface) = dnd_surface {
             self.cleanup_dnd_layers(surface);
         }
-        
+
         self.dnd_icon = None;
         self.workspaces
             .dnd_view
@@ -80,7 +80,7 @@ impl<BackendData: Backend> DndGrabHandler for Otto<BackendData> {
             .dnd_view
             .layer
             .set_scale((1.2, 1.2), Some(Transition::default()));
-        
+
         // Reset cursor to default
         self.set_cursor(&CursorImageStatus::default_named());
     }

@@ -1,8 +1,4 @@
-use layers::{
-    engine::Engine,
-    prelude::taffy,
-    types::Point,
-};
+use layers::{engine::Engine, prelude::taffy, types::Point};
 use std::sync::Arc;
 
 #[derive(Clone)]
