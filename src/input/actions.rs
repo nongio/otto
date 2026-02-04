@@ -45,6 +45,9 @@ pub enum KeyAction {
     SceneSnapshot,
     BrightnessUp,
     BrightnessDown,
+    VolumeUp,
+    VolumeDown,
+    VolumeMute,
     /// Do nothing more
     None,
 }
@@ -212,6 +215,30 @@ impl<BackendData: Backend> Otto<BackendData> {
     pub(crate) fn handle_brightness_down(&mut self) {
         adjust_brightness(-10);
     }
+
+    pub(crate) fn handle_volume_up(&mut self) {
+        if let Some(audio_mgr) = &self.audio_manager {
+            if let Err(e) = audio_mgr.increase_volume(5) {
+                error!("Failed to increase volume: {}", e);
+            }
+        }
+    }
+
+    pub(crate) fn handle_volume_down(&mut self) {
+        if let Some(audio_mgr) = &self.audio_manager {
+            if let Err(e) = audio_mgr.decrease_volume(5) {
+                error!("Failed to decrease volume: {}", e);
+            }
+        }
+    }
+
+    pub(crate) fn handle_volume_mute(&mut self) {
+        if let Some(audio_mgr) = &self.audio_manager {
+            if let Err(e) = audio_mgr.toggle_mute() {
+                error!("Failed to toggle mute: {}", e);
+            }
+        }
+    }
 }
 
 fn adjust_brightness(delta: i32) {
@@ -268,6 +295,9 @@ pub fn resolve_shortcut_action(config: &Config, action: &ShortcutAction) -> Opti
             BuiltinAction::SceneSnapshot => Some(KeyAction::SceneSnapshot),
             BuiltinAction::BrightnessUp => Some(KeyAction::BrightnessUp),
             BuiltinAction::BrightnessDown => Some(KeyAction::BrightnessDown),
+            BuiltinAction::VolumeUp => Some(KeyAction::VolumeUp),
+            BuiltinAction::VolumeDown => Some(KeyAction::VolumeDown),
+            BuiltinAction::VolumeMute => Some(KeyAction::VolumeMute),
         },
         ShortcutAction::RunCommand(run) => {
             Some(KeyAction::Run((run.cmd.clone(), run.args.clone())))

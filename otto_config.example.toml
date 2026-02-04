@@ -93,6 +93,13 @@ max_right = 50      # Right side panels
 "Prior" = "ExposeShowAll"
 "Next" = "ExposeShowDesktop"
 
+# Hardware controls (multimedia keys)
+"XF86MonBrightnessUp" = "BrightnessUp"     # Screen brightness up
+"XF86MonBrightnessDown" = "BrightnessDown" # Screen brightness down
+"XF86AudioRaiseVolume" = "VolumeUp"        # Audio volume up
+"XF86AudioLowerVolume" = "VolumeDown"      # Audio volume down
+"XF86AudioMute" = "VolumeMute"             # Audio mute toggle
+
 [dock]
 size = 1.0  # Dock size multiplier (0.5 - 2.0, default: 1.0)
 genie_scale = 0.5

@@ -92,6 +92,7 @@ use smithay::{
 
 use crate::cursor::{CursorManager, CursorTextureCache};
 use crate::{
+    audio::AudioManager,
     config::Config,
     focus::KeyboardFocusTarget,
     render_elements::scene_element::SceneElement,
@@ -212,6 +213,7 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub seat: Seat<Otto<BackendData>>,
     pub clock: Clock<Monotonic>,
     pub pointer: PointerHandle<Otto<BackendData>>,
+    pub audio_manager: Option<AudioManager>,
 
     #[cfg(feature = "xwayland")]
     pub xwm: Option<X11Wm>,
@@ -624,6 +626,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             seat,
             pointer,
             clock,
+            audio_manager: AudioManager::new().ok(),
             #[cfg(feature = "xwayland")]
             xwayland_shell_state,
             #[cfg(feature = "xwayland")]

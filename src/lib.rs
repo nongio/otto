@@ -5,6 +5,7 @@
     allow(dead_code, unused_imports)
 )]
 
+pub mod audio;
 #[cfg(any(feature = "udev", feature = "xwayland"))]
 pub mod cursor;
 pub mod drawing;
