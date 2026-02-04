@@ -253,6 +253,8 @@ Define custom keyboard shortcuts:
 - `"ScaleDown"` - Decrease display scale
 - `"ScaleUp"` - Increase display scale
 - `"RotateOutput"` - Rotate display
+- `"BrightnessUp"` - Increase screen brightness (requires sysfs access)
+- `"BrightnessDown"` - Decrease screen brightness (requires sysfs access)
 - `{ builtin = "Screen", index = N }` - Switch to screen N
 
 **Launch Application:**
@@ -298,6 +300,48 @@ Each bookmark entry can have:
 Desktop files are typically found in:
 - `/usr/share/applications/`
 - `~/.local/share/applications/`
+
+---
+
+### Night Shift / Color Temperature
+
+Otto supports color temperature adjustment (night shift/blue light reduction) through the `wlr-gamma-control-v1` Wayland protocol. This uses **hardware DRM gamma tables** for efficient, battery-friendly color adjustment with smooth 500ms animated transitions.
+
+**Recommended Tools:**
+
+- **[wlsunset](https://sr.ht/~kennylevinsen/wlsunset/)** - Automatic day/night color temperature adjustment based on time and location
+- **[gammastep](https://gitlab.com/chinstrap/gammastep)** - Fork of Redshift with Wayland support
+- **[wl-gammactl](https://github.com/mischw/wl-gammactl)** - Manual gamma control tool
+
+**Example: Using wlsunset**
+
+```bash
+# Auto-adjust based on location (Oslo, Norway)
+wlsunset -l 59.9 -L 10.8
+
+# Manual temperature (warm, 3000K)
+wlsunset -T 3000
+
+# Different day/night temperatures
+wlsunset -t 3400 -T 6500 -l 59.9 -L 10.8
+```
+
+Color changes animate smoothly over 500ms. When the client disconnects, the display smoothly fades back to neutral (6500K).
+
+**Brightness Control:**
+
+Otto also supports screen brightness control via keyboard shortcuts (see example configuration). Brightness is adjusted through system interfaces and works independently of color temperature.
+
+Example shortcuts:
+```toml
+[keyboard_shortcuts]
+"XF86MonBrightnessUp" = "BrightnessUp"
+"XF86MonBrightnessDown" = "BrightnessDown"
+```
+
+**Battery Efficiency:**
+
+Unlike GPU shader-based implementations, Otto's gamma control uses hardware lookup tables at the display controller level, resulting in negligible power consumption (~0.5-1% vs 3-8% for shader-based approaches).
 
 ---
 
