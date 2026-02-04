@@ -239,6 +239,7 @@ pub struct Otto<BackendData: Backend + 'static> {
 
     // gamma animation state
     /// Active gamma transitions: (output_name, from_lut, to_lut, start_time, duration)
+    #[allow(clippy::type_complexity)]
     pub gamma_transitions: HashMap<
         String,
         (
@@ -253,6 +254,7 @@ pub struct Otto<BackendData: Backend + 'static> {
         ),
     >,
     /// Currently applied gamma per output: (output_name, red_lut, green_lut, blue_lut)
+    #[allow(clippy::type_complexity)]
     pub current_gamma: HashMap<String, (Vec<u16>, Vec<u16>, Vec<u16>)>,
 
     // foreign toplevel list - maps surface ObjectId to unified toplevel handles (both protocols)
@@ -905,7 +907,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
             // Apply to output
             if let Some(output) = self.workspaces.outputs().find(|o| &o.name() == output_name) {
-                let _ = self.apply_gamma_immediate(&output, &current_r, &current_g, &current_b);
+                let _ = self.apply_gamma_immediate(output, &current_r, &current_g, &current_b);
 
                 // Update current_gamma tracker
                 self.current_gamma.insert(

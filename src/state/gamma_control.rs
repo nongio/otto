@@ -4,7 +4,6 @@
 // for individual outputs.
 
 use std::collections::HashMap;
-use std::os::unix::io::OwnedFd;
 
 use smithay::output::Output;
 use smithay::reexports::wayland_server::{
@@ -32,6 +31,12 @@ use crate::state::{Backend, Otto};
 pub struct GammaControlManagerState {
     /// Active gamma controls per output
     controls: HashMap<WlOutput, ZwlrGammaControlV1>,
+}
+
+impl Default for GammaControlManagerState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GammaControlManagerState {
@@ -171,7 +176,7 @@ impl<BackendData: Backend> Dispatch<ZwlrGammaControlV1, GammaControlState, Otto<
     ) {
         match request {
             zwlr_gamma_control_v1::Request::SetGamma { fd } => {
-                let fd = OwnedFd::from(fd);
+                let fd = fd;
                 let gamma_size = data.gamma_size as usize;
 
                 // Read gamma table from file descriptor
