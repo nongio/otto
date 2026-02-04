@@ -4,21 +4,41 @@ Otto uses a TOML configuration file to customize your experience. The configurat
 
 ### Configuration Files
 
-Otto looks for configuration files in the following order:
+Otto follows standard Linux configuration paths and searches for configuration files in the following order (later files override earlier ones):
 
-`otto_config.toml` - Main configuration file
+1. **System config**: `/etc/otto/config.toml`
+   - System-wide configuration managed by administrators
+   - Lowest priority
 
-**Overrides** 
+2. **User config**: `$XDG_CONFIG_HOME/otto/config.toml`
+   - Per-user configuration (defaults to `~/.config/otto/config.toml`)
+   - Follows XDG Base Directory specification
+   - Recommended location for user customization
 
-These are mainly useful for development
+3. **Local override**: `./otto_config.toml`
+   - Config file in current working directory
+   - Useful for development and testing
+   - Overrides system and user configs
 
-`otto_config.{backend}.toml` - Backend-specific overrides (e.g., `otto_config.winit.toml`, `otto_config.udev.toml`)
+4. **Backend-specific**: `./otto_config.{backend}.toml`
+   - Backend-specific overrides (e.g., `otto_config.winit.toml`, `otto_config.udev.toml`)
+   - Highest priority
+   - Useful for maintaining different settings per backend during development
 
-Backend-specific configurations override settings from the main file.
+**Getting Started:**
 
-Place your configuration files in the same directory as the Otto binary, or in the working directory from which you launch Otto.
+```bash
+# Create user config directory
+mkdir -p ~/.config/otto
 
-A reference configuration with all available options is provided in `otto_config.example.toml`.
+# Copy example config
+cp otto_config.example.toml ~/.config/otto/config.toml
+
+# Edit as needed
+$EDITOR ~/.config/otto/config.toml
+```
+
+A complete reference configuration with all available options is provided in `otto_config.example.toml`.
 
 ---
 
@@ -347,11 +367,13 @@ Unlike GPU shader-based implementations, Otto's gamma control uses hardware look
 
 ## Tips
 
-1. **Start with the example**: Copy `otto_config.example.toml` to `otto_config.toml` and modify as needed
-2. **Backend-specific settings**: Use `otto_config.winit.toml` for development/testing and `otto_config.udev.toml` for production
-3. **Icon/cursor themes**: List available themes with `ls /usr/share/icons` and `ls ~/.local/share/icons`
-4. **Test shortcuts**: Use simple shortcuts first to verify your configuration is loading correctly
-5. **Scaling**: Adjust `screen_scale` based on your display DPI (1.0 for 96 DPI, 2.0 for 192 DPI/HiDPI)
+1. **Start with the example**: Copy `otto_config.example.toml` to `~/.config/otto/config.toml` and modify as needed
+2. **Use XDG paths**: Store your user config in `~/.config/otto/config.toml` for persistence across updates
+3. **System-wide defaults**: Administrators can set defaults in `/etc/otto/config.toml`
+4. **Backend-specific settings**: Use `otto_config.winit.toml` in current directory for development/testing
+5. **Icon/cursor themes**: List available themes with `ls /usr/share/icons` and `ls ~/.local/share/icons`
+6. **Test shortcuts**: Use simple shortcuts first to verify your configuration is loading correctly
+7. **Scaling**: Adjust `screen_scale` based on your display DPI (1.0 for 96 DPI, 2.0 for 192 DPI/HiDPI)
 
 ---
 
@@ -359,8 +381,12 @@ Unlike GPU shader-based implementations, Otto's gamma control uses hardware look
 
 **Configuration not loading:**
 - Verify the TOML syntax is correct (matching brackets, quotes, commas)
-- Check Otto's log output for parsing errors
-- Ensure the config file is in the working directory
+- Check Otto's log output for parsing errors and which config files were loaded
+- Ensure the config file is in one of the searched locations:
+  - `/etc/otto/config.toml` (system)
+  - `~/.config/otto/config.toml` (user)
+  - `./otto_config.toml` (local)
+  - `./otto_config.{backend}.toml` (backend-specific)
 
 **Icon/cursor theme not found:**
 - Verify the theme is installed: `ls /usr/share/icons/ ~/.local/share/icons/`

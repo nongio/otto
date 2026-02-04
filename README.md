@@ -147,22 +147,38 @@ Current available backends:
 
 ## Configure Otto
 
-Otto uses TOML configuration files. A complete example configuration is provided in `otto_config.example.toml` which you can copy and modify:
+Otto uses TOML configuration files and follows standard Linux configuration paths.
+
+### Configuration Locations
+
+Otto searches for configuration files in the following order (later files override earlier ones):
+
+1. **System config**: `/etc/otto/config.toml`
+2. **User config**: `$XDG_CONFIG_HOME/otto/config.toml` (defaults to `~/.config/otto/config.toml`)
+3. **Local override**: `./otto_config.toml` (current directory, for development)
+4. **Backend-specific**: `./otto_config.{backend}.toml` (highest priority)
+
+A complete example configuration is provided in `otto_config.example.toml`. To get started:
 
 ```bash
-cp otto_config.example.toml otto_config.toml
+# Create user config directory
+mkdir -p ~/.config/otto
+
+# Copy example config
+cp otto_config.example.toml ~/.config/otto/config.toml
+
+# Edit as needed
+$EDITOR ~/.config/otto/config.toml
 ```
 
-### Backend-specific configuration
+### Backend-specific Configuration
 
-You can create backend-specific configuration files using the naming convention `otto_config.{backend}.toml`. For example:
+You can create backend-specific configuration files for development using the naming convention `otto_config.{backend}.toml` in the current directory:
 
 - `otto_config.winit.toml` - Configuration for the winit backend
 - `otto_config.udev.toml` - Configuration for the tty-udev/DRM backend
 
-When running with a specific backend, Otto will automatically load the corresponding configuration file if it exists, falling back to `otto_config.toml` otherwise.
-
-This allows you to maintain different display settings, keyboard shortcuts or other preferences for each backend. For instance, you might want different `screen_scale` values or display resolutions when running in a window (winit/X11) versus on bare metal (tty-udev).
+Backend-specific configs have the highest priority and override all other configuration files. This allows you to maintain different display settings, keyboard shortcuts, or other preferences for each backend. For instance, you might want different `screen_scale` values when running in a window (winit/X11) versus on bare metal (tty-udev).
 
 For detailed configuration options, see the [configuration documentation](./docs/user/configuration.md).
 
