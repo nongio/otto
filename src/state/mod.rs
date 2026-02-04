@@ -195,7 +195,6 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub wlr_foreign_toplevel_state: wlr_foreign_toplevel::WlrForeignToplevelManagerState,
     pub cursor_shape_manager_state: CursorShapeManagerState,
     pub virtual_keyboard_manager_state: VirtualKeyboardManagerState,
-    pub gamma_control_manager: gamma_control::GammaControlManagerState,
 
     #[cfg(feature = "xwayland")]
     pub xwayland_shell_state: xwayland_shell::XWaylandShellState,
@@ -214,7 +213,28 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub clock: Clock<Monotonic>,
     pub pointer: PointerHandle<Otto<BackendData>>,
 
+    pub gamma_control_manager: gamma_control::GammaControlManagerState,
     pub audio_manager: Option<crate::audio::AudioManager>,
+
+    // gamma animation state
+    /// Active gamma transitions: (output_name, from_lut, to_lut, start_time, duration)
+    #[allow(clippy::type_complexity)]
+    pub gamma_transitions: HashMap<
+        String,
+        (
+            Vec<u16>,
+            Vec<u16>,
+            Vec<u16>,
+            Vec<u16>,
+            Vec<u16>,
+            Vec<u16>,
+            std::time::Instant,
+            std::time::Duration,
+        ),
+    >,
+    /// Currently applied gamma per output: (output_name, red_lut, green_lut, blue_lut)
+    #[allow(clippy::type_complexity)]
+    pub current_gamma: HashMap<String, (Vec<u16>, Vec<u16>, Vec<u16>)>,
 
     #[cfg(feature = "xwayland")]
     pub xwm: Option<X11Wm>,
@@ -239,26 +259,6 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub screenshare_sessions: HashMap<String, crate::screenshare::ScreencastSession>,
     /// Manager for the screenshare D-Bus service (started lazily when needed).
     pub screenshare_manager: Option<crate::screenshare::ScreenshareManager>,
-
-    // gamma animation state
-    /// Active gamma transitions: (output_name, from_lut, to_lut, start_time, duration)
-    #[allow(clippy::type_complexity)]
-    pub gamma_transitions: HashMap<
-        String,
-        (
-            Vec<u16>,
-            Vec<u16>,
-            Vec<u16>,
-            Vec<u16>,
-            Vec<u16>,
-            Vec<u16>,
-            std::time::Instant,
-            std::time::Duration,
-        ),
-    >,
-    /// Currently applied gamma per output: (output_name, red_lut, green_lut, blue_lut)
-    #[allow(clippy::type_complexity)]
-    pub current_gamma: HashMap<String, (Vec<u16>, Vec<u16>, Vec<u16>)>,
 
     // foreign toplevel list - maps surface ObjectId to unified toplevel handles (both protocols)
     pub foreign_toplevels: HashMap<ObjectId, foreign_toplevel_shared::ForeignToplevelHandles>,
@@ -615,7 +615,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             wlr_foreign_toplevel_state,
             cursor_shape_manager_state,
             virtual_keyboard_manager_state,
-            gamma_control_manager,
             dnd_icon: None,
             suppressed_keys: Vec::new(),
             current_modifiers: ModifiersState::default(),
@@ -627,7 +626,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             seat,
             pointer,
             clock,
+            gamma_control_manager,
             audio_manager: AudioManager::new().ok(),
+            gamma_transitions: HashMap::new(),
+            current_gamma: HashMap::new(),
             #[cfg(feature = "xwayland")]
             xwayland_shell_state,
             #[cfg(feature = "xwayland")]
@@ -651,10 +653,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             // screenshare
             screenshare_sessions: HashMap::new(),
             screenshare_manager: None,
-
-            // gamma transitions
-            gamma_transitions: HashMap::new(),
-            current_gamma: HashMap::new(),
 
             // foreign toplevel list
             foreign_toplevels: HashMap::new(),
@@ -745,210 +743,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         }
 
         self.exclusive_zones.insert(output_name.clone(), zones);
-    }
-
-    /// Get gamma size for an output (udev backend only)
-    pub fn get_gamma_size(&self, output: &Output) -> Option<u32> {
-        #[cfg(feature = "udev")]
-        {
-            use crate::udev::UdevData;
-            if let Some(udev_data) =
-                (&self.backend_data as &dyn std::any::Any).downcast_ref::<UdevData>()
-            {
-                use crate::udev::UdevOutputId;
-                let output_id = output.user_data().get::<UdevOutputId>()?;
-                let backend = udev_data.backends.get(&output_id.device_id)?;
-                let drm_fd = backend.drm.device_fd();
-                crate::udev::gamma::get_gamma_size(drm_fd, output_id.crtc).ok()
-            } else {
-                None
-            }
-        }
-        #[cfg(not(feature = "udev"))]
-        {
-            let _ = output;
-            None
-        }
-    }
-
-    /// Apply gamma LUT to an output (udev backend only)
-    /// This version animates the transition over 500ms
-    pub fn apply_gamma(
-        &mut self,
-        output: &Output,
-        red: &[u16],
-        green: &[u16],
-        blue: &[u16],
-    ) -> Result<(), String> {
-        #[cfg(feature = "udev")]
-        {
-            use crate::udev::UdevData;
-            if let Some(udev_data) =
-                (&self.backend_data as &dyn std::any::Any).downcast_ref::<UdevData>()
-            {
-                use crate::udev::UdevOutputId;
-                let output_id = output
-                    .user_data()
-                    .get::<UdevOutputId>()
-                    .ok_or_else(|| "Output has no UdevOutputId".to_string())?;
-                let _ = udev_data
-                    .backends
-                    .get(&output_id.device_id)
-                    .ok_or_else(|| "Backend not found".to_string())?;
-
-                // Get current gamma as starting point
-                let gamma_size = red.len();
-                let current = if let Some((current_r, current_g, current_b)) =
-                    self.current_gamma.get(&output.name())
-                {
-                    // Use actual current gamma from last apply
-                    (current_r.clone(), current_g.clone(), current_b.clone())
-                } else if let Some((from_r, from_g, from_b, _, _, _, _, _)) =
-                    self.gamma_transitions.get(&output.name())
-                {
-                    // Use the start of ongoing transition as new start
-                    (from_r.clone(), from_g.clone(), from_b.clone())
-                } else {
-                    // Generate linear gamma as default start (first time only)
-                    let linear: Vec<u16> = (0..gamma_size)
-                        .map(|i| ((i as f64 / (gamma_size - 1) as f64) * 65535.0) as u16)
-                        .collect();
-                    (linear.clone(), linear.clone(), linear)
-                };
-
-                // Store transition
-                self.gamma_transitions.insert(
-                    output.name(),
-                    (
-                        current.0,
-                        current.1,
-                        current.2,
-                        red.to_vec(),
-                        green.to_vec(),
-                        blue.to_vec(),
-                        std::time::Instant::now(),
-                        std::time::Duration::from_millis(500),
-                    ),
-                );
-
-                // Trigger render loop to start animation
-                self.schedule_event_loop_dispatch();
-
-                Ok(())
-            } else {
-                Err("Not a udev backend".to_string())
-            }
-        }
-        #[cfg(not(feature = "udev"))]
-        {
-            let _ = (output, red, green, blue);
-            Err("Gamma control not supported on this backend".to_string())
-        }
-    }
-
-    /// Apply gamma immediately without animation (for internal use)
-    pub fn apply_gamma_immediate(
-        &self,
-        output: &Output,
-        red: &[u16],
-        green: &[u16],
-        blue: &[u16],
-    ) -> Result<(), String> {
-        #[cfg(feature = "udev")]
-        {
-            use crate::udev::UdevData;
-            if let Some(udev_data) =
-                (&self.backend_data as &dyn std::any::Any).downcast_ref::<UdevData>()
-            {
-                use crate::udev::UdevOutputId;
-                let output_id = output
-                    .user_data()
-                    .get::<UdevOutputId>()
-                    .ok_or_else(|| "Output has no UdevOutputId".to_string())?;
-                let backend = udev_data
-                    .backends
-                    .get(&output_id.device_id)
-                    .ok_or_else(|| "Backend not found".to_string())?;
-                let drm_fd = backend.drm.device_fd();
-                crate::udev::gamma::apply_gamma_lut(drm_fd, output_id.crtc, red, green, blue)
-            } else {
-                Err("Not a udev backend".to_string())
-            }
-        }
-        #[cfg(not(feature = "udev"))]
-        {
-            let _ = (output, red, green, blue);
-            Err("Gamma control not supported on this backend".to_string())
-        }
-    }
-
-    /// Tick gamma transitions (called from render loop)
-    pub fn tick_gamma_transitions(&mut self) {
-        let mut completed = Vec::new();
-
-        for (output_name, (from_r, from_g, from_b, to_r, to_g, to_b, start, duration)) in
-            self.gamma_transitions.iter()
-        {
-            let elapsed = start.elapsed();
-            let progress = (elapsed.as_secs_f64() / duration.as_secs_f64()).min(1.0);
-
-            // Interpolate each color channel
-            let current_r: Vec<u16> = from_r
-                .iter()
-                .zip(to_r.iter())
-                .map(|(f, t)| (*f as f64 + (*t as f64 - *f as f64) * progress) as u16)
-                .collect();
-            let current_g: Vec<u16> = from_g
-                .iter()
-                .zip(to_g.iter())
-                .map(|(f, t)| (*f as f64 + (*t as f64 - *f as f64) * progress) as u16)
-                .collect();
-            let current_b: Vec<u16> = from_b
-                .iter()
-                .zip(to_b.iter())
-                .map(|(f, t)| (*f as f64 + (*t as f64 - *f as f64) * progress) as u16)
-                .collect();
-
-            // Apply to output
-            if let Some(output) = self.workspaces.outputs().find(|o| &o.name() == output_name) {
-                let _ = self.apply_gamma_immediate(output, &current_r, &current_g, &current_b);
-
-                // Update current_gamma tracker
-                self.current_gamma.insert(
-                    output_name.clone(),
-                    (current_r.clone(), current_g.clone(), current_b.clone()),
-                );
-            }
-
-            // Mark as completed if done
-            if progress >= 1.0 {
-                completed.push(output_name.clone());
-            }
-        }
-
-        // Remove completed transitions
-        for name in completed {
-            self.gamma_transitions.remove(&name);
-        }
-    }
-
-    /// Reset gamma to neutral for an output (udev backend only)
-    pub fn reset_gamma(&mut self, output: &Output) -> Result<(), String> {
-        #[cfg(feature = "udev")]
-        {
-            // Generate neutral 6500K gamma LUT
-            let size = self
-                .get_gamma_size(output)
-                .ok_or("Failed to get gamma size")? as usize;
-            let neutral = crate::udev::gamma::generate_gamma_lut(6500, size);
-            // Use animated apply_gamma for smooth transition back to neutral
-            self.apply_gamma(output, &neutral.0, &neutral.1, &neutral.2)
-        }
-        #[cfg(not(feature = "udev"))]
-        {
-            let _ = output;
-            Err("Gamma control not supported on this backend".to_string())
-        }
     }
 
     pub fn schedule_event_loop_dispatch(&self) {
@@ -1065,10 +859,14 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             (0.0, 0.0).into();
         let mut render_elements = VecDeque::new();
 
+        // Track parent through traversal context: (absolute_location, parent_location, parent_id)
+        // parent_location is used to compute relative offsets for child surfaces
+        let initial_context = (initial_location, initial_location, None);
+
         smithay::wayland::compositor::with_surface_tree_downward(
             surface,
-            initial_location,
-            |_, states, location| {
+            initial_context,
+            |surface, states, (location, _parent_location, _parent_id)| {
                 let mut location = *location;
                 let data = states.data_map.get::<RendererSurfaceStateUserData>();
                 let mut cached_state = states.cached_state.get::<SurfaceCachedState>();
@@ -1081,7 +879,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     if let Some(view) = data.view() {
                         location += view.offset.to_f64().to_physical(scale_factor);
                         location -= surface_geometry.loc.to_f64().to_physical(scale_factor);
-                        TraversalAction::DoChildren(location)
+                        // Pass current location as parent location for children, and current surface as parent ID
+                        TraversalAction::DoChildren((location, location, Some(surface.id())))
                     } else {
                         TraversalAction::SkipChildren
                     }
@@ -1089,10 +888,21 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     TraversalAction::SkipChildren
                 }
             },
-            |surface, states, location| {
-                if let Some(window_view) =
-                    self.window_view_for_surface(surface, states, location, scale_factor)
-                {
+            |surface, states, (location, parent_location, parent_id)| {
+                // Compute relative offset from parent for child surfaces
+                let relative_offset = if parent_id.is_some() {
+                    *location - *parent_location
+                } else {
+                    *location
+                };
+
+                if let Some(window_view) = self.window_view_for_surface(
+                    surface,
+                    states,
+                    &relative_offset,
+                    scale_factor,
+                    parent_id.clone(),
+                ) {
                     render_elements.push_front(window_view);
                 }
             },
@@ -1102,21 +912,114 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     }
 
     pub fn update_dnd(&mut self) {
-        if let Some(dnd_surface) = self.dnd_icon.as_ref() {
+        let dnd_surface = self.dnd_icon.as_ref().cloned();
+        if let Some(dnd_surface) = dnd_surface {
             profiling::scope!("update_dnd_icon");
             let cursor_position = self.get_cursor_position();
 
             let scale = Config::with(|c| c.screen_scale);
-            let render_elements = self.get_render_elements(dnd_surface, scale);
-            self.workspaces
-                .dnd_view
-                .view_content
-                .update_state(&render_elements.into());
+
+            // Build both render_elements and surface_info (like windows do)
+            let mut render_elements = VecDeque::new();
+            #[allow(clippy::mutable_key_type)]
+            let mut surface_info: std::collections::HashMap<
+                ObjectId,
+                (WlSurface, Option<ObjectId>),
+            > = std::collections::HashMap::new();
+
+            let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> =
+                (0.0, 0.0).into();
+            let initial_context = (initial_location, initial_location, None);
+
+            smithay::wayland::compositor::with_surface_tree_downward(
+                &dnd_surface,
+                initial_context,
+                |surface, states, (location, _parent_location, _parent_id)| {
+                    let mut location = *location;
+                    let data = states.data_map.get::<RendererSurfaceStateUserData>();
+                    let mut cached_state = states.cached_state.get::<SurfaceCachedState>();
+                    let cached_state = cached_state.current();
+                    let surface_geometry = cached_state.geometry.unwrap_or_default();
+
+                    if let Some(data) = data {
+                        let data = data.lock().unwrap();
+                        if let Some(view) = data.view() {
+                            location += view.offset.to_f64().to_physical(scale);
+                            location -= surface_geometry.loc.to_f64().to_physical(scale);
+                            TraversalAction::DoChildren((location, location, Some(surface.id())))
+                        } else {
+                            TraversalAction::SkipChildren
+                        }
+                    } else {
+                        TraversalAction::SkipChildren
+                    }
+                },
+                |surface, states, (location, parent_location, parent_id)| {
+                    let relative_offset = if parent_id.is_some() {
+                        *location - *parent_location
+                    } else {
+                        *location
+                    };
+
+                    if let Some(wvs) = self.window_view_for_surface(
+                        surface,
+                        states,
+                        &relative_offset,
+                        scale,
+                        parent_id.clone(),
+                    ) {
+                        render_elements.push_front(wvs);
+                        surface_info.insert(surface.id(), (surface.clone(), parent_id.clone()));
+                    }
+                },
+                |_, _, _| true,
+            );
+
+            // Now build layers from surface_info (like windows)
+            for (surface_id, (surface, parent_id)) in surface_info.iter() {
+                let layer = self.get_or_create_layer_for_surface(surface);
+
+                // Configure layer with all properties
+                if let Some(wvs) = render_elements.iter().find(|e| &e.id == surface_id) {
+                    crate::workspaces::utils::configure_surface_layer(&layer, wvs);
+
+                    // Build parent-child hierarchy
+                    if let Some(parent_id) = parent_id {
+                        if let Some(parent_layer) = self.surface_layers.get(parent_id) {
+                            self.layers_engine.append_layer(&layer, parent_layer.id());
+                        }
+                    } else {
+                        // Root surface - attach to DnD content layer
+                        self.layers_engine
+                            .append_layer(&layer, self.workspaces.dnd_view.content_layer.id());
+                    }
+                }
+            }
 
             self.workspaces
                 .dnd_view
                 .layer
                 .set_position((cursor_position.x as f32, cursor_position.y as f32), None);
+        }
+    }
+
+    pub fn cleanup_dnd_layers(&mut self, dnd_surface: &WlSurface) {
+        // Remove all layers created for this DnD surface tree
+        let mut to_remove = Vec::new();
+        smithay::wayland::compositor::with_surface_tree_downward(
+            dnd_surface,
+            (),
+            |_surface, _states, _| TraversalAction::DoChildren(()),
+            |surface, _states, _| {
+                to_remove.push(surface.id());
+            },
+            |_, _, _| true,
+        );
+
+        for surface_id in to_remove {
+            if let Some(layer) = self.surface_layers.remove(&surface_id) {
+                layer.remove();
+            }
         }
     }
 
@@ -1127,6 +1030,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         states: &SurfaceData,
         location: &smithay::utils::Point<f64, smithay::utils::Physical>,
         scale: f64,
+        parent_id: Option<smithay::reexports::wayland_server::backend::ObjectId>,
     ) -> Option<WindowViewSurface> {
         let id = surface.id();
         let mut cached_state = states.cached_state.get::<SurfaceCachedState>();
@@ -1150,6 +1054,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     crate::textures_storage::set(&id, t);
                 }
                 let wvs = WindowViewSurface {
+                    parent_id, // Track parent for hierarchy
                     id: id.clone(),
                     log_offset_x: location.x as f32,
                     log_offset_y: location.y as f32,
@@ -1177,6 +1082,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let scale_factor = Config::with(|c| c.screen_scale);
         if let Some(window_surface) = window.wl_surface() {
             let id = window_surface.id();
+
+            // Ensure all surfaces in the tree have rendering layers before building render elements
+            // This only creates layers for surfaces that don't already have them
+            self.ensure_surface_tree_layers(&window_surface);
+
             let location = self
                 .workspaces
                 .element_location(window)
@@ -1212,24 +1122,29 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 let popup_origin: smithay::utils::Point<f64, smithay::utils::Physical> =
                     (0.0, 0.0).into();
                 with_surfaces_surface_tree(popup_surface, |surface, states| {
-                    if let Some(window_view) =
-                        self.window_view_for_surface(surface, states, &popup_origin, scale_factor)
-                    {
+                    // For popups, parent tracking is simpler - just use None for root
+                    // The popup itself is the root of its own surface tree
+                    if let Some(window_view) = self.window_view_for_surface(
+                        surface,
+                        states,
+                        &popup_origin,
+                        scale_factor,
+                        None,
+                    ) {
                         popup_surfaces.push(window_view);
                     }
                 });
 
-                // Remove warm cache for this popup if it exists
-                let warm_cache = self.view_warm_cache.remove(&popup_id);
-
-                // Send popup to the overlay layer with warm cache and register its surface layers
+                // Send popup to the overlay layer and register its surface layers
                 #[allow(clippy::mutable_key_type)]
                 let popup_layers = self.workspaces.popup_overlay.update_popup(
                     &popup_id,
                     &id,
                     popup_position,
                     popup_surfaces,
-                    warm_cache,
+                    None, // No warm cache needed anymore
+                    &self.layers_engine,
+                    &self.surface_layers,
                 );
 
                 self.surface_layers.extend(popup_layers);
@@ -1238,10 +1153,24 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> =
                 (0.0, 0.0).into();
 
+            // Track parent through traversal context: (location, parent_location, parent_id)
+            let initial_context = (initial_location, initial_location, None);
+
+            // Collect all surfaces and build parent-child map
+            #[allow(clippy::mutable_key_type, clippy::type_complexity)]
+            let mut surface_info: std::collections::HashMap<
+                ObjectId,
+                (
+                    WlSurface,
+                    smithay::utils::Point<f64, smithay::utils::Physical>,
+                    Option<ObjectId>,
+                ),
+            > = std::collections::HashMap::new();
+
             smithay::wayland::compositor::with_surface_tree_downward(
                 &window_surface,
-                initial_location,
-                |_, states, location| {
+                initial_context,
+                |surface, states, (location, _parent_location, _parent_id)| {
                     profiling::scope!("surface_tree_downward");
                     let mut location = *location;
                     let data = states.data_map.get::<RendererSurfaceStateUserData>();
@@ -1255,7 +1184,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                         if let Some(view) = data.view() {
                             location += view.offset.to_f64().to_physical(scale_factor);
                             location -= surface_geometry.loc.to_f64().to_physical(scale_factor);
-                            TraversalAction::DoChildren(location)
+                            TraversalAction::DoChildren((location, location, Some(surface.id())))
                         } else {
                             TraversalAction::SkipChildren
                         }
@@ -1263,15 +1192,46 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                         TraversalAction::SkipChildren
                     }
                 },
-                |surface, states, location| {
-                    if let Some(window_view) =
-                        self.window_view_for_surface(surface, states, location, scale_factor)
-                    {
-                        render_elements.push_front(window_view);
+                |surface, states, (location, parent_location, parent_id)| {
+                    let relative_offset = if parent_id.is_some() {
+                        *location - *parent_location
+                    } else {
+                        *location
+                    };
+
+                    if let Some(window_view) = self.window_view_for_surface(
+                        surface,
+                        states,
+                        &relative_offset,
+                        scale_factor,
+                        parent_id.clone(),
+                    ) {
+                        render_elements.push_front(window_view.clone());
+                        surface_info.insert(
+                            surface.id(),
+                            (surface.clone(), *location, parent_id.clone()),
+                        );
                     }
                 },
                 |_, _, _| true,
             );
+
+            // Now sync the layer hierarchy to match the surface tree
+            for (surface_id, (surface, _pos, parent_id)) in surface_info.iter() {
+                let layer = self.get_or_create_layer_for_surface(surface);
+
+                // Configure layer with all properties and draw callback
+                if let Some(wvs) = render_elements.iter().find(|e| &e.id == surface_id) {
+                    crate::workspaces::utils::configure_surface_layer(&layer, wvs);
+
+                    // Set up parent-child relationship using layers_engine
+                    if let Some(parent_id) = parent_id {
+                        if let Some(parent_layer) = self.surface_layers.get(parent_id) {
+                            self.layers_engine.append_layer(&layer, parent_layer.id());
+                        }
+                    }
+                }
+            }
 
             if let Some(window_view) = self.workspaces.get_window_view(&id) {
                 let model = WindowViewBaseModel {
@@ -1281,154 +1241,147 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     h: window_geometry.size.h as f32,
                     title,
                     fullscreen,
-                    // active: window.toplevel().unwrap().with_pending_state(|state| {
-                    //     state.states.contains(xdg_toplevel::State::Activated)
-                    // }),
-                    // TODO: find a way to get the active state
                     active: false,
                 };
                 window_view.view_base.update_state(&model);
-                window_view
-                    .view_content
-                    .update_state(&render_elements.iter().cloned().collect());
 
-                // Extract and store surface layers for sc_layer protocol
-                let render_elements_vec: Vec<_> = render_elements.into();
-                let (_, surface_layers) = crate::workspaces::utils::view_render_elements(
-                    &render_elements_vec,
-                    &window_view.view_content,
-                );
-                self.surface_layers.extend(surface_layers);
+                // Directly add root surface layer to content layer without using LayerTreeBuilder
+                let content_layer = &window_view.content_layer;
+
+                if let Some(root_layer) = self.surface_layers.get(&id) {
+                    // Use layers_engine to set parent-child relationship
+                    self.layers_engine
+                        .append_layer(root_layer, content_layer.id());
+                }
 
                 self.workspaces.expose_update_if_needed();
             }
         }
     }
+    // Commented out - update_layer_surface is no longer used
+    // pub fn update_layer_surface(&mut self, surface_id: &ObjectId) {
+    //     let Some(layer_shell_surface) = self.layer_surfaces.get(surface_id) else {
+    //         return;
+    //     };
 
-    /// Update a layer shell surface's lay_rs layer with current buffer content
-    pub fn update_layer_surface(&mut self, surface_id: &ObjectId) {
-        let Some(layer_shell_surface) = self.layer_surfaces.get(surface_id) else {
-            return;
-        };
+    //     let scale_factor = Config::with(|c| c.screen_scale);
+    //     let wl_surface = layer_shell_surface.layer_surface().wl_surface();
 
-        let scale_factor = Config::with(|c| c.screen_scale);
-        let wl_surface = layer_shell_surface.layer_surface().wl_surface();
+    //     // Get the output geometry to compute surface placement
+    //     let output_geometry = self
+    //         .workspaces
+    //         .output_geometry(layer_shell_surface.output())
+    //         .unwrap_or_default();
 
-        // Get the output geometry to compute surface placement
-        let output_geometry = self
-            .workspaces
-            .output_geometry(layer_shell_surface.output())
-            .unwrap_or_default();
+    //     // Compute the layer surface geometry based on anchors/margins
+    //     let geometry = layer_shell_surface.compute_geometry(output_geometry);
 
-        // Compute the layer surface geometry based on anchors/margins
-        let geometry = layer_shell_surface.compute_geometry(output_geometry);
+    //     // Collect render elements from the surface tree
+    //     let mut render_elements: Vec<WindowViewSurface> = Vec::new();
+    //     let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> =
+    //         (0.0, 0.0).into();
 
-        // Collect render elements from the surface tree
-        let mut render_elements: Vec<WindowViewSurface> = Vec::new();
-        let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> =
-            (0.0, 0.0).into();
+    //     smithay::wayland::compositor::with_surface_tree_downward(
+    //         wl_surface,
+    //         initial_location,
+    //         |_, states, location| {
+    //             let mut location = *location;
+    //             let data = states
+    //                 .data_map
+    //                 .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>(
+    //             );
+    //             let mut cached_state = states.cached_state.get::<SurfaceCachedState>();
+    //             let cached_state = cached_state.current();
+    //             let surface_geometry = cached_state.geometry.unwrap_or_default();
 
-        smithay::wayland::compositor::with_surface_tree_downward(
-            wl_surface,
-            initial_location,
-            |_, states, location| {
-                let mut location = *location;
-                let data = states
-                    .data_map
-                    .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>(
-                );
-                let mut cached_state = states.cached_state.get::<SurfaceCachedState>();
-                let cached_state = cached_state.current();
-                let surface_geometry = cached_state.geometry.unwrap_or_default();
+    //             if let Some(data) = data {
+    //                 let data = data.lock().unwrap();
+    //                 if let Some(view) = data.view() {
+    //                     location += view.offset.to_f64().to_physical(scale_factor);
+    //                     location -= surface_geometry.loc.to_f64().to_physical(scale_factor);
+    //                     TraversalAction::DoChildren(location)
+    //                 } else {
+    //                     TraversalAction::SkipChildren
+    //                 }
+    //             } else {
+    //                 TraversalAction::SkipChildren
+    //             }
+    //         },
+    //         |surface, states, location| {
+    //             if let Some(wvs) =
+    //                 self.window_view_for_surface(surface, states, location, scale_factor)
+    //             {
+    //                 render_elements.push(wvs);
+    //             }
+    //         },
+    //         |_, _, _| true,
+    //     );
 
-                if let Some(data) = data {
-                    let data = data.lock().unwrap();
-                    if let Some(view) = data.view() {
-                        location += view.offset.to_f64().to_physical(scale_factor);
-                        location -= surface_geometry.loc.to_f64().to_physical(scale_factor);
-                        TraversalAction::DoChildren(location)
-                    } else {
-                        TraversalAction::SkipChildren
-                    }
-                } else {
-                    TraversalAction::SkipChildren
-                }
-            },
-            |surface, states, location| {
-                if let Some(wvs) =
-                    self.window_view_for_surface(surface, states, location, scale_factor)
-                {
-                    render_elements.push(wvs);
-                }
-            },
-            |_, _, _| true,
-        );
+    //     // Update the lay_rs layer position and size
+    //     let layer = &layer_shell_surface.layer;
+    //     layer.set_position(
+    //         layers::types::Point {
+    //             x: (geometry.loc.x as f64 * scale_factor) as f32,
+    //             y: (geometry.loc.y as f64 * scale_factor) as f32,
+    //         },
+    //         None,
+    //     );
+    //     layer.set_size(
+    //         layers::types::Size::points(
+    //             (geometry.size.w as f64 * scale_factor) as f32,
+    //             (geometry.size.h as f64 * scale_factor) as f32,
+    //         ),
+    //         None,
+    //     );
 
-        // Update the lay_rs layer position and size
-        let layer = &layer_shell_surface.layer;
-        layer.set_position(
-            layers::types::Point {
-                x: (geometry.loc.x as f64 * scale_factor) as f32,
-                y: (geometry.loc.y as f64 * scale_factor) as f32,
-            },
-            None,
-        );
-        layer.set_size(
-            layers::types::Size::points(
-                (geometry.size.w as f64 * scale_factor) as f32,
-                (geometry.size.h as f64 * scale_factor) as f32,
-            ),
-            None,
-        );
+    //     // If we have render elements, set up the drawing
+    //     if !render_elements.is_empty() {
+    //         // Clone what we need for the draw closure
+    //         let elements = render_elements.clone();
+    //         let width = (geometry.size.w as f64 * scale_factor) as f32;
+    //         let height = (geometry.size.h as f64 * scale_factor) as f32;
 
-        // If we have render elements, set up the drawing
-        if !render_elements.is_empty() {
-            // Clone what we need for the draw closure
-            let elements = render_elements.clone();
-            let width = (geometry.size.w as f64 * scale_factor) as f32;
-            let height = (geometry.size.h as f64 * scale_factor) as f32;
+    //         layer.set_draw_content(move |canvas: &layers::skia::Canvas, _w, _h| {
+    //             for wvs in &elements {
+    //                 if wvs.phy_dst_w <= 0.0 || wvs.phy_dst_h <= 0.0 {
+    //                     continue;
+    //                 }
+    //                 let tex = crate::textures_storage::get(&wvs.id);
+    //                 if let Some(tex) = tex {
+    //                     let src_h = (wvs.phy_src_h - wvs.phy_src_y).max(1.0);
+    //                     let src_w = (wvs.phy_src_w - wvs.phy_src_x).max(1.0);
+    //                     let scale_y = wvs.phy_dst_h / src_h;
+    //                     let scale_x = wvs.phy_dst_w / src_w;
+    //                     let mut matrix = layers::skia::Matrix::new_identity();
+    //                     matrix.pre_translate((-wvs.phy_src_x, -wvs.phy_src_y));
+    //                     matrix.pre_scale((scale_x, scale_y), None);
 
-            layer.set_draw_content(move |canvas: &layers::skia::Canvas, _w, _h| {
-                for wvs in &elements {
-                    if wvs.phy_dst_w <= 0.0 || wvs.phy_dst_h <= 0.0 {
-                        continue;
-                    }
-                    let tex = crate::textures_storage::get(&wvs.id);
-                    if let Some(tex) = tex {
-                        let src_h = (wvs.phy_src_h - wvs.phy_src_y).max(1.0);
-                        let src_w = (wvs.phy_src_w - wvs.phy_src_x).max(1.0);
-                        let scale_y = wvs.phy_dst_h / src_h;
-                        let scale_x = wvs.phy_dst_w / src_w;
-                        let mut matrix = layers::skia::Matrix::new_identity();
-                        matrix.pre_translate((-wvs.phy_src_x, -wvs.phy_src_y));
-                        matrix.pre_scale((scale_x, scale_y), None);
+    //                     let sampling = layers::skia::SamplingOptions::from(
+    //                         layers::skia::CubicResampler::catmull_rom(),
+    //                     );
+    //                     let mut paint = layers::skia::Paint::new(
+    //                         layers::skia::Color4f::new(1.0, 1.0, 1.0, 1.0),
+    //                         None,
+    //                     );
+    //                     paint.set_shader(tex.image.to_shader(
+    //                         (layers::skia::TileMode::Clamp, layers::skia::TileMode::Clamp),
+    //                         sampling,
+    //                         &matrix,
+    //                     ));
 
-                        let sampling = layers::skia::SamplingOptions::from(
-                            layers::skia::CubicResampler::catmull_rom(),
-                        );
-                        let mut paint = layers::skia::Paint::new(
-                            layers::skia::Color4f::new(1.0, 1.0, 1.0, 1.0),
-                            None,
-                        );
-                        paint.set_shader(tex.image.to_shader(
-                            (layers::skia::TileMode::Clamp, layers::skia::TileMode::Clamp),
-                            sampling,
-                            &matrix,
-                        ));
-
-                        let dst_rect = layers::skia::Rect::from_xywh(
-                            wvs.phy_dst_x,
-                            wvs.phy_dst_y,
-                            wvs.phy_dst_w,
-                            wvs.phy_dst_h,
-                        );
-                        canvas.draw_rect(dst_rect, &paint);
-                    }
-                }
-                layers::skia::Rect::from_xywh(0.0, 0.0, width, height)
-            });
-        }
-    }
+    //                     let dst_rect = layers::skia::Rect::from_xywh(
+    //                         wvs.phy_dst_x,
+    //                         wvs.phy_dst_y,
+    //                         wvs.phy_dst_w,
+    //                         wvs.phy_dst_h,
+    //                     );
+    //                     canvas.draw_rect(dst_rect, &paint);
+    //                 }
+    //             }
+    //             layers::skia::Rect::from_xywh(0.0, 0.0, width, height)
+    //         });
+    //     }
+    // }
 
     pub fn quit_appswitcher_app(&mut self) {
         self.workspaces.quit_appswitcher_app();
@@ -1565,6 +1518,209 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             if keyboard.is_grabbed() {
                 keyboard.unset_grab(self);
             }
+        }
+    }
+
+    pub fn get_gamma_size(&self, output: &Output) -> Option<u32> {
+        #[cfg(feature = "udev")]
+        {
+            use crate::udev::UdevData;
+            if let Some(udev_data) =
+                (&self.backend_data as &dyn std::any::Any).downcast_ref::<UdevData>()
+            {
+                use crate::udev::UdevOutputId;
+                let output_id = output.user_data().get::<UdevOutputId>()?;
+                let backend = udev_data.backends.get(&output_id.device_id)?;
+                let drm_fd = backend.drm.device_fd();
+                crate::udev::gamma::get_gamma_size(drm_fd, output_id.crtc).ok()
+            } else {
+                None
+            }
+        }
+        #[cfg(not(feature = "udev"))]
+        {
+            let _ = output;
+            None
+        }
+    }
+
+    /// Apply gamma LUT to an output (udev backend only)
+    /// This version animates the transition over 500ms
+    pub fn apply_gamma(
+        &mut self,
+        output: &Output,
+        red: &[u16],
+        green: &[u16],
+        blue: &[u16],
+    ) -> Result<(), String> {
+        #[cfg(feature = "udev")]
+        {
+            use crate::udev::UdevData;
+            if let Some(udev_data) =
+                (&self.backend_data as &dyn std::any::Any).downcast_ref::<UdevData>()
+            {
+                use crate::udev::UdevOutputId;
+                let output_id = output
+                    .user_data()
+                    .get::<UdevOutputId>()
+                    .ok_or_else(|| "Output has no UdevOutputId".to_string())?;
+                let _ = udev_data
+                    .backends
+                    .get(&output_id.device_id)
+                    .ok_or_else(|| "Backend not found".to_string())?;
+
+                // Get current gamma as starting point
+                let gamma_size = red.len();
+                let current = if let Some((current_r, current_g, current_b)) =
+                    self.current_gamma.get(&output.name())
+                {
+                    // Use actual current gamma from last apply
+                    (current_r.clone(), current_g.clone(), current_b.clone())
+                } else if let Some((from_r, from_g, from_b, _, _, _, _, _)) =
+                    self.gamma_transitions.get(&output.name())
+                {
+                    // Use the start of ongoing transition as new start
+                    (from_r.clone(), from_g.clone(), from_b.clone())
+                } else {
+                    // Generate linear gamma as default start (first time only)
+                    let linear: Vec<u16> = (0..gamma_size)
+                        .map(|i| ((i as f64 / (gamma_size - 1) as f64) * 65535.0) as u16)
+                        .collect();
+                    (linear.clone(), linear.clone(), linear)
+                };
+
+                // Store transition
+                self.gamma_transitions.insert(
+                    output.name(),
+                    (
+                        current.0,
+                        current.1,
+                        current.2,
+                        red.to_vec(),
+                        green.to_vec(),
+                        blue.to_vec(),
+                        std::time::Instant::now(),
+                        std::time::Duration::from_millis(500),
+                    ),
+                );
+
+                // Trigger render loop to start animation
+                self.schedule_event_loop_dispatch();
+
+                Ok(())
+            } else {
+                Err("Not a udev backend".to_string())
+            }
+        }
+        #[cfg(not(feature = "udev"))]
+        {
+            let _ = (output, red, green, blue);
+            Err("Gamma control not supported on this backend".to_string())
+        }
+    }
+
+    /// Apply gamma immediately without animation (for internal use)
+    pub fn apply_gamma_immediate(
+        &self,
+        output: &Output,
+        red: &[u16],
+        green: &[u16],
+        blue: &[u16],
+    ) -> Result<(), String> {
+        #[cfg(feature = "udev")]
+        {
+            use crate::udev::UdevData;
+            if let Some(udev_data) =
+                (&self.backend_data as &dyn std::any::Any).downcast_ref::<UdevData>()
+            {
+                use crate::udev::UdevOutputId;
+                let output_id = output
+                    .user_data()
+                    .get::<UdevOutputId>()
+                    .ok_or_else(|| "Output has no UdevOutputId".to_string())?;
+                let backend = udev_data
+                    .backends
+                    .get(&output_id.device_id)
+                    .ok_or_else(|| "Backend not found".to_string())?;
+                let drm_fd = backend.drm.device_fd();
+                crate::udev::gamma::apply_gamma_lut(drm_fd, output_id.crtc, red, green, blue)
+            } else {
+                Err("Not a udev backend".to_string())
+            }
+        }
+        #[cfg(not(feature = "udev"))]
+        {
+            let _ = (output, red, green, blue);
+            Err("Gamma control not supported on this backend".to_string())
+        }
+    }
+
+    /// Reset gamma to neutral for an output (udev backend only)
+    pub fn reset_gamma(&mut self, output: &Output) -> Result<(), String> {
+        #[cfg(feature = "udev")]
+        {
+            // Generate neutral 6500K gamma LUT
+            let size = self
+                .get_gamma_size(output)
+                .ok_or("Failed to get gamma size")? as usize;
+            let neutral = crate::udev::gamma::generate_gamma_lut(6500, size);
+            // Use animated apply_gamma for smooth transition back to neutral
+            self.apply_gamma(output, &neutral.0, &neutral.1, &neutral.2)
+        }
+        #[cfg(not(feature = "udev"))]
+        {
+            let _ = output;
+            Err("Gamma control not supported on this backend".to_string())
+        }
+    }
+
+    /// Tick gamma transitions (called from render loop)
+    pub fn tick_gamma_transitions(&mut self) {
+        let mut completed = Vec::new();
+
+        for (output_name, (from_r, from_g, from_b, to_r, to_g, to_b, start, duration)) in
+            self.gamma_transitions.iter()
+        {
+            let elapsed = start.elapsed();
+            let progress = (elapsed.as_secs_f64() / duration.as_secs_f64()).min(1.0);
+
+            // Interpolate each color channel
+            let current_r: Vec<u16> = from_r
+                .iter()
+                .zip(to_r.iter())
+                .map(|(f, t)| (*f as f64 + (*t as f64 - *f as f64) * progress) as u16)
+                .collect();
+            let current_g: Vec<u16> = from_g
+                .iter()
+                .zip(to_g.iter())
+                .map(|(f, t)| (*f as f64 + (*t as f64 - *f as f64) * progress) as u16)
+                .collect();
+            let current_b: Vec<u16> = from_b
+                .iter()
+                .zip(to_b.iter())
+                .map(|(f, t)| (*f as f64 + (*t as f64 - *f as f64) * progress) as u16)
+                .collect();
+
+            // Apply to output
+            if let Some(output) = self.workspaces.outputs().find(|o| &o.name() == output_name) {
+                let _ = self.apply_gamma_immediate(output, &current_r, &current_g, &current_b);
+
+                // Update current_gamma tracker
+                self.current_gamma.insert(
+                    output_name.clone(),
+                    (current_r.clone(), current_g.clone(), current_b.clone()),
+                );
+            }
+
+            // Mark as completed if done
+            if progress >= 1.0 {
+                completed.push(output_name.clone());
+            }
+        }
+
+        // Remove completed transitions
+        for name in completed {
+            self.gamma_transitions.remove(&name);
         }
     }
 }

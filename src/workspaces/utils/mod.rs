@@ -1,11 +1,8 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
 
-use layers::{
-    prelude::{taffy, Layer, LayerTree, LayerTreeBuilder, View},
-    types::{Point, Size},
-};
-use smithay::{reexports::wayland_server::backend::ObjectId, utils::Transform};
+use layers::prelude::{taffy, Layer};
+use layers::types::{Point, Size};
+use smithay::utils::Transform;
 
 use super::WindowViewSurface;
 
@@ -157,143 +154,97 @@ pub fn draw_balloon_rect(
     path
 }
 
-#[allow(clippy::ptr_arg)]
-#[profiling::function]
-pub fn view_render_elements(
-    render_elements: &Vec<WindowViewSurface>,
-    _view: &View<Vec<WindowViewSurface>>,
-) -> (LayerTree, HashMap<ObjectId, Layer>) {
-    let tree = LayerTreeBuilder::default()
-        .key("window_content")
-        .size((
-            Size {
-                width: taffy::Dimension::Length(0.0),
-                height: taffy::Dimension::Length(0.0),
-            },
-            None,
-        ))
-        .pointer_events(false)
-        .children(
-            render_elements
-                .iter()
-                .filter(|render_element| {
-                    render_element.phy_dst_w > 0.0 && render_element.phy_dst_h > 0.0
-                })
-                .map(|wvs| {
-                    let draw_wvs = wvs.clone();
+/// Configure a surface layer with all rendering properties and draw callback
+///
+/// This sets up:
+/// - Position (relative to parent)
+/// - Size
+/// - Layout style (absolute positioning)
+/// - Pointer events (disabled)
+/// - Picture caching (disabled)
+/// - Draw content callback with texture rendering
+pub fn configure_surface_layer(layer: &Layer, wvs: &WindowViewSurface) {
+    // Position calculation: phy_dst is the buffer viewport offset, log_offset is from tree traversal
+    // log_offset is now relative to parent (or absolute for root surfaces)
+    let pos_x = wvs.phy_dst_x + wvs.log_offset_x;
+    let pos_y = wvs.phy_dst_y + wvs.log_offset_y;
 
-                    let draw_container = move |canvas: &layers::skia::Canvas, w: f32, h: f32| {
-                        if w == 0.0 || h == 0.0 {
-                            return layers::skia::Rect::default();
-                        }
-                        let tex = crate::textures_storage::get(&draw_wvs.id);
-                        if tex.is_none() {
-                            return layers::skia::Rect::default();
-                        }
-                        let tex = tex.unwrap();
-                        let mut damage = layers::skia::Rect::default();
-                        if let Some(tex_damage) = tex.damage {
-                            tex_damage.iter().for_each(|bd| {
-                                let r = layers::skia::Rect::from_xywh(
-                                    bd.loc.x as f32,
-                                    bd.loc.y as f32,
-                                    bd.size.w as f32,
-                                    bd.size.h as f32,
-                                );
-                                damage.join(r);
-                            });
-                        }
+    // Apply all layer properties
+    layer.set_layout_style(taffy::Style {
+        position: taffy::Position::Absolute,
+        ..Default::default()
+    });
 
-                        let src_h = (draw_wvs.phy_src_h - draw_wvs.phy_src_y).max(1.0);
-                        let src_w = (draw_wvs.phy_src_w - draw_wvs.phy_src_x).max(1.0);
-                        let scale_y = draw_wvs.phy_dst_h / src_h;
-                        let scale_x = draw_wvs.phy_dst_w / src_w;
-                        let mut matrix = layers::skia::Matrix::new_identity();
-                        match draw_wvs.transform {
-                            Transform::Normal => {
-                                matrix.pre_translate((-draw_wvs.phy_src_x, -draw_wvs.phy_src_y));
-                                matrix.pre_scale((scale_x, scale_y), None);
-                            }
-                            Transform::Flipped180 => {
-                                matrix.pre_translate((draw_wvs.phy_src_x, draw_wvs.phy_src_y));
-                                matrix.pre_scale((scale_x, -scale_y), None);
-                            }
-                            Transform::_90 => {}
-                            Transform::_180 => {}
-                            Transform::_270 => {}
-                            Transform::Flipped => {}
-                            Transform::Flipped90 => {}
-                            Transform::Flipped270 => {}
-                        }
+    layer.set_position(Point { x: pos_x, y: pos_y }, None);
+    layer.set_size(
+        Size {
+            width: taffy::Dimension::Length(wvs.phy_dst_w),
+            height: taffy::Dimension::Length(wvs.phy_dst_h),
+        },
+        None,
+    );
 
-                        let sampling = layers::skia::SamplingOptions::from(
-                            layers::skia::CubicResampler::catmull_rom(),
-                        );
-                        let mut paint = layers::skia::Paint::new(
-                            layers::skia::Color4f::new(1.0, 1.0, 1.0, 1.0),
-                            None,
-                        );
-                        paint.set_shader(tex.image.to_shader(
-                            (layers::skia::TileMode::Clamp, layers::skia::TileMode::Clamp),
-                            sampling,
-                            &matrix,
-                        ));
+    layer.set_pointer_events(false);
+    layer.set_picture_cached(true); // Enable picture caching for proper opacity inheritance
 
-                        let rect = layers::skia::Rect::from_xywh(0.0, 0.0, w, h);
-                        canvas.draw_rect(rect, &paint);
-                        damage
-                    };
-                    LayerTreeBuilder::default()
-                        .key(format!("surface_{:?}", wvs.id))
-                        .layout_style(taffy::Style {
-                            position: taffy::Position::Absolute,
-                            ..Default::default()
-                        })
-                        .position((
-                            Point {
-                                x: wvs.phy_dst_x + wvs.log_offset_x,
-                                y: wvs.phy_dst_y + wvs.log_offset_y,
-                            },
-                            None,
-                        ))
-                        .size((
-                            Size {
-                                width: taffy::Dimension::Length(wvs.phy_dst_w),
-                                height: taffy::Dimension::Length(wvs.phy_dst_h),
-                            },
-                            None,
-                        ))
-                        .content(Some(draw_container))
-                        .pointer_events(false)
-                        .picture_cached(false)
-                        .build()
-                        .unwrap()
-                })
-                .collect::<Vec<_>>(),
-        )
-        .build()
-        .unwrap();
-
-    // Extract layers by key and map to surface IDs
-    #[allow(clippy::mutable_key_type)]
-    let mut surface_layers = HashMap::new();
-    for wvs in render_elements.iter() {
-        if wvs.phy_dst_w > 0.0 && wvs.phy_dst_h > 0.0 {
-            let key = format!("surface_{:?}", wvs.id);
-            if let Some(layer) = _view.layer_by_key(&key) {
-                surface_layers.insert(wvs.id.clone(), layer);
-            }
+    // Set the draw content callback for texture rendering
+    let draw_wvs = wvs.clone();
+    layer.set_draw_content(move |canvas: &layers::skia::Canvas, w: f32, h: f32| {
+        if w == 0.0 || h == 0.0 {
+            return layers::skia::Rect::default();
         }
-    }
+        let tex = crate::textures_storage::get(&draw_wvs.id);
+        if tex.is_none() {
+            return layers::skia::Rect::default();
+        }
+        let tex = tex.unwrap();
+        let mut damage = layers::skia::Rect::default();
+        if let Some(tex_damage) = tex.damage {
+            tex_damage.iter().for_each(|bd| {
+                let r = layers::skia::Rect::from_xywh(
+                    bd.loc.x as f32,
+                    bd.loc.y as f32,
+                    bd.size.w as f32,
+                    bd.size.h as f32,
+                );
+                damage.join(r);
+            });
+        }
 
-    (tree, surface_layers)
-}
+        let src_h = (draw_wvs.phy_src_h - draw_wvs.phy_src_y).max(1.0);
+        let src_w = (draw_wvs.phy_src_w - draw_wvs.phy_src_x).max(1.0);
+        let scale_y = draw_wvs.phy_dst_h / src_h;
+        let scale_x = draw_wvs.phy_dst_w / src_w;
+        let mut matrix = layers::skia::Matrix::new_identity();
+        match draw_wvs.transform {
+            Transform::Normal => {
+                matrix.pre_translate((-draw_wvs.phy_src_x, -draw_wvs.phy_src_y));
+                matrix.pre_scale((scale_x, scale_y), None);
+            }
+            Transform::Flipped180 => {
+                matrix.pre_translate((draw_wvs.phy_src_x, draw_wvs.phy_src_y));
+                matrix.pre_scale((scale_x, -scale_y), None);
+            }
+            Transform::_90 => {}
+            Transform::_180 => {}
+            Transform::_270 => {}
+            Transform::Flipped => {}
+            Transform::Flipped90 => {}
+            Transform::Flipped270 => {}
+        }
 
-/// Wrapper for View::new that only returns the LayerTree
-#[allow(clippy::ptr_arg)]
-pub fn view_render_elements_wrapper(
-    render_elements: &Vec<WindowViewSurface>,
-    view: &View<Vec<WindowViewSurface>>,
-) -> LayerTree {
-    view_render_elements(render_elements, view).0
+        let sampling =
+            layers::skia::SamplingOptions::from(layers::skia::CubicResampler::catmull_rom());
+        let mut paint =
+            layers::skia::Paint::new(layers::skia::Color4f::new(1.0, 1.0, 1.0, 1.0), None);
+        paint.set_shader(tex.image.to_shader(
+            (layers::skia::TileMode::Clamp, layers::skia::TileMode::Clamp),
+            sampling,
+            &matrix,
+        ));
+
+        let rect = layers::skia::Rect::from_xywh(0.0, 0.0, w, h);
+        canvas.draw_rect(rect, &paint);
+        damage
+    });
 }

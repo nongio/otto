@@ -1,13 +1,12 @@
 use layers::{
     engine::Engine,
-    prelude::{taffy, Layer, View},
+    prelude::{taffy, Layer},
     types::Point,
-    view::RenderLayerTree,
 };
 use smithay::reexports::wayland_server::backend::ObjectId;
 use std::{collections::HashMap, sync::Arc};
 
-use crate::workspaces::{utils::view_render_elements_wrapper, WindowViewSurface};
+use crate::workspaces::WindowViewSurface;
 
 /// A popup with its layer and root window reference
 pub struct PopupLayer {
@@ -15,7 +14,6 @@ pub struct PopupLayer {
     pub root_window_id: ObjectId,
     pub layer: Layer,
     pub content_layer: Layer,
-    pub view_content: View<Vec<WindowViewSurface>>,
 }
 
 /// View for rendering popups on top of all windows
@@ -57,7 +55,7 @@ impl PopupOverlayView {
         &mut self,
         popup_id: ObjectId,
         root_window_id: ObjectId,
-        warm_cache: Option<HashMap<String, std::collections::VecDeque<layers::prelude::NodeRef>>>,
+        _warm_cache: Option<HashMap<String, std::collections::VecDeque<layers::prelude::NodeRef>>>,
     ) -> &mut PopupLayer {
         self.popup_layers
             .entry(popup_id.clone())
@@ -80,31 +78,18 @@ impl PopupOverlayView {
                 self.layers_engine.append_layer(&layer, self.layer.id());
                 self.layers_engine.append_layer(&content_layer, layer.id());
 
-                let view_content = View::new(
-                    format!("popup_content_{:?}", popup_id),
-                    Vec::new(),
-                    view_render_elements_wrapper,
-                );
-                view_content.mount_layer(content_layer.clone());
-
-                // Inject warm cache into newly created View
-                if let Some(cache) = warm_cache {
-                    view_content.set_viewlayer_node_map(cache);
-                    tracing::debug!("Injected warm cache into new PopupView for {:?}", popup_id);
-                }
-
                 PopupLayer {
                     popup_id,
                     root_window_id,
                     layer,
                     content_layer,
-                    view_content,
                 }
             })
     }
 
     /// Update popup position and surfaces
     #[allow(clippy::mutable_key_type)]
+    #[allow(clippy::too_many_arguments)]
     pub fn update_popup(
         &mut self,
         popup_id: &ObjectId,
@@ -112,25 +97,51 @@ impl PopupOverlayView {
         position: Point,
         surfaces: Vec<WindowViewSurface>,
         warm_cache: Option<HashMap<String, std::collections::VecDeque<layers::prelude::NodeRef>>>,
+        layers_engine: &Arc<Engine>,
+        existing_surface_layers: &HashMap<ObjectId, Layer>,
     ) -> HashMap<ObjectId, Layer> {
         let popup =
             self.get_or_create_popup_layer(popup_id.clone(), root_window_id.clone(), warm_cache);
         popup.layer.set_position(position, None);
 
-        popup.view_content.update_state(&surfaces);
+        // Map surface IDs to their layers
+        let mut surface_layers: HashMap<ObjectId, Layer> = HashMap::new();
 
-        let render_elements_vec: Vec<_> = surfaces;
-        let (_, surface_layers) = crate::workspaces::utils::view_render_elements(
-            &render_elements_vec,
-            &popup.view_content,
-        );
+        for wvs in surfaces.iter() {
+            if wvs.phy_dst_w <= 0.0 || wvs.phy_dst_h <= 0.0 {
+                continue;
+            }
+
+            // Reuse layer from cache if it exists, otherwise create new one
+            let layer = if let Some(cached_layer) = existing_surface_layers.get(&wvs.id) {
+                cached_layer.clone()
+            } else {
+                let new_layer = layers_engine.new_layer();
+                let key = format!("surface_{:?}", wvs.id);
+                new_layer.set_key(&key);
+                new_layer
+            };
+
+            // Configure layer with all properties and draw callback
+            crate::workspaces::utils::configure_surface_layer(&layer, wvs);
+
+            // Set up parent-child relationship
+            if let Some(ref parent_id) = wvs.parent_id {
+                if let Some(parent_layer) = surface_layers.get(parent_id) {
+                    layers_engine.append_layer(&layer, parent_layer.id());
+                } else {
+                    // Parent not yet created, append to content layer
+                    layers_engine.append_layer(&layer, popup.content_layer.id());
+                }
+            } else {
+                // Root surface, append to content layer
+                layers_engine.append_layer(&layer, popup.content_layer.id());
+            }
+
+            surface_layers.insert(wvs.id.clone(), layer);
+        }
 
         surface_layers
-    }
-
-    /// Get the View for a popup (if it exists)
-    pub fn get_popup_view(&self, popup_id: &ObjectId) -> Option<&View<Vec<WindowViewSurface>>> {
-        self.popup_layers.get(popup_id).map(|p| &p.view_content)
     }
 
     /// Remove a popup layer
