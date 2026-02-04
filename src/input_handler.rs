@@ -140,6 +140,18 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
                 KeyAction::VolumeMute => {
                     self.handle_volume_mute();
                 }
+                KeyAction::MediaPlayPause => {
+                    self.handle_media_play_pause();
+                }
+                KeyAction::MediaNext => {
+                    self.handle_media_next();
+                }
+                KeyAction::MediaPrev => {
+                    self.handle_media_prev();
+                }
+                KeyAction::MediaStop => {
+                    self.handle_media_stop();
+                }
 
                 action => match action {
                     KeyAction::None
@@ -366,6 +378,18 @@ impl Otto<UdevData> {
                 }
                 KeyAction::VolumeMute => {
                     self.handle_volume_mute();
+                }
+                KeyAction::MediaPlayPause => {
+                    self.handle_media_play_pause();
+                }
+                KeyAction::MediaNext => {
+                    self.handle_media_next();
+                }
+                KeyAction::MediaPrev => {
+                    self.handle_media_prev();
+                }
+                KeyAction::MediaStop => {
+                    self.handle_media_stop();
                 }
                 action => match action {
                     KeyAction::None

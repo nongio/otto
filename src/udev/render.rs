@@ -254,9 +254,6 @@ impl Otto<UdevData> {
 
     pub(super) fn render_surface(&mut self, node: DrmNode, crtc: crtc::Handle) {
         profiling::scope!("render_surface", &format!("{crtc:?}"));
-        
-        // Tick gamma transitions before rendering
-        self.tick_gamma_transitions();
 
         // Tick gamma transitions before rendering
         self.tick_gamma_transitions();

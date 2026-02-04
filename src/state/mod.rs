@@ -213,7 +213,8 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub seat: Seat<Otto<BackendData>>,
     pub clock: Clock<Monotonic>,
     pub pointer: PointerHandle<Otto<BackendData>>,
-    pub audio_manager: Option<AudioManager>,
+
+    pub audio_manager: Option<crate::audio::AudioManager>,
 
     #[cfg(feature = "xwayland")]
     pub xwm: Option<X11Wm>,
