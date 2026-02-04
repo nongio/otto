@@ -30,10 +30,10 @@ Since this is a worktree, run `git cliff` from the main repository:
 ```bash
 # Find the main repository path
 git rev-parse --git-common-dir
-# Example output: /home/riccardo/dev/otto/.git
+# Example output: /path/to/otto/.git
 
 # Navigate to main repository
-cd /home/riccardo/dev/otto
+cd /path/to/otto
 
 # Generate changelog with the new version tag
 git cliff --tag v0.x.0 -o CHANGELOG.md

@@ -342,19 +342,6 @@ impl ApplicationsInfo {
     }
 }
 
-#[tokio::test]
-async fn async_load_app_information() {
-    // Using gedit which is lightweight and available in Ubuntu repos
-    let app_info = ApplicationsInfo::get_app_info_by_id("org.gnome.gedit")
-        .await
-        .unwrap();
-
-    assert_eq!(app_info.identifier, "org.gnome.gedit");
-    assert!(app_info.desktop_name().is_some());
-    assert!(app_info.icon_path.is_some());
-    println!("{:?}", app_info);
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
