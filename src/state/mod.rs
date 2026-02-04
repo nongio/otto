@@ -195,7 +195,6 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub cursor_shape_manager_state: CursorShapeManagerState,
     pub virtual_keyboard_manager_state: VirtualKeyboardManagerState,
     pub gamma_control_manager: gamma_control::GammaControlManagerState,
-    pub gamma_control_manager: gamma_control::GammaControlManagerState,
 
     #[cfg(feature = "xwayland")]
     pub xwayland_shell_state: xwayland_shell::XWaylandShellState,
@@ -509,7 +508,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let wlr_foreign_toplevel_state =
             wlr_foreign_toplevel::WlrForeignToplevelManagerState::new::<Self>(&dh);
         let gamma_control_manager = gamma_control::GammaControlManagerState::new();
-        
+
         // Register gamma control global
         dh.create_global::<Self, gamma_control::gen::zwlr_gamma_control_manager_v1::ZwlrGammaControlManagerV1, _>(
             1,
