@@ -587,6 +587,7 @@ fn equals_ignore_case(actual: &str, expected: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::env;
     use std::fs;
 
@@ -607,16 +608,16 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_get_user_config_path_with_xdg_config_home() {
-        let temp_dir = std::env::temp_dir().join("otto_test_xdg");
-        fs::create_dir_all(&temp_dir).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
 
         // Set XDG_CONFIG_HOME temporarily
         let old_xdg = env::var("XDG_CONFIG_HOME").ok();
-        env::set_var("XDG_CONFIG_HOME", &temp_dir);
+        env::set_var("XDG_CONFIG_HOME", temp_dir.path());
 
         // Create the config file
-        let config_dir = temp_dir.join("otto");
+        let config_dir = temp_dir.path().join("otto");
         fs::create_dir_all(&config_dir).unwrap();
         let config_file = config_dir.join("config.toml");
         fs::write(&config_file, "# test config").unwrap();
@@ -626,21 +627,22 @@ mod tests {
         assert_eq!(path.unwrap(), config_file);
 
         // Cleanup
-        fs::remove_dir_all(&temp_dir).ok();
         if let Some(old) = old_xdg {
             env::set_var("XDG_CONFIG_HOME", old);
         } else {
             env::remove_var("XDG_CONFIG_HOME");
         }
+        // temp_dir automatically cleaned up when dropped
     }
 
     #[test]
+    #[serial]
     fn test_get_user_config_path_without_file() {
-        let temp_dir = std::env::temp_dir().join("otto_test_no_file");
+        let temp_dir = tempfile::tempdir().unwrap();
 
         // Set XDG_CONFIG_HOME to a dir without config
         let old_xdg = env::var("XDG_CONFIG_HOME").ok();
-        env::set_var("XDG_CONFIG_HOME", &temp_dir);
+        env::set_var("XDG_CONFIG_HOME", temp_dir.path());
 
         let path = get_user_config_path();
         assert!(path.is_none());
@@ -651,6 +653,7 @@ mod tests {
         } else {
             env::remove_var("XDG_CONFIG_HOME");
         }
+        // temp_dir automatically cleaned up when dropped
     }
 
     #[test]
@@ -705,13 +708,13 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_copy_example_config() {
         // Test in a temporary directory
-        let temp_dir = std::env::temp_dir().join("otto_test_copy_example");
-        fs::create_dir_all(&temp_dir).ok();
+        let temp_dir = tempfile::tempdir().unwrap();
 
         let original_dir = env::current_dir().unwrap();
-        env::set_current_dir(&temp_dir).unwrap();
+        env::set_current_dir(temp_dir.path()).unwrap();
 
         // Ensure no config exists
         let _ = fs::remove_file("otto_config.toml");
@@ -728,17 +731,17 @@ mod tests {
 
         // Cleanup
         env::set_current_dir(original_dir).unwrap();
-        fs::remove_dir_all(&temp_dir).ok();
+        // temp_dir automatically cleaned up when dropped
     }
 
     #[test]
+    #[serial]
     fn test_copy_example_config_does_not_overwrite() {
         // Test in a temporary directory
-        let temp_dir = std::env::temp_dir().join("otto_test_no_overwrite");
-        fs::create_dir_all(&temp_dir).ok();
+        let temp_dir = tempfile::tempdir().unwrap();
 
         let original_dir = env::current_dir().unwrap();
-        env::set_current_dir(&temp_dir).unwrap();
+        env::set_current_dir(temp_dir.path()).unwrap();
 
         // Create existing config
         let existing_content = "# existing config";
@@ -753,7 +756,7 @@ mod tests {
 
         // Cleanup
         env::set_current_dir(original_dir).unwrap();
-        fs::remove_dir_all(&temp_dir).ok();
+        // temp_dir automatically cleaned up when dropped
     }
 
     #[test]
