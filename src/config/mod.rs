@@ -34,6 +34,7 @@ pub struct Config {
     pub theme_scheme: ThemeScheme,
     pub gtk_theme: Option<String>,
     pub background_image: String,
+    pub background_color: String,
     pub locales: Vec<String>,
     pub use_10bit_color: bool,
     #[serde(default = "shortcuts::default_shortcut_map")]
@@ -61,7 +62,8 @@ impl Default for Config {
             keyboard_repeat_rate: 30,
             theme_scheme: ThemeScheme::Light,
             gtk_theme: None,
-            background_image: "./resources/background.jpg".to_string(),
+            background_image: "".to_string(),
+            background_color: "#1a1a2e".to_string(),
             locales: vec!["en".to_string()],
             use_10bit_color: false,
             keyboard_shortcuts: shortcuts::default_shortcut_map(),

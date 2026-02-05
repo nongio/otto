@@ -10,6 +10,7 @@ icon_theme = "WhiteSur"  # Uncomment to override auto-detection (e.g., "WhiteSur
 theme_scheme = "Light"  # "Light" or "Dark" - exposed via XDG Desktop Portal Settings
 # gtk_theme = "Adwaita"  # Optional: for documentation/reference only
 background_image = "./resources/background.jpg"
+background_color = "#1a1a2e"  # Fallback gradient color (bottom) when background_image is unavailable
 
 # Inputs
 keyboard_repeat_delay = 300
