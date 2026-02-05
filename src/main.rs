@@ -67,13 +67,36 @@ async fn main() {
             tracing::error!("Unknown backend: {}", other);
         }
         None => {
-            #[allow(clippy::disallowed_macros)]
-            {
-                println!("USAGE: otto --backend");
-                println!();
-                println!("Possible backends are:");
-                for b in POSSIBLE_BACKENDS {
-                    println!("\t{}", b);
+            // Auto-detect backend based on environment
+            if std::env::var("WAYLAND_DISPLAY").is_ok() {
+                // Running inside a Wayland compositor - use winit
+                #[cfg(feature = "winit")]
+                {
+                    tracing::info!("Auto-detected Wayland session, starting with winit backend");
+                    std::env::set_var("SCREEN_COMPOSER_BACKEND", "winit");
+                    otto::winit::run_winit();
+                }
+                #[cfg(not(feature = "winit"))]
+                {
+                    tracing::error!("WAYLAND_DISPLAY is set but winit feature is not enabled");
+                }
+            } else {
+                // No Wayland session - use tty-udev (bare metal)
+                #[cfg(feature = "udev")]
+                {
+                    tracing::info!("No Wayland session detected, starting with tty-udev backend");
+                    std::env::set_var("SCREEN_COMPOSER_BACKEND", "tty-udev");
+                    otto::udev::run_udev();
+                }
+                #[cfg(not(feature = "udev"))]
+                {
+                    tracing::error!("No WAYLAND_DISPLAY and udev feature is not enabled");
+                    println!("USAGE: otto [--backend]");
+                    println!();
+                    println!("Possible backends are:");
+                    for b in POSSIBLE_BACKENDS {
+                        println!("\t{}", b);
+                    }
                 }
             }
         }
