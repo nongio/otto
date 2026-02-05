@@ -1,0 +1,25 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	cargo build --release --features "default"
+	cargo build --release -p xdg-desktop-portal-otto
+
+override_dh_auto_install:
+	install -Dm755 target/release/otto debian/otto/usr/bin/otto
+	install -Dm755 target/release/xdg-desktop-portal-otto debian/otto/usr/libexec/xdg-desktop-portal-otto
+	install -Dm644 components/xdg-desktop-portal-otto/otto.portal debian/otto/usr/share/xdg-desktop-portal/portals/otto.portal
+	install -Dm644 resources/background.jpg debian/otto/usr/share/otto/background.jpg
+	install -Dm644 resources/cursor.rgba debian/otto/usr/share/otto/cursor.rgba
+	install -Dm644 resources/numbers.png debian/otto/usr/share/otto/numbers.png
+	install -Dm644 otto_config.example.toml debian/otto/usr/share/doc/otto/otto_config.example.toml
+
+override_dh_auto_test:
+	# Skip tests for now
+
+override_dh_auto_clean:
+	cargo clean || true

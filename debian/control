@@ -1,0 +1,59 @@
+Source: otto
+Section: x11
+Priority: optional
+Maintainer: Riccardo Canalicchio <riccardo.canalicchio@gmail.com>
+Build-Depends: debhelper-compat (= 13),
+               cargo,
+               rustc (>= 1.83),
+               libdrm-dev,
+               libudev-dev,
+               libgbm-dev,
+               libxkbcommon-dev,
+               libegl1-mesa-dev,
+               libwayland-dev,
+               libinput-dev,
+               libdbus-1-dev,
+               libsystemd-dev,
+               libseat-dev,
+               libpipewire-0.3-dev,
+               libfreetype-dev,
+               libfontconfig-dev,
+               libdisplay-info-dev,
+               libpixman-1-dev,
+               hicolor-icon-theme
+Standards-Version: 4.6.2
+Homepage: https://github.com/nongio/screencomposer
+Vcs-Browser: https://github.com/nongio/screencomposer
+Vcs-Git: https://github.com/nongio/screencomposer.git
+
+Package: otto
+Architecture: any
+Depends: ${shlibs:Depends},
+         ${misc:Depends},
+         libdrm2,
+         libudev1,
+         libgbm1,
+         libxkbcommon0,
+         libegl1,
+         libwayland-client0,
+         libwayland-server0,
+         libinput10,
+         libdbus-1-3,
+         libsystemd0,
+         libseat1,
+         libpipewire-0.3-0,
+         libfreetype6,
+         libfontconfig1,
+         libdisplay-info1,
+         libpixman-1-0,
+         hicolor-icon-theme,
+         xdg-desktop-portal
+Description: Visually-focused Wayland compositor
+ A visually-focused desktop system designed around smooth animations,
+ thoughtful gestures and careful attention to detail, inspired by familiar
+ macOS interactions.
+ .
+ Otto is a Wayland compositor and stacking window manager, built in Rust
+ on top of LayersEngine and uses Skia for rendering. Features include
+ multi-workspace window management, application dock and switcher, exposé
+ view, animated genie minimize effect, and screen sharing via PipeWire.
