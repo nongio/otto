@@ -1,3 +1,4 @@
+#[cfg(not(feature = "udev"))]
 static POSSIBLE_BACKENDS: &[&str] = &[
     #[cfg(feature = "winit")]
     "--winit : Run anvil as a X11 or Wayland client using winit.",
