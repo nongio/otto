@@ -1,7 +1,7 @@
 [package]
 name = "otto"
 authors = ["Riccardo Canalicchio <riccardo.canalicchio@gmail.com>"]
-version = "0.12.0"
+version = "0.13.0"
 edition = "2021"
 license = "MIT"
 rust-version = "1.85.0"
