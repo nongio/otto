@@ -150,9 +150,6 @@ impl Config {
         // If no config was found, copy example config to current directory
         if !found_any_config {
             warn!("No configuration file found, using default config");
-            if let Err(e) = copy_example_config() {
-                warn!("Failed to copy example config: {e}");
-            }
         }
 
         let mut config: Config = merged.try_into().unwrap_or_else(|err| {
@@ -711,31 +708,6 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_copy_example_config() {
-        // Test in a temporary directory
-        let temp_dir = tempfile::tempdir().unwrap();
-
-        let original_dir = env::current_dir().unwrap();
-        env::set_current_dir(temp_dir.path()).unwrap();
-
-        // Ensure no config exists
-        let _ = fs::remove_file("otto_config.toml");
-
-        // Copy example config
-        copy_example_config().expect("Should copy example config");
-
-        // Verify file was created
-        assert!(PathBuf::from("otto_config.toml").exists());
-
-        // Verify it's valid TOML
-        let content = fs::read_to_string("otto_config.toml").unwrap();
-        let _: toml::Value = content.parse().expect("Should be valid TOML");
-
-        // Cleanup
-        env::set_current_dir(original_dir).unwrap();
-        // temp_dir automatically cleaned up when dropped
-    }
-
     #[test]
     #[serial]
     fn test_copy_example_config_does_not_overwrite() {
