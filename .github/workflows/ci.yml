@@ -4,20 +4,23 @@ on:
   push:
     branches:
     - main
+    tags:
+    - 'v*'
   pull_request:
+  workflow_dispatch:
 
 jobs:
   format:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@1.85.0
         with:
           components: rustfmt
       - name: Cargo cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -30,13 +33,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@1.85.0
         with:
           components: clippy
       - name: Cargo registry cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry/index
@@ -50,3 +53,32 @@ jobs:
         run: cargo clippy --features "default" -- -D warnings
       - name: Run tests
         run: cargo test --lib --workspace
+  
+  build-deb:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@1.85.0
+      - name: Cargo registry cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
+      - name: System dependencies
+        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev hicolor-icon-theme
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+      - name: Build Debian package
+        run: cargo deb --no-strip
+      - name: Upload Debian package
+        uses: actions/upload-artifact@v4
+        with:
+          name: otto-deb
+          path: target/debian/*.deb
+          retention-days: 30
