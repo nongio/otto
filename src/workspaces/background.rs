@@ -122,10 +122,10 @@ pub fn view_background(
                 ),
             ];
             let positions: &[f32] = &[0.0, 1.0];
-            
+
             let start_point = skia::Point::new(0.0, h); // Bottom
             let end_point = skia::Point::new(0.0, 0.0); // Top
-            
+
             if let Some(shader) = skia::gradient_shader::linear(
                 (start_point, end_point),
                 skia::gradient_shader::GradientShaderColors::Colors(&colors),

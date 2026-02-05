@@ -15,19 +15,19 @@ pub mod natural_layout;
 /// Parse a hex color string (e.g., "#1a1a2e" or "1a1a2e") into a Skia Color4f
 pub fn parse_hex_color(hex: &str) -> skia::Color4f {
     let hex = hex.trim_start_matches('#');
-    
+
     // Default to a dark color if parsing fails
     let default_color = skia::Color4f::new(0.1, 0.1, 0.18, 1.0);
-    
+
     if hex.len() != 6 {
         tracing::warn!("Invalid hex color format: {}, using default", hex);
         return default_color;
     }
-    
+
     let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(26) as f32 / 255.0;
     let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(26) as f32 / 255.0;
     let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(46) as f32 / 255.0;
-    
+
     skia::Color4f::new(r, g, b, 1.0)
 }
 

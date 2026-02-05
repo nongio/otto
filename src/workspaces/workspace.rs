@@ -1,5 +1,9 @@
 use super::{BackgroundView, WindowSelectorView};
-use crate::{config::Config, shell::WindowElement, utils::{image_from_path, parse_hex_color}};
+use crate::{
+    config::Config,
+    shell::WindowElement,
+    utils::{image_from_path, parse_hex_color},
+};
 use core::fmt;
 
 use layers::{
@@ -106,7 +110,8 @@ impl WorkspaceView {
 
         // Parse background color from config
         let background_color = Config::with(|c| parse_hex_color(&c.background_color));
-        let background_view = BackgroundView::new(index, background_layer.clone(), background_color);
+        let background_view =
+            BackgroundView::new(index, background_layer.clone(), background_color);
         let background_path = Config::with(|c| c.background_image.clone());
         if let Some(background_image) = image_from_path(&background_path, (2048, 2048)) {
             background_view.set_image(background_image);
