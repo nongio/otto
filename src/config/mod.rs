@@ -229,17 +229,6 @@ fn get_user_config_path() -> Option<PathBuf> {
     }
 }
 
-fn copy_example_config() -> std::io::Result<()> {
-    const EXAMPLE_CONFIG: &str = include_str!("../../otto_config.example.toml");
-
-    let target_path = PathBuf::from("otto_config.toml");
-    if !target_path.exists() {
-        std::fs::write(&target_path, EXAMPLE_CONFIG)?;
-        tracing::info!("Created example config at ./otto_config.toml");
-    }
-    Ok(())
-}
-
 fn backend_override_candidates(backend: &str) -> Vec<String> {
     match backend {
         "winit" => vec!["otto_config.winit.toml".into()],
@@ -708,31 +697,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[test]
-    #[serial]
-    fn test_copy_example_config_does_not_overwrite() {
-        // Test in a temporary directory
-        let temp_dir = tempfile::tempdir().unwrap();
-
-        let original_dir = env::current_dir().unwrap();
-        env::set_current_dir(temp_dir.path()).unwrap();
-
-        // Create existing config
-        let existing_content = "# existing config";
-        fs::write("otto_config.toml", existing_content).unwrap();
-
-        // Try to copy example config
-        copy_example_config().expect("Should not error");
-
-        // Verify file was NOT overwritten
-        let content = fs::read_to_string("otto_config.toml").unwrap();
-        assert_eq!(content, existing_content);
-
-        // Cleanup
-        env::set_current_dir(original_dir).unwrap();
-        // temp_dir automatically cleaned up when dropped
-    }
-
     #[test]
     fn test_backend_override_candidates() {
         let winit = backend_override_candidates("winit");
