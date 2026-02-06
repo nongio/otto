@@ -140,5 +140,5 @@ jobs:
             artifacts/deb/*.deb
             artifacts/rpm/*.rpm
           generate_release_notes: true
-          draft: false
+          draft: true
           prerelease: false
