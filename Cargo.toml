@@ -6,6 +6,7 @@ edition = "2021"
 license = "MIT"
 rust-version = "1.85.0"
 description = "A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail, inspired by familiar macOS interactions."
+repository = "https://github.com/nongio/otto"
 
 [dependencies]
 bitflags = "2.2.1"
@@ -198,3 +199,34 @@ freetype = "*"
 fontconfig = "*"
 pixman = "*"
 google-noto-sans-fonts = "*"
+
+[package.metadata.aur]
+depends = [
+    "libdrm",
+    "systemd-libs",
+    "mesa",
+    "libxkbcommon",
+    "wayland",
+    "libinput",
+    "dbus",
+    "seatd",
+    "pipewire",
+    "freetype2",
+    "fontconfig",
+    "pixman",
+    "noto-fonts",
+]
+optdepends = [
+    "xdg-desktop-portal: Desktop integration",
+]
+files = [
+    ["target/release/otto", "/usr/bin/otto", "755"],
+    ["target/release/xdg-desktop-portal-otto", "/usr/libexec/xdg-desktop-portal-otto", "755"],
+    ["README.md", "/usr/share/doc/otto/README.md", "644"],
+    ["LICENSE", "/usr/share/licenses/otto/LICENSE", "644"],
+    ["otto_config.example.toml", "/etc/otto/config.toml", "644"],
+    ["resources/otto.desktop", "/usr/share/wayland-sessions/otto.desktop", "644"],
+    ["components/xdg-desktop-portal-otto/otto.portal", "/usr/share/xdg-desktop-portal/portals/otto.portal", "644"],
+    ["components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service", "/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.service", "644"],
+    ["components/xdg-desktop-portal-otto/portals.conf.example", "/usr/share/doc/otto/portals.conf.example", "644"],
+]

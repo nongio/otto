@@ -116,9 +116,46 @@ jobs:
           path: target/generate-rpm/*.rpm
           retention-days: 30
   
+  build-arch:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@1.85.0
+      - name: Cargo registry cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
+      - name: System dependencies
+        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev hicolor-icon-theme
+      - name: Install cargo-aur
+        run: cargo install cargo-aur
+      - name: Build workspace binaries
+        run: cargo build --release -p otto -p xdg-desktop-portal-otto
+      - name: Build Arch package
+        run: cargo aur -o .
+      - name: Upload Arch tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: otto-arch
+          path: otto-*.tar.gz
+          retention-days: 30
+      - name: Upload PKGBUILD
+        uses: actions/upload-artifact@v4
+        with:
+          name: otto-pkgbuild
+          path: PKGBUILD
+          retention-days: 30
+  
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-deb, build-rpm]
+    needs: [build-deb, build-rpm, build-arch]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -133,12 +170,60 @@ jobs:
         with:
           name: otto-rpm
           path: artifacts/rpm
+      - name: Download Arch tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: otto-arch
+          path: artifacts/arch
+      - name: Download PKGBUILD
+        uses: actions/download-artifact@v4
+        with:
+          name: otto-pkgbuild
+          path: artifacts/arch
+      - name: Create release body
+        run: |
+          cat > release_notes.md << 'EOF'
+          ## Installation
+
+          ### Debian/Ubuntu (`.deb`)
+          ```bash
+          sudo dpkg -i otto_*.deb
+          sudo apt-get install -f  # Install dependencies
+          ```
+
+          ### Fedora/RHEL (`.rpm`)
+          ```bash
+          sudo rpm -i otto-*.rpm
+          # or
+          sudo dnf install otto-*.rpm
+          ```
+
+          ### Arch Linux
+          **Option 1: Binary package**
+          ```bash
+          # Download and extract the tarball, then use makepkg
+          tar -xzf otto-*-x86_64.tar.gz
+          cd otto-*
+          makepkg -si
+          ```
+
+          **Option 2: From PKGBUILD**
+          ```bash
+          # Download PKGBUILD and build locally
+          makepkg -si
+          ```
+
+          ---
+          EOF
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
             artifacts/deb/*.deb
             artifacts/rpm/*.rpm
+            artifacts/arch/*.tar.gz
+            artifacts/arch/PKGBUILD
+          body_path: release_notes.md
           generate_release_notes: true
           draft: true
           prerelease: false
