@@ -157,7 +157,7 @@ extended-description = """\
 Otto is a modern Wayland compositor built with Smithay and Skia.\
 Featuring a custom scene graph engine (lay-rs) for layout management,\
 multi-workspace support, and integrated screen sharing capabilities."""
-depends = "$auto, libdrm2, libudev1, libgbm1, libxkbcommon0, libegl1, libwayland-server0, libinput10, libdbus-1-3, libsystemd0, libseat1, libpipewire-0.3-0, libfreetype6, libfontconfig1, libpixman-1-0, fonts-inter"
+depends = "$auto, libdrm2, libudev1, libgbm1, libxkbcommon0, libegl1, libwayland-server0, libinput10, libdbus-1-3, libsystemd0, libseat1, libpipewire-0.3-0, libfreetype6, libfontconfig1, libpixman-1-0, fonts-inter, wireplumber"
 section = "x11"
 priority = "optional"
 assets = [
@@ -199,6 +199,7 @@ freetype = "*"
 fontconfig = "*"
 pixman = "*"
 google-noto-sans-fonts = "*"
+wireplumber = "*"
 
 [package.metadata.aur]
 depends = [
@@ -215,6 +216,7 @@ depends = [
     "fontconfig",
     "pixman",
     "noto-fonts",
+    "wireplumber",
 ]
 optdepends = [
     "xdg-desktop-portal: Desktop integration",
