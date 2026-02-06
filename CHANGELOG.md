@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [unreleased]
+## [0.14.0] - 2026-02-06
 
 ### 🚀 Features
 
@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - Implement wlr-gamma-control-v1 protocol for night shift (#36)
 - Media controls with Mpris (#37)
 - Add XDG config directory support (#38)
+- Add multi-distro packaging and login manager support (#42)
 
 ### 🚜 Refactor
 
