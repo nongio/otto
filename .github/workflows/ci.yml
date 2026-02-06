@@ -74,6 +74,8 @@ jobs:
         run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev hicolor-icon-theme
       - name: Install cargo-deb
         run: cargo install cargo-deb
+      - name: Build workspace binaries
+        run: cargo build --release -p otto -p xdg-desktop-portal-otto
       - name: Build Debian package
         run: cargo deb --no-strip
       - name: Upload Debian package
@@ -103,8 +105,10 @@ jobs:
         run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev hicolor-icon-theme
       - name: Install cargo-generate-rpm
         run: cargo install cargo-generate-rpm
+      - name: Build workspace binaries
+        run: cargo build --release -p otto -p xdg-desktop-portal-otto
       - name: Build RPM package
-        run: cargo build --release && cargo generate-rpm
+        run: cargo generate-rpm
       - name: Upload RPM package
         uses: actions/upload-artifact@v4
         with:

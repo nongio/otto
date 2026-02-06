@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Otto
+Comment=A visually-focused Wayland compositor with smooth animations and gestures
+Exec=/usr/bin/otto
+Type=Application
+DesktopNames=Otto

@@ -161,17 +161,27 @@ section = "x11"
 priority = "optional"
 assets = [
     ["target/release/otto", "usr/bin/", "755"],
+    ["target/release/xdg-desktop-portal-otto", "usr/libexec/", "755"],
     ["README.md", "usr/share/doc/otto/", "644"],
     ["LICENSE", "usr/share/doc/otto/", "644"],
     ["otto_config.example.toml", "etc/otto/config.toml", "644"],
+    ["resources/otto.desktop", "usr/share/wayland-sessions/", "644"],
+    ["components/xdg-desktop-portal-otto/otto.portal", "usr/share/xdg-desktop-portal/portals/", "644"],
+    ["components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service", "usr/share/dbus-1/services/", "644"],
+    ["components/xdg-desktop-portal-otto/portals.conf.example", "usr/share/doc/otto/", "644"],
 ]
 
 [package.metadata.generate-rpm]
 assets = [
     { source = "target/release/otto", dest = "/usr/bin/otto", mode = "755" },
+    { source = "target/release/xdg-desktop-portal-otto", dest = "/usr/libexec/xdg-desktop-portal-otto", mode = "755" },
     { source = "README.md", dest = "/usr/share/doc/otto/README.md", mode = "644", doc = true },
     { source = "LICENSE", dest = "/usr/share/doc/otto/LICENSE", mode = "644", doc = true },
     { source = "otto_config.example.toml", dest = "/etc/otto/config.toml", mode = "644", config = true },
+    { source = "resources/otto.desktop", dest = "/usr/share/wayland-sessions/otto.desktop", mode = "644" },
+    { source = "components/xdg-desktop-portal-otto/otto.portal", dest = "/usr/share/xdg-desktop-portal/portals/otto.portal", mode = "644" },
+    { source = "components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service", dest = "/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.service", mode = "644" },
+    { source = "components/xdg-desktop-portal-otto/portals.conf.example", dest = "/usr/share/doc/otto/portals.conf.example", mode = "644", doc = true },
 ]
 [package.metadata.generate-rpm.requires]
 libdrm = "*"

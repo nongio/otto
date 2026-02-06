@@ -124,25 +124,29 @@ You can run Otto with cargo after having cloned this repository:
 ```bash
 cd otto
 
-# Run with default features (lean)
-cargo run -- --winit
+# Run Otto (auto-detects backend)
+cargo run
 
 # Run with development features (debugger, profiler)
-cargo run --features "dev" -- --winit
+cargo run --features "dev"
 
 # Release build
 cargo build --release
-cargo run --release -- --winit
+cargo run --release
 ```
 
-Current available backends:
+Otto automatically detects the best backend for your environment:
+- If running inside a Wayland session, it uses `--winit` (runs as a window)
+- If running in a TTY, it uses `--tty-udev` (bare metal display)
+
+**You can force a specific backend** by passing it as an argument:
 
 - `--tty-udev`: start Otto in a tty with udev support. This is the "traditional" launch of a Wayland
   compositor. Note that this might require you to start Otto as root if your system does not have logind
   available.
 - `--winit`: start Otto as a [Winit](https://github.com/tomaka/winit) application. This allows you to run it
-  inside of an other X11 or Wayland session, useful for developemnt.
-- `--x11`: start Otto as an X11 client. This allows you to run the compositor inside an X11 session or any compositor supporting XWayland. This implementation is quite basic and not really maintaned.
+  inside of an other X11 or Wayland session, useful for development.
+- `--x11`: start Otto as an X11 client. This allows you to run the compositor inside an X11 session or any compositor supporting XWayland. This implementation is quite basic and not really maintained.
 
 
 ## Configure Otto

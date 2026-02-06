@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=org.freedesktop.impl.portal.desktop.otto
+Exec=/usr/libexec/xdg-desktop-portal-otto
+SystemdService=xdg-desktop-portal-otto.service
