@@ -1,15 +1,16 @@
 # Display
-screen_scale = 2.0
+screen_scale = 1.0
 locales = ["en"]  # Language preferences for app names/desktop entries (e.g., ["fr", "en"])
 
 # Theme
 cursor_size = 24
 font_family = "Inter"
 cursor_theme = "Notwaita-Black"
-icon_theme = "WhiteSur"  # Uncomment to override auto-detection (e.g., "WhiteSur", "Papirus", "Adwaita")
+icon_theme = "Adwaita"  # Uncomment to override auto-detection (e.g., "WhiteSur", "Papirus", "Adwaita")
 theme_scheme = "Light"  # "Light" or "Dark" - exposed via XDG Desktop Portal Settings
 # gtk_theme = "Adwaita"  # Optional: for documentation/reference only
-background_image = "./resources/background.jpg"
+# background_image = "/usr/share/otto/background.jpg"
+background_color = "#2c2ca0"  # Fallback gradient color (bottom) when background_image is unavailable
 
 # Inputs
 keyboard_repeat_delay = 300
@@ -109,7 +110,7 @@ size = 1.0  # Dock size multiplier (0.5 - 2.0, default: 1.0)
 genie_scale = 0.5
 genie_span = 10.0
 bookmarks = [
-  { desktop_id = "org.kde.dolphin.desktop" },
+  { desktop_id = "org.gnome.Nautilus.desktop" },
   { desktop_id = "org.mozilla.firefox.desktop", label = "Web", exec_args = ["--private-window"] },
-  { desktop_id = "code.desktop" }
+  { desktop_id = "org.gnome.Terminal.desktop" }
 ]

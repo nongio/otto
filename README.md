@@ -44,7 +44,7 @@ Feedback and questions are welcome in the Matrix chat:
 *Application switcher with icons, names and background blur.*
 
 ## Is Otto usable?
-Otto is in an early but functional state and can be tested by building it from source. Many features are still missing, and the project is not yet packaged for any distribution.
+Otto is in an early but functional state. You can install it from pre-built packages or build it from source. Many features are still missing.
 
 Testing and issue reports are welcome. Development follows a draft roadmap of planned features and improvements.
 
@@ -101,6 +101,51 @@ Both this project and the LayersEngine are open to contributions. Contribute by 
 
 The repository provides AGENTS.md, automated code review instructions and developer documentation to support both human contributors and coding agents.
 
+## Installation
+
+### Download Pre-built Packages
+
+Pre-built packages are available from the [GitHub Releases](https://github.com/nongio/otto/releases) page.
+
+#### Debian/Ubuntu (`.deb`)
+
+```bash
+# Download the .deb package from releases, then:
+sudo dpkg -i otto_*.deb
+sudo apt-get install -f  # Install dependencies if needed
+```
+
+#### Fedora/RHEL (`.rpm`)
+
+```bash
+# Download the .rpm package from releases, then:
+sudo dnf install otto-*.rpm
+# or
+sudo rpm -i otto-*.rpm
+```
+
+#### Arch Linux
+
+**Option 1: Binary package (recommended)**
+```bash
+# Download the tarball from releases, then:
+tar -xzf otto-*-x86_64.tar.gz
+cd otto-*
+makepkg -si
+```
+
+**Option 2: From PKGBUILD**
+```bash
+# Download PKGBUILD from releases, then:
+makepkg -si
+```
+
+### After Installation
+
+Once installed, Otto will appear in your login manager (GDM, SDDM, LightDM, etc.) as "Otto" in the session selection menu. Simply select it and log in.
+
+**Note:** Screen sharing functionality requires `xdg-desktop-portal` to be installed on your system.
+
 ## Building Otto
 
 ### Prerequisites
@@ -124,25 +169,29 @@ You can run Otto with cargo after having cloned this repository:
 ```bash
 cd otto
 
-# Run with default features (lean)
-cargo run -- --winit
+# Run Otto (auto-detects backend)
+cargo run
 
 # Run with development features (debugger, profiler)
-cargo run --features "dev" -- --winit
+cargo run --features "dev"
 
 # Release build
 cargo build --release
-cargo run --release -- --winit
+cargo run --release
 ```
 
-Current available backends:
+Otto automatically detects the best backend for your environment:
+- If running inside a Wayland session, it uses `--winit` (runs as a window)
+- If running in a TTY, it uses `--tty-udev` (bare metal display)
+
+**You can force a specific backend** by passing it as an argument:
 
 - `--tty-udev`: start Otto in a tty with udev support. This is the "traditional" launch of a Wayland
   compositor. Note that this might require you to start Otto as root if your system does not have logind
   available.
 - `--winit`: start Otto as a [Winit](https://github.com/tomaka/winit) application. This allows you to run it
-  inside of an other X11 or Wayland session, useful for developemnt.
-- `--x11`: start Otto as an X11 client. This allows you to run the compositor inside an X11 session or any compositor supporting XWayland. This implementation is quite basic and not really maintaned.
+  inside of an other X11 or Wayland session, useful for development.
+- `--x11`: start Otto as an X11 client. This allows you to run the compositor inside an X11 session or any compositor supporting XWayland. This implementation is quite basic and not really maintained.
 
 
 ## Configure Otto

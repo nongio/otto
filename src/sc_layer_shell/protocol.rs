@@ -109,50 +109,21 @@ pub trait ScLayerShellHandler {
 
 impl<BackendData: Backend> ScLayerShellHandler for Otto<BackendData> {
     fn new_layer(&mut self, mut layer: ScLayer) {
-        let layer_id = layer.wl_layer.id();
         let surface_id = layer.surface.id();
 
-        // Try to find the existing rendering layer for this surface
-        // Walk up the parent chain for subsurfaces to find the actual rendered surface
-        use smithay::wayland::compositor::get_parent;
-
-        let mut current_surface = layer.surface.clone();
-        let found = loop {
-            let current_id = current_surface.id();
-
-            // Check if we have a rendering layer for this surface
-            if let Some(rendering_layer) = self.surface_layers.get(&current_id).cloned() {
-                // Replace the empty layer with the actual rendering layer
-                layer.layer = rendering_layer;
-                break true;
-            }
-
-            // Walk up to parent surface (for subsurfaces)
-            if let Some(parent) = get_parent(&current_surface) {
-                current_surface = parent;
-            } else {
-                // No parent, surface not found in rendering layers
-                break false;
-            }
-        };
-
-        if !found {
-            tracing::warn!(
-                "No rendering layer found for surface {:?} (or its parents) for sc-layer",
-                surface_id
-            );
-            return;
+        if let Some(rendering_layer) = self.surface_layers.get(&surface_id).cloned() {
+            layer.layer = rendering_layer.clone();
+            self.surface_layers
+                .insert(surface_id.clone(), rendering_layer);
+        } else {
+            self.surface_layers
+                .insert(surface_id.clone(), layer.layer.clone());
         }
 
-        tracing::info!(
-            "Attached sc-layer {:?} to rendering layer for surface {:?}, z-order: {:?}",
-            layer_id,
-            surface_id,
-            layer.z_order
-        );
-
-        // Store in per-surface map
-        self.sc_layers.entry(surface_id).or_default().push(layer);
+        self.sc_layers
+            .entry(surface_id.clone())
+            .or_default()
+            .push(layer);
     }
 
     fn destroy_layer(&mut self, layer: &ScLayer) {

@@ -34,6 +34,7 @@ pub struct Config {
     pub theme_scheme: ThemeScheme,
     pub gtk_theme: Option<String>,
     pub background_image: String,
+    pub background_color: String,
     pub locales: Vec<String>,
     pub use_10bit_color: bool,
     #[serde(default = "shortcuts::default_shortcut_map")]
@@ -61,7 +62,8 @@ impl Default for Config {
             keyboard_repeat_rate: 30,
             theme_scheme: ThemeScheme::Light,
             gtk_theme: None,
-            background_image: "./resources/background.jpg".to_string(),
+            background_image: "".to_string(),
+            background_color: "#1a1a2e".to_string(),
             locales: vec!["en".to_string()],
             use_10bit_color: false,
             keyboard_shortcuts: shortcuts::default_shortcut_map(),
@@ -148,9 +150,6 @@ impl Config {
         // If no config was found, copy example config to current directory
         if !found_any_config {
             warn!("No configuration file found, using default config");
-            if let Err(e) = copy_example_config() {
-                warn!("Failed to copy example config: {e}");
-            }
         }
 
         let mut config: Config = merged.try_into().unwrap_or_else(|err| {
@@ -228,17 +227,6 @@ fn get_user_config_path() -> Option<PathBuf> {
     } else {
         None
     }
-}
-
-fn copy_example_config() -> std::io::Result<()> {
-    const EXAMPLE_CONFIG: &str = include_str!("../../otto_config.example.toml");
-
-    let target_path = PathBuf::from("otto_config.toml");
-    if !target_path.exists() {
-        std::fs::write(&target_path, EXAMPLE_CONFIG)?;
-        tracing::info!("Created example config at ./otto_config.toml");
-    }
-    Ok(())
 }
 
 fn backend_override_candidates(backend: &str) -> Vec<String> {
@@ -709,56 +697,6 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_copy_example_config() {
-        // Test in a temporary directory
-        let temp_dir = tempfile::tempdir().unwrap();
-
-        let original_dir = env::current_dir().unwrap();
-        env::set_current_dir(temp_dir.path()).unwrap();
-
-        // Ensure no config exists
-        let _ = fs::remove_file("otto_config.toml");
-
-        // Copy example config
-        copy_example_config().expect("Should copy example config");
-
-        // Verify file was created
-        assert!(PathBuf::from("otto_config.toml").exists());
-
-        // Verify it's valid TOML
-        let content = fs::read_to_string("otto_config.toml").unwrap();
-        let _: toml::Value = content.parse().expect("Should be valid TOML");
-
-        // Cleanup
-        env::set_current_dir(original_dir).unwrap();
-        // temp_dir automatically cleaned up when dropped
-    }
-
-    #[test]
-    #[serial]
-    fn test_copy_example_config_does_not_overwrite() {
-        // Test in a temporary directory
-        let temp_dir = tempfile::tempdir().unwrap();
-
-        let original_dir = env::current_dir().unwrap();
-        env::set_current_dir(temp_dir.path()).unwrap();
-
-        // Create existing config
-        let existing_content = "# existing config";
-        fs::write("otto_config.toml", existing_content).unwrap();
-
-        // Try to copy example config
-        copy_example_config().expect("Should not error");
-
-        // Verify file was NOT overwritten
-        let content = fs::read_to_string("otto_config.toml").unwrap();
-        assert_eq!(content, existing_content);
-
-        // Cleanup
-        env::set_current_dir(original_dir).unwrap();
-        // temp_dir automatically cleaned up when dropped
-    }
-
     #[test]
     fn test_backend_override_candidates() {
         let winit = backend_override_candidates("winit");

@@ -1,0 +1,10 @@
+# xdg-desktop-portal configuration for Otto
+# Place this file in ~/.config/xdg-desktop-portal/portals.conf
+
+[preferred]
+# Use GTK portal as default fallback for most portals
+default=gtk
+
+# Use Otto portal for screen sharing and settings
+org.freedesktop.impl.portal.ScreenCast=otto
+org.freedesktop.impl.portal.Settings=otto

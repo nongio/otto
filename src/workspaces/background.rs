@@ -6,6 +6,7 @@ use layers::{prelude::*, skia};
 pub struct BackgroundViewState {
     pub image: Option<skia::Image>,
     pub debug_string: String,
+    pub fallback_color: skia::Color4f,
 }
 impl Hash for BackgroundViewState {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -13,6 +14,11 @@ impl Hash for BackgroundViewState {
             image.unique_id().hash(state);
         }
         self.debug_string.hash(state);
+        // Hash the color components
+        self.fallback_color.r.to_bits().hash(state);
+        self.fallback_color.g.to_bits().hash(state);
+        self.fallback_color.b.to_bits().hash(state);
+        self.fallback_color.a.to_bits().hash(state);
     }
 }
 
@@ -24,10 +30,11 @@ pub struct BackgroundView {
 }
 
 impl BackgroundView {
-    pub fn new(index: usize, layer: Layer) -> Self {
+    pub fn new(index: usize, layer: Layer, fallback_color: skia::Color4f) -> Self {
         let state = BackgroundViewState {
             image: None,
             debug_string: "Screen composer 0.1".to_string(),
+            fallback_color,
         };
         let view = layers::prelude::View::new(
             format!("background_view_{}", index),
@@ -62,12 +69,12 @@ pub fn view_background(
     _view: &View<BackgroundViewState>,
 ) -> LayerTree {
     let image = state.image.clone();
+    let fallback_color = state.fallback_color;
 
     // let debug_text = state.debug_string.clone();
 
     let draw_container = move |canvas: &skia::Canvas, w, h| {
-        let color = skia::Color4f::new(1.0, 1.0, 1.0, 1.0);
-        let mut paint = skia::Paint::new(color, None);
+        let mut paint = skia::Paint::new(skia::Color4f::new(1.0, 1.0, 1.0, 1.0), None);
 
         if let Some(image) = image.as_ref() {
             let mut matrix = skia::Matrix::new_identity();
@@ -88,6 +95,47 @@ pub fn view_background(
                 skia::SamplingOptions::default(),
                 &matrix,
             ));
+        } else {
+            // Create a gradient from bottom (fallback_color) to top (lighter version)
+            // Make the top color lighter by interpolating towards white
+            let lighter_factor = 0.3; // 30% lighter
+            let top_color = skia::Color4f::new(
+                fallback_color.r + (1.0 - fallback_color.r) * lighter_factor,
+                fallback_color.g + (1.0 - fallback_color.g) * lighter_factor,
+                fallback_color.b + (1.0 - fallback_color.b) * lighter_factor,
+                fallback_color.a,
+            );
+
+            // Convert Color4f to Color for gradient shader
+            let colors = [
+                skia::Color::from_argb(
+                    (fallback_color.a * 255.0) as u8,
+                    (fallback_color.r * 255.0) as u8,
+                    (fallback_color.g * 255.0) as u8,
+                    (fallback_color.b * 255.0) as u8,
+                ),
+                skia::Color::from_argb(
+                    (top_color.a * 255.0) as u8,
+                    (top_color.r * 255.0) as u8,
+                    (top_color.g * 255.0) as u8,
+                    (top_color.b * 255.0) as u8,
+                ),
+            ];
+            let positions: &[f32] = &[0.0, 1.0];
+
+            let start_point = skia::Point::new(0.0, h); // Bottom
+            let end_point = skia::Point::new(0.0, 0.0); // Top
+
+            if let Some(shader) = skia::gradient_shader::linear(
+                (start_point, end_point),
+                skia::gradient_shader::GradientShaderColors::Colors(&colors),
+                Some(positions),
+                skia::TileMode::Clamp,
+                None,
+                None,
+            ) {
+                paint.set_shader(shader);
+            }
         }
 
         let split = 1;
