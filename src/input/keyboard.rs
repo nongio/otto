@@ -10,7 +10,6 @@ use smithay::{
         KeyboardInteractivity, Layer as WlrLayer, LayerSurfaceCachedState,
     },
 };
-use tracing::debug;
 
 use crate::{config::Config, state::Backend, Otto};
 
@@ -55,7 +54,7 @@ pub fn process_keyboard_shortcut(
 
     // Log the incoming key event for debugging
     let keysym_name = xkb::keysym_get_name(keysym);
-    debug!(
+    tracing::trace!(
         "Shortcut check: keysym={} (0x{:x}), ctrl={}, alt={}, shift={}, logo={}",
         keysym_name,
         keysym.raw(),
@@ -85,16 +84,10 @@ pub fn process_keyboard_shortcut(
         .iter()
         .find(|binding| {
             let matches = binding.trigger.matches(&modifiers, keysym);
-            if matches {
-                debug!("Matched shortcut: {}", binding.trigger_repr);
-            }
             matches
         })
         .and_then(|binding| super::actions::resolve_shortcut_action(config, &binding.action));
 
-    if result.is_none() {
-        debug!("No shortcut matched for {}", keysym_name);
-    }
 
     result
 }
@@ -106,7 +99,6 @@ impl<BackendData: Backend> Otto<BackendData> {
     ) -> KeyAction {
         let keycode = evt.key_code();
         let state = evt.state();
-        debug!(?keycode, ?state, "key");
         let serial = SCOUNTER.next_serial();
         let time = Event::time_msec(&evt);
         let mut suppressed_keys = self.suppressed_keys.clone();
@@ -158,12 +150,6 @@ impl<BackendData: Backend> Otto<BackendData> {
                 |_, modifiers, handle| {
                     let keysym = handle.modified_sym();
 
-                    debug!(
-                        ?state,
-                        mods = ?modifiers,
-                        keysym = ::xkbcommon::xkb::keysym_get_name(keysym),
-                        "keysym"
-                    );
 
                     let shortcut_action = Config::with(|config| {
                         if matches!(state, KeyState::Pressed) && !inhibited {

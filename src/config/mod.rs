@@ -37,6 +37,8 @@ pub struct Config {
     pub background_color: String,
     pub locales: Vec<String>,
     pub use_10bit_color: bool,
+    #[serde(default = "default_accent_color")]
+    pub accent_color: String,
     #[serde(default = "shortcuts::default_shortcut_map")]
     pub keyboard_shortcuts: ShortcutMap,
     #[serde(skip)]
@@ -66,6 +68,7 @@ impl Default for Config {
             background_color: "#1a1a2e".to_string(),
             locales: vec!["en".to_string()],
             use_10bit_color: false,
+            accent_color: default_accent_color(),
             keyboard_shortcuts: shortcuts::default_shortcut_map(),
             shortcut_bindings: Vec::new(),
         };
@@ -309,6 +312,10 @@ fn default_genie_scale() -> f64 {
 
 fn default_genie_span() -> f64 {
     10.0
+}
+
+fn default_accent_color() -> String {
+    "blue".to_string()
 }
 
 /// Input device configuration

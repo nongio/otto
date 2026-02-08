@@ -105,24 +105,25 @@ pub struct ApplicationsInfo;
 impl ApplicationsInfo {
     pub async fn get_app_info_by_id(app_id: impl Into<String>) -> Option<Application> {
         let app_id = app_id.into();
-        tracing::debug!("[ApplicationsInfo] Requesting app info for: {}", app_id);
+        tracing::trace!(app_id = %app_id, "[ApplicationsInfo] app info requested");
         let mut applications = applications_info().write().await;
         let mut app = { applications.get(&app_id).cloned() };
         if app.is_none() {
-            tracing::debug!("[ApplicationsInfo] App not in cache, loading: {}", app_id);
+            tracing::debug!(app_id = %app_id, "[ApplicationsInfo] cache miss; loading");
             if let Some(new_app) = ApplicationsInfo::load_app_info(&app_id).await {
-                tracing::info!(
-                    "[ApplicationsInfo] Successfully loaded app: {} (has_icon: {})",
-                    app_id,
-                    new_app.icon.is_some()
+                tracing::trace!(
+                    app_id = %app_id,
+                    has_icon = new_app.icon.is_some(),
+                    desktop_file_id = ?new_app.desktop_file_id,
+                    "[ApplicationsInfo] loaded"
                 );
                 applications.insert(app_id.clone(), new_app.clone());
                 app = Some(new_app);
             } else {
-                tracing::error!("[ApplicationsInfo] Failed to load app info for: {}", app_id);
+                tracing::warn!(app_id = %app_id, "[ApplicationsInfo] failed to load app info");
             }
         } else {
-            tracing::trace!("[ApplicationsInfo] App found in cache: {}", app_id);
+            tracing::trace!(app_id = %app_id, "[ApplicationsInfo] cache hit");
         }
 
         app
@@ -136,10 +137,7 @@ impl ApplicationsInfo {
             app_id
         };
 
-        tracing::debug!(
-            "[get_desktop_entry] Looking for desktop entry: '{}'",
-            normalized_id
-        );
+        tracing::trace!(normalized_id = %normalized_id, "[get_desktop_entry] searching");
 
         // Exact filename match (case-insensitive)
         let entry_path = freedesktop_desktop_entry::Iter::new(
@@ -154,88 +152,51 @@ impl ApplicationsInfo {
         });
 
         if let Some(entry_path) = entry_path {
-            tracing::debug!("[get_desktop_entry] Found: {:?}", entry_path);
+            tracing::trace!(path = ?entry_path, "[get_desktop_entry] found");
             let locales = &["en"];
             return DesktopEntry::from_path(entry_path, Some(locales)).ok();
         }
 
-        tracing::debug!(
-            "[get_desktop_entry] No desktop entry found for '{}'",
-            normalized_id
-        );
+        tracing::trace!(normalized_id = %normalized_id, "[get_desktop_entry] not found");
         None
     }
 
-    async fn load_app_info(app_id: impl Into<String>) -> Option<Application> {
-        let app_id = app_id.into();
-
-        tracing::info!("[load_app_info] Starting load for: {}", app_id);
-
-        let desktop_entry = ApplicationsInfo::get_desktop_entry(&app_id).await;
-        tracing::info!(
-            "[load_app_info] Desktop entry found: {}",
-            desktop_entry.is_some()
-        );
+    async fn load_app_info(app_id: &str) -> Option<Application> {
+        tracing::trace!(app_id = %app_id, "[load_app_info] start");
+        let desktop_entry = ApplicationsInfo::get_desktop_entry(app_id).await;
 
         if let Some(desktop_entry) = desktop_entry {
             let match_id = desktop_entry.id().to_string();
             let identifier = if app_id.ends_with(".desktop") {
                 match_id.clone()
             } else {
-                app_id.clone()
+                app_id.to_string()
             };
             let icon_name = desktop_entry.icon().map(|icon| icon.to_string());
-            tracing::info!(
-                "[load_app_info] Icon name from desktop entry: {:?}",
-                icon_name
-            );
 
             let icon_path =
                 icon_name.and_then(|icon_name| find_icon_with_theme(&icon_name, 512, 1));
-            tracing::info!("[load_app_info] Icon path resolved: {:?}", icon_path);
+
+            let mut used_fallback_icon = false;
 
             let mut icon = icon_path.as_ref().and_then(|icon_path| {
                 let result = image_from_path(icon_path, (512, 512));
-                tracing::info!(
-                    "[load_app_info] Icon loaded from path: {}",
-                    result.is_some()
-                );
                 result
             });
 
             // If icon loading failed, try to use the fallback icon
             if icon.is_none() {
-                tracing::warn!(
-                    "[load_app_info] Icon loading failed for {:?}, trying fallback icon",
-                    icon_path
-                );
+                used_fallback_icon = true;
                 let fallback_path = find_icon_with_theme("application-default-icon", 512, 1)
                     .or_else(|| {
-                        tracing::warn!("[load_app_info] application-default-icon not found, trying application-x-executable");
                         find_icon_with_theme("application-x-executable", 512, 1)
                     });
 
-                tracing::info!("[load_app_info] Fallback icon path: {:?}", fallback_path);
-
                 icon = fallback_path.as_ref().and_then(|fallback_path| {
                     let result = image_from_path(fallback_path, (512, 512));
-                    tracing::info!("[load_app_info] Fallback icon loaded: {}", result.is_some());
+                    tracing::trace!(loaded = result.is_some(), "[load_app_info] fallback icon loaded");
                     result
                 });
-
-                if icon.is_some() {
-                    tracing::info!(
-                        "[load_app_info] ✓ Fallback icon loaded successfully: {:?}",
-                        fallback_path
-                    );
-                } else {
-                    tracing::error!("[load_app_info] ✗ Fallback icon loading also failed");
-                }
-            } else {
-                tracing::info!(
-                    "[load_app_info] ✓ Icon loaded successfully: {:?}",
-                    icon_path
-                );
             }
             // let picture = icon_path
             //     .as_ref()
@@ -275,28 +236,17 @@ impl ApplicationsInfo {
         }
 
         // No desktop entry found - create minimal Application with fallback icon
-        tracing::warn!(
-            "[load_app_info] Desktop entry not found for {}, creating fallback application",
-            app_id
-        );
+        tracing::debug!("[load_app_info] no desktop entry; creating fallback application");
 
         let fallback_icon_path = find_icon_with_theme("application-default-icon", 512, 1)
             .or_else(|| {
-                tracing::warn!("[load_app_info] application-default-icon not found for fallback, trying application-x-executable");
+                tracing::trace!("[load_app_info] application-default-icon not found; trying application-x-executable");
                 find_icon_with_theme("application-x-executable", 512, 1)
             });
 
-        tracing::info!(
-            "[load_app_info] Fallback application icon path: {:?}",
-            fallback_icon_path
-        );
-
         let fallback_icon = fallback_icon_path.as_ref().and_then(|path| {
             let result = image_from_path(path, (512, 512));
-            tracing::info!(
-                "[load_app_info] Fallback application icon loaded: {}",
-                result.is_some()
-            );
+            tracing::trace!(loaded = result.is_some(), "[load_app_info] fallback application icon loaded");
             result
         });
 
@@ -317,21 +267,14 @@ impl ApplicationsInfo {
             .join(" ");
 
         if fallback_icon.is_some() {
-            tracing::info!(
-                "[load_app_info] ✓ Fallback application created: '{}' with icon: {:?}",
-                display_name,
-                fallback_icon_path
-            );
+            tracing::debug!(display_name = %display_name, "[load_app_info] fallback application created");
         } else {
-            tracing::error!(
-                "[load_app_info] ✗ Fallback application created: '{}' WITHOUT icon",
-                display_name
-            );
+            tracing::warn!(display_name = %display_name, "[load_app_info] fallback application created without icon");
         }
 
         Some(Application {
-            identifier: app_id.clone(),
-            match_id: app_id.clone(),
+            identifier: app_id.to_string(),
+            match_id: app_id.to_string(),
             icon_path: fallback_icon_path,
             icon: fallback_icon,
             picture: None,

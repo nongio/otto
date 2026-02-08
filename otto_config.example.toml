@@ -12,6 +12,10 @@ theme_scheme = "Light"  # "Light" or "Dark" - exposed via XDG Desktop Portal Set
 # background_image = "/usr/share/otto/background.jpg"
 background_color = "#2c2ca0"  # Fallback gradient color (bottom) when background_image is unavailable
 
+# Accent color for workspace and window selector borders
+# Available colors: red, orange, yellow, green, mint, teal, cyan, blue, indigo, purple, pink, gray, brown
+accent_color = "blue"
+
 # Inputs
 keyboard_repeat_delay = 300
 keyboard_repeat_rate = 30
