@@ -46,6 +46,7 @@ pub use apps_info::ApplicationsInfo;
 pub use dnd_view::DndView;
 pub use dock::DockView;
 pub use popup_overlay::PopupOverlayView;
+pub use workspace::WORKSPACE_SPACING;
 pub use workspace_selector::{WorkspaceSelectorView, WORKSPACE_SELECTOR_PREVIEW_WIDTH};
 
 use crate::{
@@ -347,10 +348,11 @@ impl Workspaces {
     }
 
     fn update_workspaces_layout(&self) {
-        let (width, height, workspaces) = self.with_model(|model| {
+        let (width, height, scale, workspaces) = self.with_model(|model| {
             (
                 model.width as f32,
                 model.height as f32,
+                model.scale as f32,
                 model.workspaces.clone(),
             )
         });
@@ -365,10 +367,11 @@ impl Workspaces {
             .set_size(Size::points(width, height), None);
 
         for (logical_index, workspace) in workspaces.iter().enumerate() {
-            workspace.update_layout(logical_index, width, height);
+            workspace.update_layout(logical_index, width, height, scale);
             let selector_layer = workspace.window_selector_view.layer.clone();
             selector_layer.set_size(Size::points(width, height), None);
-            selector_layer.set_position((logical_index as f32 * width, 0.0), None);
+            // Position window selector roots with same spacing as workspaces
+            selector_layer.set_position((logical_index as f32 * (width + WORKSPACE_SPACING * scale), 0.0), None);
         }
     }
 
@@ -2348,9 +2351,10 @@ impl Workspaces {
                 self.expose_update_if_needed_workspace(i);
             }
 
-            let workspace_width = self.with_model(|m| m.width as f32);
+            let (workspace_width, scale) = self.with_model(|m| (m.width as f32, m.scale as f32));
             if workspace_width > 0.0 {
-                x = i as f32 * workspace_width;
+                // Account for spacing between workspaces (WORKSPACE_SPACING is logical, scale to physical)
+                x = i as f32 * (workspace_width + WORKSPACE_SPACING * scale);
             } else {
                 x = workspace
                     .workspace_layer
@@ -2382,8 +2386,8 @@ impl Workspaces {
         const SWIPE_DAMPENING: f32 = 0.6;
         let physical_delta = delta_x * scale * SWIPE_DAMPENING;
 
-        // Calculate bounds
-        let max_offset = (num_workspaces - 1) as f32 * workspace_width;
+        // Calculate bounds - account for spacing between workspaces (WORKSPACE_SPACING is logical, scale to physical)
+        let max_offset = (num_workspaces - 1) as f32 * (workspace_width + WORKSPACE_SPACING * scale);
 
         // Apply rubber-band resistance when already past boundaries
         // Resistance increases progressively the further past the edge we are
@@ -2448,7 +2452,8 @@ impl Workspaces {
             }
         } else {
             // Position-based: snap to nearest workspace
-            let progress = current_offset / workspace_width;
+            // Account for spacing when calculating progress (WORKSPACE_SPACING is logical, scale to physical)
+            let progress = current_offset / (workspace_width + WORKSPACE_SPACING * scale);
             let nearest = progress.round() as usize;
             nearest.min(num_workspaces - 1)
         };

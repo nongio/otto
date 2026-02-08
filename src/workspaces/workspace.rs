@@ -17,6 +17,9 @@ use std::{
     sync::{atomic::AtomicBool, Arc, RwLock},
 };
 
+/// Spacing between workspaces in logical pixels (multiply by screen scale when used)
+pub const WORKSPACE_SPACING: f32 = 50.0;
+
 #[derive(Clone)]
 pub struct WorkspaceView {
     pub index: usize,
@@ -150,10 +153,11 @@ impl WorkspaceView {
         }
     }
 
-    pub fn update_layout(&self, logical_index: usize, width: f32, height: f32) {
+    pub fn update_layout(&self, logical_index: usize, width: f32, height: f32, scale: f32) {
         self.workspace_layer
             .set_size(layers::types::Size::points(width, height), None);
-        let x = logical_index as f32 * width;
+        // Position workspaces with spacing between them (WORKSPACE_SPACING is logical, scale to physical)
+        let x = logical_index as f32 * (width + WORKSPACE_SPACING * scale);
         self.workspace_layer.set_position((x, 0.0), None);
     }
 
