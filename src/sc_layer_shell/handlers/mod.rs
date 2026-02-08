@@ -3,12 +3,14 @@ use smithay::reexports::wayland_server::{
 };
 
 use crate::{state::Backend, Otto};
-use layers::prelude::Transition;
+use layers::prelude::{Spring, Transition, TimingFunction};
 
 use super::protocol::{
-    gen::sc_layer_shell_v1::{self, ScLayerShellV1},
+    gen::otto_scene_v1::{self, OttoSceneV1},
     ScLayer, ScLayerShellHandler,
 };
+
+pub mod timing_function;
 
 /// User data for sc_layer
 pub struct ScLayerUserData {
@@ -62,23 +64,52 @@ fn commit_transaction<BackendData: Backend>(
         return;
     };
 
-    tracing::debug!(
-        "Committing transaction with {} changes, duration_ms: {:?}",
-        txn.accumulated_changes.len(),
-        txn.duration_ms
-    );
-
     // Use client-configured timing function, or create default from duration
-    let transition = txn.timing_function.or_else(|| {
-        txn.duration_ms.map(|duration_ms| {
-            let duration_secs = duration_ms / 1000.0;
-            tracing::debug!(
-                "Creating transition with duration: {} seconds",
-                duration_secs
-            );
-            Transition::ease_out_quad(duration_secs)
+    let mut transition = if let Some(mut trans) = txn.timing_function {
+        // Update timing function duration (timing functions are created with 0.0 duration)
+        if let Some(duration) = txn.duration {
+            // Recreate the timing function with the correct duration
+            trans.timing = match trans.timing {
+                TimingFunction::Easing(easing, _) => TimingFunction::Easing(easing, duration),
+                TimingFunction::Spring(_) => {
+                    if txn.spring_uses_duration {
+                        // Duration-based spring - use stored bounce and velocity
+                        if let Some(bounce) = txn.spring_bounce {
+                            tracing::debug!(
+                                "Creating duration-based spring: duration={}s, bounce={}, initial_velocity={}",
+                                duration,
+                                bounce,
+                                txn.spring_initial_velocity
+                            );
+                            TimingFunction::Spring(Spring::with_duration_bounce_and_velocity(
+                                duration,
+                                bounce,
+                                txn.spring_initial_velocity,
+                            ))
+                        } else {
+                            // Fallback if bounce not set
+                            TimingFunction::Spring(Spring::with_duration_and_bounce(duration, 0.0))
+                        }
+                    } else {
+                        // Physics-based spring from timing function - keep as is
+                        trans.timing
+                    }
+                }
+            };
+        }
+        Some(trans)
+    } else {
+        txn.duration.map(|duration| {
+            Transition::ease_out_quad(duration)
         })
-    });
+    };
+
+    // Apply delay if configured
+    if let Some(delay) = txn.delay {
+        if let Some(ref mut trans) = transition {
+            trans.delay = delay;
+        }
+    }
 
     // Schedule all accumulated changes together
     if !txn.accumulated_changes.is_empty() {
@@ -90,14 +121,11 @@ fn commit_transaction<BackendData: Backend>(
             state
                 .layers_engine
                 .schedule_changes(&txn.accumulated_changes, animation);
-            state.layers_engine.start_animation(animation, 0.0);
-            tracing::debug!("Animation started with {:?}", animation);
+            state.layers_engine.start_animation(animation, trans.delay);
         } else {
-            tracing::debug!("No transition - changes were already applied immediately");
         }
         // If no transition, changes were already applied immediately via set_* methods
     } else {
-        tracing::warn!("Transaction committed with no accumulated changes!");
     }
 
     // Send completion event if requested
@@ -113,15 +141,15 @@ pub mod transactions;
 pub fn create_layer_shell_global<BackendData: Backend + 'static>(
     display: &DisplayHandle,
 ) -> smithay::reexports::wayland_server::backend::GlobalId {
-    display.create_global::<Otto<BackendData>, ScLayerShellV1, _>(1, ())
+    display.create_global::<Otto<BackendData>, OttoSceneV1, _>(1, ())
 }
 
-impl<BackendData: Backend> GlobalDispatch<ScLayerShellV1, ()> for Otto<BackendData> {
+impl<BackendData: Backend> GlobalDispatch<OttoSceneV1, ()> for Otto<BackendData> {
     fn bind(
         _state: &mut Self,
         _handle: &DisplayHandle,
         _client: &Client,
-        resource: New<ScLayerShellV1>,
+        resource: New<OttoSceneV1>,
         _global_data: &(),
         data_init: &mut DataInit<'_, Self>,
     ) {
@@ -129,23 +157,23 @@ impl<BackendData: Backend> GlobalDispatch<ScLayerShellV1, ()> for Otto<BackendDa
     }
 }
 
-impl<BackendData: Backend> Dispatch<ScLayerShellV1, ()> for Otto<BackendData> {
+impl<BackendData: Backend> Dispatch<OttoSceneV1, ()> for Otto<BackendData> {
     fn request(
         state: &mut Self,
         _client: &Client,
-        shell: &ScLayerShellV1,
-        request: sc_layer_shell_v1::Request,
+        shell: &OttoSceneV1,
+        request: otto_scene_v1::Request,
         _data: &(),
         _dhandle: &DisplayHandle,
         data_init: &mut DataInit<'_, Self>,
     ) {
         match request {
-            sc_layer_shell_v1::Request::GetLayer { id, surface } => {
+            otto_scene_v1::Request::GetSceneSurface { id, surface } => {
                 // Per protocol spec: "It can augment any surface type"
                 // We just verify the surface is alive and valid
                 if !surface.is_alive() {
                     shell.post_error(
-                        sc_layer_shell_v1::Error::InvalidSurface,
+                        otto_scene_v1::Error::InvalidSurface,
                         "Surface does not exist",
                     );
                     return;
@@ -171,7 +199,7 @@ impl<BackendData: Backend> Dispatch<ScLayerShellV1, ()> for Otto<BackendData> {
                 // Now get the actual layer ID and set it properly
                 let layer_id = wl_layer.id();
                 let layer_id_str = format!("sc_layer_{:?}", layer_id);
-                layer.set_key(layer_id_str);
+                layer.set_key(layer_id_str.clone());
 
                 // Create compositor state
                 let sc_layer = ScLayer {
@@ -185,30 +213,44 @@ impl<BackendData: Backend> Dispatch<ScLayerShellV1, ()> for Otto<BackendData> {
                 ScLayerShellHandler::new_layer(state, sc_layer);
             }
 
-            sc_layer_shell_v1::Request::BeginTransaction { id } => {
+            otto_scene_v1::Request::BeginTransaction { id } => {
                 use super::protocol::ScTransaction;
 
                 let wl_transaction = data_init.init(id, ());
+                let txn_id = wl_transaction.id();
                 let transaction = ScTransaction {
                     wl_transaction: wl_transaction.clone(),
-                    duration_ms: None,
-                    delay_ms: None,
+                    duration: None,
+                    delay: None,
                     timing_function: None,
+                    spring_uses_duration: false,
+                    spring_bounce: None,
+                    spring_initial_velocity: 0.0,
                     send_completion: false,
                     accumulated_changes: Vec::new(),
                 };
 
                 state
                     .sc_transactions
-                    .insert(wl_transaction.id(), transaction);
+                    .insert(txn_id.clone(), transaction);                
             }
 
-            sc_layer_shell_v1::Request::Destroy => {
+            otto_scene_v1::Request::CreateTimingFunction { id } => {
+                use timing_function::ScTimingFunctionData;
+
+                // Create default timing function (linear)
+                let timing_data = ScTimingFunctionData {
+                    timing: layers::prelude::TimingFunction::linear(0.0),
+                    spring_uses_duration: false,
+                    spring_bounce: None,
+                    spring_initial_velocity: 0.0,
+                };
+
+                data_init.init(id, timing_data);
+            }
+
+            otto_scene_v1::Request::Destroy => {
                 // Nothing to do
-            }
-
-            _ => {
-                tracing::warn!("Unimplemented sc_layer_shell request: {:?}", request);
             }
         }
     }

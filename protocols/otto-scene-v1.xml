@@ -1,0 +1,413 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="otto_scene_v1">
+  <copyright>
+    Copyright © 2024-2026 Riccardo Canalicchio
+
+    Permission to use, copy, modify, distribute, and sell this
+    software and its documentation for any purpose is hereby granted
+    without fee, provided that the above copyright notice appear in
+    all copies and that both that copyright notice and this permission
+    notice appear in supporting documentation, and that the name of
+    the copyright holders not be used in advertising or publicity
+    pertaining to distribution of the software without specific,
+    written prior permission.  The copyright holders make no
+    representations about the suitability of this software for any
+    purpose.  It is provided "as is" without express or implied
+    warranty.
+
+    THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS
+    SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+    FITNESS, IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
+    SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+    WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN
+    AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
+    ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+    THIS SOFTWARE.
+  </copyright>
+
+  <interface name="otto_scene_v1" version="1">
+    <description summary="declarative animations and compositing for Wayland">
+      Otto scene protocol provides declarative animations and advanced
+      compositing features. Clients can augment wayland surfaces with animations
+      and visual effects by creating scene surfaces. Animations are defined
+      using transaction-based property changes.
+      
+      The compositor manages all animation state and execution, providing smooth,
+      GPU-accelerated animations with minimal IPC overhead.
+    </description>
+
+    <request name="get_scene_surface">
+      <description summary="create a scene surface to augment an existing surface">
+        Create a scene surface that augments an existing wl_surface with additional
+        compositing and animation capabilities. The scene surface is purely decorative
+        and does not have its own wl_surface or role. It can augment any surface
+        type (xdg_toplevel, xdg_popup, wlr_layer_shell, etc.) with effects like
+        blur, shadows, animations, and blend modes.
+      </description>
+      <arg name="id" type="new_id" interface="otto_scene_surface_v1"/>
+      <arg name="surface" type="object" interface="wl_surface" 
+           summary="surface to augment (any role)"/>
+    </request>
+
+    <request name="begin_transaction">
+      <description summary="begin a new animation transaction">
+        Start a transaction context. All property changes made to scene surfaces
+        within this transaction will animate together when the transaction is
+        committed. Transactions are scoped per client connection.
+      </description>
+      <arg name="id" type="new_id" interface="otto_transaction_v1"/>
+    </request>
+
+    <request name="create_timing_function">
+      <description summary="create a timing function for animations">
+        Create a timing function that defines how animated values interpolate
+        over time. Can be configured as bezier curves, springs, or presets.
+      </description>
+      <arg name="id" type="new_id" interface="otto_timing_function_v1"/>
+    </request>
+
+    <enum name="error">
+      <entry name="invalid_transaction" value="0" summary="transaction not active"/>
+      <entry name="invalid_surface" value="1" summary="surface does not exist"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the scene object">
+        This request destroys the scene object. Objects that have been
+        created through this instance are not affected.
+      </description>
+    </request>
+  </interface>
+
+  <interface name="otto_transaction_v1" version="1">
+    <description summary="animation transaction context">
+      A transaction groups property changes that should animate together.
+      Property changes made to scene surfaces while a transaction is active
+      will be batched and applied atomically when the transaction is committed.
+    </description>
+
+    <request name="set_duration">
+      <description summary="set animation duration">
+        Set the duration for all animations in this transaction. If not set,
+        property changes apply immediately without animation.
+      </description>
+      <arg name="duration" type="fixed" summary="duration in seconds"/>
+    </request>
+
+    <request name="set_timing_function">
+      <description summary="set timing function for animations">
+        Set the timing function that controls how animated values interpolate.
+        If not set, defaults to linear interpolation.
+      </description>
+      <arg name="timing" type="object" interface="otto_timing_function_v1"/>
+    </request>
+
+    <request name="set_delay">
+      <description summary="set animation start delay">
+        Set a delay before animations in this transaction start executing.
+      </description>
+      <arg name="delay" type="fixed" summary="delay in seconds"/>
+    </request>
+
+    <request name="enable_completion_event">
+      <description summary="request completion notification">
+        Request that a completion event be sent when all animations in this
+        transaction finish executing.
+      </description>
+    </request>
+
+    <request name="commit">
+      <description summary="commit the transaction">
+        Commit all pending property changes. If a duration is set, changes will
+        animate. Otherwise they apply immediately. After commit, the transaction
+        object becomes inert and should be destroyed.
+      </description>
+    </request>
+
+    <event name="completed">
+      <description summary="all animations completed">
+        Sent when all animations in this transaction have finished executing.
+        Only sent if enable_completion_event was called before commit.
+      </description>
+    </event>
+
+    <request name="cancel" type="destructor">
+      <description summary="cancel the transaction">
+        Cancel and destroy this transaction object. If not yet committed, all
+        pending changes are discarded.
+      </description>
+    </request>
+  </interface>
+
+  <interface name="otto_timing_function_v1" version="1">
+    <description summary="animation timing curve">
+      Defines how animated property values interpolate over time. Can be
+      configured as preset curves, custom bezier curves, or spring physics.
+    </description>
+    <enum name="preset">
+      <entry name="linear" value="0" summary="constant velocity"/>
+      <entry name="ease_in" value="1" summary="starts slow, accelerates"/>
+      <entry name="ease_out" value="2" summary="starts fast, decelerates"/>
+      <entry name="ease_in_out" value="3" summary="accelerates then decelerates"/>
+      <entry name="ease_in_quad" value="4"/>
+      <entry name="ease_out_quad" value="5"/>
+      <entry name="ease_in_out_quad" value="6"/>
+      <entry name="ease_in_cubic" value="7"/>
+      <entry name="ease_out_cubic" value="8"/>
+      <entry name="ease_in_out_cubic" value="9"/>
+    </enum>
+
+    <request name="set_preset">
+      <description summary="use a preset timing curve"/>
+      <arg name="preset" type="uint" enum="preset"/>
+    </request>
+
+    <request name="set_bezier">
+      <description summary="custom cubic bezier curve">
+        Define a custom cubic bezier curve. The curve starts at (0,0) and ends
+        at (1,1). This request sets the two middle control points.
+      </description>
+      <arg name="c1x" type="fixed" summary="first control point x"/>
+      <arg name="c1y" type="fixed" summary="first control point y"/>
+      <arg name="c2x" type="fixed" summary="second control point x"/>
+      <arg name="c2y" type="fixed" summary="second control point y"/>
+    </request>
+
+    <request name="set_spring">
+      <description summary="spring-based timing with duration and bounce">
+        Configure spring physics timing using bounce and velocity parameters.
+        The spring is tuned to settle within the transaction's duration with
+        the specified bounce characteristic. Use this when you want spring-like
+        motion but need to respect a specific duration.
+      </description>
+      <arg name="bounce" type="fixed" summary="bounce amount (0.0 = no bounce, 1.0 = maximum bounce)"/>
+      <arg name="initial_velocity" type="fixed" summary="initial velocity (optional, default 0.0)"/>
+    </request>
+
+    <request name="set_spring_stiffness_damping">
+      <description summary="spring-based timing with physics parameters">
+        Configure spring physics timing using stiffness and damping parameters.
+        This creates natural, interruptible physics-based animations. The spring
+        runs until it naturally settles based on its physical properties.
+        Transaction duration is ignored for this spring type.
+      </description>
+      <arg name="stiffness" type="fixed" summary="spring stiffness (higher = faster oscillation)"/>
+      <arg name="damping" type="fixed" summary="damping coefficient (controls energy loss)"/>
+      <arg name="initial_velocity" type="fixed" summary="initial velocity (optional, default 0.0)"/>
+    </request>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the timing function"/>
+    </request>
+  </interface>
+
+  <interface name="otto_scene_surface_v1" version="1">
+    <description summary="compositing layer with animation support">
+      A layer surface wraps a wl_surface and provides additional compositing
+      and animation capabilities. It can have transforms, effects, and can be
+      arranged in a hierarchy.
+      
+      Property changes made while a transaction is active will animate.
+      Property changes made outside a transaction apply immediately.
+    </description>
+    
+    <enum name="z_order">
+      <description summary="layer z-order relative to surface content">
+        Defines where the layer appears in the stacking order relative to the
+        parent window's content.
+      </description>
+      <entry name="below_surface" value="0" summary="below window content"/>
+      <entry name="above_surface" value="1" summary="above window content (default)"/>
+    </enum>
+    
+    <request name="set_z_order">
+      <description summary="configure z-order relative to parent">
+        Set whether this layer renders above or below the parent window's
+        surface content. Default is above_surface.
+      </description>
+      <arg name="z_order" type="uint" enum="z_order"/>
+    </request>
+    
+    <request name="set_position">
+      <description summary="set layer position (animatable)">
+        Set the layer's position in its parent's coordinate space. If called
+        within a transaction, animates from the current position.
+      </description>
+      <arg name="x" type="fixed" summary="x coordinate in parent space"/>
+      <arg name="y" type="fixed" summary="y coordinate in parent space"/>
+    </request>
+
+    <request name="set_z_position">
+      <description summary="set depth position (animatable)">
+        Set the layer's position on the z-axis for 3D layering. Layers with
+        higher z values appear in front.
+      </description>
+      <arg name="z" type="fixed" summary="z coordinate"/>
+    </request>
+
+    <request name="set_size">
+      <description summary="set layer bounds (animatable)">
+        Set the layer's size. The position is relative to the anchor point.
+      </description>
+      <arg name="width" type="fixed"/>
+      <arg name="height" type="fixed"/>
+    </request>
+
+    <request name="set_scale">
+      <description summary="set scale transform (animatable)">
+        Set the layer's scale factors. Applied relative to the anchor point.
+      </description>
+      <arg name="x" type="fixed" summary="horizontal scale factor"/>
+      <arg name="y" type="fixed" summary="vertical scale factor"/>
+    </request>
+
+    <request name="set_rotation">
+      <description summary="set rotation transform (animatable)">
+        Set the layer's rotation in radians around the z-axis. Applied relative
+        to the anchor point.
+      </description>
+      <arg name="angle" type="fixed" summary="rotation angle in radians"/>
+    </request>
+
+    <request name="set_anchor_point">
+      <description summary="set transform anchor point (animatable)">
+        Set the point within the layer that transforms are applied relative to.
+        Expressed as normalized coordinates (0.0 to 1.0) where (0,0) is top-left
+        and (1,1) is bottom-right. Default is (0.5, 0.5) - center.
+      </description>
+      <arg name="x" type="fixed" summary="normalized x coordinate (0.0-1.0)"/>
+      <arg name="y" type="fixed" summary="normalized y coordinate (0.0-1.0)"/>
+    </request>
+
+    <request name="set_transform">
+      <description summary="set full 3D transform matrix (animatable)">
+        Set a full 4x4 transformation matrix for advanced 3D effects.
+        For simple transforms, prefer the individual transform methods.
+      </description>
+      <arg name="m11" type="fixed"/>
+      <arg name="m12" type="fixed"/>
+      <arg name="m13" type="fixed"/>
+      <arg name="m14" type="fixed"/>
+      <arg name="m21" type="fixed"/>
+      <arg name="m22" type="fixed"/>
+      <arg name="m23" type="fixed"/>
+      <arg name="m24" type="fixed"/>
+      <arg name="m31" type="fixed"/>
+      <arg name="m32" type="fixed"/>
+      <arg name="m33" type="fixed"/>
+      <arg name="m34" type="fixed"/>
+      <arg name="m41" type="fixed"/>
+      <arg name="m42" type="fixed"/>
+      <arg name="m43" type="fixed"/>
+      <arg name="m44" type="fixed"/>
+    </request>
+
+    <!-- Appearance Properties (Animatable) -->
+    
+    <request name="set_opacity">
+      <description summary="set layer opacity (animatable)">
+        Set the layer's opacity. Affects the layer and all its sublayers.
+      </description>
+      <arg name="opacity" type="fixed" summary="opacity (0.0 = transparent, 1.0 = opaque)"/>
+    </request>
+
+    <request name="set_background_color">
+      <description summary="set background color (animatable)">
+        Set the layer's background color. Colors are in sRGB color space.
+      </description>
+      <arg name="red" type="fixed" summary="red component (0.0-1.0)"/>
+      <arg name="green" type="fixed" summary="green component (0.0-1.0)"/>
+      <arg name="blue" type="fixed" summary="blue component (0.0-1.0)"/>
+      <arg name="alpha" type="fixed" summary="alpha component (0.0-1.0)"/>
+    </request>
+
+    <request name="set_corner_radius">
+      <description summary="set corner rounding (animatable)">
+        Set the corner radius for rounded corners. The surface content is
+        clipped to this shape.
+      </description>
+      <arg name="radius" type="fixed" summary="corner radius in pixels"/>
+    </request>
+
+    <request name="set_border">
+      <description summary="set border style (animatable)">
+        Set the layer's border. The border is drawn inside the layer bounds.
+      </description>
+      <arg name="width" type="fixed" summary="border width in pixels"/>
+      <arg name="red" type="fixed" summary="red component (0.0-1.0)"/>
+      <arg name="green" type="fixed" summary="green component (0.0-1.0)"/>
+      <arg name="blue" type="fixed" summary="blue component (0.0-1.0)"/>
+      <arg name="alpha" type="fixed" summary="alpha component (0.0-1.0)"/>
+    </request>
+
+    <request name="set_shadow">
+      <description summary="set shadow effect (animatable)">
+        Set the layer's drop shadow effect.
+      </description>
+      <arg name="opacity" type="fixed" summary="shadow opacity (0.0-1.0)"/>
+      <arg name="radius" type="fixed" summary="blur radius in pixels"/>
+      <arg name="offset_x" type="fixed" summary="horizontal offset"/>
+      <arg name="offset_y" type="fixed" summary="vertical offset"/>
+      <arg name="red" type="fixed" summary="shadow red component (0.0-1.0)"/>
+      <arg name="green" type="fixed" summary="shadow green component (0.0-1.0)"/>
+      <arg name="blue" type="fixed" summary="shadow blue component (0.0-1.0)"/>
+    </request>
+
+    <!-- Visibility and Rendering -->
+    
+    <enum name="blend_mode">
+      <description summary="layer blending mode">
+        Defines how this layer blends with content behind it.
+      </description>
+      <entry name="normal" value="0" summary="standard alpha blending"/>
+      <entry name="background_blur" value="1" summary="blur content behind this layer"/>
+    </enum>
+    
+    <request name="set_blend_mode">
+      <description summary="set layer blend mode">
+        Set how this layer blends with content behind it. When set to background_blur,
+        the content behind this layer is blurred before the layer is composited on top.
+      </description>
+      <arg name="mode" type="uint" enum="blend_mode"/>
+    </request>
+    
+    <request name="set_hidden">
+      <description summary="set visibility">
+        Set whether the layer is hidden. Hidden layers and their sublayers
+        are not rendered.
+      </description>
+      <arg name="hidden" type="uint" summary="1 to hide, 0 to show"/>
+    </request>
+
+    <request name="set_masks_to_bounds">
+      <description summary="enable sublayer clipping">
+        If true, sublayers are clipped to this layer's bounds.
+      </description>
+      <arg name="masks" type="uint" summary="1 to enable, 0 to disable"/>
+    </request> 
+
+    <!-- Animation Control -->
+    
+    <request name="cancel_animation">
+      <description summary="cancel a specific animation">
+        Cancel a specific animation by its key. The animated property
+        remains at its current value.
+      </description>
+      <arg name="key" type="string" summary="animation identifier"/>
+    </request>
+
+    <request name="cancel_all_animations">
+      <description summary="cancel all animations">
+        Cancel all animations on this layer. Properties remain at
+        their current animated values.
+      </description>
+    </request>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the layer surface">
+        Destroy this layer surface. If the layer has a parent, it is automatically
+        removed from the parent's sublayer list.
+      </description>
+    </request>
+  </interface>
+</protocol>

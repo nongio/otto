@@ -3,6 +3,7 @@ use wayland_backend::server::ClientId;
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
 
 use crate::{
+    config::Config,
     sc_layer_shell::handlers::{
         accumulate_change, find_active_transaction_for_client, trigger_window_update,
         wl_fixed_to_f32, ScLayerUserData,
@@ -12,16 +13,16 @@ use crate::{
 };
 
 use super::super::protocol::{
-    gen::sc_layer_v1::{self, ScLayerV1},
+    gen::otto_scene_surface_v1::{self, OttoSceneSurfaceV1},
     ScLayerShellHandler,
 };
 
-impl<BackendData: Backend> Dispatch<ScLayerV1, ScLayerUserData> for Otto<BackendData> {
+impl<BackendData: Backend> Dispatch<OttoSceneSurfaceV1, ScLayerUserData> for Otto<BackendData> {
     fn request(
         state: &mut Self,
         _client: &Client,
-        layer_obj: &ScLayerV1,
-        request: sc_layer_v1::Request,
+        layer_obj: &OttoSceneSurfaceV1,
+        request: otto_scene_surface_v1::Request,
         _data: &ScLayerUserData,
         _dhandle: &DisplayHandle,
         _data_init: &mut DataInit<'_, Self>,
@@ -44,7 +45,7 @@ impl<BackendData: Backend> Dispatch<ScLayerV1, ScLayerUserData> for Otto<Backend
         let active_transaction = find_active_transaction_for_client(state, _client);
 
         match request {
-            sc_layer_v1::Request::SetPosition { x, y } => {
+            otto_scene_surface_v1::Request::SetPosition { x, y } => {
                 let x = wl_fixed_to_f32(x);
                 let y = wl_fixed_to_f32(y);
 
@@ -61,7 +62,7 @@ impl<BackendData: Backend> Dispatch<ScLayerV1, ScLayerUserData> for Otto<Backend
                 }
             }
 
-            sc_layer_v1::Request::SetSize { width, height } => {
+            otto_scene_surface_v1::Request::SetSize { width, height } => {
                 let width = wl_fixed_to_f32(width);
                 let height = wl_fixed_to_f32(height);
 
@@ -78,21 +79,48 @@ impl<BackendData: Backend> Dispatch<ScLayerV1, ScLayerUserData> for Otto<Backend
                 }
             }
 
-            sc_layer_v1::Request::SetOpacity { opacity } => {
+            otto_scene_surface_v1::Request::SetScale { x, y } => {
+                let x = wl_fixed_to_f32(x);
+                let y = wl_fixed_to_f32(y);
+
+                if let Some(txn_id) = active_transaction {
+                    let change = sc_layer
+                        .layer
+                        .change_scale(layers::types::Point { x, y });
+                    accumulate_change(state, txn_id, change);
+                } else {
+                    sc_layer.layer.set_scale((x, y), None);
+                    trigger_window_update(state, &sc_layer.surface.id());
+                }
+            }
+
+            otto_scene_surface_v1::Request::SetAnchorPoint { x, y } => {
+                let x = wl_fixed_to_f32(x);
+                let y = wl_fixed_to_f32(y);
+
+                if let Some(txn_id) = active_transaction {
+                    let change = sc_layer
+                        .layer
+                        .change_anchor_point(layers::types::Point { x, y });
+                    accumulate_change(state, txn_id, change);
+                } else {
+                    sc_layer.layer.set_anchor_point((x, y), None);
+                    trigger_window_update(state, &sc_layer.surface.id());
+                }
+            }
+
+            otto_scene_surface_v1::Request::SetOpacity { opacity } => {
                 let opacity = wl_fixed_to_f32(opacity).clamp(0.0, 1.0);
 
                 if let Some(txn_id) = active_transaction {
                     let change = sc_layer.layer.change_opacity(opacity);
                     accumulate_change(state, txn_id, change);
-                    tracing::debug!("Accumulated opacity change: {} in transaction", opacity);
                 } else {
                     sc_layer.layer.set_opacity(opacity, None);
-                    trigger_window_update(state, &sc_layer.surface.id());
-                    tracing::debug!("Applied opacity immediately: {}", opacity);
                 }
             }
 
-            sc_layer_v1::Request::SetBackgroundColor {
+            otto_scene_surface_v1::Request::SetBackgroundColor {
                 red,
                 green,
                 blue,
@@ -114,21 +142,23 @@ impl<BackendData: Backend> Dispatch<ScLayerV1, ScLayerUserData> for Otto<Backend
                 }
             }
 
-            sc_layer_v1::Request::SetCornerRadius { radius } => {
+            otto_scene_surface_v1::Request::SetCornerRadius { radius } => {
                 let radius = wl_fixed_to_f32(radius);
+                let screen_scale = Config::with(|c| c.screen_scale) as f32;
+                let scaled_radius = radius * screen_scale;
 
                 if let Some(txn_id) = active_transaction {
-                    let change = sc_layer.layer.change_border_corner_radius(radius);
+                    let change = sc_layer.layer.change_border_corner_radius(scaled_radius);
                     accumulate_change(state, txn_id, change);
                 } else {
                     sc_layer
                         .layer
-                        .set_border_corner_radius(BorderRadius::new_single(radius), None);
+                        .set_border_corner_radius(BorderRadius::new_single(scaled_radius), None);
                     // trigger_window_update(state, &sc_layer.surface.id());
                 }
             }
 
-            sc_layer_v1::Request::SetBorder {
+            otto_scene_surface_v1::Request::SetBorder {
                 width,
                 red,
                 green,
@@ -160,7 +190,7 @@ impl<BackendData: Backend> Dispatch<ScLayerV1, ScLayerUserData> for Otto<Backend
                 }
             }
 
-            sc_layer_v1::Request::SetShadow {
+            otto_scene_surface_v1::Request::SetShadow {
                 opacity,
                 radius,
                 offset_x,
@@ -193,7 +223,7 @@ impl<BackendData: Backend> Dispatch<ScLayerV1, ScLayerUserData> for Otto<Backend
                 trigger_window_update(state, &sc_layer.surface.id());
             }
 
-            sc_layer_v1::Request::SetHidden { hidden } => {
+            otto_scene_surface_v1::Request::SetHidden { hidden } => {
                 let hidden = hidden != 0;
 
                 // Hidden doesn't animate, always apply immediately
@@ -201,14 +231,14 @@ impl<BackendData: Backend> Dispatch<ScLayerV1, ScLayerUserData> for Otto<Backend
                 trigger_window_update(state, &sc_layer.surface.id());
             }
 
-            sc_layer_v1::Request::SetMasksToBounds { masks } => {
+            otto_scene_surface_v1::Request::SetMasksToBounds { masks } => {
                 let masks_to_bounds = masks != 0;
-
+            
                 sc_layer.layer.set_clip_content(masks_to_bounds, None);
             }
 
-            sc_layer_v1::Request::SetBlendMode { mode } => {
-                use super::super::protocol::gen::sc_layer_v1::BlendMode;
+            otto_scene_surface_v1::Request::SetBlendMode { mode } => {
+                use super::super::protocol::gen::otto_scene_surface_v1::BlendMode;
                 use layers::types::BlendMode as LayrsBlendMode;
 
                 let blend_mode = match mode.into_result().ok() {
@@ -225,8 +255,8 @@ impl<BackendData: Backend> Dispatch<ScLayerV1, ScLayerUserData> for Otto<Backend
                 trigger_window_update(state, &sc_layer.surface.id());
             }
 
-            sc_layer_v1::Request::SetZOrder { z_order } => {
-                use super::super::protocol::gen::sc_layer_v1::ZOrder;
+            otto_scene_surface_v1::Request::SetZOrder { z_order } => {
+                use super::super::protocol::gen::otto_scene_surface_v1::ZOrder;
                 use crate::sc_layer_shell::ScLayerZOrder;
 
                 // Update z-order configuration
@@ -274,7 +304,7 @@ impl<BackendData: Backend> Dispatch<ScLayerV1, ScLayerUserData> for Otto<Backend
                 }
             }
 
-            sc_layer_v1::Request::Destroy => {
+            otto_scene_surface_v1::Request::Destroy => {
                 // Handled by destructor
             }
 
@@ -287,7 +317,7 @@ impl<BackendData: Backend> Dispatch<ScLayerV1, ScLayerUserData> for Otto<Backend
     fn destroyed(
         state: &mut Self,
         _client: ClientId,
-        resource: &ScLayerV1,
+        resource: &OttoSceneSurfaceV1,
         _data: &ScLayerUserData,
     ) {
         let layer_id = resource.id();

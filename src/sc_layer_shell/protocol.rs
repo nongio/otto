@@ -11,12 +11,12 @@ pub mod gen {
     pub use smithay::reexports::wayland_server::protocol::*;
     pub use smithay::reexports::wayland_server::*;
 
-    wayland_scanner::generate_interfaces!("./protocols/sc-layer-v1.xml");
-    wayland_scanner::generate_server_code!("./protocols/sc-layer-v1.xml");
+    wayland_scanner::generate_interfaces!("./protocols/otto-scene-v1.xml");
+    wayland_scanner::generate_server_code!("./protocols/otto-scene-v1.xml");
 }
 
-pub use gen::sc_layer_v1::ScLayerV1 as ZscLayerV1;
-pub use gen::sc_transaction_v1::ScTransactionV1;
+pub use gen::otto_scene_surface_v1::OttoSceneSurfaceV1 as ZscLayerV1;
+pub use gen::otto_transaction_v1::OttoTransactionV1;
 
 /// Z-order configuration for sc-layer relative to parent surface content
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,16 +56,25 @@ impl PartialEq for ScLayer {
 /// Transaction state for batching animated changes
 pub struct ScTransaction {
     /// The protocol object
-    pub wl_transaction: ScTransactionV1,
+    pub wl_transaction: OttoTransactionV1,
 
-    /// Animation duration in milliseconds (None = immediate)
-    pub duration_ms: Option<f32>,
+    /// Animation duration in seconds (None = immediate)
+    pub duration: Option<f32>,
 
-    /// Animation delay in milliseconds
-    pub delay_ms: Option<f32>,
+    /// Animation delay in seconds
+    pub delay: Option<f32>,
 
     /// Timing function configured by client
     pub timing_function: Option<layers::prelude::Transition>,
+
+    /// If true, spring animations should use the transaction's duration
+    pub spring_uses_duration: bool,
+
+    /// Bounce parameter for duration-based springs
+    pub spring_bounce: Option<f32>,
+
+    /// Initial velocity for springs
+    pub spring_initial_velocity: f32,
 
     /// Whether to send completion event
     pub send_completion: bool,
@@ -78,9 +87,12 @@ impl Clone for ScTransaction {
     fn clone(&self) -> Self {
         Self {
             wl_transaction: self.wl_transaction.clone(),
-            duration_ms: self.duration_ms,
-            delay_ms: self.delay_ms,
+            duration: self.duration,
+            delay: self.delay,
             timing_function: self.timing_function,
+            spring_uses_duration: self.spring_uses_duration,
+            spring_bounce: self.spring_bounce,
+            spring_initial_velocity: self.spring_initial_velocity,
             send_completion: self.send_completion,
             accumulated_changes: self.accumulated_changes.clone(),
         }
@@ -90,8 +102,8 @@ impl Clone for ScTransaction {
 impl std::fmt::Debug for ScTransaction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ScTransaction")
-            .field("duration_ms", &self.duration_ms)
-            .field("delay_ms", &self.delay_ms)
+            .field("duration", &self.duration)
+            .field("delay", &self.delay)
             .field("send_completion", &self.send_completion)
             .field("num_changes", &self.accumulated_changes.len())
             .finish()
