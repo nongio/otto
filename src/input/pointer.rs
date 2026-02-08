@@ -241,7 +241,23 @@ impl<BackendData: Backend> Otto<BackendData> {
             .or_else(|| layers.layer_under(WlrLayer::Top, pos))
         {
             let layer_loc = layers.layer_geometry(layer).unwrap().loc;
-            under = Some((layer.clone().into(), output_geo.loc + layer_loc));
+            let layer_abs_pos = output_geo.loc + layer_loc;
+            
+            // Check for surfaces under this layer (including popups)
+            // Pass position relative to layer surface
+            if let Some((surface, surface_loc)) = layer.surface_under(
+                pos - layer_abs_pos.to_f64(),
+                WindowSurfaceType::ALL,
+            ) {
+                // surface_loc is relative to layer surface, convert to absolute
+                under = Some((
+                    PointerFocusTarget::WlSurface(surface),
+                    layer_abs_pos + surface_loc,
+                ));
+            } else {
+                // No popup, use the layer surface itself
+                under = Some((layer.clone().into(), layer_abs_pos));
+            }
         }
         // Check dock
         else if self
@@ -272,7 +288,23 @@ impl<BackendData: Backend> Otto<BackendData> {
             .or_else(|| layers.layer_under(WlrLayer::Background, pos))
         {
             let layer_loc = layers.layer_geometry(layer).unwrap().loc;
-            under = Some((layer.clone().into(), output_geo.loc + layer_loc));
+            let layer_abs_pos = output_geo.loc + layer_loc;
+            
+            // Check for surfaces under this layer (including popups)
+            // Pass position relative to layer surface
+            if let Some((surface, surface_loc)) = layer.surface_under(
+                pos - layer_abs_pos.to_f64(),
+                WindowSurfaceType::ALL,
+            ) {
+                // surface_loc is relative to layer surface, convert to absolute
+                under = Some((
+                    PointerFocusTarget::WlSurface(surface),
+                    layer_abs_pos + surface_loc,
+                ));
+            } else {
+                // No popup, use the layer surface itself
+                under = Some((layer.clone().into(), layer_abs_pos));
+            }
         };
         under.map(|(s, l)| (s, l.to_f64()))
     }
