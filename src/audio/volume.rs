@@ -75,7 +75,7 @@ impl AudioManager {
         let mut state = self.state.lock().unwrap();
         let new_volume = (state.volume as i32 + delta).clamp(0, 100) as u32;
 
-        info!(
+        tracing::trace!(
             current = state.volume,
             delta = delta,
             new = new_volume,
@@ -99,7 +99,7 @@ impl AudioManager {
         let mut state = self.state.lock().unwrap();
         let new_muted = !state.muted;
 
-        info!(current = state.muted, new = new_muted, "Toggling mute");
+        tracing::trace!(current = state.muted, new = new_muted, "Toggling mute");
 
         // Apply via wpctl for now (will be replaced with native PipeWire)
         self.set_mute_wpctl(new_muted)?;
@@ -123,10 +123,10 @@ impl AudioManager {
 
             match output {
                 Ok(out) if out.status.success() => {
-                    debug!("Volume set to {}% via wpctl", volume);
+                    tracing::trace!("Volume set to {}% via wpctl", volume);
                 }
                 Ok(out) => {
-                    error!("wpctl failed: {}", String::from_utf8_lossy(&out.stderr));
+                    tracing::error!("wpctl failed: {}", String::from_utf8_lossy(&out.stderr));
                 }
                 Err(e) => {
                     error!("Failed to execute wpctl: {}", e);

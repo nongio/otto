@@ -214,17 +214,24 @@ impl<BackendData: Backend> Otto<BackendData> {
     }
 
     pub(crate) fn handle_brightness_up(&mut self) {
-        adjust_brightness(10);
+        if let Some(level) = adjust_brightness(10) {
+            self.workspaces.osd.show_brightness(level);
+        }
     }
 
     pub(crate) fn handle_brightness_down(&mut self) {
-        adjust_brightness(-10);
+        if let Some(level) = adjust_brightness(-10) {
+            self.workspaces.osd.show_brightness(level);
+        }
     }
 
     pub(crate) fn handle_volume_up(&mut self) {
         if let Some(audio_mgr) = &self.audio_manager {
             if let Err(e) = audio_mgr.increase_volume(5) {
                 error!("Failed to increase volume: {}", e);
+            } else {
+                let volume = (audio_mgr.get_state().volume.min(100) * 20 / 100) as u8; // Scale to 0-20
+                self.workspaces.osd.show_volume(volume);
             }
         }
     }
@@ -233,6 +240,9 @@ impl<BackendData: Backend> Otto<BackendData> {
         if let Some(audio_mgr) = &self.audio_manager {
             if let Err(e) = audio_mgr.decrease_volume(5) {
                 error!("Failed to decrease volume: {}", e);
+            } else {
+                let volume = (audio_mgr.get_state().volume.min(100) * 20 / 100) as u8; // Scale to 0-20
+                self.workspaces.osd.show_volume(volume);
             }
         }
     }
@@ -241,6 +251,15 @@ impl<BackendData: Backend> Otto<BackendData> {
         if let Some(audio_mgr) = &self.audio_manager {
             if let Err(e) = audio_mgr.toggle_mute() {
                 error!("Failed to toggle mute: {}", e);
+            } else {
+                let state = audio_mgr.get_state();
+                let volume = if state.muted {
+                    0
+                } else {
+                    println!("Volume after unmuting: {}", state.volume);
+                    (state.volume.min(100) * 20 / 100) as u8
+                };
+                self.workspaces.osd.show_volume(volume);
             }
         }
     }
@@ -270,35 +289,39 @@ impl<BackendData: Backend> Otto<BackendData> {
     }
 }
 
-fn adjust_brightness(delta: i32) {
-    std::thread::spawn(move || {
-        for device in brightness::blocking::brightness_devices() {
-            match device {
-                Ok(device) => {
-                    if let Ok(device_name) = device.device_name() {
-                        if let Ok(current) = device.get() {
-                            let new_value = (current as i32 + delta).clamp(0, 100) as u32;
+fn adjust_brightness(delta: i32) -> Option<u8> {
+    let mut result_level = None;
+    
+    for device in brightness::blocking::brightness_devices() {
+        match device {
+            Ok(device) => {
+                if let Ok(device_name) = device.device_name() {
+                    if let Ok(current) = device.get() {
+                        let new_value = (current as i32 + delta).clamp(0, 100) as u32;
 
-                            info!(
-                                device = %device_name,
-                                current = current,
-                                delta = delta,
-                                new = new_value,
-                                "Adjusting brightness"
-                            );
+                        tracing::trace!(
+                            device = %device_name,
+                            current = current,
+                            delta = delta,
+                            new = new_value,
+                            "Adjusting brightness"
+                        );
 
-                            if let Err(e) = device.set(new_value) {
-                                error!(device = %device_name, error = %e, "Failed to set brightness");
-                            }
+                        if let Err(e) = device.set(new_value) {
+                            error!(device = %device_name, error = %e, "Failed to set brightness");
                         }
+                        // Store result (scaled to 0-20)
+                        result_level = Some((new_value.min(100) * 20 / 100) as u8);
                     }
                 }
-                Err(e) => {
-                    error!(error = %e, "Failed to get brightness device");
-                }
+            }
+            Err(e) => {
+                error!(error = %e, "Failed to get brightness device");
             }
         }
-    });
+    }
+    
+    result_level
 }
 
 pub fn resolve_shortcut_action(config: &Config, action: &ShortcutAction) -> Option<KeyAction> {

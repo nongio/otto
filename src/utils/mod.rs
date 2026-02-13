@@ -95,6 +95,32 @@ pub fn image_from_path(path: &str, size: impl Into<skia::ISize>) -> Option<layer
     Some(image)
 }
 
+/// Load an image from resources directory, falling back to system locations and theme icons
+///
+/// Search order:
+/// 1. `./resources/{path}`
+/// 2. `/etc/otto/share/{path}`
+/// 3. Theme icon with `alternative_theme_icon_name`
+pub fn resource_image(
+    path: &str,
+    alternative_theme_icon_name: &str,
+) -> Option<layers::skia::Image> {
+    // Try local resources directory first
+    let local_path = format!("resources/{}", path);
+    if let Some(image) = image_from_path(&local_path, (512, 512)) {
+        return Some(image);
+    }
+
+    // Try system-wide installation directory
+    let system_path = format!("/etc/otto/share/{}", path);
+    if let Some(image) = image_from_path(&system_path, (512, 512)) {
+        return Some(image);
+    }
+
+    // Fall back to theme icon
+    named_icon(alternative_theme_icon_name)
+}
+
 pub fn named_icon(icon_name: &str) -> Option<layers::skia::Image> {
     let ic = icon_cache();
     let mut ic = ic.write().unwrap();
@@ -272,4 +298,16 @@ pub fn button_release_scale() -> PointerHandlerFunction {
         );
     };
     f.into()
+}
+
+/// Determines if a connector name indicates a laptop's internal panel
+///
+/// Laptop panels use specific connector types:
+/// - eDP (embedded DisplayPort) - most modern laptops
+/// - LVDS (Low-Voltage Differential Signaling) - older laptops
+/// - DSI (Display Serial Interface) - some ARM-based devices
+pub fn is_laptop_panel(connector_name: &str) -> bool {
+    connector_name.starts_with("eDP-")
+        || connector_name.starts_with("LVDS-")
+        || connector_name.starts_with("DSI-")
 }
