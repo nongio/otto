@@ -4,7 +4,7 @@ use smithay::{
         self, Axis, AxisSource, ButtonState, Event, InputBackend, PointerAxisEvent,
         PointerButtonEvent,
     },
-    desktop::{layer_map_for_output, WindowSurfaceType},
+    desktop::{layer_map_for_output, space::SpaceElement, WindowSurfaceType},
     input::pointer::{AxisFrame, ButtonEvent, MotionEvent},
     reexports::wayland_server::{protocol::wl_pointer, Resource},
     utils::{IsAlive, Logical, Point, Serial, SERIAL_COUNTER as SCOUNTER},
@@ -66,6 +66,10 @@ impl<BackendData: Backend> Otto<BackendData> {
     pub(crate) fn focus_window_under_cursor(&mut self, serial: Serial) {
         let keyboard = self.seat.get_keyboard().unwrap();
         let input_method = self.seat.input_method();
+        
+        // Get current focus to deactivate it
+        let old_focus = keyboard.current_focus();
+        
         // change the keyboard focus unless the pointer or keyboard is grabbed
         // We test for any matching surface type here but always use the root
         // (in case of a window the toplevel) surface for the focus.
@@ -99,6 +103,20 @@ impl<BackendData: Backend> Otto<BackendData> {
                         {
                             self.xwm.as_mut().unwrap().raise_window(surf).unwrap();
                         }
+                        
+                        // Deactivate old focus if it was a different window
+                        if let Some(old) = old_focus.as_ref() {
+                            if let crate::focus::KeyboardFocusTarget::Window(old_window) = old {
+                                if old_window.wl_surface() != window.wl_surface() {
+                                    old_window.set_activate(false);
+                                    old_window.toplevel().map(|t|t.send_configure());
+                                }
+                            }
+                        }
+                        
+                        // Activate new window and set focus
+                        window.set_activate(true);
+                        window.toplevel().map(|t| t.send_configure());
                         keyboard.set_focus(self, Some(window.into()), serial);
                         return;
                     }
@@ -148,6 +166,32 @@ impl<BackendData: Backend> Otto<BackendData> {
                                 return;
                             }
                             self.workspaces.focus_app_with_window(&id);
+                            
+                            // Deactivate old focus if it was a different window
+                            if let Some(old) = old_focus.as_ref() {
+                                if let crate::focus::KeyboardFocusTarget::Window(old_window) = old {
+                                    if old_window.wl_surface() != window.wl_surface() {
+                                        old_window.set_activate(false);
+                                        // Update shadow for deactivated window
+                                        if let Some(view) = self.workspaces.get_window_view(&old_window.id()) {
+                                            view.set_active(false);
+                                        }
+                                        if let Some(toplevel) = old_window.toplevel() {
+                                            toplevel.send_configure();
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // Activate new window and set focus
+                            window.set_activate(true);
+                            // Update shadow for activated window
+                            if let Some(view) = self.workspaces.get_window_view(&id) {
+                                view.set_active(true);
+                            }
+                            if let Some(toplevel) = window.toplevel() {
+                                toplevel.send_configure();
+                            }
                             keyboard.set_focus(self, Some(window.into()), serial);
                             self.workspaces.update_workspace_model();
                         }
@@ -241,7 +285,22 @@ impl<BackendData: Backend> Otto<BackendData> {
             .or_else(|| layers.layer_under(WlrLayer::Top, pos))
         {
             let layer_loc = layers.layer_geometry(layer).unwrap().loc;
-            under = Some((layer.clone().into(), output_geo.loc + layer_loc));
+            let layer_abs_pos = output_geo.loc + layer_loc;
+
+            // Check for surfaces under this layer (including popups)
+            // Pass position relative to layer surface
+            if let Some((surface, surface_loc)) =
+                layer.surface_under(pos - layer_abs_pos.to_f64(), WindowSurfaceType::ALL)
+            {
+                // surface_loc is relative to layer surface, convert to absolute
+                under = Some((
+                    PointerFocusTarget::WlSurface(surface),
+                    layer_abs_pos + surface_loc,
+                ));
+            } else {
+                // No popup, use the layer surface itself
+                under = Some((layer.clone().into(), layer_abs_pos));
+            }
         }
         // Check dock
         else if self
@@ -272,7 +331,22 @@ impl<BackendData: Backend> Otto<BackendData> {
             .or_else(|| layers.layer_under(WlrLayer::Background, pos))
         {
             let layer_loc = layers.layer_geometry(layer).unwrap().loc;
-            under = Some((layer.clone().into(), output_geo.loc + layer_loc));
+            let layer_abs_pos = output_geo.loc + layer_loc;
+
+            // Check for surfaces under this layer (including popups)
+            // Pass position relative to layer surface
+            if let Some((surface, surface_loc)) =
+                layer.surface_under(pos - layer_abs_pos.to_f64(), WindowSurfaceType::ALL)
+            {
+                // surface_loc is relative to layer surface, convert to absolute
+                under = Some((
+                    PointerFocusTarget::WlSurface(surface),
+                    layer_abs_pos + surface_loc,
+                ));
+            } else {
+                // No popup, use the layer surface itself
+                under = Some((layer.clone().into(), layer_abs_pos));
+            }
         };
         under.map(|(s, l)| (s, l.to_f64()))
     }
