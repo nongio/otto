@@ -28,6 +28,8 @@ pub struct Config {
     pub dock: DockConfig,
     #[serde(default)]
     pub layer_shell: LayerShellConfig,
+    #[serde(default)]
+    pub power_management: PowerManagementConfig,
     pub font_family: String,
     pub keyboard_repeat_delay: i32,
     pub keyboard_repeat_rate: i32,
@@ -59,6 +61,7 @@ impl Default for Config {
             input: InputConfig::default(),
             dock: DockConfig::default(),
             layer_shell: LayerShellConfig::default(),
+            power_management: PowerManagementConfig::default(),
             font_family: "Inter".to_string(),
             keyboard_repeat_delay: 300,
             keyboard_repeat_rate: 30,
@@ -316,6 +319,56 @@ fn default_genie_span() -> f64 {
 
 fn default_accent_color() -> String {
     "blue".to_string()
+}
+
+/// Power management configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PowerManagementConfig {
+    /// Enable Otto's lid switch handling (default: true)
+    /// When enabled, Otto manages display state on lid close/open
+    /// When disabled, all lid handling is delegated to systemd-logind
+    #[serde(default = "default_manage_lid_switch")]
+    pub manage_lid_switch: bool,
+
+    /// What to do when laptop lid closes (default: "auto")
+    /// Options:
+    ///   "auto" - Normal laptop: disable screen, allow suspend if no external monitor
+    ///   "disable_internal_screen" - Always disable screen but stay running (for display managers/kiosks)
+    #[serde(default = "default_on_lid_close")]
+    pub on_lid_close: LidCloseAction,
+}
+
+/// Action to take when laptop lid is closed
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LidCloseAction {
+    /// Normal laptop behavior: disable screen, allow suspend if no external monitor
+    Auto,
+    /// Always disable screen but keep running (for display managers/kiosks)
+    DisableInternalScreen,
+}
+
+impl Default for LidCloseAction {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+impl Default for PowerManagementConfig {
+    fn default() -> Self {
+        Self {
+            manage_lid_switch: default_manage_lid_switch(),
+            on_lid_close: default_on_lid_close(),
+        }
+    }
+}
+
+fn default_manage_lid_switch() -> bool {
+    true
+}
+
+fn default_on_lid_close() -> LidCloseAction {
+    LidCloseAction::Auto
 }
 
 /// Input device configuration

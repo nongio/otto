@@ -256,6 +256,9 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub pinch_last_scale: f64,
     pub is_resizing: bool,
 
+    // power management
+    pub is_lid_closed: bool,
+
     // screenshare
     pub screenshare_sessions: HashMap<String, crate::screenshare::ScreencastSession>,
     /// Manager for the screenshare D-Bus service (started lazily when needed).
@@ -650,6 +653,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             is_pinching: false,
             pinch_last_scale: 1.0,
             is_resizing: false,
+
+            // power management
+            is_lid_closed: false,
 
             // screenshare
             screenshare_sessions: HashMap::new(),
@@ -1466,7 +1472,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         if let Some(window) = self.workspaces.get_window_for_surface(wid) {
             let keyboard = self.seat.get_keyboard().unwrap();
             let serial = SERIAL_COUNTER.next_serial();
-            
+
             // Deactivate the previously focused window
             if let Some(old_focus) = keyboard.current_focus() {
                 if let crate::focus::KeyboardFocusTarget::Window(old_window) = old_focus {
@@ -1482,7 +1488,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     }
                 }
             }
-            
+
             // Activate the new window and send configure
             window.set_activate(true);
             // Update shadow for activated window
@@ -1499,7 +1505,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     pub fn clear_keyboard_focus(&mut self) {
         if let Some(keyboard) = self.seat.get_keyboard() {
             let serial = SERIAL_COUNTER.next_serial();
-            
+
             // Deactivate the currently focused window when clearing focus
             if let Some(old_focus) = keyboard.current_focus() {
                 if let crate::focus::KeyboardFocusTarget::Window(old_window) = old_focus {
@@ -1513,7 +1519,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     }
                 }
             }
-            
+
             keyboard.set_focus(self, None, serial);
         }
     }

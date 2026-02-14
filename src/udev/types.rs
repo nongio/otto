@@ -66,6 +66,7 @@ pub type GbmDrmCompositor = DrmCompositor<
 pub struct UdevOutputId {
     pub device_id: DrmNode,
     pub crtc: crtc::Handle,
+    pub is_laptop_panel: bool,
 }
 
 /// Main udev backend data

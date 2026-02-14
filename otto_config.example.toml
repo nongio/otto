@@ -78,6 +78,18 @@ max_bottom = 100    # Bottom panels/docks
 max_left = 50       # Left side panels
 max_right = 50      # Right side panels
 
+# Power management
+[power_management]
+# Enable Otto's lid switch handling (default: true)
+# When true, Otto manages display state on lid close/open and coordinates with systemd-logind
+# When false, all lid handling is delegated to systemd-logind
+manage_lid_switch = true
+
+# What to do when laptop lid closes (default: "auto")
+# Options:
+#   "auto" - Normal laptop: disable screen, allow suspend if no external monitor
+#   "disable_internal_screen" - Always disable screen but stay running (for display managers/kiosks)
+on_lid_close = "auto"
 
 [keyboard_shortcuts]
 "Ctrl+Esc" = "Quit"
