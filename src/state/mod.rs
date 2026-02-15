@@ -93,7 +93,7 @@ use smithay::{
 
 use crate::cursor::{CursorManager, CursorTextureCache};
 use crate::{
-    audio::AudioManager,
+    audio::{AudioManager, SoundPlayer},
     config::Config,
     focus::KeyboardFocusTarget,
     render_elements::scene_element::SceneElement,
@@ -216,6 +216,7 @@ pub struct Otto<BackendData: Backend + 'static> {
 
     pub gamma_control_manager: gamma_control::GammaControlManagerState,
     pub audio_manager: Option<crate::audio::AudioManager>,
+    pub sound_player: Option<crate::audio::SoundPlayer>,
 
     // gamma animation state
     /// Active gamma transitions: (output_name, from_lut, to_lut, start_time, duration)
@@ -277,6 +278,9 @@ pub struct Otto<BackendData: Backend + 'static> {
     // Built during surface creation, moved into Views when they're created
     pub view_warm_cache:
         HashMap<ObjectId, HashMap<String, std::collections::VecDeque<layers::prelude::NodeRef>>>,
+
+    // otto_dock protocol
+    pub otto_dock: crate::otto_dock::handlers::OttoDockState,
 
     // Rendering metrics
     #[cfg(feature = "metrics")]
@@ -403,6 +407,19 @@ smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 
     gamma_control::gen::zwlr_gamma_control_v1::ZwlrGammaControlV1: gamma_control::GammaControlState
 ] => gamma_control::GammaControlManagerState);
 
+// otto_dock protocol delegates
+smithay::reexports::wayland_server::delegate_global_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
+    crate::otto_dock::protocol::gen::otto_dock_manager_v1::OttoDockManagerV1: ()
+] => crate::otto_dock::handlers::OttoDockState);
+
+smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
+    crate::otto_dock::protocol::gen::otto_dock_manager_v1::OttoDockManagerV1: ()
+] => crate::otto_dock::handlers::OttoDockState);
+
+smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
+    crate::otto_dock::protocol::gen::otto_dock_item_v1::OttoDockItemV1: crate::otto_dock::protocol::DockItem
+] => crate::otto_dock::handlers::OttoDockState);
+
 impl<BackendData: Backend + 'static> Otto<BackendData> {
     pub fn init(
         display: Display<Otto<BackendData>>,
@@ -525,6 +542,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         // Create minimal sc_layer shell global
         crate::surface_style::create_style_manager_global::<BackendData>(&dh);
 
+        // Create otto_dock protocol global
+        let otto_dock = crate::otto_dock::handlers::OttoDockState::new::<Self>(&dh);
+
         // init input
         let seat_name = backend_data.seat_name();
         let mut seat = seat_state.new_wl_seat(&dh, seat_name.clone());
@@ -632,6 +652,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             clock,
             gamma_control_manager,
             audio_manager: AudioManager::new().ok(),
+            sound_player: SoundPlayer::new().ok(),
             gamma_transitions: HashMap::new(),
             current_gamma: HashMap::new(),
             #[cfg(feature = "xwayland")]
@@ -669,6 +690,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             style_transactions: HashMap::new(),
             surface_layers: HashMap::new(),
             view_warm_cache: HashMap::new(),
+
+            // otto_dock protocol
+            otto_dock,
 
             // render metrics
             #[cfg(feature = "metrics")]

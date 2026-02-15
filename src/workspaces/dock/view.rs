@@ -25,7 +25,7 @@ use crate::{
 
 use super::{
     model::DockModel,
-    render::{draw_app_icon, setup_app_icon, setup_label, setup_miniwindow_icon},
+    render::{draw_app_icon, draw_running_indicator_only, setup_app_icon, setup_app_container_for_protocol_layer, setup_label, setup_miniwindow_icon},
 };
 
 #[derive(Debug, Clone)]
@@ -53,6 +53,8 @@ pub struct DockView {
 
     app_layers: Arc<RwLock<HashMap<String, AppLayerEntry>>>,
     miniwindow_layers: Arc<RwLock<HashMap<ObjectId, MiniWindowLayers>>>,
+    /// Protocol-provided layer shell surfaces (app_id -> wlr layer)
+    pub protocol_app_layers: Arc<RwLock<HashMap<String, Layer>>>,
     state: Arc<RwLock<DockModel>>,
     active: Arc<AtomicBool>,
     notify_tx: tokio::sync::mpsc::Sender<WorkspacesModel>,
@@ -261,6 +263,7 @@ impl DockView {
             dock_windows_container,
             app_layers: Arc::new(RwLock::new(HashMap::new())),
             miniwindow_layers: Arc::new(RwLock::new(HashMap::new())),
+            protocol_app_layers: Arc::new(RwLock::new(HashMap::new())),
             state: Arc::new(RwLock::new(initial_state)),
             active: Arc::new(AtomicBool::new(true)),
             notify_tx,
@@ -427,11 +430,41 @@ impl DockView {
                     let layer = entry.layer.clone();
                     let label = entry.label_layer.clone();
 
-                    let current_icon_id = app_copy.icon.as_ref().map(|i| i.unique_id());
-                    if entry.icon_id != current_icon_id || entry.running != *running {
-                        let draw_picture = draw_app_icon(&app_copy, *running);
-                        icon_layer.set_draw_content(draw_picture);
-                        entry.icon_id = current_icon_id;
+                    // Check if this app now has a protocol layer
+                    let protocol_layers = self.protocol_app_layers.read().unwrap();
+                    let has_protocol_layer = protocol_layers.contains_key(&app.identifier);
+                    let protocol_layer = protocol_layers.get(&app.identifier).cloned();
+                    drop(protocol_layers);
+
+                    tracing::info!("Occupied: App {} has_protocol_layer={}", app.identifier, has_protocol_layer);
+
+                    if has_protocol_layer {
+                        // Replace icon with protocol layer
+                        tracing::info!("Replacing existing icon with protocol layer for app {}", app.identifier);
+                        
+                        // Clear the icon drawing function so only the protocol layer shows
+                        icon_layer.set_draw_content(draw_running_indicator_only(*running));
+                        
+                        // Add protocol layer as sublayer
+                        if let Some(proto_layer) = protocol_layer {
+                            // Position and size the protocol layer to fill the container
+                            proto_layer.set_position(Point::new(0.0, 0.0), None);
+                            proto_layer.set_size(Size::percent(1.0, 1.0), None);
+                            
+                            icon_layer.add_sublayer(&proto_layer);
+                            tracing::info!("Added protocol layer to existing icon_layer for app {} (positioned at 0,0, size 100%)", app.identifier);
+                        }
+                        
+                        // Update entry to reflect it now has a protocol layer (no icon_id)
+                        entry.icon_id = None;
+                    } else {
+                        // Normal icon update
+                        let current_icon_id = app_copy.icon.as_ref().map(|i| i.unique_id());
+                        if entry.icon_id != current_icon_id || entry.running != *running {
+                            let draw_picture = draw_app_icon(&app_copy, *running);
+                            icon_layer.set_draw_content(draw_picture);
+                            entry.icon_id = current_icon_id;
+                        }
                     }
                     entry.running = *running;
 
@@ -465,63 +498,195 @@ impl DockView {
                 }
                 Entry::Vacant(vac) => {
                     let new_layer = self.layers_engine.new_layer();
-                    let icon_layer = self.layers_engine.new_layer();
-                    setup_app_icon(
+                    
+                    // Check if this app has a protocol-provided layer
+                    let protocol_layers = self.protocol_app_layers.read().unwrap();
+                    let has_protocol_layer = protocol_layers.contains_key(&app.identifier);
+                    tracing::info!("App {} has_protocol_layer={}", app.identifier, has_protocol_layer);
+                    drop(protocol_layers);
+                    
+                    if has_protocol_layer {
+                        // Use protocol layer instead of icon
+                        tracing::info!("Using protocol layer for app {}", app.identifier);
+                        let container_layer = self.layers_engine.new_layer();
+                        setup_app_container_for_protocol_layer(
+                            &new_layer,
+                            &container_layer,
+                            app_name.to_string(),
+                            available_icon_width,
+                            *running,
+                        );
+                        
+                        // Add the protocol layer as a sublayer
+                        if let Some(protocol_layer) = self.protocol_app_layers.read().unwrap().get(&app.identifier) {
+                            // Position and size the protocol layer to fill the container
+                            protocol_layer.set_position(Point::new(0.0, 0.0), None);
+                            protocol_layer.set_size(Size::percent(1.0, 1.0), None);
+                            
+                            container_layer.add_sublayer(protocol_layer);
+                            tracing::info!("Added protocol layer as sublayer for app {} (positioned at 0,0, size 100%)", app.identifier);
+                        } else {
+                            tracing::warn!("Protocol layer disappeared for app {}", app.identifier);
+                        }
+                        
+                        self.dock_apps_container.add_sublayer(&new_layer);
+                        let label_layer = self.layers_engine.new_layer();
+                        
+                        setup_label(&label_layer, app_name);
+                        new_layer.add_sublayer(&container_layer);
+                        new_layer.add_sublayer(&label_layer);
+                        
+                        vac.insert(AppLayerEntry {
+                            layer: new_layer.clone(),
+                            icon_layer: container_layer.clone(),
+                            label_layer: label_layer.clone(),
+                            icon_id: None, // Protocol layers don't have icon IDs
+                            running: *running,
+                            identifier: app.identifier.clone(),
+                        });
+                        
+                        let label_ref = label_layer.clone();
+                        new_layer.add_on_pointer_in(move |_: &Layer, _, _| {
+                            label_ref.set_opacity(1.0, Some(Transition::ease_in_quad(0.1)));
+                        });
+                        let label_ref = label_layer.clone();
+                        new_layer.add_on_pointer_out(move |_: &Layer, _, _| {
+                            label_ref.set_opacity(0.0, Some(Transition::ease_in_quad(0.1)));
+                        });
+                    } else {
+                        // Traditional icon rendering
+                        let icon_layer = self.layers_engine.new_layer();
+                        setup_app_icon(
+                            &new_layer,
+                            &icon_layer,
+                            app_copy.clone(),
+                            available_icon_width,
+                            *running,
+                        );
+                        icon_layer.set_image_cached(true);
+
+                        self.dock_apps_container.add_sublayer(&new_layer);
+                        let label_layer = self.layers_engine.new_layer();
+
+                        setup_label(&label_layer, app_name);
+                        new_layer.add_sublayer(&icon_layer);
+                        new_layer.add_sublayer(&label_layer);
+                        let icon_id = app_copy.icon.as_ref().map(|i| i.unique_id());
+
+                        vac.insert(AppLayerEntry {
+                            layer: new_layer.clone(),
+                            icon_layer: icon_layer.clone(),
+                            label_layer: label_layer.clone(),
+                            icon_id,
+                            running: *running,
+                            identifier: app.identifier.clone(),
+                        });
+
+                        let darken_color = skia::Color::from_argb(100, 100, 100, 100);
+                        let add = skia::Color::from_argb(0, 0, 0, 0);
+                        let filter = skia::color_filters::lighting(darken_color, add);
+
+                        let icon_ref = icon_layer.clone();
+                        new_layer.remove_all_pointer_handlers();
+
+                        new_layer.add_on_pointer_press(move |_: &Layer, _, _| {
+                            icon_ref.set_color_filter(filter.clone());
+                        });
+
+                        let icon_ref = icon_layer.clone();
+                        new_layer.add_on_pointer_release(move |_: &Layer, _, _| {
+                            icon_ref.set_color_filter(None);
+                        });
+
+                        let label_ref = label_layer.clone();
+                        new_layer.add_on_pointer_in(move |_: &Layer, _, _| {
+                            label_ref.set_opacity(1.0, Some(Transition::ease_in_quad(0.1)));
+                        });
+                        let label_ref = label_layer.clone();
+                        let icon_ref = icon_layer.clone();
+                        new_layer.add_on_pointer_out(move |_: &Layer, _, _| {
+                            label_ref.set_opacity(0.0, Some(Transition::ease_in_quad(0.1)));
+                            icon_ref.set_color_filter(None);
+                        });
+                    }
+                    previous_app_layers.retain(|l| l.id() != new_layer.id());
+                }
+            }
+        }
+
+        // Render protocol-only layers (apps that provided layers but aren't in the app list yet)
+        let protocol_layers_map = self.protocol_app_layers.read().unwrap();
+        tracing::info!("Checking protocol layers, count: {}", protocol_layers_map.len());
+        for (app_id, protocol_layer) in protocol_layers_map.iter() {
+            tracing::info!("Processing protocol layer for app_id={}", app_id);
+            // Check if this app_id is already rendered (skip if it is)
+            let already_rendered = display_apps.iter().any(|(app, _)| &app.identifier == app_id);
+            tracing::info!("app_id={} already_rendered={}", app_id, already_rendered);
+            if already_rendered {
+                tracing::info!("Skipping app_id={}, already rendered in normal apps", app_id);
+                continue;
+            }
+
+            // Render protocol-only layer
+            match apps_layers_map.entry(app_id.clone()) {
+                Entry::Occupied(_) => {
+                    // Already exists, skip
+                    tracing::info!("app_id={} already has layer entry, skipping", app_id);
+                }
+                Entry::Vacant(vac) => {
+                    tracing::info!("Creating new dock entry for protocol layer app_id={}", app_id);
+                    let new_layer = self.layers_engine.new_layer();
+                    let container_layer = self.layers_engine.new_layer();
+                    
+                    setup_app_container_for_protocol_layer(
                         &new_layer,
-                        &icon_layer,
-                        app_copy.clone(),
+                        &container_layer,
+                        app_id.clone(),
                         available_icon_width,
-                        *running,
+                        true, // Assume running since it provided a layer
                     );
-                    icon_layer.set_image_cached(true);
-
+                    
+                    // Add the actual protocol layer as a sublayer
+                    // Position and size the protocol layer to fill the container
+                    protocol_layer.set_position(Point::new(0.0, 0.0), None);
+                    protocol_layer.set_size(Size::percent(1.0, 1.0), None);
+                    
+                    container_layer.add_sublayer(protocol_layer);
+                    tracing::info!("Added protocol layer as sublayer to container for app_id={} (positioned at 0,0, size 100%)", app_id);
+                    
                     self.dock_apps_container.add_sublayer(&new_layer);
+                    tracing::info!("Added new_layer to dock_apps_container for app_id={}", app_id);
                     let label_layer = self.layers_engine.new_layer();
-
-                    setup_label(&label_layer, app_name);
-                    new_layer.add_sublayer(&icon_layer);
+                    
+                    setup_label(&label_layer, app_id.to_string());
+                    new_layer.add_sublayer(&container_layer);
                     new_layer.add_sublayer(&label_layer);
-                    let icon_id = app_copy.icon.as_ref().map(|i| i.unique_id());
-
+                    
                     vac.insert(AppLayerEntry {
                         layer: new_layer.clone(),
-                        icon_layer: icon_layer.clone(),
+                        icon_layer: container_layer.clone(),
                         label_layer: label_layer.clone(),
-                        icon_id,
-                        running: *running,
-                        identifier: app.identifier.clone(),
+                        icon_id: None,
+                        running: true,
+                        identifier: app_id.clone(),
                     });
-
-                    let darken_color = skia::Color::from_argb(100, 100, 100, 100);
-                    let add = skia::Color::from_argb(0, 0, 0, 0);
-                    let filter = skia::color_filters::lighting(darken_color, add);
-
-                    let icon_ref = icon_layer.clone();
-                    new_layer.remove_all_pointer_handlers();
-
-                    new_layer.add_on_pointer_press(move |_: &Layer, _, _| {
-                        icon_ref.set_color_filter(filter.clone());
-                    });
-
-                    let icon_ref = icon_layer.clone();
-                    new_layer.add_on_pointer_release(move |_: &Layer, _, _| {
-                        icon_ref.set_color_filter(None);
-                    });
-
+                    
                     let label_ref = label_layer.clone();
                     new_layer.add_on_pointer_in(move |_: &Layer, _, _| {
                         label_ref.set_opacity(1.0, Some(Transition::ease_in_quad(0.1)));
                     });
                     let label_ref = label_layer.clone();
-                    let icon_ref = icon_layer.clone();
                     new_layer.add_on_pointer_out(move |_: &Layer, _, _| {
                         label_ref.set_opacity(0.0, Some(Transition::ease_in_quad(0.1)));
-                        icon_ref.set_color_filter(None);
                     });
+                    
                     previous_app_layers.retain(|l| l.id() != new_layer.id());
+                    tracing::info!("Completed protocol layer setup for app_id={}", app_id);
                 }
             }
         }
+        drop(protocol_layers_map);
+        tracing::info!("Finished processing protocol layers");
 
         let mut previous_miniwindows = self.get_miniwin_layers();
         let mut miniwindows_layers_map = self.miniwindow_layers.write().unwrap();
@@ -850,6 +1015,47 @@ impl DockView {
             .iter()
             .find(|app| app.match_id == match_id)
             .cloned()
+    }
+    
+    /// Check if an app has a protocol layer registered
+    pub fn has_protocol_layer(&self, app_id: &str) -> bool {
+        self.protocol_app_layers.read().unwrap().contains_key(app_id)
+    }
+    
+    /// Register a protocol-provided layer shell surface for a dock app
+    pub fn register_protocol_layer(&self, app_id: String, layer: Layer) {
+        tracing::info!("DockView::register_protocol_layer called for app_id={}", app_id);
+        
+        // Create a wrapper layer that we fully control
+        let wrapper_layer = self.layers_engine.new_layer();
+        wrapper_layer.set_position(Point::new(0.0, 0.0), None);
+        wrapper_layer.set_size(Size::percent(1.0, 1.0), None);
+        wrapper_layer.set_draw_content(layer.as_content());
+        wrapper_layer.set_pointer_events(false);
+        layer.add_follower_node(wrapper_layer.clone());
+        // Add the original layer as a sublayer
+        // The wrapper controls position/size, the original layer just renders
+        wrapper_layer.add_sublayer(&layer);
+        tracing::info!("Created wrapper layer for protocol layer app_id={}", app_id);
+        
+        let mut protocol_layers = self.protocol_app_layers.write().unwrap();
+        protocol_layers.insert(app_id.clone(), wrapper_layer);
+        tracing::info!("Protocol layer registered (wrapped), total protocol layers: {}", protocol_layers.len());
+        drop(protocol_layers);
+        
+        // Trigger a redraw to update the dock
+        tracing::info!("Triggering dock redraw");
+        self.render_dock();
+    }
+    
+    /// Unregister a protocol-provided layer shell surface
+    pub fn unregister_protocol_layer(&self, app_id: &str) {
+        let mut protocol_layers = self.protocol_app_layers.write().unwrap();
+        protocol_layers.remove(app_id);
+        drop(protocol_layers);
+        
+        // Trigger a redraw to update the dock
+        self.render_dock();
     }
 }
 

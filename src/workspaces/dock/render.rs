@@ -71,6 +71,64 @@ pub fn setup_app_icon(
     icon_layer.build_layer_tree(&icon_tree);
 }
 
+/// Setup app container for protocol-provided layer (wlr layer shell)
+/// The icon layer is the wlr layer itself, we just draw the running indicator
+pub fn setup_app_container_for_protocol_layer(
+    layer: &Layer,
+    indicator_layer: &Layer,
+    app_name: String,
+    icon_width: f32,
+    running: bool,
+) {
+    let draw_indicator = Some(draw_running_indicator_only(running));
+    let height_padding = icon_width * 0.20;
+    
+    let container_tree = LayerTreeBuilder::default()
+        .key(app_name)
+        .layout_style(taffy::Style {
+            display: taffy::Display::Flex,
+            position: taffy::Position::Relative,
+            overflow: taffy::geometry::Point {
+                x: taffy::style::Overflow::Visible,
+                y: taffy::style::Overflow::Visible,
+            },
+            ..Default::default()
+        })
+        .size((
+            Size {
+                width: taffy::Dimension::Length(icon_width),
+                height: taffy::Dimension::Length(icon_width + height_padding),
+            },
+            Some(Transition::ease_in_quad(0.2)),
+        ))
+        .background_color(Color::new_rgba(1.0, 0.0, 0.0, 0.0))
+        .build()
+        .unwrap();
+    layer.build_layer_tree(&container_tree);
+
+    // Indicator layer only draws the running circle
+    let indicator_tree = LayerTreeBuilder::default()
+        .key("indicator")
+        .layout_style(taffy::Style {
+            display: taffy::Display::Block,
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        })
+        .size((
+            Size {
+                width: taffy::Dimension::Percent(1.0),
+                height: taffy::Dimension::Percent(1.0),
+            },
+            None,
+        ))
+        .pointer_events(false)
+        .background_color(Color::new_rgba(1.0, 0.0, 0.0, 0.0))
+        .content(draw_indicator)
+        .build()
+        .unwrap();
+    indicator_layer.build_layer_tree(&indicator_tree);
+}
+
 pub fn setup_miniwindow_icon(layer: &Layer, inner_layer: &Layer, _icon_width: f32) {
     let container_tree = LayerTreeBuilder::default()
         .key("miniwindow")
@@ -298,6 +356,33 @@ pub fn draw_app_icon(application: &Application, running: bool) -> ContentDrawFun
                 canvas.draw_picture(picure, None, None);
             }
         }
+        if running {
+            // use primary text color for the running indicator (dark on light theme)
+            let mut color = theme_colors().text_primary.c4f();
+            color.a = 0.9;
+            let mut paint = layers::skia::Paint::new(color, None);
+            paint.set_anti_alias(true);
+            paint.set_style(layers::skia::paint::Style::Fill);
+            let indicator_y_offset = icon_size * 0.04;
+            canvas.draw_circle(
+                (w / 2.0, h - (indicator_y_offset + circle_radius)),
+                circle_radius,
+                &paint,
+            );
+        }
+
+        layers::skia::Rect::from_xywh(0.0, 0.0, w, h)
+    };
+
+    draw_picture.into()
+}
+
+/// Draw only the running indicator (no icon) for protocol-provided layers
+pub fn draw_running_indicator_only(running: bool) -> ContentDrawFunction {
+    let draw_picture = move |canvas: &layers::skia::Canvas, w: f32, h: f32| -> layers::skia::Rect {
+        let icon_size = (w * 0.95).max(0.0);
+        let circle_radius = icon_size * 0.025;
+        
         if running {
             // use primary text color for the running indicator (dark on light theme)
             let mut color = theme_colors().text_primary.c4f();

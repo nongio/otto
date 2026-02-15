@@ -5,24 +5,20 @@ use smithay::xwayland::XWaylandClientData;
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
     desktop::{
-        find_popup_root_surface, layer_map_for_output, utils::with_surfaces_surface_tree,
-        LayerSurface, PopupKind, WindowSurface, WindowSurfaceType,
+        LayerSurface, PopupKind, WindowSurface, WindowSurfaceType, find_popup_root_surface, layer_map_for_output, utils::with_surfaces_surface_tree
     },
     output::Output,
     reexports::{
         calloop::Interest,
         wayland_server::{
-            protocol::{wl_buffer::WlBuffer, wl_output, wl_surface::WlSurface},
-            Client, Resource,
+            Client, Resource, protocol::{wl_buffer::WlBuffer, wl_output, wl_surface::WlSurface}
         },
     },
     utils::{Logical, Point, Rectangle, Size},
     wayland::{
         buffer::BufferHandler,
         compositor::{
-            add_blocker, add_pre_commit_hook, get_parent, is_sync_subsurface, with_states,
-            with_surface_tree_upward, BufferAssignment, CompositorClientState, CompositorHandler,
-            CompositorState, SurfaceAttributes, TraversalAction,
+            BufferAssignment, CompositorClientState, CompositorHandler, CompositorState, SurfaceAttributes, TraversalAction, add_blocker, add_pre_commit_hook, get_parent, is_sync_subsurface, with_states, with_surface_tree_upward
         },
         dmabuf::get_dmabuf,
         shell::{
@@ -426,6 +422,11 @@ impl<BackendData: Backend> Otto<BackendData> {
                         surface.id(),
                         (surface.clone(), *location, parent_id.clone()),
                     );
+                } else {
+                    // Null buffer — hide the layer so unmapped subsurfaces don't linger
+                    if let Some(layer) = self.surface_layers.get(&surface.id()) {
+                        layer.set_hidden(true);
+                    }
                 }
             },
             |_, _, _| true,
@@ -441,6 +442,7 @@ impl<BackendData: Backend> Otto<BackendData> {
 
             if let Some(wvs) = render_elements.iter().find(|e| &e.id == surface_id) {
                 // Configure layer with all properties and draw callback
+                surface_layer.set_hidden(false);
                 crate::workspaces::utils::configure_surface_layer(&surface_layer, wvs);
 
                 // Set up parent-child relationship
@@ -532,12 +534,8 @@ impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
         // Also register with Smithay's layer map for protocol compliance
         let mut map = layer_map_for_output(&output);
         map.map_layer(&layer_surface).unwrap();
-
-        tracing::info!(
-            "New layer surface: layer={:?}, namespace={}",
-            wlr_layer,
-            layer_surface.namespace()
-        );
+        // Get the current size from the layer surface state
+        let size = layer_surface.cached_state().size;
 
         // Arrange the layer map which will handle the exclusive zone
         map.arrange();
