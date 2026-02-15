@@ -66,10 +66,10 @@ impl<BackendData: Backend> Otto<BackendData> {
     pub(crate) fn focus_window_under_cursor(&mut self, serial: Serial) {
         let keyboard = self.seat.get_keyboard().unwrap();
         let input_method = self.seat.input_method();
-        
+
         // Get current focus to deactivate it
         let old_focus = keyboard.current_focus();
-        
+
         // change the keyboard focus unless the pointer or keyboard is grabbed
         // We test for any matching surface type here but always use the root
         // (in case of a window the toplevel) surface for the focus.
@@ -103,17 +103,17 @@ impl<BackendData: Backend> Otto<BackendData> {
                         {
                             self.xwm.as_mut().unwrap().raise_window(surf).unwrap();
                         }
-                        
+
                         // Deactivate old focus if it was a different window
                         if let Some(old) = old_focus.as_ref() {
                             if let crate::focus::KeyboardFocusTarget::Window(old_window) = old {
                                 if old_window.wl_surface() != window.wl_surface() {
                                     old_window.set_activate(false);
-                                    old_window.toplevel().map(|t|t.send_configure());
+                                    old_window.toplevel().map(|t| t.send_configure());
                                 }
                             }
                         }
-                        
+
                         // Activate new window and set focus
                         window.set_activate(true);
                         window.toplevel().map(|t| t.send_configure());
@@ -166,14 +166,16 @@ impl<BackendData: Backend> Otto<BackendData> {
                                 return;
                             }
                             self.workspaces.focus_app_with_window(&id);
-                            
+
                             // Deactivate old focus if it was a different window
                             if let Some(old) = old_focus.as_ref() {
                                 if let crate::focus::KeyboardFocusTarget::Window(old_window) = old {
                                     if old_window.wl_surface() != window.wl_surface() {
                                         old_window.set_activate(false);
                                         // Update shadow for deactivated window
-                                        if let Some(view) = self.workspaces.get_window_view(&old_window.id()) {
+                                        if let Some(view) =
+                                            self.workspaces.get_window_view(&old_window.id())
+                                        {
                                             view.set_active(false);
                                         }
                                         if let Some(toplevel) = old_window.toplevel() {
@@ -182,7 +184,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                                     }
                                 }
                             }
-                            
+
                             // Activate new window and set focus
                             window.set_activate(true);
                             // Update shadow for activated window

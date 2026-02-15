@@ -3,40 +3,36 @@ use wayland_backend::server::ClientId;
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
 
 use crate::{
-    config::Config,
-    sc_layer_shell::handlers::{
-        accumulate_change, find_active_transaction_for_client, trigger_window_update,
-        wl_fixed_to_f32, ScLayerUserData,
-    },
-    state::Backend,
-    Otto,
+    Otto, config::Config, state::Backend, surface_style::handlers::{
+        OttoLayerUserData, accumulate_change, find_active_transaction_for_client, trigger_window_update, wl_fixed_to_f32
+    }
 };
 
 use super::super::protocol::{
-    gen::otto_scene_surface_v1::{self, OttoSceneSurfaceV1},
-    ScLayerShellHandler,
+    gen::otto_surface_style_v1::{self, OttoSurfaceStyleV1},
+    SurfaceStyleHandler,
 };
 
-impl<BackendData: Backend> Dispatch<OttoSceneSurfaceV1, ScLayerUserData> for Otto<BackendData> {
+impl<BackendData: Backend> Dispatch<OttoSurfaceStyleV1, OttoLayerUserData> for Otto<BackendData> {
     fn request(
         state: &mut Self,
         _client: &Client,
-        layer_obj: &OttoSceneSurfaceV1,
-        request: otto_scene_surface_v1::Request,
-        _data: &ScLayerUserData,
+        layer_obj: &OttoSurfaceStyleV1,
+        request: otto_surface_style_v1::Request,
+        _data: &OttoLayerUserData,
         _dhandle: &DisplayHandle,
         _data_init: &mut DataInit<'_, Self>,
     ) {
         let layer_id = layer_obj.id();
 
-        // Find the sc_layer in any parent's list
-        let sc_layer = state
-            .sc_layers
+        // Find the surface style in any parent's list
+        let surface_style = state
+            .surfaces_style
             .values()
             .flat_map(|layers| layers.iter())
-            .find(|layer| layer.wl_layer.id() == layer_id);
+            .find(|layer| layer.wl_style.id() == layer_id);
 
-        let Some(sc_layer) = sc_layer else {
+        let Some(sstyle) = surface_style else {
             tracing::warn!("Layer {:?} not found in state", layer_id);
             return;
         };
@@ -45,82 +41,80 @@ impl<BackendData: Backend> Dispatch<OttoSceneSurfaceV1, ScLayerUserData> for Ott
         let active_transaction = find_active_transaction_for_client(state, _client);
 
         match request {
-            otto_scene_surface_v1::Request::SetPosition { x, y } => {
+            otto_surface_style_v1::Request::SetPosition { x, y } => {
                 let x = wl_fixed_to_f32(x);
                 let y = wl_fixed_to_f32(y);
 
                 if let Some(txn_id) = active_transaction {
                     // Accumulate change in transaction
-                    let change = sc_layer
+                    let change = sstyle
                         .layer
                         .change_position(layers::types::Point { x, y });
                     accumulate_change(state, txn_id, change);
                 } else {
                     // Apply immediately
-                    sc_layer.layer.set_position((x, y), None);
-                    trigger_window_update(state, &sc_layer.surface.id());
+                    sstyle.layer.set_position((x, y), None);
+                    trigger_window_update(state, &sstyle.surface.id());
                 }
             }
 
-            otto_scene_surface_v1::Request::SetSize { width, height } => {
+            otto_surface_style_v1::Request::SetSize { width, height } => {
                 let width = wl_fixed_to_f32(width);
                 let height = wl_fixed_to_f32(height);
 
                 if let Some(txn_id) = active_transaction {
-                    let change = sc_layer
+                    let change = sstyle
                         .layer
                         .change_size(layers::types::Size::points(width, height));
                     accumulate_change(state, txn_id, change);
                 } else {
-                    sc_layer
+                    sstyle
                         .layer
                         .set_size(layers::types::Size::points(width, height), None);
-                    trigger_window_update(state, &sc_layer.surface.id());
+                    trigger_window_update(state, &sstyle.surface.id());
                 }
             }
 
-            otto_scene_surface_v1::Request::SetScale { x, y } => {
+            otto_surface_style_v1::Request::SetScale { x, y } => {
                 let x = wl_fixed_to_f32(x);
                 let y = wl_fixed_to_f32(y);
 
                 if let Some(txn_id) = active_transaction {
-                    let change = sc_layer
-                        .layer
-                        .change_scale(layers::types::Point { x, y });
+                    let change = sstyle.layer.change_scale(layers::types::Point { x, y });
                     accumulate_change(state, txn_id, change);
                 } else {
-                    sc_layer.layer.set_scale((x, y), None);
-                    trigger_window_update(state, &sc_layer.surface.id());
+                    sstyle.layer.set_scale((x, y), None);
+                    trigger_window_update(state, &sstyle.surface.id());
                 }
             }
 
-            otto_scene_surface_v1::Request::SetAnchorPoint { x, y } => {
+            otto_surface_style_v1::Request::SetAnchorPoint { x, y } => {
                 let x = wl_fixed_to_f32(x);
                 let y = wl_fixed_to_f32(y);
 
                 if let Some(txn_id) = active_transaction {
-                    let change = sc_layer
+                    let change = sstyle
                         .layer
                         .change_anchor_point(layers::types::Point { x, y });
                     accumulate_change(state, txn_id, change);
                 } else {
-                    sc_layer.layer.set_anchor_point((x, y), None);
-                    trigger_window_update(state, &sc_layer.surface.id());
+                    sstyle.layer.set_anchor_point((x, y), None);
+                    trigger_window_update(state, &sstyle.surface.id());
                 }
             }
 
-            otto_scene_surface_v1::Request::SetOpacity { opacity } => {
+            otto_surface_style_v1::Request::SetOpacity { opacity } => {
                 let opacity = wl_fixed_to_f32(opacity).clamp(0.0, 1.0);
 
                 if let Some(txn_id) = active_transaction {
-                    let change = sc_layer.layer.change_opacity(opacity);
+                    let change = sstyle.layer.change_opacity(opacity);
                     accumulate_change(state, txn_id, change);
                 } else {
-                    sc_layer.layer.set_opacity(opacity, None);
+                    sstyle.layer.set_opacity(opacity, None);
                 }
             }
 
-            otto_scene_surface_v1::Request::SetBackgroundColor {
+            otto_surface_style_v1::Request::SetBackgroundColor {
                 red,
                 green,
                 blue,
@@ -133,32 +127,32 @@ impl<BackendData: Backend> Dispatch<OttoSceneSurfaceV1, ScLayerUserData> for Ott
 
                 if let Some(txn_id) = active_transaction {
                     let color = layers::types::Color::new_rgba(red, green, blue, alpha);
-                    let change = sc_layer.layer.change_background_color(color);
+                    let change = sstyle.layer.change_background_color(color);
                     accumulate_change(state, txn_id, change);
                 } else {
                     let color = layers::types::Color::new_rgba(red, green, blue, alpha);
-                    sc_layer.layer.set_background_color(color, None);
-                    trigger_window_update(state, &sc_layer.surface.id());
+                    sstyle.layer.set_background_color(color, None);
+                    trigger_window_update(state, &sstyle.surface.id());
                 }
             }
 
-            otto_scene_surface_v1::Request::SetCornerRadius { radius } => {
+            otto_surface_style_v1::Request::SetCornerRadius { radius } => {
                 let radius = wl_fixed_to_f32(radius);
                 let screen_scale = Config::with(|c| c.screen_scale) as f32;
                 let scaled_radius = radius * screen_scale;
 
                 if let Some(txn_id) = active_transaction {
-                    let change = sc_layer.layer.change_border_corner_radius(scaled_radius);
+                    let change = sstyle.layer.change_border_corner_radius(scaled_radius);
                     accumulate_change(state, txn_id, change);
                 } else {
-                    sc_layer
+                    sstyle
                         .layer
                         .set_border_corner_radius(BorderRadius::new_single(scaled_radius), None);
-                    // trigger_window_update(state, &sc_layer.surface.id());
+                    // trigger_window_update(state, &sstyle.surface.id());
                 }
             }
 
-            otto_scene_surface_v1::Request::SetBorder {
+            otto_surface_style_v1::Request::SetBorder {
                 width,
                 red,
                 green,
@@ -175,7 +169,7 @@ impl<BackendData: Backend> Dispatch<OttoSceneSurfaceV1, ScLayerUserData> for Ott
 
                 if let Some(txn_id) = active_transaction {
                     // Create both changes before accumulating
-                    let layer = sc_layer.layer.clone();
+                    let layer = sstyle.layer.clone();
                     let width_change = layer.change_border_width(width);
                     let color_change = layer.change_border_color(color);
 
@@ -184,13 +178,13 @@ impl<BackendData: Backend> Dispatch<OttoSceneSurfaceV1, ScLayerUserData> for Ott
                     accumulate_change(state, txn_id, color_change);
                 } else {
                     // Apply immediately
-                    sc_layer.layer.set_border_width(width, None);
-                    sc_layer.layer.set_border_color(color, None);
-                    trigger_window_update(state, &sc_layer.surface.id());
+                    sstyle.layer.set_border_width(width, None);
+                    sstyle.layer.set_border_color(color, None);
+                    trigger_window_update(state, &sstyle.surface.id());
                 }
             }
 
-            otto_scene_surface_v1::Request::SetShadow {
+            otto_surface_style_v1::Request::SetShadow {
                 opacity,
                 radius,
                 offset_x,
@@ -208,7 +202,7 @@ impl<BackendData: Backend> Dispatch<OttoSceneSurfaceV1, ScLayerUserData> for Ott
                 let blue = wl_fixed_to_f32(blue);
 
                 // Shadow properties in lay-rs
-                sc_layer.layer.set_shadow_color(
+                sstyle.layer.set_shadow_color(
                     layers::prelude::Color::new_rgba255(
                         (red * 255.0) as u8,
                         (green * 255.0) as u8,
@@ -217,28 +211,46 @@ impl<BackendData: Backend> Dispatch<OttoSceneSurfaceV1, ScLayerUserData> for Ott
                     ),
                     None,
                 );
-                sc_layer.layer.set_shadow_radius(radius, None);
-                sc_layer.layer.set_shadow_offset((offset_x, offset_y), None);
+                sstyle.layer.set_shadow_radius(radius, None);
+                sstyle.layer.set_shadow_offset((offset_x, offset_y), None);
 
-                trigger_window_update(state, &sc_layer.surface.id());
+                trigger_window_update(state, &sstyle.surface.id());
             }
 
-            otto_scene_surface_v1::Request::SetHidden { hidden } => {
-                let hidden = hidden != 0;
+            otto_surface_style_v1::Request::SetHidden { visibility } => {
+                use super::super::protocol::gen::otto_surface_style_v1::Visibility;
+
+                let hidden = match visibility.into_result().ok() {
+                    Some(Visibility::Visible) => false,
+                    Some(Visibility::Hidden) => true,
+                    _ => {
+                        tracing::warn!("Invalid visibility value: {:?}", visibility);
+                        return;
+                    }
+                };
 
                 // Hidden doesn't animate, always apply immediately
-                sc_layer.layer.set_hidden(hidden);
-                trigger_window_update(state, &sc_layer.surface.id());
+                sstyle.layer.set_hidden(hidden);
+                trigger_window_update(state, &sstyle.surface.id());
             }
 
-            otto_scene_surface_v1::Request::SetMasksToBounds { masks } => {
-                let masks_to_bounds = masks != 0;
-            
-                sc_layer.layer.set_clip_content(masks_to_bounds, None);
+            otto_surface_style_v1::Request::SetMasksToBounds { clip_mode } => {
+                use super::super::protocol::gen::otto_surface_style_v1::ClipMode;
+
+                let masks_to_bounds = match clip_mode.into_result().ok() {
+                    Some(ClipMode::Disabled) => false,
+                    Some(ClipMode::Enabled) => true,
+                    _ => {
+                        tracing::warn!("Invalid clip_mode value: {:?}", clip_mode);
+                        return;
+                    }
+                };
+
+                sstyle.layer.set_clip_content(masks_to_bounds, None);
             }
 
-            otto_scene_surface_v1::Request::SetBlendMode { mode } => {
-                use super::super::protocol::gen::otto_scene_surface_v1::BlendMode;
+            otto_surface_style_v1::Request::SetBlendMode { mode } => {
+                use super::super::protocol::gen::otto_surface_style_v1::BlendMode;
                 use layers::types::BlendMode as LayrsBlendMode;
 
                 let blend_mode = match mode.into_result().ok() {
@@ -251,18 +263,18 @@ impl<BackendData: Backend> Dispatch<OttoSceneSurfaceV1, ScLayerUserData> for Ott
                 };
 
                 // Blend mode doesn't animate, always apply immediately
-                sc_layer.layer.set_blend_mode(blend_mode);
-                trigger_window_update(state, &sc_layer.surface.id());
+                sstyle.layer.set_blend_mode(blend_mode);
+                trigger_window_update(state, &sstyle.surface.id());
             }
 
-            otto_scene_surface_v1::Request::SetZOrder { z_order } => {
-                use super::super::protocol::gen::otto_scene_surface_v1::ZOrder;
-                use crate::sc_layer_shell::ScLayerZOrder;
+            otto_surface_style_v1::Request::SetZOrder { z_order } => {
+                use super::super::protocol::gen::otto_surface_style_v1::ZOrder;
+                use crate::surface_style::OttoSurfaceStyleZOrder;
 
                 // Update z-order configuration
                 let new_z_order = match z_order.into_result().ok() {
-                    Some(ZOrder::BelowSurface) => ScLayerZOrder::BelowSurface,
-                    Some(ZOrder::AboveSurface) => ScLayerZOrder::AboveSurface,
+                    Some(ZOrder::BelowSurface) => OttoSurfaceStyleZOrder::BelowSurface,
+                    Some(ZOrder::AboveSurface) => OttoSurfaceStyleZOrder::AboveSurface,
                     _ => {
                         tracing::warn!("Invalid z_order value: {:?}", z_order);
                         return;
@@ -270,7 +282,7 @@ impl<BackendData: Backend> Dispatch<OttoSceneSurfaceV1, ScLayerUserData> for Ott
                 };
 
                 // Find window and reattach layer
-                let surface_id = sc_layer.surface.id();
+                let surface_id = sstyle.surface.id();
                 if let Some(window) = state
                     .workspaces
                     .get_window_for_surface(&surface_id)
@@ -278,38 +290,38 @@ impl<BackendData: Backend> Dispatch<OttoSceneSurfaceV1, ScLayerUserData> for Ott
                 {
                     // TODO: lay-rs doesn't support remove_sublayer yet
                     // For now we just add it again (this may cause duplication)
-                    // window.layer().remove_sublayer(&sc_layer.layer);
+                    // window.layer().remove_sublayer(&sstyle.layer);
 
                     // Reattach based on new z-order
                     // TODO: lay-rs doesn't support insert_sublayer_at yet
                     // For now we can only add to the top
                     match new_z_order {
-                        ScLayerZOrder::BelowSurface => {
-                            window.layer().add_sublayer(&sc_layer.layer);
+                        OttoSurfaceStyleZOrder::BelowSurface => {
+                            window.layer().add_sublayer(&sstyle.layer);
                         }
-                        ScLayerZOrder::AboveSurface => {
-                            window.layer().add_sublayer(&sc_layer.layer);
+                        OttoSurfaceStyleZOrder::AboveSurface => {
+                            window.layer().add_sublayer(&sstyle.layer);
                         }
                     }
 
                     // Update stored z-order
-                    if let Some(layers) = state.sc_layers.get_mut(&surface_id) {
-                        if let Some(layer) = layers.iter_mut().find(|l| l.wl_layer.id() == layer_id)
+                    if let Some(layers) = state.surfaces_style.get_mut(&surface_id) {
+                        if let Some(layer) = layers.iter_mut().find(|l| l.wl_style.id() == layer_id)
                         {
                             layer.z_order = new_z_order;
                         }
                     }
 
-                    tracing::debug!("Updated sc-layer z-order to {:?}", new_z_order);
+                    tracing::debug!("Updated surface style z-order to {:?}", new_z_order);
                 }
             }
 
-            otto_scene_surface_v1::Request::Destroy => {
+            otto_surface_style_v1::Request::Destroy => {
                 // Handled by destructor
             }
 
             _ => {
-                tracing::warn!("Unimplemented sc_layer request: {:?}", request);
+                tracing::warn!("Unimplemented surface style request: {:?}", request);
             }
         }
     }
@@ -317,21 +329,21 @@ impl<BackendData: Backend> Dispatch<OttoSceneSurfaceV1, ScLayerUserData> for Ott
     fn destroyed(
         state: &mut Self,
         _client: ClientId,
-        resource: &OttoSceneSurfaceV1,
-        _data: &ScLayerUserData,
+        resource: &OttoSurfaceStyleV1,
+        _data: &OttoLayerUserData,
     ) {
         let layer_id = resource.id();
 
-        // Find and remove the sc_layer from the appropriate parent's list
-        let sc_layer = state
-            .sc_layers
+        // Find and remove the surface style from the appropriate parent's list
+        let surface_style = state
+            .surfaces_style
             .values()
             .flat_map(|layers| layers.iter())
-            .find(|layer| layer.wl_layer.id() == layer_id)
+            .find(|layer| layer.wl_style.id() == layer_id)
             .cloned();
 
-        if let Some(sc_layer) = sc_layer {
-            ScLayerShellHandler::destroy_layer(state, &sc_layer);
+        if let Some(surface_style) = surface_style {
+            SurfaceStyleHandler::destroy_surface_style(state, &surface_style);
         }
     }
 }

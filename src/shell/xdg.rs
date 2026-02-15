@@ -161,12 +161,12 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         let id = toplevel.wl_surface().id();
 
         // Cascade destroy all sc-layers attached to this window
-        if let Some(layers) = self.sc_layers.remove(&id) {
+        if let Some(layers) = self.surfaces_style.remove(&id) {
             for layer in layers {
                 self.layers_engine.mark_for_delete(layer.layer.id());
                 tracing::info!(
                     "Cascade destroyed sc-layer {:?} with parent window {:?}",
-                    layer.wl_layer.id(),
+                    layer.wl_style.id(),
                     id
                 );
             }
@@ -196,12 +196,12 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
         // Clean up surface_layers and sc_layers for the main window and removed popup surfaces
         self.surface_layers.remove(&id);
-        self.sc_layers.remove(&id);
+        self.surfaces_style.remove(&id);
         self.view_warm_cache.remove(&id);
 
         for surface_id in removed_surface_ids {
             self.surface_layers.remove(&surface_id);
-            self.sc_layers.remove(&surface_id);
+            self.surfaces_style.remove(&surface_id);
         }
 
         if let Some(keyboard) = self.seat.get_keyboard() {
@@ -248,7 +248,7 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         // Clean up layers for this popup surface
         self.destroy_layer_for_surface(&popup_id);
         // Also clean up any sc-layers attached to these surfaces
-        self.sc_layers.remove(&popup_id);
+        self.surfaces_style.remove(&popup_id);
 
         if let Some(root_id) = self.popup_root_cache.remove(&popup_id) {
             if let Some(window) = self.workspaces.get_window_for_surface(&root_id).cloned() {

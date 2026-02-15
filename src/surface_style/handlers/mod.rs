@@ -2,18 +2,17 @@ use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
 
-use crate::{state::Backend, Otto};
-use layers::prelude::{Spring, Transition, TimingFunction};
+use crate::{Otto, state::Backend, surface_style::gen::otto_surface_style_manager_v1::{self, OttoSurfaceStyleManagerV1}};
+use layers::prelude::{Spring, TimingFunction, Transition};
 
 use super::protocol::{
-    gen::otto_scene_v1::{self, OttoSceneV1},
-    ScLayer, ScLayerShellHandler,
+    SurfaceStyle, SurfaceStyleHandler,
 };
 
 pub mod timing_function;
 
-/// User data for sc_layer
-pub struct ScLayerUserData {
+/// User data for surface style
+pub struct OttoLayerUserData {
     pub layer_id: smithay::reexports::wayland_server::backend::ObjectId,
 }
 
@@ -28,9 +27,9 @@ fn find_active_transaction_for_client<BackendData: Backend>(
     client: &Client,
 ) -> Option<smithay::reexports::wayland_server::backend::ObjectId> {
     state
-        .sc_transactions
+        .style_transactions
         .iter()
-        .find(|(_, txn)| txn.wl_transaction.client().map(|c| c.id()) == Some(client.id()))
+        .find(|(_, txn)| txn.wl_style_transaction.client().map(|c| c.id()) == Some(client.id()))
         .map(|(id, _)| id.clone())
 }
 
@@ -40,7 +39,7 @@ fn accumulate_change<BackendData: Backend>(
     txn_id: smithay::reexports::wayland_server::backend::ObjectId,
     change: layers::engine::AnimatedNodeChange,
 ) {
-    if let Some(txn) = state.sc_transactions.get_mut(&txn_id) {
+    if let Some(txn) = state.style_transactions.get_mut(&txn_id) {
         txn.accumulated_changes.push(change);
     }
 }
@@ -60,7 +59,7 @@ fn commit_transaction<BackendData: Backend>(
     state: &mut Otto<BackendData>,
     txn_id: smithay::reexports::wayland_server::backend::ObjectId,
 ) {
-    let Some(txn) = state.sc_transactions.remove(&txn_id) else {
+    let Some(txn) = state.style_transactions.get_mut(&txn_id) else {
         return;
     };
 
@@ -99,9 +98,8 @@ fn commit_transaction<BackendData: Backend>(
         }
         Some(trans)
     } else {
-        txn.duration.map(|duration| {
-            Transition::ease_out_quad(duration)
-        })
+        txn.duration
+            .map(|duration| Transition::ease_out_quad(duration))
     };
 
     // Apply delay if configured
@@ -114,42 +112,68 @@ fn commit_transaction<BackendData: Backend>(
     // Schedule all accumulated changes together
     if !txn.accumulated_changes.is_empty() {
         if let Some(ref trans) = transition {
-            // Create animation and start all changes together
+            // Create animation and store it in the transaction
             let animation = state
                 .layers_engine
                 .add_animation_from_transition(trans, false);
+
+            txn.animation = Some(animation);
+
             state
                 .layers_engine
                 .schedule_changes(&txn.accumulated_changes, animation);
+
+            // Add on_finish callback if completion event requested
+            if txn.send_completion {
+                let wl_txn = txn.wl_style_transaction.clone();
+                state.layers_engine.on_animation_finish(
+                    animation,
+                    move |_| {
+                        wl_txn.completed();
+                    },
+                    false,
+                );
+            }
+
             state.layers_engine.start_animation(animation, trans.delay);
         } else {
+            // No animation - send completion immediately if requested
+            if txn.send_completion {
+                if let Some(txn) = state.style_transactions.remove(&txn_id) {
+                    txn.wl_style_transaction.completed();
+                }
+                return;
+            }
         }
         // If no transition, changes were already applied immediately via set_* methods
     } else {
-    }
-
-    // Send completion event if requested
-    if txn.send_completion {
-        txn.wl_transaction.completed();
+        // No changes - send completion immediately if requested
+        if txn.send_completion {
+            tracing::info!("No changes, sending completed event immediately");
+            if let Some(txn) = state.style_transactions.remove(&txn_id) {
+                txn.wl_style_transaction.completed();
+            }
+            return;
+        }
     }
 }
 
-pub mod layer;
+pub mod style;
 pub mod transactions;
 
 /// Create the sc_layer_shell global
-pub fn create_layer_shell_global<BackendData: Backend + 'static>(
+pub fn create_style_manager_global<BackendData: Backend + 'static>(
     display: &DisplayHandle,
 ) -> smithay::reexports::wayland_server::backend::GlobalId {
-    display.create_global::<Otto<BackendData>, OttoSceneV1, _>(1, ())
+    display.create_global::<Otto<BackendData>, OttoSurfaceStyleManagerV1, _>(1, ())
 }
 
-impl<BackendData: Backend> GlobalDispatch<OttoSceneV1, ()> for Otto<BackendData> {
+impl<BackendData: Backend> GlobalDispatch<OttoSurfaceStyleManagerV1, ()> for Otto<BackendData> {
     fn bind(
         _state: &mut Self,
         _handle: &DisplayHandle,
         _client: &Client,
-        resource: New<OttoSceneV1>,
+        resource: New<OttoSurfaceStyleManagerV1>,
         _global_data: &(),
         data_init: &mut DataInit<'_, Self>,
     ) {
@@ -157,25 +181,25 @@ impl<BackendData: Backend> GlobalDispatch<OttoSceneV1, ()> for Otto<BackendData>
     }
 }
 
-impl<BackendData: Backend> Dispatch<OttoSceneV1, ()> for Otto<BackendData> {
+impl<BackendData: Backend> Dispatch<OttoSurfaceStyleManagerV1, ()> for Otto<BackendData> {
     fn request(
         state: &mut Self,
         _client: &Client,
-        shell: &OttoSceneV1,
-        request: otto_scene_v1::Request,
+        shell: &OttoSurfaceStyleManagerV1,
+        request: otto_surface_style_manager_v1::Request,
         _data: &(),
         _dhandle: &DisplayHandle,
         data_init: &mut DataInit<'_, Self>,
     ) {
         match request {
-            otto_scene_v1::Request::GetSceneSurface { id, surface } => {
+            otto_surface_style_manager_v1::Request::GetSurfaceStyle { id, surface } => {
                 // Per protocol spec: "It can augment any surface type"
                 // We just verify the surface is alive and valid
                 if !surface.is_alive() {
-                    shell.post_error(
-                        otto_scene_v1::Error::InvalidSurface,
-                        "Surface does not exist",
-                    );
+                    // shell.post_error(
+                    //     otto_style_surface_v1::Error::InvalidSurface,
+                    //     "Surface does not exist",
+                    // );
                     return;
                 }
 
@@ -191,35 +215,35 @@ impl<BackendData: Backend> Dispatch<OttoSceneV1, ()> for Otto<BackendData> {
                 // Initialize the wayland object - we'll use a placeholder ID for now
                 let wl_layer = data_init.init(
                     id,
-                    ScLayerUserData {
+                    OttoLayerUserData {
                         layer_id: surface.id(), // Temporary placeholder, will be overwritten
                     },
                 );
 
                 // Now get the actual layer ID and set it properly
                 let layer_id = wl_layer.id();
-                let layer_id_str = format!("sc_layer_{:?}", layer_id);
+                let layer_id_str = format!("surface_style_{:?}", layer_id);
                 layer.set_key(layer_id_str.clone());
 
                 // Create compositor state
-                let sc_layer = ScLayer {
-                    wl_layer: wl_layer.clone(),
+                let surface_style = SurfaceStyle {
+                    wl_style: wl_layer.clone(),
                     layer: layer.clone(),
                     surface: surface.clone(),
-                    z_order: crate::sc_layer_shell::ScLayerZOrder::default(),
+                    z_order: crate::surface_style::OttoSurfaceStyleZOrder::default(),
                 };
 
                 // Notify handler
-                ScLayerShellHandler::new_layer(state, sc_layer);
+                SurfaceStyleHandler::new_surface_style(state, surface_style);
             }
 
-            otto_scene_v1::Request::BeginTransaction { id } => {
-                use super::protocol::ScTransaction;
+            otto_surface_style_manager_v1::Request::BeginTransaction { id } => {
+                use super::protocol::StyleTransaction;
 
                 let wl_transaction = data_init.init(id, ());
                 let txn_id = wl_transaction.id();
-                let transaction = ScTransaction {
-                    wl_transaction: wl_transaction.clone(),
+                let transaction = StyleTransaction {
+                    wl_style_transaction: wl_transaction.clone(),
                     duration: None,
                     delay: None,
                     timing_function: None,
@@ -228,14 +252,13 @@ impl<BackendData: Backend> Dispatch<OttoSceneV1, ()> for Otto<BackendData> {
                     spring_initial_velocity: 0.0,
                     send_completion: false,
                     accumulated_changes: Vec::new(),
+                    animation: None,
                 };
 
-                state
-                    .sc_transactions
-                    .insert(txn_id.clone(), transaction);                
+                state.style_transactions.insert(txn_id.clone(), transaction);
             }
 
-            otto_scene_v1::Request::CreateTimingFunction { id } => {
+            otto_surface_style_manager_v1::Request::CreateTimingFunction { id } => {
                 use timing_function::ScTimingFunctionData;
 
                 // Create default timing function (linear)
@@ -249,7 +272,7 @@ impl<BackendData: Backend> Dispatch<OttoSceneV1, ()> for Otto<BackendData> {
                 data_init.init(id, timing_data);
             }
 
-            otto_scene_v1::Request::Destroy => {
+            otto_surface_style_manager_v1::Request::Destroy => {
                 // Nothing to do
             }
         }

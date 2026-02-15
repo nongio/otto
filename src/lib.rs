@@ -18,7 +18,7 @@ pub mod render_elements;
 #[cfg(feature = "metrics")]
 pub mod render_metrics;
 pub mod renderer;
-pub mod sc_layer_shell;
+pub mod surface_style;
 pub mod screenshare;
 pub mod settings_service;
 pub mod shell;

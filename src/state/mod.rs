@@ -267,10 +267,10 @@ pub struct Otto<BackendData: Backend + 'static> {
     // foreign toplevel list - maps surface ObjectId to unified toplevel handles (both protocols)
     pub foreign_toplevels: HashMap<ObjectId, foreign_toplevel_shared::ForeignToplevelHandles>,
 
-    // sc_layer protocol
-    // Map from surface ID to list of sc-layers augmenting that surface
-    pub sc_layers: HashMap<ObjectId, Vec<crate::sc_layer_shell::ScLayer>>,
-    pub sc_transactions: HashMap<ObjectId, crate::sc_layer_shell::ScTransaction>,
+    // surface style protocol
+    // Map from surface ID to list of surface styles augmenting that surface
+    pub surfaces_style: HashMap<ObjectId, Vec<crate::surface_style::SurfaceStyle>>,
+    pub style_transactions: HashMap<ObjectId, crate::surface_style::StyleTransaction>,
     // Map from surface ID to its rendering layer in the scene graph
     pub surface_layers: HashMap<ObjectId, layers::prelude::Layer>,
     // Pre-warmed View caches: surface_id -> (layer_key -> NodeRef)
@@ -523,7 +523,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         );
 
         // Create minimal sc_layer shell global
-        crate::sc_layer_shell::create_layer_shell_global::<BackendData>(&dh);
+        crate::surface_style::create_style_manager_global::<BackendData>(&dh);
 
         // init input
         let seat_name = backend_data.seat_name();
@@ -664,9 +664,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             // foreign toplevel list
             foreign_toplevels: HashMap::new(),
 
-            // sc_layer minimal protocol
-            sc_layers: HashMap::new(),
-            sc_transactions: HashMap::new(),
+            // Surface style protocol
+            surfaces_style: HashMap::new(),
+            style_transactions: HashMap::new(),
             surface_layers: HashMap::new(),
             view_warm_cache: HashMap::new(),
 
