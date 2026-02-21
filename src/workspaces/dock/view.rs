@@ -12,6 +12,7 @@ use layers::{
     types::{BlendMode, Size},
     view::{BuildLayerTree, LayerTreeBuilder},
 };
+use otto_kit::{components::context_menu::ContextMenu, prelude::{ContextMenuStyle, MenuItem}};
 use smithay::{reexports::wayland_server::backend::ObjectId, utils::IsAlive};
 use tokio::sync::mpsc;
 
@@ -20,22 +21,32 @@ use crate::{
     shell::WindowElement,
     theme::theme_colors,
     utils::Observer,
-    workspaces::{apps_info::ApplicationsInfo, Application, WorkspacesModel},
+    workspaces::{Application, WorkspacesModel, apps_info::ApplicationsInfo, utils::ContextMenuView},
 };
 
 use super::{
     model::DockModel,
-    render::{draw_app_icon, draw_running_indicator_only, setup_app_icon, setup_app_container_for_protocol_layer, setup_label, setup_miniwindow_icon},
+    render::{draw_app_icon, draw_badge, draw_progress, setup_app_icon, setup_badge_layer, setup_progress_layer, setup_label, setup_miniwindow_icon},
 };
 
+pub const BASE_ICON_SIZE: f32 = 300.0;
+
 #[derive(Debug, Clone)]
-struct AppLayerEntry {
-    layer: Layer,
-    icon_layer: Layer,
-    label_layer: Layer,
-    icon_id: Option<u32>,
-    running: bool,
-    identifier: String,
+pub(super) struct AppLayerEntry {
+    pub(super) layer: Layer,
+    /// Icon scaler: fixed-size wrapper that applies a uniform scale to fit the magnified slot.
+    pub(super) icon_scaler: Layer,
+    /// Icon stack: contains the icon, badge, and progress layers
+    pub(super) icon_stack: Layer,
+    pub(super) icon_layer: Layer,
+    /// Overlay layer showing the badge (red circle + number). Hidden when no badge is set.
+    pub(super) badge_layer: Layer,
+    /// Overlay layer showing the progress bar. Hidden when no progress is set.
+    pub(super) progress_layer: Layer,
+    pub(super) label_layer: Layer,
+    pub(super) icon_id: Option<u32>,
+    pub(super) running: bool,
+    pub(super) identifier: String,
 }
 
 type MiniWindowLayers = (Layer, Layer, Layer, Option<u32>);
@@ -51,18 +62,20 @@ pub struct DockView {
     dock_apps_container: layers::prelude::Layer,
     dock_windows_container: layers::prelude::Layer,
 
-    app_layers: Arc<RwLock<HashMap<String, AppLayerEntry>>>,
+    pub(super) app_layers: Arc<RwLock<HashMap<String, AppLayerEntry>>>,
     miniwindow_layers: Arc<RwLock<HashMap<ObjectId, MiniWindowLayers>>>,
-    /// Protocol-provided layer shell surfaces (app_id -> wlr layer)
-    pub protocol_app_layers: Arc<RwLock<HashMap<String, Layer>>>,
     state: Arc<RwLock<DockModel>>,
     active: Arc<AtomicBool>,
     notify_tx: tokio::sync::mpsc::Sender<WorkspacesModel>,
     latest_event: Arc<tokio::sync::RwLock<Option<WorkspacesModel>>>,
     magnification_position: Arc<RwLock<f32>>,
-    bookmark_configs: Arc<RwLock<HashMap<String, DockBookmark>>>,
+    pub(super) bookmark_configs: Arc<RwLock<HashMap<String, DockBookmark>>>,
 
     pub dragging: Arc<AtomicBool>,
+
+    pub context_menu: Arc<RwLock<Option<ContextMenuView>>>,
+    /// The identifier of the app whose icon is currently showing the context-menu pressed state.
+    pub(super) context_menu_app_id: Arc<RwLock<Option<String>>>,
 }
 impl PartialEq for DockView {
     fn eq(&self, other: &Self) -> bool {
@@ -263,7 +276,6 @@ impl DockView {
             dock_windows_container,
             app_layers: Arc::new(RwLock::new(HashMap::new())),
             miniwindow_layers: Arc::new(RwLock::new(HashMap::new())),
-            protocol_app_layers: Arc::new(RwLock::new(HashMap::new())),
             state: Arc::new(RwLock::new(initial_state)),
             active: Arc::new(AtomicBool::new(true)),
             notify_tx,
@@ -271,6 +283,8 @@ impl DockView {
             magnification_position: Arc::new(RwLock::new(-500.0)),
             bookmark_configs: Arc::new(RwLock::new(HashMap::new())),
             dragging: Arc::new(AtomicBool::new(false)),
+            context_menu: Arc::new(RwLock::new(None)),
+            context_menu_app_id: Arc::new(RwLock::new(None)),
         };
         dock.render_dock();
         dock.notification_handler(notify_rx);
@@ -297,8 +311,12 @@ impl DockView {
             let mut configs = HashMap::new();
 
             for bookmark in bookmarks {
+                // Accept both "firefox" and "firefox.desktop" in config
+                let id = bookmark.desktop_id.strip_suffix(".desktop")
+                    .unwrap_or(&bookmark.desktop_id)
+                    .to_string();
                 if let Some(mut app) =
-                    ApplicationsInfo::get_app_info_by_id(bookmark.desktop_id.clone()).await
+                    ApplicationsInfo::get_app_info_by_id(id).await
                 {
                     app.override_name = bookmark.label.clone();
                     configs.insert(app.match_id.clone(), bookmark.clone());
@@ -428,249 +446,145 @@ impl DockView {
 
                     let icon_layer = entry.icon_layer.clone();
                     let layer = entry.layer.clone();
-                    let label = entry.label_layer.clone();
+                    // let label = entry.label_layer.clone();
 
-                    // Check if this app now has a protocol layer
-                    let protocol_layers = self.protocol_app_layers.read().unwrap();
-                    let has_protocol_layer = protocol_layers.contains_key(&app.identifier);
-                    let protocol_layer = protocol_layers.get(&app.identifier).cloned();
-                    drop(protocol_layers);
-
-                    tracing::info!("Occupied: App {} has_protocol_layer={}", app.identifier, has_protocol_layer);
-
-                    if has_protocol_layer {
-                        // Replace icon with protocol layer
-                        tracing::info!("Replacing existing icon with protocol layer for app {}", app.identifier);
-                        
-                        // Clear the icon drawing function so only the protocol layer shows
-                        icon_layer.set_draw_content(draw_running_indicator_only(*running));
-                        
-                        // Add protocol layer as sublayer
-                        if let Some(proto_layer) = protocol_layer {
-                            // Position and size the protocol layer to fill the container
-                            proto_layer.set_position(Point::new(0.0, 0.0), None);
-                            proto_layer.set_size(Size::percent(1.0, 1.0), None);
-                            
-                            icon_layer.add_sublayer(&proto_layer);
-                            tracing::info!("Added protocol layer to existing icon_layer for app {} (positioned at 0,0, size 100%)", app.identifier);
-                        }
-                        
-                        // Update entry to reflect it now has a protocol layer (no icon_id)
-                        entry.icon_id = None;
-                    } else {
-                        // Normal icon update
-                        let current_icon_id = app_copy.icon.as_ref().map(|i| i.unique_id());
-                        if entry.icon_id != current_icon_id || entry.running != *running {
-                            let draw_picture = draw_app_icon(&app_copy, *running);
-                            icon_layer.set_draw_content(draw_picture);
-                            entry.icon_id = current_icon_id;
-                        }
+                    // Update icon content if the icon changed.
+                    // Running state is shown via the running_indicator_layer (separate from icon_stack).
+                    let current_icon_id = app_copy.icon.as_ref().map(|i| i.unique_id());
+                    if entry.icon_id != current_icon_id {
+                        let draw_picture = draw_app_icon(&app_copy);
+                        icon_layer.set_draw_content(draw_picture);
+                        entry.icon_id = current_icon_id;
                     }
                     entry.running = *running;
+                    let entry_is_running = entry.running;
 
-                    let darken_color = skia::Color::from_argb(100, 100, 100, 100);
-                    let add = skia::Color::from_argb(0, 0, 0, 0);
-                    let filter = skia::color_filters::lighting(darken_color, add);
-
-                    let icon_ref = icon_layer.clone();
-                    layer.remove_all_pointer_handlers();
-
-                    layer.add_on_pointer_press(move |_: &Layer, _, _| {
-                        icon_ref.set_color_filter(filter.clone());
+                    // update main layer render function
+                    layer.set_draw_content(move |canvas: &skia::Canvas, w: f32, h: f32| {
+                        if entry_is_running {
+                            let color = theme_colors().text_primary.opacity(0.9).c4f();
+                            let mut paint = layers::skia::Paint::new(color, None);
+                            paint.set_anti_alias(true);
+                            paint.set_style(layers::skia::paint::Style::Fill);
+                            let radius = 2.0 * draw_scale;
+                            canvas.draw_circle((w / 2.0, h - radius - 2.0 * draw_scale), radius, &paint);
+                        }
+                        layers::skia::Rect::from_xywh(0.0, 0.0, w, h)
                     });
-
-                    let icon_ref = icon_layer.clone();
-                    layer.add_on_pointer_release(move |_: &Layer, _, _| {
-                        icon_ref.set_color_filter(None);
-                    });
-
-                    let label_ref = label.clone();
-                    layer.add_on_pointer_in(move |_: &Layer, _, _| {
-                        label_ref.set_opacity(1.0, Some(Transition::ease_in_quad(0.1)));
-                    });
-                    let label_ref = label.clone();
-                    let icon_ref = icon_layer.clone();
-                    layer.add_on_pointer_out(move |_: &Layer, _, _| {
-                        label_ref.set_opacity(0.0, Some(Transition::ease_in_quad(0.1)));
-                        icon_ref.set_color_filter(None);
-                    });
+                    
                     previous_app_layers.retain(|l| l.id() != layer.id());
                 }
                 Entry::Vacant(vac) => {
                     let new_layer = self.layers_engine.new_layer();
-                    
-                    // Check if this app has a protocol-provided layer
-                    let protocol_layers = self.protocol_app_layers.read().unwrap();
-                    let has_protocol_layer = protocol_layers.contains_key(&app.identifier);
-                    tracing::info!("App {} has_protocol_layer={}", app.identifier, has_protocol_layer);
-                    drop(protocol_layers);
-                    
-                    if has_protocol_layer {
-                        // Use protocol layer instead of icon
-                        tracing::info!("Using protocol layer for app {}", app.identifier);
-                        let container_layer = self.layers_engine.new_layer();
-                        setup_app_container_for_protocol_layer(
-                            &new_layer,
-                            &container_layer,
-                            app_name.to_string(),
-                            available_icon_width,
-                            *running,
-                        );
-                        
-                        // Add the protocol layer as a sublayer
-                        if let Some(protocol_layer) = self.protocol_app_layers.read().unwrap().get(&app.identifier) {
-                            // Position and size the protocol layer to fill the container
-                            protocol_layer.set_position(Point::new(0.0, 0.0), None);
-                            protocol_layer.set_size(Size::percent(1.0, 1.0), None);
-                            
-                            container_layer.add_sublayer(protocol_layer);
-                            tracing::info!("Added protocol layer as sublayer for app {} (positioned at 0,0, size 100%)", app.identifier);
-                        } else {
-                            tracing::warn!("Protocol layer disappeared for app {}", app.identifier);
-                        }
-                        
-                        self.dock_apps_container.add_sublayer(&new_layer);
-                        let label_layer = self.layers_engine.new_layer();
-                        
-                        setup_label(&label_layer, app_name);
-                        new_layer.add_sublayer(&container_layer);
-                        new_layer.add_sublayer(&label_layer);
-                        
-                        vac.insert(AppLayerEntry {
-                            layer: new_layer.clone(),
-                            icon_layer: container_layer.clone(),
-                            label_layer: label_layer.clone(),
-                            icon_id: None, // Protocol layers don't have icon IDs
-                            running: *running,
-                            identifier: app.identifier.clone(),
-                        });
-                        
-                        let label_ref = label_layer.clone();
-                        new_layer.add_on_pointer_in(move |_: &Layer, _, _| {
-                            label_ref.set_opacity(1.0, Some(Transition::ease_in_quad(0.1)));
-                        });
-                        let label_ref = label_layer.clone();
-                        new_layer.add_on_pointer_out(move |_: &Layer, _, _| {
-                            label_ref.set_opacity(0.0, Some(Transition::ease_in_quad(0.1)));
-                        });
-                    } else {
-                        // Traditional icon rendering
-                        let icon_layer = self.layers_engine.new_layer();
-                        setup_app_icon(
-                            &new_layer,
-                            &icon_layer,
-                            app_copy.clone(),
-                            available_icon_width,
-                            *running,
-                        );
-                        icon_layer.set_image_cached(true);
+                    // icon_scaler wraps icon_stack: fixed size, scales to fill the magnified slot
+                    let icon_scaler = self.layers_engine.new_layer();
+                    // icon_stack holds icon + badge + progress (not label) — mirrored by app switcher
+                    let icon_stack = self.layers_engine.new_layer();
+                    let icon_layer = self.layers_engine.new_layer();
+                    let badge_layer = self.layers_engine.new_layer();
+                    let progress_layer = self.layers_engine.new_layer();
 
-                        self.dock_apps_container.add_sublayer(&new_layer);
-                        let label_layer = self.layers_engine.new_layer();
-
-                        setup_label(&label_layer, app_name);
-                        new_layer.add_sublayer(&icon_layer);
-                        new_layer.add_sublayer(&label_layer);
-                        let icon_id = app_copy.icon.as_ref().map(|i| i.unique_id());
-
-                        vac.insert(AppLayerEntry {
-                            layer: new_layer.clone(),
-                            icon_layer: icon_layer.clone(),
-                            label_layer: label_layer.clone(),
-                            icon_id,
-                            running: *running,
-                            identifier: app.identifier.clone(),
-                        });
-
-                        let darken_color = skia::Color::from_argb(100, 100, 100, 100);
-                        let add = skia::Color::from_argb(0, 0, 0, 0);
-                        let filter = skia::color_filters::lighting(darken_color, add);
-
-                        let icon_ref = icon_layer.clone();
-                        new_layer.remove_all_pointer_handlers();
-
-                        new_layer.add_on_pointer_press(move |_: &Layer, _, _| {
-                            icon_ref.set_color_filter(filter.clone());
-                        });
-
-                        let icon_ref = icon_layer.clone();
-                        new_layer.add_on_pointer_release(move |_: &Layer, _, _| {
-                            icon_ref.set_color_filter(None);
-                        });
-
-                        let label_ref = label_layer.clone();
-                        new_layer.add_on_pointer_in(move |_: &Layer, _, _| {
-                            label_ref.set_opacity(1.0, Some(Transition::ease_in_quad(0.1)));
-                        });
-                        let label_ref = label_layer.clone();
-                        let icon_ref = icon_layer.clone();
-                        new_layer.add_on_pointer_out(move |_: &Layer, _, _| {
-                            label_ref.set_opacity(0.0, Some(Transition::ease_in_quad(0.1)));
-                            icon_ref.set_color_filter(None);
-                        });
-                    }
-                    previous_app_layers.retain(|l| l.id() != new_layer.id());
-                }
-            }
-        }
-
-        // Render protocol-only layers (apps that provided layers but aren't in the app list yet)
-        let protocol_layers_map = self.protocol_app_layers.read().unwrap();
-        tracing::info!("Checking protocol layers, count: {}", protocol_layers_map.len());
-        for (app_id, protocol_layer) in protocol_layers_map.iter() {
-            tracing::info!("Processing protocol layer for app_id={}", app_id);
-            // Check if this app_id is already rendered (skip if it is)
-            let already_rendered = display_apps.iter().any(|(app, _)| &app.identifier == app_id);
-            tracing::info!("app_id={} already_rendered={}", app_id, already_rendered);
-            if already_rendered {
-                tracing::info!("Skipping app_id={}, already rendered in normal apps", app_id);
-                continue;
-            }
-
-            // Render protocol-only layer
-            match apps_layers_map.entry(app_id.clone()) {
-                Entry::Occupied(_) => {
-                    // Already exists, skip
-                    tracing::info!("app_id={} already has layer entry, skipping", app_id);
-                }
-                Entry::Vacant(vac) => {
-                    tracing::info!("Creating new dock entry for protocol layer app_id={}", app_id);
-                    let new_layer = self.layers_engine.new_layer();
-                    let container_layer = self.layers_engine.new_layer();
-                    
-                    setup_app_container_for_protocol_layer(
+                    setup_app_icon(
                         &new_layer,
-                        &container_layer,
-                        app_id.clone(),
+                        &icon_layer,
+                        app_copy.clone(),
                         available_icon_width,
-                        true, // Assume running since it provided a layer
+                        *running,
                     );
+                    icon_layer.set_image_cached(true);
+
                     
-                    // Add the actual protocol layer as a sublayer
-                    // Position and size the protocol layer to fill the container
-                    protocol_layer.set_position(Point::new(0.0, 0.0), None);
-                    protocol_layer.set_size(Size::percent(1.0, 1.0), None);
-                    
-                    container_layer.add_sublayer(protocol_layer);
-                    tracing::info!("Added protocol layer as sublayer to container for app_id={} (positioned at 0,0, size 100%)", app_id);
-                    
-                    self.dock_apps_container.add_sublayer(&new_layer);
-                    tracing::info!("Added new_layer to dock_apps_container for app_id={}", app_id);
+                    // Set up icon_scaler as an absolute-positioned square with a fixed size.
+                    // Its scale is animated during magnification to fill the parent slot;
+                    // it never changes its layout size.
+                    {
+                        use layers::view::BuildLayerTree;
+
+                        let scaler_tree = layers::view::LayerTreeBuilder::default()
+                            .key(format!("icon_scaler_{}", app.identifier))
+                            .layout_style(taffy::Style {
+                                position: taffy::Position::Absolute,
+                                ..Default::default()
+                            })
+                            .size(Size::points(BASE_ICON_SIZE, BASE_ICON_SIZE * 1.2))
+                            .anchor_point(layers::types::Point::new(0.5, 0.5))
+                            .pointer_events(false)
+                            .build()
+                            .unwrap();
+                        icon_scaler.build_layer_tree(&scaler_tree);
+                    }
+                    icon_scaler.set_position(Point::new(available_icon_width/2.0, (available_icon_width * 1.2)/2.0), None);
+
+                    // Set up icon_stack as a fixed-size square inside icon_scaler.
+                    // icon_stack stays at its original size; visual scaling is handled by icon_scaler.
+                    {
+                        use layers::view::BuildLayerTree;
+
+                        let stack_tree = layers::view::LayerTreeBuilder::default()
+                            .key(format!("icon_stack_{}", app.identifier))
+                            .layout_style(taffy::Style {
+                                position: taffy::Position::Absolute,
+                                ..Default::default()
+                            })
+                            .size(Size::points(BASE_ICON_SIZE, BASE_ICON_SIZE))
+                            .picture_cached(false)
+                            .image_cache(false)
+                            .pointer_events(false)
+                            .build()
+                            .unwrap();
+                        icon_stack.build_layer_tree(&stack_tree);
+                    }
+                    icon_stack.set_position(Point::new(0.0, 0.0), None);
+                    // icon_stack.set_anchor_point(layers::types::Point::new(0.5, 0.0), None);
+                    setup_badge_layer(&badge_layer, BASE_ICON_SIZE);
+                    setup_progress_layer(&progress_layer, BASE_ICON_SIZE);
+
                     let label_layer = self.layers_engine.new_layer();
-                    
-                    setup_label(&label_layer, app_id.to_string());
-                    new_layer.add_sublayer(&container_layer);
+                    setup_label(&label_layer, app_name);
+
+                    self.dock_apps_container.add_sublayer(&new_layer);
+                    // icon_scaler wraps icon_stack; icon_stack holds icon + badge + progress
+                    new_layer.add_sublayer(&icon_scaler);
+                    icon_scaler.add_sublayer(&icon_stack);
+                    icon_stack.add_sublayer(&icon_layer);
+                    icon_stack.add_sublayer(&badge_layer);
+                    icon_stack.add_sublayer(&progress_layer);
+                    // label is a direct child of new_layer, NOT inside icon_stack
                     new_layer.add_sublayer(&label_layer);
-                    
+
+                    let icon_id = app_copy.icon.as_ref().map(|i| i.unique_id());
+
                     vac.insert(AppLayerEntry {
                         layer: new_layer.clone(),
-                        icon_layer: container_layer.clone(),
+                        icon_scaler: icon_scaler.clone(),
+                        icon_stack: icon_stack.clone(),
+                        icon_layer: icon_layer.clone(),
                         label_layer: label_layer.clone(),
-                        icon_id: None,
-                        running: true,
-                        identifier: app_id.clone(),
+                        badge_layer: badge_layer.clone(),
+                        progress_layer: progress_layer.clone(),
+                        icon_id,
+                        running: *running,
+                        identifier: app.identifier.clone(),
                     });
-                    
+
+                    // // Assign a random badge and progress immediately for demo/testing.
+                    // {
+                    //     use rand::Rng;
+                    //     let mut rng = rand::thread_rng();
+                    //     if rng.gen_bool(0.5) {
+                    //         let n = rng.gen_range(1u32..=99).to_string();
+                    //         badge_layer.set_draw_content(draw_badge(n));
+                    //         badge_layer.set_opacity(1.0, None);
+                    //     }
+                    //     if rng.gen_bool(0.6) {
+                    //         let v = rng.gen::<f64>();
+                    //         progress_layer.set_draw_content(draw_progress(v));
+                    //         progress_layer.set_opacity(1.0, None);
+                    //     }
+                    // }
+
+                    new_layer.remove_all_pointer_handlers();
+
                     let label_ref = label_layer.clone();
                     new_layer.add_on_pointer_in(move |_: &Layer, _, _| {
                         label_ref.set_opacity(1.0, Some(Transition::ease_in_quad(0.1)));
@@ -679,14 +593,10 @@ impl DockView {
                     new_layer.add_on_pointer_out(move |_: &Layer, _, _| {
                         label_ref.set_opacity(0.0, Some(Transition::ease_in_quad(0.1)));
                     });
-                    
                     previous_app_layers.retain(|l| l.id() != new_layer.id());
-                    tracing::info!("Completed protocol layer setup for app_id={}", app_id);
                 }
             }
         }
-        drop(protocol_layers_map);
-        tracing::info!("Finished processing protocol layers");
 
         let mut previous_miniwindows = self.get_miniwin_layers();
         let mut miniwindows_layers_map = self.miniwindow_layers.write().unwrap();
@@ -719,13 +629,13 @@ impl DockView {
 
                 layer.add_on_pointer_press(move |l: &Layer, _: f32, _: f32| {
                     l.children().iter().for_each(|child| {
-                        child.set_color_filter(filter.clone());
+                        // child.set_color_filter(filter.clone());
                     });
                 });
                 // let inner_ref = inner.clone();
                 layer.add_on_pointer_release(move |l: &Layer, _: f32, _: f32| {
                     l.children().iter().for_each(|child| {
-                        child.set_color_filter(None);
+                        // child.set_color_filter(None);
                     });
                 });
 
@@ -738,7 +648,7 @@ impl DockView {
                 layer.add_on_pointer_out(move |l: &Layer, _: f32, _: f32| {
                     label_ref.set_opacity(0.0, Some(Transition::ease_in_out_quad(0.1)));
                     l.children().iter().for_each(|child| {
-                        child.set_color_filter(None);
+                        // child.set_color_filter(None);
                     });
                 });
                 previous_miniwindows.retain(|l| l.id() != layer.id());
@@ -782,7 +692,7 @@ impl DockView {
             miniwindows_layers_map.retain(|_k, (v, ..)| v.id() != layer.id());
         }
     }
-    fn available_icon_size(&self) -> f32 {
+    pub fn available_icon_size(&self) -> f32 {
         let state = self.get_state();
         let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
         // those are constant like values
@@ -803,6 +713,9 @@ impl DockView {
             (available_width - component_padding_h * 2.0) / (apps_len + windows_len);
         icon_size.min(available_icon_size)
     }
+
+    /// Render dock elements (app icons and miniwindow icons) based on the current state.
+    /// This is called whenever the state changes to update the dock appearance.
     fn render_dock(&self) {
         let available_icon_size = self.available_icon_size();
 
@@ -925,9 +838,9 @@ impl DockView {
 
         let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
         let dock_size_multiplier = Config::with(|config| config.dock.size.clamp(0.5, 2.0)) as f32;
-        let base_icon_size = 95.0;
+        let base_icon_size = 80.0;
         let icon_size: f32 = base_icon_size * dock_size_multiplier * draw_scale;
-        let padding = icon_size * 20.0 / 95.0;
+        let padding = icon_size * 20.0 / base_icon_size;
         let focus = pos / (bounds.width() - padding);
 
         let apps_len = display_apps.len() as f32;
@@ -947,13 +860,30 @@ impl DockView {
                     let icon_pos = 1.0 / tot_elements * index as f32 + 1.0 / (tot_elements * 2.0);
                     let icon_focus = 1.0 + magnify_function(focus - icon_pos) * genie_scale;
                     let focused_icon_size = icon_size * icon_focus as f32;
-                    let height_padding = draw_scale * dock_size_multiplier * 16.0;
+                    let height_padding = BASE_ICON_SIZE * 0.08;
 
                     let change = layer.change_size(Size::points(
                         focused_icon_size,
                         focused_icon_size + height_padding,
                     ));
                     changes.push(change);
+                    
+
+                    entry.icon_scaler.set_size(Size::points(BASE_ICON_SIZE, BASE_ICON_SIZE + height_padding), None);
+                    // icon_scaler has a fixed size of 100.0; animate its scale to stretch it
+                    // to focused_icon_size. badge and progress scale with it as children.
+                    let scaler = (focused_icon_size * 0.9) / BASE_ICON_SIZE;
+
+                    let scaler_change_position = entry.icon_scaler.change_position(Point {
+                        x: focused_icon_size / 2.0,
+                        y: (focused_icon_size * 1.3) / 2.0,
+                    });
+                    changes.push(scaler_change_position);
+                    let scaler_change = entry.icon_scaler.change_scale(Point {
+                        x: scaler,
+                        y: scaler,
+                    });
+                    changes.push(scaler_change);
                 }
             }
         }
@@ -1002,11 +932,25 @@ impl DockView {
     }
     pub fn update_magnification_position(&self, pos: f32) {
         *self.magnification_position.write().unwrap() = pos;
+        if self.has_menu_open() {
+            return;
+        }
         self.magnify_elements();
     }
     pub fn bookmark_config_for(&self, match_id: &str) -> Option<DockBookmark> {
         self.bookmark_configs.read().unwrap().get(match_id).cloned()
     }
+    /// Returns the icon_stack layer for `identifier` so the app switcher can mirror it.
+    /// The icon_stack contains icon + badge + progress overlays (not the label tooltip).
+    pub fn get_icon_stack_for_app(&self, identifier: &str) -> Option<Layer> {
+        self.app_layers
+            .read()
+            .unwrap()
+            .values()
+            .find(|e| e.identifier == identifier)
+            .map(|e| e.icon_stack.clone())
+    }
+
     pub fn bookmark_application(&self, match_id: &str) -> Option<Application> {
         self.state
             .read()
@@ -1016,46 +960,183 @@ impl DockView {
             .find(|app| app.match_id == match_id)
             .cloned()
     }
-    
-    /// Check if an app has a protocol layer registered
-    pub fn has_protocol_layer(&self, app_id: &str) -> bool {
-        self.protocol_app_layers.read().unwrap().contains_key(app_id)
+
+    /// Update the badge shown on the dock icon for `app_id`.
+    /// Pass `None` or an empty string to hide the badge.
+    pub fn update_badge_for_app(&self, app_id: &str, text: Option<String>) {
+        let app_layers = self.app_layers.read().unwrap();
+        if let Some(entry) = app_layers.values().find(|e| e.identifier == app_id) {
+            let badge_layer = entry.badge_layer.clone();
+            drop(app_layers);
+            match text {
+                Some(t) if !t.is_empty() => {
+                    badge_layer.set_draw_content(draw_badge(t));
+                    badge_layer.set_opacity(1.0, Some(Transition::ease_in_quad(0.15)));
+                }
+                _ => {
+                    badge_layer.set_opacity(0.0, Some(Transition::ease_in_quad(0.15)));
+                }
+            }
+        }
     }
-    
-    /// Register a protocol-provided layer shell surface for a dock app
-    pub fn register_protocol_layer(&self, app_id: String, layer: Layer) {
-        tracing::info!("DockView::register_protocol_layer called for app_id={}", app_id);
-        
-        // Create a wrapper layer that we fully control
-        let wrapper_layer = self.layers_engine.new_layer();
-        wrapper_layer.set_position(Point::new(0.0, 0.0), None);
-        wrapper_layer.set_size(Size::percent(1.0, 1.0), None);
-        wrapper_layer.set_draw_content(layer.as_content());
-        wrapper_layer.set_pointer_events(false);
-        layer.add_follower_node(wrapper_layer.clone());
-        // Add the original layer as a sublayer
-        // The wrapper controls position/size, the original layer just renders
-        wrapper_layer.add_sublayer(&layer);
-        tracing::info!("Created wrapper layer for protocol layer app_id={}", app_id);
-        
-        let mut protocol_layers = self.protocol_app_layers.write().unwrap();
-        protocol_layers.insert(app_id.clone(), wrapper_layer);
-        tracing::info!("Protocol layer registered (wrapped), total protocol layers: {}", protocol_layers.len());
-        drop(protocol_layers);
-        
-        // Trigger a redraw to update the dock
-        tracing::info!("Triggering dock redraw");
-        self.render_dock();
+
+    /// Update the progress bar shown on the dock icon for `app_id`.
+    /// Pass `None` or a negative value to hide the progress bar.
+    pub fn update_progress_for_app(&self, app_id: &str, value: Option<f64>) {
+        let app_layers = self.app_layers.read().unwrap();
+        if let Some(entry) = app_layers.values().find(|e| e.identifier == app_id) {
+            let progress_layer = entry.progress_layer.clone();
+            drop(app_layers);
+            match value {
+                Some(v) if v >= 0.0 => {
+                    progress_layer.set_draw_content(draw_progress(v.clamp(0.0, 1.0)));
+                    progress_layer.set_opacity(1.0, Some(Transition::ease_in_quad(0.15)));
+                }
+                _ => {
+                    progress_layer.set_opacity(0.0, Some(Transition::ease_in_quad(0.15)));
+                }
+            }
+        }
     }
-    
-    /// Unregister a protocol-provided layer shell surface
-    pub fn unregister_protocol_layer(&self, app_id: &str) {
-        let mut protocol_layers = self.protocol_app_layers.write().unwrap();
-        protocol_layers.remove(app_id);
-        drop(protocol_layers);
-        
-        // Trigger a redraw to update the dock
-        self.render_dock();
+
+    /// Find the `match_id` (bookmark key) for an app by its `identifier`.
+    pub fn match_id_for(&self, identifier: &str) -> Option<String> {
+        self.app_layers.read().unwrap()
+            .iter()
+            .find(|(_, e)| e.identifier == identifier)
+            .map(|(match_id, _)| match_id.clone())
+    }
+
+    /// Whether an app is currently running (has open windows).
+    pub fn is_app_running(&self, identifier: &str) -> bool {
+        self.app_layers.read().unwrap()
+            .values()
+            .any(|e| e.identifier == identifier && e.running)
+    }
+
+    /// Build context-menu items for the given app `identifier`,
+    /// reflecting its current running and bookmarked state.
+    pub fn build_context_menu_items(&self, identifier: &str) -> Vec<MenuItem> {
+        let running = self.is_app_running(identifier);
+        let match_id = self.match_id_for(identifier);
+        let bookmarked = match_id.as_deref()
+            .map(|mid| self.bookmark_config_for(mid).is_some())
+            .unwrap_or(false);
+
+        let mut items = Vec::new();
+
+        if running {
+            items.push(MenuItem::action("New Window"));
+            items.push(MenuItem::separator());
+        } else {
+            items.push(MenuItem::action("Open"));
+            items.push(MenuItem::separator());
+        }
+
+        let keep_label = if bookmarked { "✓ Keep in Dock" } else { "Keep in Dock" };
+        items.push(MenuItem::action(keep_label));
+
+        if running {
+            items.push(MenuItem::separator());
+            items.push(MenuItem::action("Quit").with_shortcut("⌘Q"));
+        }
+
+        items
+    }
+
+    pub fn open_context_menu(&self, _pos: Point, app_id: String) {
+        // Compute position from the app icon layer to anchor the menu above it
+        let scale = Config::with(|c| c.screen_scale) as f32;
+        let menu_pos = {
+            let app_layers = self.app_layers.read().unwrap();
+            let entry = app_layers.values().find(|e| e.identifier == app_id);
+            if let Some(e) = entry {
+                let icon_bounds = e.layer.render_bounds_transformed();
+                let wrap_bounds = self.wrap_layer.render_bounds_transformed();
+                // Center the menu horizontally over the icon;
+                // anchor point (0.5, 1.0) means the bottom-center lands at (x, y),
+                // so y = top-edge of the icon relative to the wrap_layer (in logical px).
+                Point::new(
+                    (icon_bounds.x() + icon_bounds.width() / 2.0 - wrap_bounds.x()) / scale,
+                    (icon_bounds.y() - wrap_bounds.y()) / scale,
+                )
+            } else {
+                _pos
+            }
+        };
+
+        let mut context_menu_lock = self.context_menu.write().unwrap();
+        if context_menu_lock.is_some() {
+            // If a context menu is already open, close it
+            if let Some(menu) = context_menu_lock.as_ref() {
+                menu.hide();
+            }
+        } else {
+            let items = self.build_context_menu_items(&app_id);
+            let menu = ContextMenuView::new(&self.wrap_layer, items);
+            let scale = Config::with(|c| c.screen_scale) as f32;
+            menu.set_style(ContextMenuStyle::default_with_scale(scale));
+            *context_menu_lock = Some(menu);
+        }
+
+        if let Some(menu) = context_menu_lock.as_ref() {
+            // Refresh items in case the menu was reused (app state may have changed)
+            let items = self.build_context_menu_items(&app_id);
+            menu.set_items(items);
+            menu.show_at(menu_pos.x, menu_pos.y);
+        }
+        drop(context_menu_lock);
+
+        // Darken the icon and hide the tooltip for the right-clicked app.
+        *self.context_menu_app_id.write().unwrap() = Some(app_id.clone());
+        self.set_app_context_menu_active(&app_id, true);
+    }
+    /// Apply or remove the "context menu open" visual state on an app icon:
+    /// - active=true  → darken the icon, hide the label
+    /// - active=false → clear the colour filter, restore label visibility
+    fn set_app_context_menu_active(&self, app_id: &str, active: bool) {
+        let darken_color = skia::Color::from_argb(100, 100, 100, 100);
+        let add = skia::Color::from_argb(0, 0, 0, 0);
+        let filter = skia::color_filters::lighting(darken_color, add);
+        let app_layers = self.app_layers.read().unwrap();
+        if let Some(entry) = app_layers.values().find(|e| e.identifier == app_id) {
+            if active {
+                entry.icon_scaler.set_color_filter(filter);
+                entry.label_layer.set_opacity(0.0, Some(Transition::ease_in_quad(0.1)));
+            } else {
+                entry.icon_scaler.set_color_filter(None);
+                // label returns to normal opacity on next pointer-in/out cycle
+                entry.label_layer.set_opacity(0.0, Some(Transition::ease_in_quad(0.1)));
+            }
+        }
+    }
+
+    pub fn has_menu_open(&self) -> bool {
+        if let Some(menu) = self.context_menu.read().unwrap().as_ref() {
+            menu.is_active()
+        } else {
+            false
+        }
+    }
+
+    /// Hide the context menu and immediately re-run magnification so the dock
+    /// resizes to the current pointer position.
+    pub fn close_context_menu(&self) {
+        let menu_lock = self.context_menu.read().unwrap();
+        if let Some(menu) = menu_lock.as_ref() {
+            menu.hide();
+        }
+        drop(menu_lock);
+
+        // Restore the pressed icon to its normal appearance.
+        if let Some(app_id) = self.context_menu_app_id.write().unwrap().take() {
+            self.set_app_context_menu_active(&app_id, false);
+        }
+
+        // menu.hide() sets is_active() to false, so the guard in
+        // update_magnification_position will pass and the dock will resize.
+        let pos = *self.magnification_position.read().unwrap();
+        self.update_magnification_position(pos);
     }
 }
 

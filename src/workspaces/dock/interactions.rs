@@ -1,6 +1,8 @@
-use smithay::{backend::input::ButtonState, utils::IsAlive};
+use layers::skia;
+use otto_kit::components::context_menu::ContextMenuRenderer;
+use smithay::{backend::input::{ButtonState, KeyState}, input::keyboard::Keysym, utils::IsAlive};
 
-use crate::{config::Config, interactive_view::ViewInteractions};
+use crate::{config::Config, interactive_view::{InteractiveView, ViewInteractions}};
 
 use tracing::warn;
 
@@ -24,6 +26,18 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
             return;
         }
         let scale = Config::with(|c| c.screen_scale);
+        if let Some(menu) = self.context_menu.read().unwrap().as_ref().filter(|m| m.is_active()) {
+            let mut menu_state = menu.view.get_state();
+            let items = menu_state.items();
+            let style = &menu_state.style;
+            // render_bounds_transformed returns physical pixels; event.location is logical.
+            let menu_bounds = menu.view_layer.render_bounds_transformed();
+            let x = event.location.x as f32 - menu_bounds.left / scale as f32;
+            let y = event.location.y as f32 - menu_bounds.top / scale as f32;
+            let item_index = ContextMenuRenderer::hit_test_items(items, style, x, y);
+            menu_state.select_at_depth(0, item_index);
+            menu.view.update_state(&menu_state);
+        }
 
         self.update_magnification_position((event.location.x * scale) as f32);
     }
@@ -32,7 +46,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
     }
     fn on_button(
         &self,
-        _seat: &smithay::input::Seat<crate::Otto<Backend>>,
+        seat: &smithay::input::Seat<crate::Otto<Backend>>,
         state: &mut crate::Otto<Backend>,
         event: &smithay::input::pointer::ButtonEvent,
     ) {
@@ -42,29 +56,73 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
             ButtonState::Pressed => {
                 // println!("dock Button pressed");
                 if let Some(layer_id) = state.layers_engine.current_hover() {
-                    if let Some((_identifier, _match_id)) = self.get_app_from_layer(&layer_id) {
-                        self.dragging
-                            .store(true, std::sync::atomic::Ordering::SeqCst);
+                    if let Some((identifier, _match_id)) = self.get_app_from_layer(&layer_id) {
+                        // self.dragging
+                        //     .store(true, std::sync::atomic::Ordering::SeqCst);
+                        let apps_layers = self.app_layers.read().unwrap();
+                        if let Some(entry) = apps_layers.get(&identifier) {
+                            let darken_color = skia::Color::from_argb(100, 100, 100, 100);
+                            let add = skia::Color::from_argb(0, 0, 0, 0);
+                            let filter = skia::color_filters::lighting(darken_color, add);
+                            entry.icon_scaler.set_color_filter(filter);
+                            entry.icon_scaler.set_opacity(1.0, None);
+                        }
                     }
                 }
             }
             ButtonState::Released => {
+                // If context menu is open, forward the click to it
+                {
+                    use crate::config::Config;
+                    use otto_kit::components::context_menu::ContextMenuRenderer;
+                    let scale = Config::with(|c| c.screen_scale) as f32;
+                    let menu_lock = self.context_menu.read().unwrap();
+                    if let Some(menu) = menu_lock.as_ref().filter(|m| m.is_active()) {
+                        let menu_state = menu.view.get_state();
+                        let items = menu_state.items();
+                        let style = &menu_state.style;
+                        let menu_bounds = menu.view_layer.render_bounds_transformed();
+                        let ptr = state.last_pointer_location;
+                        let x = ptr.0 as f32 - menu_bounds.left / scale;
+                        let y = ptr.1 as f32 - menu_bounds.top / scale;
+                        let item_index = ContextMenuRenderer::hit_test_items(items, style, x, y);
+                        drop(menu_lock);
+                        if let Some(idx) = item_index {
+                            let label = {
+                                let menu_lock = self.context_menu.read().unwrap();
+                                menu_lock.as_ref().and_then(|m| {
+                                    let s = m.view.get_state();
+                                    s.items().get(idx).and_then(|i| i.label().map(|l| l.to_string()))
+                                })
+                            };
+                            // Read app_id before close_context_menu(), which calls .take() on it
+                            let app_id = self.context_menu_app_id.read().unwrap().clone();
+                            self.close_context_menu();
+                            if let (Some(label), Some(app_id)) = (label, app_id) {
+                                self.execute_context_menu_action(&label, &app_id, state);
+                            }
+                        } else {
+                            // Click outside menu — close it
+                            self.close_context_menu();
+                        }
+                        return;
+                    }
+                }
+
                 if let Some(layer_id) = state.layers_engine.current_hover() {
                     if let Some((identifier, match_id)) = self.get_app_from_layer(&layer_id) {
-                        println!("Button released on layer {}, identifier={}, has_protocol_layer={}", layer_id.0, identifier, self.has_protocol_layer(&identifier));
                         // Check for right-click on protocol layer item
-                        if event.button == BTN_RIGHT && self.has_protocol_layer(&identifier) {
-                            tracing::info!("Right-click on protocol layer app: {}", identifier);
-                            
-                            // Look up dock item resource and send menu_requested event
-                            if let Some(dock_item_resource) = state.otto_dock.app_id_to_resource.get(&identifier) {
-                                let pointer_loc = state.pointer.current_location();
-                                tracing::info!("Sending menu_requested event: app_id={}, x={}, y={}", 
-                                    identifier, pointer_loc.x as i32, pointer_loc.y as i32);
-                                dock_item_resource.menu_requested(pointer_loc.x as i32, pointer_loc.y as i32);
-                            } else {
-                                warn!("No dock item resource found for app_id={}", identifier);
-                            }
+                        if event.button == BTN_RIGHT {
+                            tracing::info!("🖱️ Right-click detected on protocol layer app: {}", identifier);
+
+                            let pos = state.last_pointer_location;
+                            let pos = layers::prelude::Point::new(pos.0 as f32, pos.1 as f32);
+                            state.workspaces.dock.open_context_menu(pos, identifier.clone());
+                            let view = InteractiveView { view: Box::new(self.clone()) };
+                            seat.get_keyboard().map(|keyboard| {
+                                keyboard.set_focus(state, Some(crate::focus::KeyboardFocusTarget::View(view)), event.serial);
+                            });
+                            return;
                         } else {
                             // Normal left-click: focus or launch app
                             if let Some(wid) = state.workspaces.focus_app(&identifier) {
@@ -89,9 +147,143 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
                         }
                     }
                 }
+                // Clear darken filter on any pressed app icon
+                if let Some(layer_id) = state.layers_engine.current_hover() {
+                    if let Some((identifier, _match_id)) = self.get_app_from_layer(&layer_id) {
+                        let apps_layers = self.app_layers.read().unwrap();
+                        if let Some(entry) = apps_layers.get(&identifier) {
+                            entry.icon_scaler.set_color_filter(None);
+                        }
+                    }
+                }
                 self.dragging
                     .store(false, std::sync::atomic::Ordering::SeqCst);
             }
+        }
+    }
+    fn on_key(&self, event: &smithay::input::keyboard::KeysymHandle<'_>, state: smithay::backend::input::KeyState) {
+        if state != KeyState::Released {
+            return;
+        }
+
+        // Determine what action to take while holding a read lock, then drop it
+        // before calling close_context_menu (which also acquires the lock).
+        enum MenuAction { None, Navigate, Close(Option<String>) }
+        let action = {
+            let menu_lock = self.context_menu.read().unwrap();
+            let Some(menu) = menu_lock.as_ref() else { return };
+
+            match event.modified_sym() {
+                Keysym::Up    => { menu.select_previous(); MenuAction::Navigate }
+                Keysym::Down  => { menu.select_next();     MenuAction::Navigate }
+                Keysym::Right => { menu.open_submenu();    MenuAction::Navigate }
+                Keysym::Left  => { menu.close_submenu();   MenuAction::Navigate }
+                Keysym::Return | Keysym::KP_Enter => {
+                    MenuAction::Close(menu.selected_label())
+                }
+                Keysym::Escape => MenuAction::Close(None),
+                _ => MenuAction::None,
+            }
+        }; // menu_lock dropped here
+
+        if let MenuAction::Close(_) = action {
+            self.close_context_menu();
+        }
+    }
+
+    fn on_key_with_data(
+        &self,
+        event: &smithay::input::keyboard::KeysymHandle<'_>,
+        key_state: smithay::backend::input::KeyState,
+        data: &mut crate::Otto<Backend>,
+    ) {
+        if key_state != KeyState::Released {
+            return;
+        }
+        let label = {
+            let menu_lock = self.context_menu.read().unwrap();
+            let Some(menu) = menu_lock.as_ref() else { return };
+            match event.modified_sym() {
+                Keysym::Return | Keysym::KP_Enter => menu.selected_label(),
+                _ => return,
+            }
+        };
+        if let Some(label) = label {
+            // Read app_id before close_context_menu(), which calls .take() on it
+            let app_id = self.context_menu_app_id.read().unwrap().clone();
+            self.close_context_menu();
+            if let Some(app_id) = app_id {
+                self.execute_context_menu_action(&label, &app_id, data);
+            }
+        }
+    }
+
+    fn on_keyboard_leave(&self) {
+        self.close_context_menu();
+    }
+
+}
+
+impl DockView {
+    /// Execute the named context-menu action for the given app identifier.
+    pub(super) fn execute_context_menu_action<Backend: crate::state::Backend>(
+        &self,
+        label: &str,
+        app_id: &str,
+        state: &mut crate::Otto<Backend>,
+    ) {
+        tracing::info!("Context menu action '{}' for app '{}'", label, app_id);
+        match label {
+            "Open" | "New Window" => {
+                // Focus if running, otherwise launch
+                if self.is_app_running(app_id) {
+                    state.workspaces.focus_app(app_id);
+                } else if let Some(match_id) = self.match_id_for(app_id) {
+                    if let Some(app) = self.bookmark_application(&match_id) {
+                        if let Some((cmd, args)) = app.command(&[]) {
+                            state.launch_program(cmd, args);
+                        }
+                    }
+                }
+            }
+            "Keep in Dock" => {
+                if let Some(match_id) = self.match_id_for(app_id) {
+                    let mut dock_state = self.get_state();
+                    if let Some(app) = dock_state.running_apps.iter().find(|a| a.match_id == match_id).cloned() {
+                        crate::config::add_dock_bookmark(&match_id);
+                        let bookmark = crate::config::DockBookmark {
+                            desktop_id: match_id.clone(),
+                            label: None,
+                            exec_args: vec![],
+                        };
+                        self.bookmark_configs.write().unwrap().insert(match_id.clone(), bookmark);
+                        if !dock_state.launchers.iter().any(|a| a.match_id == match_id) {
+                            dock_state.launchers.push(app);
+                            self.update_state(&dock_state);
+                        }
+                        tracing::info!("Added '{}' to dock bookmarks", match_id);
+                    }
+                }
+            }
+            "✓ Keep in Dock" => {
+                if let Some(match_id) = self.match_id_for(app_id) {
+                    // Get the original desktop_id as written in the config file
+                    let desktop_id = self.bookmark_configs.read().unwrap()
+                        .get(&match_id)
+                        .map(|b| b.desktop_id.clone())
+                        .unwrap_or_else(|| match_id.clone());
+                    crate::config::remove_dock_bookmark(&desktop_id);
+                    self.bookmark_configs.write().unwrap().remove(&match_id);
+                    let mut dock_state = self.get_state();
+                    dock_state.launchers.retain(|a| a.match_id != match_id);
+                    self.update_state(&dock_state);
+                    tracing::info!("Removed '{}' from dock bookmarks ({})", app_id, desktop_id);
+                }
+            }
+            "Quit" => {
+                state.workspaces.quit_app(app_id);
+            }
+            _ => {}
         }
     }
 }

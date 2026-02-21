@@ -137,7 +137,7 @@ impl Config {
         }
 
         // 4. Backend overrides (highest priority)
-        if let Ok(backend) = std::env::var("SCREEN_COMPOSER_BACKEND") {
+        if let Ok(backend) = std::env::var("OTTO_BACKEND") {
             for candidate in backend_override_candidates(&backend) {
                 tracing::debug!("Trying to load backend override config: {}", &candidate);
                 if let Ok(content) = std::fs::read_to_string(&candidate) {
@@ -235,6 +235,90 @@ fn get_user_config_path() -> Option<PathBuf> {
         Some(path)
     } else {
         None
+    }
+}
+
+/// Return the best writable config file path:
+/// backend-specific local file if running with a backend override,
+/// user XDG config if it exists, otherwise the local dev override.
+pub fn writable_config_path() -> PathBuf {
+    // Prefer the backend-specific local override (e.g. otto_config.winit.toml)
+    if let Ok(backend) = std::env::var("OTTO_BACKEND") {
+        for candidate in backend_override_candidates(&backend) {
+            let path = PathBuf::from(&candidate);
+            if path.exists() {
+                return path;
+            }
+        }
+    }
+    get_user_config_path()
+        .unwrap_or_else(|| PathBuf::from("otto_config.toml"))
+}
+
+fn strip_desktop_ext(id: &str) -> &str {
+    id.strip_suffix(".desktop").unwrap_or(id)
+}
+
+/// Add a bookmark to the dock section of the writable config file.
+///
+/// Does nothing (and logs a warning) if the bookmark already exists.
+pub fn add_dock_bookmark(desktop_id: &str) {
+    let normalized = strip_desktop_ext(desktop_id);
+    let path = writable_config_path();
+    let raw = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut doc: toml::Value = raw.parse().unwrap_or(toml::Value::Table(Default::default()));
+
+    let bookmarks = doc
+        .as_table_mut().unwrap()
+        .entry("dock").or_insert(toml::Value::Table(Default::default()))
+        .as_table_mut().unwrap()
+        .entry("bookmarks").or_insert(toml::Value::Array(vec![]));
+
+    if let toml::Value::Array(arr) = bookmarks {
+        let already = arr.iter().any(|e| {
+            e.get("desktop_id").and_then(|v| v.as_str())
+                .map(|s| strip_desktop_ext(s) == normalized)
+                .unwrap_or(false)
+        });
+        if !already {
+            let mut entry = toml::map::Map::new();
+            entry.insert("desktop_id".into(), toml::Value::String(normalized.into()));
+            arr.push(toml::Value::Table(entry));
+        }
+    }
+
+    if let Ok(serialized) = toml::to_string_pretty(&doc) {
+        let _ = std::fs::write(&path, serialized);
+    }
+}
+
+/// Remove a bookmark from the dock section of the writable config file.
+pub fn remove_dock_bookmark(desktop_id: &str) {
+    let normalized = strip_desktop_ext(desktop_id);
+    let path = writable_config_path();
+    let raw = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut doc: toml::Value = match raw.parse() {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    if let Some(bookmarks) = doc
+        .as_table_mut()
+        .and_then(|t| t.get_mut("dock"))
+        .and_then(|d| d.as_table_mut())
+        .and_then(|t| t.get_mut("bookmarks"))
+    {
+        if let toml::Value::Array(arr) = bookmarks {
+            arr.retain(|e| {
+                e.get("desktop_id").and_then(|v| v.as_str())
+                    .map(|s| strip_desktop_ext(s) != normalized)
+                    .unwrap_or(true)
+            });
+        }
+    }
+
+    if let Ok(serialized) = toml::to_string_pretty(&doc) {
+        let _ = std::fs::write(&path, serialized);
     }
 }
 

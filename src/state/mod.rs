@@ -213,6 +213,8 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub seat: Seat<Otto<BackendData>>,
     pub clock: Clock<Monotonic>,
     pub pointer: PointerHandle<Otto<BackendData>>,
+    /// Cached pointer location to avoid deadlock when accessing during button events
+    pub last_pointer_location: (f64, f64),
 
     pub gamma_control_manager: gamma_control::GammaControlManagerState,
     pub audio_manager: Option<crate::audio::AudioManager>,
@@ -281,7 +283,7 @@ pub struct Otto<BackendData: Backend + 'static> {
 
     // otto_dock protocol
     pub otto_dock: crate::otto_dock::handlers::OttoDockState,
-
+    pub dock_item_surfaces: HashMap<ObjectId, crate::otto_dock::DockItem>,
     // Rendering metrics
     #[cfg(feature = "metrics")]
     pub render_metrics: Arc<crate::render_metrics::RenderMetrics>,
@@ -649,6 +651,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             seat_name,
             seat,
             pointer,
+            last_pointer_location: (0.0, 0.0),
             clock,
             gamma_control_manager,
             audio_manager: AudioManager::new().ok(),
@@ -693,7 +696,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
             // otto_dock protocol
             otto_dock,
-
+            dock_item_surfaces: HashMap::new(),
             // render metrics
             #[cfg(feature = "metrics")]
             render_metrics: Arc::new(crate::render_metrics::RenderMetrics::new(backend_name)),
@@ -1242,6 +1245,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                             surface.id(),
                             (surface.clone(), *location, parent_id.clone()),
                         );
+                    } else {
+                        // Surface committed a null buffer (unmapped subsurface) — hide its layer
+                        if let Some(layer) = self.surface_layers.get(&surface.id()) {
+                            layer.set_hidden(true);
+                        }
                     }
                 },
                 |_, _, _| true,
@@ -1253,6 +1261,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
                 // Configure layer with all properties and draw callback
                 if let Some(wvs) = render_elements.iter().find(|e| &e.id == surface_id) {
+                    layer.set_hidden(false);
                     crate::workspaces::utils::configure_surface_layer(&layer, wvs);
 
                     // Set up parent-child relationship using layers_engine
