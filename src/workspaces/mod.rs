@@ -110,6 +110,8 @@ pub struct Workspaces {
     pub workspaces_layer: Layer,
     /// Container for wlr-layer-shell background layer surfaces
     pub layer_shell_background: Layer,
+
+    pub layer_shell_top: Layer,
     /// Container for wlr-layer-shell overlay layer surfaces  
     pub layer_shell_overlay: Layer,
     expose_layer: Layer,
@@ -236,10 +238,24 @@ impl Workspaces {
         let dock = Arc::new(dock);
         dock.show(None);
 
+        // Layer shell top layer (z-order: above workspaces)
+        let layer_shell_top = layers_engine.new_layer();
+        layer_shell_top.set_key("layer_shell_top");
+        layer_shell_top.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            size: taffy::Size {
+                width: taffy::Dimension::Percent(1.0),
+                height: taffy::Dimension::Percent(1.0),
+            },
+            ..Default::default()
+        });
+        layer_shell_top.set_pointer_events(false);
+        layers_engine.add_layer(&layer_shell_top);
+
         // Create popup overlay AFTER dock so it renders on top
         let popup_overlay = PopupOverlayView::new(layers_engine.clone());
 
-        let app_switcher = AppSwitcherView::new(layers_engine.clone());
+        let app_switcher = AppSwitcherView::new(layers_engine.clone(), dock.clone());
         let app_switcher = Arc::new(app_switcher);
 
         let workspace_selector_layer = layers_engine.new_layer();
@@ -288,6 +304,7 @@ impl Workspaces {
             osd,
             overlay_layer,
             layer_shell_background,
+            layer_shell_top,
             layer_shell_overlay,
             show_all: Arc::new(AtomicBool::new(false)),
             show_desktop: Arc::new(AtomicBool::new(false)),
@@ -1654,6 +1671,7 @@ impl Workspaces {
                 .view_layer
                 .render_bounds_transformed()
                 .contains(skia::Point::new(x, y))
+        || self.dock.has_menu_open()
     }
 
     /// Return the actual rendered height of the dock in logical pixels
@@ -2627,7 +2645,7 @@ impl Workspaces {
                 self.layer_shell_background.add_sublayer(&layer);
             }
             WlrLayer::Top => {
-                self.layer_shell_overlay.add_sublayer(&layer);
+                self.layer_shell_top.add_sublayer(&layer);
             }
             WlrLayer::Overlay => {
                 self.layer_shell_overlay.add_sublayer(&layer);
