@@ -117,7 +117,7 @@ impl ContextMenuView {
                 delay: 0.0,
                 timing: TimingFunction::ease_in_quad(0.05),
             }),
-        ).on_finish(|l: &Layer, p:f32| {
+        ).on_finish(|l: &Layer, _p: f32| {
             l.set_hidden(true);
         }, true);
     }
@@ -202,6 +202,50 @@ impl ContextMenuView {
     /// Current submenu depth (0 = root)
     pub fn depth(&self) -> usize {
         self.view.get_state().depth()
+    }
+
+    /// Flash the selected item at `depth`/`idx`, then send `label` on the returned receiver.
+    ///
+    /// Mirrors the client-side pulse: deselect (50 ms) → reselect (100 ms) → send.
+    /// The caller should close the menu and execute the action when the receiver fires.
+    /// Trigger a visual pulse on the selected item, then close the menu.
+    /// The action should be executed immediately by the caller before calling this.
+    pub fn pulse_then_close(&self, depth: usize, idx: usize, dock: crate::workspaces::dock::DockView) {
+        let view = self.view.clone();
+        tokio::spawn(async move {
+            let mut state = view.get_state();
+            state.select_at_depth(depth, None);
+            view.update_state(&state);
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+            let mut state = view.get_state();
+            state.select_at_depth(depth, Some(idx));
+            view.update_state(&state);
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+            dock.close_context_menu();
+        });
+    }
+
+    /// Trigger a visual pulse on the selected item (fire-and-forget).
+    /// The action should be executed immediately by the caller; this only animates.
+    pub fn pulse(&self, depth: usize, idx: usize) {
+        let view = self.view.clone();
+        tokio::spawn(async move {
+            let mut state = view.get_state();
+            state.select_at_depth(depth, None);
+            view.update_state(&state);
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+            let mut state = view.get_state();
+            state.select_at_depth(depth, Some(idx));
+            view.update_state(&state);
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        });
     }
 }
 

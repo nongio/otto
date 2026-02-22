@@ -4,7 +4,7 @@ use taffy::LengthPercentageAuto;
 
 use crate::{
     config::Config,
-    theme::{self, theme_colors},
+    theme::theme_colors,
     workspaces::{
         Application, utils::{FONT_CACHE, draw_balloon_rect}
     },
@@ -175,6 +175,8 @@ pub fn setup_app_icon(
             },
             Some(Transition::ease_in_quad(0.2)),
         ))
+        .picture_cached(false)
+        .image_cache(false)
         
         .build()
         .unwrap();
@@ -195,7 +197,9 @@ pub fn setup_app_icon(
             None, // None
         ))
         .pointer_events(false)
-        .image_cache(true)
+        // .image_cache(true)
+        .picture_cached(false)
+        .image_cache(false)
         .background_color(Color::new_rgba(1.0, 0.0, 0.0, 0.0))
         .content(draw_picture)
         .build()

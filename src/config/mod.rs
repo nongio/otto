@@ -255,73 +255,6 @@ pub fn writable_config_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("otto_config.toml"))
 }
 
-fn strip_desktop_ext(id: &str) -> &str {
-    id.strip_suffix(".desktop").unwrap_or(id)
-}
-
-/// Add a bookmark to the dock section of the writable config file.
-///
-/// Does nothing (and logs a warning) if the bookmark already exists.
-pub fn add_dock_bookmark(desktop_id: &str) {
-    let normalized = strip_desktop_ext(desktop_id);
-    let path = writable_config_path();
-    let raw = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml::Value = raw.parse().unwrap_or(toml::Value::Table(Default::default()));
-
-    let bookmarks = doc
-        .as_table_mut().unwrap()
-        .entry("dock").or_insert(toml::Value::Table(Default::default()))
-        .as_table_mut().unwrap()
-        .entry("bookmarks").or_insert(toml::Value::Array(vec![]));
-
-    if let toml::Value::Array(arr) = bookmarks {
-        let already = arr.iter().any(|e| {
-            e.get("desktop_id").and_then(|v| v.as_str())
-                .map(|s| strip_desktop_ext(s) == normalized)
-                .unwrap_or(false)
-        });
-        if !already {
-            let mut entry = toml::map::Map::new();
-            entry.insert("desktop_id".into(), toml::Value::String(normalized.into()));
-            arr.push(toml::Value::Table(entry));
-        }
-    }
-
-    if let Ok(serialized) = toml::to_string_pretty(&doc) {
-        let _ = std::fs::write(&path, serialized);
-    }
-}
-
-/// Remove a bookmark from the dock section of the writable config file.
-pub fn remove_dock_bookmark(desktop_id: &str) {
-    let normalized = strip_desktop_ext(desktop_id);
-    let path = writable_config_path();
-    let raw = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml::Value = match raw.parse() {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-
-    if let Some(bookmarks) = doc
-        .as_table_mut()
-        .and_then(|t| t.get_mut("dock"))
-        .and_then(|d| d.as_table_mut())
-        .and_then(|t| t.get_mut("bookmarks"))
-    {
-        if let toml::Value::Array(arr) = bookmarks {
-            arr.retain(|e| {
-                e.get("desktop_id").and_then(|v| v.as_str())
-                    .map(|s| strip_desktop_ext(s) != normalized)
-                    .unwrap_or(true)
-            });
-        }
-    }
-
-    if let Ok(serialized) = toml::to_string_pretty(&doc) {
-        let _ = std::fs::write(&path, serialized);
-    }
-}
-
 fn backend_override_candidates(backend: &str) -> Vec<String> {
     match backend {
         "winit" => vec!["otto_config.winit.toml".into()],
@@ -337,6 +270,26 @@ fn backend_override_candidates(backend: &str) -> Vec<String> {
     }
 }
 
+/// Persist a `DockConfig` into the `[dock]` section of the writable config file.
+///
+/// The caller is responsible for passing the authoritative in-memory state.
+/// Only the `[dock]` table is touched; all other sections are left unchanged.
+pub fn save_dock_config(dock: &DockConfig) {
+    let path = writable_config_path();
+    let raw = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut doc: toml::Value = raw.parse().unwrap_or(toml::Value::Table(Default::default()));
+
+    if let Ok(dock_value) = toml::Value::try_from(dock) {
+        doc.as_table_mut()
+            .unwrap()
+            .insert("dock".to_string(), dock_value);
+    }
+
+    if let Ok(serialized) = toml::to_string_pretty(&doc) {
+        let _ = std::fs::write(&path, serialized);
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DockConfig {
     #[serde(default = "default_dock_size")]
@@ -345,6 +298,10 @@ pub struct DockConfig {
     pub genie_scale: f64,
     #[serde(default = "default_genie_span")]
     pub genie_span: f64,
+    #[serde(default)]
+    pub autohide: bool,
+    #[serde(default = "default_magnification")]
+    pub magnification: bool,
     #[serde(default)]
     pub bookmarks: Vec<DockBookmark>,
 }
@@ -390,6 +347,10 @@ fn default_max_left() -> i32 {
 
 fn default_max_right() -> i32 {
     50 // Max 50 logical points for side panels
+}
+
+fn default_magnification() -> bool {
+    true
 }
 
 fn default_dock_size() -> f64 {
@@ -623,6 +584,8 @@ impl DisplaysConfig {
 pub struct DisplayProfile {
     #[serde(default)]
     pub name: Option<String>,
+    #[serde(default)]
+    pub primary: bool,
     #[serde(default)]
     pub resolution: Option<DisplayResolution>,
     #[serde(default)]

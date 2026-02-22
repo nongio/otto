@@ -84,6 +84,7 @@ pub struct Workspaces {
     model: Arc<RwLock<WorkspacesModel>>,
     spaces: Vec<Space<WindowElement>>,
     outputs: Vec<Output>,
+    primary_output: Option<Output>,
     display_handle: DisplayHandle,
 
     pub windows_map: HashMap<ObjectId, WindowElement>,
@@ -292,6 +293,7 @@ impl Workspaces {
             // layer,
             spaces,
             outputs: Vec::new(),
+            primary_output: None,
             model: Arc::new(RwLock::new(model)),
             windows_map: HashMap::new(),
             workspaces_layer,
@@ -350,6 +352,7 @@ impl Workspaces {
 
         self.update_workspaces_layout();
         self.scroll_to_workspace_index(current_workspace, Some(Transition::ease_out_quad(0.0)));
+        self.dock.set_screen_size(width, height);
     }
 
     pub fn get_logical_rect(&self) -> smithay::utils::Rectangle<i32, smithay::utils::Logical> {
@@ -1074,42 +1077,58 @@ impl Workspaces {
                     true,
                 );
             }
-            self.workspace_selector_view
+            let tr = self.workspace_selector_view
                 .layer
                 .set_opacity(workspace_opacity, transition);
 
             // Animate layer shell overlay opacity (fade out when entering expose)
             self.layer_shell_overlay
                 .set_opacity(layer_shell_overlay_opacity, transition);
+
+            if end_gesture {
+                let wsv = self.workspace_selector_view
+                .layer.clone();
+                tr.on_finish(
+                    move |_: &Layer, _: f32| {
+                        // Animation finished
+                        wsv.set_hidden(!show_expose);    
+                    },
+                    true,
+                );
+            }
         }
         // Animate dock position
         if let Some(current_workspace) = current_workspace {
             if !is_current_workspace {
                 return;
             }
-            let mut start_position = 0.0;
-            let mut end_position = 250.0;
-            // Only keep dock hidden in fullscreen mode when NOT in expose mode
-            // During expose mode, we want the dock to animate normally
-            if current_workspace.get_fullscreen_mode() {
-                start_position = 250.0;
-                end_position = 250.0;
+            // When autohide is on and the dock is visible, animate it down with the expose
+            // gesture (same interpolation as the non-autohide path). The hot zone is suppressed
+            // during expose (see check_dock_hot_zone).
+            if self.dock.is_autohide_enabled() && !self.dock.is_hidden() {
+                let dock_y = 0.0_f32.interpolate(&250.0, delta);
+                self.dock.view_layer.set_position((0.0, dock_y.clamp(0.0, 250.0)), transition.clone());
+                if end_gesture && show_all {
+                    self.dock.schedule_autohide();
+                }
+            } else if !self.dock.is_autohide_enabled() {
+                let mut start_position = 0.0;
+                let mut end_position = 250.0;
+                // Only keep dock hidden in fullscreen mode when NOT in expose mode
+                // During expose mode, we want the dock to animate normally
+                if current_workspace.get_fullscreen_mode() {
+                    start_position = 250.0;
+                    end_position = 250.0;
+                }
+                let dock_y = start_position.interpolate(&end_position, delta);
+                let dock_y = dock_y.clamp(0.0, 250.0);
+                self.dock.view_layer.set_position((0.0, dock_y), transition);
             }
-            let dock_y = start_position.interpolate(&end_position, delta);
-            let dock_y = dock_y.clamp(0.0, 250.0);
-            let tr = self.dock.view_layer.set_position((0.0, dock_y), transition);
 
             if let Some(anim_ref) = animation {
                 self.layers_engine.start_animation(anim_ref, 0.0);
             }
-            if end_gesture {
-                tr.on_finish(
-                    move |_: &Layer, _: f32| {
-                        // Animation finished
-                    },
-                    true,
-                );
-            }
+            
         }
     }
 
@@ -2162,18 +2181,39 @@ impl Workspaces {
         output: &Output,
         location: impl Into<smithay::utils::Point<i32, smithay::utils::Logical>>,
     ) {
+        self.map_output_with_primary(output, location, false);
+    }
+
+    /// Attach a new output to every workspace, optionally marking it as primary.
+    pub fn map_output_with_primary(
+        &mut self,
+        output: &Output,
+        location: impl Into<smithay::utils::Point<i32, smithay::utils::Logical>>,
+        is_primary: bool,
+    ) {
         let location = location.into();
 
         self.outputs.push(output.clone());
+        if is_primary || self.primary_output.is_none() {
+            self.primary_output = Some(output.clone());
+        }
         // add the new output to every space
         for space in self.spaces.iter_mut() {
             space.map_output(output, location);
         }
     }
 
+    /// Returns the primary output (used for dock placement and hot zone).
+    pub fn primary_output(&self) -> Option<&Output> {
+        self.primary_output.as_ref()
+    }
+
     /// Detach an output from every workspace
     pub fn unmap_output(&mut self, output: &Output) {
         self.outputs.retain(|o| o != output);
+        if self.primary_output.as_ref() == Some(output) {
+            self.primary_output = self.outputs.first().cloned();
+        }
         // remove the new output from every space
         for space in self.spaces.iter_mut() {
             space.unmap_output(output);
@@ -2357,7 +2397,9 @@ impl Workspaces {
             if !self.get_show_all() {
                 if workspace.get_fullscreen_mode() {
                     self.dock.hide(Some(transition));
-                } else {
+                } else if !self.dock.is_autohide_enabled() {
+                    // With autohide on, dock visibility is managed by the hot zone /
+                    // show_autohide(); calling show() would hide it (see DockView::show).
                     self.dock.show(Some(transition));
                 }
             }

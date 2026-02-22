@@ -1468,6 +1468,35 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             }
         }
     }
+    /// Re-run maximize_request on every currently-maximized window so that the
+    /// new usable geometry (e.g. dock just became visible) is applied immediately.
+    pub fn remaximize_maximized_windows(&mut self) {
+        let windows: Vec<_> = self.workspaces.spaces_elements().cloned().collect();
+        for window in windows {
+            match window.underlying_surface() {
+                smithay::desktop::WindowSurface::Wayland(_) => {
+                    if let Some(toplevel) = window.toplevel() {
+                        let is_maximized = toplevel.with_pending_state(|state| {
+                            state.states.contains(xdg_toplevel::State::Maximized)
+                        });
+                        if is_maximized {
+                            let toplevel = toplevel.clone();
+                            <Self as smithay::wayland::shell::xdg::XdgShellHandler>::maximize_request(
+                                self, toplevel,
+                            );
+                        }
+                    }
+                }
+                #[cfg(feature = "xwayland")]
+                smithay::desktop::WindowSurface::X11(surface) => {
+                    if surface.is_maximized() {
+                        self.maximize_request_x11(&surface);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn close_focused_window(&mut self) {
         if let Some(keyboard) = self.seat.get_keyboard() {
             if let Some(KeyboardFocusTarget::Window(window)) = keyboard.current_focus() {

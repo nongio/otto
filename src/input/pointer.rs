@@ -1,4 +1,5 @@
 use crate::{focus::PointerFocusTarget, shell::FullscreenSurface, state::Backend, Otto};
+use layers::skia::Contains;
 use smithay::{
     backend::input::{
         self, Axis, AxisSource, ButtonState, Event, InputBackend, PointerAxisEvent,
@@ -394,6 +395,29 @@ impl<BackendData: Backend> Otto<BackendData> {
             pointer.frame(self);
         }
     }
+
+    /// Check if the pointer is in the dock hot zone (bottom edge of the primary output)
+    /// and show/hide the dock accordingly when autohide is enabled.
+    pub(crate) fn check_dock_hot_zone(&mut self, pos: (f64, f64)) {
+
+        if !self.workspaces.dock.is_autohide_enabled() {
+            return;
+        }
+        // Don't trigger show dock if we're in the middle of a workspace switch or showing all workspaces
+        if self.workspaces.get_show_all() || self.workspaces.is_expose_transitioning() {
+            return;
+        }
+        let hot_zone = *self.workspaces.dock.cached_hot_zone.read().unwrap();
+        if let Some(hot_zone) = hot_zone {
+            let pos = layers::skia::Point::new(pos.0 as f32, pos.1 as f32);
+            let in_hotzone = hot_zone.contains(pos);
+            if in_hotzone && self.workspaces.dock.is_hidden() {
+                self.workspaces.dock.show_autohide();
+            } else if !in_hotzone && !self.workspaces.dock.is_hidden() {
+                self.workspaces.dock.schedule_autohide();
+            }
+        }
+    }
 }
 
 #[cfg(any(feature = "winit", feature = "x11"))]
@@ -426,6 +450,8 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
         let pos = pos.to_physical(scale);
         self.layers_engine
             .pointer_move(&(pos.x as f32, pos.y as f32).into(), None);
+
+        self.check_dock_hot_zone(self.last_pointer_location);
     }
 }
 
@@ -549,6 +575,8 @@ impl crate::Otto<crate::udev::UdevData> {
         self.layers_engine
             .pointer_move(&(pos.x as f32, pos.y as f32).into(), None);
 
+        self.check_dock_hot_zone(self.last_pointer_location);
+
         // Schedule a redraw to update the cursor position
         self.schedule_event_loop_dispatch();
 
@@ -618,6 +646,8 @@ impl crate::Otto<crate::udev::UdevData> {
 
         self.layers_engine
             .pointer_move(&(pos.x as f32, pos.y as f32).into(), None);
+
+        self.check_dock_hot_zone(self.last_pointer_location);
 
         // Schedule a redraw to update the cursor position
         self.schedule_event_loop_dispatch();

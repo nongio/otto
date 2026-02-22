@@ -6,13 +6,13 @@ use std::{
 
 use layers::{
     engine::{animation::Transition, Engine, NodeRef, TransactionRef},
-    prelude::{taffy, Layer, Point},
+    prelude::{taffy, Layer, Point, Spring, TimingFunction},
     skia,
     taffy::{prelude::FromLength, style::Style},
     types::{BlendMode, Size},
     view::{BuildLayerTree, LayerTreeBuilder},
 };
-use otto_kit::{components::context_menu::ContextMenu, prelude::{ContextMenuStyle, MenuItem}};
+use otto_kit::prelude::{ContextMenuStyle, MenuItem};
 use smithay::{reexports::wayland_server::backend::ObjectId, utils::IsAlive};
 use tokio::sync::mpsc;
 
@@ -69,13 +69,22 @@ pub struct DockView {
     notify_tx: tokio::sync::mpsc::Sender<WorkspacesModel>,
     latest_event: Arc<tokio::sync::RwLock<Option<WorkspacesModel>>>,
     magnification_position: Arc<RwLock<f32>>,
-    pub(super) bookmark_configs: Arc<RwLock<HashMap<String, DockBookmark>>>,
-
     pub dragging: Arc<AtomicBool>,
 
     pub context_menu: Arc<RwLock<Option<ContextMenuView>>>,
     /// The identifier of the app whose icon is currently showing the context-menu pressed state.
     pub(super) context_menu_app_id: Arc<RwLock<Option<String>>>,
+    /// Runtime dock configuration — loaded at startup, kept in sync with the file on changes.
+    /// This is the single source of truth for all dock settings and bookmarks.
+    pub(super) dock_config: Arc<RwLock<crate::config::DockConfig>>,
+    /// Runtime magnification toggle (mirrors config but can be changed without restart).
+    magnification_enabled: Arc<AtomicBool>,
+    /// Physical screen dimensions, kept in sync by the compositor via `set_screen_size`.
+    screen_size: Arc<RwLock<(i32, i32)>>,
+    /// Pre-computed autohide hot-zone rect, rebuilt by `render_dock` every time the dock
+    /// layout changes. `check_dock_hot_zone` reads this without doing any computation.
+    pub cached_hot_zone: Arc<RwLock<Option<skia::Rect>>>,
+
 }
 impl PartialEq for DockView {
     fn eq(&self, other: &Self) -> bool {
@@ -208,8 +217,7 @@ impl DockView {
         view_layer.add_sublayer(&resize_handle);
 
         let handle_tree = LayerTreeBuilder::default()
-            .key("dock_handle")
-            .pointer_events(false)
+            .pointer_events(true)
             .size(Size {
                 width: taffy::Dimension::Length(scaled_icon_size * 0.4),
                 height: taffy::Dimension::Length(initial_bar_height),
@@ -281,11 +289,20 @@ impl DockView {
             notify_tx,
             latest_event: Arc::new(tokio::sync::RwLock::new(None)),
             magnification_position: Arc::new(RwLock::new(-500.0)),
-            bookmark_configs: Arc::new(RwLock::new(HashMap::new())),
             dragging: Arc::new(AtomicBool::new(false)),
             context_menu: Arc::new(RwLock::new(None)),
             context_menu_app_id: Arc::new(RwLock::new(None)),
+            dock_config: Arc::new(RwLock::new(Config::with(|c| c.dock.clone()))),
+            magnification_enabled: Arc::new(AtomicBool::new(Config::with(|c| c.dock.magnification))),
+            screen_size: Arc::new(RwLock::new((0, 0))),
+            cached_hot_zone: Arc::new(RwLock::new(None)),
+
         };
+        // Sync AtomicBool from dock_config (single source)
+        dock.magnification_enabled.store(
+            dock.dock_config.read().unwrap().magnification,
+            std::sync::atomic::Ordering::SeqCst,
+        );
         dock.render_dock();
         dock.notification_handler(notify_rx);
         dock.load_configured_bookmarks();
@@ -293,11 +310,7 @@ impl DockView {
         dock
     }
     fn load_configured_bookmarks(&self) {
-        let bookmarks = Config::with(|c| c.dock.bookmarks.clone());
-        {
-            let mut configs = self.bookmark_configs.write().unwrap();
-            configs.clear();
-        }
+        let bookmarks = self.dock_config.read().unwrap().bookmarks.clone();
         if bookmarks.is_empty() {
             let mut state = self.get_state();
             state.launchers.clear();
@@ -308,27 +321,17 @@ impl DockView {
         let dock = self.clone();
         tokio::spawn(async move {
             let mut launchers = Vec::new();
-            let mut configs = HashMap::new();
 
             for bookmark in bookmarks {
-                // Accept both "firefox" and "firefox.desktop" in config
                 let id = bookmark.desktop_id.strip_suffix(".desktop")
                     .unwrap_or(&bookmark.desktop_id)
                     .to_string();
-                if let Some(mut app) =
-                    ApplicationsInfo::get_app_info_by_id(id).await
-                {
+                if let Some(mut app) = ApplicationsInfo::get_app_info_by_id(id).await {
                     app.override_name = bookmark.label.clone();
-                    configs.insert(app.match_id.clone(), bookmark.clone());
                     launchers.push(app);
                 } else {
                     tracing::warn!("dock bookmark not found: {}", bookmark.desktop_id);
                 }
-            }
-
-            {
-                let mut cfg_guard = dock.bookmark_configs.write().unwrap();
-                *cfg_guard = configs;
             }
 
             let mut state = dock.get_state();
@@ -345,12 +348,26 @@ impl DockView {
     pub fn get_state(&self) -> DockModel {
         self.state.read().unwrap().clone()
     }
+    pub fn is_hidden(&self) -> bool {
+        !self.active.load(std::sync::atomic::Ordering::Relaxed)
+    }
+    pub fn is_autohide_enabled(&self) -> bool {
+        self.dock_config.read().unwrap().autohide
+    }
     pub fn hide(&self, transition: Option<Transition>) -> TransactionRef {
+        tracing::debug!("dock: hide");
         self.active
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.view_layer.set_position((0.0, 250.0), transition)
     }
     pub fn show(&self, transition: Option<Transition>) -> TransactionRef {
+        if self.dock_config.read().unwrap().autohide {
+            // When autohide is on, external show() calls should keep the dock hidden.
+            // Mark active=false so is_hidden() returns true and the hot zone can trigger it.
+            self.active.store(false, std::sync::atomic::Ordering::Relaxed);
+            return self.view_layer.set_position((0.0, 250.0), None);
+        }
+        tracing::debug!("dock: show");
         self.active
             .store(true, std::sync::atomic::Ordering::Relaxed);
         self.view_layer.set_position((0.0, 0.0), transition)
@@ -383,7 +400,7 @@ impl DockView {
     }
     fn render_elements_layers(&self, available_icon_width: f32) {
         let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
-        let dock_size_multiplier = Config::with(|config| config.dock.size.clamp(0.5, 2.0)) as f32;
+        let dock_size_multiplier = self.dock_config.read().unwrap().size.clamp(0.5, 2.0) as f32;
         let state = self.get_state();
         let display_apps = self.display_entries(&state);
         let app_height = available_icon_width * (1.0 + 20.0 / 95.0);
@@ -508,6 +525,8 @@ impl DockView {
                             })
                             .size(Size::points(BASE_ICON_SIZE, BASE_ICON_SIZE * 1.2))
                             .anchor_point(layers::types::Point::new(0.5, 0.5))
+                            .picture_cached(true)
+                            .image_cache(true)
                             .pointer_events(false)
                             .build()
                             .unwrap();
@@ -527,8 +546,8 @@ impl DockView {
                                 ..Default::default()
                             })
                             .size(Size::points(BASE_ICON_SIZE, BASE_ICON_SIZE))
-                            .picture_cached(false)
-                            .image_cache(false)
+                            .picture_cached(true)
+                            .image_cache(true)
                             .pointer_events(false)
                             .build()
                             .unwrap();
@@ -567,21 +586,6 @@ impl DockView {
                         identifier: app.identifier.clone(),
                     });
 
-                    // // Assign a random badge and progress immediately for demo/testing.
-                    // {
-                    //     use rand::Rng;
-                    //     let mut rng = rand::thread_rng();
-                    //     if rng.gen_bool(0.5) {
-                    //         let n = rng.gen_range(1u32..=99).to_string();
-                    //         badge_layer.set_draw_content(draw_badge(n));
-                    //         badge_layer.set_opacity(1.0, None);
-                    //     }
-                    //     if rng.gen_bool(0.6) {
-                    //         let v = rng.gen::<f64>();
-                    //         progress_layer.set_draw_content(draw_progress(v));
-                    //         progress_layer.set_opacity(1.0, None);
-                    //     }
-                    // }
 
                     new_layer.remove_all_pointer_handlers();
 
@@ -619,37 +623,16 @@ impl DockView {
                         (new_layer, inner_layer, label_layer, None)
                     });
 
+                let label = label.clone();
                 layer.remove_all_pointer_handlers();
 
-                let darken_color = skia::Color::from_argb(100, 100, 100, 100);
-                let add = skia::Color::from_argb(0, 0, 0, 0);
-                let filter = skia::color_filters::lighting(darken_color, add);
-
-                layer.remove_all_pointer_handlers();
-
-                layer.add_on_pointer_press(move |l: &Layer, _: f32, _: f32| {
-                    l.children().iter().for_each(|child| {
-                        // child.set_color_filter(filter.clone());
-                    });
-                });
-                // let inner_ref = inner.clone();
-                layer.add_on_pointer_release(move |l: &Layer, _: f32, _: f32| {
-                    l.children().iter().for_each(|child| {
-                        // child.set_color_filter(None);
-                    });
-                });
-
-                let label_ref = label.clone();
+                let label_in = label.clone();
                 layer.add_on_pointer_in(move |_: &Layer, _, _| {
-                    label_ref.set_opacity(1.0, Some(Transition::ease_in_quad(0.1)));
+                    label_in.set_opacity(1.0, Some(Transition::ease_in_quad(0.1)));
                 });
-                let label_ref = label.clone();
 
-                layer.add_on_pointer_out(move |l: &Layer, _: f32, _: f32| {
-                    label_ref.set_opacity(0.0, Some(Transition::ease_in_out_quad(0.1)));
-                    l.children().iter().for_each(|child| {
-                        // child.set_color_filter(None);
-                    });
+                layer.add_on_pointer_out(move |_: &Layer, _: f32, _: f32| {
+                    label.set_opacity(0.0, Some(Transition::ease_in_out_quad(0.1)));
                 });
                 previous_miniwindows.retain(|l| l.id() != layer.id());
             }
@@ -698,7 +681,7 @@ impl DockView {
         // those are constant like values
         let available_width = state.width as f32 - 20.0 * draw_scale;
         let base_icon_size = 95.0;
-        let dock_size_multiplier = Config::with(|config| config.dock.size.clamp(0.5, 2.0)) as f32;
+        let dock_size_multiplier = self.dock_config.read().unwrap().size.clamp(0.5, 2.0) as f32;
         let icon_size: f32 = base_icon_size * dock_size_multiplier * draw_scale;
 
         let apps_len = self.display_entries(&state).len() as f32;
@@ -720,7 +703,36 @@ impl DockView {
         let available_icon_size = self.available_icon_size();
 
         self.render_elements_layers(available_icon_size);
-        self.magnify_elements();
+        // When magnification is enabled, re-apply the current hover position so a
+        // state-driven re-render (e.g. window focus change) doesn't snap icons back
+        // to base size while the pointer is still over the dock.
+        // When magnification is disabled, pass genie_scale=0 to size icons correctly.
+        let scale_override = if self.magnification_enabled.load(std::sync::atomic::Ordering::SeqCst) {
+            None
+        } else {
+            Some(0.0_f64)
+        };
+        self.magnify_elements_with_scale(scale_override);
+
+        // Recompute and cache the autohide hot zone from the new dock dimensions.
+        let screen_scale = Config::with(|c| c.screen_scale) as f32;
+        // let dock_size_multiplier = self.dock_config.read().unwrap().size.clamp(0.5, 2.0) as f32;
+        let bar_h = Self::calculate_bar_height(available_icon_size,  1.0) / screen_scale;
+        let (screen_w, screen_h) = *self.screen_size.read().unwrap();
+        // println!("screen x=0, w={}, h={} scale={}", screen_w, screen_h, screen_scale);
+
+        let screen_h = screen_h as f32 / screen_scale;
+        let screen_w = screen_w as f32 / screen_scale;
+        *self.cached_hot_zone.write().unwrap() = if screen_w > 0.0 && screen_h > 0.0 {
+            // println!("new hot zone: screen x=0, w={}, h={}", screen_w, screen_h);
+            // println!("new hot zone: bar x=0, w={}, h={}", screen_w, bar_h);
+            Some(
+                skia::Rect::from_xywh(0.0, screen_h - bar_h, screen_w, bar_h)
+                    .with_outset((20.0, 40.0)),
+            )
+        } else {
+            None
+        };
     }
     fn notification_handler(&self, mut rx: tokio::sync::mpsc::Receiver<WorkspacesModel>) {
         // let view = self.view.clone();
@@ -792,6 +804,10 @@ impl DockView {
             .find(|(_, entry)| entry.layer.id() == *layer)
             .map(|(match_id, entry)| (entry.identifier.clone(), match_id.clone()))
     }
+
+    pub fn is_handle_layer(&self, layer: &NodeRef) -> bool {
+        self.resize_handle.id() == *layer
+    }
     pub fn get_window_from_layer(&self, layer: &NodeRef) -> Option<ObjectId> {
         let miniwindow_layers = self.miniwindow_layers.read().unwrap();
         if let Some((window, ..)) = miniwindow_layers
@@ -830,6 +846,14 @@ impl DockView {
     }
     // Magnify elements
     fn magnify_elements(&self) {
+        self.magnify_elements_with_scale(None);
+    }
+
+    fn magnify_elements_with_scale(&self, scale_override: Option<f64>) {
+        let magnification_enabled = self.magnification_enabled.load(std::sync::atomic::Ordering::SeqCst);
+        if scale_override.is_none() && !magnification_enabled {
+            return;
+        }
         let pos = *self.magnification_position.read().unwrap();
         let bounds = self.view_layer.render_bounds_transformed();
         let pos = pos - bounds.x();
@@ -837,7 +861,7 @@ impl DockView {
         let display_apps = self.display_entries(&state);
 
         let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
-        let dock_size_multiplier = Config::with(|config| config.dock.size.clamp(0.5, 2.0)) as f32;
+        let dock_size_multiplier = self.dock_config.read().unwrap().size.clamp(0.5, 2.0) as f32;
         let base_icon_size = 80.0;
         let icon_size: f32 = base_icon_size * dock_size_multiplier * draw_scale;
         let padding = icon_size * 20.0 / base_icon_size;
@@ -851,14 +875,15 @@ impl DockView {
             .layers_engine
             .add_animation_from_transition(&Transition::ease_out_quad(0.08), false);
         let mut changes = Vec::new();
-        let genie_scale = Config::with(|c| c.dock.genie_scale);
+        let genie_scale = scale_override.unwrap_or_else(|| self.dock_config.read().unwrap().genie_scale);
+        let genie_span = self.dock_config.read().unwrap().genie_span;
         {
             let layers_map = self.app_layers.read().unwrap();
             for (index, (app, _running)) in display_apps.iter().enumerate() {
                 if let Some(entry) = layers_map.get(&app.match_id) {
                     let layer = entry.layer.clone();
                     let icon_pos = 1.0 / tot_elements * index as f32 + 1.0 / (tot_elements * 2.0);
-                    let icon_focus = 1.0 + magnify_function(focus - icon_pos) * genie_scale;
+                    let icon_focus = 1.0 + magnify_function(focus - icon_pos, genie_span) * genie_scale;
                     let focused_icon_size = icon_size * icon_focus as f32;
                     let height_padding = BASE_ICON_SIZE * 0.08;
 
@@ -897,7 +922,7 @@ impl DockView {
                 // so minimized window magnification lines up with their on-screen order.
                 let index = index + miniwindow_start_index;
                 let icon_pos = 1.0 / tot_elements * index as f32 + 1.0 / (tot_elements * 2.0);
-                let icon_focus = 1.0 + magnify_function(focus - icon_pos) * genie_scale;
+                let icon_focus = 1.0 + magnify_function(focus - icon_pos, genie_span) * genie_scale;
                 let focused_icon_size = icon_size * icon_focus as f32;
 
                 // let ratio = win.w / win.h;
@@ -930,6 +955,11 @@ impl DockView {
 
         self.layers_engine.start_animation(animation, 0.0);
     }
+    /// Update the physical screen dimensions so `render_dock` can compute a correct hot zone.
+    pub fn set_screen_size(&self, w: i32, h: i32) {
+        *self.screen_size.write().unwrap() = (w, h);
+    }
+
     pub fn update_magnification_position(&self, pos: f32) {
         *self.magnification_position.write().unwrap() = pos;
         if self.has_menu_open() {
@@ -938,7 +968,9 @@ impl DockView {
         self.magnify_elements();
     }
     pub fn bookmark_config_for(&self, match_id: &str) -> Option<DockBookmark> {
-        self.bookmark_configs.read().unwrap().get(match_id).cloned()
+        self.dock_config.read().unwrap().bookmarks.iter()
+            .find(|b| b.desktop_id.strip_suffix(".desktop").unwrap_or(&b.desktop_id) == match_id)
+            .cloned()
     }
     /// Returns the icon_stack layer for `identifier` so the app switcher can mirror it.
     /// The icon_stack contains icon + badge + progress overlays (not the label tooltip).
@@ -999,6 +1031,41 @@ impl DockView {
         }
     }
 
+    /// Open the dock-settings context menu anchored to the handle.
+    pub fn open_handle_context_menu(&self) {
+        let scale = Config::with(|c| c.screen_scale) as f32;
+        let handle_bounds = self.resize_handle.render_bounds_transformed();
+        let wrap_bounds = self.wrap_layer.render_bounds_transformed();
+        let pos = Point::new(
+            (handle_bounds.x() + handle_bounds.width() / 2.0 - wrap_bounds.x()) / scale,
+            (handle_bounds.y() - wrap_bounds.y()) / scale,
+        );
+
+        let autohide = self.dock_config.read().unwrap().autohide;
+        let magnification = self.dock_config.read().unwrap().magnification;
+
+        let items = vec![
+            MenuItem::action(if autohide { "✓ Auto-hide" } else { "Auto-hide" }).with_action_id("toggle_autohide"),
+            MenuItem::action(if magnification { "✓ Magnification" } else { "Magnification" }).with_action_id("toggle_magnification"),
+        ];
+
+        let mut context_menu_lock = self.context_menu.write().unwrap();
+        if context_menu_lock.is_none() {
+            let menu = ContextMenuView::new(&self.wrap_layer, items.clone());
+            let s = Config::with(|c| c.screen_scale) as f32;
+            menu.set_style(ContextMenuStyle::default_with_scale(s));
+            *context_menu_lock = Some(menu);
+        }
+        if let Some(menu) = context_menu_lock.as_ref() {
+            menu.set_items(items);
+            menu.show_at(pos.x, pos.y);
+        }
+        drop(context_menu_lock);
+
+        // Use a sentinel app_id so actions can be distinguished
+        *self.context_menu_app_id.write().unwrap() = Some("__dock__".to_string());
+    }
+
     /// Find the `match_id` (bookmark key) for an app by its `identifier`.
     pub fn match_id_for(&self, identifier: &str) -> Option<String> {
         self.app_layers.read().unwrap()
@@ -1026,19 +1093,19 @@ impl DockView {
         let mut items = Vec::new();
 
         if running {
-            items.push(MenuItem::action("New Window"));
             items.push(MenuItem::separator());
         } else {
-            items.push(MenuItem::action("Open"));
+            items.push(MenuItem::action("Open").with_action_id("open"));
             items.push(MenuItem::separator());
         }
 
         let keep_label = if bookmarked { "✓ Keep in Dock" } else { "Keep in Dock" };
-        items.push(MenuItem::action(keep_label));
+        let keep_action = if bookmarked { "remove_from_dock" } else { "keep_in_dock" };
+        items.push(MenuItem::action(keep_label).with_action_id(keep_action));
 
         if running {
             items.push(MenuItem::separator());
-            items.push(MenuItem::action("Quit").with_shortcut("⌘Q"));
+            items.push(MenuItem::action("Quit").with_action_id("quit").with_shortcut("⌘Q"));
         }
 
         items
@@ -1102,11 +1169,12 @@ impl DockView {
         if let Some(entry) = app_layers.values().find(|e| e.identifier == app_id) {
             if active {
                 entry.icon_scaler.set_color_filter(filter);
-                entry.label_layer.set_opacity(0.0, Some(Transition::ease_in_quad(0.1)));
+                entry.icon_scaler.set_opacity(1.0, None);
+                entry.label_layer.set_opacity(0.0, Some(Transition::ease_in_quad(0.05)));
             } else {
                 entry.icon_scaler.set_color_filter(None);
-                // label returns to normal opacity on next pointer-in/out cycle
-                entry.label_layer.set_opacity(0.0, Some(Transition::ease_in_quad(0.1)));
+                entry.icon_scaler.set_opacity(1.0, None);
+                entry.label_layer.set_opacity(1.0, Some(Transition::ease_in_quad(0.05)));
             }
         }
     }
@@ -1116,6 +1184,59 @@ impl DockView {
             menu.is_active()
         } else {
             false
+        }
+    }
+
+    pub(super) fn set_magnification_enabled(&self, enabled: bool) {
+        self.dock_config.write().unwrap().magnification = enabled;
+        self.magnification_enabled.store(enabled, std::sync::atomic::Ordering::SeqCst);
+        if !enabled {
+            // Reset all icons to base size immediately
+            self.update_magnification_position(-500.0);
+        }
+    }
+
+    /// Persist the current in-memory dock config to the writable config file.
+    pub(super) fn save_config(&self) {
+        crate::config::save_dock_config(&self.dock_config.read().unwrap());
+    }
+
+    /// Mutate the in-memory dock config and immediately persist it.
+    pub(super) fn update_dock_config(&self, f: impl FnOnce(&mut crate::config::DockConfig)) {
+        f(&mut self.dock_config.write().unwrap());
+        self.save_config();
+    }
+
+    /// Schedule hiding the dock after a short delay (if autohide is enabled).
+    /// The delay is handled by the animation itself; a subsequent show() call
+    /// overrides the pending animation and cancels the hide naturally.
+    pub fn schedule_autohide(&self) {
+        if !self.dock_config.read().unwrap().autohide || self.is_hidden() || self.has_menu_open() {
+            return;
+        }
+        self.active.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.view_layer.set_position((0.0, 250.0), Some(Transition {
+            timing: TimingFunction::Spring(Spring::with_duration_and_bounce(0.5, 0.0)),
+            delay: 0.4,
+        }))
+        .on_finish(|l:&Layer, _|{
+            l.set_hidden(true);
+        }, true);
+    }
+
+    /// Show the dock (used from the hot-zone when autohide is on).
+    pub fn show_autohide(&self) {
+        if self.dock_config.read().unwrap().autohide {
+            if self.active.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
+            self.view_layer.set_hidden(false);
+            tracing::debug!("dock: show (override pending hide)");
+            self.active.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.view_layer.set_position((0.0, 0.0), Some(Transition {
+                timing: TimingFunction::Spring(Spring::with_duration_and_bounce(0.5, 0.2)),
+                delay: 0.0,
+            }));
         }
     }
 
@@ -1149,9 +1270,7 @@ impl Observer<WorkspacesModel> for DockView {
 
 // https://www.wolframalpha.com/input?i=plot+e%5E%28-8*x%5E2%29
 use std::f64::consts::E;
-pub fn magnify_function(x: impl Into<f64>) -> f64 {
+pub fn magnify_function(x: impl Into<f64>, genie_span: f64) -> f64 {
     let x = x.into();
-    let genie_span = Config::with(|c| c.dock.genie_span);
-    let genie_span = -1.0 * genie_span;
-    E.powf(genie_span * (x).powi(2))
+    E.powf(-1.0 * genie_span * x.powi(2))
 }

@@ -535,7 +535,7 @@ impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
         let mut map = layer_map_for_output(&output);
         map.map_layer(&layer_surface).unwrap();
         // Get the current size from the layer surface state
-        let size = layer_surface.cached_state().size;
+        // let _size = layer_surface.cached_state().size;
 
         // Arrange the layer map which will handle the exclusive zone
         map.arrange();

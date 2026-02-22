@@ -805,17 +805,22 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             // Calculate usable area from tracked exclusive zones
             let mut usable_zone = zones.apply_to_output(output_geom);
 
-            // Get the actual dock geometry (position and size)
-            let dock_geom = self.workspaces.get_dock_geometry();
+            // Get the actual dock geometry (position and size).
+            // When autohide is enabled the dock slides out of the way, so maximized
+            // windows should use the full output height instead of stopping above it.
+            let dock_autohide = self.workspaces.dock.is_autohide_enabled();
+            if !dock_autohide {
+                let dock_geom = self.workspaces.get_dock_geometry();
 
-            // Dock reduces available height from the bottom
-            if dock_geom.size.h > 0 {
-                let dock_top = dock_geom.loc.y;
-                let available_bottom = usable_zone.loc.y + usable_zone.size.h;
+                // Dock reduces available height from the bottom
+                if dock_geom.size.h > 0 {
+                    let dock_top = dock_geom.loc.y;
+                    let available_bottom = usable_zone.loc.y + usable_zone.size.h;
 
-                // If dock is in the usable area, reduce height to stop above dock
-                if dock_top < available_bottom {
-                    usable_zone.size.h = dock_top - usable_zone.loc.y;
+                    // If dock is in the usable area, reduce height to stop above dock
+                    if dock_top < available_bottom {
+                        usable_zone.size.h = dock_top - usable_zone.loc.y;
+                    }
                 }
             }
             let new_geometry = usable_zone;

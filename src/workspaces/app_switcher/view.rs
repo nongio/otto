@@ -16,7 +16,7 @@ use layers::{
     taffy::{prelude::FromLength, style::Style},
     types::{BlendMode, BorderRadius, PaintColor, Size},
 };
-use smithay::{reexports::pixman::Point, utils::IsAlive};
+use smithay::utils::IsAlive;
 use tokio::sync::mpsc;
 
 use crate::{

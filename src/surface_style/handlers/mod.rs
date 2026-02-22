@@ -185,7 +185,7 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleManagerV1, ()> for Otto<Back
     fn request(
         state: &mut Self,
         _client: &Client,
-        shell: &OttoSurfaceStyleManagerV1,
+        _shell: &OttoSurfaceStyleManagerV1,
         request: otto_surface_style_manager_v1::Request,
         _data: &(),
         _dhandle: &DisplayHandle,
