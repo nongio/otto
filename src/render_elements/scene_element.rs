@@ -24,6 +24,7 @@ pub struct SceneElement {
     last_update: Instant,
     pub size: (f32, f32),
     damage: Rc<RefCell<DamageBag<i32, Physical>>>,
+    empty_damage_count: Rc<RefCell<u32>>,
     #[cfg(feature = "perf-counters")]
     perf_stats: Rc<RefCell<ScenePerfStats>>,
 }
@@ -37,6 +38,7 @@ impl SceneElement {
             last_update: Instant::now(),
             size: (0.0, 0.0),
             damage: Rc::new(RefCell::new(DamageBag::new(5))),
+            empty_damage_count: Rc::new(RefCell::new(0)),
             #[cfg(feature = "perf-counters")]
             perf_stats: Rc::new(RefCell::new(ScenePerfStats::new())),
         }
@@ -203,10 +205,20 @@ impl Element for SceneElement {
         let damage = self.damage.borrow().damage_since(commit);
 
         match damage {
-            Some(rects) if !rects.is_empty() => DamageSet::from_slice(&rects),
+            Some(rects) if !rects.is_empty() => {
+                *self.empty_damage_count.borrow_mut() = 0;
+                DamageSet::from_slice(&rects)
+            }
             None if geometry_size.w > 0 && geometry_size.h > 0 => {
-                let full_damage = Rectangle::new((0, 0).into(), geometry_size);
-                DamageSet::from_slice(&[full_damage])
+                let mut count = self.empty_damage_count.borrow_mut();
+                *count += 1;
+                if *count >= 3 {
+                    *count = 0;
+                    let full_damage = Rectangle::new((0, 0).into(), geometry_size);
+                    DamageSet::from_slice(&[full_damage])
+                } else {
+                    DamageSet::default()
+                }
             }
             _ => DamageSet::default(),
         }

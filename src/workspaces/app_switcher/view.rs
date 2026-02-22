@@ -87,6 +87,7 @@ impl AppSwitcherView {
             ..Default::default()
         });
         panel.set_pointer_events(false);
+        panel.set_hidden(true);
 
         let apps_container = layers_engine.new_layer();
         apps_container.set_key("app_switcher_apps_container");
@@ -218,6 +219,7 @@ impl AppSwitcherView {
         self.update_panel();
         self.active.store(true, Ordering::Relaxed);
         self.wrap_layer.set_hidden(false);
+        self.panel_layer.set_hidden(false);
         self.wrap_layer.set_opacity(
             1.0,
             Some(Transition {
@@ -239,6 +241,7 @@ impl AppSwitcherView {
         self.update_panel();
         self.active.store(true, Ordering::Relaxed);
         self.wrap_layer.set_hidden(false);
+        self.panel_layer.set_hidden(false);
         self.wrap_layer.set_opacity(
             1.0,
             Some(Transition {
@@ -253,9 +256,11 @@ impl AppSwitcherView {
         let tr = self
             .wrap_layer
             .set_opacity(0.0, Some(Transition::ease_in_quad(0.01)));
+        let p = self.panel_layer.clone();
         tr.on_finish(
-            |l: &layers::prelude::Layer, _p: f32| {
+            move |l: &layers::prelude::Layer, _p: f32| {
                 l.set_hidden(true);
+                p.set_hidden(true);
             },
             true,
         );
