@@ -1,8 +1,15 @@
 use layers::{prelude::Transition, skia};
 use otto_kit::components::context_menu::ContextMenuRenderer;
-use smithay::{backend::input::{ButtonState, KeyState}, input::keyboard::Keysym, utils::IsAlive};
+use smithay::{
+    backend::input::{ButtonState, KeyState},
+    input::keyboard::Keysym,
+    utils::IsAlive,
+};
 
-use crate::{config::Config, interactive_view::{InteractiveView, ViewInteractions}};
+use crate::{
+    config::Config,
+    interactive_view::{InteractiveView, ViewInteractions},
+};
 
 use tracing::warn;
 
@@ -26,7 +33,13 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
             return;
         }
         let scale = Config::with(|c| c.screen_scale);
-        if let Some(menu) = self.context_menu.read().unwrap().as_ref().filter(|m| m.is_active()) {
+        if let Some(menu) = self
+            .context_menu
+            .read()
+            .unwrap()
+            .as_ref()
+            .filter(|m| m.is_active())
+        {
             let mut menu_state = menu.view.get_state();
             let items = menu_state.items();
             let style = &menu_state.style;
@@ -42,6 +55,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
         self.update_magnification_position((event.location.x * scale) as f32);
     }
     fn on_leave(&self, _serial: smithay::utils::Serial, _time: u32) {
+        self.demagnify_elements();
         self.schedule_autohide();
     }
     fn on_enter(&self, _event: &smithay::input::pointer::MotionEvent) {
@@ -67,7 +81,9 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
                             let filter = skia::color_filters::lighting(darken_color, add);
                             entry.icon_scaler.set_color_filter(filter);
                             entry.icon_scaler.set_opacity(1.0, None);
-                            entry.label_layer.set_opacity(1.0, Some(Transition::ease_in_quad(0.05)));
+                            entry
+                                .label_layer
+                                .set_opacity(1.0, Some(Transition::ease_in_quad(0.05)));
                         }
                     }
                 }
@@ -93,8 +109,14 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
                             // Get action_id and app_id synchronously before closing the menu
                             let action_id = {
                                 let menu_lock = self.context_menu.read().unwrap();
-                                menu_lock.as_ref()
-                                    .and_then(|m| m.view.get_state().items_at_depth(0).get(idx).and_then(|i| i.action_id()).map(|s| s.to_string()))
+                                menu_lock.as_ref().and_then(|m| {
+                                    m.view
+                                        .get_state()
+                                        .items_at_depth(0)
+                                        .get(idx)
+                                        .and_then(|i| i.action_id())
+                                        .map(|s| s.to_string())
+                                })
                             };
                             let app_id = self.context_menu_app_id.read().unwrap().clone();
                             // Execute action immediately (while we have &mut state)
@@ -120,9 +142,15 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
                     // Right-click on the dock handle → settings menu
                     if event.button == BTN_RIGHT && self.is_handle_layer(&layer_id) {
                         state.workspaces.dock.open_handle_context_menu();
-                        let view = InteractiveView { view: Box::new(self.clone()) };
+                        let view = InteractiveView {
+                            view: Box::new(self.clone()),
+                        };
                         seat.get_keyboard().map(|keyboard| {
-                            keyboard.set_focus(state, Some(crate::focus::KeyboardFocusTarget::View(view)), event.serial);
+                            keyboard.set_focus(
+                                state,
+                                Some(crate::focus::KeyboardFocusTarget::View(view)),
+                                event.serial,
+                            );
                         });
                         return;
                     }
@@ -130,14 +158,26 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
                     if let Some((identifier, match_id)) = self.get_app_from_layer(&layer_id) {
                         // Check for right-click on protocol layer item
                         if event.button == BTN_RIGHT {
-                            tracing::info!("🖱️ Right-click detected on protocol layer app: {}", identifier);
+                            tracing::info!(
+                                "🖱️ Right-click detected on protocol layer app: {}",
+                                identifier
+                            );
 
                             let pos = state.last_pointer_location;
                             let pos = layers::prelude::Point::new(pos.0 as f32, pos.1 as f32);
-                            state.workspaces.dock.open_context_menu(pos, identifier.clone());
-                            let view = InteractiveView { view: Box::new(self.clone()) };
+                            state
+                                .workspaces
+                                .dock
+                                .open_context_menu(pos, identifier.clone());
+                            let view = InteractiveView {
+                                view: Box::new(self.clone()),
+                            };
                             seat.get_keyboard().map(|keyboard| {
-                                keyboard.set_focus(state, Some(crate::focus::KeyboardFocusTarget::View(view)), event.serial);
+                                keyboard.set_focus(
+                                    state,
+                                    Some(crate::focus::KeyboardFocusTarget::View(view)),
+                                    event.serial,
+                                );
                             });
                             return;
                         } else {
@@ -171,7 +211,9 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
                         if let Some(entry) = apps_layers.get(&match_id) {
                             entry.icon_scaler.set_color_filter(None);
                             entry.icon_scaler.set_opacity(1.0, None);
-                            entry.label_layer.set_opacity(1.0, Some(Transition::ease_in_quad(0.05)));
+                            entry
+                                .label_layer
+                                .set_opacity(1.0, Some(Transition::ease_in_quad(0.05)));
                         }
                     }
                 }
@@ -180,21 +222,43 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
             }
         }
     }
-    fn on_key(&self, event: &smithay::input::keyboard::KeysymHandle<'_>, state: smithay::backend::input::KeyState) {
+    fn on_key(
+        &self,
+        event: &smithay::input::keyboard::KeysymHandle<'_>,
+        state: smithay::backend::input::KeyState,
+    ) {
         if state != KeyState::Released {
             return;
         }
 
-        enum MenuAction { None, Navigate, Close }
+        enum MenuAction {
+            None,
+            Navigate,
+            Close,
+        }
         let action = {
             let menu_lock = self.context_menu.read().unwrap();
-            let Some(menu) = menu_lock.as_ref() else { return };
+            let Some(menu) = menu_lock.as_ref() else {
+                return;
+            };
 
             match event.modified_sym() {
-                Keysym::Up    => { menu.select_previous(); MenuAction::Navigate }
-                Keysym::Down  => { menu.select_next();     MenuAction::Navigate }
-                Keysym::Right => { menu.open_submenu();    MenuAction::Navigate }
-                Keysym::Left  => { menu.close_submenu();   MenuAction::Navigate }
+                Keysym::Up => {
+                    menu.select_previous();
+                    MenuAction::Navigate
+                }
+                Keysym::Down => {
+                    menu.select_next();
+                    MenuAction::Navigate
+                }
+                Keysym::Right => {
+                    menu.open_submenu();
+                    MenuAction::Navigate
+                }
+                Keysym::Left => {
+                    menu.close_submenu();
+                    MenuAction::Navigate
+                }
                 Keysym::Escape => MenuAction::Close,
                 _ => MenuAction::None,
             }
@@ -216,14 +280,20 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
         }
         let (idx, depth, action_id) = {
             let menu_lock = self.context_menu.read().unwrap();
-            let Some(menu) = menu_lock.as_ref().filter(|m| m.is_active()) else { return };
+            let Some(menu) = menu_lock.as_ref().filter(|m| m.is_active()) else {
+                return;
+            };
             match event.modified_sym() {
                 Keysym::Return | Keysym::KP_Enter => {
                     let state = menu.view.get_state();
                     let depth = state.depth();
                     let idx = state.selected_index(None);
                     let action_id = idx.and_then(|i| {
-                        state.items_at_depth(depth).get(i).and_then(|item| item.action_id()).map(|s| s.to_string())
+                        state
+                            .items_at_depth(depth)
+                            .get(i)
+                            .and_then(|item| item.action_id())
+                            .map(|s| s.to_string())
                     });
                     (idx, depth, action_id)
                 }
@@ -249,7 +319,6 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
     fn on_keyboard_leave(&self) {
         self.close_context_menu();
     }
-
 }
 
 impl DockView {
@@ -277,7 +346,12 @@ impl DockView {
             "keep_in_dock" => {
                 if let Some(match_id) = self.match_id_for(app_id) {
                     let mut dock_state = self.get_state();
-                    if let Some(app) = dock_state.running_apps.iter().find(|a| a.match_id == match_id).cloned() {
+                    if let Some(app) = dock_state
+                        .running_apps
+                        .iter()
+                        .find(|a| a.match_id == match_id)
+                        .cloned()
+                    {
                         let bookmark = crate::config::DockBookmark {
                             desktop_id: match_id.clone(),
                             label: None,
@@ -300,7 +374,10 @@ impl DockView {
                 if let Some(match_id) = self.match_id_for(app_id) {
                     self.update_dock_config(|d| {
                         d.bookmarks.retain(|b| {
-                            let id = b.desktop_id.strip_suffix(".desktop").unwrap_or(&b.desktop_id);
+                            let id = b
+                                .desktop_id
+                                .strip_suffix(".desktop")
+                                .unwrap_or(&b.desktop_id);
                             id != match_id
                         });
                     });
@@ -316,7 +393,10 @@ impl DockView {
             "toggle_autohide" => {
                 let autohide = self.dock_config.read().unwrap().autohide;
                 self.update_dock_config(|d| d.autohide = !autohide);
-                tracing::info!("Dock auto-hide {}", if !autohide { "enabled" } else { "disabled" });
+                tracing::info!(
+                    "Dock auto-hide {}",
+                    if !autohide { "enabled" } else { "disabled" }
+                );
                 // When autohide is disabled the dock becomes permanently visible,
                 // so any maximized windows must shrink to respect the dock height.
                 if autohide {
@@ -327,7 +407,14 @@ impl DockView {
                 let magnification = self.dock_config.read().unwrap().magnification;
                 self.set_magnification_enabled(!magnification);
                 self.save_config();
-                tracing::info!("Dock magnification {}", if !magnification { "enabled" } else { "disabled" });
+                tracing::info!(
+                    "Dock magnification {}",
+                    if !magnification {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                );
             }
             _ => {}
         }
