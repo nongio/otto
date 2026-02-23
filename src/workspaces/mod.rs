@@ -140,7 +140,6 @@ pub struct Workspaces {
     // layers
     pub layers_engine: Arc<Engine>,
     pub overlay_layer: Layer,
-
     pub layer_shell_top: Layer,
     /// Container for wlr-layer-shell overlay layer surfaces  
     pub layer_shell_overlay: Layer,
@@ -235,7 +234,6 @@ impl Workspaces {
         display_handle: DisplayHandle,
     ) -> (Self, smithay::reexports::calloop::channel::Channel<usize>) {
         let model = WorkspacesModel::default();
-
         let expose_layer = layers_engine.new_layer();
         expose_layer.set_key("expose");
         expose_layer.set_layout_style(taffy::Style {
@@ -1382,6 +1380,12 @@ impl Workspaces {
                 .map(|wv| wv.window_selector_view.window_selector_view.clone())
                 .collect();
 
+            // Collect secondary output expose layers to sync with primary
+            let secondary_expose_layers: Vec<Layer> = self.output_workspaces.values()
+                .filter(|ows| ows.expose_layer != expose_layer)
+                .map(|ows| ows.expose_layer.clone())
+                .collect();
+
             expose_layer.set_hidden(!show_expose);
             for el in &secondary_expose_layers {
                 el.set_hidden(!show_expose);
@@ -1875,23 +1879,25 @@ impl Workspaces {
 
         // Find the next topmost non-minimized window for focus.
         let index = self.with_model(|m| m.current_workspace);
-        self.primary_output_workspaces()
+        let next = self.primary_output_workspaces()
             .and_then(|ows| ows.spaces.get(index))
-            .and_then(|s| {
-                s.elements().rev().find_map(|e| {
-                    let eid = e.id();
-                    let dominated = self
-                        .windows_map
-                        .get(&eid)
-                        .map(|w| w.is_minimised() || w.id() == we.id())
-                        .unwrap_or(false);
-                    if dominated {
-                        None
-                    } else {
-                        Some(eid)
+            .and_then(|s| s.elements().rev().find_map(|e| {
+                let id = e.id();
+                if let Some(window) = self.windows_map.get(&id) {
+                    if window.is_minimised() || window.id() == we.id() {
+                        return None;
                     }
-                })
-            })
+                }
+                Some(id)
+            }));
+
+        if let Some(next_id) = next {
+            // Raise and activate the next topmost window
+            self.raise_element(&next_id, true, true);
+            Some(next_id)
+        } else {
+            None
+        }
     }
 
     /// Unminimise a WindowElement
