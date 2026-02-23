@@ -3,9 +3,13 @@ use wayland_backend::server::ClientId;
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
 
 use crate::{
-    Otto, config::Config, state::Backend, surface_style::handlers::{
-        OttoLayerUserData, accumulate_change, find_active_transaction_for_client, trigger_window_update, wl_fixed_to_f32
-    }
+    config::Config,
+    state::Backend,
+    surface_style::handlers::{
+        accumulate_change, find_active_transaction_for_client, trigger_window_update,
+        wl_fixed_to_f32, OttoLayerUserData,
+    },
+    Otto,
 };
 
 use super::super::protocol::{
@@ -47,9 +51,7 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleV1, OttoLayerUserData> for O
 
                 if let Some(txn_id) = active_transaction {
                     // Accumulate change in transaction
-                    let change = sstyle
-                        .layer
-                        .change_position(layers::types::Point { x, y });
+                    let change = sstyle.layer.change_position(layers::types::Point { x, y });
                     accumulate_change(state, txn_id, change);
                 } else {
                     // Apply immediately

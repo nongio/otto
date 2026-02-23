@@ -1,9 +1,7 @@
 use std::sync::{atomic::AtomicBool, Arc};
 
 use layers::{
-    engine::{
-        animation::{TimingFunction, Transition},
-    },
+    engine::animation::{TimingFunction, Transition},
     prelude::{taffy, BorderRadius, Layer, LayerTree, LayerTreeBuilder, Point, View},
     taffy::style::Style,
     types::{BlendMode, Size},
@@ -74,12 +72,12 @@ impl ContextMenuView {
         layers_engine.add_layer(&wrap);
         wrap.add_sublayer(&view_layer);
         // view_layer.set_pointer_events(true);
-        
+
         view_layer.set_anchor_point((0.5, 1.0), None);
         let initial_state = ContextMenuState::new(items);
         let view = View::new("context_menu_inner", initial_state, Box::new(render_menu));
         view.mount_layer(view_layer.clone());
-        
+
         base_layer.add_sublayer(&wrap);
         Self {
             wrap_layer: wrap,
@@ -93,7 +91,13 @@ impl ContextMenuView {
     pub fn show_at(&self, x: f32, y: f32) {
         println!("Showing context menu at ({}, {})", x, y);
         let scale = Config::with(|c| c.screen_scale) as f32;
-        self.view_layer.set_position(Point { x: x * scale, y: y * scale }, None);
+        self.view_layer.set_position(
+            Point {
+                x: x * scale,
+                y: y * scale,
+            },
+            None,
+        );
         self.active
             .store(true, std::sync::atomic::Ordering::Relaxed);
         self.wrap_layer.set_opacity(0.0, None);
@@ -111,15 +115,20 @@ impl ContextMenuView {
     pub fn hide(&self) {
         self.active
             .store(false, std::sync::atomic::Ordering::Relaxed);
-        self.wrap_layer.set_opacity(
-            0.0,
-            Some(Transition {
-                delay: 0.0,
-                timing: TimingFunction::ease_in_quad(0.05),
-            }),
-        ).on_finish(|l: &Layer, _p: f32| {
-            l.set_hidden(true);
-        }, true);
+        self.wrap_layer
+            .set_opacity(
+                0.0,
+                Some(Transition {
+                    delay: 0.0,
+                    timing: TimingFunction::ease_in_quad(0.05),
+                }),
+            )
+            .on_finish(
+                |l: &Layer, _p: f32| {
+                    l.set_hidden(true);
+                },
+                true,
+            );
     }
 
     /// Update the menu items and reset navigation state
@@ -210,7 +219,12 @@ impl ContextMenuView {
     /// The caller should close the menu and execute the action when the receiver fires.
     /// Trigger a visual pulse on the selected item, then close the menu.
     /// The action should be executed immediately by the caller before calling this.
-    pub fn pulse_then_close(&self, depth: usize, idx: usize, dock: crate::workspaces::dock::DockView) {
+    pub fn pulse_then_close(
+        &self,
+        depth: usize,
+        idx: usize,
+        dock: crate::workspaces::dock::DockView,
+    ) {
         let view = self.view.clone();
         tokio::spawn(async move {
             let mut state = view.get_state();

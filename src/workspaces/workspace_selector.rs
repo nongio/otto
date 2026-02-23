@@ -110,7 +110,7 @@ impl WorkspaceSelectorView {
         layer.set_opacity(0.0, None);
         view.set_layer(layer.clone());
         layer.set_hidden(true);
-        
+
         let drop_targets = Arc::new(RwLock::new(Vec::new()));
         let drop_hover_index = Arc::new(RwLock::new(None));
         let pressed_action = Arc::new(RwLock::new(None));

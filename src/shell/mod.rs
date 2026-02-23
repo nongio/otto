@@ -5,20 +5,24 @@ use smithay::xwayland::XWaylandClientData;
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
     desktop::{
-        LayerSurface, PopupKind, WindowSurface, WindowSurfaceType, find_popup_root_surface, layer_map_for_output, utils::with_surfaces_surface_tree
+        find_popup_root_surface, layer_map_for_output, utils::with_surfaces_surface_tree,
+        LayerSurface, PopupKind, WindowSurface, WindowSurfaceType,
     },
     output::Output,
     reexports::{
         calloop::Interest,
         wayland_server::{
-            Client, Resource, protocol::{wl_buffer::WlBuffer, wl_output, wl_surface::WlSurface}
+            protocol::{wl_buffer::WlBuffer, wl_output, wl_surface::WlSurface},
+            Client, Resource,
         },
     },
     utils::{Logical, Point, Rectangle, Size},
     wayland::{
         buffer::BufferHandler,
         compositor::{
-            BufferAssignment, CompositorClientState, CompositorHandler, CompositorState, SurfaceAttributes, TraversalAction, add_blocker, add_pre_commit_hook, get_parent, is_sync_subsurface, with_states, with_surface_tree_upward
+            add_blocker, add_pre_commit_hook, get_parent, is_sync_subsurface, with_states,
+            with_surface_tree_upward, BufferAssignment, CompositorClientState, CompositorHandler,
+            CompositorState, SurfaceAttributes, TraversalAction,
         },
         dmabuf::get_dmabuf,
         shell::{
