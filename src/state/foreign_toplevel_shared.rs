@@ -57,6 +57,14 @@ impl ForeignToplevelHandles {
         }
     }
 
+    /// Broadcast window state (activated, minimized, maximized, fullscreen) via wlr protocol.
+    /// The ext-foreign-toplevel-list protocol does not carry state events.
+    pub fn send_state(&self, activated: bool, minimized: bool, maximized: bool, fullscreen: bool) {
+        if let Some(wlr) = &self.wlr {
+            wlr.send_state(activated, minimized, maximized, fullscreen);
+        }
+    }
+
     /// Get title from ext handle (they should be in sync)
     pub fn title(&self) -> String {
         self.ext
