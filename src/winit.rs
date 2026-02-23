@@ -367,6 +367,9 @@ pub fn run_winit() {
         .shm_state
         .update_formats(state.backend_data.backend.renderer().shm_formats());
 
+    // Set initial screen dimensions before mapping output so update_workspaces_layout
+    // can compute the correct scene size.
+    state.workspaces.set_screen_dimension(size.w, size.h);
     state.workspaces.map_output(&output, (0, 0));
 
     #[cfg(feature = "xwayland")]
@@ -414,12 +417,9 @@ pub fn run_winit() {
                 output.set_preferred(mode);
                 let pointer_location = state.pointer.current_location();
                 crate::shell::fixup_positions(&mut state.workspaces, pointer_location);
-                state.scene_element.set_size(size.w as f32, size.h as f32);
+                // set_screen_dimension triggers update_workspaces_layout which resizes
+                // the scene root to cover all outputs' physical extents.
                 state.workspaces.set_screen_dimension(size.w, size.h);
-                root.set_size(
-                    layers::types::Size::points(size.w as f32, size.h as f32),
-                    None,
-                );
             }
             WinitEvent::Input(event) => state.process_input_event_windowed(event, OUTPUT_NAME),
             _ => (),

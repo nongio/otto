@@ -62,12 +62,21 @@ impl crate::Otto<crate::udev::UdevData> {
 
                 match direction {
                     crate::state::SwipeDirection::Horizontal(_) => {
-                        // Initialize workspace switching mode and apply current delta
+                        // Detect the output under the pointer at gesture start
+                        let pointer_loc = pointer.current_location();
+                        let output_name = self
+                            .workspaces
+                            .output_under(pointer_loc)
+                            .next()
+                            .map(|o| o.name())
+                            .or_else(|| self.workspaces.primary_output().map(|o| o.name()))
+                            .unwrap_or_default();
+
                         self.swipe_gesture = crate::state::SwipeGestureState::WorkspaceSwitching {
                             velocity_samples: vec![delta.x],
+                            output_name: output_name.clone(),
                         };
-                        // Apply the current frame's delta (not accumulated)
-                        self.workspaces.workspace_swipe_update(delta.x as f32);
+                        self.workspaces.workspace_swipe_update(&output_name, delta.x as f32);
                     }
                     crate::state::SwipeDirection::Vertical(_) => {
                         // Initialize expose mode and apply current delta
@@ -87,12 +96,16 @@ impl crate::Otto<crate::udev::UdevData> {
                     crate::state::SwipeDirection::Undetermined => {}
                 }
             }
-            crate::state::SwipeGestureState::WorkspaceSwitching { velocity_samples } => {
+            crate::state::SwipeGestureState::WorkspaceSwitching {
+                velocity_samples,
+                output_name,
+            } => {
                 velocity_samples.push(delta.x);
                 if velocity_samples.len() > crate::state::VELOCITY_SAMPLE_COUNT {
                     velocity_samples.remove(0);
                 }
-                self.workspaces.workspace_swipe_update(delta.x as f32);
+                let name = output_name.clone();
+                self.workspaces.workspace_swipe_update(&name, delta.x as f32);
             }
             crate::state::SwipeGestureState::Expose { velocity_samples } => {
                 // Collect velocity samples for momentum-based spring animation
@@ -127,8 +140,11 @@ impl crate::Otto<crate::udev::UdevData> {
             crate::state::SwipeGestureState::Expose { velocity_samples } => {
                 self.gesture_swipe_end_expose(velocity_samples);
             }
-            crate::state::SwipeGestureState::WorkspaceSwitching { velocity_samples } => {
-                self.gesture_swipe_end_workspace(velocity_samples, evt.cancelled());
+            crate::state::SwipeGestureState::WorkspaceSwitching {
+                velocity_samples,
+                output_name,
+            } => {
+                self.gesture_swipe_end_workspace(velocity_samples, output_name, evt.cancelled());
             }
             _ => {}
         }
@@ -154,25 +170,26 @@ impl crate::Otto<crate::udev::UdevData> {
         self.workspaces.expose_end_with_velocity(velocity as f32);
     }
 
-    fn gesture_swipe_end_workspace(&mut self, velocity_samples: Vec<f64>, cancelled: bool) {
-        let target_index = if !cancelled {
-            let velocity = if velocity_samples.is_empty() {
-                0.0
-            } else {
-                velocity_samples.iter().sum::<f64>() / velocity_samples.len() as f64
-            };
-            Some(self.workspaces.workspace_swipe_end(velocity as f32))
+    fn gesture_swipe_end_workspace(
+        &mut self,
+        velocity_samples: Vec<f64>,
+        output_name: String,
+        cancelled: bool,
+    ) {
+        let velocity = if !cancelled && !velocity_samples.is_empty() {
+            velocity_samples.iter().sum::<f64>() / velocity_samples.len() as f64
         } else {
-            Some(self.workspaces.workspace_swipe_end(0.0))
+            0.0
         };
+        let target_index = self
+            .workspaces
+            .workspace_swipe_end(&output_name, velocity as f32);
 
         // Update keyboard focus to top window of the target workspace
-        if let Some(index) = target_index {
-            if let Some(top_wid) = self.workspaces.get_top_window_of_workspace(index) {
-                self.set_keyboard_focus_on_surface(&top_wid);
-            } else {
-                self.clear_keyboard_focus();
-            }
+        if let Some(top_wid) = self.workspaces.get_top_window_of_workspace(target_index) {
+            self.set_keyboard_focus_on_surface(&top_wid);
+        } else {
+            self.clear_keyboard_focus();
         }
     }
 

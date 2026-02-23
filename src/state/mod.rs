@@ -345,7 +345,11 @@ impl SwipeDirection {
 pub enum SwipeGestureState {
     Idle,
     Detecting { accumulated: (f64, f64) },
-    WorkspaceSwitching { velocity_samples: Vec<f64> },
+    WorkspaceSwitching {
+        velocity_samples: Vec<f64>,
+        /// Name of the output this swipe targets (output under pointer at gesture start)
+        output_name: String,
+    },
     Expose { velocity_samples: Vec<f64> },
 }
 
@@ -595,7 +599,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
         let layers_engine = Engine::create(500.0, 500.0);
         let root_layer = layers_engine.new_layer();
-        root_layer.set_key("screen_composer_root");
+        root_layer.set_key("otto_root");
         root_layer.set_layout_style(taffy::Style {
             position: taffy::Position::Absolute,
             ..Default::default()
@@ -1525,7 +1529,15 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         }
     }
     pub fn set_current_workspace_index(&mut self, index: usize) {
-        self.workspaces.set_current_workspace_index(index, None);
+        // Use the focused output from the model cache — safe to call from button handlers
+        // (avoids re-acquiring the pointer lock, which would deadlock inside a Smithay handler).
+        let target_output = self.workspaces.focused_output().cloned();
+        if let Some(output) = target_output {
+            self.workspaces
+                .set_workspace_for_output(&output, index, None);
+        } else {
+            self.workspaces.set_current_workspace_index(index, None);
+        }
         // Focus the top window of the new workspace, or clear focus if empty
         if let Some(top_wid) = self.workspaces.get_top_window_of_workspace(index) {
             self.set_keyboard_focus_on_surface(&top_wid);
@@ -1879,7 +1891,7 @@ pub fn post_repaint<'a>(
     time: impl Into<Duration>,
 ) {
     let time = time.into();
-    let throttle = Some(Duration::from_secs(1));
+    let throttle = Some(Duration::ZERO);
 
     window_elements.iter().for_each(|window| {
         window.with_surfaces(|surface, states| {

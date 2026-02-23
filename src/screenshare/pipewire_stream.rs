@@ -226,7 +226,7 @@ impl PipeWireStream {
             unsafe {
                 pipewire::sys::pw_stream_trigger_process(ptr);
             }
-            tracing::debug!("Triggered pw_stream_trigger_process");
+            tracing::trace!("Triggered pw_stream_trigger_process");
         } else {
             tracing::warn!("trigger_frame called but stream_ptr not set");
         }
