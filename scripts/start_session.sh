@@ -40,10 +40,18 @@ source "$SCRIPT_DIR/portal.sh"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export XDG_SESSION_TYPE="wayland"
 export XDG_SESSION_CLASS="user"
-export XDG_CURRENT_DESKTOP="screencomposer"
+# Ensure XDG Desktop Portal picks the Otto backend (UseIn=otto).
+export XDG_CURRENT_DESKTOP="otto"
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 
 # Wayland display will be set by compositor
 export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+
+# Ensure systemd user services (including xdg-desktop-portal) see the same session env.
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user import-environment \
+        XDG_RUNTIME_DIR XDG_SESSION_TYPE XDG_CURRENT_DESKTOP XDG_CONFIG_HOME WAYLAND_DISPLAY || true
+fi
 
 setup_dbus_session
 
@@ -124,6 +132,15 @@ fi
 
 # Now start portal after compositor is ready
 portal_setup
+
+# Force frontend portal to reload with the current session environment.
+if command -v systemctl >/dev/null 2>&1; then
+    if systemctl --user restart xdg-desktop-portal.service 2>/dev/null; then
+        log_info "Restarted xdg-desktop-portal user service"
+    else
+        log_warn "Could not restart xdg-desktop-portal user service"
+    fi
+fi
 
 # Bring compositor to foreground and tail its log
 log_info "Compositor initialized successfully, following log..."
