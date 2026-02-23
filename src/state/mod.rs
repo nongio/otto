@@ -267,6 +267,9 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// Manager for the screenshare D-Bus service (started lazily when needed).
     pub screenshare_manager: Option<crate::screenshare::ScreenshareManager>,
 
+    /// Virtual outputs defined in config, each streamed via PipeWire.
+    pub virtual_outputs: Vec<crate::virtual_output::VirtualOutputState>,
+
     // foreign toplevel list - maps surface ObjectId to unified toplevel handles (both protocols)
     pub foreign_toplevels: HashMap<ObjectId, foreign_toplevel_shared::ForeignToplevelHandles>,
 
@@ -684,6 +687,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             // screenshare
             screenshare_sessions: HashMap::new(),
             screenshare_manager: None,
+            virtual_outputs: Vec::new(),
 
             // foreign toplevel list
             foreign_toplevels: HashMap::new(),

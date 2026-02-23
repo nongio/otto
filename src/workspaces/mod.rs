@@ -2539,7 +2539,11 @@ impl Workspaces {
     // Space management
 
     pub fn outputs_for_element(&self, element: &WindowElement) -> Vec<Output> {
-        self.space().outputs_for_element(element)
+        self.space()
+            .outputs_for_element(element)
+            .into_iter()
+            .filter(|o| !crate::virtual_output::is_virtual_output(o))
+            .collect()
     }
 
     fn apply_scroll_offset(
@@ -2627,7 +2631,9 @@ impl Workspaces {
         &self,
         point: P,
     ) -> impl Iterator<Item = &Output> {
-        self.space().output_under(point)
+        self.space()
+            .output_under(point)
+            .filter(|o| !crate::virtual_output::is_virtual_output(o))
     }
 
     pub fn element_geometry(
