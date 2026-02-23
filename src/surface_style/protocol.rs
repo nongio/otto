@@ -15,8 +15,8 @@ pub mod gen {
     wayland_scanner::generate_server_code!("./protocols/otto-surface-style-unstable-v1.xml");
 }
 
-pub use gen::otto_surface_style_v1::OttoSurfaceStyleV1 as ZSurfaceStyleV1;
 pub use gen::otto_style_transaction_v1::OttoStyleTransactionV1 as ZTransactionV1;
+pub use gen::otto_surface_style_v1::OttoSurfaceStyleV1 as ZSurfaceStyleV1;
 
 /// Z-order configuration for surface style relative to parent surface content
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

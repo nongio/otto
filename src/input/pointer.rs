@@ -399,7 +399,6 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// Check if the pointer is in the dock hot zone (bottom edge of the primary output)
     /// and show/hide the dock accordingly when autohide is enabled.
     pub(crate) fn check_dock_hot_zone(&mut self, pos: (f64, f64)) {
-
         if !self.workspaces.dock.is_autohide_enabled() {
             return;
         }
@@ -434,6 +433,8 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
 
         let under = self.surface_under(pos);
         let pointer = self.pointer.clone();
+        // Cache pointer location for use in button events
+        self.last_pointer_location = (pos.x, pos.y);
 
         pointer.motion(
             self,
@@ -569,6 +570,9 @@ impl crate::Otto<crate::udev::UdevData> {
         );
         pointer.frame(self);
 
+        // Cache pointer location for use in button events
+        self.last_pointer_location = (pointer_location.x, pointer_location.y);
+
         let scale = Config::with(|c| c.screen_scale);
         let pos = pointer_location.to_physical(scale);
 
@@ -630,6 +634,9 @@ impl crate::Otto<crate::udev::UdevData> {
 
         let pointer = self.pointer.clone();
         let under = self.surface_under(pointer_location);
+        // Cache pointer location for use in button events
+        self.last_pointer_location = (pointer_location.x, pointer_location.y);
+
         pointer.motion(
             self,
             under,

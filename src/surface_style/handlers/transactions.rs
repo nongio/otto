@@ -2,7 +2,7 @@ use wayland_backend::server::ClientId;
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
 
 use super::super::protocol::gen::otto_style_transaction_v1::{self, OttoStyleTransactionV1};
-use crate::{surface_style::handlers::commit_transaction, state::Backend, Otto};
+use crate::{state::Backend, surface_style::handlers::commit_transaction, Otto};
 
 impl<BackendData: Backend> Dispatch<OttoStyleTransactionV1, ()> for Otto<BackendData> {
     fn request(
@@ -70,7 +70,12 @@ impl<BackendData: Backend> Dispatch<OttoStyleTransactionV1, ()> for Otto<Backend
         }
     }
 
-    fn destroyed(state: &mut Self, _client: ClientId, transaction: &OttoStyleTransactionV1, _data: &()) {
+    fn destroyed(
+        state: &mut Self,
+        _client: ClientId,
+        transaction: &OttoStyleTransactionV1,
+        _data: &(),
+    ) {
         // Clean up transaction if still present
         state.style_transactions.remove(&transaction.id());
     }

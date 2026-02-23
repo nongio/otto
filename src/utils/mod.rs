@@ -128,7 +128,7 @@ pub fn resource_image(
 /// 2. `/etc/otto/share/{path}`
 pub fn resource_path(path: &str) -> Option<std::path::PathBuf> {
     use std::path::PathBuf;
-    
+
     // Try local resources directory first
     let local_path = PathBuf::from(format!("resources/{}", path));
     if local_path.exists() {

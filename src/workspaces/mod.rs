@@ -1077,7 +1077,8 @@ impl Workspaces {
                     true,
                 );
             }
-            let tr = self.workspace_selector_view
+            let tr = self
+                .workspace_selector_view
                 .layer
                 .set_opacity(workspace_opacity, transition);
 
@@ -1086,12 +1087,11 @@ impl Workspaces {
                 .set_opacity(layer_shell_overlay_opacity, transition);
 
             if end_gesture {
-                let wsv = self.workspace_selector_view
-                .layer.clone();
+                let wsv = self.workspace_selector_view.layer.clone();
                 tr.on_finish(
                     move |_: &Layer, _: f32| {
                         // Animation finished
-                        wsv.set_hidden(!show_expose);    
+                        wsv.set_hidden(!show_expose);
                     },
                     true,
                 );
@@ -1107,7 +1107,9 @@ impl Workspaces {
             // during expose (see check_dock_hot_zone).
             if self.dock.is_autohide_enabled() && !self.dock.is_hidden() {
                 let dock_y = 0.0_f32.interpolate(&250.0, delta);
-                self.dock.view_layer.set_position((0.0, dock_y.clamp(0.0, 250.0)), transition.clone());
+                self.dock
+                    .view_layer
+                    .set_position((0.0, dock_y.clamp(0.0, 250.0)), transition.clone());
                 if end_gesture && show_all {
                     self.dock.schedule_autohide();
                 }
@@ -1128,7 +1130,6 @@ impl Workspaces {
             if let Some(anim_ref) = animation {
                 self.layers_engine.start_animation(anim_ref, 0.0);
             }
-            
         }
     }
 
@@ -1690,7 +1691,7 @@ impl Workspaces {
                 .view_layer
                 .render_bounds_transformed()
                 .contains(skia::Point::new(x, y))
-        || self.dock.has_menu_open()
+            || self.dock.has_menu_open()
     }
 
     /// Return the actual rendered height of the dock in logical pixels
