@@ -1547,6 +1547,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                         if let Some(toplevel) = old_window.toplevel() {
                             toplevel.send_configure();
                         }
+                        // Notify foreign toplevel: deactivated
+                        let old_id = old_window.id();
+                        self.send_foreign_toplevel_state(&old_id, false);
                     }
                 }
             }
@@ -1560,6 +1563,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             if let Some(toplevel) = window.toplevel() {
                 toplevel.send_configure();
             }
+            // Notify foreign toplevel: activated
+            let wid = wid.clone();
+            self.send_foreign_toplevel_state(&wid, true);
             keyboard.set_focus(self, Some(window.clone().into()), serial);
         }
     }
@@ -1579,10 +1585,29 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     if let Some(toplevel) = old_window.toplevel() {
                         toplevel.send_configure();
                     }
+                    let old_id = old_window.id();
+                    self.send_foreign_toplevel_state(&old_id, false);
                 }
             }
 
             keyboard.set_focus(self, None, serial);
+        }
+    }
+
+    /// Compute and send the wlr foreign toplevel `state` event for a window.
+    pub fn send_foreign_toplevel_state(&self, wid: &ObjectId, activated: bool) {
+        if let Some(handles) = self.foreign_toplevels.get(wid) {
+            if let Some(window) = self.workspaces.get_window_for_surface(wid) {
+                let minimized = window.is_minimised();
+                let maximized = window
+                    .toplevel()
+                    .map(|t| {
+                        t.with_pending_state(|s| s.states.contains(xdg_toplevel::State::Maximized))
+                    })
+                    .unwrap_or(false);
+                let fullscreen = window.is_fullscreen();
+                handles.send_state(activated, minimized, maximized, fullscreen);
+            }
         }
     }
 
