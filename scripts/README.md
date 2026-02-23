@@ -62,6 +62,24 @@ Start Otto with a full session environment (D-Bus, pipewire, etc.)
 ### `test-screenshare.sh`
 Test Otto's screen sharing functionality
 
+**Usage:**
+```bash
+# Default output: eDP-1, opens GStreamer playback automatically
+./scripts/test-screenshare.sh
+
+# Select an explicit output from ListOutputs (example: virtual-1)
+./scripts/test-screenshare.sh virtual-1
+
+# Optionally attempt OpenPipeWireRemote too
+OPEN_PIPEWIRE=1 ./scripts/test-screenshare.sh
+
+# Open stream live with ffplay (requires pipewire input support in ffmpeg)
+PLAYER=ffplay ./scripts/test-screenshare.sh eDP-1
+
+# Keep stream session alive without opening a player
+PLAYER=none ./scripts/test-screenshare.sh eDP-1
+```
+
 ### Session helper scripts
 - `dbus.sh` - D-Bus session management
 - `pipewire.sh` - PipeWire audio setup
