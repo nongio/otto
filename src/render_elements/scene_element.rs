@@ -329,7 +329,6 @@ impl RenderElement<SkiaRenderer> for SceneElement {
         } else {
             None
         };
-
         // If rendering from an output sub-tree, translate so the output_layer's
         // scene-space position maps to (0,0) on the output framebuffer.
         if let Some(oid) = self.output_root {
@@ -362,7 +361,6 @@ impl RenderElement<SkiaRenderer> for SceneElement {
         } else {
             None
         };
-
         scene.with_arena(|arena| {
             scene.with_renderable_arena(|renderable_arena| {
                 if let Some(root_id) = root_id {
