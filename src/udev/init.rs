@@ -22,7 +22,10 @@ use smithay::{
 };
 use tracing::{error, info, warn};
 
-use crate::{config::Config, state::Otto};
+use crate::{
+    config::Config,
+    state::{Backend, Otto},
+};
 
 use super::{
     feedback::get_surface_dmabuf_feedback,
@@ -453,6 +456,85 @@ pub fn run_udev() {
         }
         Err(e) => {
             tracing::warn!("Failed to start screenshare D-Bus service: {}", e);
+        }
+    }
+
+    /*
+     * Create virtual outputs from config
+     */
+    {
+        let vout_configs = crate::config::Config::with(|c| c.virtual_outputs.clone());
+        if !vout_configs.is_empty() {
+            let gbm_device = state.backend_data.gbm_device();
+            let format_modifiers = state
+                .backend_data
+                .get_format_modifiers(smithay::backend::allocator::Fourcc::Argb8888);
+
+            for vout_config in &vout_configs {
+                let output = crate::virtual_output::VirtualOutputState::build_output(vout_config);
+                let global = output.create_global::<Otto<UdevData>>(&display_handle);
+
+                let position: smithay::utils::Point<i32, smithay::utils::Logical> = vout_config
+                    .position
+                    .map(|p| (p.x, p.y).into())
+                    .unwrap_or_else(|| (0, 0).into());
+                state.workspaces.map_output(&output, position);
+
+                match crate::virtual_output::VirtualOutputState::start(
+                    output,
+                    global,
+                    vout_config,
+                    gbm_device.clone(),
+                    format_modifiers.clone(),
+                ) {
+                    Ok((vout_state, node_id)) => {
+                        tracing::info!(
+                            "Virtual output '{}' started (PipeWire node {}). \
+                             Connect with: pw-play --target {}",
+                            vout_config.name,
+                            node_id,
+                            node_id
+                        );
+                        state.virtual_outputs.push(vout_state);
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to create virtual output '{}': {}",
+                            vout_config.name,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
+        // Add a calloop timer to drive virtual output rendering independently of physical VBlanks.
+        // This ensures frames keep flowing even when physical outputs are idle.
+        if !state.virtual_outputs.is_empty() {
+            let refresh_hz = state
+                .virtual_outputs
+                .iter()
+                .filter_map(|v| v.output.current_mode())
+                .map(|m| m.refresh as f64 / 1000.0)
+                .fold(f64::INFINITY, f64::min);
+            let refresh_hz = if refresh_hz.is_finite() { refresh_hz } else { 60.0 };
+            let interval =
+                std::time::Duration::from_micros((1_000_000.0 / refresh_hz) as u64);
+
+            state
+                .handle
+                .insert_source(
+                    smithay::reexports::calloop::timer::Timer::from_duration(interval),
+                    move |_, _, data: &mut Otto<super::types::UdevData>| {
+                        data.render_virtual_outputs();
+                        smithay::reexports::calloop::timer::TimeoutAction::ToDuration(interval)
+                    },
+                )
+                .expect("failed to schedule virtual output render timer");
+            tracing::info!(
+                "Virtual output render timer started at {:.1} Hz",
+                refresh_hz
+            );
         }
     }
 

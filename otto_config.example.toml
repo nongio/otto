@@ -32,6 +32,18 @@ resolution = { width = 1920, height = 1080 }
 refresh_hz = 60.0
 position = { x = 1920, y = 0 }
 
+# Virtual outputs (optional) — headless outputs streamed via PipeWire.
+# Each entry creates a compositor output with no physical display.
+# Frames are pushed to a PipeWire stream; connect with any PipeWire client
+# (e.g. OBS Studio, pw-play, gst-launch-1.0). The PipeWire node ID is
+# logged at startup: "Virtual output 'virtual-1' started (PipeWire node 42)".
+#
+# [[virtual_outputs]]
+# name = "virtual-1"
+# resolution = { width = 1920, height = 1080 }
+# refresh_hz = 60.0
+# position = { x = 3840, y = 0 }   # optional: place next to physical outputs
+
 [input]
 # Touchpad tap-to-click (1-finger = left click, 2-finger = right click, 3-finger = middle click)
 tap_enabled = true

@@ -19,15 +19,16 @@ pub mod render_elements;
 #[cfg(feature = "metrics")]
 pub mod render_metrics;
 pub mod renderer;
-pub mod surface_style;
 pub mod screenshare;
 pub mod settings_service;
 pub mod shell;
 pub mod skia_renderer;
 pub mod state;
+pub mod surface_style;
 pub mod textures_storage;
 #[cfg(feature = "udev")]
 pub mod udev;
+pub mod virtual_output;
 #[cfg(feature = "winit")]
 pub mod winit;
 #[cfg(feature = "x11")]
