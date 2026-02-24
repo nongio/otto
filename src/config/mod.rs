@@ -303,6 +303,12 @@ pub struct DockConfig {
     #[serde(default = "default_genie_span")]
     pub genie_span: f64,
     #[serde(default)]
+    pub colorize_icons: bool,
+    #[serde(default = "default_dock_colorize_color")]
+    pub colorize_color: String,
+    #[serde(default = "default_dock_colorize_intensity")]
+    pub colorize_intensity: f64,
+    #[serde(default)]
     pub autohide: bool,
     #[serde(default = "default_magnification")]
     pub magnification: bool,
@@ -371,6 +377,14 @@ fn default_genie_scale() -> f64 {
 
 fn default_genie_span() -> f64 {
     10.0
+}
+
+fn default_dock_colorize_color() -> String {
+    "#ffffff".to_string()
+}
+
+fn default_dock_colorize_intensity() -> f64 {
+    1.0
 }
 
 fn default_accent_color() -> String {
