@@ -7,7 +7,9 @@ use smithay::reexports::wayland_server::DisplayHandle;
 use crate::state::Backend;
 
 pub use handlers::create_style_manager_global;
-pub use protocol::{gen, SurfaceStyle, SurfaceStyleHandler, OttoSurfaceStyleZOrder, StyleTransaction};
+pub use protocol::{
+    gen, OttoSurfaceStyleZOrder, StyleTransaction, SurfaceStyle, SurfaceStyleHandler,
+};
 
 /// Shell global state
 #[derive(Clone)]

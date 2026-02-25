@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod default_apps;
 pub mod shortcuts;
@@ -254,8 +254,7 @@ pub fn writable_config_path() -> PathBuf {
             }
         }
     }
-    get_user_config_path()
-        .unwrap_or_else(|| PathBuf::from("otto_config.toml"))
+    get_user_config_path().unwrap_or_else(|| PathBuf::from("otto_config.toml"))
 }
 
 fn backend_override_candidates(backend: &str) -> Vec<String> {
@@ -280,7 +279,9 @@ fn backend_override_candidates(backend: &str) -> Vec<String> {
 pub fn save_dock_config(dock: &DockConfig) {
     let path = writable_config_path();
     let raw = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml::Value = raw.parse().unwrap_or(toml::Value::Table(Default::default()));
+    let mut doc: toml::Value = raw
+        .parse()
+        .unwrap_or(toml::Value::Table(Default::default()));
 
     if let Ok(dock_value) = toml::Value::try_from(dock) {
         doc.as_table_mut()
@@ -305,7 +306,11 @@ pub struct DockConfig {
     pub autohide: bool,
     #[serde(default = "default_magnification")]
     pub magnification: bool,
-    #[serde(default)]
+    #[serde(
+        default,
+        serialize_with = "serialize_dock_bookmarks",
+        deserialize_with = "deserialize_dock_bookmarks"
+    )]
     pub bookmarks: Vec<DockBookmark>,
 }
 
@@ -428,7 +433,7 @@ pub struct AudioConfig {
     /// Enable sound feedback for UI events (default: true)
     #[serde(default = "default_sound_enabled")]
     pub sound_enabled: bool,
-    
+
     /// XDG Sound Theme name (default: None for auto-detection)
     /// Examples: "freedesktop", "Pop", "ocean"
     /// When None, Otto will auto-detect the system sound theme
@@ -556,6 +561,67 @@ pub struct DockBookmark {
     pub label: Option<String>,
     #[serde(default)]
     pub exec_args: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum DockBookmarkToml {
+    Compact(String),
+    Detailed {
+        desktop_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        exec_args: Vec<String>,
+    },
+}
+
+fn serialize_dock_bookmarks<S>(bookmarks: &[DockBookmark], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let encoded: Vec<DockBookmarkToml> = bookmarks
+        .iter()
+        .map(|bookmark| {
+            if bookmark.label.is_none() && bookmark.exec_args.is_empty() {
+                DockBookmarkToml::Compact(bookmark.desktop_id.clone())
+            } else {
+                DockBookmarkToml::Detailed {
+                    desktop_id: bookmark.desktop_id.clone(),
+                    label: bookmark.label.clone(),
+                    exec_args: bookmark.exec_args.clone(),
+                }
+            }
+        })
+        .collect();
+
+    encoded.serialize(serializer)
+}
+
+fn deserialize_dock_bookmarks<'de, D>(deserializer: D) -> Result<Vec<DockBookmark>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let encoded = Vec::<DockBookmarkToml>::deserialize(deserializer)?;
+    Ok(encoded
+        .into_iter()
+        .map(|bookmark| match bookmark {
+            DockBookmarkToml::Compact(desktop_id) => DockBookmark {
+                desktop_id,
+                label: None,
+                exec_args: Vec::new(),
+            },
+            DockBookmarkToml::Detailed {
+                desktop_id,
+                label,
+                exec_args,
+            } => DockBookmark {
+                desktop_id,
+                label,
+                exec_args,
+            },
+        })
+        .collect())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -852,6 +918,103 @@ mod tests {
         assert_eq!(config.screen_scale, 1.5);
         // Other defaults should remain
         assert_eq!(config.cursor_theme, "Notwaita-Black");
+    }
+
+    #[test]
+    fn test_dock_bookmarks_compact_deserialize() {
+        let raw = r#"
+            [dock]
+            bookmarks = ["firefox.desktop", "kitty.desktop"]
+        "#;
+        let config: Config =
+            toml::from_str(raw).expect("compact dock bookmarks should deserialize");
+
+        assert_eq!(config.dock.bookmarks.len(), 2);
+        assert_eq!(config.dock.bookmarks[0].desktop_id, "firefox.desktop");
+        assert_eq!(config.dock.bookmarks[0].label, None);
+        assert!(config.dock.bookmarks[0].exec_args.is_empty());
+        assert_eq!(config.dock.bookmarks[1].desktop_id, "kitty.desktop");
+    }
+
+    #[test]
+    fn test_dock_bookmarks_mixed_deserialize() {
+        let raw = r#"
+            [dock]
+            bookmarks = [
+                "firefox.desktop",
+                { desktop_id = "kitty.desktop", exec_args = ["--single-instance"] }
+            ]
+        "#;
+        let config: Config = toml::from_str(raw).expect("mixed dock bookmarks should deserialize");
+
+        assert_eq!(config.dock.bookmarks.len(), 2);
+        assert_eq!(config.dock.bookmarks[0].desktop_id, "firefox.desktop");
+        assert!(config.dock.bookmarks[0].exec_args.is_empty());
+        assert_eq!(config.dock.bookmarks[1].desktop_id, "kitty.desktop");
+        assert_eq!(
+            config.dock.bookmarks[1].exec_args,
+            vec!["--single-instance".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_dock_bookmarks_compact_serialize() {
+        let dock = DockConfig {
+            bookmarks: vec![
+                DockBookmark {
+                    desktop_id: "firefox.desktop".to_string(),
+                    label: None,
+                    exec_args: Vec::new(),
+                },
+                DockBookmark {
+                    desktop_id: "kitty.desktop".to_string(),
+                    label: None,
+                    exec_args: Vec::new(),
+                },
+            ],
+            ..DockConfig::default()
+        };
+        let value = toml::Value::try_from(dock).expect("dock config should serialize");
+        let bookmarks = value
+            .get("bookmarks")
+            .and_then(toml::Value::as_array)
+            .expect("bookmarks should be serialized as array");
+
+        assert_eq!(bookmarks.len(), 2);
+        assert_eq!(bookmarks[0].as_str(), Some("firefox.desktop"));
+        assert_eq!(bookmarks[1].as_str(), Some("kitty.desktop"));
+    }
+
+    #[test]
+    fn test_dock_bookmarks_detailed_serialize_when_needed() {
+        let dock = DockConfig {
+            bookmarks: vec![DockBookmark {
+                desktop_id: "kitty.desktop".to_string(),
+                label: None,
+                exec_args: vec!["--single-instance".to_string()],
+            }],
+            ..DockConfig::default()
+        };
+        let value = toml::Value::try_from(dock).expect("dock config should serialize");
+        let bookmarks = value
+            .get("bookmarks")
+            .and_then(toml::Value::as_array)
+            .expect("bookmarks should be serialized as array");
+        let first = bookmarks[0]
+            .as_table()
+            .expect("bookmark should serialize as detailed table when args exist");
+
+        assert_eq!(
+            first.get("desktop_id").and_then(toml::Value::as_str),
+            Some("kitty.desktop")
+        );
+        assert_eq!(
+            first
+                .get("exec_args")
+                .and_then(toml::Value::as_array)
+                .map(|arr| arr.len()),
+            Some(1)
+        );
     }
 
     #[test]

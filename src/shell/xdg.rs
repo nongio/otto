@@ -143,6 +143,7 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             &self.display_handle,
             &app_id,
             &title,
+            surface_id.clone(),
         );
 
         let handles = crate::state::foreign_toplevel_shared::ForeignToplevelHandles::new(

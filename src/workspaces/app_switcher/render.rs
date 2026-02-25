@@ -25,9 +25,9 @@ pub fn layout_metrics(state: &AppSwitcherModel) -> (f32, f32, f32, f32, f32, f32
         padding_v = 50.0 * draw_scale;
     }
 
-    let available_icon_size =
-        ((available_width - total_padding - padding_h * 2.0) / state.apps.len().max(1) as f32)
-            .min(icon_size);
+    let available_icon_size = ((available_width - total_padding - padding_h * 2.0)
+        / state.apps.len().max(1) as f32)
+        .min(icon_size);
 
     let component_width = apps_len * available_icon_size + total_padding + padding_h * 2.0;
     let component_height = available_icon_size + icon_padding * 2.0 + padding_v * 2.0;
@@ -83,9 +83,8 @@ pub fn draw_appswitcher_overlay(state: &AppSwitcherModel) -> ContentDrawFunction
                 layers::skia::font_style::Width::CONDENSED,
                 layers::skia::font_style::Slant::Upright,
             );
-            let font = FONT_CACHE.with(|fc| {
-                fc.make_font_with_fallback(font_family, font_style, font_size)
-            });
+            let font = FONT_CACHE
+                .with(|fc| fc.make_font_with_fallback(font_family, font_style, font_size));
             let mut text_paint =
                 layers::skia::Paint::new(theme_colors().text_secondary.c4f(), None);
             text_paint.set_anti_alias(true);
@@ -99,4 +98,3 @@ pub fn draw_appswitcher_overlay(state: &AppSwitcherModel) -> ContentDrawFunction
     };
     draw.into()
 }
-
