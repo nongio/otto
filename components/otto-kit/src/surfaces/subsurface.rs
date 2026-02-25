@@ -80,6 +80,7 @@ impl SubsurfaceSurface {
     /// * `compositor` - Compositor state
     /// * `subcompositor` - Subcompositor global
     /// * `qh` - Queue handle for creating objects
+    #[allow(clippy::too_many_arguments)]
     pub fn new_typed<D>(
         parent_surface: &wl_surface::WlSurface,
         x: i32,

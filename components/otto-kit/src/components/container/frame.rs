@@ -152,6 +152,7 @@ impl<B: ContainerBackend> Container for Frame<B> {
 /// Builder for creating Frame instances
 ///
 /// Provides a fluent API for configuring frames before creation.
+#[allow(clippy::type_complexity)]
 pub struct FrameBuilder {
     width: f32,
     height: f32,

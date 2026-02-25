@@ -34,10 +34,12 @@ impl<BackendData: Backend> Dispatch<OttoStyleTransactionV1, ()> for Otto<Backend
             otto_style_transaction_v1::Request::SetTimingFunction { timing } => {
                 if let Some(txn) = state.style_transactions.get_mut(&txn_id) {
                     // Get the timing function data from the object
-                    if let Some(timing_data) = timing.data::<super::timing_function::ScTimingFunctionData>() {
+                    if let Some(timing_data) =
+                        timing.data::<super::timing_function::ScTimingFunctionData>()
+                    {
                         // Store the timing function for later use when creating the transition
                         txn.timing_function = Some(layers::prelude::Transition {
-                            timing: timing_data.timing.clone(),
+                            timing: timing_data.timing,
                             delay: 0.0, // Will be set from txn.delay
                         });
                         txn.spring_uses_duration = timing_data.spring_uses_duration;

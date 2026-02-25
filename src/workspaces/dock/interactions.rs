@@ -145,13 +145,13 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
                         let view = InteractiveView {
                             view: Box::new(self.clone()),
                         };
-                        seat.get_keyboard().map(|keyboard| {
+                        if let Some(keyboard) = seat.get_keyboard() {
                             keyboard.set_focus(
                                 state,
                                 Some(crate::focus::KeyboardFocusTarget::View(view)),
                                 event.serial,
                             );
-                        });
+                        }
                         return;
                     }
 
@@ -172,13 +172,13 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
                             let view = InteractiveView {
                                 view: Box::new(self.clone()),
                             };
-                            seat.get_keyboard().map(|keyboard| {
+                            if let Some(keyboard) = seat.get_keyboard() {
                                 keyboard.set_focus(
                                     state,
                                     Some(crate::focus::KeyboardFocusTarget::View(view)),
                                     event.serial,
                                 );
-                            });
+                            }
                             return;
                         } else {
                             // Normal left-click: focus or launch app

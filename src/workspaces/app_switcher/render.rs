@@ -16,11 +16,11 @@ pub fn layout_metrics(state: &AppSwitcherModel) -> (f32, f32, f32, f32, f32, f32
     let total_gaps = (apps_len - 1.0) * gap;
     let total_padding = apps_len * icon_padding * 2.0 + total_gaps;
 
-    let mut padding_h: f32 = (available_width - total_padding) * 0.03 * draw_scale;
+    let mut padding_h: f32 = ((available_width - total_padding) * 0.03 * draw_scale).max(0.0);
     if padding_h > 15.0 * draw_scale {
         padding_h = 15.0 * draw_scale;
     }
-    let mut padding_v: f32 = (available_width - total_padding) * 0.014 * draw_scale;
+    let mut padding_v: f32 = ((available_width - total_padding) * 0.014 * draw_scale).max(0.0);
     if padding_v > 50.0 * draw_scale {
         padding_v = 50.0 * draw_scale;
     }
@@ -28,6 +28,10 @@ pub fn layout_metrics(state: &AppSwitcherModel) -> (f32, f32, f32, f32, f32, f32
     let available_icon_size = ((available_width - total_padding - padding_h * 2.0)
         / state.apps.len().max(1) as f32)
         .min(icon_size);
+    // Reserve enough vertical room for the app label under the selected icon.
+    // This keeps the panel from looking too tight on 1.0 scale outputs.
+    let min_padding_v = (available_icon_size / 8.0) * 1.6;
+    padding_v = padding_v.max(min_padding_v);
 
     let component_width = apps_len * available_icon_size + total_padding + padding_h * 2.0;
     let component_height = available_icon_size + icon_padding * 2.0 + padding_v * 2.0;

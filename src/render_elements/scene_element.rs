@@ -3,7 +3,11 @@ use std::{cell::RefCell, rc::Rc, sync::Arc, time::Instant};
 #[cfg(feature = "perf-counters")]
 use std::time::Duration;
 
-use layers::{drawing::render_node_tree, engine::{Engine, NodeRef}, prelude::Layer};
+use layers::{
+    drawing::render_node_tree,
+    engine::{Engine, NodeRef},
+    prelude::Layer,
+};
 
 use smithay::{
     backend::renderer::{
@@ -199,7 +203,9 @@ impl Element for SceneElement {
     fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
         if let Some(oid) = self.output_root {
             // Per-output element: geometry fills the output framebuffer from (0,0).
-            let size = self.engine.get_layer(&oid)
+            let size = self
+                .engine
+                .get_layer(&oid)
                 .map(|l| {
                     let b = l.render_bounds_transformed();
                     (b.width() as i32, b.height() as i32).into()

@@ -70,12 +70,7 @@ impl<BackendData: Backend> Dispatch<OttoTimingFunctionV1, ScTimingFunctionData>
                 }
             }
 
-            otto_timing_function_v1::Request::SetBezier {
-                c1x,
-                c1y,
-                c2x,
-                c2y,
-            } => {
+            otto_timing_function_v1::Request::SetBezier { c1x, c1y, c2x, c2y } => {
                 let easing = Easing {
                     x1: c1x as f32,
                     y1: c1y as f32,

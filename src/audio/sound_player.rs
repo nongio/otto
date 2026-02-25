@@ -24,6 +24,7 @@ fn last_play_cache() -> &'static RwLock<HashMap<String, Instant>> {
 }
 
 /// Simple sound player for UI feedback
+#[derive(Default)]
 pub struct SoundPlayer {
     // Placeholder for future PipeWire state
 }
@@ -156,12 +157,6 @@ impl SoundPlayer {
     /// Play volume adjustment sound
     pub fn play_volume_sound(&self) {
         self.play_event("audio-volume-change");
-    }
-}
-
-impl Default for SoundPlayer {
-    fn default() -> Self {
-        Self {}
     }
 }
 

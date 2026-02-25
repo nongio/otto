@@ -240,7 +240,7 @@ impl App for DockApp {
                     );
 
                     // Pass the serial to show() for popup grab
-                    menu.show(&xdg_surface, &positioner, serial);
+                    menu.show(xdg_surface, &positioner, serial);
                 }
             } else {
                 // menu.hide();

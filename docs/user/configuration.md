@@ -375,6 +375,12 @@ size = 1.0
 genie_scale = 0.5
 genie_span = 10.0
 
+# Optional icon colorization
+# When enabled, dock app icons are tinted to this color (hex RGB).
+colorize_icons = false
+colorize_color = "#ffffff"
+colorize_intensity = 1.0
+
 # Bookmarked applications
 bookmarks = [
   { desktop_id = "org.kde.dolphin.desktop" },

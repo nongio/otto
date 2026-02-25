@@ -48,6 +48,7 @@ pub trait ContainerBackend: Send + 'static {
 }
 
 /// Drawing-based backend - renders directly on parent canvas
+#[allow(clippy::type_complexity)]
 pub struct DrawingBackend {
     /// Custom drawing function
     pub draw_fn: Option<Box<dyn FnMut(&Canvas, Rect) + Send>>,
@@ -121,6 +122,7 @@ impl ContainerBackend for DrawingBackend {
 ///
 /// This allows expensive rendering to be cached and only updated when needed,
 /// improving performance for complex UIs.
+#[allow(clippy::type_complexity)]
 pub struct SurfaceBackend {
     /// Reference to subsurface (managed externally)
     subsurface_id: Option<String>,

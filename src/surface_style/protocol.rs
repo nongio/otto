@@ -97,7 +97,7 @@ impl Clone for StyleTransaction {
             spring_initial_velocity: self.spring_initial_velocity,
             send_completion: self.send_completion,
             accumulated_changes: self.accumulated_changes.clone(),
-            animation: self.animation.clone(),
+            animation: self.animation,
         }
     }
 }

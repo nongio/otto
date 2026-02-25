@@ -76,6 +76,7 @@ impl LayerSurface {
 
         // Create Skia surface using shared context
         use crate::app_runner::AppContext;
+        #[allow(clippy::map_identity)]
         let skia_surface = AppContext::skia_context(|ctx| {
             ctx.create_surface(&wl_surface, width * buffer_scale, height * buffer_scale)
         })

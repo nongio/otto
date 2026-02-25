@@ -106,12 +106,12 @@ impl<BackendData: Backend> Otto<BackendData> {
                         }
 
                         // Deactivate old focus if it was a different window
-                        if let Some(old) = old_focus.as_ref() {
-                            if let crate::focus::KeyboardFocusTarget::Window(old_window) = old {
-                                if old_window.wl_surface() != window.wl_surface() {
-                                    old_window.set_activate(false);
-                                    old_window.toplevel().map(|t| t.send_configure());
-                                }
+                        if let Some(crate::focus::KeyboardFocusTarget::Window(old_window)) =
+                            old_focus.as_ref()
+                        {
+                            if old_window.wl_surface() != window.wl_surface() {
+                                old_window.set_activate(false);
+                                old_window.toplevel().map(|t| t.send_configure());
                             }
                         }
 
@@ -169,19 +169,19 @@ impl<BackendData: Backend> Otto<BackendData> {
                             self.workspaces.focus_app_with_window(&id);
 
                             // Deactivate old focus if it was a different window
-                            if let Some(old) = old_focus.as_ref() {
-                                if let crate::focus::KeyboardFocusTarget::Window(old_window) = old {
-                                    if old_window.wl_surface() != window.wl_surface() {
-                                        old_window.set_activate(false);
-                                        // Update shadow for deactivated window
-                                        if let Some(view) =
-                                            self.workspaces.get_window_view(&old_window.id())
-                                        {
-                                            view.set_active(false);
-                                        }
-                                        if let Some(toplevel) = old_window.toplevel() {
-                                            toplevel.send_configure();
-                                        }
+                            if let Some(crate::focus::KeyboardFocusTarget::Window(old_window)) =
+                                old_focus.as_ref()
+                            {
+                                if old_window.wl_surface() != window.wl_surface() {
+                                    old_window.set_activate(false);
+                                    // Update shadow for deactivated window
+                                    if let Some(view) =
+                                        self.workspaces.get_window_view(&old_window.id())
+                                    {
+                                        view.set_active(false);
+                                    }
+                                    if let Some(toplevel) = old_window.toplevel() {
+                                        toplevel.send_configure();
                                     }
                                 }
                             }
@@ -276,9 +276,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
         // Window selector check
         if self.workspaces.get_show_all() {
-            let Some(workspace) = self.workspaces.get_current_workspace() else {
-                return None;
-            };
+            let workspace = self.workspaces.get_current_workspace()?;
             let focus = workspace.window_selector_view.as_ref().clone().into();
             let position = workspace.window_selector_view.layer.render_position();
 

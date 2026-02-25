@@ -1,5 +1,7 @@
+#[allow(clippy::module_inception)]
 mod data;
 mod group;
+#[allow(clippy::module_inception)]
 mod menu_item;
 mod renderer;
 mod style;

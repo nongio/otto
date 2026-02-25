@@ -35,12 +35,8 @@ impl LayersRenderer {
     /// Returns true if a redraw is needed
     /// Limited to 60fps - will skip updates if called too frequently
     pub fn update(&self) -> bool {
-        // println!("LayersRenderer update called");
-
         // Update engine (layout + animations)
-        let ret = self.engine.update(0.016);
-        // println!("Engine update returned: {}", ret);
-        ret
+        self.engine.update(0.016)
     }
 
     /// Resize the renderer
