@@ -29,6 +29,8 @@ impl LayoutBoundingBox for WindowElement {
 const WINDOW_PLACEMENT_NATURAL_ACCURACY: f32 = 10.0;
 const WINDOW_PLACEMENT_NATURAL_GAPS: f32 = 20.0;
 const WINDOW_PLACEMENT_NATURAL_MAX_TRANSLATIONS: usize = 5000;
+const WINDOW_PLACEMENT_JITTER_RADIUS_PX: f32 = 1.0;
+const WINDOW_PLACEMENT_JITTER_STEP_DEG: f32 = 90.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LayoutRect {
@@ -126,10 +128,13 @@ pub fn natural_layout(
     let mut rects = vec![];
     let mut rng = rand::thread_rng();
 
-    for (window_id, rect) in windows {
-        // Add tiny random jitter to break symmetry when windows are at identical positions
-        let jitter_x = rng.gen_range(-2.0..2.0);
-        let jitter_y = rng.gen_range(-2.0..2.0);
+    for (index, (window_id, rect)) in windows.into_iter().enumerate() {
+        // Add tiny deterministic jitter to break symmetry when windows are at identical positions.
+        // Uses a configurable step angle (degrees). 90° matches the old 4-direction cycle.
+        let step_rad = WINDOW_PLACEMENT_JITTER_STEP_DEG.to_radians();
+        let angle = index as f32 * step_rad;
+        let jitter_x = WINDOW_PLACEMENT_JITTER_RADIUS_PX * angle.cos();
+        let jitter_y = WINDOW_PLACEMENT_JITTER_RADIUS_PX * angle.sin();
 
         let layout_rect = LayoutRect::new(
             rect.x + jitter_x,
