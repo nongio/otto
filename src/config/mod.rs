@@ -30,6 +30,8 @@ pub struct Config {
     pub layer_shell: LayerShellConfig,
     #[serde(default)]
     pub power_management: PowerManagementConfig,
+    #[serde(default)]
+    pub audio: AudioConfig,
     pub font_family: String,
     pub keyboard_repeat_delay: i32,
     pub keyboard_repeat_rate: i32,
@@ -62,6 +64,7 @@ impl Default for Config {
             dock: DockConfig::default(),
             layer_shell: LayerShellConfig::default(),
             power_management: PowerManagementConfig::default(),
+            audio: AudioConfig::default(),
             font_family: "Inter".to_string(),
             keyboard_repeat_delay: 300,
             keyboard_repeat_rate: 30,
@@ -369,6 +372,33 @@ fn default_manage_lid_switch() -> bool {
 
 fn default_on_lid_close() -> LidCloseAction {
     LidCloseAction::Auto
+}
+
+/// Audio configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioConfig {
+    /// Enable sound feedback for UI events (default: true)
+    #[serde(default = "default_sound_enabled")]
+    pub sound_enabled: bool,
+    
+    /// XDG Sound Theme name (default: None for auto-detection)
+    /// Examples: "freedesktop", "Pop", "ocean"
+    /// When None, Otto will auto-detect the system sound theme
+    #[serde(default)]
+    pub sound_theme: Option<String>,
+}
+
+impl Default for AudioConfig {
+    fn default() -> Self {
+        Self {
+            sound_enabled: default_sound_enabled(),
+            sound_theme: None,
+        }
+    }
+}
+
+fn default_sound_enabled() -> bool {
+    true
 }
 
 /// Input device configuration

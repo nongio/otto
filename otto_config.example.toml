@@ -91,6 +91,21 @@ manage_lid_switch = true
 #   "disable_internal_screen" - Always disable screen but stay running (for display managers/kiosks)
 on_lid_close = "auto"
 
+# Audio / Sound feedback
+[audio]
+# Enable sound effects for UI events like volume changes (default: true)
+sound_enabled = true
+
+# XDG Sound Theme name (optional, auto-detect if omitted)
+# Uses freedesktop.org Sound Theme specification for sound lookup
+# Common themes: "freedesktop", "Pop", "ocean"
+# Sounds are loaded from /usr/share/sounds/{theme}/stereo/{event}.oga
+sound_theme = "freedesktop"  # Uncomment to override auto-detection
+
+# You can also place custom sounds in resources/ directory:
+#   resources/audio-volume-change.oga - Custom volume change sound
+# Custom sounds take precedence over theme sounds.
+
 [keyboard_shortcuts]
 "Ctrl+Esc" = "Quit"
 "Ctrl+Return" = { run = { cmd = "terminator", args = [] } }

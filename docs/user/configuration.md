@@ -186,6 +186,79 @@ max_right = 50      # Right side panels
 
 ---
 
+### Audio & Sound Feedback
+
+Otto can play sound effects for UI events using the XDG Sound Theme specification.
+
+```toml
+[audio]
+# Enable sound effects for UI events like volume changes (default: true)
+sound_enabled = true
+
+# XDG Sound Theme name (optional, auto-detect if omitted)
+# Uses freedesktop.org Sound Theme specification for sound lookup
+# Common themes: "freedesktop", "Pop", "ocean", "Yaru"
+sound_theme = "freedesktop"  # Uncomment to override auto-detection
+```
+
+**Sound Events:**
+
+Currently supported events:
+- **`audio-volume-change`** - Plays when volume is adjusted with keyboard shortcuts
+
+**How Sound Lookup Works:**
+
+Otto searches for sounds in this order:
+
+1. **Custom sounds in resources/**
+   ```
+   resources/audio-volume-change.oga
+   resources/audio-volume-change.ogg
+   resources/audio-volume-change.wav
+   ```
+
+2. **Configured theme** (if `sound_theme` is set)
+   ```
+   /usr/share/sounds/{theme}/stereo/{event}.oga
+   ```
+
+3. **Auto-detected system theme** (from desktop environment or gsettings)
+
+4. **Freedesktop fallback theme**
+   ```
+   /usr/share/sounds/freedesktop/stereo/audio-volume-change.oga
+   ```
+
+**Common Sound Themes:**
+
+- **freedesktop** - Standard freedesktop.org sounds (minimal, universally available)
+- **Pop** - Pop!_OS sound theme (modern, pleasant clicks)
+- **ocean** - KDE Plasma's Ocean theme
+- **Yaru** - Ubuntu's default theme
+
+**Disabling Sound Effects:**
+
+```toml
+[audio]
+sound_enabled = false
+```
+
+**Custom Sounds:**
+
+Place your own sound files in the `resources/` directory with the event name:
+
+```bash
+# Create resources directory if it doesn't exist
+mkdir -p resources
+
+# Add custom volume change sound
+cp ~/my-click-sound.oga resources/audio-volume-change.oga
+```
+
+Supported formats: `.oga` (Ogg Vorbis), `.ogg`, `.wav`, `.flac`
+
+---
+
 ### Application Defaults
 
 ---
