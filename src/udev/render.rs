@@ -87,11 +87,10 @@ impl Otto<UdevData> {
         };
 
         let output = if let Some(output) = self.workspaces.outputs().find(|o| {
-            o.user_data().get::<UdevOutputId>()
-                == Some(&UdevOutputId {
-                    device_id: surface.device_id,
-                    crtc,
-                })
+            o.user_data()
+                .get::<UdevOutputId>()
+                .map(|id| id.device_id == surface.device_id && id.crtc == crtc)
+                .unwrap_or(false)
         }) {
             output.clone()
         } else {
@@ -289,11 +288,10 @@ impl Otto<UdevData> {
         .unwrap();
 
         let output = if let Some(output) = self.workspaces.outputs().find(|o| {
-            o.user_data().get::<UdevOutputId>()
-                == Some(&UdevOutputId {
-                    device_id: surface.device_id,
-                    crtc,
-                })
+            o.user_data()
+                .get::<UdevOutputId>()
+                .map(|id| id.device_id == surface.device_id && id.crtc == crtc)
+                .unwrap_or(false)
         }) {
             output.clone()
         } else {

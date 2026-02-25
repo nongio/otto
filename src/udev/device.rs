@@ -431,6 +431,7 @@ impl Otto<UdevData> {
         output.user_data().insert_if_missing(|| UdevOutputId {
             crtc,
             device_id: node,
+            is_laptop_panel: crate::utils::is_laptop_panel(output_name),
         });
 
         #[cfg(feature = "fps_ticker")]
@@ -588,6 +589,141 @@ impl Otto<UdevData> {
             if let Some(output) = output {
                 self.workspaces.unmap_output(&output);
             }
+        }
+    }
+
+    /// Updates display power state based on lid switch and configuration
+    ///
+    /// This implements clamshell mode: when lid is closed and external monitors
+    /// are connected, the laptop panel is disabled. When the lid opens, it's re-enabled.
+    pub fn update_display_power_state(&mut self) {
+        use crate::config::{Config, LidCloseAction};
+
+        // Check config - if lid management is disabled, do nothing
+        let (manage_lid, lid_action) = Config::with(|config| {
+            (
+                config.power_management.manage_lid_switch,
+                config.power_management.on_lid_close,
+            )
+        });
+
+        if !manage_lid {
+            tracing::debug!("Lid switch management disabled in config");
+            return;
+        }
+
+        // Determine if we should disable laptop panels based on lid state and config
+        let disable_laptop_panels = match lid_action {
+            LidCloseAction::Auto => {
+                // Normal laptop behavior: only disable if lid is closed
+                self.is_lid_closed
+            }
+            LidCloseAction::DisableInternalScreen => {
+                // Display manager mode: always act like lid is closed
+                // (screen turns off, system stays running)
+                true
+            }
+        };
+
+        if disable_laptop_panels && self.is_lid_closed {
+            // Check if any external monitor is connected (for logging purposes)
+            let mut has_external_monitor = false;
+            for device in self.backend_data.backends.values() {
+                for (connector, _crtc) in device.drm_scanner.crtcs() {
+                    let connector_name = format!(
+                        "{}-{}",
+                        connector.interface().as_str(),
+                        connector.interface_id()
+                    );
+                    if !crate::utils::is_laptop_panel(&connector_name) {
+                        has_external_monitor = true;
+                        break;
+                    }
+                }
+                if has_external_monitor {
+                    break;
+                }
+            }
+
+            if has_external_monitor {
+                tracing::info!(
+                    "Lid closed with external monitor - disabling laptop panel (clamshell mode)"
+                );
+            } else {
+                tracing::info!("Lid closed without external monitor - disabling laptop panel (system will suspend via systemd-logind)");
+            }
+        }
+
+        // Collect outputs to disconnect/reconnect
+        let mut to_disconnect = vec![];
+        let mut to_reconnect = vec![];
+
+        if disable_laptop_panels {
+            // Lid is closed - disconnect laptop panels that are currently active
+            for (&node, device) in &self.backend_data.backends {
+                for (&crtc, _surface) in &device.surfaces {
+                    // Find the output for this surface
+                    let output = self.workspaces.outputs().find(|o| {
+                        o.user_data()
+                            .get::<UdevOutputId>()
+                            .map(|id| id.device_id == node && id.crtc == crtc && id.is_laptop_panel)
+                            .unwrap_or(false)
+                    });
+
+                    if let Some(output) = output {
+                        let output_name = output.name();
+                        tracing::info!("Disabling laptop panel: {}", output_name);
+                        to_disconnect.push((node, crtc));
+                    }
+                }
+            }
+        } else {
+            // Lid is open - reconnect laptop panels that are not currently active
+            for (&node, device) in &self.backend_data.backends {
+                for (connector, crtc) in device.drm_scanner.crtcs() {
+                    let connector_name = format!(
+                        "{}-{}",
+                        connector.interface().as_str(),
+                        connector.interface_id()
+                    );
+
+                    // Check if this is a laptop panel
+                    if !crate::utils::is_laptop_panel(&connector_name) {
+                        continue;
+                    }
+
+                    // Check if this panel is already connected
+                    let already_connected = device.surfaces.contains_key(&crtc);
+
+                    if !already_connected {
+                        tracing::info!("Re-enabling laptop panel: {}", connector_name);
+                        to_reconnect.push((node, connector.clone(), crtc));
+                    }
+                }
+            }
+        }
+
+        // Disconnect laptop panels that should be disabled
+        let disconnect_with_connectors: Vec<_> = to_disconnect
+            .into_iter()
+            .filter_map(|(node, crtc)| {
+                self.backend_data.backends.get(&node).and_then(|device| {
+                    device
+                        .drm_scanner
+                        .crtcs()
+                        .find(|(_, c)| *c == crtc)
+                        .map(|(connector, _)| (node, connector.clone(), crtc))
+                })
+            })
+            .collect();
+
+        for (node, connector, crtc) in disconnect_with_connectors {
+            self.connector_disconnected(node, connector, crtc);
+        }
+
+        // Reconnect laptop panels that should be re-enabled
+        for (node, connector, crtc) in to_reconnect {
+            self.connector_connected(node, connector, crtc);
         }
     }
 }

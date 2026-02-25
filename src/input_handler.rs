@@ -4,7 +4,7 @@
 //! to the appropriate handler modules (keyboard, pointer, gestures, tablet).
 
 use smithay::{
-    backend::input::{InputBackend, InputEvent},
+    backend::input::{InputBackend, InputEvent, Switch, SwitchState, SwitchToggleEvent},
     output::Scale,
     reexports::wayland_server::DisplayHandle,
     utils::Transform,
@@ -425,6 +425,20 @@ impl Otto<UdevData> {
             InputEvent::GesturePinchEnd { event, .. } => self.on_gesture_pinch_end::<B>(event),
             InputEvent::GestureHoldBegin { event, .. } => self.on_gesture_hold_begin::<B>(event),
             InputEvent::GestureHoldEnd { event, .. } => self.on_gesture_hold_end::<B>(event),
+            InputEvent::SwitchToggle { event } => {
+                if let Some(switch) = event.switch() {
+                    if switch == Switch::Lid {
+                        let is_closed = event.state() == SwitchState::On;
+                        tracing::info!(
+                            is_closed,
+                            "Lid switch {}",
+                            if is_closed { "closed" } else { "opened" }
+                        );
+                        self.is_lid_closed = is_closed;
+                        self.update_display_power_state();
+                    }
+                }
+            }
             InputEvent::DeviceAdded { device } => {
                 if device.has_capability(DeviceCapability::TabletTool) {
                     self.seat
