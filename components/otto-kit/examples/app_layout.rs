@@ -20,28 +20,28 @@ impl App for AppLayoutApp {
 
             // ===== TOOLBAR =====
             let leading = ToolbarGroup::new()
-                .add(
+                .add_item(
                     Button::icon("layout-dashboard")
                         .with_background(Color::TRANSPARENT)
                         .with_text_color(Color::from_rgb(59, 130, 246)),
                 )
                 .add_space(16.0)
-                .add(
+                .add_item(
                     Button::new("Dashboard")
                         .with_background(Color::TRANSPARENT)
                         .with_text_color(Color::from_rgb(30, 30, 30)),
                 )
-                .add(
+                .add_item(
                     Button::new("Projects")
                         .with_background(Color::TRANSPARENT)
                         .with_text_color(Color::from_rgb(100, 100, 100)),
                 )
-                .add(
+                .add_item(
                     Button::new("Team")
                         .with_background(Color::TRANSPARENT)
                         .with_text_color(Color::from_rgb(100, 100, 100)),
                 )
-                .add(
+                .add_item(
                     Button::new("Analytics")
                         .with_background(Color::TRANSPARENT)
                         .with_text_color(Color::from_rgb(100, 100, 100)),
@@ -49,18 +49,18 @@ impl App for AppLayoutApp {
                 .build();
 
             let trailing = ToolbarGroup::new()
-                .add(
+                .add_item(
                     Button::icon("search")
                         .with_background(Color::TRANSPARENT)
                         .with_text_color(Color::from_rgb(100, 100, 100)),
                 )
-                .add(
+                .add_item(
                     Button::icon("bell")
                         .with_background(Color::TRANSPARENT)
                         .with_text_color(Color::from_rgb(100, 100, 100)),
                 )
                 .add_separator()
-                .add(
+                .add_item(
                     Button::icon("user")
                         .with_background(Color::from_rgb(229, 231, 235))
                         .with_text_color(Color::from_rgb(60, 60, 60)),

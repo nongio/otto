@@ -58,7 +58,7 @@ impl<BackendData: Backend> Dispatch<OttoDockItemV1, DockItem, Otto<BackendData>>
             }
 
             otto_dock_item_v1::Request::SetProgress { value } => {
-                let progress_value: f64 = value.into();
+                let progress_value: f64 = value;
                 tracing::info!("set_progress: app_id={} value={}", app_id, progress_value);
 
                 let opt_value = if progress_value < 0.0 {

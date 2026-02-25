@@ -3,7 +3,6 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use rand::Rng;
 use smithay::reexports::wayland_server::backend::ObjectId;
 
 use crate::shell::WindowElement;
@@ -126,7 +125,6 @@ pub fn natural_layout(
     let mut direction = 0;
     let mut directions = vec![];
     let mut rects = vec![];
-    let mut rng = rand::thread_rng();
 
     for (index, (window_id, rect)) in windows.into_iter().enumerate() {
         // Add tiny deterministic jitter to break symmetry when windows are at identical positions.

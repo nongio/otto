@@ -330,7 +330,8 @@ impl Otto<UdevData> {
         };
 
         // Build a per-output scene element that renders from the output's own layer node
-        let output_scene_element = self.workspaces
+        let output_scene_element = self
+            .workspaces
             .output_workspaces
             .get(&output.name())
             .map(|ows| self.scene_element.for_output_layer(&ows.output_layer))
@@ -654,7 +655,8 @@ impl Otto<UdevData> {
             let output_name = output_clone.name();
 
             // Per-output scene element — renders only this output's sub-tree
-            let output_scene_element = self.workspaces
+            let output_scene_element = self
+                .workspaces
                 .output_workspaces
                 .get(&output_name)
                 .map(|ows| scene_element.for_output_layer(&ows.output_layer))
@@ -662,15 +664,26 @@ impl Otto<UdevData> {
 
             // Build cursor elements if pointer is over this output
             let scale = Scale::from(output_clone.current_scale().fractional_scale());
-            let output_mode_size = output_clone.current_mode().map(|m| m.size).unwrap_or_default();
+            let output_mode_size = output_clone
+                .current_mode()
+                .map(|m| m.size)
+                .unwrap_or_default();
             let output_geometry = Rectangle::new((0, 0).into(), output_mode_size);
             let pointer_location = self.pointer.current_location();
             // Virtual output's logical position in the scene
             let vout_geo = self.workspaces.output_geometry(&output_clone);
             let local_pointer: Point<f64, Logical> = vout_geo
-                .map(|geo| (pointer_location.x - geo.loc.x as f64, pointer_location.y - geo.loc.y as f64).into())
+                .map(|geo| {
+                    (
+                        pointer_location.x - geo.loc.x as f64,
+                        pointer_location.y - geo.loc.y as f64,
+                    )
+                        .into()
+                })
                 .unwrap_or(pointer_location);
-            let pointer_in_output = output_geometry.to_f64().contains(local_pointer.to_physical(scale));
+            let pointer_in_output = output_geometry
+                .to_f64()
+                .contains(local_pointer.to_physical(scale));
 
             // Helper closure — builds fresh cursor elements (can't clone render elements)
             let build_cursor_elements = |renderer: &mut _| -> Vec<WorkspaceRenderElements<_>> {
@@ -682,7 +695,10 @@ impl Otto<UdevData> {
                 use smithay::backend::renderer::element::surface::render_elements_from_surface_tree;
                 let output_scale = output_clone.current_scale().fractional_scale();
                 let mut elems = Vec::new();
-                match self.cursor_manager.get_render_cursor(output_scale.round() as i32) {
+                match self
+                    .cursor_manager
+                    .get_render_cursor(output_scale.round() as i32)
+                {
                     RenderCursor::Hidden => {}
                     RenderCursor::Surface { hotspot, surface } => {
                         let cursor_pos_scaled = (local_pointer.to_physical(scale)
@@ -699,10 +715,19 @@ impl Otto<UdevData> {
                             );
                         elems.extend(cursor_elems);
                     }
-                    RenderCursor::Named { icon, scale: _, cursor } => {
+                    RenderCursor::Named {
+                        icon,
+                        scale: _,
+                        cursor,
+                    } => {
                         let elapsed_millis = self.clock.now().as_millis();
                         let (idx, image) = cursor.frame(elapsed_millis);
-                        let texture = self.cursor_texture_cache.get(icon, output_scale.round() as i32, &cursor, idx);
+                        let texture = self.cursor_texture_cache.get(
+                            icon,
+                            output_scale.round() as i32,
+                            &cursor,
+                            idx,
+                        );
                         let hotspot_physical = Point::from((image.xhot as f64, image.yhot as f64));
                         let cursor_pos_scaled: Point<i32, Physical> =
                             (local_pointer.to_physical(scale) - hotspot_physical).to_i32_round();
@@ -710,7 +735,9 @@ impl Otto<UdevData> {
                             renderer,
                             cursor_pos_scaled.to_f64(),
                             &texture,
-                            None, None, None,
+                            None,
+                            None,
+                            None,
                             Kind::Cursor,
                         ) {
                             elems.push(WorkspaceRenderElements::from(elem));
@@ -724,9 +751,8 @@ impl Otto<UdevData> {
             let pool_arc = self.virtual_outputs[i].pipewire_stream.buffer_pool();
             let maybe_buf = {
                 let mut pool = pool_arc.lock().unwrap();
-                pool.available.pop_front().map(|buf| {
+                pool.available.pop_front().inspect(|buf| {
                     pool.to_queue.insert(buf.fd, buf.pw_buffer);
-                    buf
                 })
             };
             if let Some(available) = maybe_buf {
@@ -737,7 +763,8 @@ impl Otto<UdevData> {
                     match renderer.bind(&mut dmabuf) {
                         Ok(mut framebuffer) => {
                             let mut elements = build_cursor_elements(&mut renderer);
-                            elements.push(WorkspaceRenderElements::Scene(output_scene_element.clone()));
+                            elements
+                                .push(WorkspaceRenderElements::Scene(output_scene_element.clone()));
                             let _ = crate::render::render_output(
                                 &output_clone,
                                 &all_window_elements,
@@ -767,9 +794,8 @@ impl Otto<UdevData> {
                         let ss_pool = stream.pipewire_stream.buffer_pool();
                         let maybe_ss_buf = {
                             let mut pool = ss_pool.lock().unwrap();
-                            pool.available.pop_front().map(|buf| {
+                            pool.available.pop_front().inspect(|buf| {
                                 pool.to_queue.insert(buf.fd, buf.pw_buffer);
-                                buf
                             })
                         };
                         if let Some(ss_buf) = maybe_ss_buf {
@@ -778,7 +804,9 @@ impl Otto<UdevData> {
                             match renderer.bind(&mut ss_dmabuf) {
                                 Ok(mut fb) => {
                                     let mut ss_elements = build_cursor_elements(&mut renderer);
-                                    ss_elements.push(WorkspaceRenderElements::Scene(output_scene_element.clone()));
+                                    ss_elements.push(WorkspaceRenderElements::Scene(
+                                        output_scene_element.clone(),
+                                    ));
                                     let _ = crate::render::render_output(
                                         &output_clone,
                                         &all_window_elements,

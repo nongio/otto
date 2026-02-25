@@ -60,7 +60,7 @@ impl DockItem {
 
         let dock_item = AppContext::otto_dock_manager()
             .ok_or(SurfaceError::CreationFailed)?
-            .get_dock_item(app_id, &qh, ());
+            .get_dock_item(app_id, qh, ());
         let docksurface = Self {
             base_surface: core,
             configured: true,

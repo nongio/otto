@@ -1033,7 +1033,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[test]
     fn test_backend_override_candidates() {
         let winit = backend_override_candidates("winit");
         assert_eq!(winit, vec!["otto_config.winit.toml"]);

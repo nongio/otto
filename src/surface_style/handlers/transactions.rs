@@ -39,7 +39,7 @@ impl<BackendData: Backend> Dispatch<OttoStyleTransactionV1, ()> for Otto<Backend
                     {
                         // Store the timing function for later use when creating the transition
                         txn.timing_function = Some(layers::prelude::Transition {
-                            timing: timing_data.timing.clone(),
+                            timing: timing_data.timing,
                             delay: 0.0, // Will be set from txn.delay
                         });
                         txn.spring_uses_duration = timing_data.spring_uses_duration;

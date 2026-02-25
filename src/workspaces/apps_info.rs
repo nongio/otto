@@ -177,10 +177,9 @@ impl ApplicationsInfo {
             let icon_path =
                 icon_name.and_then(|icon_name| find_icon_with_theme(&icon_name, 512, 1));
 
-            let mut icon = icon_path.as_ref().and_then(|icon_path| {
-                let result = image_from_path(icon_path, (512, 512));
-                result
-            });
+            let mut icon = icon_path
+                .as_ref()
+                .and_then(|icon_path| image_from_path(icon_path, (512, 512)));
 
             // If icon loading failed, try to use the fallback icon
             if icon.is_none() {
@@ -255,7 +254,7 @@ impl ApplicationsInfo {
         let display_name = app_id
             .split('/')
             .last()
-            .unwrap_or(&app_id)
+            .unwrap_or(app_id)
             .split('-')
             .map(|word| {
                 let mut c = word.chars();
@@ -307,7 +306,7 @@ mod tests {
             ("io.elementary.files", "io.elementary.files", true),
             ("com.mitchellh.ghostty", "com.mitchellh.ghostty", true),
         ];
-
+        #[allow(clippy::manual_strip)]
         for (app_id, file_stem, expected_match) in test_cases {
             let normalized_id = if app_id.ends_with(".desktop") {
                 &app_id[..app_id.len() - 8]

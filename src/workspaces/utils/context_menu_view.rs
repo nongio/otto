@@ -300,7 +300,7 @@ fn render_menu(state: &ContextMenuState, _view: &View<ContextMenuState>) -> Laye
 
         let shadow_color = theme_colors().shadow_color;
         let depth_layer = LayerTreeBuilder::default()
-            .key(&format!("menu-depth-{}", depth))
+            .key(format!("menu-depth-{}", depth))
             .position(Point::new(x_offset, 0.0))
             .size(Size::points(width, height))
             .opacity((

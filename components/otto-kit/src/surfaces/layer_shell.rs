@@ -92,6 +92,7 @@ impl LayerShellSurface {
     /// * `layer_shell` - wlr-layer-shell protocol object
     /// * `sc_layer_shell` - Optional SC layer shell for augmentation
     /// * `qh` - Queue handle for creating objects
+    #[allow(clippy::too_many_arguments)]
     pub fn new_typed<D>(
         layer: Layer,
         namespace: &str,
@@ -160,7 +161,12 @@ impl LayerShellSurface {
         AppContext::register_layer_configure_callback(
             layer_surface_id,
             move |width, height, serial| {
-                tracing::debug!("Layer configure callback: {}x{}, serial: {}", width, height, serial);
+                tracing::debug!(
+                    "Layer configure callback: {}x{}, serial: {}",
+                    width,
+                    height,
+                    serial
+                );
 
                 // Extract callback before borrowing to avoid double borrow
                 let callback_to_call = {

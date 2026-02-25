@@ -41,7 +41,6 @@ impl PopupOverlayView {
         });
         layer.set_pointer_events(false);
 
-
         Self {
             layer,
             layers_engine,

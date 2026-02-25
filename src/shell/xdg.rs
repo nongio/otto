@@ -143,7 +143,10 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             "[window_assign] pointer=({:.1},{:.1}) output_under={:?} -> assigning to={:?}",
             pointer_location.x,
             pointer_location.y,
-            self.workspaces.output_under(pointer_location).next().map(|o| o.name()),
+            self.workspaces
+                .output_under(pointer_location)
+                .next()
+                .map(|o| o.name()),
             target_output.as_ref().map(|o| o.name()),
         );
         if let Some(output) = target_output {
@@ -231,7 +234,9 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         if let Some(keyboard) = self.seat.get_keyboard() {
             if let Some(focus) = keyboard.current_focus() {
                 if focus.same_client_as(&id) {
-                    let current_space_elements: Vec<_> = self.workspaces.space()
+                    let current_space_elements: Vec<_> = self
+                        .workspaces
+                        .space()
                         .map(|s| s.elements().cloned().collect::<Vec<_>>())
                         .unwrap_or_default();
                     let top_element = current_space_elements.last().cloned();

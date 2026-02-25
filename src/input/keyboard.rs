@@ -82,10 +82,7 @@ pub fn process_keyboard_shortcut(
     let result = config
         .shortcut_bindings()
         .iter()
-        .find(|binding| {
-            let matches = binding.trigger.matches(&modifiers, keysym);
-            matches
-        })
+        .find(|binding| binding.trigger.matches(&modifiers, keysym))
         .and_then(|binding| super::actions::resolve_shortcut_action(config, &binding.action));
 
     result
@@ -246,6 +243,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_capture_app_switcher_hold_modifiers() {
         let mut mods = ModifiersState::default();
         mods.ctrl = true;
@@ -262,6 +260,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_app_switcher_hold_is_active_with_ctrl() {
         let mut hold = ModifiersState::default();
         hold.ctrl = true;
@@ -271,6 +270,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_app_switcher_hold_not_active_when_released() {
         let mut hold = ModifiersState::default();
         hold.ctrl = true;

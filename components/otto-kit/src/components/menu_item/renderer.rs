@@ -104,10 +104,11 @@ impl MenuItemRenderer {
             style.border_radius,
             style.border_radius,
         );
-        canvas.draw_rrect(&bg_rect, &bg_paint);
+        canvas.draw_rrect(bg_rect, &bg_paint);
     }
 
     /// Draw item label
+    #[allow(clippy::too_many_arguments)]
     fn draw_label(
         canvas: &Canvas,
         label: &str,
@@ -159,6 +160,7 @@ impl MenuItemRenderer {
     }
 
     /// Draw shortcut text
+    #[allow(clippy::too_many_arguments)]
     fn draw_shortcut(
         canvas: &Canvas,
         shortcut: &str,
