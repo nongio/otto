@@ -182,7 +182,7 @@ fn render_workspace_selector_view(
             let is_drop_hover = state_drop_hover_index - 1 == (i as i32) && !current;
 
             let mut border_width = 0.0;
-            let border_color = theme_colors().accents_blue;
+            let border_color = crate::theme::accent_color();
 
             if current {
                 border_width = 8.0;

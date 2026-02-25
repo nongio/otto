@@ -130,3 +130,26 @@ pub fn theme_colors() -> &'static Lazy<ThemeColors> {
         ThemeScheme::Dark => &colors_dark::COLORS,
     })
 }
+
+/// Get the configured accent color by name
+pub fn accent_color() -> Color {
+    let colors = theme_colors();
+    Config::with(|c| {
+        match c.accent_color.as_str() {
+            "red" => colors.accents_red,
+            "orange" => colors.accents_orange,
+            "yellow" => colors.accents_yellow,
+            "green" => colors.accents_green,
+            "mint" => colors.accents_mint,
+            "teal" => colors.accents_teal,
+            "cyan" => colors.accents_cyan,
+            "blue" => colors.accents_blue,
+            "indigo" => colors.accents_indigo,
+            "purple" => colors.accents_purple,
+            "pink" => colors.accents_pink,
+            "gray" => colors.accents_gray,
+            "brown" => colors.accents_brown,
+            _ => colors.accents_blue, // default fallback
+        }
+    })
+}
