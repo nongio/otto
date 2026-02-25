@@ -244,16 +244,11 @@ impl WindowElement {
 
         // If we have a valid XDG app_id, use it
         if !raw_app_id.is_empty() {
-            tracing::debug!("[display_app_id] Using XDG app_id: '{}'", raw_app_id);
             return raw_app_id;
         }
 
         // Only try PID resolution as fallback when app_id is missing
         if let Some(resolved_id) = self.resolve_app_id_from_pid(display_handle) {
-            tracing::info!(
-                "[display_app_id] Resolved missing app_id -> '{}' via PID",
-                resolved_id
-            );
             return resolved_id;
         }
 
@@ -272,30 +267,19 @@ impl WindowElement {
         let credentials = client.get_credentials(display_handle).ok()?;
         let pid = credentials.pid;
 
-        tracing::debug!("[resolve_app_id_from_pid] Got PID: {}", pid);
 
         // Read /proc/PID/exe to get the executable path
         let exe_path = fs::read_link(format!("/proc/{}/exe", pid)).ok()?;
         let exe_name = exe_path.file_name()?.to_str()?.to_string();
 
-        tracing::info!(
-            "[resolve_app_id_from_pid] PID {} -> exe: {} ({})",
-            pid,
-            exe_name,
-            exe_path.display()
-        );
 
         // Try to find matching desktop entry
         if let Some(desktop_id) = Self::find_desktop_entry_for_exe(&exe_name, &exe_path) {
-            tracing::info!(
-                "[resolve_app_id_from_pid] Matched to desktop entry: {}",
-                desktop_id
-            );
             return Some(desktop_id);
         }
 
         // Fall back to executable name
-        tracing::debug!(
+        tracing::trace!(
             "[resolve_app_id_from_pid] No desktop entry found, using exe name: {}",
             exe_name
         );
@@ -327,11 +311,6 @@ impl WindowElement {
                                 .file_stem()
                                 .and_then(|s| s.to_str())
                                 .map(|s| s.to_string())?;
-                            tracing::debug!(
-                                "[find_desktop_entry] Matched {} via Exec field to {}",
-                                exe_name,
-                                desktop_id
-                            );
                             return Some(desktop_id);
                         }
                     }
@@ -344,11 +323,6 @@ impl WindowElement {
                             .file_stem()
                             .and_then(|s| s.to_str())
                             .map(|s| s.to_string())?;
-                        tracing::debug!(
-                            "[find_desktop_entry] Matched {} via TryExec to {}",
-                            exe_name,
-                            desktop_id
-                        );
                         return Some(desktop_id);
                     }
                 }

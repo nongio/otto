@@ -16,7 +16,6 @@ use std::{
 use crate::{
     config::Config,
     interactive_view::ViewInteractions,
-    theme::theme_colors,
     utils::natural_layout::{natural_layout, LayoutRect},
 };
 
@@ -541,10 +540,10 @@ pub fn view_window_selector(
     let draw_container = Some(move |canvas: &skia::Canvas, w, h| {
         if window_selection.is_some() {
             let window_selection = window_selection.as_ref().unwrap();
-            let color = theme_colors().accents_blue.c4f();
+            let color = crate::theme::accent_color().c4f();
             let mut paint = skia::Paint::new(color, None);
             paint.set_stroke(true);
-            paint.set_stroke_width(12.0 * draw_scale);
+            paint.set_stroke_width(8.0 * draw_scale);
             let rrect = skia::RRect::new_rect_xy(
                 skia::Rect::from_xywh(
                     window_selection.x,
@@ -552,9 +551,9 @@ pub fn view_window_selector(
                     window_selection.w,
                     window_selection.h,
                 )
-                .with_outset((draw_scale * 6.0, draw_scale * 6.0)),
-                12.0 * draw_scale,
-                12.0 * draw_scale,
+                .with_outset((draw_scale * 8.0, draw_scale * 8.0)),
+                16.0 * draw_scale,
+                16.0 * draw_scale,
             );
 
             canvas.draw_rrect(rrect, &paint);

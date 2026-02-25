@@ -175,7 +175,6 @@ pub fn configure_surface_layer(layer: &Layer, wvs: &WindowViewSurface) {
         ..Default::default()
     });
 
-    layer.set_position(Point { x: pos_x, y: pos_y }, None);
     layer.set_size(
         Size {
             width: taffy::Dimension::Length(wvs.phy_dst_w),
@@ -183,6 +182,16 @@ pub fn configure_surface_layer(layer: &Layer, wvs: &WindowViewSurface) {
         },
         None,
     );
+
+    // Account for the layer's anchor point when positioning
+    // set_position places the anchor point at the given coordinates,
+    // so we need to offset by (size * anchor_point) to get the desired visual position
+    let anchor_point = layer.anchor_point();
+    let adjusted_pos = Point {
+        x: pos_x + (wvs.phy_dst_w * anchor_point.x),
+        y: pos_y + (wvs.phy_dst_h * anchor_point.y),
+    };
+    layer.set_position(adjusted_pos, None);
 
     layer.set_pointer_events(false);
     layer.set_picture_cached(true); // Enable picture caching for proper opacity inheritance
