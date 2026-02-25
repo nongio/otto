@@ -102,7 +102,18 @@ impl PopupOverlayView {
     ) -> HashMap<ObjectId, Layer> {
         let popup =
             self.get_or_create_popup_layer(popup_id.clone(), root_window_id.clone(), warm_cache);
-        popup.layer.set_position(position, None);
+        
+        // Account for the layer's size and anchor point when positioning
+        // The position parameter represents where we want the top-left corner to be,
+        // but set_position places the layer's anchor point at that position.
+        // So we need to offset by (size * anchor_point) to get the correct visual position.
+        let anchor_point = popup.layer.anchor_point();
+        let size = popup.layer.render_size();
+        let adjusted_position = Point {
+            x: position.x + (size.x * anchor_point.x),
+            y: position.y + (size.y * anchor_point.y),
+        };
+        popup.layer.set_position(adjusted_position, None);
 
         // Map surface IDs to their layers
         let mut surface_layers: HashMap<ObjectId, Layer> = HashMap::new();
