@@ -44,13 +44,13 @@ async fn main() {
         #[cfg(feature = "winit")]
         Some("--winit") => {
             tracing::info!("Starting otto with winit backend");
-            std::env::set_var("SCREEN_COMPOSER_BACKEND", "winit");
+            std::env::set_var("OTTO_BACKEND", "winit");
             otto::winit::run_winit();
         }
         #[cfg(feature = "udev")]
         Some("--tty-udev") => {
             tracing::info!("Starting otto on a tty using udev");
-            std::env::set_var("SCREEN_COMPOSER_BACKEND", "tty-udev");
+            std::env::set_var("OTTO_BACKEND", "tty-udev");
             otto::udev::run_udev();
         }
         #[cfg(feature = "udev")]
@@ -61,7 +61,7 @@ async fn main() {
         #[cfg(feature = "x11")]
         Some("--x11") => {
             tracing::info!("Starting otto with x11 backend");
-            std::env::set_var("SCREEN_COMPOSER_BACKEND", "x11");
+            std::env::set_var("OTTO_BACKEND", "x11");
             otto::x11::run_x11();
         }
         Some(other) => {
@@ -74,7 +74,7 @@ async fn main() {
                 #[cfg(feature = "winit")]
                 {
                     tracing::info!("Auto-detected Wayland session, starting with winit backend");
-                    std::env::set_var("SCREEN_COMPOSER_BACKEND", "winit");
+                    std::env::set_var("OTTO_BACKEND", "winit");
                     otto::winit::run_winit();
                 }
                 #[cfg(not(feature = "winit"))]
@@ -86,7 +86,7 @@ async fn main() {
                 #[cfg(feature = "udev")]
                 {
                     tracing::info!("No Wayland session detected, starting with tty-udev backend");
-                    std::env::set_var("SCREEN_COMPOSER_BACKEND", "tty-udev");
+                    std::env::set_var("OTTO_BACKEND", "tty-udev");
                     otto::udev::run_udev();
                 }
                 #[cfg(not(feature = "udev"))]

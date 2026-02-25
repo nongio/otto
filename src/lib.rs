@@ -13,12 +13,13 @@ pub mod focus;
 pub mod input;
 pub mod input_handler;
 pub mod interactive_view;
+pub mod otto_dock;
 pub mod render;
 pub mod render_elements;
 #[cfg(feature = "metrics")]
 pub mod render_metrics;
 pub mod renderer;
-pub mod sc_layer_shell;
+pub mod surface_style;
 pub mod screenshare;
 pub mod settings_service;
 pub mod shell;

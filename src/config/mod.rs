@@ -137,7 +137,7 @@ impl Config {
         }
 
         // 4. Backend overrides (highest priority)
-        if let Ok(backend) = std::env::var("SCREEN_COMPOSER_BACKEND") {
+        if let Ok(backend) = std::env::var("OTTO_BACKEND") {
             for candidate in backend_override_candidates(&backend) {
                 tracing::debug!("Trying to load backend override config: {}", &candidate);
                 if let Ok(content) = std::fs::read_to_string(&candidate) {
@@ -238,6 +238,23 @@ fn get_user_config_path() -> Option<PathBuf> {
     }
 }
 
+/// Return the best writable config file path:
+/// backend-specific local file if running with a backend override,
+/// user XDG config if it exists, otherwise the local dev override.
+pub fn writable_config_path() -> PathBuf {
+    // Prefer the backend-specific local override (e.g. otto_config.winit.toml)
+    if let Ok(backend) = std::env::var("OTTO_BACKEND") {
+        for candidate in backend_override_candidates(&backend) {
+            let path = PathBuf::from(&candidate);
+            if path.exists() {
+                return path;
+            }
+        }
+    }
+    get_user_config_path()
+        .unwrap_or_else(|| PathBuf::from("otto_config.toml"))
+}
+
 fn backend_override_candidates(backend: &str) -> Vec<String> {
     match backend {
         "winit" => vec!["otto_config.winit.toml".into()],
@@ -253,6 +270,26 @@ fn backend_override_candidates(backend: &str) -> Vec<String> {
     }
 }
 
+/// Persist a `DockConfig` into the `[dock]` section of the writable config file.
+///
+/// The caller is responsible for passing the authoritative in-memory state.
+/// Only the `[dock]` table is touched; all other sections are left unchanged.
+pub fn save_dock_config(dock: &DockConfig) {
+    let path = writable_config_path();
+    let raw = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut doc: toml::Value = raw.parse().unwrap_or(toml::Value::Table(Default::default()));
+
+    if let Ok(dock_value) = toml::Value::try_from(dock) {
+        doc.as_table_mut()
+            .unwrap()
+            .insert("dock".to_string(), dock_value);
+    }
+
+    if let Ok(serialized) = toml::to_string_pretty(&doc) {
+        let _ = std::fs::write(&path, serialized);
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DockConfig {
     #[serde(default = "default_dock_size")]
@@ -261,6 +298,10 @@ pub struct DockConfig {
     pub genie_scale: f64,
     #[serde(default = "default_genie_span")]
     pub genie_span: f64,
+    #[serde(default)]
+    pub autohide: bool,
+    #[serde(default = "default_magnification")]
+    pub magnification: bool,
     #[serde(default)]
     pub bookmarks: Vec<DockBookmark>,
 }
@@ -306,6 +347,10 @@ fn default_max_left() -> i32 {
 
 fn default_max_right() -> i32 {
     50 // Max 50 logical points for side panels
+}
+
+fn default_magnification() -> bool {
+    true
 }
 
 fn default_dock_size() -> f64 {
@@ -539,6 +584,8 @@ impl DisplaysConfig {
 pub struct DisplayProfile {
     #[serde(default)]
     pub name: Option<String>,
+    #[serde(default)]
+    pub primary: bool,
     #[serde(default)]
     pub resolution: Option<DisplayResolution>,
     #[serde(default)]

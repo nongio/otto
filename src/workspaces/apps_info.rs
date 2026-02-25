@@ -177,8 +177,6 @@ impl ApplicationsInfo {
             let icon_path =
                 icon_name.and_then(|icon_name| find_icon_with_theme(&icon_name, 512, 1));
 
-            let mut used_fallback_icon = false;
-
             let mut icon = icon_path.as_ref().and_then(|icon_path| {
                 let result = image_from_path(icon_path, (512, 512));
                 result
@@ -186,7 +184,6 @@ impl ApplicationsInfo {
 
             // If icon loading failed, try to use the fallback icon
             if icon.is_none() {
-                used_fallback_icon = true;
                 let fallback_path = find_icon_with_theme("application-default-icon", 512, 1)
                     .or_else(|| {
                         find_icon_with_theme("application-x-executable", 512, 1)

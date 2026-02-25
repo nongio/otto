@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop"] }
+smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client"] }
 wayland-egl = "0.32"
@@ -15,15 +15,26 @@ gl = "0.14"
 khronos-egl = { version = "6", features = ["dynamic"] }
 calloop = "0.13"
 
+[dependencies.laye-rs]
+git = "https://github.com/nongio/layers"
+tag = "v1.3.0"
+features = ["export-taffy"]
+
 [dependencies.skia-safe]
 version = "=0.88"
-features = ["gl", "textlayout"]
+features = ["gl", "textlayout", "svg"]
 
 [[example]]
-name = "simple_window"
-path = "examples/simple_window.rs"
+name = "simple_app"
+path = "examples/simple_app.rs"
 
 [[example]]
-name = "menu_bar"
-path = "examples/menu_bar.rs"
+name = "simple_menu"
+path = "examples/simple_menu.rs"
 
+[[example]]
+name = "titlebar_with_popup"
+path = "examples/titlebar_with_popup.rs"
+[[example]]
+name = "dock_application_simple"
+path = "examples/dock_application_simple.rs"

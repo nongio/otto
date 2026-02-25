@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="otto_dock_v1">
+  <copyright>
+    Copyright © 2026 Otto Contributors
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice (including the next
+    paragraph) shall be included in all copies or substantial portions of the
+    Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+  </copyright>
+
+  <description summary="dock item management protocol">
+    This protocol allows clients to provide elements for the Otto
+    compositor's dock area.
+    </description>
+
+  <interface name="otto_dock_manager_v1" version="1">
+    <description summary="manager for creating dock items">
+      The dock manager global allows clients to create dock items.
+    </description>
+    
+    <enum name="error">
+      <description summary="protocol errors">
+        These errors can be emitted in response to otto_dock_manager_v1 requests.
+      </description>
+      <entry name="role" value="0" summary="surface already has a role"/>
+      <entry name="invalid_surface" value="1" summary="invalid surface"/>
+    </enum>
+    <request name="get_dock_item">
+      <description summary="get dock item by application identifier">
+        Get the dock item for a specific application by its app_id.
+        Returns null if no dock item exists for the given app_id.
+
+        This allows applications to find and interact with their dock
+        representation without needing to track the otto_dock_item_v1
+        object from assign_layer_to_dock.
+      </description>
+      <arg name="id" type="new_id" interface="otto_dock_item_v1"/>
+      <arg name="app_id" type="string" summary="application identifier"/>
+    </request>
+    
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the dock manager">
+        Destroy the dock manager object. This does not affect existing dock items.
+      </description>
+    </request>
+  </interface>
+
+  <interface name="otto_dock_item_v1" version="1">
+    <description summary="a dock item">
+      A dock item represents an element in the Otto compositor's dock. It is associated with a specific
+      application (identified by app_id).
+      
+      The item can have a preview surface that displays the application's content,
+      as well as optional badge text and a progress indicator.
+      The compositor manages the layout and presentation of dock items,
+      including grouping by app_id and handling interactions.
+    </description>
+
+    <request name="set_preview">
+      <description summary="set or replace the preview surface">
+        Set or replace the preview surface that displays the dock item's content.
+        This allows applications to provide custom rendering (e.g., live video
+        playback, custom icons, etc.) while the main surface retains the ability
+        to have popups attached.
+
+        The compositor validates that the provided `wl_surface` (or its
+        backing surface) is owned or authorized by the client that controls
+        this dock item (or otherwise permitted for the `app_id`). If the
+        compositor cannot verify ownership or authorization, the request may
+        be rejected. The surface should be a child of the main surface
+        provided during dock item creation.
+      </description>
+      <arg name="surface" type="object" interface="wl_surface" allow-null="true"
+           summary="the surface to use as preview, or null to clear"/>
+    </request>
+
+    <request name="set_badge">
+      <description summary="set badge text for the dock item">
+        Set a badge label to be displayed on the dock item. This is typically
+        used to show notification counts, status indicators, or other short
+        text overlays (similar to macOS dock badges).
+
+        The compositor will render the badge text over the dock item's preview.
+        Pass an empty string or null to clear the badge.
+      </description>
+      <arg name="text" type="string" allow-null="true"
+           summary="badge text to display, or null to clear"/>
+    </request>
+
+    <request name="set_progress">
+      <description summary="set progress indicator for the dock item">
+        Set a progress indicator to be displayed on the dock item. This is
+        typically rendered as a progress bar or pie chart overlay on the
+        dock item (similar to macOS dock progress indicators).
+
+        The value should be between 0.0 (no progress) and 1.0 (complete).
+        Pass a negative value to hide the progress indicator.
+      </description>
+      <arg name="value" type="fixed"
+           summary="progress value from 0.0 to 1.0, or negative to clear"/>
+    </request>
+  </interface>
+</protocol>

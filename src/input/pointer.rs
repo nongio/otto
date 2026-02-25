@@ -1,4 +1,5 @@
 use crate::{focus::PointerFocusTarget, shell::FullscreenSurface, state::Backend, Otto};
+use layers::skia::Contains;
 use smithay::{
     backend::input::{
         self, Axis, AxisSource, ButtonState, Event, InputBackend, PointerAxisEvent,
@@ -66,10 +67,10 @@ impl<BackendData: Backend> Otto<BackendData> {
     pub(crate) fn focus_window_under_cursor(&mut self, serial: Serial) {
         let keyboard = self.seat.get_keyboard().unwrap();
         let input_method = self.seat.input_method();
-        
+
         // Get current focus to deactivate it
         let old_focus = keyboard.current_focus();
-        
+
         // change the keyboard focus unless the pointer or keyboard is grabbed
         // We test for any matching surface type here but always use the root
         // (in case of a window the toplevel) surface for the focus.
@@ -103,17 +104,17 @@ impl<BackendData: Backend> Otto<BackendData> {
                         {
                             self.xwm.as_mut().unwrap().raise_window(surf).unwrap();
                         }
-                        
+
                         // Deactivate old focus if it was a different window
                         if let Some(old) = old_focus.as_ref() {
                             if let crate::focus::KeyboardFocusTarget::Window(old_window) = old {
                                 if old_window.wl_surface() != window.wl_surface() {
                                     old_window.set_activate(false);
-                                    old_window.toplevel().map(|t|t.send_configure());
+                                    old_window.toplevel().map(|t| t.send_configure());
                                 }
                             }
                         }
-                        
+
                         // Activate new window and set focus
                         window.set_activate(true);
                         window.toplevel().map(|t| t.send_configure());
@@ -166,14 +167,16 @@ impl<BackendData: Backend> Otto<BackendData> {
                                 return;
                             }
                             self.workspaces.focus_app_with_window(&id);
-                            
+
                             // Deactivate old focus if it was a different window
                             if let Some(old) = old_focus.as_ref() {
                                 if let crate::focus::KeyboardFocusTarget::Window(old_window) = old {
                                     if old_window.wl_surface() != window.wl_surface() {
                                         old_window.set_activate(false);
                                         // Update shadow for deactivated window
-                                        if let Some(view) = self.workspaces.get_window_view(&old_window.id()) {
+                                        if let Some(view) =
+                                            self.workspaces.get_window_view(&old_window.id())
+                                        {
                                             view.set_active(false);
                                         }
                                         if let Some(toplevel) = old_window.toplevel() {
@@ -182,7 +185,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                                     }
                                 }
                             }
-                            
+
                             // Activate new window and set focus
                             window.set_activate(true);
                             // Update shadow for activated window
@@ -392,6 +395,29 @@ impl<BackendData: Backend> Otto<BackendData> {
             pointer.frame(self);
         }
     }
+
+    /// Check if the pointer is in the dock hot zone (bottom edge of the primary output)
+    /// and show/hide the dock accordingly when autohide is enabled.
+    pub(crate) fn check_dock_hot_zone(&mut self, pos: (f64, f64)) {
+
+        if !self.workspaces.dock.is_autohide_enabled() {
+            return;
+        }
+        // Don't trigger show dock if we're in the middle of a workspace switch or showing all workspaces
+        if self.workspaces.get_show_all() || self.workspaces.is_expose_transitioning() {
+            return;
+        }
+        let hot_zone = *self.workspaces.dock.cached_hot_zone.read().unwrap();
+        if let Some(hot_zone) = hot_zone {
+            let pos = layers::skia::Point::new(pos.0 as f32, pos.1 as f32);
+            let in_hotzone = hot_zone.contains(pos);
+            if in_hotzone && self.workspaces.dock.is_hidden() {
+                self.workspaces.dock.show_autohide();
+            } else if !in_hotzone && !self.workspaces.dock.is_hidden() {
+                self.workspaces.dock.schedule_autohide();
+            }
+        }
+    }
 }
 
 #[cfg(any(feature = "winit", feature = "x11"))]
@@ -424,6 +450,8 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
         let pos = pos.to_physical(scale);
         self.layers_engine
             .pointer_move(&(pos.x as f32, pos.y as f32).into(), None);
+
+        self.check_dock_hot_zone(self.last_pointer_location);
     }
 }
 
@@ -547,6 +575,8 @@ impl crate::Otto<crate::udev::UdevData> {
         self.layers_engine
             .pointer_move(&(pos.x as f32, pos.y as f32).into(), None);
 
+        self.check_dock_hot_zone(self.last_pointer_location);
+
         // Schedule a redraw to update the cursor position
         self.schedule_event_loop_dispatch();
 
@@ -616,6 +646,8 @@ impl crate::Otto<crate::udev::UdevData> {
 
         self.layers_engine
             .pointer_move(&(pos.x as f32, pos.y as f32).into(), None);
+
+        self.check_dock_hot_zone(self.last_pointer_location);
 
         // Schedule a redraw to update the cursor position
         self.schedule_event_loop_dispatch();
