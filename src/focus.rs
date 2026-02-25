@@ -36,6 +36,7 @@ use crate::{
     workspaces::{AppSwitcherView, DockView, WindowSelectorView, WorkspaceSelectorView},
 };
 
+#[allow(clippy::large_enum_variant)]
 pub enum KeyboardFocusTarget<B: Backend> {
     Window(WindowElement),
     LayerSurface(LayerSurface),

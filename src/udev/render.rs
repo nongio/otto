@@ -1011,10 +1011,10 @@ pub(super) fn render_surface<'a>(
             ) => err.into(),
             other => {
                 tracing::error!("Unexpected render frame error: {:?}", other);
-                SwapBuffersError::ContextLost(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Render frame error: {:?}", other),
-                )))
+                SwapBuffersError::ContextLost(Box::new(std::io::Error::other(format!(
+                    "Render frame error: {:?}",
+                    other
+                ))))
             }
         })?;
 
@@ -1106,10 +1106,10 @@ pub(super) fn initial_render(
             smithay::backend::drm::compositor::RenderFrameError::RenderFrame(
                 smithay::backend::renderer::damage::Error::Rendering(err),
             ) => err.into(),
-            other => SwapBuffersError::ContextLost(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Render frame error: {:?}", other),
-            ))),
+            other => SwapBuffersError::ContextLost(Box::new(std::io::Error::other(format!(
+                "Render frame error: {:?}",
+                other
+            )))),
         })?;
     surface.compositor.queue_frame(None)?;
     surface.compositor.reset_buffers();

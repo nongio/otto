@@ -145,7 +145,6 @@ members = [
     "components/apps-manager",
     "components/otto-kit",
     "sample-clients/client-rainbow",
-    "sample-clients/hello-layers",
     "sample-clients/submenu",
     "sample-clients/submenu-gtk",
 ]

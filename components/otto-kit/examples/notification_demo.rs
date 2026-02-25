@@ -113,6 +113,7 @@ impl App for NotificationDemoApp {
 }
 
 impl NotificationDemoApp {
+    #[allow(clippy::too_many_arguments)]
     fn draw_notification(
         canvas: &skia_safe::Canvas,
         icon_name: &str,

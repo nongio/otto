@@ -253,7 +253,7 @@ impl ApplicationsInfo {
         // Format the app_id (executable name) as a nice display name
         let display_name = app_id
             .split('/')
-            .last()
+            .next_back()
             .unwrap_or(app_id)
             .split('-')
             .map(|word| {
