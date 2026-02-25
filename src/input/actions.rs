@@ -232,6 +232,11 @@ impl<BackendData: Backend> Otto<BackendData> {
             } else {
                 let volume = (audio_mgr.get_state().volume.min(100) * 20 / 100) as u8; // Scale to 0-20
                 self.workspaces.osd.show_volume(volume);
+                
+                // Play volume change sound
+                if let Some(sound_player) = &self.sound_player {
+                    sound_player.play_volume_sound();
+                }
             }
         }
     }
@@ -243,6 +248,11 @@ impl<BackendData: Backend> Otto<BackendData> {
             } else {
                 let volume = (audio_mgr.get_state().volume.min(100) * 20 / 100) as u8; // Scale to 0-20
                 self.workspaces.osd.show_volume(volume);
+                
+                // Play volume change sound
+                if let Some(sound_player) = &self.sound_player {
+                    sound_player.play_volume_sound();
+                }
             }
         }
     }
@@ -291,7 +301,7 @@ impl<BackendData: Backend> Otto<BackendData> {
 
 fn adjust_brightness(delta: i32) -> Option<u8> {
     let mut result_level = None;
-    
+
     for device in brightness::blocking::brightness_devices() {
         match device {
             Ok(device) => {
@@ -320,7 +330,7 @@ fn adjust_brightness(delta: i32) -> Option<u8> {
             }
         }
     }
-    
+
     result_level
 }
 
