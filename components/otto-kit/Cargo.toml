@@ -21,9 +21,9 @@ lazy_static = "1.4"
 pipewire = "0.9"
 
 [dependencies.laye-rs]
-# git = "https://github.com/nongio/layers"
-# tag = "v1.3.0"
-path = "../../../layers"
+git = "https://github.com/nongio/layers"
+tag = "v1.4.0"
+# path = "../../../layers"
 features = ["export-taffy", "debugger"]
 
 [dependencies.skia-safe]
