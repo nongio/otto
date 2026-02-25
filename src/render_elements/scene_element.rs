@@ -3,7 +3,7 @@ use std::{cell::RefCell, rc::Rc, sync::Arc, time::Instant};
 #[cfg(feature = "perf-counters")]
 use std::time::Duration;
 
-use layers::{drawing::render_node_tree, engine::Engine, prelude::Layer};
+use layers::{drawing::render_node_tree, engine::{Engine, NodeRef}, prelude::Layer};
 
 use smithay::{
     backend::renderer::{
@@ -25,6 +25,9 @@ pub struct SceneElement {
     pub size: (f32, f32),
     damage: Rc<RefCell<DamageBag<i32, Physical>>>,
     empty_damage_count: Rc<RefCell<u32>>,
+    /// When set, render from this node instead of the global scene root.
+    /// Used to render only a specific output's sub-tree (coordinates are output-local).
+    pub output_root: Option<NodeRef>,
     #[cfg(feature = "perf-counters")]
     perf_stats: Rc<RefCell<ScenePerfStats>>,
 }
@@ -39,9 +42,17 @@ impl SceneElement {
             size: (0.0, 0.0),
             damage: Rc::new(RefCell::new(DamageBag::new(5))),
             empty_damage_count: Rc::new(RefCell::new(0)),
+            output_root: None,
             #[cfg(feature = "perf-counters")]
             perf_stats: Rc::new(RefCell::new(ScenePerfStats::new())),
         }
+    }
+
+    /// Return a clone of this element that renders from the given output layer node.
+    pub fn for_output_layer(&self, layer: &Layer) -> Self {
+        let mut clone = self.clone();
+        clone.output_root = Some(layer.id);
+        clone
     }
     #[profiling::function]
     pub fn update(&mut self) -> bool {
@@ -168,6 +179,11 @@ impl Element for SceneElement {
     }
 
     fn location(&self, _scale: Scale<f64>) -> Point<i32, Physical> {
+        if self.output_root.is_some() {
+            // Per-output element: always at (0,0) in the output framebuffer.
+            // Canvas translation in draw() maps scene coords to output-local coords.
+            return (0, 0).into();
+        }
         if let Some(root) = self.root_layer() {
             let bounds = root.render_bounds_transformed();
             (bounds.x() as i32, bounds.y() as i32).into()
@@ -181,6 +197,16 @@ impl Element for SceneElement {
     }
 
     fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
+        if let Some(oid) = self.output_root {
+            // Per-output element: geometry fills the output framebuffer from (0,0).
+            let size = self.engine.get_layer(&oid)
+                .map(|l| {
+                    let b = l.render_bounds_transformed();
+                    (b.width() as i32, b.height() as i32).into()
+                })
+                .unwrap_or_default();
+            return Rectangle::new((0, 0).into(), size);
+        }
         if let Some(root) = self.root_layer() {
             let bounds = root.render_bounds_transformed();
             Rectangle::new(
@@ -258,8 +284,20 @@ impl RenderElement<SkiaRenderer> for SceneElement {
         let canvas = surface.canvas();
 
         let scene = self.engine.scene();
-        let root_id = self.engine.scene_root();
+        // Use per-output root if set, otherwise fall back to global scene root.
+        let root_id = self.output_root.or_else(|| self.engine.scene_root());
         let save_point = canvas.save();
+
+        // If rendering from an output sub-tree, translate so the output_layer's
+        // scene-space position maps to (0,0) on the output framebuffer.
+        if let Some(oid) = self.output_root {
+            if let Some(layer) = self.engine.get_layer(&oid) {
+                let pos = layer.render_position();
+                if pos.x != 0.0 || pos.y != 0.0 {
+                    canvas.translate((-pos.x, -pos.y));
+                }
+            }
+        }
 
         scene.with_arena(|arena| {
             scene.with_renderable_arena(|renderable_arena| {

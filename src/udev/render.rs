@@ -329,6 +329,13 @@ impl Otto<UdevData> {
             None
         };
 
+        // Build a per-output scene element that renders from the output's own layer node
+        let output_scene_element = self.workspaces
+            .output_workspaces
+            .get(&output.name())
+            .map(|ows| self.scene_element.for_output_layer(&ows.output_layer))
+            .unwrap_or_else(|| self.scene_element.clone());
+
         let result = render_surface(
             surface,
             &mut renderer,
@@ -339,7 +346,7 @@ impl Otto<UdevData> {
             &self.cursor_texture_cache,
             self.dnd_icon.as_ref(),
             &self.clock,
-            self.scene_element.clone(),
+            output_scene_element,
             scene_has_damage,
             fullscreen_window.as_ref(),
         );
@@ -393,7 +400,7 @@ impl Otto<UdevData> {
                     const CURSOR_MODE_EMBEDDED: u32 = 2;
                     let should_render_cursor = session.cursor_mode == CURSOR_MODE_EMBEDDED;
 
-                    tracing::debug!(
+                    tracing::trace!(
                         "Screenshare session {}: cursor_mode={}, should_render={}",
                         session.session_id,
                         session.cursor_mode,
@@ -646,6 +653,73 @@ impl Otto<UdevData> {
             let output_clone = self.virtual_outputs[i].output.clone();
             let output_name = output_clone.name();
 
+            // Per-output scene element — renders only this output's sub-tree
+            let output_scene_element = self.workspaces
+                .output_workspaces
+                .get(&output_name)
+                .map(|ows| scene_element.for_output_layer(&ows.output_layer))
+                .unwrap_or_else(|| scene_element.clone());
+
+            // Build cursor elements if pointer is over this output
+            let scale = Scale::from(output_clone.current_scale().fractional_scale());
+            let output_mode_size = output_clone.current_mode().map(|m| m.size).unwrap_or_default();
+            let output_geometry = Rectangle::new((0, 0).into(), output_mode_size);
+            let pointer_location = self.pointer.current_location();
+            // Virtual output's logical position in the scene
+            let vout_geo = self.workspaces.output_geometry(&output_clone);
+            let local_pointer: Point<f64, Logical> = vout_geo
+                .map(|geo| (pointer_location.x - geo.loc.x as f64, pointer_location.y - geo.loc.y as f64).into())
+                .unwrap_or(pointer_location);
+            let pointer_in_output = output_geometry.to_f64().contains(local_pointer.to_physical(scale));
+
+            // Helper closure — builds fresh cursor elements (can't clone render elements)
+            let build_cursor_elements = |renderer: &mut _| -> Vec<WorkspaceRenderElements<_>> {
+                if !pointer_in_output {
+                    return Vec::new();
+                }
+                use crate::cursor::RenderCursor;
+                use smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement;
+                use smithay::backend::renderer::element::surface::render_elements_from_surface_tree;
+                let output_scale = output_clone.current_scale().fractional_scale();
+                let mut elems = Vec::new();
+                match self.cursor_manager.get_render_cursor(output_scale.round() as i32) {
+                    RenderCursor::Hidden => {}
+                    RenderCursor::Surface { hotspot, surface } => {
+                        let cursor_pos_scaled = (local_pointer.to_physical(scale)
+                            - hotspot.to_f64().to_physical(scale))
+                        .to_i32_round();
+                        let cursor_elems: Vec<WorkspaceRenderElements<_>> =
+                            render_elements_from_surface_tree(
+                                renderer,
+                                &surface,
+                                cursor_pos_scaled,
+                                scale,
+                                1.0,
+                                Kind::Cursor,
+                            );
+                        elems.extend(cursor_elems);
+                    }
+                    RenderCursor::Named { icon, scale: _, cursor } => {
+                        let elapsed_millis = self.clock.now().as_millis();
+                        let (idx, image) = cursor.frame(elapsed_millis);
+                        let texture = self.cursor_texture_cache.get(icon, output_scale.round() as i32, &cursor, idx);
+                        let hotspot_physical = Point::from((image.xhot as f64, image.yhot as f64));
+                        let cursor_pos_scaled: Point<i32, Physical> =
+                            (local_pointer.to_physical(scale) - hotspot_physical).to_i32_round();
+                        if let Ok(elem) = MemoryRenderBufferRenderElement::from_buffer(
+                            renderer,
+                            cursor_pos_scaled.to_f64(),
+                            &texture,
+                            None, None, None,
+                            Kind::Cursor,
+                        ) {
+                            elems.push(WorkspaceRenderElements::from(elem));
+                        }
+                    }
+                }
+                elems
+            };
+
             // --- Render into this virtual output's own PipeWire stream ---
             let pool_arc = self.virtual_outputs[i].pipewire_stream.buffer_pool();
             let maybe_buf = {
@@ -662,10 +736,12 @@ impl Otto<UdevData> {
                     let damage_tracker = &mut self.virtual_outputs[i].damage_tracker;
                     match renderer.bind(&mut dmabuf) {
                         Ok(mut framebuffer) => {
+                            let mut elements = build_cursor_elements(&mut renderer);
+                            elements.push(WorkspaceRenderElements::Scene(output_scene_element.clone()));
                             let _ = crate::render::render_output(
                                 &output_clone,
                                 &all_window_elements,
-                                [WorkspaceRenderElements::Scene(scene_element.clone())],
+                                elements,
                                 None,
                                 &mut renderer,
                                 &mut framebuffer,
@@ -699,10 +775,12 @@ impl Otto<UdevData> {
                             let mut temp_tracker = OutputDamageTracker::from_output(&output_clone);
                             match renderer.bind(&mut ss_dmabuf) {
                                 Ok(mut fb) => {
+                                    let mut ss_elements = build_cursor_elements(&mut renderer);
+                                    ss_elements.push(WorkspaceRenderElements::Scene(output_scene_element.clone()));
                                     let _ = crate::render::render_output(
                                         &output_clone,
                                         &all_window_elements,
-                                        [WorkspaceRenderElements::Scene(scene_element.clone())],
+                                        ss_elements,
                                         None,
                                         &mut renderer,
                                         &mut fb,

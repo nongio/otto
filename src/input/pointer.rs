@@ -276,7 +276,9 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
         // Window selector check
         if self.workspaces.get_show_all() {
-            let workspace = self.workspaces.get_current_workspace();
+            let Some(workspace) = self.workspaces.get_current_workspace() else {
+                return None;
+            };
             let focus = workspace.window_selector_view.as_ref().clone().into();
             let position = workspace.window_selector_view.layer.render_position();
 
@@ -435,6 +437,12 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
         let pointer = self.pointer.clone();
         // Cache pointer location for use in button events
         self.last_pointer_location = (pos.x, pos.y);
+
+        // Update focused output for workspace selector display
+        {
+            let focused = self.workspaces.output_under(pos).next().cloned();
+            self.workspaces.set_focused_output(focused.as_ref());
+        }
 
         pointer.motion(
             self,

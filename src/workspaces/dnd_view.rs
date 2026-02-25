@@ -22,8 +22,7 @@ impl DndView {
             ..Default::default()
         });
 
-        layers_engine.add_layer(&layer);
-        layers_engine.append_layer(&content_layer, layer.id());
+        layer.add_sublayer(&content_layer);
 
         Self {
             layer,

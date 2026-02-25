@@ -102,7 +102,6 @@ impl AppSwitcherView {
         });
         apps_container.set_pointer_events(false);
 
-        layers_engine.add_layer(&wrap);
         wrap.add_sublayer(&panel);
         panel.add_sublayer(&apps_container);
 

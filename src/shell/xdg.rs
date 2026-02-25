@@ -90,7 +90,11 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         let current_workspace = self.workspaces.get_current_workspace();
         let current_index = self.workspaces.get_current_workspace_index();
 
-        if current_workspace.get_fullscreen_mode() {
+        if current_workspace
+            .as_ref()
+            .map(|w| w.get_fullscreen_mode())
+            .unwrap_or(false)
+        {
             // Check if the new window belongs to the same app as the fullscreen window
             if let Some(fullscreen_window) = self.workspaces.get_fullscreen_window() {
                 let new_app_id = window_element.display_app_id(&self.display_handle);
@@ -128,8 +132,27 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             );
         }
 
-        self.workspaces
-            .map_window(&window_element, location, true, None);
+        // Map window to the output under the pointer, falling back to primary.
+        let target_output = self
+            .workspaces
+            .output_under(pointer_location)
+            .next()
+            .cloned()
+            .or_else(|| self.workspaces.primary_output().cloned());
+        tracing::info!(
+            "[window_assign] pointer=({:.1},{:.1}) output_under={:?} -> assigning to={:?}",
+            pointer_location.x,
+            pointer_location.y,
+            self.workspaces.output_under(pointer_location).next().map(|o| o.name()),
+            target_output.as_ref().map(|o| o.name()),
+        );
+        if let Some(output) = target_output {
+            self.workspaces
+                .map_window_for_output(&output, &window_element, location, true, None);
+        } else {
+            self.workspaces
+                .map_window(&window_element, location, true, None);
+        }
 
         // Register with foreign toplevel protocols (both ext and wlr)
         let surface_id = surface.wl_surface().id();
@@ -208,7 +231,9 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         if let Some(keyboard) = self.seat.get_keyboard() {
             if let Some(focus) = keyboard.current_focus() {
                 if focus.same_client_as(&id) {
-                    let current_space_elements = self.workspaces.space().elements();
+                    let current_space_elements: Vec<_> = self.workspaces.space()
+                        .map(|s| s.elements().cloned().collect::<Vec<_>>())
+                        .unwrap_or_default();
                     let top_element = current_space_elements.last().cloned();
                     if let Some(window_element) = top_element {
                         keyboard.set_focus(self, Some(window_element.into()), Serial::from(0));
@@ -679,7 +704,9 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
                     // Get the fullscreen workspace index before switching away from it
                     let fullscreen_workspace_index = self.workspaces.get_current_workspace_index();
-                    let workspace = self.workspaces.get_current_workspace();
+                    let Some(workspace) = self.workspaces.get_current_workspace() else {
+                        return;
+                    };
                     workspace.set_fullscreen_mode(false);
                     workspace.set_fullscreen_animating(false);
 
