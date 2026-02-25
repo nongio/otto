@@ -1,6 +1,5 @@
 use smithay::reexports::wayland_server::{
-    backend::ObjectId, Client, DataInit, Dispatch, DisplayHandle,
-    GlobalDispatch, New, Resource,
+    backend::ObjectId, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
 use std::collections::HashMap;
 
@@ -23,7 +22,10 @@ pub struct DockItemRole {
 
 impl DockItemRole {
     pub fn new(app_id: String, resource_id: ObjectId) -> Self {
-        Self { app_id, resource_id }
+        Self {
+            app_id,
+            resource_id,
+        }
     }
 }
 
@@ -96,7 +98,10 @@ impl<BackendData: Backend> Dispatch<OttoDockManagerV1, (), Otto<BackendData>> fo
                 let resource_id = wl_item.id();
 
                 // Register item in state for subsequent requests (set_badge, etc.)
-                state.otto_dock.dock_items.insert(resource_id.clone(), dock_item);
+                state
+                    .otto_dock
+                    .dock_items
+                    .insert(resource_id.clone(), dock_item);
                 state.otto_dock.app_id_to_resource.insert(app_id, wl_item);
             }
             otto_dock_manager_v1::Request::Destroy => {

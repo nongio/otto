@@ -23,7 +23,9 @@ use crate::{
     interactive_view::ViewInteractions,
     theme::theme_colors,
     utils::Observer,
-    workspaces::{Application, DockView, WorkspacesModel, apps_info::ApplicationsInfo, dock::BASE_ICON_SIZE},
+    workspaces::{
+        apps_info::ApplicationsInfo, dock::BASE_ICON_SIZE, Application, DockView, WorkspacesModel,
+    },
 };
 
 use super::{
@@ -87,6 +89,7 @@ impl AppSwitcherView {
             ..Default::default()
         });
         panel.set_pointer_events(false);
+        panel.set_hidden(true);
 
         let apps_container = layers_engine.new_layer();
         apps_container.set_key("app_switcher_apps_container");
@@ -167,11 +170,18 @@ impl AppSwitcherView {
                 mirror.set_draw_content(icon_stack.as_content());
                 mirror.set_picture_cached(false);
                 mirror.set_key(format!("switcher_mirror_{}", app.identifier));
-                mirror.set_position(layers::prelude::Point {x: slot_size / 2.0, y: slot_size / 2.0}, None);
-                mirror.set_anchor_point(layers::prelude::Point {x: 0.5, y: 0.5}, None);
+                mirror.set_position(
+                    layers::prelude::Point {
+                        x: slot_size / 2.0,
+                        y: slot_size / 2.0,
+                    },
+                    None,
+                );
+                mirror.set_anchor_point(layers::prelude::Point { x: 0.5, y: 0.5 }, None);
                 // Keep the mirror at the original icon_stack size and use scale to
                 // match the desired slot_size visually.
-                let original_size = layers::types::Point::new(BASE_ICON_SIZE, BASE_ICON_SIZE * 1.08);
+                let original_size =
+                    layers::types::Point::new(BASE_ICON_SIZE, BASE_ICON_SIZE * 1.08);
                 let scale = if original_size.x > 0.0 {
                     (slot_size * 0.8) / original_size.x
                 } else {
@@ -218,6 +228,7 @@ impl AppSwitcherView {
         self.update_panel();
         self.active.store(true, Ordering::Relaxed);
         self.wrap_layer.set_hidden(false);
+        self.panel_layer.set_hidden(false);
         self.wrap_layer.set_opacity(
             1.0,
             Some(Transition {
@@ -230,8 +241,7 @@ impl AppSwitcherView {
     pub fn previous(&self) {
         let mut state = self.state.read().unwrap().clone();
         if !state.apps.is_empty() {
-            state.current_app =
-                (state.current_app + state.apps.len() - 1) % state.apps.len();
+            state.current_app = (state.current_app + state.apps.len() - 1) % state.apps.len();
         } else {
             state.current_app = 0;
         }
@@ -239,6 +249,7 @@ impl AppSwitcherView {
         self.update_panel();
         self.active.store(true, Ordering::Relaxed);
         self.wrap_layer.set_hidden(false);
+        self.panel_layer.set_hidden(false);
         self.wrap_layer.set_opacity(
             1.0,
             Some(Transition {
@@ -253,9 +264,11 @@ impl AppSwitcherView {
         let tr = self
             .wrap_layer
             .set_opacity(0.0, Some(Transition::ease_in_quad(0.01)));
+        let p = self.panel_layer.clone();
         tr.on_finish(
-            |l: &layers::prelude::Layer, _p: f32| {
+            move |l: &layers::prelude::Layer, _p: f32| {
                 l.set_hidden(true);
+                p.set_hidden(true);
             },
             true,
         );
@@ -296,9 +309,7 @@ impl AppSwitcherView {
                     let mut apps: Vec<Application> = Vec::new();
                     for app_id in workspace.zindex_application_list.iter().rev() {
                         if app_set.insert(app_id.clone()) {
-                            if let Some(app) =
-                                ApplicationsInfo::get_app_info_by_id(app_id).await
-                            {
+                            if let Some(app) = ApplicationsInfo::get_app_info_by_id(app_id).await {
                                 apps.push(app);
                             }
                         }

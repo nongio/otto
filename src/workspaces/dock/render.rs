@@ -6,7 +6,8 @@ use crate::{
     config::Config,
     theme::theme_colors,
     workspaces::{
-        Application, utils::{FONT_CACHE, draw_balloon_rect}
+        utils::{draw_balloon_rect, FONT_CACHE},
+        Application,
     },
 };
 
@@ -16,7 +17,6 @@ pub fn draw_badge(text: String) -> ContentDrawFunction {
         if text.is_empty() {
             return layers::skia::Rect::from_xywh(0.0, 0.0, w, h);
         }
-        
 
         // White text centered
         let text_size = h * 0.55;
@@ -35,8 +35,8 @@ pub fn draw_badge(text: String) -> ContentDrawFunction {
         text_paint.set_anti_alias(true);
 
         let (_, text_bounds) = font.measure_str(&text, Some(&text_paint));
-        let text_x = w/2.0 - text_bounds.width() / 2.0 - text_bounds.left;
-        let text_y = h/2.0 - text_bounds.height() / 2.0 - text_bounds.top;
+        let text_x = w / 2.0 - text_bounds.width() / 2.0 - text_bounds.left;
+        let text_y = h / 2.0 - text_bounds.height() / 2.0 - text_bounds.top;
 
         canvas.draw_str(&text, (text_x, text_y), &font, &text_paint);
 
@@ -52,23 +52,18 @@ pub fn draw_progress(value: f64) -> ContentDrawFunction {
         let corner_radius = h / 2.0;
 
         // Dark semi-transparent background track
-        let mut bg_paint = layers::skia::Paint::new(
-            layers::skia::Color4f::new(0.0, 0.0, 0.0, 0.30),
-            None,
-        );
+        let mut bg_paint =
+            layers::skia::Paint::new(layers::skia::Color4f::new(0.0, 0.0, 0.0, 0.30), None);
         bg_paint.set_anti_alias(true);
         let bg_rect = layers::skia::Rect::from_xywh(0.0, 0.0, w, h);
-        let bg_rrect =
-            layers::skia::RRect::new_rect_xy(bg_rect, corner_radius, corner_radius);
+        let bg_rrect = layers::skia::RRect::new_rect_xy(bg_rect, corner_radius, corner_radius);
         canvas.draw_rrect(bg_rrect, &bg_paint);
 
         // White fill proportional to progress
         if value > 0.0 {
             let fill_w = (w * value).max(h); // keep at least circle-width so it never looks empty
-            let mut fill_paint = layers::skia::Paint::new(
-                layers::skia::Color4f::new(1.0, 1.0, 1.0, 0.92),
-                None,
-            );
+            let mut fill_paint =
+                layers::skia::Paint::new(layers::skia::Color4f::new(1.0, 1.0, 1.0, 0.92), None);
             fill_paint.set_anti_alias(true);
             let fill_rect = layers::skia::Rect::from_xywh(0.0, 0.0, fill_w.min(w), h);
             let fill_rrect =
@@ -97,7 +92,7 @@ pub fn setup_badge_layer(layer: &Layer, icon_width: f32) {
         })
         .anchor_point(Point { x: 0.5, y: 0.5 })
         .background_color(theme_colors().accents_red.opacity(0.9))
-        .border_corner_radius(BorderRadius::new_single(badge_size/2.0))
+        .border_corner_radius(BorderRadius::new_single(badge_size / 2.0))
         .opacity((0.0, None))
         .shadow_color(theme_colors().shadow_color.opacity(0.4))
         .shadow_offset(((0.0, 0.0).into(), None))
@@ -108,7 +103,7 @@ pub fn setup_badge_layer(layer: &Layer, icon_width: f32) {
         .unwrap();
     layer.build_layer_tree(&tree);
     // Hang off the top-right corner of the icon (icon starts at x = icon_width * 0.025)
-    let pos_x = icon_width * 0.90;// - badge_size * 0.55;
+    let pos_x = icon_width * 0.90; // - badge_size * 0.55;
     let pos_y = icon_width * 0.05;
     layer.set_position(Point { x: pos_x, y: pos_y }, None);
 }
@@ -177,7 +172,6 @@ pub fn setup_app_icon(
         ))
         .picture_cached(false)
         .image_cache(false)
-        
         .build()
         .unwrap();
     layer.build_layer_tree(&container_tree);
@@ -206,7 +200,6 @@ pub fn setup_app_icon(
         .unwrap();
     icon_layer.build_layer_tree(&icon_tree);
 }
-
 
 pub fn setup_miniwindow_icon(layer: &Layer, inner_layer: &Layer, _icon_width: f32) {
     let container_tree = LayerTreeBuilder::default()
@@ -440,5 +433,3 @@ pub fn draw_app_icon(application: &Application) -> ContentDrawFunction {
 
     draw_picture.into()
 }
-
-

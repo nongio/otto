@@ -44,8 +44,19 @@ pub trait ViewInteractions<B: Backend>: Sync + Send {
     fn on_gesture_swipe_begin(&self, _event: &smithay::input::pointer::GestureSwipeBeginEvent) {}
     fn on_gesture_swipe_end(&self, _event: &smithay::input::pointer::GestureSwipeEndEvent) {}
     fn on_gesture_swipe_update(&self, _event: &smithay::input::pointer::GestureSwipeUpdateEvent) {}
-    fn on_key(&self, _event: &smithay::input::keyboard::KeysymHandle<'_>, _state: smithay::backend::input::KeyState) {}
-    fn on_key_with_data(&self, _event: &smithay::input::keyboard::KeysymHandle<'_>, _key_state: smithay::backend::input::KeyState, _data: &mut Otto<B>) {}
+    fn on_key(
+        &self,
+        _event: &smithay::input::keyboard::KeysymHandle<'_>,
+        _state: smithay::backend::input::KeyState,
+    ) {
+    }
+    fn on_key_with_data(
+        &self,
+        _event: &smithay::input::keyboard::KeysymHandle<'_>,
+        _key_state: smithay::backend::input::KeyState,
+        _data: &mut Otto<B>,
+    ) {
+    }
     fn on_modifiers(&self, _modifiers: smithay::input::keyboard::ModifiersState) {}
     fn on_keyboard_leave(&self) {}
 

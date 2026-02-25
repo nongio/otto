@@ -73,9 +73,11 @@ impl<BackendData: Backend> Dispatch<OttoDockItemV1, DockItem, Otto<BackendData>>
                 }
 
                 // Update dock icon progress bar overlay (app-switcher mirrors reflect this automatically)
-                state.workspaces.dock.update_progress_for_app(&app_id, opt_value);
+                state
+                    .workspaces
+                    .dock
+                    .update_progress_for_app(&app_id, opt_value);
             }
         }
     }
 }
-

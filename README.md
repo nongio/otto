@@ -58,7 +58,8 @@ Testing and issue reports are welcome. Development follows a draft roadmap of pl
 - **Input:** natural scrolling, two-finger scrolling, keyboard remapping.
 - **Theming:** dark/light.
 - **Screen sharing:** works through an XDG Desktop Portal backend + PipeWire (full-screen capture via GPU blit + dmabuf).
-
+- **System UI:** brightness, volume, keyboard backlight
+- 
 ### Still to come
  - **Multi-monitor:** multiple screens.
  - **Screen capture:** per-window capture, screenshots, and a permission dialog UI.

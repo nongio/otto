@@ -4,7 +4,9 @@
 /// Used by rofi, waybar, and other wlroots-based tools.
 use std::sync::{Arc, Mutex};
 
-use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource};
+use wayland_server::{
+    backend::ObjectId, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
+};
 
 use wayland_protocols_wlr::foreign_toplevel::v1::server::{
     zwlr_foreign_toplevel_handle_v1::{self, ZwlrForeignToplevelHandleV1},
@@ -38,6 +40,7 @@ impl WlrForeignToplevelManagerState {
         dh: &DisplayHandle,
         app_id: &str,
         title: &str,
+        window_id: ObjectId,
     ) -> WlrForeignToplevelHandle
     where
         D: Dispatch<ZwlrForeignToplevelHandleV1, Arc<Mutex<WlrToplevelData>>> + 'static,
@@ -45,6 +48,8 @@ impl WlrForeignToplevelManagerState {
         let handle_data = Arc::new(Mutex::new(WlrToplevelData {
             app_id: app_id.to_string(),
             title: title.to_string(),
+            window_id,
+            current_state: Vec::new(),
             resources: Vec::new(),
         }));
 
@@ -89,6 +94,10 @@ impl WlrForeignToplevelManagerState {
 struct WlrToplevelData {
     app_id: String,
     title: String,
+    /// ObjectId of the corresponding compositor window surface
+    window_id: ObjectId,
+    /// Cached state bytes (array of u32 state enum values) for late-joining clients
+    current_state: Vec<u8>,
     resources: Vec<ZwlrForeignToplevelHandleV1>,
 }
 
@@ -126,6 +135,35 @@ impl WlrForeignToplevelHandle {
         for resource in &data.resources {
             resource.closed();
         }
+    }
+
+    pub fn send_state(&self, activated: bool, minimized: bool, maximized: bool, fullscreen: bool) {
+        // Pack active state enum values as u32 little-endian bytes (wlr protocol array)
+        let mut vals: Vec<u32> = Vec::new();
+        if maximized {
+            vals.push(0);
+        }
+        if minimized {
+            vals.push(1);
+        }
+        if activated {
+            vals.push(2);
+        }
+        if fullscreen {
+            vals.push(3);
+        }
+        let state_bytes: Vec<u8> = vals.iter().flat_map(|v| v.to_ne_bytes()).collect();
+
+        let mut data = self.data.lock().unwrap();
+        data.current_state = state_bytes.clone();
+        for resource in &data.resources {
+            resource.state(state_bytes.clone());
+            resource.done();
+        }
+    }
+
+    pub fn window_id(&self) -> ObjectId {
+        self.data.lock().unwrap().window_id.clone()
     }
 
     pub fn title(&self) -> String {
@@ -174,6 +212,7 @@ impl<BackendData: Backend> GlobalDispatch<ZwlrForeignToplevelManagerV1, (), Otto
                         let data = wlr_handle.data.lock().unwrap();
                         handle.app_id(data.app_id.clone());
                         handle.title(data.title.clone());
+                        handle.state(data.current_state.clone());
                         handle.done();
 
                         // Store handle reference
@@ -224,59 +263,77 @@ impl<BackendData: Backend>
     for Otto<BackendData>
 {
     fn request(
-        _state: &mut Otto<BackendData>,
+        state: &mut Otto<BackendData>,
         _client: &Client,
         _resource: &ZwlrForeignToplevelHandleV1,
         request: zwlr_foreign_toplevel_handle_v1::Request,
-        _data: &Arc<Mutex<WlrToplevelData>>,
+        data: &Arc<Mutex<WlrToplevelData>>,
         _dhandle: &DisplayHandle,
         _data_init: &mut DataInit<'_, Otto<BackendData>>,
     ) {
+        let window_id = data.lock().unwrap().window_id.clone();
+
         match request {
             zwlr_foreign_toplevel_handle_v1::Request::SetMaximized => {
-                // TODO: implement maximize
-                tracing::debug!("wlr foreign toplevel: set_maximized requested");
+                if let Some(window) = state.workspaces.get_window_for_surface(&window_id) {
+                    if let Some(toplevel) = window.toplevel().cloned() {
+                        <Otto<BackendData> as smithay::wayland::shell::xdg::XdgShellHandler>::maximize_request(state, toplevel);
+                    }
+                }
             }
             zwlr_foreign_toplevel_handle_v1::Request::UnsetMaximized => {
-                // TODO: implement unmaximize
-                tracing::debug!("wlr foreign toplevel: unset_maximized requested");
+                if let Some(window) = state.workspaces.get_window_for_surface(&window_id) {
+                    if let Some(toplevel) = window.toplevel().cloned() {
+                        <Otto<BackendData> as smithay::wayland::shell::xdg::XdgShellHandler>::unmaximize_request(state, toplevel);
+                    }
+                }
             }
             zwlr_foreign_toplevel_handle_v1::Request::SetMinimized => {
-                // TODO: implement minimize
-                tracing::debug!("wlr foreign toplevel: set_minimized requested");
+                if let Some(window) = state.workspaces.get_window_for_surface(&window_id).cloned() {
+                    state.workspaces.minimize_window(&window);
+                }
             }
             zwlr_foreign_toplevel_handle_v1::Request::UnsetMinimized => {
-                // TODO: implement unminimize
-                tracing::debug!("wlr foreign toplevel: unset_minimized requested");
+                state.workspaces.unminimize_window(&window_id);
+                state.set_keyboard_focus_on_surface(&window_id);
             }
             zwlr_foreign_toplevel_handle_v1::Request::Activate { seat: _seat } => {
-                // TODO: implement activate/focus
-                tracing::debug!("wlr foreign toplevel: activate requested");
+                if let Some(wid) = state.workspaces.focus_app_with_window(&window_id) {
+                    state.set_keyboard_focus_on_surface(&wid);
+                }
             }
             zwlr_foreign_toplevel_handle_v1::Request::Close => {
-                // TODO: implement close
-                tracing::debug!("wlr foreign toplevel: close requested");
+                if let Some(window) = state.workspaces.get_window_for_surface(&window_id) {
+                    match window.underlying_surface() {
+                        smithay::desktop::WindowSurface::Wayland(toplevel) => {
+                            toplevel.send_close();
+                        }
+                        #[cfg(feature = "xwayland")]
+                        smithay::desktop::WindowSurface::X11(surface) => {
+                            let _ = surface.close();
+                        }
+                    }
+                }
             }
-            zwlr_foreign_toplevel_handle_v1::Request::SetRectangle {
-                surface: _surface,
-                x: _x,
-                y: _y,
-                width: _width,
-                height: _height,
-            } => {
-                // TODO: implement set_rectangle (for minimize animation)
-                tracing::debug!("wlr foreign toplevel: set_rectangle requested");
+            zwlr_foreign_toplevel_handle_v1::Request::SetRectangle { .. } => {
+                // Hint for minimize animation target; not required by protocol
             }
             zwlr_foreign_toplevel_handle_v1::Request::Destroy => {
                 // Handle is being destroyed by client
             }
             zwlr_foreign_toplevel_handle_v1::Request::SetFullscreen { output: _output } => {
-                // TODO: implement fullscreen
-                tracing::debug!("wlr foreign toplevel: set_fullscreen requested");
+                if let Some(window) = state.workspaces.get_window_for_surface(&window_id) {
+                    if let Some(toplevel) = window.toplevel().cloned() {
+                        <Otto<BackendData> as smithay::wayland::shell::xdg::XdgShellHandler>::fullscreen_request(state, toplevel, None);
+                    }
+                }
             }
             zwlr_foreign_toplevel_handle_v1::Request::UnsetFullscreen => {
-                // TODO: implement unfullscreen
-                tracing::debug!("wlr foreign toplevel: unset_fullscreen requested");
+                if let Some(window) = state.workspaces.get_window_for_surface(&window_id) {
+                    if let Some(toplevel) = window.toplevel().cloned() {
+                        <Otto<BackendData> as smithay::wayland::shell::xdg::XdgShellHandler>::unfullscreen_request(state, toplevel);
+                    }
+                }
             }
             _ => {}
         }

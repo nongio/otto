@@ -2,12 +2,14 @@ use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
 
-use crate::{Otto, state::Backend, surface_style::gen::otto_surface_style_manager_v1::{self, OttoSurfaceStyleManagerV1}};
+use crate::{
+    state::Backend,
+    surface_style::gen::otto_surface_style_manager_v1::{self, OttoSurfaceStyleManagerV1},
+    Otto,
+};
 use layers::prelude::{Spring, TimingFunction, Transition};
 
-use super::protocol::{
-    SurfaceStyle, SurfaceStyleHandler,
-};
+use super::protocol::{SurfaceStyle, SurfaceStyleHandler};
 
 pub mod timing_function;
 

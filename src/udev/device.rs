@@ -427,7 +427,8 @@ impl Otto<UdevData> {
         );
 
         let is_primary = config_profile.as_ref().map(|p| p.primary).unwrap_or(false);
-        self.workspaces.map_output_with_primary(&output, position, is_primary);
+        self.workspaces
+            .map_output_with_primary(&output, position, is_primary);
 
         output.user_data().insert_if_missing(|| UdevOutputId {
             crtc,
