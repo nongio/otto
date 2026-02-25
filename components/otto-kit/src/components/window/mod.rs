@@ -30,6 +30,7 @@ fn default_layer_augmentation(layer: &otto_surface_style_v1::OttoSurfaceStyleV1)
 ///
 /// Window is Clone-able, allowing it to be shared across the application.
 #[derive(Clone)]
+#[allow(clippy::type_complexity)]
 pub struct Window {
     surface: Arc<RwLock<Option<ToplevelSurface>>>,
     background_color: Arc<RwLock<skia_safe::Color>>,
@@ -55,7 +56,7 @@ impl Window {
         } else {
             eprintln!("Warning: No surface style available - window will not have rounded corners");
         }
-
+        #[allow(clippy::arc_with_non_send_sync)]
         let window = Self {
             surface: Arc::new(RwLock::new(Some(surface))),
             background_color: Arc::new(RwLock::new(skia_safe::Color::from_rgb(245, 245, 245))),
@@ -176,6 +177,7 @@ impl Window {
     where
         F: FnOnce(),
     {
+        #[allow(clippy::single_match)]
         match self.surface.read() {
             Ok(surface_guard) => {
                 if let Some(ref surface) = *surface_guard {

@@ -43,8 +43,8 @@ impl App for WindowWithTitlebarApp {
             let window_width = 800.0;
             // Create window controls group
             let controls = TitlebarGroup::new()
-                .add(Button::icon("square-x").ghost().with_corner_radius(0.0)) // Close
-                .add(Button::icon("minus").ghost()) // Minimize
+                .add_item(Button::icon("square-x").ghost().with_corner_radius(0.0)) // Close
+                .add_item(Button::icon("minus").ghost()) // Minimize
                 // .add(Button::icon("maximize-2").ghost().with_corner_radius(0.0)) // Maximize
                 .build();
 

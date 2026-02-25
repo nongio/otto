@@ -205,7 +205,7 @@ fn render_menu(state: &ContextMenuState, _view: &View<ContextMenuState>) -> Laye
         };
 
         let depth_layer = LayerTreeBuilder::default()
-            .key(&format!("menu-depth-{}", depth))
+            .key(format!("menu-depth-{}", depth))
             .position(layers::types::Point::new(x_offset, 0.0))
             .size(layers::types::Size::points(width, height))
             .opacity((

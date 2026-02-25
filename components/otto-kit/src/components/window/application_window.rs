@@ -34,6 +34,7 @@ impl Default for WindowLayout {
 /// Currently has a toplevel window with a titlebar subsurface.
 /// Content and sidebar subsurfaces will be added incrementally.
 #[derive(Clone)]
+#[allow(clippy::type_complexity)]
 pub struct ApplicationWindow {
     surface: Arc<RwLock<Option<ToplevelSurface>>>,
     titlebar: Arc<RwLock<Option<SubsurfaceSurface>>>,
@@ -74,7 +75,7 @@ impl ApplicationWindow {
             layer.set_corner_radius(36.0);
             layer.set_masks_to_bounds(otto_surface_style_v1::ClipMode::Enabled);
         }
-
+        #[allow(clippy::arc_with_non_send_sync)]
         let window = Self {
             surface: Arc::new(RwLock::new(Some(surface))),
             titlebar: Arc::new(RwLock::new(None)),
@@ -97,7 +98,7 @@ impl ApplicationWindow {
                 if let Some(our_surface) = window_clone.wl_surface() {
                     use wayland_client::Proxy;
                     if our_surface.id() == surface_id {
-                        window_clone.on_configure::<A>(configure, serial);
+                        window_clone.on_configure(configure, serial);
                     }
                 }
             }
@@ -160,8 +161,8 @@ impl ApplicationWindow {
         self.layout.read().unwrap().clone()
     }
 
-    /// Create titlebar subsurface (called on first configure)
-    fn create_titlebar<A: App + 'static>(&self) -> Result<(), SurfaceError> {
+    /// Create titlebar subsurface (called on first configure)    
+    fn create_titlebar(&self) -> Result<(), SurfaceError> {
         let layout = self.layout.read().unwrap().clone();
         let width = self.initial_width;
 
@@ -209,7 +210,7 @@ impl ApplicationWindow {
 
     /// Create sidebar subsurface (called on first configure)
     /// Sidebar is full height and positioned at left or right edge
-    fn create_sidebar<A: App + 'static>(&self) -> Result<(), SurfaceError> {
+    fn create_sidebar(&self) -> Result<(), SurfaceError> {
         let layout = self.layout.read().unwrap().clone();
 
         // Only create sidebar if width > 0
@@ -258,7 +259,7 @@ impl ApplicationWindow {
 
     /// Create content subsurface (called on first configure)
     /// Content area has top margin to avoid titlebar overlap
-    fn create_content<A: App + 'static>(&self) -> Result<(), SurfaceError> {
+    fn create_content(&self) -> Result<(), SurfaceError> {
         let layout = self.layout.read().unwrap().clone();
 
         let height = self.initial_height;
@@ -375,7 +376,7 @@ impl ApplicationWindow {
     }
 
     /// Internal: Handle window configure event
-    fn on_configure<A: App + 'static>(&self, configure: WindowConfigure, serial: u32) {
+    fn on_configure(&self, configure: WindowConfigure, serial: u32) {
         // Handle configure first - this updates the toplevel dimensions
         if let Ok(mut surface_guard) = self.surface.write() {
             if let Some(ref mut surface) = *surface_guard {
@@ -391,19 +392,19 @@ impl ApplicationWindow {
         // Create subsurfaces on first configure by checking if they exist
         // Order: sidebar, content, then titlebar (so titlebar overlaps)
         if self.sidebar.read().unwrap().is_none() {
-            if let Err(e) = self.create_sidebar::<A>() {
+            if let Err(e) = self.create_sidebar() {
                 eprintln!("Failed to create sidebar: {:?}", e);
             }
         }
 
         if self.content.read().unwrap().is_none() {
-            if let Err(e) = self.create_content::<A>() {
+            if let Err(e) = self.create_content() {
                 eprintln!("Failed to create content: {:?}", e);
             }
         }
 
         if self.titlebar.read().unwrap().is_none() {
-            if let Err(e) = self.create_titlebar::<A>() {
+            if let Err(e) = self.create_titlebar() {
                 eprintln!("Failed to create titlebar: {:?}", e);
             }
         }

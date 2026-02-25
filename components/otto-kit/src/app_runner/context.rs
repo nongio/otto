@@ -24,7 +24,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::ZwlrLay
 // Store pointer to AppContextData (single pointer instead of RawAppContext struct)
 // This pointer is only valid during the event loop while AppData exists
 thread_local! {
-    static APP_CONTEXT_PTR: RefCell<Option<*const AppContextData>> = RefCell::new(None);
+    static APP_CONTEXT_PTR: RefCell<Option<*const AppContextData>> = const { RefCell::new(None) };
 }
 
 // Store configure handlers registered by surface components
@@ -34,12 +34,12 @@ thread_local! {
 
 // Store the current surface configure event being processed
 thread_local! {
-    pub(super) static CURRENT_CONFIGURE: RefCell<Option<(ObjectId, WindowConfigure, u32)>> = RefCell::new(None);
+    pub(super) static CURRENT_CONFIGURE: RefCell<Option<(ObjectId, WindowConfigure, u32)>> = const { RefCell::new(None) };
 }
 
 // Store the shared SkiaContext
 thread_local! {
-    pub(super) static SHARED_SKIA_CONTEXT: RefCell<Option<crate::rendering::SkiaContext>> = RefCell::new(None);
+    pub(super) static SHARED_SKIA_CONTEXT: RefCell<Option<crate::rendering::SkiaContext>> = const { RefCell::new(None) };
 }
 
 // Store the shared LayersRenderer (globally shared with RwLock for multi-threaded access)
@@ -55,7 +55,7 @@ lazy_static::lazy_static! {
 
 // Store EGL display for cleanup
 thread_local! {
-    pub(crate) static EGL_DISPLAY: RefCell<Option<khronos_egl::Display>> = RefCell::new(None);
+    pub(crate) static EGL_DISPLAY: RefCell<Option<khronos_egl::Display>> = const { RefCell::new(None) };
 }
 
 // Store EGL resources for all surfaces (cold path storage)
@@ -65,21 +65,24 @@ thread_local! {
 
 // Store pointer event callbacks
 thread_local! {
+    #[allow(clippy::type_complexity)]
     pub(super) static POINTER_CALLBACKS: RefCell<Vec<Box<dyn FnMut(&[smithay_client_toolkit::seat::pointer::PointerEvent])>>> = RefCell::new(Vec::new());
 }
 
 // Store pending pointer callbacks to be registered after event dispatch
 thread_local! {
+    #[allow(clippy::type_complexity)]
     pub(super) static PENDING_POINTER_CALLBACKS: RefCell<Vec<Box<dyn FnMut(&[smithay_client_toolkit::seat::pointer::PointerEvent])>>> = RefCell::new(Vec::new());
 }
 
 // Store windows for rendering loop
 thread_local! {
-    pub(super) static WINDOWS: RefCell<Vec<crate::components::window::Window>> = RefCell::new(Vec::new());
+    pub(super) static WINDOWS: RefCell<Vec<crate::components::window::Window>> = const { RefCell::new(Vec::new()) };
 }
 
 // Store popup configure callbacks - map from popup wl_surface ObjectId to callback
 thread_local! {
+    #[allow(clippy::type_complexity)]
     pub(super) static POPUP_CONFIGURE_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnOnce(u32)>>> = RefCell::new(HashMap::new());
 }
 
@@ -90,6 +93,7 @@ thread_local! {
 
 // Store layer shell configure callbacks - map from layer_surface ObjectId to callback
 thread_local! {
+    #[allow(clippy::type_complexity)]
     pub(super) static LAYER_SHELL_CONFIGURE_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnMut(i32, i32, u32)>>> = RefCell::new(HashMap::new());
 }
 
@@ -105,6 +109,7 @@ thread_local! {
 
 // Store frame request function (set during AppRunner initialization)
 thread_local! {
+    #[allow(clippy::type_complexity)]
     pub(super) static FRAME_REQUEST_FN: RefCell<Option<Box<dyn Fn(&wl_surface::WlSurface)>>> = RefCell::new(None);
 }
 

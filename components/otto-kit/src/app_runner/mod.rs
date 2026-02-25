@@ -693,14 +693,12 @@ impl<A: App + 'static> wayland_client::Dispatch<wl_keyboard::WlKeyboard, ()> for
     ) {
         if let wl_keyboard::Event::Key {
             key,
-            state: key_state,
+            state: wayland_client::WEnum::Value(state_val),
             ..
         } = event
         {
-            if let wayland_client::WEnum::Value(state_val) = key_state {
-                // Forward keyboard event (serial not available in wl_keyboard events)
-                state.app.on_keyboard_event(key, state_val, 0);
-            }
+            // Forward keyboard event (serial not available in wl_keyboard events)
+            state.app.on_keyboard_event(key, state_val, 0);
         }
     }
 }

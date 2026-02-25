@@ -663,7 +663,7 @@ impl Otto<UdevData> {
         if disable_laptop_panels {
             // Lid is closed - disconnect laptop panels that are currently active
             for (&node, device) in &self.backend_data.backends {
-                for (&crtc, _surface) in &device.surfaces {
+                for &crtc in device.surfaces.keys() {
                     // Find the output for this surface
                     let output = self.workspaces.outputs().find(|o| {
                         o.user_data()

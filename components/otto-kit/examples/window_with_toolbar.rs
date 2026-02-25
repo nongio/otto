@@ -49,10 +49,10 @@ impl App for WindowWithToolbarApp {
 
             // Create toolbar groups
             let leading = ToolbarGroup::new()
-                .add(Button::icon("chevron-left").ghost())
-                .add(Button::icon("chevron-right").ghost())
+                .add_item(Button::icon("chevron-left").ghost())
+                .add_item(Button::icon("chevron-right").ghost())
                 .add_space(16.0)
-                .add(
+                .add_item(
                     Label::new("Toolbar window")
                         .with_style(styles::TITLE_3_EMPHASIZED)
                         .with_color(theme.text_primary),

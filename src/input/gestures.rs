@@ -76,7 +76,8 @@ impl crate::Otto<crate::udev::UdevData> {
                             velocity_samples: vec![delta.x],
                             output_name: output_name.clone(),
                         };
-                        self.workspaces.workspace_swipe_update(&output_name, delta.x as f32);
+                        self.workspaces
+                            .workspace_swipe_update(&output_name, delta.x as f32);
                     }
                     crate::state::SwipeDirection::Vertical(_) => {
                         // Initialize expose mode and apply current delta
@@ -105,7 +106,8 @@ impl crate::Otto<crate::udev::UdevData> {
                     velocity_samples.remove(0);
                 }
                 let name = output_name.clone();
-                self.workspaces.workspace_swipe_update(&name, delta.x as f32);
+                self.workspaces
+                    .workspace_swipe_update(&name, delta.x as f32);
             }
             crate::state::SwipeGestureState::Expose { velocity_samples } => {
                 // Collect velocity samples for momentum-based spring animation

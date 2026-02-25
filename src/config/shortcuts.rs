@@ -402,6 +402,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn case_insensitive_letter_keysyms() {
         let mut map = ShortcutMap::new();
         map.insert(

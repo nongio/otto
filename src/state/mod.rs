@@ -344,13 +344,17 @@ impl SwipeDirection {
 #[derive(Debug, Clone)]
 pub enum SwipeGestureState {
     Idle,
-    Detecting { accumulated: (f64, f64) },
+    Detecting {
+        accumulated: (f64, f64),
+    },
     WorkspaceSwitching {
         velocity_samples: Vec<f64>,
         /// Name of the output this swipe targets (output under pointer at gesture start)
         output_name: String,
     },
-    Expose { velocity_samples: Vec<f64> },
+    Expose {
+        velocity_samples: Vec<f64>,
+    },
 }
 
 impl SwipeGestureState {
@@ -1552,21 +1556,21 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             let serial = SERIAL_COUNTER.next_serial();
 
             // Deactivate the previously focused window
-            if let Some(old_focus) = keyboard.current_focus() {
-                if let crate::focus::KeyboardFocusTarget::Window(old_window) = old_focus {
-                    if old_window.wl_surface() != window.wl_surface() {
-                        old_window.set_activate(false);
-                        // Update shadow for deactivated window
-                        if let Some(view) = self.workspaces.get_window_view(&old_window.id()) {
-                            view.set_active(false);
-                        }
-                        if let Some(toplevel) = old_window.toplevel() {
-                            toplevel.send_configure();
-                        }
-                        // Notify foreign toplevel: deactivated
-                        let old_id = old_window.id();
-                        self.send_foreign_toplevel_state(&old_id, false);
+            if let Some(crate::focus::KeyboardFocusTarget::Window(old_window)) =
+                keyboard.current_focus()
+            {
+                if old_window.wl_surface() != window.wl_surface() {
+                    old_window.set_activate(false);
+                    // Update shadow for deactivated window
+                    if let Some(view) = self.workspaces.get_window_view(&old_window.id()) {
+                        view.set_active(false);
                     }
+                    if let Some(toplevel) = old_window.toplevel() {
+                        toplevel.send_configure();
+                    }
+                    // Notify foreign toplevel: deactivated
+                    let old_id = old_window.id();
+                    self.send_foreign_toplevel_state(&old_id, false);
                 }
             }
 
@@ -1591,19 +1595,19 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             let serial = SERIAL_COUNTER.next_serial();
 
             // Deactivate the currently focused window when clearing focus
-            if let Some(old_focus) = keyboard.current_focus() {
-                if let crate::focus::KeyboardFocusTarget::Window(old_window) = old_focus {
-                    old_window.set_activate(false);
-                    // Update shadow for deactivated window
-                    if let Some(view) = self.workspaces.get_window_view(&old_window.id()) {
-                        view.set_active(false);
-                    }
-                    if let Some(toplevel) = old_window.toplevel() {
-                        toplevel.send_configure();
-                    }
-                    let old_id = old_window.id();
-                    self.send_foreign_toplevel_state(&old_id, false);
+            if let Some(crate::focus::KeyboardFocusTarget::Window(old_window)) =
+                keyboard.current_focus()
+            {
+                old_window.set_activate(false);
+                // Update shadow for deactivated window
+                if let Some(view) = self.workspaces.get_window_view(&old_window.id()) {
+                    view.set_active(false);
                 }
+                if let Some(toplevel) = old_window.toplevel() {
+                    toplevel.send_configure();
+                }
+                let old_id = old_window.id();
+                self.send_foreign_toplevel_state(&old_id, false);
             }
 
             keyboard.set_focus(self, None, serial);

@@ -100,8 +100,7 @@ fn commit_transaction<BackendData: Backend>(
         }
         Some(trans)
     } else {
-        txn.duration
-            .map(|duration| Transition::ease_out_quad(duration))
+        txn.duration.map(Transition::ease_out_quad)
     };
 
     // Apply delay if configured
@@ -144,7 +143,6 @@ fn commit_transaction<BackendData: Backend>(
                 if let Some(txn) = state.style_transactions.remove(&txn_id) {
                     txn.wl_style_transaction.completed();
                 }
-                return;
             }
         }
         // If no transition, changes were already applied immediately via set_* methods
@@ -155,7 +153,6 @@ fn commit_transaction<BackendData: Backend>(
             if let Some(txn) = state.style_transactions.remove(&txn_id) {
                 txn.wl_style_transaction.completed();
             }
-            return;
         }
     }
 }

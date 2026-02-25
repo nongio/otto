@@ -20,7 +20,7 @@ use crate::{
     config::{Config, DockBookmark},
     shell::WindowElement,
     theme::theme_colors,
-    utils::Observer,
+    utils::{parse_hex_color, Observer},
     workspaces::{
         apps_info::ApplicationsInfo, utils::ContextMenuView, Application, WorkspacesModel,
     },
@@ -151,8 +151,6 @@ impl DockView {
             justify_items: Some(taffy::JustifyItems::Center),
             ..Default::default()
         });
-
-        layers_engine.add_layer(&wrap_layer);
 
         let view_layer = layers_engine.new_layer();
 
@@ -409,6 +407,41 @@ impl DockView {
     fn render_elements_layers(&self, available_icon_width: f32) {
         let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
         let dock_size_multiplier = self.dock_config.read().unwrap().size.clamp(0.5, 2.0) as f32;
+        let icon_color_filter = {
+            let dock_config = self.dock_config.read().unwrap();
+            if dock_config.colorize_icons {
+                let color = parse_hex_color(&dock_config.colorize_color);
+                let intensity = dock_config.colorize_intensity.clamp(0.0, 1.0) as f32;
+                let (r, g, b) = (color.r, color.g, color.b);
+                let (lr, lg, lb) = (0.2126_f32, 0.7152_f32, 0.0722_f32);
+                let inv = 1.0 - intensity;
+                let matrix = skia::ColorMatrix::new(
+                    inv + intensity * lr * r,
+                    intensity * lg * r,
+                    intensity * lb * r,
+                    0.0,
+                    0.0,
+                    intensity * lr * g,
+                    inv + intensity * lg * g,
+                    intensity * lb * g,
+                    0.0,
+                    0.0,
+                    intensity * lr * b,
+                    intensity * lg * b,
+                    inv + intensity * lb * b,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    1.0,
+                    0.0,
+                );
+                Some(skia::color_filters::matrix(&matrix, None))
+            } else {
+                None
+            }
+        };
         let state = self.get_state();
         let display_apps = self.display_entries(&state);
         let app_height = available_icon_width * (1.0 + 20.0 / 95.0);
@@ -473,6 +506,8 @@ impl DockView {
                     let layer = entry.layer.clone();
                     // let label = entry.label_layer.clone();
 
+                    icon_layer.set_color_filter(icon_color_filter.clone());
+
                     // Update icon content if the icon changed.
                     // Running state is shown via the running_indicator_layer (separate from icon_stack).
                     let current_icon_id = app_copy.icon.as_ref().map(|i| i.unique_id());
@@ -521,6 +556,7 @@ impl DockView {
                         *running,
                     );
                     icon_layer.set_image_cached(true);
+                    icon_layer.set_color_filter(icon_color_filter.clone());
 
                     // Set up icon_scaler as an absolute-positioned square with a fixed size.
                     // Its scale is animated during magnification to fill the parent slot;

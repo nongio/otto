@@ -51,7 +51,7 @@ otto-kit = { path = "components/otto-kit" }
 [dependencies.laye-rs]
 # path = "../layers"
 git = "https://github.com/nongio/layers"
-tag = "v1.3.0"
+tag = "v1.4.0"
 features = ["export-taffy"]
 
 [dependencies.smithay-drm-extras]
@@ -145,8 +145,6 @@ members = [
     "components/apps-manager",
     "components/otto-kit",
     "sample-clients/client-rainbow",
-    "sample-clients/hello-layers",
-    "sample-clients/otto-kit",
     "sample-clients/submenu",
     "sample-clients/submenu-gtk",
 ]

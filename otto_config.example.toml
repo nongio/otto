@@ -152,6 +152,11 @@ sound_theme = "freedesktop"  # Uncomment to override auto-detection
 size = 1.0  # Dock size multiplier (0.5 - 2.0, default: 1.0)
 genie_scale = 0.5
 genie_span = 10.0
+# Optional icon colorization
+# When enabled, dock app icons are tinted to this color (hex RGB).
+colorize_icons = false
+colorize_color = "#ffffff"
+colorize_intensity = 1.0
 bookmarks = [
   { desktop_id = "org.gnome.Nautilus.desktop" },
   { desktop_id = "org.mozilla.firefox.desktop", label = "Web", exec_args = ["--private-window"] },

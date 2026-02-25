@@ -517,9 +517,12 @@ pub fn run_udev() {
                 .filter_map(|v| v.output.current_mode())
                 .map(|m| m.refresh as f64 / 1000.0)
                 .fold(f64::INFINITY, f64::min);
-            let refresh_hz = if refresh_hz.is_finite() { refresh_hz } else { 60.0 };
-            let interval =
-                std::time::Duration::from_micros((1_000_000.0 / refresh_hz) as u64);
+            let refresh_hz = if refresh_hz.is_finite() {
+                refresh_hz
+            } else {
+                60.0
+            };
+            let interval = std::time::Duration::from_micros((1_000_000.0 / refresh_hz) as u64);
 
             state
                 .handle
