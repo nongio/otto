@@ -121,6 +121,29 @@ pub fn resource_image(
     named_icon(alternative_theme_icon_name)
 }
 
+/// Find a resource file path
+///
+/// Search order:
+/// 1. `./resources/{path}`
+/// 2. `/etc/otto/share/{path}`
+pub fn resource_path(path: &str) -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+    
+    // Try local resources directory first
+    let local_path = PathBuf::from(format!("resources/{}", path));
+    if local_path.exists() {
+        return Some(local_path);
+    }
+
+    // Try system-wide installation directory
+    let system_path = PathBuf::from(format!("/etc/otto/share/{}", path));
+    if system_path.exists() {
+        return Some(system_path);
+    }
+
+    None
+}
+
 pub fn named_icon(icon_name: &str) -> Option<layers::skia::Image> {
     let ic = icon_cache();
     let mut ic = ic.write().unwrap();
