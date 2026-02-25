@@ -45,6 +45,8 @@ pub struct Config {
     pub accent_color: String,
     #[serde(default = "shortcuts::default_shortcut_map")]
     pub keyboard_shortcuts: ShortcutMap,
+    #[serde(default)]
+    pub virtual_outputs: Vec<VirtualOutputConfig>,
     #[serde(skip)]
     #[serde(default)]
     shortcut_bindings: Vec<ShortcutBinding>,
@@ -77,6 +79,7 @@ impl Default for Config {
             accent_color: default_accent_color(),
             keyboard_shortcuts: shortcuts::default_shortcut_map(),
             shortcut_bindings: Vec::new(),
+            virtual_outputs: Vec::new(),
         };
         config.rebuild_shortcut_bindings();
         config
@@ -611,6 +614,25 @@ impl DisplayResolution {
 pub struct DisplayPosition {
     pub x: i32,
     pub y: i32,
+}
+
+/// Configuration for a virtual (headless) output streamed via PipeWire.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VirtualOutputConfig {
+    /// Unique name for the virtual output (e.g. "virtual-1").
+    pub name: String,
+    /// Output resolution.
+    pub resolution: DisplayResolution,
+    /// Target refresh rate in Hz.
+    #[serde(default = "default_virtual_refresh_hz")]
+    pub refresh_hz: f64,
+    /// Output position in the compositor layout.
+    #[serde(default)]
+    pub position: Option<DisplayPosition>,
+}
+
+fn default_virtual_refresh_hz() -> f64 {
+    60.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

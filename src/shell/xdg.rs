@@ -782,8 +782,12 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             let outputs_for_window = self.workspaces.outputs_for_element(&window);
             let output = outputs_for_window
                 .first()
-                // The window hasn't been mapped yet, use the primary output instead
-                .or_else(|| self.workspaces.outputs().next())
+                // The window hasn't been mapped yet, use the primary physical output instead
+                .or_else(|| {
+                    self.workspaces
+                        .outputs()
+                        .find(|o| !crate::virtual_output::is_virtual_output(o))
+                })
                 // Assumes that at least one output exists
                 .expect("No outputs found")
                 .clone(); // Clone to avoid borrow conflicts

@@ -27,7 +27,11 @@ use crate::{
 use smithay::{
     backend::{
         drm::{DrmAccessError, DrmError, DrmEventMetadata, DrmNode},
-        renderer::element::{AsRenderElements, Kind},
+        renderer::{
+            damage::OutputDamageTracker,
+            element::{AsRenderElements, Kind},
+            Bind,
+        },
         SwapBuffersError,
     },
     output::Output,
@@ -249,6 +253,11 @@ impl Otto<UdevData> {
                 self.render_surface(node, crtc);
             }
         };
+
+        // Render virtual outputs once per primary GPU cycle
+        if node == self.backend_data.primary_gpu {
+            self.render_virtual_outputs();
+        }
     }
 
     pub(super) fn render_surface(&mut self, node: DrmNode, crtc: crtc::Handle) {
@@ -604,6 +613,115 @@ impl Otto<UdevData> {
                         .insert_idle(move |data| data.schedule_initial_render(node, crtc, handle));
                 }
                 SwapBuffersError::ContextLost(err) => panic!("Rendering loop lost: {}", err),
+            }
+        }
+    }
+
+    /// Render all virtual outputs into their PipeWire buffers.
+    ///
+    /// Called once per primary GPU render cycle. For each virtual output we:
+    /// 1. Pop an available DMA-BUF buffer from the PipeWire pool.
+    /// 2. Bind it as the render target.
+    /// 3. Call `render_output()` directly into the PipeWire buffer.
+    /// 4. Queue the buffer back and trigger PipeWire.
+    pub(super) fn render_virtual_outputs(&mut self) {
+        if self.virtual_outputs.is_empty() {
+            return;
+        }
+
+        let primary_gpu = self.backend_data.primary_gpu;
+        let all_window_elements: Vec<&WindowElement> = self.workspaces.spaces_elements().collect();
+        let scene_element = self.scene_element.clone();
+
+        for i in 0..self.virtual_outputs.len() {
+            let mut renderer = match self.backend_data.gpus.single_renderer(&primary_gpu) {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!("render_virtual_outputs: failed to get renderer: {e}");
+                    continue;
+                }
+            };
+
+            // Clone output (cheap Arc clone) so we can hold &output alongside &mut damage_tracker
+            let output_clone = self.virtual_outputs[i].output.clone();
+            let output_name = output_clone.name();
+
+            // --- Render into this virtual output's own PipeWire stream ---
+            let pool_arc = self.virtual_outputs[i].pipewire_stream.buffer_pool();
+            let maybe_buf = {
+                let mut pool = pool_arc.lock().unwrap();
+                pool.available.pop_front().map(|buf| {
+                    pool.to_queue.insert(buf.fd, buf.pw_buffer);
+                    buf
+                })
+            };
+            if let Some(available) = maybe_buf {
+                let mut dmabuf = available.dmabuf.clone();
+                {
+                    // Scope the damage_tracker borrow so it ends before pipewire_stream access
+                    let damage_tracker = &mut self.virtual_outputs[i].damage_tracker;
+                    match renderer.bind(&mut dmabuf) {
+                        Ok(mut framebuffer) => {
+                            let _ = crate::render::render_output(
+                                &output_clone,
+                                &all_window_elements,
+                                [WorkspaceRenderElements::Scene(scene_element.clone())],
+                                None,
+                                &mut renderer,
+                                &mut framebuffer,
+                                damage_tracker,
+                                0,
+                            );
+                        }
+                        Err(e) => {
+                            warn!("render_virtual_outputs: bind failed for '{output_name}': {e}");
+                        }
+                    }
+                }
+                self.virtual_outputs[i].pipewire_stream.increment_frame_sequence();
+            }
+            self.virtual_outputs[i].pipewire_stream.trigger_frame();
+
+            // --- Tap screenshare sessions targeting this virtual output ---
+            for session in self.screenshare_sessions.values() {
+                for (connector, stream) in &session.streams {
+                    if *connector == output_name {
+                        let ss_pool = stream.pipewire_stream.buffer_pool();
+                        let maybe_ss_buf = {
+                            let mut pool = ss_pool.lock().unwrap();
+                            pool.available.pop_front().map(|buf| {
+                                pool.to_queue.insert(buf.fd, buf.pw_buffer);
+                                buf
+                            })
+                        };
+                        if let Some(ss_buf) = maybe_ss_buf {
+                            let mut ss_dmabuf = ss_buf.dmabuf.clone();
+                            let mut temp_tracker = OutputDamageTracker::from_output(&output_clone);
+                            match renderer.bind(&mut ss_dmabuf) {
+                                Ok(mut fb) => {
+                                    let _ = crate::render::render_output(
+                                        &output_clone,
+                                        &all_window_elements,
+                                        [WorkspaceRenderElements::Scene(scene_element.clone())],
+                                        None,
+                                        &mut renderer,
+                                        &mut fb,
+                                        &mut temp_tracker,
+                                        0,
+                                    );
+                                    stream.pipewire_stream.increment_frame_sequence();
+                                }
+                                Err(e) => {
+                                    warn!("render_virtual_outputs: screenshare bind failed for '{output_name}': {e}");
+                                }
+                            }
+                            stream.pipewire_stream.trigger_frame();
+                        } else {
+                            stream.pipewire_stream.trigger_frame();
+                            trace!("render_virtual_outputs: no screenshare buffer for '{output_name}'");
+                        }
+                    }
+                }
             }
         }
     }
