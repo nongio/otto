@@ -27,6 +27,7 @@ mod app_switcher;
 mod background;
 mod dnd_view;
 mod dock;
+mod osd;
 mod popup_overlay;
 pub mod workspace;
 
@@ -45,6 +46,7 @@ pub use app_switcher::AppSwitcherView;
 pub use apps_info::ApplicationsInfo;
 pub use dnd_view::DndView;
 pub use dock::DockView;
+pub use osd::OsdView;
 pub use popup_overlay::PopupOverlayView;
 pub use workspace::WORKSPACE_SPACING;
 pub use workspace_selector::{WorkspaceSelectorView, WORKSPACE_SELECTOR_PREVIEW_WIDTH};
@@ -92,6 +94,7 @@ pub struct Workspaces {
     pub window_views: Arc<RwLock<HashMap<ObjectId, WindowView>>>,
     pub dnd_view: DndView,
     pub popup_overlay: PopupOverlayView,
+    pub osd: OsdView,
 
     // gestures states
     pub show_all: Arc<AtomicBool>,
@@ -263,6 +266,10 @@ impl Workspaces {
             workspace_selector_layer.clone(),
         ));
 
+        // Create OSD view on overlay layer
+        let osd = OsdView::new(layers_engine.clone());
+        overlay_layer.add_sublayer(&osd.wrap_layer);
+
         // layer.add_sublayer(overlay_layer.clone());
 
         let mut workspaces = Self {
@@ -278,6 +285,7 @@ impl Workspaces {
             dock: dock.clone(),
             dnd_view,
             popup_overlay,
+            osd,
             overlay_layer,
             layer_shell_background,
             layer_shell_overlay,
