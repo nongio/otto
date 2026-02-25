@@ -391,7 +391,8 @@ impl WindowSelectorView {
         if otto
             .workspaces
             .get_current_workspace()
-            .get_fullscreen_mode()
+            .map(|w| w.get_fullscreen_mode())
+            .unwrap_or(false)
         {
             return None;
         }
@@ -403,8 +404,8 @@ impl WindowSelectorView {
             let window_in_space = otto
                 .workspaces
                 .space()
-                .elements()
-                .any(|w| w.id() == *window_id);
+                .map(|s| s.elements().any(|w| w.id() == *window_id))
+                .unwrap_or(false);
 
             if !window_in_space {
                 return None;
@@ -925,7 +926,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
                                 let position = otto
                                     .workspaces
                                     .space()
-                                    .element_location(&window_element)
+                                    .and_then(|s| s.element_location(&window_element))
                                     .unwrap_or_default();
 
                                 // Clear dragging state

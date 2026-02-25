@@ -160,10 +160,7 @@ impl LayerShellSurface {
         AppContext::register_layer_configure_callback(
             layer_surface_id,
             move |width, height, serial| {
-                println!(
-                    "Layer configure callback: {}x{}, serial: {}",
-                    width, height, serial
-                );
+                tracing::debug!("Layer configure callback: {}x{}, serial: {}", width, height, serial);
 
                 // Extract callback before borrowing to avoid double borrow
                 let callback_to_call = {
