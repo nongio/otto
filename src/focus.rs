@@ -387,18 +387,18 @@ impl<B: Backend> KeyboardTarget<Otto<B>> for KeyboardFocusTarget<B> {
         }
     }
     fn leave(&self, seat: &Seat<Otto<B>>, data: &mut Otto<B>, serial: Serial) {
-        // Show popups for the window gaining focus
-        if let KeyboardFocusTarget::Window(w) = self {
-            let window_id = w.wl_surface().map(|s| s.id());
-            if let Some(id) = window_id {
-                data.workspaces.popup_overlay.show_popups_for_window(&id);
-            }
-        }
         // Hide popups for the window losing focus
         if let KeyboardFocusTarget::Window(w) = self {
             let window_id = w.wl_surface().map(|s| s.id());
             if let Some(id) = window_id {
                 data.workspaces.popup_overlay.hide_popups_for_window(&id);
+            }
+        }
+        // Show popups for the window gaining focus
+        if let KeyboardFocusTarget::Window(w) = self {
+            let window_id = w.wl_surface().map(|s| s.id());
+            if let Some(id) = window_id {
+                data.workspaces.popup_overlay.show_popups_for_window(&id);
             }
         }
 

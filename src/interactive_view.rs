@@ -44,8 +44,10 @@ pub trait ViewInteractions<B: Backend>: Sync + Send {
     fn on_gesture_swipe_begin(&self, _event: &smithay::input::pointer::GestureSwipeBeginEvent) {}
     fn on_gesture_swipe_end(&self, _event: &smithay::input::pointer::GestureSwipeEndEvent) {}
     fn on_gesture_swipe_update(&self, _event: &smithay::input::pointer::GestureSwipeUpdateEvent) {}
-    fn on_key(&self, _event: &smithay::input::keyboard::KeysymHandle<'_>) {}
+    fn on_key(&self, _event: &smithay::input::keyboard::KeysymHandle<'_>, _state: smithay::backend::input::KeyState) {}
+    fn on_key_with_data(&self, _event: &smithay::input::keyboard::KeysymHandle<'_>, _key_state: smithay::backend::input::KeyState, _data: &mut Otto<B>) {}
     fn on_modifiers(&self, _modifiers: smithay::input::keyboard::ModifiersState) {}
+    fn on_keyboard_leave(&self) {}
 
     fn on_up(
         &self,
@@ -288,7 +290,8 @@ impl<B: Backend> KeyboardTarget<Otto<B>> for InteractiveView<B> {
         _serial: smithay::utils::Serial,
         _time: u32,
     ) {
-        self.view.on_key(&key);
+        self.view.on_key(&key, _state);
+        self.view.on_key_with_data(&key, _state, _data);
     }
     fn leave(
         &self,
@@ -296,6 +299,7 @@ impl<B: Backend> KeyboardTarget<Otto<B>> for InteractiveView<B> {
         _data: &mut Otto<B>,
         _serial: smithay::utils::Serial,
     ) {
+        self.view.on_keyboard_leave();
     }
     fn modifiers(
         &self,

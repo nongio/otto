@@ -69,7 +69,7 @@ Testing and issue reports are welcome. Development follows a draft roadmap of pl
  - **Input polish:** scroll acceleration.
 
  ### Experimentation
-- **Scene graph protocol:** WIP protocol ([sc-layer-v1](protocols/sc-layer-v1.xml)) to expose the scene graph and animations to external clients for advanced UI customisation and effects.
+- **Scene graph protocol:** WIP protocol ([otto-scene-v1](protocols/otto-scene-v1.xml)) to expose the scene graph and animations to external clients for advanced UI customisation and effects.
 - **Ideas:** remote "virtual screens" (VNC/RDP).
 
 ## Supported Wayland Protocols

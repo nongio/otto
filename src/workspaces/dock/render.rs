@@ -6,10 +6,138 @@ use crate::{
     config::Config,
     theme::theme_colors,
     workspaces::{
-        utils::{draw_balloon_rect, FONT_CACHE},
-        Application,
+        Application, utils::{FONT_CACHE, draw_balloon_rect}
     },
 };
+
+/// Draw a badge (red circle with white text), sized to fill the layer bounds.
+pub fn draw_badge(text: String) -> ContentDrawFunction {
+    let draw_fn = move |canvas: &layers::skia::Canvas, w: f32, h: f32| -> layers::skia::Rect {
+        if text.is_empty() {
+            return layers::skia::Rect::from_xywh(0.0, 0.0, w, h);
+        }
+        
+
+        // White text centered
+        let text_size = h * 0.55;
+        let font_family = Config::with(|c| c.font_family.clone());
+        let font_style = layers::skia::FontStyle::new(
+            layers::skia::font_style::Weight::MEDIUM,
+            layers::skia::font_style::Width::NORMAL,
+            layers::skia::font_style::Slant::Upright,
+        );
+        let font = FONT_CACHE.with(|font_cache| {
+            font_cache.make_font_with_fallback(font_family, font_style, text_size)
+        });
+
+        let mut text_paint =
+            layers::skia::Paint::new(layers::skia::Color4f::new(1.0, 1.0, 1.0, 1.0), None);
+        text_paint.set_anti_alias(true);
+
+        let (_, text_bounds) = font.measure_str(&text, Some(&text_paint));
+        let text_x = w/2.0 - text_bounds.width() / 2.0 - text_bounds.left;
+        let text_y = h/2.0 - text_bounds.height() / 2.0 - text_bounds.top;
+
+        canvas.draw_str(&text, (text_x, text_y), &font, &text_paint);
+
+        layers::skia::Rect::from_xywh(0.0, 0.0, w, h)
+    };
+    draw_fn.into()
+}
+
+/// Draw a horizontal progress bar, sized to fill the layer bounds.
+pub fn draw_progress(value: f64) -> ContentDrawFunction {
+    let draw_fn = move |canvas: &layers::skia::Canvas, w: f32, h: f32| -> layers::skia::Rect {
+        let value = value.clamp(0.0, 1.0) as f32;
+        let corner_radius = h / 2.0;
+
+        // Dark semi-transparent background track
+        let mut bg_paint = layers::skia::Paint::new(
+            layers::skia::Color4f::new(0.0, 0.0, 0.0, 0.30),
+            None,
+        );
+        bg_paint.set_anti_alias(true);
+        let bg_rect = layers::skia::Rect::from_xywh(0.0, 0.0, w, h);
+        let bg_rrect =
+            layers::skia::RRect::new_rect_xy(bg_rect, corner_radius, corner_radius);
+        canvas.draw_rrect(bg_rrect, &bg_paint);
+
+        // White fill proportional to progress
+        if value > 0.0 {
+            let fill_w = (w * value).max(h); // keep at least circle-width so it never looks empty
+            let mut fill_paint = layers::skia::Paint::new(
+                layers::skia::Color4f::new(1.0, 1.0, 1.0, 0.92),
+                None,
+            );
+            fill_paint.set_anti_alias(true);
+            let fill_rect = layers::skia::Rect::from_xywh(0.0, 0.0, fill_w.min(w), h);
+            let fill_rrect =
+                layers::skia::RRect::new_rect_xy(fill_rect, corner_radius, corner_radius);
+            canvas.draw_rrect(fill_rrect, &fill_paint);
+        }
+
+        layers::skia::Rect::from_xywh(0.0, 0.0, w, h)
+    };
+    draw_fn.into()
+}
+
+/// Configure a badge overlay layer (initially hidden; caller must call set_opacity to show it).
+/// The layer is positioned to float at the top-right corner of the icon content area.
+pub fn setup_badge_layer(layer: &Layer, icon_width: f32) {
+    let badge_size = icon_width * 0.4;
+    let tree = LayerTreeBuilder::default()
+        .key("badge")
+        .layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        })
+        .size(Size {
+            width: taffy::Dimension::Length(badge_size),
+            height: taffy::Dimension::Length(badge_size),
+        })
+        .anchor_point(Point { x: 0.5, y: 0.5 })
+        .background_color(theme_colors().accents_red.opacity(0.9))
+        .border_corner_radius(BorderRadius::new_single(badge_size/2.0))
+        .opacity((0.0, None))
+        .shadow_color(theme_colors().shadow_color.opacity(0.4))
+        .shadow_offset(((0.0, 0.0).into(), None))
+        .shadow_radius((10.0, None))
+        .shadow_spread((3.0, None))
+        .pointer_events(false)
+        .build()
+        .unwrap();
+    layer.build_layer_tree(&tree);
+    // Hang off the top-right corner of the icon (icon starts at x = icon_width * 0.025)
+    let pos_x = icon_width * 0.90;// - badge_size * 0.55;
+    let pos_y = icon_width * 0.05;
+    layer.set_position(Point { x: pos_x, y: pos_y }, None);
+}
+
+/// Configure a progress-bar overlay layer (initially hidden; caller must set_opacity to show it).
+/// Positioned near the bottom of the square icon_stack (overlays the lower part of the icon).
+pub fn setup_progress_layer(layer: &Layer, icon_width: f32) {
+    let bar_width = icon_width * 0.78;
+    let bar_height = icon_width * 0.062;
+    // 3% margin from the bottom edge of the square icon_stack.
+    let pos_y = icon_width - bar_height + (icon_width * 0.01);
+    let pos_x = (icon_width - bar_width) / 2.0;
+    let tree = LayerTreeBuilder::default()
+        .key("progress")
+        .layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        })
+        .size(Size {
+            width: taffy::Dimension::Length(bar_width),
+            height: taffy::Dimension::Length(bar_height),
+        })
+        .opacity((0.0, None))
+        .pointer_events(false)
+        .build()
+        .unwrap();
+    layer.build_layer_tree(&tree);
+    layer.set_position(Point { x: pos_x, y: pos_y }, None);
+}
 
 pub fn setup_app_icon(
     layer: &Layer,
@@ -23,7 +151,10 @@ pub fn setup_app_icon(
         .clone()
         .unwrap_or(application.identifier.clone());
 
-    let draw_picture = Some(draw_app_icon(&application, running));
+    // `draw_app_icon` no longer draws the running indicator; pass `running` here only
+    // to keep the public signature stable — running indicator is a separate layer.
+    let _ = running;
+    let draw_picture = Some(draw_app_icon(&application));
     let height_padding = icon_width * 0.20;
     let container_tree = LayerTreeBuilder::default()
         .key(app_name)
@@ -39,11 +170,14 @@ pub fn setup_app_icon(
         .size((
             Size {
                 width: taffy::Dimension::Length(icon_width),
+                // Outer container keeps height_padding for the running indicator dot.
                 height: taffy::Dimension::Length(icon_width + height_padding),
             },
-            Some(Transition::ease_in_quad(0.2)), // None
+            Some(Transition::ease_in_quad(0.2)),
         ))
-        .background_color(Color::new_rgba(1.0, 0.0, 0.0, 0.0))
+        .picture_cached(false)
+        .image_cache(false)
+        
         .build()
         .unwrap();
     layer.build_layer_tree(&container_tree);
@@ -63,13 +197,16 @@ pub fn setup_app_icon(
             None, // None
         ))
         .pointer_events(false)
-        .image_cache(true)
+        // .image_cache(true)
+        .picture_cached(false)
+        .image_cache(false)
         .background_color(Color::new_rgba(1.0, 0.0, 0.0, 0.0))
         .content(draw_picture)
         .build()
         .unwrap();
     icon_layer.build_layer_tree(&icon_tree);
 }
+
 
 pub fn setup_miniwindow_icon(layer: &Layer, inner_layer: &Layer, _icon_width: f32) {
     let container_tree = LayerTreeBuilder::default()
@@ -231,14 +368,14 @@ pub fn setup_label(new_layer: &Layer, label_text: String) {
     new_layer.build_layer_tree(&label_tree);
 }
 
-pub fn draw_app_icon(application: &Application, running: bool) -> ContentDrawFunction {
+/// Draw the app icon image only (no running indicator — that is a separate layer).
+pub fn draw_app_icon(application: &Application) -> ContentDrawFunction {
     let application = application.clone();
     let draw_picture = move |canvas: &layers::skia::Canvas, w: f32, h: f32| -> layers::skia::Rect {
-        let icon_size = (w * 0.95).max(0.0);
-        // Scale indicator with icon size (base ratio from 95.0)
-        let circle_radius = icon_size * 0.025;
-        let icon_y = h / 2.0 - icon_size / 2.0 - icon_size * 0.04;
-        let icon_x = (w - icon_size) / 2.0;
+        // Fill the entire layer with the icon.
+        let icon_size = w;
+        let icon_y = (h - icon_size) / 2.0;
+        let icon_x = 0.0;
         if let Some(image) = &application.icon.clone() {
             let mut paint =
                 layers::skia::Paint::new(layers::skia::Color4f::new(1.0, 1.0, 1.0, 1.0), None);
@@ -298,23 +435,10 @@ pub fn draw_app_icon(application: &Application, running: bool) -> ContentDrawFun
                 canvas.draw_picture(picure, None, None);
             }
         }
-        if running {
-            // use primary text color for the running indicator (dark on light theme)
-            let mut color = theme_colors().text_primary.c4f();
-            color.a = 0.9;
-            let mut paint = layers::skia::Paint::new(color, None);
-            paint.set_anti_alias(true);
-            paint.set_style(layers::skia::paint::Style::Fill);
-            let indicator_y_offset = icon_size * 0.04;
-            canvas.draw_circle(
-                (w / 2.0, h - (indicator_y_offset + circle_radius)),
-                circle_radius,
-                &paint,
-            );
-        }
-
         layers::skia::Rect::from_xywh(0.0, 0.0, w, h)
     };
 
     draw_picture.into()
 }
+
+

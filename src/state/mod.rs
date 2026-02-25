@@ -213,6 +213,8 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub seat: Seat<Otto<BackendData>>,
     pub clock: Clock<Monotonic>,
     pub pointer: PointerHandle<Otto<BackendData>>,
+    /// Cached pointer location to avoid deadlock when accessing during button events
+    pub last_pointer_location: (f64, f64),
 
     pub gamma_control_manager: gamma_control::GammaControlManagerState,
     pub audio_manager: Option<crate::audio::AudioManager>,
@@ -268,10 +270,10 @@ pub struct Otto<BackendData: Backend + 'static> {
     // foreign toplevel list - maps surface ObjectId to unified toplevel handles (both protocols)
     pub foreign_toplevels: HashMap<ObjectId, foreign_toplevel_shared::ForeignToplevelHandles>,
 
-    // sc_layer protocol
-    // Map from surface ID to list of sc-layers augmenting that surface
-    pub sc_layers: HashMap<ObjectId, Vec<crate::sc_layer_shell::ScLayer>>,
-    pub sc_transactions: HashMap<ObjectId, crate::sc_layer_shell::ScTransaction>,
+    // surface style protocol
+    // Map from surface ID to list of surface styles augmenting that surface
+    pub surfaces_style: HashMap<ObjectId, Vec<crate::surface_style::SurfaceStyle>>,
+    pub style_transactions: HashMap<ObjectId, crate::surface_style::StyleTransaction>,
     // Map from surface ID to its rendering layer in the scene graph
     pub surface_layers: HashMap<ObjectId, layers::prelude::Layer>,
     // Pre-warmed View caches: surface_id -> (layer_key -> NodeRef)
@@ -280,8 +282,8 @@ pub struct Otto<BackendData: Backend + 'static> {
         HashMap<ObjectId, HashMap<String, std::collections::VecDeque<layers::prelude::NodeRef>>>,
 
     // otto_dock protocol
-    pub otto_dock: crate::otto_dock::OttoDockState,
-
+    pub otto_dock: crate::otto_dock::handlers::OttoDockState,
+    pub dock_item_surfaces: HashMap<ObjectId, crate::otto_dock::DockItem>,
     // Rendering metrics
     #[cfg(feature = "metrics")]
     pub render_metrics: Arc<crate::render_metrics::RenderMetrics>,
@@ -409,16 +411,16 @@ smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 
 
 // otto_dock protocol delegates
 smithay::reexports::wayland_server::delegate_global_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
-    crate::otto_dock::OttoDockManagerV1: ()
-] => crate::otto_dock::OttoDockState);
+    crate::otto_dock::protocol::gen::otto_dock_manager_v1::OttoDockManagerV1: ()
+] => crate::otto_dock::handlers::OttoDockState);
 
 smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
-    crate::otto_dock::OttoDockManagerV1: ()
-] => crate::otto_dock::OttoDockState);
+    crate::otto_dock::protocol::gen::otto_dock_manager_v1::OttoDockManagerV1: ()
+] => crate::otto_dock::handlers::OttoDockState);
 
 smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
-    crate::otto_dock::OttoDockItemV1: crate::otto_dock::DockItem
-] => crate::otto_dock::OttoDockState);
+    crate::otto_dock::protocol::gen::otto_dock_item_v1::OttoDockItemV1: crate::otto_dock::protocol::DockItem
+] => crate::otto_dock::handlers::OttoDockState);
 
 impl<BackendData: Backend + 'static> Otto<BackendData> {
     pub fn init(
@@ -540,10 +542,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         );
 
         // Create minimal sc_layer shell global
-        crate::sc_layer_shell::create_layer_shell_global::<BackendData>(&dh);
+        crate::surface_style::create_style_manager_global::<BackendData>(&dh);
 
         // Create otto_dock protocol global
-        let otto_dock = crate::otto_dock::OttoDockState::new::<Self>(&dh);
+        let otto_dock = crate::otto_dock::handlers::OttoDockState::new::<Self>(&dh);
 
         // init input
         let seat_name = backend_data.seat_name();
@@ -649,6 +651,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             seat_name,
             seat,
             pointer,
+            last_pointer_location: (0.0, 0.0),
             clock,
             gamma_control_manager,
             audio_manager: AudioManager::new().ok(),
@@ -685,15 +688,15 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             // foreign toplevel list
             foreign_toplevels: HashMap::new(),
 
-            // sc_layer minimal protocol
-            sc_layers: HashMap::new(),
-            sc_transactions: HashMap::new(),
+            // Surface style protocol
+            surfaces_style: HashMap::new(),
+            style_transactions: HashMap::new(),
             surface_layers: HashMap::new(),
             view_warm_cache: HashMap::new(),
 
             // otto_dock protocol
             otto_dock,
-
+            dock_item_surfaces: HashMap::new(),
             // render metrics
             #[cfg(feature = "metrics")]
             render_metrics: Arc::new(crate::render_metrics::RenderMetrics::new(backend_name)),
@@ -1242,6 +1245,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                             surface.id(),
                             (surface.clone(), *location, parent_id.clone()),
                         );
+                    } else {
+                        // Surface committed a null buffer (unmapped subsurface) — hide its layer
+                        if let Some(layer) = self.surface_layers.get(&surface.id()) {
+                            layer.set_hidden(true);
+                        }
                     }
                 },
                 |_, _, _| true,
@@ -1253,6 +1261,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
                 // Configure layer with all properties and draw callback
                 if let Some(wvs) = render_elements.iter().find(|e| &e.id == surface_id) {
+                    layer.set_hidden(false);
                     crate::workspaces::utils::configure_surface_layer(&layer, wvs);
 
                     // Set up parent-child relationship using layers_engine
@@ -1459,6 +1468,35 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             }
         }
     }
+    /// Re-run maximize_request on every currently-maximized window so that the
+    /// new usable geometry (e.g. dock just became visible) is applied immediately.
+    pub fn remaximize_maximized_windows(&mut self) {
+        let windows: Vec<_> = self.workspaces.spaces_elements().cloned().collect();
+        for window in windows {
+            match window.underlying_surface() {
+                smithay::desktop::WindowSurface::Wayland(_) => {
+                    if let Some(toplevel) = window.toplevel() {
+                        let is_maximized = toplevel.with_pending_state(|state| {
+                            state.states.contains(xdg_toplevel::State::Maximized)
+                        });
+                        if is_maximized {
+                            let toplevel = toplevel.clone();
+                            <Self as smithay::wayland::shell::xdg::XdgShellHandler>::maximize_request(
+                                self, toplevel,
+                            );
+                        }
+                    }
+                }
+                #[cfg(feature = "xwayland")]
+                smithay::desktop::WindowSurface::X11(surface) => {
+                    if surface.is_maximized() {
+                        self.maximize_request_x11(&surface);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn close_focused_window(&mut self) {
         if let Some(keyboard) = self.seat.get_keyboard() {
             if let Some(KeyboardFocusTarget::Window(window)) = keyboard.current_focus() {
