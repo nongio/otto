@@ -267,11 +267,9 @@ impl WindowElement {
         let credentials = client.get_credentials(display_handle).ok()?;
         let pid = credentials.pid;
 
-
         // Read /proc/PID/exe to get the executable path
         let exe_path = fs::read_link(format!("/proc/{}/exe", pid)).ok()?;
         let exe_name = exe_path.file_name()?.to_str()?.to_string();
-
 
         // Try to find matching desktop entry
         if let Some(desktop_id) = Self::find_desktop_entry_for_exe(&exe_name, &exe_path) {

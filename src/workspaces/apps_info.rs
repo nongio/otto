@@ -185,13 +185,14 @@ impl ApplicationsInfo {
             // If icon loading failed, try to use the fallback icon
             if icon.is_none() {
                 let fallback_path = find_icon_with_theme("application-default-icon", 512, 1)
-                    .or_else(|| {
-                        find_icon_with_theme("application-x-executable", 512, 1)
-                    });
+                    .or_else(|| find_icon_with_theme("application-x-executable", 512, 1));
 
                 icon = fallback_path.as_ref().and_then(|fallback_path| {
                     let result = image_from_path(fallback_path, (512, 512));
-                    tracing::trace!(loaded = result.is_some(), "[load_app_info] fallback icon loaded");
+                    tracing::trace!(
+                        loaded = result.is_some(),
+                        "[load_app_info] fallback icon loaded"
+                    );
                     result
                 });
             }
@@ -243,7 +244,10 @@ impl ApplicationsInfo {
 
         let fallback_icon = fallback_icon_path.as_ref().and_then(|path| {
             let result = image_from_path(path, (512, 512));
-            tracing::trace!(loaded = result.is_some(), "[load_app_info] fallback application icon loaded");
+            tracing::trace!(
+                loaded = result.is_some(),
+                "[load_app_info] fallback application icon loaded"
+            );
             result
         });
 

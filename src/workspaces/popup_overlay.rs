@@ -101,7 +101,7 @@ impl PopupOverlayView {
     ) -> HashMap<ObjectId, Layer> {
         let popup =
             self.get_or_create_popup_layer(popup_id.clone(), root_window_id.clone(), warm_cache);
-        
+
         // Account for the layer's size and anchor point when positioning
         // The position parameter represents where we want the top-left corner to be,
         // but set_position places the layer's anchor point at that position.

@@ -88,7 +88,6 @@ pub fn process_keyboard_shortcut(
         })
         .and_then(|binding| super::actions::resolve_shortcut_action(config, &binding.action));
 
-
     result
 }
 
@@ -149,7 +148,6 @@ impl<BackendData: Backend> Otto<BackendData> {
                 time,
                 |_, modifiers, handle| {
                     let keysym = handle.modified_sym();
-
 
                     let shortcut_action = Config::with(|config| {
                         if matches!(state, KeyState::Pressed) && !inhibited {

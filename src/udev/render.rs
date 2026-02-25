@@ -754,7 +754,9 @@ impl Otto<UdevData> {
                         }
                     }
                 }
-                self.virtual_outputs[i].pipewire_stream.increment_frame_sequence();
+                self.virtual_outputs[i]
+                    .pipewire_stream
+                    .increment_frame_sequence();
             }
             self.virtual_outputs[i].pipewire_stream.trigger_frame();
 
@@ -796,7 +798,9 @@ impl Otto<UdevData> {
                             stream.pipewire_stream.trigger_frame();
                         } else {
                             stream.pipewire_stream.trigger_frame();
-                            trace!("render_virtual_outputs: no screenshare buffer for '{output_name}'");
+                            trace!(
+                                "render_virtual_outputs: no screenshare buffer for '{output_name}'"
+                            );
                         }
                     }
                 }

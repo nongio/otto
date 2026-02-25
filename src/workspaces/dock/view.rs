@@ -152,7 +152,6 @@ impl DockView {
             ..Default::default()
         });
 
-
         let view_layer = layers_engine.new_layer();
 
         wrap_layer.add_sublayer(&view_layer);
@@ -417,10 +416,26 @@ impl DockView {
                 let (lr, lg, lb) = (0.2126_f32, 0.7152_f32, 0.0722_f32);
                 let inv = 1.0 - intensity;
                 let matrix = skia::ColorMatrix::new(
-                    inv + intensity * lr * r, intensity * lg * r, intensity * lb * r, 0.0, 0.0,
-                    intensity * lr * g, inv + intensity * lg * g, intensity * lb * g, 0.0, 0.0,
-                    intensity * lr * b, intensity * lg * b, inv + intensity * lb * b, 0.0, 0.0,
-                    0.0, 0.0, 0.0, 1.0, 0.0,
+                    inv + intensity * lr * r,
+                    intensity * lg * r,
+                    intensity * lb * r,
+                    0.0,
+                    0.0,
+                    intensity * lr * g,
+                    inv + intensity * lg * g,
+                    intensity * lb * g,
+                    0.0,
+                    0.0,
+                    intensity * lr * b,
+                    intensity * lg * b,
+                    inv + intensity * lb * b,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    1.0,
+                    0.0,
                 );
                 Some(skia::color_filters::matrix(&matrix, None))
             } else {
