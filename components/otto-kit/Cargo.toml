@@ -1,0 +1,57 @@
+[package]
+name = "otto-kit"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+wayland-egl = "0.32"
+wayland-cursor = "0.31"
+wayland-scanner = "0.31"
+wayland-backend = "0.3"
+gl = "0.14"
+khronos-egl = { version = "6", features = ["dynamic"] }
+calloop = "0.13"
+tracing = "0.1"
+tokio = { version = "1", features = ["full"] }
+lazy_static = "1.4"
+
+[dependencies.laye-rs]
+# git = "https://github.com/nongio/layers"
+# tag = "v1.3.0"
+path = "../../../layers"
+features = ["export-taffy", "debugger"]
+
+[dependencies.skia-safe]
+version = "=0.88"
+features = ["gl", "textlayout", "svg"]
+
+[[example]]
+name = "simple_app"
+path = "examples/simple_app.rs"
+
+[[example]]
+name = "simple_menu"
+path = "examples/simple_menu.rs"
+
+[[example]]
+name = "titlebar_with_popup"
+path = "examples/titlebar_with_popup.rs"
+[[example]]
+name = "dock_application_simple"
+path = "examples/dock_application_simple.rs"
+
+[[example]]
+name = "dock_application_layer"
+path = "examples/dock_application_layer.rs"
+
+[[example]]
+name = "topbar_layer_shell"
+path = "examples/topbar_layer_shell.rs"
+
+[[example]]
+name = "topbar_app_runner"
+path = "examples/topbar_app_runner.rs"
