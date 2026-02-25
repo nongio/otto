@@ -86,6 +86,17 @@ impl WindowView {
             minimizing_animation: Arc::new(AtomicBool::new(false)),
         }
     }
+
+    /// Update the activation state of the window shadow
+    pub fn set_active(&self, active: bool) {
+        let current_state = self.view_base.get_state();
+        let new_state = WindowViewBaseModel {
+            active,
+            ..current_state.clone()
+        };
+        self.view_base.update_state(&new_state);
+    }
+
     pub fn set_is_minimizing(&self, minimizing: bool) {
         self.minimizing_animation
             .store(minimizing, std::sync::atomic::Ordering::SeqCst);

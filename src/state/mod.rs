@@ -24,6 +24,7 @@ use smithay::{
     delegate_relative_pointer, delegate_shm, delegate_text_input_manager, delegate_viewporter,
     delegate_virtual_keyboard_manager, delegate_xdg_foreign, delegate_xdg_shell,
     desktop::{
+        space::SpaceElement,
         utils::{
             surface_presentation_feedback_flags_from_states, surface_primary_scanout_output,
             update_surface_primary_scanout_output, with_surfaces_surface_tree,
@@ -1465,6 +1466,32 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         if let Some(window) = self.workspaces.get_window_for_surface(wid) {
             let keyboard = self.seat.get_keyboard().unwrap();
             let serial = SERIAL_COUNTER.next_serial();
+            
+            // Deactivate the previously focused window
+            if let Some(old_focus) = keyboard.current_focus() {
+                if let crate::focus::KeyboardFocusTarget::Window(old_window) = old_focus {
+                    if old_window.wl_surface() != window.wl_surface() {
+                        old_window.set_activate(false);
+                        // Update shadow for deactivated window
+                        if let Some(view) = self.workspaces.get_window_view(&old_window.id()) {
+                            view.set_active(false);
+                        }
+                        if let Some(toplevel) = old_window.toplevel() {
+                            toplevel.send_configure();
+                        }
+                    }
+                }
+            }
+            
+            // Activate the new window and send configure
+            window.set_activate(true);
+            // Update shadow for activated window
+            if let Some(view) = self.workspaces.get_window_view(wid) {
+                view.set_active(true);
+            }
+            if let Some(toplevel) = window.toplevel() {
+                toplevel.send_configure();
+            }
             keyboard.set_focus(self, Some(window.clone().into()), serial);
         }
     }
@@ -1472,6 +1499,21 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     pub fn clear_keyboard_focus(&mut self) {
         if let Some(keyboard) = self.seat.get_keyboard() {
             let serial = SERIAL_COUNTER.next_serial();
+            
+            // Deactivate the currently focused window when clearing focus
+            if let Some(old_focus) = keyboard.current_focus() {
+                if let crate::focus::KeyboardFocusTarget::Window(old_window) = old_focus {
+                    old_window.set_activate(false);
+                    // Update shadow for deactivated window
+                    if let Some(view) = self.workspaces.get_window_view(&old_window.id()) {
+                        view.set_active(false);
+                    }
+                    if let Some(toplevel) = old_window.toplevel() {
+                        toplevel.send_configure();
+                    }
+                }
+            }
+            
             keyboard.set_focus(self, None, serial);
         }
     }

@@ -11,10 +11,11 @@ pub fn view_window_shadow(
 ) -> LayerTree {
     let w = state.w;
     let h = state.h;
+    let is_active = state.active;
     const SAFE_AREA: f32 = 100.0;
     let draw_scale = Config::with(|config| config.screen_scale) as f32;
     let draw_shadow = move |canvas: &layers::skia::Canvas, w: f32, h: f32| {
-        // draw shadow
+        // draw shadow with different opacity based on activation state
         let window_corner_radius = 24.0 * draw_scale;
         let rect = layers::skia::Rect::from_xywh(
             SAFE_AREA,
@@ -26,10 +27,13 @@ pub fn view_window_shadow(
         let rrect =
             layers::skia::RRect::new_rect_xy(rect, window_corner_radius, window_corner_radius);
         canvas.clip_rrect(rrect, layers::skia::ClipOp::Difference, false);
-        // let canvas_mat= canvas.local_to_device_as_3x3();
-        // let scale = (canvas_mat.scale_x(), canvas_mat.scale_y());
-        let mut shadow_paint =
-            layers::skia::Paint::new(layers::skia::Color4f::new(0.0, 0.0, 0.0, 0.25), None);
+
+        // Inner shadow - lighter for active, very light for inactive
+        let inner_opacity = if is_active { 0.25 } else { 0.08 };
+        let mut shadow_paint = layers::skia::Paint::new(
+            layers::skia::Color4f::new(0.0, 0.0, 0.0, inner_opacity),
+            None,
+        );
         shadow_paint.set_mask_filter(layers::skia::MaskFilter::blur(
             layers::skia::BlurStyle::Normal,
             3.0,
@@ -37,6 +41,7 @@ pub fn view_window_shadow(
         ));
         canvas.draw_rrect(rrect, &shadow_paint);
 
+        // Outer shadow - stronger for active, very light for inactive
         let rect = layers::skia::Rect::from_xywh(
             SAFE_AREA,
             SAFE_AREA + 20.0 * draw_scale,
@@ -50,7 +55,13 @@ pub fn view_window_shadow(
             30.0,
             false,
         ));
-        shadow_paint.set_color4f(layers::skia::Color4f::new(0.1, 0.1, 0.1, 0.35), None);
+
+        // Active: darker shadow (0.35), Inactive: very light shadow (0.12)
+        let outer_opacity = if is_active { 0.35 } else { 0.12 };
+        shadow_paint.set_color4f(
+            layers::skia::Color4f::new(0.1, 0.1, 0.1, outer_opacity),
+            None,
+        );
 
         canvas.draw_rrect(rrect, &shadow_paint);
         layers::skia::Rect::from_xywh(0.0, 0.0, w, h)
