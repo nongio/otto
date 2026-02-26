@@ -1062,7 +1062,7 @@ impl Workspaces {
         // Calculate overlay opacity:
         // - During gestures (transition.is_none()): keep at 0.0 (hidden)
         // - After gesture ends (transition.is_some()): set to target, animation callback will apply it
-        let overlay_opacity = if delta == 1.0 && transition.is_none() {
+        let overlay_opacity = if delta >= 1.0  { //&& transition.is_none()
             delta
         } else {
             0.0 // Keep hidden during entire gesture
@@ -2584,15 +2584,13 @@ impl Workspaces {
             // overlay contains dnd and osd
             self.overlay_layer.add_sublayer(&self.dnd_view.layer);
             self.overlay_layer.add_sublayer(&self.osd.wrap_layer);
-            output_layer.add_sublayer(&self.overlay_layer);
             output_layer.add_sublayer(&self.dock.wrap_layer.clone());
             output_layer.add_sublayer(&self.layer_shell_top);
             output_layer.add_sublayer(&self.workspace_selector_view.layer.clone());
-            output_layer.add_sublayer(&self.layer_shell_overlay);
             output_layer.add_sublayer(&self.app_switcher.wrap_layer.clone());
             output_layer.add_sublayer(&self.popup_overlay.layer.clone());
-        } else {
-            output_layer.add_sublayer(&self.layer_shell_top);
+            output_layer.add_sublayer(&self.layer_shell_overlay);
+            output_layer.add_sublayer(&self.overlay_layer);
         }
 
         let workspace_counter_start = self.with_model(|m| m.workspace_counter);
