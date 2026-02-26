@@ -114,6 +114,18 @@ Portal backend: `components/xdg-desktop-portal-otto/` — separate binary that b
 
 See [docs/developer/screenshare.md](./docs/developer/screenshare.md) for detailed architecture documentation.
 
+## Coordinate Systems & Naming Conventions
+
+Otto has two coordinate spaces — mixing them causes subtle scale-dependent bugs.
+
+- **Physical pixels** — raw hardware pixels. Used for layer positions (`set_position`, `change_position`) and `output.current_mode().size`.
+- **Logical pixels (points)** — physical ÷ scale. `output_geometry(output).size` returns logical pixels — **do not use this for layer positions**.
+
+Always use the **per-output scale** for geometry: `output.current_scale().fractional_scale() as f32`.  
+`WorkspacesModel.scale` is a global fallback only — avoid it in geometry code.
+
+**Naming convention:** suffix physical-pixel variables with `_px` (e.g. `width_px`, `offset_px`) to make the space explicit.
+
 ## Configuration
 
 TOML-based config at runtime:
