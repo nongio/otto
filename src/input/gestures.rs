@@ -83,8 +83,8 @@ impl crate::Otto<crate::udev::UdevData> {
                         // Initialize expose mode and apply current delta
                         self.dismiss_all_popups();
 
-                        // Reset accumulated gesture value to prevent accumulation across repeated gestures
-                        self.workspaces.reset_expose_gesture();
+                        // Initialize expose mode: reset accumulator and set initial layer visibility
+                        self.workspaces.expose_gesture_start();
 
                         self.swipe_gesture = crate::state::SwipeGestureState::Expose {
                             velocity_samples: vec![-delta.y],

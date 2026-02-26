@@ -183,7 +183,7 @@ impl WorkspaceView {
             let size = window_element.base_layer().render_size_transformed();
             mirror_window.set_size(Size::points(size.x, size.y), None);
             self.window_selector_view
-                .windows_layer
+                .window_selector_windows_container
                 .add_sublayer(mirror_window);
 
             let window_base = window_element.base_layer();
@@ -281,6 +281,6 @@ impl Drop for WorkspaceView {
     fn drop(&mut self) {
         self.windows_layer.remove();
         self.workspace_layer.remove();
-        self.window_selector_view.layer.remove();
+        self.window_selector_view.window_selector_root.remove();
     }
 }

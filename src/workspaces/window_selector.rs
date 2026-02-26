@@ -101,10 +101,10 @@ pub struct DragState {
 
 #[derive(Clone)]
 pub struct WindowSelectorView {
-    pub layer: layers::prelude::Layer,
-    pub background_layer: layers::prelude::Layer,
-    pub windows_layer: layers::prelude::Layer,
-    pub overlay_layer: layers::prelude::Layer,
+    pub window_selector_root: layers::prelude::Layer,
+    pub window_selector_background: layers::prelude::Layer,
+    pub window_selector_windows_container: layers::prelude::Layer,
+    pub window_selector_view: layers::prelude::Layer,
     pub drag_overlay_layer: layers::prelude::Layer,
     pub view: layers::prelude::View<WindowSelectorState>,
     pub windows: std::sync::Arc<RwLock<HashMap<ObjectId, Layer>>>,
@@ -121,17 +121,17 @@ pub struct WindowSelectorView {
 ///
 /// ```diagram
 /// WindowSelectorView
-/// ├── layer
-/// │   ├── background_layer
-/// │   ├── windows_layer
-/// │   ├── overlay_layer (view(view_window_selector))
+/// ├── window_selector_root
+/// │   ├── window_selector_background
+/// │   ├── window_selector_windows_container
+/// │   ├── window_selector_view (view(view_window_selector))
 /// │   │   └── window_selector_label
 /// ```
 ///
-/// - `layer`: The root layer for the window selector view.
-/// - `background_layer`: a replica of the workspace background
-/// - `windows_layer`: windows replica container
-/// - `overlay_layer`: draw the window selection and text
+/// - `window_selector_root`: The root layer for the window selector view.
+/// - `window_selector_background`: a replica of the workspace background
+/// - `window_selector_windows_container`: windows replica container
+/// - `window_selector_view`: draw the window selection and text
 /// - `window_selector_label`: text layer for the window title
 impl WindowSelectorView {
     pub fn new(
@@ -155,19 +155,19 @@ impl WindowSelectorView {
         window_selector_root.set_clip_children(true, None);
         window_selector_root.set_clip_content(true, None);
 
-        let overlay_layer = layers_engine.new_layer();
-        overlay_layer.set_layout_style(taffy::Style {
+        let window_selector_view = layers_engine.new_layer();
+        window_selector_view.set_layout_style(taffy::Style {
             position: taffy::Position::Absolute,
             ..Default::default()
         });
         // let mut overlay_color = theme_colors().accents_green;
         // overlay_color.alpha = 0.5;
-        // overlay_layer.set_background_color(overlay_color, None);
-        overlay_layer.set_size(layers::types::Size::percent(1.0, 1.0), None);
-        overlay_layer.set_pointer_events(false);
-        // overlay_layer.set_picture_cached(false);
-        // overlay_layer.set_image_cached(false);
-        overlay_layer.set_hidden(true);
+        // window_selector_view.set_background_color(overlay_color, None);
+        window_selector_view.set_size(layers::types::Size::percent(1.0, 1.0), None);
+        window_selector_view.set_pointer_events(false);
+        // window_selector_view.set_picture_cached(false);
+        // window_selector_view.set_image_cached(false);
+        window_selector_view.set_hidden(true);
 
         let state = WindowSelectorState {
             rects: vec![],
@@ -178,42 +178,42 @@ impl WindowSelectorView {
             state,
             view_window_selector,
         );
-        view.mount_layer(overlay_layer.clone());
+        view.mount_layer(window_selector_view.clone());
 
-        let clone_background_layer = layers_engine.new_layer();
-        clone_background_layer.set_key(format!("window_selector_background_{}", index));
-        clone_background_layer.set_layout_style(taffy::Style {
+        let window_selector_background = layers_engine.new_layer();
+        window_selector_background.set_key(format!("window_selector_background_{}", index));
+        window_selector_background.set_layout_style(taffy::Style {
             position: taffy::Position::Absolute,
             ..Default::default()
         });
-        clone_background_layer.set_size(layers::types::Size::percent(1.0, 1.0), None);
-        clone_background_layer.set_draw_content(background_layer.as_content());
-        clone_background_layer.set_picture_cached(false);
-        background_layer.add_follower_node(&clone_background_layer);
-        clone_background_layer.set_opacity(1.0, None);
-        let windows_layer = layers_engine.new_layer();
-        windows_layer.set_key(format!("window_selector_windows_container_{}", index));
-        windows_layer.set_layout_style(taffy::Style {
+        window_selector_background.set_size(layers::types::Size::percent(1.0, 1.0), None);
+        window_selector_background.set_draw_content(background_layer.as_content());
+        window_selector_background.set_picture_cached(false);
+        background_layer.add_follower_node(&window_selector_background);
+        window_selector_background.set_opacity(1.0, None);
+        let window_selector_windows_container = layers_engine.new_layer();
+        window_selector_windows_container.set_key(format!("window_selector_windows_container_{}", index));
+        window_selector_windows_container.set_layout_style(taffy::Style {
             position: taffy::Position::Absolute,
             ..Default::default()
         });
-        // windows_layer.set_pointer_events(false);
-        // windows_layer.set_picture_cached(false);
-        // windows_layer.set_image_cached(false);
-        windows_layer.set_size(layers::types::Size::percent(1.0, 1.0), None);
+        window_selector_windows_container.set_pointer_events(false);
+        // window_selector_windows_container.set_picture_cached(false);
+        // window_selector_windows_container.set_image_cached(false);
+        window_selector_windows_container.set_size(layers::types::Size::percent(1.0, 1.0), None);
 
-        window_selector_root.add_sublayer(&clone_background_layer);
+        window_selector_root.add_sublayer(&window_selector_background);
 
-        window_selector_root.add_sublayer(&windows_layer);
+        window_selector_root.add_sublayer(&window_selector_windows_container);
 
-        window_selector_root.add_sublayer(&overlay_layer);
+        window_selector_root.add_sublayer(&window_selector_view);
 
         Self {
             view,
-            layer: window_selector_root,
-            background_layer: clone_background_layer,
-            windows_layer,
-            overlay_layer,
+            window_selector_root,
+            window_selector_background,
+            window_selector_windows_container,
+            window_selector_view,
             drag_overlay_layer,
             windows: std::sync::Arc::new(RwLock::new(HashMap::new())),
             cursor_location: Arc::new(RwLock::new(None)),
@@ -230,9 +230,9 @@ impl WindowSelectorView {
     }
 
     /// add a window layer to windows map
-    /// and append the window to the windows_layer
+    /// and append the window to the window_selector_windows_container
     pub fn map_window(&self, window_id: ObjectId, layer: &Layer) {
-        self.windows_layer.add_sublayer(layer);
+        self.window_selector_windows_container.add_sublayer(layer);
         self.windows
             .write()
             .unwrap()
@@ -248,12 +248,12 @@ impl WindowSelectorView {
             if let Some(layer) = windows.get(window_id) {
                 // Re-append in state order; append detaches first, so this
                 // effectively reorders the siblings without changing parents.
-                self.windows_layer.add_sublayer(layer);
+                self.window_selector_windows_container.add_sublayer(layer);
             }
         }
     }
     /// remove the window from the windows map
-    /// and remove the layer from windows_layer
+    /// and remove the layer from window_selector_windows_container
     pub fn unmap_window(&self, window_id: &ObjectId) -> Option<Layer> {
         self.windows.write().unwrap().remove(window_id)
     }
@@ -276,7 +276,7 @@ impl WindowSelectorView {
     }
 
     fn preview_scale(&self) -> f32 {
-        let workspace_width = self.layer.render_size().x.max(1.0);
+        let workspace_width = self.window_selector_root.render_size().x.max(1.0);
         WORKSPACE_SELECTOR_PREVIEW_WIDTH / workspace_width
     }
 
@@ -463,7 +463,7 @@ impl WindowSelectorView {
             original_position,
             original_scale,
             original_anchor,
-            original_parent: self.windows_layer.clone(),
+            original_parent: self.window_selector_windows_container.clone(),
             current_drop_target: None,
         };
 
