@@ -180,7 +180,7 @@ impl AppSwitcherView {
                 // Keep the mirror at the original icon_stack size and use scale to
                 // match the desired slot_size visually.
                 let original_size =
-                    layers::types::Point::new(BASE_ICON_SIZE, BASE_ICON_SIZE * 1.08);
+                    layers::types::Point::new(BASE_ICON_SIZE, BASE_ICON_SIZE);
                 let scale = if original_size.x > 0.0 {
                     (slot_size * 0.8) / original_size.x
                 } else {

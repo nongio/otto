@@ -53,10 +53,17 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
         }
 
         self.update_magnification_position((event.location.x * scale) as f32);
+
+        // Update label visibility: show tooltip for the hovered dock item only.
+        // Skip while a context menu is open.
+        if !self.has_menu_open() {
+            self.set_active_label(self.hovered_label());
+        }
     }
     fn on_leave(&self, _serial: smithay::utils::Serial, _time: u32) {
         self.demagnify_elements();
-        self.schedule_autohide();
+        self.set_active_label(None);
+        // Autohide is managed exclusively by check_dock_hot_zone via cached_dock_bounds.
     }
     fn on_enter(&self, _event: &smithay::input::pointer::MotionEvent) {
         self.show_autohide();

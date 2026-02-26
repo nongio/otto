@@ -114,7 +114,7 @@ pub fn setup_progress_layer(layer: &Layer, icon_width: f32) {
     let bar_width = icon_width * 0.78;
     let bar_height = icon_width * 0.062;
     // 3% margin from the bottom edge of the square icon_stack.
-    let pos_y = icon_width - bar_height + (icon_width * 0.01);
+    let pos_y = icon_width - bar_height;
     let pos_x = (icon_width - bar_width) / 2.0;
     let tree = LayerTreeBuilder::default()
         .key("progress")
