@@ -82,8 +82,9 @@ impl WorkspaceView {
             position: taffy::Position::Absolute,
             ..Default::default()
         });
+        workspace_layer.set_clip_children(true, None);
+        workspace_layer.set_clip_content(true, None);     
         workspace_layer.set_size(layers::types::Size::auto(), None);
-
         workspace_layer.set_position((0.0, 0.0), None);
         workspace_layer.set_pointer_events(false);
         let background_layer = layers_engine.new_layer();
@@ -107,7 +108,6 @@ impl WorkspaceView {
         windows_layer.set_pointer_events(false);
 
         layers_engine.append_layer(&workspace_layer, parent.id);
-
         layers_engine.append_layer(&background_layer, Some(workspace_layer.id));
         layers_engine.append_layer(&windows_layer, Some(workspace_layer.id));
 

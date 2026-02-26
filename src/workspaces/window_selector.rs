@@ -152,8 +152,9 @@ impl WindowSelectorView {
         // window_selector_root.set_image_cached(false);
         layers_engine.add_layer(&window_selector_root);
         window_selector_root.set_size(layers::types::Size::percent(1.0, 1.0), None);
+        window_selector_root.set_clip_children(true, None);
+        window_selector_root.set_clip_content(true, None);
 
-        // window_selector_root.set_background_color(Color::new_hex("#ff0000ff"), None);
         let overlay_layer = layers_engine.new_layer();
         overlay_layer.set_layout_style(taffy::Style {
             position: taffy::Position::Absolute,
