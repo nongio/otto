@@ -140,7 +140,7 @@ impl DockView {
         let scaled_icon_size = base_icon_size * dock_size_multiplier * draw_scale;
 
         let wrap_layer = layers_engine.new_layer();
-        wrap_layer.set_key("dock");
+        wrap_layer.set_key("dock_view");
         wrap_layer.set_pointer_events(false);
         wrap_layer.set_size(Size::percent(1.0, 1.0), None);
         wrap_layer.set_layout_style(Style {
@@ -158,7 +158,7 @@ impl DockView {
         // FIXME: initial dock position
         view_layer.set_position((0.0, 1000.0), None);
         let view_tree = LayerTreeBuilder::default()
-            .key("dock-view")
+            .key("dock_layout")
             .size(Size::auto())
             .build()
             .unwrap();
@@ -170,7 +170,7 @@ impl DockView {
         let initial_bar_height =
             Self::calculate_bar_height(scaled_icon_size, dock_size_multiplier * draw_scale);
         let bar_tree = LayerTreeBuilder::default()
-            .key("dock-bar")
+            .key("dock_background_bar")
             .pointer_events(false)
             .size(Size {
                 width: taffy::percent(1.0),
@@ -219,6 +219,7 @@ impl DockView {
         view_layer.add_sublayer(&resize_handle);
 
         let handle_tree = LayerTreeBuilder::default()
+            .key("dock_handle")
             .pointer_events(true)
             .size(Size {
                 width: taffy::Dimension::Length(scaled_icon_size * 0.4),
