@@ -406,13 +406,16 @@ impl<BackendData: Backend> Otto<BackendData> {
         if self.workspaces.get_show_all() || self.workspaces.is_expose_transitioning() {
             return;
         }
+        let pos = layers::skia::Point::new(pos.0 as f32, pos.1 as f32);
         let hot_zone = *self.workspaces.dock.cached_hot_zone.read().unwrap();
+        let dock_bounds = *self.workspaces.dock.cached_dock_bounds.read().unwrap();
         if let Some(hot_zone) = hot_zone {
-            let pos = layers::skia::Point::new(pos.0 as f32, pos.1 as f32);
-            let in_hotzone = hot_zone.contains(pos);
-            if in_hotzone && self.workspaces.dock.is_hidden() {
+            if hot_zone.contains(pos) && self.workspaces.dock.is_hidden() {
                 self.workspaces.dock.show_autohide();
-            } else if !in_hotzone && !self.workspaces.dock.is_hidden() {
+            }
+        }
+        if let Some(dock_bounds) = dock_bounds {
+            if !dock_bounds.contains(pos) && !self.workspaces.dock.is_hidden() {
                 self.workspaces.dock.schedule_autohide();
             }
         }

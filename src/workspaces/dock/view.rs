@@ -89,6 +89,8 @@ pub struct DockView {
     /// Pre-computed autohide hot-zone rect, rebuilt by `render_dock` every time the dock
     /// layout changes. `check_dock_hot_zone` reads this without doing any computation.
     pub cached_hot_zone: Arc<RwLock<Option<skia::Rect>>>,
+    /// Full dock bounds (at rest) used to decide when to *hide* the dock.
+    pub cached_dock_bounds: Arc<RwLock<Option<skia::Rect>>>,
 }
 impl PartialEq for DockView {
     fn eq(&self, other: &Self) -> bool {
@@ -301,6 +303,7 @@ impl DockView {
             }))),
             screen_size: Arc::new(RwLock::new((0, 0))),
             cached_hot_zone: Arc::new(RwLock::new(None)),
+            cached_dock_bounds: Arc::new(RwLock::new(None)),
         };
         // Sync AtomicBool from dock_config (single source)
         dock.magnification_enabled.store(
@@ -781,12 +784,15 @@ impl DockView {
         let screen_h = screen_h as f32 / screen_scale;
         let screen_w = screen_w as f32 / screen_scale;
         *self.cached_hot_zone.write().unwrap() = if screen_w > 0.0 && screen_h > 0.0 {
-            // println!("new hot zone: screen x=0, w={}, h={}", screen_w, screen_h);
-            // println!("new hot zone: bar x=0, w={}, h={}", screen_w, bar_h);
-            Some(
-                skia::Rect::from_xywh(0.0, screen_h - bar_h, screen_w, bar_h)
-                    .with_outset((20.0, 40.0)),
-            )
+            // Hot zone is a thin strip at the very bottom: 30% of the dock height.
+            let hot_zone_h = (bar_h * 2.0) * 0.3;
+            Some(skia::Rect::from_xywh(0.0, screen_h - hot_zone_h, screen_w, hot_zone_h))
+        } else {
+            None
+        };
+        *self.cached_dock_bounds.write().unwrap() = if screen_w > 0.0 && screen_h > 0.0 {
+            // Full dock area at rest, used to keep the dock visible while pointer is over it.
+            Some(skia::Rect::from_xywh(0.0, screen_h - bar_h * 2.0, screen_w, bar_h * 2.0))
         } else {
             None
         };
