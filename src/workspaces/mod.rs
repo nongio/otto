@@ -508,8 +508,9 @@ impl Workspaces {
                 workspace.update_layout(logical_index, w, h, scale);
                 let selector_layer = workspace.window_selector_view.layer.clone();
                 selector_layer.set_size(Size::points(w, h), None);
+                let workspace_gap = WORKSPACE_SPACING * scale;
                 selector_layer
-                    .set_position((logical_index as f32 * (w + WORKSPACE_SPACING), 0.0), None);
+                    .set_position((logical_index as f32 * (w + workspace_gap), 0.0), None);
             }
         }
     }
@@ -2889,7 +2890,7 @@ impl Workspaces {
         if !valid {
             return None;
         }
-
+        let scale = output.current_scale().fractional_scale() as f32;
         // Get workspace width for this output — use physical mode size (same as update_layout)
         let workspace_width = self
             .outputs
@@ -2906,7 +2907,8 @@ impl Workspaces {
         self.update_workspace_model();
 
         // Scroll only this output's layer
-        let offset = i as f32 * (workspace_width + WORKSPACE_SPACING);
+        let workspace_gap = WORKSPACE_SPACING * scale;
+        let offset = i as f32 * (workspace_width + workspace_gap);
         let transition = transition.unwrap_or(Transition {
             delay: 0.0,
             timing: TimingFunction::Spring(Spring::with_duration_and_bounce(1.0, 0.1)),
@@ -2991,19 +2993,22 @@ impl Workspaces {
             .add_animation_from_transition(&transition, true);
         let mut changes = Vec::new();
         for (output_name, ows) in self.output_workspaces.iter() {
-            let output_width = self
+            let output = self
                 .outputs
                 .iter()
-                .find(|o| o.name() == *output_name)
+                .find(|o| o.name() == *output_name);
+            let output_width = output
                 .and_then(|o| o.current_mode())
                 .map(|m| m.size.w as f32)
                 .unwrap_or(primary_width);
-            let w = if output_width > 0.0 {
-                output_width
-            } else {
-                primary_width
-            };
-            let offset = i as f32 * (w + WORKSPACE_SPACING);
+            let scale = output
+                .map(|o| o.current_scale().fractional_scale() as f32)
+                .unwrap_or(1.0);
+            let w = output_width;
+
+            
+            let workspace_gap = WORKSPACE_SPACING * scale;
+            let offset = i as f32 * (w + workspace_gap);
             changes.push(ows.workspaces_layer.change_position((-offset, 0.0)));
             changes.push(ows.expose_layer.change_position((-offset, 0.0)));
         }
@@ -3062,8 +3067,8 @@ impl Workspaces {
 
         const SWIPE_DAMPENING: f32 = 0.6;
         let physical_delta = delta_x * scale * SWIPE_DAMPENING;
-
-        let max_offset = (num_workspaces - 1) as f32 * (workspace_width + WORKSPACE_SPACING);
+        let workspace_gap = WORKSPACE_SPACING * scale;
+        let max_offset = (num_workspaces - 1) as f32 * (workspace_width + workspace_gap);
 
         let new_offset = if current_offset < 0.0 {
             let resistance_factor = 1.0 / (1.0 + (-current_offset) / 100.0);
@@ -3127,7 +3132,8 @@ impl Workspaces {
                 (current_index + 1).min(num_workspaces - 1)
             }
         } else {
-            let progress = current_offset / (workspace_width + WORKSPACE_SPACING);
+            let workspace_gap = WORKSPACE_SPACING * scale;
+            let progress = current_offset / (workspace_width + workspace_gap);
             (progress.round() as usize).min(num_workspaces - 1)
         };
 
