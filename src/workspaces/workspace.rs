@@ -248,6 +248,24 @@ impl WorkspaceView {
         }
     }
 
+    pub fn raise_window_to_front(&self, window_id: &ObjectId) {
+        {
+            let mut window_list = self.windows_list.write().unwrap();
+            if let Some(index) = window_list.iter().position(|x| x == window_id) {
+                if index + 1 != window_list.len() {
+                    let wid = window_list.remove(index);
+                    window_list.push(wid);
+                }
+            }
+        }
+
+        if let Some(base_layer) = self.window_base_layers.read().unwrap().get(window_id).cloned() {
+            self.windows_layer.add_sublayer(&base_layer);
+        }
+
+        self.window_selector_view.bring_window_to_front(window_id);
+    }
+
     pub fn set_fullscreen_mode(&self, fullscreen: bool) {
         self.fullscreen_mode
             .store(fullscreen, std::sync::atomic::Ordering::Relaxed);

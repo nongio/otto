@@ -996,7 +996,7 @@ impl Workspaces {
             screen_size_h - offset_y,
         );
         let dragging_window = self.expose_dragged_window.lock().unwrap().clone();
-        let windows = self.with_model(|model| {
+        let mut windows = self.with_model(|model| {
             if let Some(workspace_model) = model.workspaces.get(workspace_index) {
                 let windows_list = workspace_model.windows_list.read().unwrap();
                 let Some(space) = self
@@ -1040,6 +1040,10 @@ impl Workspaces {
                 Vec::new()
             }
         });
+
+        // Keep expose layout stable regardless of runtime z-order changes.
+        // Window stacking may change (hover raise/focus), but tiling positions should not.
+        windows.sort_by_key(|w| w.id.protocol_id());
 
         // Skip relayout if window set and geometry match previous layout
         if workspace
@@ -2337,18 +2341,7 @@ impl Workspaces {
                 }
 
                 let workspace = self.with_model(|m| m.workspaces[index].clone());
-                {
-                    if let Some(view) = self.get_window_view(window_id) {
-                        workspace.windows_layer.add_sublayer(&view.window_layer);
-                    }
-                    if let Some(layer) = workspace.window_selector_view.layer_for_window(window_id)
-                    {
-                        workspace
-                            .window_selector_view
-                            .window_selector_windows_container
-                            .add_sublayer(&layer);
-                    }
-                }
+                workspace.raise_window_to_front(window_id);
                 if update {
                     self.update_workspace_model();
                 }
@@ -2958,6 +2951,30 @@ impl Workspaces {
             }
             Some(id)
         })
+    }
+
+    /// Apply the current expose selector order back to the real workspace stacking.
+    ///
+    /// This is intended to be called when leaving expose mode: while expose is open,
+    /// only mirror previews are reordered; on close, the same order is committed to
+    /// the actual Space/layers/windows_list ordering.
+    pub fn apply_window_selector_order_to_workspace(&mut self, workspace_index: usize) {
+        let Some(workspace) = self.get_workspace_at(workspace_index) else {
+            return;
+        };
+
+        let state = workspace.window_selector_view.view.get_state().clone();
+        let order: Vec<ObjectId> = state
+            .rects
+            .iter()
+            .filter_map(|rect| rect.window_id.clone())
+            .collect();
+
+        for window_id in order {
+            self.raise_element(&window_id, false, false);
+        }
+
+        self.update_workspace_model();
     }
 
     /// Given a workspace view index (WorkspaceView.index), return its current

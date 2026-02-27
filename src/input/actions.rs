@@ -155,14 +155,14 @@ impl<BackendData: Backend> Otto<BackendData> {
 
     pub(crate) fn handle_app_switcher_next(&mut self) {
         if self.workspaces.get_show_all() {
-            self.workspaces.expose_set_visible(false);
+            self.close_expose_show_all_and_focus_top();
         }
         self.workspaces.app_switcher.next();
     }
 
     pub(crate) fn handle_app_switcher_prev(&mut self) {
         if self.workspaces.get_show_all() {
-            self.workspaces.expose_set_visible(false);
+            self.close_expose_show_all_and_focus_top();
         }
         self.workspaces.app_switcher.previous();
     }
@@ -186,6 +186,11 @@ impl<BackendData: Backend> Otto<BackendData> {
     }
 
     pub(crate) fn handle_expose_show_desktop(&mut self) {
+        if self.workspaces.get_show_all() {
+            self.close_expose_show_all_and_focus_top();
+            return;
+        }
+
         if self.workspaces.get_show_desktop() {
             self.workspaces.expose_show_desktop(-1.0, true);
         } else {
@@ -195,7 +200,7 @@ impl<BackendData: Backend> Otto<BackendData> {
 
     pub(crate) fn handle_expose_show_all(&mut self) {
         if self.workspaces.get_show_all() {
-            self.workspaces.expose_set_visible(false);
+            self.close_expose_show_all_and_focus_top();
         } else {
             // Exit show desktop mode if active, don't enter expose yet
             if self.workspaces.get_show_desktop() {

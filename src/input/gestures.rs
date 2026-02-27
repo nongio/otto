@@ -169,7 +169,7 @@ impl crate::Otto<crate::udev::UdevData> {
             velocity_samples.iter().sum::<f64>() / velocity_samples.len() as f64
         };
 
-        self.workspaces.expose_end_with_velocity(velocity as f32);
+        self.expose_end_with_velocity_and_focus_top(velocity as f32);
     }
 
     fn gesture_swipe_end_workspace(

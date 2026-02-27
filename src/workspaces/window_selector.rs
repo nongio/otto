@@ -258,6 +258,34 @@ impl WindowSelectorView {
         self.windows.write().unwrap().remove(window_id)
     }
 
+    pub fn bring_window_to_front(&self, window_id: &ObjectId) {
+        let mut state = self.view.get_state().clone();
+        let Some(position) = state
+            .rects
+            .iter()
+            .position(|rect| rect.window_id.as_ref() == Some(window_id))
+        else {
+            return;
+        };
+
+        let mut rect = state.rects.remove(position);
+        rect.index = state.rects.len();
+        state.rects.push(rect);
+
+        for (idx, rect) in state.rects.iter_mut().enumerate() {
+            rect.index = idx;
+        }
+        state.current_selection = state
+            .rects
+            .iter()
+            .position(|rect| rect.window_id.as_ref() == Some(window_id));
+        self.view.update_state(&state);
+
+        if let Some(layer) = self.layer_for_window(window_id) {
+            self.window_selector_windows_container.add_sublayer(&layer);
+        }
+    }
+
     fn record_cursor_location(&self, location: (f32, f32)) {
         let mut cursor = self.cursor_location.write().unwrap();
         *cursor = Some(location);
@@ -753,7 +781,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
         event: &smithay::input::pointer::MotionEvent,
     ) {
         // println!("on_motion");
-        let mut state = self.view.get_state().clone();
+        let state = self.view.get_state().clone();
         let screen_scale = Config::with(|config| config.screen_scale);
         let location = event.location.to_physical(screen_scale);
         let cursor_point = (location.x as f32, location.y as f32);
@@ -841,30 +869,42 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
                 }
             }
         }
-        let rect = state
+        let previous_selection = state.current_selection;
+        let hovered_selection = state
             .rects
             .iter()
             .find(|rect| {
-                if rect.x < location.x as f32
+                rect.x < location.x as f32
                     && rect.x + rect.w > location.x as f32
                     && rect.y < location.y as f32
                     && rect.y + rect.h > location.y as f32
-                {
-                    state.current_selection = Some(rect.index);
-                    let cursor = CursorImageStatus::Named(CursorIcon::Pointer);
-                    otto.set_cursor(&cursor);
-                    true
-                } else {
-                    let cursor = CursorImageStatus::Named(CursorIcon::default());
-                    otto.set_cursor(&cursor);
-                    false
-                }
             })
             .map(|x| x.index);
 
+        if hovered_selection.is_some() {
+            let cursor = CursorImageStatus::Named(CursorIcon::Pointer);
+            otto.set_cursor(&cursor);
+        } else {
+            let cursor = CursorImageStatus::Named(CursorIcon::default());
+            otto.set_cursor(&cursor);
+        }
+
+        if hovered_selection != previous_selection {
+            if let Some(index) = hovered_selection {
+                if let Some(window_id) = state
+                    .rects
+                    .get(index)
+                    .and_then(|rect| rect.window_id.clone())
+                {
+                    self.bring_window_to_front(&window_id);
+                    return;
+                }
+            }
+        }
+
         self.view.update_state(&WindowSelectorState {
             rects: state.rects,
-            current_selection: rect,
+            current_selection: hovered_selection,
         });
     }
     fn on_button(
@@ -978,13 +1018,14 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
                 if let Some(index) = selector_state.current_selection {
                     if let Some(window_selection) = selector_state.rects.get(index) {
                         if let Some(wid) = window_selection.window_id.clone() {
-                            otto.workspaces.focus_app_with_window(&wid);
-                            otto.set_keyboard_focus_on_surface(&wid);
+                            // Keep clicked selection on top in expose order, then let the
+                            // centralized close path commit ordering and focus top window.
+                            self.bring_window_to_front(&wid);
                         }
                     }
                 }
                 // Exit expose mode after click handling and clear selector highlight.
-                otto.workspaces.expose_set_visible(false);
+                otto.close_expose_show_all_and_focus_top();
                 otto.set_cursor(&CursorImageStatus::default_named());
                 let state = WindowSelectorState {
                     current_selection: None,

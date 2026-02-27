@@ -1550,6 +1550,37 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         }
     }
 
+    fn focus_top_window_of_current_workspace(&mut self) {
+        let workspace_index = self.workspaces.get_current_workspace_index();
+        if let Some(top_wid) = self.workspaces.get_top_window_of_workspace(workspace_index) {
+            self.set_keyboard_focus_on_surface(&top_wid);
+        } else {
+            self.clear_keyboard_focus();
+        }
+    }
+
+    pub fn close_expose_show_all_and_focus_top(&mut self) {
+        let was_open = self.workspaces.get_show_all();
+        self.workspaces.expose_set_visible(false);
+        if was_open {
+            let workspace_index = self.workspaces.get_current_workspace_index();
+            self.workspaces
+                .apply_window_selector_order_to_workspace(workspace_index);
+            self.focus_top_window_of_current_workspace();
+        }
+    }
+
+    pub fn expose_end_with_velocity_and_focus_top(&mut self, raw_velocity: f32) {
+        let was_open = self.workspaces.get_show_all();
+        self.workspaces.expose_end_with_velocity(raw_velocity);
+        if was_open && !self.workspaces.get_show_all() {
+            let workspace_index = self.workspaces.get_current_workspace_index();
+            self.workspaces
+                .apply_window_selector_order_to_workspace(workspace_index);
+            self.focus_top_window_of_current_workspace();
+        }
+    }
+
     pub fn set_keyboard_focus_on_surface(&mut self, wid: &ObjectId) {
         if let Some(window) = self.workspaces.get_window_for_surface(wid) {
             let keyboard = self.seat.get_keyboard().unwrap();
