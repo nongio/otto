@@ -3174,8 +3174,13 @@ impl Workspaces {
             return;
         }
 
-        // Get current scroll position from this output's layer
-        let current_pos = ows.workspaces_layer.render_position();
+        // Get current scroll position from the active layer.
+        // In expose/transition states, expose_layer is authoritative; otherwise workspaces_layer is.
+        let current_pos = if self.get_show_all() || self.is_expose_transitioning() {
+            ows.expose_layer.render_position()
+        } else {
+            ows.workspaces_layer.render_position()
+        };
         let current_offset = -current_pos.x;
 
         const SWIPE_DAMPENING: f32 = 0.6;
@@ -3202,7 +3207,15 @@ impl Workspaces {
     /// Uses velocity to determine target workspace for natural momentum-based snapping.
     /// Returns the target workspace index.
     pub fn workspace_swipe_end(&mut self, output_name: &str, velocity: f32) -> usize {
-        let scale = self.with_model(|m| m.scale as f32);
+        let output = self
+            .outputs
+            .iter()
+            .find(|o| o.name() == output_name)
+            .cloned();
+        let scale = output
+            .as_ref()
+            .map(|o| o.current_scale().fractional_scale() as f32)
+            .unwrap_or_else(|| self.with_model(|m| m.scale as f32));
 
         let (num_workspaces, workspace_width, current_index) = {
             let ows = match self.output_workspaces.get(output_name) {
@@ -3231,12 +3244,21 @@ impl Workspaces {
         let current_pos = self
             .output_workspaces
             .get(output_name)
-            .map(|ows| ows.workspaces_layer.render_position())
+            .map(|ows| {
+                if self.get_show_all() || self.is_expose_transitioning() {
+                    ows.expose_layer.render_position()
+                } else {
+                    ows.workspaces_layer.render_position()
+                }
+            })
             .unwrap_or_default();
         let current_offset = -current_pos.x;
 
         let physical_velocity = velocity * scale;
         const VELOCITY_THRESHOLD: f32 = 15.0;
+
+        let workspace_gap = WORKSPACE_SPACING * scale;
+        let progress = current_offset / (workspace_width + workspace_gap);
 
         let target_index = if physical_velocity.abs() > VELOCITY_THRESHOLD {
             if physical_velocity > 0.0 {
@@ -3245,8 +3267,6 @@ impl Workspaces {
                 (current_index + 1).min(num_workspaces - 1)
             }
         } else {
-            let workspace_gap = WORKSPACE_SPACING * scale;
-            let progress = current_offset / (workspace_width + workspace_gap);
             (progress.round() as usize).min(num_workspaces - 1)
         };
 
@@ -3255,11 +3275,6 @@ impl Workspaces {
             timing: TimingFunction::Spring(Spring::with_duration_and_bounce(0.5, 0.05)),
         };
 
-        let output = self
-            .outputs
-            .iter()
-            .find(|o| o.name() == output_name)
-            .cloned();
         if let Some(output) = output {
             let _ = self.set_workspace_for_output(&output, target_index, Some(transition));
         } else {
