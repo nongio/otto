@@ -254,8 +254,9 @@ impl<BackendData: Backend> Otto<BackendData> {
             return Some((focus, (0.0, 0.0).into()));
         }
 
-        // Workspace selector
-        if self.workspaces.get_show_all() {
+        // Workspace selector — skip when a window drag is active so the window selector
+        // keeps receiving motion events and the dragged window keeps following the pointer.
+        if self.workspaces.get_show_all() && !self.workspaces.is_window_selector_dragging() {
             let focus = self
                 .workspaces
                 .workspace_selector_view

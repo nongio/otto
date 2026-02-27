@@ -302,16 +302,13 @@ impl WindowSelectorView {
         let mut drag_state = self.drag_state.write().unwrap();
         let state = drag_state.take()?;
 
-        state.window_layer.set_position(
-            state.original_position,
-            Some(Transition::ease_out_quad(0.12)),
-        );
-        state
+        // Reattach the dragged preview to the window selector container immediately.
+        // The expose re-layout animation will then move/scale all windows (including this one)
+        // in a single synchronized transition.
+        let restored_position = state
             .window_layer
-            .set_scale(state.original_scale, Some(Transition::ease_out_quad(0.12)));
-        state
-            .window_layer
-            .set_anchor_point(state.original_anchor, Some(Transition::ease_out_quad(0.12)));
+            .set_anchor_point_preserving_position(state.original_anchor);
+        state.window_layer.set_position(restored_position, None);
         state.original_parent.add_sublayer(&state.window_layer);
 
         Some(state)
@@ -878,6 +875,8 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
     ) {
         match event.state {
             ButtonState::Pressed => {
+                // Start a potential click/drag gesture: remember current pointer position
+                // and the item that was selected at press time.
                 self.pointer_down.store(true, Ordering::SeqCst);
                 let pointer_location = self.current_pointer_or_default(otto);
                 *self.press_location.write().unwrap() = Some(pointer_location);
@@ -890,10 +889,13 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
                 if let Some(selection) = selection {
                     *self.pressed_selection.write().unwrap() = Some(selection);
                 } else {
+                    // Pressed outside any selection: clear press context so motion/release
+                    // cannot accidentally act on stale state.
                     self.clear_press_context();
                 }
             }
             ButtonState::Released => {
+                // End of gesture. If a drag is active, resolve drop/restore first.
                 self.pointer_down.store(false, Ordering::SeqCst);
                 let was_dragging = self.drag_state.read().unwrap().is_some();
 
@@ -905,6 +907,8 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
                         otto.workspaces.workspace_selector_view.set_drop_hover(None);
 
                         if let Some(target_workspace) = drop_target {
+                            // Valid drop target: move the real window to the target workspace,
+                            // then refresh expose previews.
                             let target_pos = otto
                                 .workspaces
                                 .workspace_position_by_view_index(target_workspace);
@@ -955,11 +959,11 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
                                 "Expose drop: no target workspace, restoring window {:?} to original position",
                                 drag_state.window_id
                             );
-                            // No drop target - restore to original position
+                            // No drop target: restore the dragged item in state and trigger
+                            // a single expose re-layout animation for all previews in sync.
                             self.restore_rect_to_state(drag_state.selection.clone());
                             self.restore_layer_order_from_state();
-                            otto.workspaces
-                                .end_window_selector_drag(&drag_state.window_id);
+                            *otto.workspaces.expose_dragged_window.lock().unwrap() = None;
                             otto.workspaces.expose_update_if_needed();
                         }
                     }
@@ -967,6 +971,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
                     otto.set_cursor(&CursorImageStatus::default_named());
                     return;
                 }
+                // Not dragging: treat release as click-to-focus on the currently hovered preview.
                 self.clear_press_context();
 
                 let selector_state = self.view.get_state();
@@ -978,6 +983,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
                         }
                     }
                 }
+                // Exit expose mode after click handling and clear selector highlight.
                 otto.workspaces.expose_set_visible(false);
                 otto.set_cursor(&CursorImageStatus::default_named());
                 let state = WindowSelectorState {

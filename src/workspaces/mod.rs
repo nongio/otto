@@ -203,6 +203,9 @@ impl Workspaces {
         self.expose_update_if_needed();
     }
 
+    pub fn is_window_selector_dragging(&self) -> bool {
+        self.expose_dragged_window.lock().unwrap().is_some()
+    }
     pub fn end_window_selector_drag(&self, window_id: &ObjectId) {
         let mut dragging = self.expose_dragged_window.lock().unwrap();
         if dragging.as_ref() == Some(window_id) {
@@ -210,6 +213,12 @@ impl Workspaces {
         }
         drop(dragging);
         self.expose_set_visible(true);
+    }
+    /// Returns a clone of the expose_dragged_window Arc for use in animation callbacks.
+    pub fn expose_dragged_window_handle(
+        &self,
+    ) -> Arc<std::sync::Mutex<Option<ObjectId>>> {
+        self.expose_dragged_window.clone()
     }
     pub fn new(layers_engine: Arc<Engine>, display_handle: DisplayHandle) -> Self {
         let model = WorkspacesModel::default();
@@ -731,6 +740,11 @@ impl Workspaces {
                 workspace_view.window_selector_view.window_selector_root.set_hidden(false);
                 workspace_view.window_selector_view.window_selector_view.set_hidden(true);
             }
+            // Pre-compute layout and trigger a view render (via update_state) so the
+            // selection overlay is ready to show the moment the open animation completes.
+            // expose_show_all_layout only updates the bin + calls view.update_state — no
+            // layer visibility side-effects.
+            self.expose_show_all_layout(i);
         }
 
         // Hide the workspace content layers: during expose the windows are shown via mirror
