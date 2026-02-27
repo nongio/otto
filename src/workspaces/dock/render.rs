@@ -166,9 +166,9 @@ pub fn setup_app_icon(
             Size {
                 width: taffy::Dimension::Length(icon_width),
                 // Outer container keeps height_padding for the running indicator dot.
-                height: taffy::Dimension::Length(icon_width + height_padding),
+                height: taffy::Dimension::Percent(1.0),
             },
-            Some(Transition::ease_in_quad(0.2)),
+            None,
         ))
         .picture_cached(false)
         .image_cache(false)

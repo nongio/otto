@@ -35,6 +35,7 @@ use super::{
 };
 
 pub const BASE_ICON_SIZE: f32 = 300.0;
+const ICON_SCALER_FILL: f32 = 0.9; // The percentage of the icon_scaler that the icon should fill at scale=1.0. Leaves some padding for magnification.
 
 #[derive(Debug, Clone)]
 pub(super) struct AppLayerEntry {
@@ -132,8 +133,8 @@ impl DockView {
     /// Calculate dock bar height based on icon size
     /// Bar height = app container height + top padding + bottom padding
     fn calculate_bar_height(icon_size: f32, scale: f32) -> f32 {
-        let padding_top = 4.0 * scale;
-        let padding_bottom = 4.0 * scale;
+        let padding_top = 0.0 * scale;
+        let padding_bottom = 0.0 * scale;
         icon_size + padding_top + padding_bottom
     }
 
@@ -460,8 +461,8 @@ impl DockView {
         // Calculate bar height using helper function
         let bar_height =
             Self::calculate_bar_height(icon_size, draw_scale * dock_size_multiplier);
-        let padding_top = bar_height * 0.05;
-        let padding_bottom = bar_height * 0.1;
+        let padding_top = 4.0 * draw_scale;
+        let padding_bottom = 4.0 * draw_scale;
 
         // Update view layer padding to match current icon size
         self.view_layer.set_layout_style(taffy::Style {
@@ -593,9 +594,12 @@ impl DockView {
                         Point::new(
                             available_icon_width / 2.0,
                             available_icon_width / 2.0,
+                            // available_icon_width
                         ),
                         None,
                     );
+                    let initial_scaler = (available_icon_width * ICON_SCALER_FILL) / BASE_ICON_SIZE;
+                    icon_scaler.set_scale(Point::new(initial_scaler, initial_scaler), None);
 
                     // Set up icon_stack as a fixed-size square inside icon_scaler.
                     // icon_stack stays at its original size; visual scaling is handled by icon_scaler.
@@ -688,18 +692,28 @@ impl DockView {
 
         // App layers
         for layer in previous_app_layers {
-            layer.set_opacity(0.0, Transition::ease_out_quad(0.2));
-            layer
-                .set_size(
-                    layers::types::Size::points(0.0, app_height),
-                    Transition::ease_out_quad(0.3),
-                )
-                .on_finish(
+            let animation = self
+                .layers_engine
+                .add_animation_from_transition(&Transition::ease_out_quad(0.3), false);
+            let mut changes = vec![
+                layer.change_opacity(0.0),
+                layer.change_size(layers::types::Size::points(0.0, app_height)),
+            ];
+            if let Some(entry) = apps_layers_map.values().find(|entry| entry.layer.id() == layer.id()) {
+                entry.icon_scaler.set_anchor_point_preserving_position(Point::new(0.0, 1.0));
+                changes.push(entry.icon_scaler.change_scale(Point::new(0.1, 0.1)));
+            }
+
+            let transactions = self.layers_engine.schedule_changes(&changes, animation);
+            if let Some(tr) = transactions.into_iter().next() {
+                tr.on_finish(
                     |l: &Layer, _| {
                         l.remove();
                     },
                     true,
                 );
+            }
+            self.layers_engine.start_animation(animation, 0.0);
             apps_layers_map.retain(|_, entry| entry.layer.id() != layer.id());
         }
 
@@ -760,7 +774,7 @@ impl DockView {
         } else {
             Some(0.0_f64)
         };
-        self.magnify_elements_with_scale(scale_override);
+        self.magnify_elements_with_scale(scale_override, Some(Transition::spring(0.5, 0.1)));
 
         // Recompute and cache the autohide hot zone from the new dock dimensions.
         let screen_scale = Config::with(|c| c.screen_scale) as f32;
@@ -782,7 +796,7 @@ impl DockView {
             // Span from dock top (screen_h - bar height) to screen bottom,
             // outset 40 pts horizontally.
             let dock_h = bar_h * 2.0;
-            Some(skia::Rect::from_xywh(-40.0, screen_h - dock_h, screen_w + 80.0, dock_h+0.0))
+            Some(skia::Rect::from_xywh(-40.0, screen_h - dock_h, screen_w + 80.0, dock_h+80.0))
         } else {
             None
         };
@@ -903,18 +917,17 @@ impl DockView {
     /// Show `label` and hide the previously active label if different.
     pub(super) fn set_active_label(&self, label: Option<Layer>) {
         let mut active = self.active_label.write().unwrap();
-        let transition = Some(Transition::ease_in_quad(0.1));
         if let Some(prev) = active.as_ref() {
             if label
                 .as_ref()
                 .map(|l| l.id() != prev.id())
                 .unwrap_or(true)
             {
-                prev.set_opacity(0.0, transition.clone());
+                prev.set_opacity(0.0, None);
             }
         }
         if let Some(l) = label.as_ref() {
-            l.set_opacity(1.0, transition);
+            l.set_opacity(1.0, None);
         }
         *active = label;
     }
@@ -945,10 +958,10 @@ impl DockView {
     }
     // Magnify elements
     fn magnify_elements(&self) {
-        self.magnify_elements_with_scale(None);
+        self.magnify_elements_with_scale(None, None);
     }
 
-    fn magnify_elements_with_scale(&self, scale_override: Option<f64>) {
+    fn magnify_elements_with_scale(&self, scale_override: Option<f64>, transtion: Option<Transition>) {
         let magnification_enabled = self
             .magnification_enabled
             .load(std::sync::atomic::Ordering::SeqCst);
@@ -972,9 +985,10 @@ impl DockView {
         let windows_len = state.minimized_windows.len() as f32;
 
         let tot_elements = apps_len + windows_len;
-        let animation = self
+        
+        let animation = transtion.map(|t| {self
             .layers_engine
-            .add_animation_from_transition(&Transition::ease_out_quad(0.08), false);
+            .add_animation_from_transition(&t, false)});
         let mut changes = Vec::new();
         let genie_scale =
             scale_override.unwrap_or_else(|| self.dock_config.read().unwrap().genie_scale);
@@ -1012,11 +1026,12 @@ impl DockView {
                     changes.push(change);
                     // icon_scaler has a fixed size of 100.0; animate its scale to stretch it
                     // to focused_icon_size. badge and progress scale with it as children.
-                    let scaler = (focused_icon_size * 0.9) / BASE_ICON_SIZE;
+                    let scaler = (focused_icon_size * ICON_SCALER_FILL) / BASE_ICON_SIZE;
 
                     let scaler_change_position = entry.icon_scaler.change_position(Point {
                         x: focused_icon_size / 2.0,
                         y: focused_icon_size / 2.0,
+                        // y: focused_icon_size,
                     });
                     changes.push(scaler_change_position);
                     let scaler_change = entry.icon_scaler.change_scale(Point {
@@ -1050,8 +1065,11 @@ impl DockView {
         // Update bar height to accommodate magnified icons using helper function
 
         self.layers_engine.schedule_changes(&changes, animation);
-
-        self.layers_engine.start_animation(animation, 0.0);
+        // self.layers_engine.schedule_changes(&changes, None);
+        if animation.is_some() {
+            let animation = animation.unwrap();
+            self.layers_engine.start_animation(animation, 0.0);
+        }
     }
     /// Update the physical screen dimensions so `render_dock` can compute a correct hot zone.
     pub fn set_screen_size(&self, w: i32, h: i32) {
@@ -1060,7 +1078,7 @@ impl DockView {
 
     pub(super) fn demagnify_elements(&self) {
         *self.magnification_position.write().unwrap() = -500.0;
-        self.magnify_elements_with_scale(Some(0.0));
+        self.magnify_elements_with_scale(Some(0.0), Some(Transition::spring(0.2, 0.1)));
     }
 
     pub fn update_magnification_position(&self, pos: f32) {
