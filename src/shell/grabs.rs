@@ -460,7 +460,7 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11) => {
-                let mut location = data.space.element_location(&self.window).unwrap();
+                let mut location = data.workspaces.element_location(&self.window).unwrap();
 
                 // Reposition window during resize if resizing from top or left edges
                 if self.edges.intersects(ResizeEdge::TOP_LEFT) {
@@ -475,7 +475,9 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
                             + (self.initial_window_size.h - geometry.size.h);
                     }
 
-                    data.space.map_element(self.window.clone(), location, true);
+                    if let Some(space) = data.workspaces.space_mut() {
+                        space.map_element(self.window.clone(), location, true);
+                    }
                 }
 
                 x11.configure(Rectangle::new(location.into(), self.last_window_size))
@@ -535,7 +537,7 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
                 }
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(x11) => {
-                    let location = state.space.element_location(&self.window).unwrap();
+                    let location = state.workspaces.element_location(&self.window).unwrap();
                     x11.configure(Rectangle::new(location.into(), self.last_window_size))
                         .unwrap();
 
@@ -549,10 +551,10 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
                             .get::<RefCell<SurfaceData>>()
                             .unwrap()
                             .borrow_mut();
-                        if let ResizeState::Resizing(resize_data) = state.resize_state {
-                            state.resize_state = ResizeState::WaitingForCommit(resize_data);
+                        if let ResizeState::Resizing(resize_data) = data.resize_state {
+                            data.resize_state = ResizeState::WaitingForCommit(resize_data);
                         } else {
-                            panic!("invalid resize state: {:?}", state.resize_state);
+                            // panic!("invalid resize state: {:?}", data.resize_state);
                         }
                     });
                 }
@@ -716,7 +718,7 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11) => {
-                let location = state.space.element_location(&self.window).unwrap();
+                let location = state.workspaces.element_location(&self.window).unwrap();
                 x11.configure(Rectangle::new(location.into(), self.last_window_size))
                     .unwrap();
 
@@ -730,10 +732,10 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
                         .get::<RefCell<SurfaceData>>()
                         .unwrap()
                         .borrow_mut();
-                    if let ResizeState::Resizing(resize_data) = state.resize_state {
-                        state.resize_state = ResizeState::WaitingForCommit(resize_data);
+                    if let ResizeState::Resizing(resize_data) = data.resize_state {
+                        data.resize_state = ResizeState::WaitingForCommit(resize_data);
                     } else {
-                        panic!("invalid resize state: {:?}", state.resize_state);
+                        // panic!("invalid resize state: {:?}", data.resize_state);
                     }
                 });
             }
@@ -841,7 +843,7 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11) => {
-                let mut location = data.space.element_location(&self.window).unwrap();
+                let mut location = data.workspaces.element_location(&self.window).unwrap();
 
                 // Reposition window during resize if resizing from top or left edges
                 if self.edges.intersects(ResizeEdge::TOP_LEFT) {
@@ -856,7 +858,9 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
                             + (self.initial_window_size.h - geometry.size.h);
                     }
 
-                    data.space.map_element(self.window.clone(), location, true);
+                    if let Some(space) = data.workspaces.space_mut() {
+                        space.map_element(self.window.clone(), location, true);
+                    }
                 }
 
                 x11.configure(Rectangle::new(location.into(), self.last_window_size))

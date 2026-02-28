@@ -99,7 +99,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                         WindowSurfaceType::ALL,
                     ) {
                         #[cfg(feature = "xwayland")]
-                        if let crate::shell::window::WindowSurface::X11(surf) =
+                        if let smithay::desktop::WindowSurface::X11(surf) =
                             window.underlying_surface()
                         {
                             self.xwm.as_mut().unwrap().raise_window(surf).unwrap();
@@ -195,13 +195,13 @@ impl<BackendData: Backend> Otto<BackendData> {
                             if let Some(toplevel) = window.toplevel() {
                                 toplevel.send_configure();
                             }
-                            keyboard.set_focus(self, Some(window.into()), serial);
+                            keyboard.set_focus(self, Some(window.clone().into()), serial);
                             self.workspaces.update_workspace_model();
                         }
                     }
 
                     #[cfg(feature = "xwayland")]
-                    if let crate::shell::window::WindowSurface::X11(surf) =
+                    if let smithay::desktop::WindowSurface::X11(surf) =
                         &window.underlying_surface()
                     {
                         self.xwm.as_mut().unwrap().raise_window(surf).unwrap();

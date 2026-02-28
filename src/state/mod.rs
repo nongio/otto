@@ -107,8 +107,11 @@ use smithay::{
     utils::{Point, Size},
     wayland::selection::{SelectionSource, SelectionTarget},
     wayland::xwayland_keyboard_grab::{XWaylandKeyboardGrabHandler, XWaylandKeyboardGrabState},
+    wayland::xwayland_shell,
     xwayland::{X11Wm, XWayland, XWaylandEvent},
 };
+#[cfg(feature = "xwayland")]
+use crate::cursor::Cursor;
 
 pub struct CalloopData<BackendData: Backend + 'static> {
     pub state: Otto<BackendData>,
@@ -821,7 +824,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     x11_socket,
                     display_number,
                 } => {
-                    let mut wm = X11Wm::start_wm(data.handle.clone(), x11_socket, client.clone())
+                    let mut wm = X11Wm::start_wm(data.handle.clone(), &data.display_handle, x11_socket, client.clone())
                         .expect("Failed to attach X11 Window Manager");
 
                     let cursor = Cursor::load();
@@ -1118,6 +1121,16 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     commit: render_surface.current_commit(),
                     transform: surface_attributes.buffer_transform.into(),
                 };
+                // tracing::trace!(
+                //     "window_view_for_surface: id={:?} texture_id={:?} \
+                //      src=({},{} {}x{}) dst=({},{} {}x{}) log_offset=({},{}) scale={}",
+                //     id,
+                //     wvs.texture_id,
+                //     wvs.phy_src_x, wvs.phy_src_y, wvs.phy_src_w, wvs.phy_src_h,
+                //     wvs.phy_dst_x, wvs.phy_dst_y, wvs.phy_dst_w, wvs.phy_dst_h,
+                //     wvs.log_offset_x, wvs.log_offset_y,
+                //     scale
+                // );
                 return Some(wvs);
             }
         };
@@ -1147,6 +1160,18 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 .to_physical(scale_factor);
             let title = window.xdg_title();
             let fullscreen = window.xdg_is_fullscreen();
+
+            let is_x11 = matches!(window.underlying_surface(), smithay::desktop::WindowSurface::X11(_));
+            if is_x11 {
+                // tracing::debug!(
+                //     "update_window_view x11: title={:?} fullscreen={} location={:?} geometry={:?} surface_id={:?}",
+                //     title,
+                //     window.is_fullscreen(),
+                //     location,
+                //     window_geometry,
+                //     id
+                // );
+            }
 
             let mut render_elements = VecDeque::new();
 
@@ -1577,7 +1602,18 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             let workspace_index = self.workspaces.get_current_workspace_index();
             self.workspaces
                 .apply_window_selector_order_to_workspace(workspace_index);
-            self.focus_top_window_of_current_workspace();
+            // If a window was hovered when the closing gesture completed, focus it directly.
+            let hovered = self
+                .workspaces
+                .get_workspace_at(workspace_index)
+                .and_then(|wv| wv.window_selector_view.get_selected_window_id());
+            if let Some(wid) = hovered {
+                if let Some(focused) = self.workspaces.focus_app_with_window(&wid) {
+                    self.set_keyboard_focus_on_surface(&focused);
+                }
+            } else {
+                self.focus_top_window_of_current_workspace();
+            }
         }
     }
 

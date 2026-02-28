@@ -28,6 +28,8 @@ use smithay::{
     utils::Point,
     wayland::selection::data_device::DataDeviceHandler,
 };
+#[cfg(feature = "xwayland")]
+use smithay::xwayland::X11Surface;
 
 use crate::{
     interactive_view::InteractiveView,
@@ -740,9 +742,7 @@ where
                 DndFocus::enter(w, data, dh, source, seat, location, serial)
             }
             #[cfg(feature = "xwayland")]
-            PointerFocusTarget::X11Surface(w) => {
-                DndFocus::enter(w, data, dh, source, seat, location, serial)
-            }
+            PointerFocusTarget::X11Surface(_) => None,
             PointerFocusTarget::View(_) => None,
         }
     }
@@ -760,9 +760,7 @@ where
                 DndFocus::motion(w, data, offer, seat, location, time)
             }
             #[cfg(feature = "xwayland")]
-            PointerFocusTarget::X11Surface(w) => {
-                DndFocus::motion(w, data, offer, seat, location, time)
-            }
+            PointerFocusTarget::X11Surface(_) => {}
             PointerFocusTarget::View(_) => {}
         }
     }
@@ -776,7 +774,7 @@ where
         match self {
             PointerFocusTarget::WlSurface(w) => DndFocus::leave(w, data, offer, seat),
             #[cfg(feature = "xwayland")]
-            PointerFocusTarget::X11Surface(w) => DndFocus::leave(w, data, offer, seat),
+            PointerFocusTarget::X11Surface(_) => {}
             PointerFocusTarget::View(_) => {}
         }
     }
@@ -790,7 +788,7 @@ where
         match self {
             PointerFocusTarget::WlSurface(w) => DndFocus::drop(w, data, offer, seat),
             #[cfg(feature = "xwayland")]
-            PointerFocusTarget::X11Surface(w) => DndFocus::drop(w, data, offer, seat),
+            PointerFocusTarget::X11Surface(_) => {}
             PointerFocusTarget::View(_) => {}
         }
     }

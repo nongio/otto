@@ -18,6 +18,69 @@ use xcursor::CursorTheme;
 
 static FALLBACK_CURSOR_DATA: &[u8] = include_bytes!("../resources/cursor.rgba");
 
+/// Simple xcursor loader for XWayland default cursor.
+#[cfg(feature = "xwayland")]
+pub struct Cursor {
+    icons: Vec<Image>,
+    size: u32,
+}
+
+#[cfg(feature = "xwayland")]
+impl Cursor {
+    pub fn load() -> Cursor {
+        let name = std::env::var("XCURSOR_THEME")
+            .ok()
+            .unwrap_or_else(|| "default".into());
+        let size = std::env::var("XCURSOR_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(24);
+        let theme = CursorTheme::load(&name);
+        let icons = theme
+            .load_icon("default")
+            .and_then(|path| std::fs::File::open(path).ok())
+            .and_then(|mut f| {
+                let mut data = Vec::new();
+                f.read_to_end(&mut data).ok()?;
+                parse_xcursor(&data)
+            })
+            .unwrap_or_else(|| {
+                vec![Image {
+                    size: 32,
+                    width: 64,
+                    height: 64,
+                    xhot: 1,
+                    yhot: 1,
+                    delay: 1,
+                    pixels_rgba: Vec::from(FALLBACK_CURSOR_DATA),
+                    pixels_argb: vec![],
+                }]
+            });
+        Cursor { icons, size }
+    }
+
+    pub fn get_image(&self, scale: u32, time: std::time::Duration) -> Image {
+        let target_size = self.size * scale;
+        let nearest = self
+            .icons
+            .iter()
+            .min_by_key(|i| (target_size as i32 - i.size as i32).abs())
+            .unwrap();
+        let total: u32 = self.icons.iter().filter(|i| i.width == nearest.width).map(|i| i.delay).sum();
+        if total == 0 {
+            return nearest.clone();
+        }
+        let mut millis = time.as_millis() as u32 % total;
+        for img in self.icons.iter().filter(|i| i.width == nearest.width) {
+            if millis < img.delay {
+                return img.clone();
+            }
+            millis -= img.delay;
+        }
+        nearest.clone()
+    }
+}
+
 type XCursorCache = HashMap<(CursorIcon, i32), Option<Rc<XCursor>>>;
 
 pub struct CursorManager {

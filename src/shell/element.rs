@@ -3,7 +3,7 @@ use std::{
     fs,
     sync::{
         atomic::{AtomicBool, AtomicUsize},
-        Arc,
+        Arc, OnceLock,
     },
     time::Duration,
 };
@@ -55,11 +55,14 @@ pub struct WindowElementInner {
     pub mirror_layer: Layer,
     pub workspace_index: AtomicUsize,
     pub fullscreen_workspace_index: AtomicUsize,
+    /// Cached stable ID derived from the wl_surface on first call.
+    /// Survives after the wl_surface is destroyed (e.g. on window close).
+    cached_id: OnceLock<ObjectId>,
 }
 
 impl PartialEq for WindowElement {
     fn eq(&self, other: &Self) -> bool {
-        self.id() == other.id()
+        Arc::ptr_eq(&self.0, &other.0)
     }
 }
 
@@ -75,10 +78,21 @@ impl WindowElement {
             app_id: "".to_string(),
             base_layer,
             mirror_layer,
+            cached_id: OnceLock::new(),
         }))
     }
     pub fn id(&self) -> ObjectId {
-        self.0.window.wl_surface().unwrap().as_ref().id()
+        self.0
+            .cached_id
+            .get_or_init(|| {
+                self.0
+                    .window
+                    .wl_surface()
+                    .expect("id() called before wl_surface is available")
+                    .as_ref()
+                    .id()
+            })
+            .clone()
     }
     pub fn surface_under<B: Backend>(
         &self,
@@ -165,7 +179,7 @@ impl WindowElement {
     #[cfg(feature = "xwayland")]
     #[inline]
     pub fn is_x11(&self) -> bool {
-        self.window.is_x11()
+        self.0.window.is_x11()
     }
 
     #[inline]
@@ -217,23 +231,20 @@ impl WindowElement {
     }
 
     pub fn xdg_app_id(&self) -> String {
-        if self.is_wayland() {
-            let surface = self.wl_surface().unwrap();
-            smithay::wayland::compositor::with_states(&surface, |states| {
-                let attributes: std::sync::MutexGuard<
-                    '_,
-                    smithay::wayland::shell::xdg::XdgToplevelSurfaceRoleAttributes,
-                > = states
-                    .data_map
-                    .get::<XdgToplevelSurfaceData>()
-                    .unwrap()
-                    .lock()
-                    .unwrap();
-
-                attributes.app_id.clone().unwrap_or_default()
-            })
-        } else {
-            "".to_string()
+        match self.underlying_surface() {
+            WindowSurface::Wayland(_) => {
+                let surface = self.wl_surface().unwrap();
+                smithay::wayland::compositor::with_states(&surface, |states| {
+                    states
+                        .data_map
+                        .get::<XdgToplevelSurfaceData>()
+                        .and_then(|d| d.lock().ok())
+                        .and_then(|d| d.app_id.clone())
+                        .unwrap_or_default()
+                })
+            }
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(x11) => x11.class(),
         }
     }
 
@@ -395,21 +406,23 @@ impl WindowElement {
     }
 
     pub fn xdg_title(&self) -> String {
-        self.wl_surface()
-            .map(|window_surface| {
-                smithay::wayland::compositor::with_states(&window_surface, |states| {
-                    states
-                        .data_map
-                        .get::<XdgToplevelSurfaceData>()
-                        .unwrap()
-                        .lock()
-                        .unwrap()
-                        .title
-                        .clone()
+        match self.underlying_surface() {
+            WindowSurface::Wayland(_) => self
+                .wl_surface()
+                .map(|surface| {
+                    smithay::wayland::compositor::with_states(&surface, |states| {
+                        states
+                            .data_map
+                            .get::<XdgToplevelSurfaceData>()
+                            .and_then(|d| d.lock().ok())
+                            .and_then(|d| d.title.clone())
+                            .unwrap_or_default()
+                    })
                 })
-                .unwrap_or_default()
-            })
-            .unwrap_or_default()
+                .unwrap_or_default(),
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(x11) => x11.title(),
+        }
     }
 }
 

@@ -80,11 +80,12 @@ impl crate::Otto<crate::udev::UdevData> {
                             .workspace_swipe_update(&output_name, delta.x as f32);
                     }
                     crate::state::SwipeDirection::Vertical(_) => {
-                        // Initialize expose mode and apply current delta
                         self.dismiss_all_popups();
 
-                        // Initialize expose mode: reset accumulator and set initial layer visibility
-                        self.workspaces.expose_gesture_start();
+                        // Only run start logic when opening expose, not when closing.
+                        if !self.workspaces.get_show_all() {
+                            self.workspaces.expose_gesture_start();
+                        }
 
                         self.swipe_gesture = crate::state::SwipeGestureState::Expose {
                             velocity_samples: vec![-delta.y],
