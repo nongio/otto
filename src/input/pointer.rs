@@ -356,12 +356,14 @@ impl<BackendData: Backend> Otto<BackendData> {
     }
 
     pub(crate) fn on_pointer_axis<B: InputBackend>(&mut self, evt: B::PointerAxisEvent) {
+        let scroll_speed = Config::with(|c| c.input.scroll_speed);
         let horizontal_amount = evt.amount(input::Axis::Horizontal).unwrap_or_else(|| {
             evt.amount_v120(input::Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.
-        });
+        }) * scroll_speed;
         let vertical_amount = evt
             .amount(input::Axis::Vertical)
-            .unwrap_or_else(|| evt.amount_v120(input::Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.);
+            .unwrap_or_else(|| evt.amount_v120(input::Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.)
+            * scroll_speed;
         let horizontal_amount_discrete = evt.amount_v120(input::Axis::Horizontal);
         let vertical_amount_discrete = evt.amount_v120(input::Axis::Vertical);
 

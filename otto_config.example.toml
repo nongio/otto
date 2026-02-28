@@ -69,6 +69,10 @@ pointer_accel_speed = 0.0
 # Pointer acceleration profile: "adaptive" (default) or "flat" (no acceleration)
 pointer_accel_profile = "adaptive"
 
+# Scroll speed multiplier (software-applied). Default is 1.0 (no change).
+# Values > 1.0 increase scroll speed; values between 0.0 and 1.0 decrease it.
+scroll_speed = 1.0
+
 # Keyboard layout and options (XKB configuration)
 # Tools: xkbcli list | ./scripts/show-keys.sh | man xkeyboard-config
 #

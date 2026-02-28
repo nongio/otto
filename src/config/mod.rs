@@ -493,6 +493,10 @@ pub struct InputConfig {
     pub touchpad_left_handed: bool,
     #[serde(default = "default_touchpad_middle_emulation_enabled")]
     pub touchpad_middle_emulation_enabled: bool,
+    /// Scroll speed multiplier applied in software. Default is 1.0 (no change).
+    /// Values > 1.0 increase scroll speed; values between 0.0 and 1.0 decrease it.
+    #[serde(default = "default_scroll_speed")]
+    pub scroll_speed: f64,
     /// Pointer acceleration speed. Range: -1.0 (slowest) to 1.0 (fastest), default 0.0.
     /// Applies to all pointer devices (mice and touchpads).
     #[serde(default = "default_pointer_accel_speed")]
@@ -552,6 +556,7 @@ impl Default for InputConfig {
             touchpad_natural_scroll_enabled: default_touchpad_natural_scroll_enabled(),
             touchpad_left_handed: default_touchpad_left_handed(),
             touchpad_middle_emulation_enabled: default_touchpad_middle_emulation_enabled(),
+            scroll_speed: default_scroll_speed(),
             pointer_accel_speed: default_pointer_accel_speed(),
             pointer_accel_profile: default_pointer_accel_profile(),
             xkb_layout: None,
@@ -591,6 +596,10 @@ fn default_touchpad_left_handed() -> bool {
 
 fn default_touchpad_middle_emulation_enabled() -> bool {
     false
+}
+
+fn default_scroll_speed() -> f64 {
+    1.0
 }
 
 fn default_pointer_accel_speed() -> f64 {
