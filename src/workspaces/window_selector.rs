@@ -165,9 +165,7 @@ impl WindowSelectorView {
         // window_selector_view.set_background_color(overlay_color, None);
         window_selector_view.set_size(layers::types::Size::percent(1.0, 1.0), None);
         window_selector_view.set_pointer_events(false);
-        // window_selector_view.set_picture_cached(false);
-        // window_selector_view.set_image_cached(false);
-        window_selector_view.set_hidden(true);
+        window_selector_view.set_opacity(0.0, None);
 
         let state = WindowSelectorState {
             rects: vec![],
@@ -229,6 +227,21 @@ impl WindowSelectorView {
         self.windows.read().unwrap().get(window).cloned()
     }
 
+    /// Clear the current window selection (e.g. when expose is reopened).
+    pub fn clear_selection(&self) {
+        let mut state = self.view.get_state();
+        if state.current_selection.is_some() {
+            state.current_selection = None;
+            self.view.update_state(&state);
+        }
+    }
+
+    /// Invalidate the cached layout so the next `update_windows` call forces a fresh
+    /// natural layout recalculation regardless of whether the window set changed.
+    pub fn invalidate_layout(&self) {
+        *self.layout_hash.write().unwrap() = 0;
+    }
+
     /// add a window layer to windows map
     /// and append the window to the window_selector_windows_container
     pub fn map_window(&self, window_id: ObjectId, layer: &Layer) {
@@ -256,6 +269,13 @@ impl WindowSelectorView {
     /// and remove the layer from window_selector_windows_container
     pub fn unmap_window(&self, window_id: &ObjectId) -> Option<Layer> {
         self.windows.write().unwrap().remove(window_id)
+    }
+
+    /// Returns the window ID of the currently hovered/selected preview, if any.
+    pub fn get_selected_window_id(&self) -> Option<ObjectId> {
+        let state = self.view.get_state();
+        let index = state.current_selection?;
+        state.rects.get(index)?.window_id.clone()
     }
 
     pub fn bring_window_to_front(&self, window_id: &ObjectId) {
@@ -765,14 +785,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
     }
 
     fn is_alive(&self) -> bool {
-        !self
-            .view
-            .layer
-            .read()
-            .unwrap()
-            .as_ref()
-            .map(|l| l.hidden())
-            .unwrap_or(true)
+        !self.window_selector_root.hidden()
     }
     fn on_motion(
         &self,

@@ -168,6 +168,36 @@ fn apply_device_config(device: &mut smithay::reexports::input::Device, config: &
             config.input.touchpad_natural_scroll_enabled
         );
     }
+
+    // Configure pointer acceleration speed for all pointer devices
+    if device.config_accel_is_available() {
+        use crate::config::PointerAccelProfile;
+        use smithay::reexports::input::AccelProfile;
+
+        let profile = match config.input.pointer_accel_profile {
+            PointerAccelProfile::Flat => AccelProfile::Flat,
+            PointerAccelProfile::Adaptive => AccelProfile::Adaptive,
+        };
+
+        if device.config_accel_set_profile(profile).is_ok() {
+            tracing::debug!(
+                device = device.name(),
+                profile = ?config.input.pointer_accel_profile,
+                "Set pointer acceleration profile"
+            );
+        }
+
+        if device
+            .config_accel_set_speed(config.input.pointer_accel_speed)
+            .is_ok()
+        {
+            tracing::debug!(
+                device = device.name(),
+                speed = config.input.pointer_accel_speed,
+                "Set pointer acceleration speed"
+            );
+        }
+    }
 }
 
 /// Main entry point for the udev backend

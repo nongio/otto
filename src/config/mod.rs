@@ -493,6 +493,14 @@ pub struct InputConfig {
     pub touchpad_left_handed: bool,
     #[serde(default = "default_touchpad_middle_emulation_enabled")]
     pub touchpad_middle_emulation_enabled: bool,
+    /// Pointer acceleration speed. Range: -1.0 (slowest) to 1.0 (fastest), default 0.0.
+    /// Applies to all pointer devices (mice and touchpads).
+    #[serde(default = "default_pointer_accel_speed")]
+    pub pointer_accel_speed: f64,
+    /// Pointer acceleration profile. "flat" disables acceleration (raw speed),
+    /// "adaptive" applies libinput's default adaptive acceleration curve.
+    #[serde(default = "default_pointer_accel_profile")]
+    pub pointer_accel_profile: PointerAccelProfile,
     #[serde(default)]
     pub xkb_layout: Option<String>,
     #[serde(default)]
@@ -518,6 +526,21 @@ pub enum TouchpadClickMethod {
     ButtonAreas,
 }
 
+/// Pointer acceleration profile.
+///
+/// Maps to libinput's LIBINPUT_CONFIG_ACCEL_PROFILE_* enum values.
+/// See: https://wayland.freedesktop.org/libinput/doc/latest/pointer-acceleration.html
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PointerAccelProfile {
+    /// No acceleration; pointer speed is directly proportional to physical movement.
+    /// Corresponds to LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT
+    Flat,
+    /// libinput's default adaptive acceleration curve.
+    /// Corresponds to LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE
+    Adaptive,
+}
+
 impl Default for InputConfig {
     fn default() -> Self {
         Self {
@@ -529,6 +552,8 @@ impl Default for InputConfig {
             touchpad_natural_scroll_enabled: default_touchpad_natural_scroll_enabled(),
             touchpad_left_handed: default_touchpad_left_handed(),
             touchpad_middle_emulation_enabled: default_touchpad_middle_emulation_enabled(),
+            pointer_accel_speed: default_pointer_accel_speed(),
+            pointer_accel_profile: default_pointer_accel_profile(),
             xkb_layout: None,
             xkb_variant: None,
             xkb_options: Vec::new(),
@@ -566,6 +591,14 @@ fn default_touchpad_left_handed() -> bool {
 
 fn default_touchpad_middle_emulation_enabled() -> bool {
     false
+}
+
+fn default_pointer_accel_speed() -> f64 {
+    0.0
+}
+
+fn default_pointer_accel_profile() -> PointerAccelProfile {
+    PointerAccelProfile::Adaptive
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

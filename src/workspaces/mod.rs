@@ -197,7 +197,7 @@ impl Workspaces {
                 workspace_view
                     .window_selector_view
                     .window_selector_view
-                    .set_hidden(true);
+                    .set_opacity(0.0, None);
             }
         }
         self.expose_update_if_needed();
@@ -738,12 +738,13 @@ impl Workspaces {
         for i in 0..num_workspaces {
             if let Some(workspace_view) = self.get_workspace_at(i) {
                 workspace_view.window_selector_view.window_selector_root.set_hidden(false);
-                workspace_view.window_selector_view.window_selector_view.set_hidden(true);
+                workspace_view.window_selector_view.window_selector_view.set_opacity(0.0, None);
+                // Clear any leftover selection and force a fresh layout recalculation.
+                workspace_view.window_selector_view.clear_selection();
+                workspace_view.window_selector_view.invalidate_layout();
             }
-            // Pre-compute layout and trigger a view render (via update_state) so the
-            // selection overlay is ready to show the moment the open animation completes.
-            // expose_show_all_layout only updates the bin + calls view.update_state — no
-            // layer visibility side-effects.
+            // Compute layout and trigger a view render so the selection overlay is ready
+            // to show immediately when the open animation completes.
             self.expose_show_all_layout(i);
         }
 
@@ -1144,7 +1145,7 @@ impl Workspaces {
         self.is_animating
             .store(is_starting_animation, std::sync::atomic::Ordering::Relaxed);
 
-        window_selector_view.set_hidden(true);
+        window_selector_view.set_opacity(0.0, None);
 
         // Create animation if transition is specified
         let animation = transition
@@ -1306,7 +1307,15 @@ impl Workspaces {
                         // but not while a window drag is in progress.
                         if !is_dragging {
                             for ol in &all_window_selector_views {
-                                ol.set_hidden(!show_all);
+                                if show_all {
+                                    let fade_in = Transition {
+                                        delay: 0.05,
+                                        timing: TimingFunction::ease_in_out(0.2),
+                                    };
+                                    ol.set_opacity(1.0, Some(fade_in));
+                                } else {
+                                    ol.set_opacity(0.0, None);
+                                }
                             }
                         }
                         expose_layer.set_hidden(!show_all);
@@ -2210,7 +2219,7 @@ impl Workspaces {
 
         // map to new space on all outputs
         {
-            let id = we.wl_surface().unwrap().id();
+            let id = if let Some(s) = we.wl_surface() { s.as_ref().id() } else { return; };
             for ows in self.output_workspaces.values_mut() {
                 if let Some(space) = ows.spaces.get_mut(workspace_index) {
                     space.map_element(we.clone(), location, false);
@@ -2461,7 +2470,7 @@ impl Workspaces {
     pub(crate) fn update_workspace_model(&self) {
         let windows: Vec<(ObjectId, WindowElement)> = self
             .spaces_elements()
-            .map(|we| (we.wl_surface().unwrap().id(), we.clone()))
+            .filter_map(|we| we.wl_surface().map(|s| (s.as_ref().id(), we.clone())))
             .collect();
 
         {
@@ -3019,6 +3028,21 @@ impl Workspaces {
         self.sync_model_from_primary();
         self.update_workspace_model();
 
+        // Control dock visibility based on target workspace fullscreen state.
+        let resolved_transition = transition.clone().unwrap_or(Transition {
+            delay: 0.0,
+            timing: TimingFunction::Spring(Spring::with_duration_and_bounce(1.0, 0.1)),
+        });
+        if !self.get_show_all() {
+            if let Some(workspace) = self.get_workspace_at(i) {
+                if workspace.get_fullscreen_mode() {
+                    self.dock.hide(Some(resolved_transition.clone()));
+                } else if !self.dock.is_autohide_enabled() {
+                    self.dock.show(Some(resolved_transition.clone()));
+                }
+            }
+        }
+
         // Scroll only this output's layer
         let workspace_gap = WORKSPACE_SPACING * scale;
         let offset = i as f32 * (workspace_width + workspace_gap);
@@ -3141,7 +3165,9 @@ impl Workspaces {
                     is_animating.store(false, std::sync::atomic::Ordering::Relaxed);
                     if show_all {
                         if let Some(ref overlay) = window_selector_view {
-                            overlay.set_opacity(1.0, None);
+                            if !overlay.hidden() {
+                                overlay.set_opacity(1.0, None);
+                            }
                         }
                     }
                 },
@@ -3348,7 +3374,9 @@ impl Workspaces {
                         // Ensure overlay is visible after workspace scroll animation
                         if show_all {
                             if let Some(ref overlay) = window_selector_view {
-                                overlay.set_opacity(1.0, None);
+                                if !overlay.hidden() {
+                                    overlay.set_opacity(1.0, None);
+                                }
                             }
                         }
                     },

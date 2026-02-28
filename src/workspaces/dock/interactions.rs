@@ -67,6 +67,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
     }
     fn on_enter(&self, _event: &smithay::input::pointer::MotionEvent) {
         self.show_autohide();
+        self.magnify_elements_animated();
     }
     fn on_button(
         &self,

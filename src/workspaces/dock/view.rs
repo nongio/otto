@@ -1076,6 +1076,10 @@ impl DockView {
         *self.screen_size.write().unwrap() = (w, h);
     }
 
+    pub(super) fn magnify_elements_animated(&self) {
+        self.magnify_elements_with_scale(None, Some(Transition::spring(0.2, 0.1)));
+    }
+
     pub(super) fn demagnify_elements(&self) {
         *self.magnification_position.write().unwrap() = -500.0;
         self.magnify_elements_with_scale(Some(0.0), Some(Transition::spring(0.2, 0.1)));
