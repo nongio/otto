@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     hash::{Hash, Hasher},
     sync::{Arc, RwLock},
 };
@@ -7,6 +8,7 @@ use layers::prelude::*;
 use smithay::{
     backend::input::ButtonState,
     input::pointer::{CursorIcon, CursorImageStatus},
+    reexports::calloop::channel::{Sender as CalloopSender, channel}, utils::Coordinate,
 };
 
 use crate::{
@@ -22,6 +24,7 @@ use crate::{
 use super::WorkspacesModel;
 
 pub const WORKSPACE_SELECTOR_PREVIEW_WIDTH: f32 = 300.0;
+const WORKSPACE_SELECTOR_GAP: f32 = 50.0;
 
 #[derive(Clone, Debug)]
 pub struct WorkspaceDropTarget {
@@ -74,7 +77,9 @@ pub struct WorkspaceSelectorView {
     pub cursor_location: Arc<RwLock<Point>>,
     pub drop_targets: Arc<RwLock<Vec<WorkspaceDropTarget>>>,
     pub drop_hover_index: Arc<RwLock<Option<usize>>>,
+    known_indices: Arc<RwLock<HashSet<usize>>>,
     pressed_action: Arc<RwLock<Option<String>>>,
+    remove_sender: CalloopSender<usize>,
 }
 
 /// # WorkspaceSelectorView Layer Structure
@@ -94,7 +99,10 @@ pub struct WorkspaceSelectorView {
 ///
 ///
 impl WorkspaceSelectorView {
-    pub fn new(_layers_engine: Arc<Engine>, layer: Layer) -> Self {
+    pub fn new(
+        _layers_engine: Arc<Engine>,
+        layer: Layer,
+    ) -> (Self, smithay::reexports::calloop::channel::Channel<usize>) {
         let state = WorkspaceSelectorViewState {
             workspaces: Vec::new(),
             current: 0,
@@ -114,9 +122,13 @@ impl WorkspaceSelectorView {
         let drop_targets = Arc::new(RwLock::new(Vec::new()));
         let drop_hover_index = Arc::new(RwLock::new(None));
         let pressed_action = Arc::new(RwLock::new(None));
+        let (remove_sender, remove_receiver) = channel::<usize>();
 
-        // Setup post-render hook to update drop targets
+        // Setup post-render hook to update drop targets and animate new workspaces
         let drop_targets_clone = drop_targets.clone();
+        let known_indices: Arc<RwLock<HashSet<usize>>> = Arc::new(RwLock::new(HashSet::new()));
+        let known_indices_for_hook = known_indices.clone();
+
         view.add_post_render_hook(move |state, view, _layer| {
             let targets: Vec<WorkspaceDropTarget> = state
                 .workspaces
@@ -130,17 +142,65 @@ impl WorkspaceSelectorView {
                 })
                 .collect();
             *drop_targets_clone.write().unwrap() = targets;
+
+                       
+            
+            // Keep existing workspace items at full size, animate only new ones from width 0.
+            let mut known = known_indices_for_hook.write().unwrap();
+            for w in state.workspaces.iter() {
+                let is_new = !known.contains(&w.index);
+                known.insert(w.index);
+                let workspace_width = w.workspace_width.max(1.0);
+                let preview_width = WORKSPACE_SELECTOR_PREVIEW_WIDTH;
+                let full_width = preview_width + WORKSPACE_SELECTOR_GAP;
+                
+                let key = format!("workspace_selector_desktop_{}", w.index);
+                let wrap_key = format!("workspace_selector_desktop_wrap_{}", w.index);
+                if let Some(layer) = view.layer_by_key(&key) {
+                    if is_new {
+                        layer.set_size(layers::types::Size::points(0.0, 0.0), None);
+                        
+                        layer.set_size(
+                            layers::types::Size {
+                                width: layers::taffy::style::Dimension::Length(full_width),
+                                height: layers::taffy::style::Dimension::Percent(1.0),
+                            },
+                            Transition::ease_out(0.5),
+                        );
+                    }
+                }
+
+                if let Some(wrap) = view.layer_by_key(&wrap_key) {
+                    if is_new {
+                        let offset_x = workspace_width / 2.0;
+                        wrap.set_position(Point::new(offset_x, 0.0), None);
+                        wrap.set_position(
+                            Point::new(WORKSPACE_SELECTOR_GAP / 2.0, 0.0),
+                            Transition::spring(1.2, 0.1),
+                        );
+                    } else {
+                        wrap.set_position(Point::new(WORKSPACE_SELECTOR_GAP / 2.0, 0.0), None);
+                    }
+                }
+            }
+            // Forget removed indices so re-added workspaces animate again
+            known.retain(|idx| state.workspaces.iter().any(|w| w.index == *idx));
         });
 
-        Self {
-            // engine: layers_engine,
-            layer,
-            view,
-            cursor_location: Arc::new(RwLock::new(Point::default())),
-            drop_targets,
-            drop_hover_index,
-            pressed_action,
-        }
+        (
+            Self {
+                // engine: layers_engine,
+                layer,
+                view,
+                cursor_location: Arc::new(RwLock::new(Point::default())),
+                drop_targets,
+                drop_hover_index,
+                known_indices,
+                pressed_action,
+                remove_sender,
+            },
+            remove_receiver,
+        )
     }
 
     /// Get current drop targets (updated after each render)
@@ -168,9 +228,21 @@ fn render_workspace_selector_view(
     state: &WorkspaceSelectorViewState,
     view: &View<WorkspaceSelectorViewState>,
 ) -> LayerTree {
-    let worspaces = state.workspaces.clone();
+    let workspaces = state.workspaces.clone();
 
-    let workspaces_tree = worspaces
+    let (_ww,wh) = workspaces.iter().fold((0.0, 0.0), |(max_w, max_h), w| {
+        let workspace_width = w.workspace_width.max(1.0);
+        let workspace_height = w.workspace_height.max(1.0);
+        let preview_width = WORKSPACE_SELECTOR_PREVIEW_WIDTH;
+        let scale = preview_width / workspace_width;
+        let preview_height = workspace_height * scale;
+        let label_height = 30.0 * Config::with(|config| config.screen_scale) as f32;
+        (
+            max_w.max(preview_width + WORKSPACE_SELECTOR_GAP),
+            max_h.max(preview_height + label_height),
+        )
+    });
+    let workspaces_tree = workspaces
         .iter()
         .enumerate()
         .map(|(i, w)| {
@@ -194,190 +266,204 @@ fn render_workspace_selector_view(
                 let add = layers::skia::Color::from_argb(0, 0, 0, 0);
                 color_filter = layers::skia::color_filters::lighting(darken_color, add);
             }
-
+            let screen_scale = Config::with(|config| config.screen_scale);
             let workspace_width = w.workspace_width.max(1.0);
             let workspace_height = w.workspace_height.max(1.0);
             let preview_width = WORKSPACE_SELECTOR_PREVIEW_WIDTH;
             let scale = preview_width / workspace_width;
             let preview_height = workspace_height * scale;
+            let label_height = 30.0 * screen_scale as f32;
 
             LayerTreeBuilder::with_key(format!(
                 "workspace_selector_desktop_{}",
                 workspace_index.clone()
             ))
             .layout_style(taffy::Style {
-                display: taffy::Display::Flex,
                 position: taffy::Position::Relative,
+                display: taffy::Display::Flex,
                 flex_direction: taffy::FlexDirection::Column,
                 align_items: Some(taffy::AlignItems::Center),
                 justify_content: Some(taffy::AlignContent::Center),
-                gap: taffy::Size::length(20.0),
                 ..Default::default()
             })
-            .size((
-                layers::types::Size {
-                    width: layers::taffy::style::Dimension::Length(preview_width),
-                    height: layers::taffy::style::Dimension::Auto,
-                },
-                None,
-            ))
             .children(vec![
                 LayerTreeBuilder::with_key(format!(
-                    "workspace_selector_desktop_content_{}",
+                    "workspace_selector_desktop_wrap_{}",
                     workspace_index.clone()
                 ))
                 .layout_style(taffy::Style {
-                    position: taffy::Position::Relative,
+                    position: taffy::Position::Absolute,
+                    display: taffy::Display::Flex,
+                    flex_direction: taffy::FlexDirection::Column,
+                    align_items: Some(taffy::AlignItems::FlexStart),
+                    justify_content: Some(taffy::AlignContent::Center),
                     ..Default::default()
                 })
                 .size((
                     layers::types::Size {
                         width: layers::taffy::style::Dimension::Length(preview_width),
-                        height: layers::taffy::style::Dimension::Length(preview_height),
+                        height: layers::taffy::style::Dimension::Length(preview_height + label_height),
                     },
                     None,
                 ))
-                .on_pointer_move({
-                    let view_ref = view.clone();
-                    move |_layer: &Layer, _x, _y| {
-                        let key = format!("workspace_selector_desktop_remove_{}", workspace_index);
-                        if let Some(remove_button) = view_ref.layer_by_key(key.as_str()) {
-                            remove_button.set_opacity(1.0, Transition::spring(0.3, 0.1));
-                            remove_button
-                                .set_scale(Point::new(1.0, 1.0), Transition::spring(0.3, 0.1));
-                        }
-                    }
-                })
-                .on_pointer_out({
-                    let view_ref = view.clone();
-                    move |_layer: &Layer, _x, _y| {
-                        let key = format!("workspace_selector_desktop_remove_{}", workspace_index);
-                        if let Some(remove_button) = view_ref.layer_by_key(key.as_str()) {
-                            remove_button.set_opacity(0.0, Transition::spring(0.3, 0.1));
-                            remove_button
-                                .set_scale(Point::new(0.8, 0.8), Transition::spring(0.3, 0.1));
-                        }
-                    }
-                })
-                .children::<LayerTree>({
-                    let children: Vec<Option<LayerTree>> = vec![
-                        Some(
-                            LayerTreeBuilder::with_key(format!(
-                                "workspace_selector_desktop_content_mirror_{}",
-                                workspace_index.clone()
-                            ))
-                            .layout_style(taffy::Style {
-                                position: taffy::Position::Absolute,
-                                ..Default::default()
-                            })
-                            .size((
-                                layers::types::Size {
-                                    width: layers::taffy::style::Dimension::Length(workspace_width),
-                                    height: layers::taffy::style::Dimension::Length(
-                                        workspace_height,
-                                    ),
-                                },
-                                None,
-                            ))
-                            .scale(Point::new(scale, scale))
-                            .replicate_node(w.workspace_node)
-                            .picture_cached(true)
-                            .image_cache(true)
-                            .color_filter(color_filter)
-                            .border_corner_radius(BorderRadius::new_single(20.0 / scale))
-                            .clip_children(true)
-                            .clip_content(true)
-                            .pointer_events(true)
-                            .on_pointer_press(button_press_filter())
-                            .on_pointer_release(button_release_filter())
-                            .on_pointer_out(button_release_filter())
-                            .build()
-                            .unwrap(),
-                        ),
-                        Some(
-                            LayerTreeBuilder::with_key(format!(
-                                "workspace_selector_desktop_border_{}",
-                                w.index
-                            ))
-                            .layout_style(taffy::Style {
-                                position: taffy::Position::Absolute,
-                                ..Default::default()
-                            })
-                            .position(Point::new(0.0, 0.0))
-                            .size((
-                                layers::types::Size {
-                                    width: layers::taffy::style::Dimension::Percent(1.0),
-                                    height: layers::taffy::style::Dimension::Percent(1.0),
-                                },
-                                None,
-                            ))
-                            .border_width((border_width, None))
-                            .border_color(border_color)
-                            .border_corner_radius(BorderRadius::new_single(20.0))
-                            .pointer_events(false)
-                            .build()
-                            .unwrap(),
-                        ),
-                        // Only show remove button if not current workspace and not a non-empty fullscreen workspace
-                        (!(current || w.fullscreen && w.window_count > 0)).then(|| -> LayerTree {
-                            LayerTreeBuilder::with_key(format!(
-                                "workspace_selector_desktop_remove_{}",
-                                w.index
-                            ))
-                            .layout_style(taffy::Style {
-                                position: taffy::Position::Absolute,
-                                ..Default::default()
-                            })
-                            .anchor_point(Point::new(0.5, 0.5))
-                            .scale(Point::new(0.2, 0.2))
-                            .opacity((0.0, None))
-                            .position(Point::new(preview_width, 0.0))
-                            .size((
-                                layers::types::Size {
-                                    width: layers::taffy::style::Dimension::Length(50.0),
-                                    height: layers::taffy::style::Dimension::Length(50.0),
-                                },
-                                None,
-                            ))
-                            .background_color(theme_colors().materials_ultrathick)
-                            .blend_mode(BlendMode::BackgroundBlur)
-                            .border_corner_radius(BorderRadius::new_single(25.0))
-                            .content(draw_named_icon("close-symbolic"))
-                            .shadow_color((Color::new_rgba(0.0, 0.0, 0.0, 0.2), None))
-                            .shadow_offset(((0.0, 0.0).into(), None))
-                            .shadow_radius((5.0, None))
-                            .image_cache(true)
-                            .on_pointer_press(button_press_scale(0.9))
-                            .on_pointer_release(button_release_scale())
-                            .build()
-                            .unwrap()
-                        }),
-                    ];
-                    children
-                })
-                .build()
-                .unwrap(),
-                LayerTreeBuilder::with_key(format!("workspace_selector_desktop_label_{}", w.index))
+                .children(vec![
+                    LayerTreeBuilder::with_key(format!(
+                        "workspace_selector_desktop_content_{}",
+                        workspace_index.clone()
+                    ))
                     .layout_style(taffy::Style {
-                        position: taffy::Position::Relative,
                         ..Default::default()
                     })
+                    .position(Point::new(0.0, 0.0))
                     .size((
                         layers::types::Size {
-                            width: layers::taffy::style::Dimension::Percent(1.0),
-                            height: layers::taffy::style::Dimension::Length(40.0),
+                            width: layers::taffy::style::Dimension::Length(preview_width),
+                            height: layers::taffy::style::Dimension::Length(preview_height),
                         },
                         None,
                     ))
-                    // .background_color(theme_colors().accents_purple)
-                    .content(draw_text_content(
-                        w.name.clone(),
-                        theme::text_styles::title_3_regular(),
-                        layers::skia::textlayout::TextAlign::Center,
-                    ))
+                    .on_pointer_move({
+                        let view_ref = view.clone();
+                        move |_layer: &Layer, _x, _y| {
+                            let key = format!("workspace_selector_desktop_remove_{}", workspace_index);
+                            if let Some(remove_button) = view_ref.layer_by_key(key.as_str()) {
+                                remove_button.set_opacity(1.0, Transition::spring(0.3, 0.1));
+                                remove_button
+                                    .set_scale(Point::new(1.0, 1.0), Transition::spring(0.3, 0.1));
+                            }
+                        }
+                    })
+                    .on_pointer_out({
+                        let view_ref = view.clone();
+                        move |_layer: &Layer, _x, _y| {
+                            let key = format!("workspace_selector_desktop_remove_{}", workspace_index);
+                            if let Some(remove_button) = view_ref.layer_by_key(key.as_str()) {
+                                remove_button.set_opacity(0.0, Transition::spring(0.3, 0.1));
+                                remove_button
+                                    .set_scale(Point::new(0.8, 0.8), Transition::spring(0.3, 0.1));
+                            }
+                        }
+                    })
+                    .children::<LayerTree>({
+                        let children: Vec<Option<LayerTree>> = vec![
+                            Some(
+                                LayerTreeBuilder::with_key(format!(
+                                    "workspace_selector_desktop_content_mirror_{}",
+                                    workspace_index.clone()
+                                ))
+                                .layout_style(taffy::Style {
+                                    position: taffy::Position::Absolute,
+                                    ..Default::default()
+                                })
+                                .size((
+                                    layers::types::Size {
+                                        width: layers::taffy::style::Dimension::Length(workspace_width),
+                                        height: layers::taffy::style::Dimension::Length(
+                                            workspace_height,
+                                        ),
+                                    },
+                                    None,
+                                ))
+                                .scale(Point::new(scale, scale))
+                                .replicate_node(w.workspace_node)
+                                .picture_cached(true)
+                                .image_cache(true)
+                                .color_filter(color_filter)
+                                .border_corner_radius(BorderRadius::new_single(20.0 / scale))
+                                .clip_children(true)
+                                .clip_content(true)
+                                .pointer_events(true)
+                                .on_pointer_press(button_press_filter())
+                                .on_pointer_release(button_release_filter())
+                                .on_pointer_out(button_release_filter())
+                                .build()
+                                .unwrap(),
+                            ),
+                            Some(
+                                LayerTreeBuilder::with_key(format!(
+                                    "workspace_selector_desktop_border_{}",
+                                    w.index
+                                ))
+                                .layout_style(taffy::Style {
+                                    position: taffy::Position::Absolute,
+                                    ..Default::default()
+                                })
+                                .position(Point::new(0.0, 0.0))
+                                .size((
+                                    layers::types::Size {
+                                        width: layers::taffy::style::Dimension::Percent(1.0),
+                                        height: layers::taffy::style::Dimension::Percent(1.0),
+                                    },
+                                    None,
+                                ))
+                                .border_width((border_width, None))
+                                .border_color(border_color)
+                                .border_corner_radius(BorderRadius::new_single(20.0))
+                                .pointer_events(false)
+                                .build()
+                                .unwrap(),
+                            ),
+                            // Only show remove button if not current workspace and not a non-empty fullscreen workspace
+                            (!(current || w.fullscreen && w.window_count > 0)).then(|| -> LayerTree {
+                                LayerTreeBuilder::with_key(format!(
+                                    "workspace_selector_desktop_remove_{}",
+                                    w.index
+                                ))
+                                .layout_style(taffy::Style {
+                                    position: taffy::Position::Absolute,
+                                    ..Default::default()
+                                })
+                                .anchor_point(Point::new(0.5, 0.5))
+                                .scale(Point::new(0.2, 0.2))
+                                .opacity((0.0, None))
+                                .position(Point::new(preview_width, 0.0))
+                                .size((
+                                    layers::types::Size {
+                                        width: layers::taffy::style::Dimension::Length(50.0),
+                                        height: layers::taffy::style::Dimension::Length(50.0),
+                                    },
+                                    None,
+                                ))
+                                .background_color(theme_colors().materials_ultrathick)
+                                .blend_mode(BlendMode::BackgroundBlur)
+                                .border_corner_radius(BorderRadius::new_single(25.0))
+                                .content(draw_named_icon("close-symbolic"))
+                                .shadow_color((Color::new_rgba(0.0, 0.0, 0.0, 0.2), None))
+                                .shadow_offset(((0.0, 0.0).into(), None))
+                                .shadow_radius((5.0, None))
+                                .image_cache(true)
+                                .on_pointer_press(button_press_scale(0.9))
+                                .on_pointer_release(button_release_scale())
+                                .build()
+                                .unwrap()
+                            }),
+                        ];
+                        children
+                    })
                     .build()
                     .unwrap(),
-            ])
+                    LayerTreeBuilder::with_key(format!("workspace_selector_desktop_label_{}", w.index))
+                        .layout_style(taffy::Style {
+                            position: taffy::Position::Relative,
+                            ..Default::default()
+                        })
+                        .size((
+                            layers::types::Size {
+                                width: layers::taffy::style::Dimension::Percent(1.0),
+                                height: layers::taffy::style::Dimension::Length(label_height),
+                            },
+                            None,
+                        ))
+                        .content(draw_text_content(
+                            w.name.clone(),
+                            theme::text_styles::title_3_regular(),
+                            layers::skia::textlayout::TextAlign::Center,
+                        ))
+                        .build()
+                        .unwrap(),
+                ])
+            .build()
+            .unwrap()])
             .build()
             .unwrap()
         })
@@ -409,7 +495,7 @@ fn render_workspace_selector_view(
                     flex_direction: taffy::FlexDirection::Row,
                     align_items: Some(taffy::AlignItems::Center),
                     justify_content: Some(taffy::AlignContent::Center),
-                    gap: taffy::length(50.0),
+                    gap: taffy::length(0.0),
                     padding: taffy::Rect {
                         bottom: taffy::length(20.0),
                         top: taffy::length(30.0),
@@ -421,7 +507,7 @@ fn render_workspace_selector_view(
                 .size((
                     layers::types::Size {
                         width: layers::taffy::style::Dimension::Percent(1.0),
-                        height: layers::taffy::style::Dimension::Auto,
+                        height: layers::taffy::style::Dimension::Length(wh + 50.0),
                     },
                     None,
                 ))
@@ -454,22 +540,26 @@ fn render_workspace_selector_view(
 impl Observer<WorkspacesModel> for WorkspaceSelectorView {
     fn notify(&self, model: &WorkspacesModel) {
         let mut state = self.view.get_state();
-        state.workspaces = model
-            .workspaces
-            .iter()
-            .enumerate()
-            .map(|(i, w)| WorkspaceViewState {
-                name: w
-                    .get_name()
-                    .unwrap_or_else(|| format!("Workspace {}", i + 1)),
-                index: w.index,
-                workspace_node: Some(w.workspace_layer.id()),
-                workspace_width: model.width as f32,
-                workspace_height: model.height as f32,
-                fullscreen: w.get_fullscreen_mode(),
-                window_count: w.windows_list.read().unwrap().len(),
-            })
-            .collect();
+        {
+            let mut known = self.known_indices.write().unwrap();
+            state.workspaces = model
+                .workspaces
+                .iter()
+                .enumerate()
+                .map(|(i, w)| WorkspaceViewState {
+                    name: w
+                        .get_name()
+                        .unwrap_or_else(|| format!("Workspace {}", i + 1)),
+                    index: w.index,
+                    workspace_node: Some(w.workspace_layer.id()),
+                    workspace_width: model.width as f32,
+                    workspace_height: model.height as f32,
+                    fullscreen: w.get_fullscreen_mode(),
+                    window_count: w.windows_list.read().unwrap().len(),
+                })
+                .collect();
+            known.retain(|idx| state.workspaces.iter().any(|w| w.index == *idx));
+        }
         state.current = model.current_workspace;
         self.view.update_state(&state);
     }
@@ -586,8 +676,33 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
                             .strip_prefix("workspace_selector_desktop_remove_")
                             .and_then(|idx| idx.parse::<usize>().ok())
                         {
-                            if let Some(pos) = get_position_worspace_by_index(index) {
-                                otto.workspaces.remove_workspace_at(pos);
+                            let parent_key = format!("workspace_selector_desktop_{}", index);
+                            let wrap_key = format!("workspace_selector_desktop_wrap_{}", index);
+                            if let Some(parent_layer) =
+                                self.view.layer_by_key(parent_key.as_str())
+                            {
+                                let current_size = parent_layer.render_size();
+                                let remove_sender = self.remove_sender.clone();
+                                parent_layer
+                                    .set_size(
+                                        layers::types::Size::points(0.0, current_size.y),
+                                        Transition::spring(0.6, 0.1),
+                                    )
+                                    .then(move |_layer: &Layer, _| {
+                                        let _ = remove_sender.send(index);
+                                    });
+                            }
+                            if let Some(wrap_layer) =
+                                self.view.layer_by_key(&wrap_key.as_str())
+                            {
+                                let current_size = wrap_layer.render_size();
+                                wrap_layer.set_clip_children(true, None);
+                                wrap_layer.set_clip_content(true, None);
+                                wrap_layer
+                                    .set_size(
+                                        layers::types::Size::points(0.0, current_size.y),
+                                        Transition::spring(0.4, 0.1),
+                                    );
                             }
                         } else if let Some(index) = release_key
                             .strip_prefix("workspace_selector_desktop_")
@@ -604,3 +719,4 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
         }
     }
 }
+
