@@ -259,7 +259,7 @@ impl DockView {
             .position(Point::new(0.0, 0.0))
             .size(Size {
                 width: taffy::Dimension::Auto,
-                height: taffy::Dimension::Percent(1.0),
+                height: taffy::Dimension::Length(scaled_icon_size),
             })
             .layout_style(taffy::Style {
                 display: taffy::Display::Flex,
