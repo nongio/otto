@@ -99,7 +99,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                         WindowSurfaceType::ALL,
                     ) {
                         #[cfg(feature = "xwayland")]
-                        if let crate::shell::window::WindowSurface::X11(surf) =
+                        if let smithay::desktop::WindowSurface::X11(surf) =
                             window.underlying_surface()
                         {
                             self.xwm.as_mut().unwrap().raise_window(surf).unwrap();
@@ -195,14 +195,13 @@ impl<BackendData: Backend> Otto<BackendData> {
                             if let Some(toplevel) = window.toplevel() {
                                 toplevel.send_configure();
                             }
-                            keyboard.set_focus(self, Some(window.into()), serial);
+                            keyboard.set_focus(self, Some(window.clone().into()), serial);
                             self.workspaces.update_workspace_model();
                         }
                     }
 
                     #[cfg(feature = "xwayland")]
-                    if let crate::shell::window::WindowSurface::X11(surf) =
-                        &window.underlying_surface()
+                    if let smithay::desktop::WindowSurface::X11(surf) = &window.underlying_surface()
                     {
                         self.xwm.as_mut().unwrap().raise_window(surf).unwrap();
                     }
@@ -254,8 +253,9 @@ impl<BackendData: Backend> Otto<BackendData> {
             return Some((focus, (0.0, 0.0).into()));
         }
 
-        // Workspace selector
-        if self.workspaces.get_show_all() {
+        // Workspace selector — skip when a window drag is active so the window selector
+        // keeps receiving motion events and the dragged window keeps following the pointer.
+        if self.workspaces.get_show_all() && !self.workspaces.is_window_selector_dragging() {
             let focus = self
                 .workspaces
                 .workspace_selector_view
@@ -278,7 +278,10 @@ impl<BackendData: Backend> Otto<BackendData> {
         if self.workspaces.get_show_all() {
             let workspace = self.workspaces.get_current_workspace()?;
             let focus = workspace.window_selector_view.as_ref().clone().into();
-            let position = workspace.window_selector_view.layer.render_position();
+            let position = workspace
+                .window_selector_view
+                .window_selector_root
+                .render_position();
 
             return Some((focus, (position.x as f64, position.y as f64).into()));
         }
@@ -355,12 +358,14 @@ impl<BackendData: Backend> Otto<BackendData> {
     }
 
     pub(crate) fn on_pointer_axis<B: InputBackend>(&mut self, evt: B::PointerAxisEvent) {
+        let scroll_speed = Config::with(|c| c.input.scroll_speed);
         let horizontal_amount = evt.amount(input::Axis::Horizontal).unwrap_or_else(|| {
             evt.amount_v120(input::Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.
-        });
+        }) * scroll_speed;
         let vertical_amount = evt
             .amount(input::Axis::Vertical)
-            .unwrap_or_else(|| evt.amount_v120(input::Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.);
+            .unwrap_or_else(|| evt.amount_v120(input::Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.)
+            * scroll_speed;
         let horizontal_amount_discrete = evt.amount_v120(input::Axis::Horizontal);
         let vertical_amount_discrete = evt.amount_v120(input::Axis::Vertical);
 
@@ -406,13 +411,16 @@ impl<BackendData: Backend> Otto<BackendData> {
         if self.workspaces.get_show_all() || self.workspaces.is_expose_transitioning() {
             return;
         }
+        let pos = layers::skia::Point::new(pos.0 as f32, pos.1 as f32);
         let hot_zone = *self.workspaces.dock.cached_hot_zone.read().unwrap();
+        let dock_bounds = *self.workspaces.dock.cached_dock_bounds.read().unwrap();
         if let Some(hot_zone) = hot_zone {
-            let pos = layers::skia::Point::new(pos.0 as f32, pos.1 as f32);
-            let in_hotzone = hot_zone.contains(pos);
-            if in_hotzone && self.workspaces.dock.is_hidden() {
+            if hot_zone.contains(pos) && self.workspaces.dock.is_hidden() {
                 self.workspaces.dock.show_autohide();
-            } else if !in_hotzone && !self.workspaces.dock.is_hidden() {
+            }
+        }
+        if let Some(dock_bounds) = dock_bounds {
+            if !dock_bounds.contains(pos) && !self.workspaces.dock.is_hidden() {
                 self.workspaces.dock.schedule_autohide();
             }
         }

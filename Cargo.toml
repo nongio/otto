@@ -51,7 +51,7 @@ otto-kit = { path = "components/otto-kit" }
 [dependencies.laye-rs]
 # path = "../layers"
 git = "https://github.com/nongio/layers"
-tag = "v1.4.0"
+tag = "v1.4.1"
 features = ["export-taffy"]
 
 [dependencies.smithay-drm-extras]
@@ -87,7 +87,7 @@ version = "0.12.0"
 
 [features]
 perf-counters = []
-default = ["egl", "winit", "udev", "renderer_sync"]
+default = ["egl", "winit", "udev", "renderer_sync", "xwayland"]
 dev = ["debug", "profile", "debugger"]
 debug = ["image/png", "renderdoc", "debugger"] # "fps_ticker", 
 debugger = ["laye-rs/debugger"]
@@ -155,7 +155,7 @@ copyright = "2024-2026, Riccardo Canalicchio <riccardo.canalicchio@gmail.com>"
 license-file = ["LICENSE", "4"]
 extended-description = """\
 Otto is a modern Wayland compositor built with Smithay and Skia.\
-Featuring a custom scene graph engine (lay-rs) for layout management,\
+Featuring a custom scene graph engine (laye-rs) for layout management,\
 multi-workspace support, and integrated screen sharing capabilities."""
 depends = "$auto, libdrm2, libudev1, libgbm1, libxkbcommon0, libegl1, libwayland-server0, libinput10, libdbus-1-3, libsystemd0, libseat1, libpipewire-0.3-0, libfreetype6, libfontconfig1, libpixman-1-0, fonts-inter, wireplumber"
 section = "x11"

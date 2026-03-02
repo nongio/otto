@@ -91,6 +91,8 @@ use smithay::{
     },
 };
 
+#[cfg(feature = "xwayland")]
+use crate::cursor::Cursor;
 use crate::cursor::{CursorManager, CursorTextureCache};
 use crate::{
     audio::{AudioManager, SoundPlayer},
@@ -103,10 +105,9 @@ use crate::{
 };
 #[cfg(feature = "xwayland")]
 use smithay::{
-    delegate_xwayland_keyboard_grab,
     utils::{Point, Size},
-    wayland::selection::{SelectionSource, SelectionTarget},
-    wayland::xwayland_keyboard_grab::{XWaylandKeyboardGrabHandler, XWaylandKeyboardGrabState},
+    wayland::xwayland_keyboard_grab::XWaylandKeyboardGrabState,
+    wayland::xwayland_shell,
     xwayland::{X11Wm, XWayland, XWaylandEvent},
 };
 
@@ -610,7 +611,20 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         });
         layers_engine.add_layer(&root_layer);
         let scene_element = SceneElement::with_engine(layers_engine.clone());
-        let workspaces = Workspaces::new(layers_engine.clone(), dh.clone());
+        let (workspaces, remove_workspace_receiver) =
+            Workspaces::new(layers_engine.clone(), dh.clone());
+        handle
+            .insert_source(remove_workspace_receiver, |event, _, otto| {
+                if let ChannelEvent::Msg(index) = event {
+                    let pos = otto
+                        .workspaces
+                        .with_model(|m| m.workspaces.iter().position(|w| w.index == index));
+                    if let Some(pos) = pos {
+                        otto.workspaces.remove_workspace_at(pos);
+                    }
+                }
+            })
+            .expect("Failed to register workspace remove channel");
 
         #[cfg(feature = "debugger")]
         layers_engine.start_debugger();
@@ -821,8 +835,13 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     x11_socket,
                     display_number,
                 } => {
-                    let mut wm = X11Wm::start_wm(data.handle.clone(), x11_socket, client.clone())
-                        .expect("Failed to attach X11 Window Manager");
+                    let mut wm = X11Wm::start_wm(
+                        data.handle.clone(),
+                        &data.display_handle,
+                        x11_socket,
+                        client.clone(),
+                    )
+                    .expect("Failed to attach X11 Window Manager");
 
                     let cursor = Cursor::load();
                     let image = cursor.get_image(1, Duration::ZERO);
@@ -848,6 +867,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     }
     pub fn set_cursor(&mut self, image: &CursorImageStatus) {
         *self.cursor_status.lock().unwrap() = image.clone();
+        self.cursor_manager.set_cursor_image(image.clone());
         self.backend_data.set_cursor(image);
     }
 
@@ -1118,6 +1138,16 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     commit: render_surface.current_commit(),
                     transform: surface_attributes.buffer_transform.into(),
                 };
+                // tracing::trace!(
+                //     "window_view_for_surface: id={:?} texture_id={:?} \
+                //      src=({},{} {}x{}) dst=({},{} {}x{}) log_offset=({},{}) scale={}",
+                //     id,
+                //     wvs.texture_id,
+                //     wvs.phy_src_x, wvs.phy_src_y, wvs.phy_src_w, wvs.phy_src_h,
+                //     wvs.phy_dst_x, wvs.phy_dst_y, wvs.phy_dst_w, wvs.phy_dst_h,
+                //     wvs.log_offset_x, wvs.log_offset_y,
+                //     scale
+                // );
                 return Some(wvs);
             }
         };
@@ -1147,6 +1177,21 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 .to_physical(scale_factor);
             let title = window.xdg_title();
             let fullscreen = window.xdg_is_fullscreen();
+
+            let is_x11 = matches!(
+                window.underlying_surface(),
+                smithay::desktop::WindowSurface::X11(_)
+            );
+            if is_x11 {
+                // tracing::debug!(
+                //     "update_window_view x11: title={:?} fullscreen={} location={:?} geometry={:?} surface_id={:?}",
+                //     title,
+                //     window.is_fullscreen(),
+                //     location,
+                //     window_geometry,
+                //     id
+                // );
+            }
 
             let mut render_elements = VecDeque::new();
 
@@ -1473,9 +1518,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             #[cfg(feature = "xwayland")]
             smithay::desktop::WindowSurface::X11(surface) => {
                 if surface.is_maximized() {
-                    self.unmaximize_request_x11(&surface);
+                    self.unmaximize_request_x11(surface);
                 } else {
-                    self.maximize_request_x11(&surface);
+                    self.maximize_request_x11(surface);
                 }
             }
         }
@@ -1502,7 +1547,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 #[cfg(feature = "xwayland")]
                 smithay::desktop::WindowSurface::X11(surface) => {
                     if surface.is_maximized() {
-                        self.maximize_request_x11(&surface);
+                        self.maximize_request_x11(surface);
                     }
                 }
             }
@@ -1547,6 +1592,87 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             self.set_keyboard_focus_on_surface(&top_wid);
         } else {
             self.clear_keyboard_focus();
+        }
+    }
+
+    pub fn close_expose_show_all_and_focus_top(&mut self) {
+        tracing::debug!("close_expose_show_all_and_focus_top");
+        let was_open = self.workspaces.get_show_all();
+        tracing::debug!("close_expose_show_all_and_focus_top: was_open={}", was_open);
+        // Read hovered window BEFORE expose_set_visible(false) clears the selection.
+        let hovered = if was_open {
+            let workspace_index = self.workspaces.get_current_workspace_index();
+            let h = self
+                .workspaces
+                .get_workspace_at(workspace_index)
+                .and_then(|wv| wv.window_selector_view.get_selected_window_id());
+            tracing::debug!("close_expose_show_all_and_focus_top: hovered={:?}", h);
+            h
+        } else {
+            None
+        };
+        self.workspaces.expose_set_visible(false);
+        if was_open {
+            let workspace_index = self.workspaces.get_current_workspace_index();
+            self.workspaces
+                .apply_window_selector_order_to_workspace(workspace_index);
+            if let Some(wid) = hovered {
+                let focused = self.workspaces.focus_app_with_window(&wid);
+                tracing::debug!("close_expose_show_all_and_focus_top: focused={:?}", focused);
+                if let Some(focused) = focused {
+                    self.set_keyboard_focus_on_surface(&focused);
+                }
+            } else {
+                tracing::debug!(
+                    "close_expose_show_all_and_focus_top: no hover, leaving focus as-is"
+                );
+            }
+        }
+    }
+
+    pub fn expose_end_with_velocity_and_focus_top(&mut self, raw_velocity: f32) {
+        tracing::debug!(
+            "expose_end_with_velocity_and_focus_top: velocity={}",
+            raw_velocity
+        );
+        let was_open = self.workspaces.get_show_all();
+        // Read hovered window BEFORE expose_end_with_velocity clears the selection.
+        let hovered = if was_open {
+            let workspace_index = self.workspaces.get_current_workspace_index();
+            let h = self
+                .workspaces
+                .get_workspace_at(workspace_index)
+                .and_then(|wv| wv.window_selector_view.get_selected_window_id());
+            tracing::debug!("expose_end_with_velocity_and_focus_top: hovered={:?}", h);
+            h
+        } else {
+            None
+        };
+        self.workspaces.expose_end_with_velocity(raw_velocity);
+        let is_open_after = self.workspaces.get_show_all();
+        tracing::debug!(
+            "expose_end_with_velocity_and_focus_top: was_open={} is_open_after={}",
+            was_open,
+            is_open_after
+        );
+        if was_open && !is_open_after {
+            let workspace_index = self.workspaces.get_current_workspace_index();
+            self.workspaces
+                .apply_window_selector_order_to_workspace(workspace_index);
+            if let Some(wid) = hovered {
+                let focused = self.workspaces.focus_app_with_window(&wid);
+                tracing::debug!(
+                    "expose_end_with_velocity_and_focus_top: focused={:?}",
+                    focused
+                );
+                if let Some(focused) = focused {
+                    self.set_keyboard_focus_on_surface(&focused);
+                }
+            } else {
+                tracing::debug!(
+                    "expose_end_with_velocity_and_focus_top: no hover, leaving focus as-is"
+                );
+            }
         }
     }
 

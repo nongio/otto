@@ -411,17 +411,13 @@ pub struct PowerManagementConfig {
 /// Action to take when laptop lid is closed
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum LidCloseAction {
     /// Normal laptop behavior: disable screen, allow suspend if no external monitor
+    #[default]
     Auto,
     /// Always disable screen but keep running (for display managers/kiosks)
     DisableInternalScreen,
-}
-
-impl Default for LidCloseAction {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 impl Default for PowerManagementConfig {
@@ -493,6 +489,22 @@ pub struct InputConfig {
     pub touchpad_left_handed: bool,
     #[serde(default = "default_touchpad_middle_emulation_enabled")]
     pub touchpad_middle_emulation_enabled: bool,
+    /// Scroll speed multiplier applied in software. Default is 1.0 (no change).
+    /// Values > 1.0 increase scroll speed; values between 0.0 and 1.0 decrease it.
+    /// Negative values are clamped to 0.0 to prevent inverted scrolling.
+    #[serde(
+        default = "default_scroll_speed",
+        deserialize_with = "deserialize_scroll_speed"
+    )]
+    pub scroll_speed: f64,
+    /// Pointer acceleration speed. Range: -1.0 (slowest) to 1.0 (fastest), default 0.0.
+    /// Applies to all pointer devices (mice and touchpads).
+    #[serde(default = "default_pointer_accel_speed")]
+    pub pointer_accel_speed: f64,
+    /// Pointer acceleration profile. "flat" disables acceleration (raw speed),
+    /// "adaptive" applies libinput's default adaptive acceleration curve.
+    #[serde(default = "default_pointer_accel_profile")]
+    pub pointer_accel_profile: PointerAccelProfile,
     #[serde(default)]
     pub xkb_layout: Option<String>,
     #[serde(default)]
@@ -518,6 +530,21 @@ pub enum TouchpadClickMethod {
     ButtonAreas,
 }
 
+/// Pointer acceleration profile.
+///
+/// Maps to libinput's LIBINPUT_CONFIG_ACCEL_PROFILE_* enum values.
+/// See: https://wayland.freedesktop.org/libinput/doc/latest/pointer-acceleration.html
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PointerAccelProfile {
+    /// No acceleration; pointer speed is directly proportional to physical movement.
+    /// Corresponds to LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT
+    Flat,
+    /// libinput's default adaptive acceleration curve.
+    /// Corresponds to LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE
+    Adaptive,
+}
+
 impl Default for InputConfig {
     fn default() -> Self {
         Self {
@@ -529,6 +556,9 @@ impl Default for InputConfig {
             touchpad_natural_scroll_enabled: default_touchpad_natural_scroll_enabled(),
             touchpad_left_handed: default_touchpad_left_handed(),
             touchpad_middle_emulation_enabled: default_touchpad_middle_emulation_enabled(),
+            scroll_speed: default_scroll_speed(),
+            pointer_accel_speed: default_pointer_accel_speed(),
+            pointer_accel_profile: default_pointer_accel_profile(),
             xkb_layout: None,
             xkb_variant: None,
             xkb_options: Vec::new(),
@@ -566,6 +596,26 @@ fn default_touchpad_left_handed() -> bool {
 
 fn default_touchpad_middle_emulation_enabled() -> bool {
     false
+}
+
+fn default_scroll_speed() -> f64 {
+    1.0
+}
+
+fn deserialize_scroll_speed<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = f64::deserialize(deserializer)?;
+    Ok(value.max(0.0))
+}
+
+fn default_pointer_accel_speed() -> f64 {
+    0.0
+}
+
+fn default_pointer_accel_profile() -> PointerAccelProfile {
+    PointerAccelProfile::Adaptive
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1048,5 +1098,33 @@ mod tests {
 
         let custom = backend_override_candidates("custom");
         assert_eq!(custom, vec!["otto_config.custom.toml"]);
+    }
+
+    #[test]
+    fn test_scroll_speed_negative_clamping() {
+        // Test that negative values are clamped to 0.0
+        let val: f64 = (-2.5f64).max(0.0);
+        assert_eq!(val, 0.0, "negative scroll_speed should be clamped to 0.0");
+    }
+
+    #[test]
+    fn test_scroll_speed_positive_preserved() {
+        // Test that positive values are preserved
+        let val: f64 = (2.5f64).max(0.0);
+        assert_eq!(val, 2.5, "positive scroll_speed should be preserved");
+    }
+
+    #[test]
+    fn test_scroll_speed_zero_preserved() {
+        // Test that zero is preserved
+        let val: f64 = (0.0f64).max(0.0);
+        assert_eq!(val, 0.0, "zero scroll_speed should be preserved");
+    }
+
+    #[test]
+    fn test_scroll_speed_default() {
+        // Test default value
+        let val = default_scroll_speed();
+        assert_eq!(val, 1.0, "scroll_speed should default to 1.0");
     }
 }

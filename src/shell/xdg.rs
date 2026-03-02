@@ -715,15 +715,6 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                     workspace.set_fullscreen_mode(false);
                     workspace.set_fullscreen_animating(false);
 
-                    // Exit expose mode when exiting fullscreen
-                    self.workspaces.expose_set_visible(false);
-
-                    // Fade in layer_shell_overlay when exiting fullscreen
-                    self.workspaces.set_fullscreen_overlay_visibility(false);
-
-                    // Show dock with animation at the start of unfullscreen transition
-                    self.workspaces.dock.show(Some(transition));
-
                     self.workspaces.move_window_to_workspace(
                         &we,
                         we.get_workspace(),
@@ -732,9 +723,19 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                     self.workspaces
                         .set_current_workspace_index(we.get_workspace(), Some(transition));
 
-                    // Delete the temporary fullscreen workspace
+                    // Delete the temporary fullscreen workspace BEFORE setting up animations
+                    // so that expose_set_visible's on_finish callbacks don't capture freed layer nodes.
                     self.workspaces
                         .remove_workspace_at(fullscreen_workspace_index);
+
+                    // Exit expose mode (after remove, so freed workspace layers aren't captured)
+                    self.workspaces.expose_set_visible(false);
+
+                    // Fade in layer_shell_overlay when exiting fullscreen
+                    self.workspaces.set_fullscreen_overlay_visibility(false);
+
+                    // Show dock with animation at the start of unfullscreen transition
+                    self.workspaces.dock.show(Some(transition));
 
                     // Animate size during unfullscreen transition
                     let current_element_geometry = self.workspaces.element_geometry(&we).unwrap();

@@ -82,8 +82,9 @@ impl WorkspaceView {
             position: taffy::Position::Absolute,
             ..Default::default()
         });
+        workspace_layer.set_clip_children(true, None);
+        workspace_layer.set_clip_content(true, None);
         workspace_layer.set_size(layers::types::Size::auto(), None);
-
         workspace_layer.set_position((0.0, 0.0), None);
         workspace_layer.set_pointer_events(false);
         let background_layer = layers_engine.new_layer();
@@ -107,7 +108,6 @@ impl WorkspaceView {
         windows_layer.set_pointer_events(false);
 
         layers_engine.append_layer(&workspace_layer, parent.id);
-
         layers_engine.append_layer(&background_layer, Some(workspace_layer.id));
         layers_engine.append_layer(&windows_layer, Some(workspace_layer.id));
 
@@ -183,7 +183,7 @@ impl WorkspaceView {
             let size = window_element.base_layer().render_size_transformed();
             mirror_window.set_size(Size::points(size.x, size.y), None);
             self.window_selector_view
-                .windows_layer
+                .window_selector_windows_container
                 .add_sublayer(mirror_window);
 
             let window_base = window_element.base_layer();
@@ -248,6 +248,30 @@ impl WorkspaceView {
         }
     }
 
+    pub fn raise_window_to_front(&self, window_id: &ObjectId) {
+        {
+            let mut window_list = self.windows_list.write().unwrap();
+            if let Some(index) = window_list.iter().position(|x| x == window_id) {
+                if index + 1 != window_list.len() {
+                    let wid = window_list.remove(index);
+                    window_list.push(wid);
+                }
+            }
+        }
+
+        if let Some(base_layer) = self
+            .window_base_layers
+            .read()
+            .unwrap()
+            .get(window_id)
+            .cloned()
+        {
+            self.windows_layer.add_sublayer(&base_layer);
+        }
+
+        self.window_selector_view.bring_window_to_front(window_id);
+    }
+
     pub fn set_fullscreen_mode(&self, fullscreen: bool) {
         self.fullscreen_mode
             .store(fullscreen, std::sync::atomic::Ordering::Relaxed);
@@ -281,6 +305,6 @@ impl Drop for WorkspaceView {
     fn drop(&mut self) {
         self.windows_layer.remove();
         self.workspace_layer.remove();
-        self.window_selector_view.layer.remove();
+        self.window_selector_view.window_selector_root.remove();
     }
 }
