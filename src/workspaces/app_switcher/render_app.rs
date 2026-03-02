@@ -1,6 +1,6 @@
 use layers::{
     engine::NodeRef,
-    prelude::{Layer, LayerTree, LayerTreeBuilder, Transition, View, taffy},
+    prelude::{taffy, Layer, LayerTree, LayerTreeBuilder, View},
     taffy::prelude::FromLength,
     types::{BlendMode, BorderRadius, PaintColor, Size},
 };

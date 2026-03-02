@@ -70,21 +70,6 @@ pub struct WindowSelectorWindow {
     pub title: String,
 }
 
-#[derive(Clone)]
-pub struct HandlerFunction(pub std::sync::Arc<dyn Fn(usize) + 'static + Send + Sync>);
-
-impl PartialEq for HandlerFunction {
-    fn eq(&self, other: &Self) -> bool {
-        std::sync::Arc::ptr_eq(&self.0, &other.0)
-    }
-}
-
-impl<F: Fn(usize) + Send + Sync + 'static> From<F> for HandlerFunction {
-    fn from(f: F) -> Self {
-        HandlerFunction(std::sync::Arc::new(f))
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct DragState {
     pub window_layer: Layer,
@@ -190,7 +175,8 @@ impl WindowSelectorView {
         background_layer.add_follower_node(&window_selector_background);
         window_selector_background.set_opacity(1.0, None);
         let window_selector_windows_container = layers_engine.new_layer();
-        window_selector_windows_container.set_key(format!("window_selector_windows_container_{}", index));
+        window_selector_windows_container
+            .set_key(format!("window_selector_windows_container_{}", index));
         window_selector_windows_container.set_layout_style(taffy::Style {
             position: taffy::Position::Absolute,
             ..Default::default()
@@ -586,8 +572,7 @@ pub fn view_window_selector(
         .map(|(window_selection, _)| window_selection.clone());
 
     let draw_container = Some(move |canvas: &skia::Canvas, w, h| {
-        if window_selection.is_some() {
-            let window_selection = window_selection.as_ref().unwrap();
+        if let Some(window_selection) = window_selection.as_ref() {
             let color = crate::theme::accent_color().c4f();
             let mut paint = skia::Paint::new(color, None);
             paint.set_stroke(true);

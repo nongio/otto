@@ -66,7 +66,12 @@ impl Cursor {
             .iter()
             .min_by_key(|i| (target_size as i32 - i.size as i32).abs())
             .unwrap();
-        let total: u32 = self.icons.iter().filter(|i| i.width == nearest.width).map(|i| i.delay).sum();
+        let total: u32 = self
+            .icons
+            .iter()
+            .filter(|i| i.width == nearest.width)
+            .map(|i| i.delay)
+            .sum();
         if total == 0 {
             return nearest.clone();
         }

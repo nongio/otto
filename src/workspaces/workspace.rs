@@ -83,7 +83,7 @@ impl WorkspaceView {
             ..Default::default()
         });
         workspace_layer.set_clip_children(true, None);
-        workspace_layer.set_clip_content(true, None);     
+        workspace_layer.set_clip_content(true, None);
         workspace_layer.set_size(layers::types::Size::auto(), None);
         workspace_layer.set_position((0.0, 0.0), None);
         workspace_layer.set_pointer_events(false);
@@ -259,7 +259,13 @@ impl WorkspaceView {
             }
         }
 
-        if let Some(base_layer) = self.window_base_layers.read().unwrap().get(window_id).cloned() {
+        if let Some(base_layer) = self
+            .window_base_layers
+            .read()
+            .unwrap()
+            .get(window_id)
+            .cloned()
+        {
             self.windows_layer.add_sublayer(&base_layer);
         }
 

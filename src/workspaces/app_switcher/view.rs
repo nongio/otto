@@ -22,19 +22,18 @@ use tokio::sync::mpsc;
 use crate::{
     interactive_view::ViewInteractions,
     utils::Observer,
-    workspaces::{app_icons_manager::AppIconsManager, apps_info::ApplicationsInfo, Application, WorkspacesModel},
+    workspaces::{
+        app_icons_manager::AppIconsManager, apps_info::ApplicationsInfo, Application,
+        WorkspacesModel,
+    },
 };
 
-use super::{
-    model::AppSwitcherModel,
-    render_app::render_appswitcher_panel,
-};
+use super::{model::AppSwitcherModel, render_app::render_appswitcher_panel};
 
 #[derive(Debug, Clone)]
 pub struct AppSwitcherView {
     pub wrap_layer: layers::prelude::Layer,
     pub view: View<AppSwitcherModel>,
-    layers_engine: Arc<Engine>,
     app_icons_manager: Arc<AppIconsManager>,
     active: Arc<AtomicBool>,
     notify_tx: mpsc::Sender<WorkspacesModel>,
@@ -82,7 +81,6 @@ impl AppSwitcherView {
         let switcher = Self {
             wrap_layer: wrap,
             view,
-            layers_engine,
             app_icons_manager,
             active: Arc::new(AtomicBool::new(false)),
             notify_tx,
@@ -169,7 +167,12 @@ impl AppSwitcherView {
             .map(|app| app.identifier.clone())
     }
 
-    fn build_model_with_stacks(&self, apps: Vec<Application>, current_app: usize, width: i32) -> AppSwitcherModel {
+    fn build_model_with_stacks(
+        &self,
+        apps: Vec<Application>,
+        current_app: usize,
+        width: i32,
+    ) -> AppSwitcherModel {
         let icon_stacks = apps
             .iter()
             .map(|app| {
@@ -222,7 +225,8 @@ impl AppSwitcherView {
                             s.current_app
                         }
                     };
-                    let new_state = this.build_model_with_stacks(apps, current_app, workspace.width);
+                    let new_state =
+                        this.build_model_with_stacks(apps, current_app, workspace.width);
                     this.update_state(new_state);
                 }
             }

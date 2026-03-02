@@ -208,21 +208,21 @@ impl Otto<UdevData> {
             //
             // A more complete solution could work on a sliding window analyzing past repaints
             // and do some prediction for the next repaint.
-            let repaint_delay =
+            let _repaint_delay =
                 Duration::from_millis(((1_000_000f32 / output_refresh as f32) * 0.6f32) as u64);
 
             let timer = if self.backend_data.primary_gpu != surface.render_node {
                 // However, if we need to do a copy, that might not be enough.
                 // (And without actual comparision to previous frames we cannot really know.)
                 // So lets ignore that in those cases to avoid thrashing performance.
-//                trace!("scheduling repaint timer immediately on {:?}", crtc);
+                //                trace!("scheduling repaint timer immediately on {:?}", crtc);
                 Timer::immediate()
             } else {
-//                trace!(
-//                    "scheduling repaint timer with delay {:?} on {:?}",
-//                    repaint_delay,
-//                    crtc
-//                );
+                //                trace!(
+                //                    "scheduling repaint timer with delay {:?} on {:?}",
+                //                    repaint_delay,
+                //                    crtc
+                //                );
                 // Timer::from_duration(repaint_delay)
                 Timer::immediate()
             };
@@ -566,11 +566,11 @@ impl Otto<UdevData> {
             // after approx. one frame to re-test for damage.
             let reschedule_duration =
                 Duration::from_millis((1_000_000f32 / output_refresh as f32) as u64);
-//            trace!(
-//                "reschedule repaint timer with delay {:?} on {:?}",
-//                reschedule_duration,
-//                crtc,
-//            );
+            //            trace!(
+            //                "reschedule repaint timer with delay {:?} on {:?}",
+            //                reschedule_duration,
+            //                crtc,
+            //            );
             let timer = Timer::from_duration(reschedule_duration);
             self.handle
                 .insert_source(timer, move |_, _, data| {
@@ -579,7 +579,7 @@ impl Otto<UdevData> {
                 })
                 .expect("failed to schedule frame timer");
         } else {
-            let elapsed = start.elapsed();
+            let _elapsed = start.elapsed();
             //tracing::trace!(?elapsed, "rendered surface");
         }
 

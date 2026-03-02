@@ -91,6 +91,8 @@ use smithay::{
     },
 };
 
+#[cfg(feature = "xwayland")]
+use crate::cursor::Cursor;
 use crate::cursor::{CursorManager, CursorTextureCache};
 use crate::{
     audio::{AudioManager, SoundPlayer},
@@ -103,15 +105,11 @@ use crate::{
 };
 #[cfg(feature = "xwayland")]
 use smithay::{
-    delegate_xwayland_keyboard_grab,
     utils::{Point, Size},
-    wayland::selection::{SelectionSource, SelectionTarget},
-    wayland::xwayland_keyboard_grab::{XWaylandKeyboardGrabHandler, XWaylandKeyboardGrabState},
+    wayland::xwayland_keyboard_grab::XWaylandKeyboardGrabState,
     wayland::xwayland_shell,
     xwayland::{X11Wm, XWayland, XWaylandEvent},
 };
-#[cfg(feature = "xwayland")]
-use crate::cursor::Cursor;
 
 pub struct CalloopData<BackendData: Backend + 'static> {
     pub state: Otto<BackendData>,
@@ -837,8 +835,13 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     x11_socket,
                     display_number,
                 } => {
-                    let mut wm = X11Wm::start_wm(data.handle.clone(), &data.display_handle, x11_socket, client.clone())
-                        .expect("Failed to attach X11 Window Manager");
+                    let mut wm = X11Wm::start_wm(
+                        data.handle.clone(),
+                        &data.display_handle,
+                        x11_socket,
+                        client.clone(),
+                    )
+                    .expect("Failed to attach X11 Window Manager");
 
                     let cursor = Cursor::load();
                     let image = cursor.get_image(1, Duration::ZERO);
@@ -1175,7 +1178,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             let title = window.xdg_title();
             let fullscreen = window.xdg_is_fullscreen();
 
-            let is_x11 = matches!(window.underlying_surface(), smithay::desktop::WindowSurface::X11(_));
+            let is_x11 = matches!(
+                window.underlying_surface(),
+                smithay::desktop::WindowSurface::X11(_)
+            );
             if is_x11 {
                 // tracing::debug!(
                 //     "update_window_view x11: title={:?} fullscreen={} location={:?} geometry={:?} surface_id={:?}",
@@ -1512,9 +1518,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             #[cfg(feature = "xwayland")]
             smithay::desktop::WindowSurface::X11(surface) => {
                 if surface.is_maximized() {
-                    self.unmaximize_request_x11(&surface);
+                    self.unmaximize_request_x11(surface);
                 } else {
-                    self.maximize_request_x11(&surface);
+                    self.maximize_request_x11(surface);
                 }
             }
         }
@@ -1541,7 +1547,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 #[cfg(feature = "xwayland")]
                 smithay::desktop::WindowSurface::X11(surface) => {
                     if surface.is_maximized() {
-                        self.maximize_request_x11(&surface);
+                        self.maximize_request_x11(surface);
                     }
                 }
             }
@@ -1589,15 +1595,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         }
     }
 
-    fn focus_top_window_of_current_workspace(&mut self) {
-        let workspace_index = self.workspaces.get_current_workspace_index();
-        if let Some(top_wid) = self.workspaces.get_top_window_of_workspace(workspace_index) {
-            self.set_keyboard_focus_on_surface(&top_wid);
-        } else {
-            self.clear_keyboard_focus();
-        }
-    }
-
     pub fn close_expose_show_all_and_focus_top(&mut self) {
         tracing::debug!("close_expose_show_all_and_focus_top");
         let was_open = self.workspaces.get_show_all();
@@ -1626,13 +1623,18 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     self.set_keyboard_focus_on_surface(&focused);
                 }
             } else {
-                tracing::debug!("close_expose_show_all_and_focus_top: no hover, leaving focus as-is");
+                tracing::debug!(
+                    "close_expose_show_all_and_focus_top: no hover, leaving focus as-is"
+                );
             }
         }
     }
 
     pub fn expose_end_with_velocity_and_focus_top(&mut self, raw_velocity: f32) {
-        tracing::debug!("expose_end_with_velocity_and_focus_top: velocity={}", raw_velocity);
+        tracing::debug!(
+            "expose_end_with_velocity_and_focus_top: velocity={}",
+            raw_velocity
+        );
         let was_open = self.workspaces.get_show_all();
         // Read hovered window BEFORE expose_end_with_velocity clears the selection.
         let hovered = if was_open {
@@ -1648,19 +1650,28 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         };
         self.workspaces.expose_end_with_velocity(raw_velocity);
         let is_open_after = self.workspaces.get_show_all();
-        tracing::debug!("expose_end_with_velocity_and_focus_top: was_open={} is_open_after={}", was_open, is_open_after);
+        tracing::debug!(
+            "expose_end_with_velocity_and_focus_top: was_open={} is_open_after={}",
+            was_open,
+            is_open_after
+        );
         if was_open && !is_open_after {
             let workspace_index = self.workspaces.get_current_workspace_index();
             self.workspaces
                 .apply_window_selector_order_to_workspace(workspace_index);
             if let Some(wid) = hovered {
                 let focused = self.workspaces.focus_app_with_window(&wid);
-                tracing::debug!("expose_end_with_velocity_and_focus_top: focused={:?}", focused);
+                tracing::debug!(
+                    "expose_end_with_velocity_and_focus_top: focused={:?}",
+                    focused
+                );
                 if let Some(focused) = focused {
                     self.set_keyboard_focus_on_surface(&focused);
                 }
             } else {
-                tracing::debug!("expose_end_with_velocity_and_focus_top: no hover, leaving focus as-is");
+                tracing::debug!(
+                    "expose_end_with_velocity_and_focus_top: no hover, leaving focus as-is"
+                );
             }
         }
     }

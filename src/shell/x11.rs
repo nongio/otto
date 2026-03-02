@@ -1,7 +1,8 @@
 use std::{cell::RefCell, os::unix::io::OwnedFd};
 
+use layers::prelude::Transition;
 use smithay::{
-    desktop::{space::SpaceElement, Window, WindowSurface},
+    desktop::WindowSurface,
     input::pointer::Focus,
     reexports::wayland_server::Resource,
     utils::{Logical, Rectangle, SERIAL_COUNTER},
@@ -25,13 +26,12 @@ use smithay::{
     },
 };
 use tracing::{error, trace};
-use layers::prelude::Transition;
 
 use crate::{focus::KeyboardFocusTarget, state::Backend, Otto};
 
 use super::{
-    FullscreenSurface, PointerMoveSurfaceGrab, PointerResizeSurfaceGrab,
-    ResizeData, ResizeState, SurfaceData, TouchMoveSurfaceGrab, WindowElement,
+    FullscreenSurface, PointerMoveSurfaceGrab, PointerResizeSurfaceGrab, ResizeData, ResizeState,
+    SurfaceData, TouchMoveSurfaceGrab,
 };
 
 #[derive(Debug, Default)]
@@ -72,20 +72,17 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
     }
 
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
-        let maybe = self
-            .workspaces
-            .space()
-            .and_then(|s| {
-                s.elements()
-                    .find(|e| {
-                        if let WindowSurface::X11(x) = e.underlying_surface() {
-                            x == &window
-                        } else {
-                            false
-                        }
-                    })
-                    .cloned()
-            });
+        let maybe = self.workspaces.space().and_then(|s| {
+            s.elements()
+                .find(|e| {
+                    if let WindowSurface::X11(x) = e.underlying_surface() {
+                        x == &window
+                    } else {
+                        false
+                    }
+                })
+                .cloned()
+        });
         if let Some(elem) = maybe {
             if let Some(surface) = elem.wl_surface() {
                 self.workspaces.unmap_window(&surface.as_ref().id());
@@ -133,15 +130,11 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
             geometry,
             window.title()
         );
-        let Some(elem) = self
-            .workspaces
-            .space()
-            .and_then(|s| {
-                s.elements()
-                    .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
-                    .cloned()
-            })
-        else {
+        let Some(elem) = self.workspaces.space().and_then(|s| {
+            s.elements()
+                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
+                .cloned()
+        }) else {
             return;
         };
         self.workspaces.map_window(&elem, geometry.loc, false, None);
@@ -152,15 +145,11 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
     }
 
     fn unmaximize_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        let Some(elem) = self
-            .workspaces
-            .space()
-            .and_then(|s| {
-                s.elements()
-                    .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
-                    .cloned()
-            })
-        else {
+        let Some(elem) = self.workspaces.space().and_then(|s| {
+            s.elements()
+                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
+                .cloned()
+        }) else {
             return;
         };
 
@@ -176,20 +165,17 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
                 window.title()
             );
             window.configure(old_geo).unwrap();
-            self.workspaces.map_window(&elem, old_geo.loc, false, Some(Transition::ease_out(0.3)));
+            self.workspaces
+                .map_window(&elem, old_geo.loc, false, Some(Transition::ease_out(0.3)));
         }
     }
 
     fn fullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        let Some(elem) = self
-            .workspaces
-            .space()
-            .and_then(|s| {
-                s.elements()
-                    .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
-                    .cloned()
-            })
-        else {
+        let Some(elem) = self.workspaces.space().and_then(|s| {
+            s.elements()
+                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
+                .cloned()
+        }) else {
             return;
         };
 
@@ -226,8 +212,14 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
         );
 
         // Register for direct scanout path
-        output.user_data().insert_if_missing(FullscreenSurface::default);
-        output.user_data().get::<FullscreenSurface>().unwrap().set(elem.clone());
+        output
+            .user_data()
+            .insert_if_missing(FullscreenSurface::default);
+        output
+            .user_data()
+            .get::<FullscreenSurface>()
+            .unwrap()
+            .set(elem.clone());
 
         self.backend_data.reset_buffers(&output);
 
@@ -241,23 +233,21 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
 
         self.workspaces.expose_set_visible(false);
         self.workspaces.set_fullscreen_overlay_visibility(true);
-        self.workspaces.move_window_to_workspace(&elem, next_workspace_index, (0, 0));
+        self.workspaces
+            .move_window_to_workspace(&elem, next_workspace_index, (0, 0));
         elem.set_workspace(current_workspace_index);
-        self.workspaces.set_current_workspace_index(next_workspace_index, None);
+        self.workspaces
+            .set_current_workspace_index(next_workspace_index, None);
 
         trace!("Fullscreening X11: {:?}", elem);
     }
 
     fn unfullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        let Some(elem) = self
-            .workspaces
-            .space()
-            .and_then(|s| {
-                s.elements()
-                    .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
-                    .cloned()
-            })
-        else {
+        let Some(elem) = self.workspaces.space().and_then(|s| {
+            s.elements()
+                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
+                .cloned()
+        }) else {
             return;
         };
 
@@ -266,14 +256,23 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
         }
 
         // Clear direct-scanout registration
-        if let Some(output) = self.workspaces.outputs().find(|o| {
-            o.user_data()
+        if let Some(output) = self
+            .workspaces
+            .outputs()
+            .find(|o| {
+                o.user_data()
+                    .get::<FullscreenSurface>()
+                    .and_then(|f| f.get())
+                    .map(|w| w == elem)
+                    .unwrap_or(false)
+            })
+            .cloned()
+        {
+            output
+                .user_data()
                 .get::<FullscreenSurface>()
-                .and_then(|f| f.get())
-                .map(|w| w == elem)
-                .unwrap_or(false)
-        }).cloned() {
-            output.user_data().get::<FullscreenSurface>().unwrap().clear();
+                .unwrap()
+                .clear();
             self.backend_data.reset_buffers(&output);
         }
 
@@ -288,19 +287,23 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
         elem.set_fullscreen(false, 0);
         window.set_fullscreen(false).unwrap();
 
-        let restore_loc = self.workspaces
+        let restore_loc = self
+            .workspaces
             .get_window_view(&elem.id())
             .map(|v| v.unmaximised_rect.loc)
             .unwrap_or_default();
 
         let transition = Transition::ease_in_out_quad(1.4);
 
-        self.workspaces.move_window_to_workspace(&elem, prev_workspace, restore_loc);
-        self.workspaces.set_current_workspace_index(prev_workspace, Some(transition));
+        self.workspaces
+            .move_window_to_workspace(&elem, prev_workspace, restore_loc);
+        self.workspaces
+            .set_current_workspace_index(prev_workspace, Some(transition));
 
         // Remove workspace BEFORE calling expose_set_visible so that its on_finish
         // callback doesn't capture freed layer nodes from the fullscreen workspace.
-        self.workspaces.remove_workspace_at(fullscreen_workspace_index);
+        self.workspaces
+            .remove_workspace_at(fullscreen_workspace_index);
 
         self.workspaces.expose_set_visible(false);
         self.workspaces.set_fullscreen_overlay_visibility(false);
@@ -311,7 +314,8 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
         // This mirrors the XDG unfullscreen flow and prevents freed-node panics from pending
         // transaction callbacks still holding references to the removed workspace's layers.
         if let Some(view) = self.workspaces.get_window_view(&elem.id()) {
-            let scale = self.workspaces
+            let scale = self
+                .workspaces
                 .outputs_for_element(&elem)
                 .first()
                 .map(|o| o.current_scale().fractional_scale())
@@ -321,7 +325,10 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
             let target_workspace = self.workspaces.get_workspace_at(prev_workspace);
             let workspace_layer = target_workspace.map(|ws| ws.windows_layer.clone());
 
-            self.workspaces.dnd_view.layer.add_sublayer(&view.window_layer);
+            self.workspaces
+                .dnd_view
+                .layer
+                .add_sublayer(&view.window_layer);
 
             view.window_layer
                 .set_position(
@@ -357,15 +364,11 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
     ) {
         let start_data = self.pointer.grab_start_data().unwrap();
 
-        let Some(element) = self
-            .workspaces
-            .space()
-            .and_then(|s| {
-                s.elements()
-                    .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
-                    .cloned()
-            })
-        else {
+        let Some(element) = self.workspaces.space().and_then(|s| {
+            s.elements()
+                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
+                .cloned()
+        }) else {
             return;
         };
 
@@ -475,19 +478,19 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
 
 impl<BackendData: Backend> Otto<BackendData> {
     pub fn maximize_request_x11(&mut self, window: &X11Surface) {
-        let Some(elem) = self
-            .workspaces
-            .space()
-            .and_then(|s| {
-                s.elements()
-                    .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == window))
-                    .cloned()
-            })
-        else {
+        let Some(elem) = self.workspaces.space().and_then(|s| {
+            s.elements()
+                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == window))
+                .cloned()
+        }) else {
             return;
         };
 
-        let old_geo = self.workspaces.space().and_then(|s| s.element_bbox(&elem)).unwrap();
+        let old_geo = self
+            .workspaces
+            .space()
+            .and_then(|s| s.element_bbox(&elem))
+            .unwrap();
         let outputs_for_window = self.workspaces.outputs_for_element(&elem);
         let output = outputs_for_window
             .first()
@@ -511,19 +514,16 @@ impl<BackendData: Backend> Otto<BackendData> {
             .get::<OldGeometry>()
             .unwrap()
             .save(old_geo);
-        self.workspaces.map_window(&elem, geometry.loc, false, Some(Transition::ease_out(0.3)));
+        self.workspaces
+            .map_window(&elem, geometry.loc, false, Some(Transition::ease_out(0.3)));
     }
 
     pub fn unmaximize_request_x11(&mut self, window: &X11Surface) {
-        let Some(elem) = self
-            .workspaces
-            .space()
-            .and_then(|s| {
-                s.elements()
-                    .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == window))
-                    .cloned()
-            })
-        else {
+        let Some(elem) = self.workspaces.space().and_then(|s| {
+            s.elements()
+                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == window))
+                .cloned()
+        }) else {
             return;
         };
 
@@ -539,7 +539,8 @@ impl<BackendData: Backend> Otto<BackendData> {
                 window.title()
             );
             window.configure(old_geo).unwrap();
-            self.workspaces.map_window(&elem, old_geo.loc, false, Some(Transition::ease_out(0.3)));
+            self.workspaces
+                .map_window(&elem, old_geo.loc, false, Some(Transition::ease_out(0.3)));
         }
     }
 
@@ -556,10 +557,15 @@ impl<BackendData: Backend> Otto<BackendData> {
                     });
 
                 if let Some(element) = element {
-                    let mut initial_window_location = self.workspaces.element_location(&element).unwrap();
+                    let mut initial_window_location =
+                        self.workspaces.element_location(&element).unwrap();
 
                     if window.is_maximized() {
-                        let maximized_geometry = self.workspaces.space().and_then(|s| s.element_bbox(&element)).unwrap();
+                        let maximized_geometry = self
+                            .workspaces
+                            .space()
+                            .and_then(|s| s.element_bbox(&element))
+                            .unwrap();
                         let touch_location = start_data.location;
 
                         let grab_offset_x = touch_location.x - maximized_geometry.loc.x as f64;
@@ -592,10 +598,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                             initial_window_location = (new_x as i32, new_y as i32).into();
 
                             window
-                                .configure(Rectangle::new(
-                                    initial_window_location.into(),
-                                    old_geo.size,
-                                ))
+                                .configure(Rectangle::new(initial_window_location, old_geo.size))
                                 .unwrap();
                         } else {
                             let pos = start_data.location;
@@ -619,22 +622,22 @@ impl<BackendData: Backend> Otto<BackendData> {
             return;
         };
 
-        let Some(element) = self
-            .workspaces
-            .space()
-            .and_then(|s| {
-                s.elements()
-                    .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == window))
-                    .cloned()
-            })
-        else {
+        let Some(element) = self.workspaces.space().and_then(|s| {
+            s.elements()
+                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == window))
+                .cloned()
+        }) else {
             return;
         };
 
         let mut initial_window_location = self.workspaces.element_location(&element).unwrap();
 
         if window.is_maximized() {
-            let maximized_geometry = self.workspaces.space().and_then(|s| s.element_bbox(&element)).unwrap();
+            let maximized_geometry = self
+                .workspaces
+                .space()
+                .and_then(|s| s.element_bbox(&element))
+                .unwrap();
             let pointer_location = self.pointer.current_location();
 
             let grab_offset_x = pointer_location.x - maximized_geometry.loc.x as f64;
@@ -667,7 +670,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                 initial_window_location = (new_x as i32, new_y as i32).into();
 
                 window
-                    .configure(Rectangle::new(initial_window_location.into(), old_geo.size))
+                    .configure(Rectangle::new(initial_window_location, old_geo.size))
                     .unwrap();
             } else {
                 let pos = self.pointer.current_location();

@@ -201,8 +201,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                     }
 
                     #[cfg(feature = "xwayland")]
-                    if let smithay::desktop::WindowSurface::X11(surf) =
-                        &window.underlying_surface()
+                    if let smithay::desktop::WindowSurface::X11(surf) = &window.underlying_surface()
                     {
                         self.xwm.as_mut().unwrap().raise_window(surf).unwrap();
                     }
@@ -279,7 +278,10 @@ impl<BackendData: Backend> Otto<BackendData> {
         if self.workspaces.get_show_all() {
             let workspace = self.workspaces.get_current_workspace()?;
             let focus = workspace.window_selector_view.as_ref().clone().into();
-            let position = workspace.window_selector_view.window_selector_root.render_position();
+            let position = workspace
+                .window_selector_view
+                .window_selector_root
+                .render_position();
 
             return Some((focus, (position.x as f64, position.y as f64).into()));
         }

@@ -13,16 +13,11 @@ pub use gen::otto_dock_item_v1::OttoDockItemV1;
 pub use gen::otto_dock_manager_v1::OttoDockManagerV1;
 
 /// Type of dock item for layout purposes
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DockItemType {
+    #[default]
     AppElement,
     PlaceElement,
-}
-
-impl Default for DockItemType {
-    fn default() -> Self {
-        Self::AppElement
-    }
 }
 
 /// Compositor-side dock item state

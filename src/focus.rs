@@ -1,6 +1,8 @@
 use std::{borrow::Cow, fmt::Debug, hash::Hash, sync::RwLock};
 
 use smithay::utils::Logical;
+#[cfg(feature = "xwayland")]
+use smithay::xwayland::X11Surface;
 pub use smithay::{
     backend::input::KeyState,
     desktop::{LayerSurface, PopupKind},
@@ -28,8 +30,6 @@ use smithay::{
     utils::Point,
     wayland::selection::data_device::DataDeviceHandler,
 };
-#[cfg(feature = "xwayland")]
-use smithay::xwayland::X11Surface;
 
 use crate::{
     interactive_view::InteractiveView,
@@ -94,6 +94,7 @@ impl<B: Backend> IsAlive for KeyboardFocusTarget<B> {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum PointerFocusTarget<B: Backend> {
     WlSurface(WlSurface),
     #[cfg(feature = "xwayland")]

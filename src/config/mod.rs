@@ -411,17 +411,13 @@ pub struct PowerManagementConfig {
 /// Action to take when laptop lid is closed
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum LidCloseAction {
     /// Normal laptop behavior: disable screen, allow suspend if no external monitor
+    #[default]
     Auto,
     /// Always disable screen but keep running (for display managers/kiosks)
     DisableInternalScreen,
-}
-
-impl Default for LidCloseAction {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 impl Default for PowerManagementConfig {

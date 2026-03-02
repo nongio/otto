@@ -150,7 +150,7 @@ pub fn setup_app_icon(
     // to keep the public signature stable — running indicator is a separate layer.
     let _ = running;
     let draw_picture = Some(draw_app_icon(&application));
-    let height_padding = icon_width * 0.20;
+    let _height_padding = icon_width * 0.20;
     let container_tree = LayerTreeBuilder::default()
         .key(app_name)
         .layout_style(taffy::Style {

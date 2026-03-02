@@ -141,7 +141,11 @@ impl AppIconsManager {
 
     /// Return the icon stack for `app_id` if it has been created, or `None`.
     pub fn get_stack(&self, app_id: &str) -> Option<Layer> {
-        self.entries.read().unwrap().get(app_id).map(|e| e.stack.clone())
+        self.entries
+            .read()
+            .unwrap()
+            .get(app_id)
+            .map(|e| e.stack.clone())
     }
 
     /// Redraw the icon if `app`'s icon has changed since the last call.
@@ -163,10 +167,14 @@ impl AppIconsManager {
             match text {
                 Some(t) if !t.is_empty() => {
                     entry.badge_layer.set_draw_content(draw_badge(t));
-                    entry.badge_layer.set_opacity(1.0, Some(Transition::ease_in_quad(0.15)));
+                    entry
+                        .badge_layer
+                        .set_opacity(1.0, Some(Transition::ease_in_quad(0.15)));
                 }
                 _ => {
-                    entry.badge_layer.set_opacity(0.0, Some(Transition::ease_in_quad(0.15)));
+                    entry
+                        .badge_layer
+                        .set_opacity(0.0, Some(Transition::ease_in_quad(0.15)));
                 }
             }
         }
@@ -178,11 +186,17 @@ impl AppIconsManager {
         if let Some(entry) = entries.get(app_id) {
             match value {
                 Some(v) if v >= 0.0 => {
-                    entry.progress_layer.set_draw_content(draw_progress(v.clamp(0.0, 1.0)));
-                    entry.progress_layer.set_opacity(1.0, Some(Transition::ease_in_quad(0.15)));
+                    entry
+                        .progress_layer
+                        .set_draw_content(draw_progress(v.clamp(0.0, 1.0)));
+                    entry
+                        .progress_layer
+                        .set_opacity(1.0, Some(Transition::ease_in_quad(0.15)));
                 }
                 _ => {
-                    entry.progress_layer.set_opacity(0.0, Some(Transition::ease_in_quad(0.15)));
+                    entry
+                        .progress_layer
+                        .set_opacity(0.0, Some(Transition::ease_in_quad(0.15)));
                 }
             }
         }

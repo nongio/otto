@@ -22,9 +22,7 @@ use crate::{
     theme::theme_colors,
     utils::{parse_hex_color, Observer},
     workspaces::{
-        app_icons_manager::AppIconsManager,
-        apps_info::ApplicationsInfo,
-        utils::ContextMenuView,
+        app_icons_manager::AppIconsManager, apps_info::ApplicationsInfo, utils::ContextMenuView,
         Application, WorkspacesModel,
     },
 };
@@ -217,7 +215,10 @@ impl DockView {
             .build()
             .unwrap();
         dock_apps_container.build_layer_tree(&container_tree);
-        dock_apps_container.set_position(Point::new(0.0, (initial_bar_height - scaled_icon_size) / 2.0), None);
+        dock_apps_container.set_position(
+            Point::new(0.0, (initial_bar_height - scaled_icon_size) / 2.0),
+            None,
+        );
         let resize_handle = layers_engine.new_layer();
         view_layer.add_sublayer(&resize_handle);
 
@@ -455,8 +456,7 @@ impl DockView {
         let miniwindow_height = available_icon_width * (1.0 + 60.0 / 95.0);
 
         // Calculate bar height using helper function
-        let bar_height =
-            Self::calculate_bar_height(icon_size, draw_scale * dock_size_multiplier);
+        let bar_height = Self::calculate_bar_height(icon_size, draw_scale * dock_size_multiplier);
         let padding_top = 4.0 * draw_scale;
         let padding_bottom = 4.0 * draw_scale;
 
@@ -586,7 +586,9 @@ impl DockView {
                     // Get or create the permanent icon stack from AppIconsManager.
                     // This stack (icon + badge + progress) is owned by AppIconsManager and
                     // never freed — mirrors pointing at it are always valid.
-                    let icon_stack = self.app_icons_manager.get_or_create_stack(&match_id, &app_copy);
+                    let icon_stack = self
+                        .app_icons_manager
+                        .get_or_create_stack(&match_id, &app_copy);
                     let icon_stack_ref = icon_stack.id();
 
                     // Create a mirror layer in the dock slot that replicates the managed stack.
@@ -675,8 +677,13 @@ impl DockView {
                 layer.change_opacity(0.0),
                 layer.change_size(layers::types::Size::points(0.0, app_height)),
             ];
-            if let Some(entry) = apps_layers_map.values().find(|entry| entry.layer.id() == layer.id()) {
-                entry.icon_scaler.set_anchor_point_preserving_position(Point::new(0.0, 1.0));
+            if let Some(entry) = apps_layers_map
+                .values()
+                .find(|entry| entry.layer.id() == layer.id())
+            {
+                entry
+                    .icon_scaler
+                    .set_anchor_point_preserving_position(Point::new(0.0, 1.0));
                 changes.push(entry.icon_scaler.change_scale(Point::new(0.1, 0.1)));
             }
 
@@ -764,7 +771,12 @@ impl DockView {
         *self.cached_hot_zone.write().unwrap() = if screen_w > 0.0 && screen_h > 0.0 {
             // Hot zone is a thin strip at the very bottom: 30% of the dock height.
             let hot_zone_h = (bar_h * 2.0) * 0.3;
-            Some(skia::Rect::from_xywh(0.0, screen_h - hot_zone_h, screen_w, hot_zone_h))
+            Some(skia::Rect::from_xywh(
+                0.0,
+                screen_h - hot_zone_h,
+                screen_w,
+                hot_zone_h,
+            ))
         } else {
             None
         };
@@ -772,7 +784,12 @@ impl DockView {
             // Span from dock top (screen_h - bar height) to screen bottom,
             // outset 40 pts horizontally.
             let dock_h = bar_h * 2.0;
-            Some(skia::Rect::from_xywh(-40.0, screen_h - dock_h, screen_w + 80.0, dock_h+80.0))
+            Some(skia::Rect::from_xywh(
+                -40.0,
+                screen_h - dock_h,
+                screen_w + 80.0,
+                dock_h + 80.0,
+            ))
         } else {
             None
         };
@@ -894,11 +911,7 @@ impl DockView {
     pub(super) fn set_active_label(&self, label: Option<Layer>) {
         let mut active = self.active_label.write().unwrap();
         if let Some(prev) = active.as_ref() {
-            if label
-                .as_ref()
-                .map(|l| l.id() != prev.id())
-                .unwrap_or(true)
-            {
+            if label.as_ref().map(|l| l.id() != prev.id()).unwrap_or(true) {
                 prev.set_opacity(0.0, None);
             }
         }
@@ -937,7 +950,11 @@ impl DockView {
         self.magnify_elements_with_scale(None, Some(Transition::spring(0.005, 0.0)));
     }
 
-    fn magnify_elements_with_scale(&self, scale_override: Option<f64>, transtion: Option<Transition>) {
+    fn magnify_elements_with_scale(
+        &self,
+        scale_override: Option<f64>,
+        transtion: Option<Transition>,
+    ) {
         let magnification_enabled = self
             .magnification_enabled
             .load(std::sync::atomic::Ordering::SeqCst);
@@ -975,10 +992,9 @@ impl DockView {
         let windows_len = state.minimized_windows.len() as f32;
 
         let tot_elements = apps_len + windows_len;
-        
-        let animation = transtion.map(|t| {self
-            .layers_engine
-            .add_animation_from_transition(&t, false)});
+
+        let animation =
+            transtion.map(|t| self.layers_engine.add_animation_from_transition(&t, false));
         let mut changes = Vec::new();
         let genie_scale =
             scale_override.unwrap_or_else(|| self.dock_config.read().unwrap().genie_scale);
@@ -989,10 +1005,9 @@ impl DockView {
                 height: taffy::Dimension::Length(icon_size),
             });
             changes.push(change);
-            let position_change = self.dock_apps_container.change_position(Point {
-                x: 0.0,
-                y: 0.0,
-            });
+            let position_change = self
+                .dock_apps_container
+                .change_position(Point { x: 0.0, y: 0.0 });
 
             changes.push(position_change);
             let layers_map = self.app_layers.read().unwrap();
@@ -1004,15 +1019,13 @@ impl DockView {
                         1.0 + magnify_function(focus - icon_pos, genie_span) * genie_scale;
                     let focused_icon_size = icon_size * icon_focus as f32;
 
-                    let change = layer.change_size(Size::points(
-                        focused_icon_size,
-                        focused_icon_size,
-                    ));
+                    let change =
+                        layer.change_size(Size::points(focused_icon_size, focused_icon_size));
                     changes.push(change);
 
-                    let change = entry.icon_scaler.change_size(
-                        Size::points(BASE_ICON_SIZE, BASE_ICON_SIZE)
-                    );
+                    let change = entry
+                        .icon_scaler
+                        .change_size(Size::points(BASE_ICON_SIZE, BASE_ICON_SIZE));
                     changes.push(change);
                     // icon_scaler has a fixed size of 100.0; animate its scale to stretch it
                     // to focused_icon_size. badge and progress scale with it as children.
@@ -1056,8 +1069,7 @@ impl DockView {
 
         self.layers_engine.schedule_changes(&changes, animation);
         // self.layers_engine.schedule_changes(&changes, None);
-        if animation.is_some() {
-            let animation = animation.unwrap();
+        if let Some(animation) = animation {
             self.layers_engine.start_animation(animation, 0.0);
         }
     }
@@ -1405,5 +1417,5 @@ impl Observer<WorkspacesModel> for DockView {
 use std::f64::consts::E;
 pub fn magnify_function(x: impl Into<f64>, genie_span: f64) -> f64 {
     let x = x.into();
-    E.powf(-1.0 * genie_span * x.powi(2))
+    E.powf(-genie_span * x.powi(2))
 }
