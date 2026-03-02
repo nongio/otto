@@ -23,6 +23,7 @@ use smithay::{
 use wayland_server::DisplayHandle;
 use workspace::WorkspaceView;
 
+mod app_icons_manager;
 mod app_switcher;
 mod background;
 mod dnd_view;
@@ -42,6 +43,7 @@ pub use background::BackgroundView;
 pub use window_selector::{WindowSelectorView, WindowSelectorWindow};
 pub use window_view::{WindowView, WindowViewBaseModel, WindowViewSurface};
 
+pub use app_icons_manager::AppIconsManager;
 pub use app_switcher::AppSwitcherView;
 pub use apps_info::ApplicationsInfo;
 pub use dnd_view::DndView;
@@ -120,6 +122,7 @@ pub struct Workspaces {
     pub dnd_view: DndView,
     pub popup_overlay: PopupOverlayView,
     pub osd: OsdView,
+    pub app_icons_manager: Arc<AppIconsManager>,
 
     // gestures states
     pub show_all: Arc<AtomicBool>,
@@ -128,6 +131,8 @@ pub struct Workspaces {
     pub show_desktop_gesture: Arc<AtomicI32>,
     /// Tracks whether the workspace is currently animating (e.g., scrolling between workspaces)
     pub is_animating: Arc<AtomicBool>,
+    /// True while a 3-finger expose gesture is physically in progress (fingers on trackpad).
+    pub expose_gesture_active: Arc<AtomicBool>,
 
     // layers
     pub layers_engine: Arc<Engine>,
@@ -220,7 +225,10 @@ impl Workspaces {
     ) -> Arc<std::sync::Mutex<Option<ObjectId>>> {
         self.expose_dragged_window.clone()
     }
-    pub fn new(layers_engine: Arc<Engine>, display_handle: DisplayHandle) -> Self {
+    pub fn new(
+        layers_engine: Arc<Engine>,
+        display_handle: DisplayHandle,
+    ) -> (Self, smithay::reexports::calloop::channel::Channel<usize>) {
         let model = WorkspacesModel::default();
 
         // Layer shell background layer (z-order: below workspaces)
@@ -264,7 +272,9 @@ impl Workspaces {
         let dnd_view = DndView::new(layers_engine.clone());
         // dnd attached to overlay_layer in map_output_with_primary
 
-        let dock = DockView::new(layers_engine.clone());
+        let app_icons_manager = Arc::new(AppIconsManager::new(layers_engine.clone()));
+
+        let dock = DockView::new(layers_engine.clone(), app_icons_manager.clone());
         let dock = Arc::new(dock);
         dock.show(None);
 
@@ -285,7 +295,7 @@ impl Workspaces {
         // Create popup overlay AFTER dock so it renders on top
         let popup_overlay = PopupOverlayView::new(layers_engine.clone());
 
-        let app_switcher = AppSwitcherView::new(layers_engine.clone(), dock.clone());
+        let app_switcher = AppSwitcherView::new(layers_engine.clone(), app_icons_manager.clone());
         let app_switcher = Arc::new(app_switcher);
 
         let workspace_selector_layer = layers_engine.new_layer();
@@ -306,10 +316,11 @@ impl Workspaces {
         layer_shell_overlay.set_pointer_events(false);
         // attached to output_layer in map_output_with_primary
 
-        let workspace_selector_view = Arc::new(WorkspaceSelectorView::new(
+        let (workspace_selector_view, remove_receiver) = WorkspaceSelectorView::new(
             layers_engine.clone(),
             workspace_selector_layer.clone(),
-        ));
+        );
+        let workspace_selector_view = Arc::new(workspace_selector_view);
 
         // Create OSD view; attach it to overlay_layer in map_output_with_primary
         let osd = OsdView::new(layers_engine.clone());
@@ -328,6 +339,7 @@ impl Workspaces {
             dnd_view,
             popup_overlay,
             osd,
+            app_icons_manager,
             overlay_layer,
             layer_shell_background,
             layer_shell_top,
@@ -337,6 +349,7 @@ impl Workspaces {
             show_all_gesture: Arc::new(AtomicI32::new(0)),
             show_desktop_gesture: Arc::new(AtomicI32::new(0)),
             is_animating: Arc::new(AtomicBool::new(false)),
+            expose_gesture_active: Arc::new(AtomicBool::new(false)),
             window_views: Arc::new(RwLock::new(HashMap::new())),
             observers: Vec::new(),
             layers_engine,
@@ -347,7 +360,7 @@ impl Workspaces {
         workspaces.add_listener(dock.clone());
         workspaces.add_listener(app_switcher.clone());
         workspaces.add_listener(workspace_selector_view.clone());
-        workspaces
+        (workspaces, remove_receiver)
     }
 
     fn primary_output_name(&self) -> Option<String> {
@@ -697,7 +710,29 @@ impl Workspaces {
 
     /// Update expose mode during a gesture (no animation).
     pub fn expose_update(&self, delta: f32) {
+        tracing::trace!("Updating expose gesture with delta: {}", delta);
+        let num_workspaces = self.with_model(|m| m.workspaces.len());
+        for i in 0..num_workspaces {
+            if let Some(workspace_view) = self.get_workspace_at(i) {
+                let ol = &workspace_view.window_selector_view.window_selector_view;
+                let before = ol.opacity();
+                ol.set_opacity(0.0, None);
+                let after = ol.opacity();
+                if before > 0.0 || after > 0.0 {
+                    tracing::debug!("expose_update ws={} selector opacity before={} after={}", i, before, after);
+                }
+            }
+        }
         self.expose_show_all(delta, false);
+        // Log opacity after expose_show_all to catch if something inside sets it back
+        for i in 0..num_workspaces {
+            if let Some(workspace_view) = self.get_workspace_at(i) {
+                let after = workspace_view.window_selector_view.window_selector_view.opacity();
+                if after > 0.0 {
+                    tracing::debug!("expose_update ws={} selector opacity AFTER expose_show_all={}", i, after);
+                }
+            }
+        }
     }
 
     /// Start an expose gesture: reset accumulator and set initial layer visibility.
@@ -710,6 +745,7 @@ impl Workspaces {
     /// - If expose is closed: selector stays hidden until the open animation completes.
     pub fn expose_gesture_start(&self) {
         let current_show_all = self.get_show_all();
+        self.expose_gesture_active.store(true, std::sync::atomic::Ordering::Relaxed);
 
         // Reset gesture accumulator to current state
         let reset_value = if current_show_all { 1000 } else { 0 };
@@ -753,6 +789,29 @@ impl Workspaces {
         // visible.  They are restored by the on_finish callback when the closing animation ends.
         for ows in self.output_workspaces.values() {
             ows.workspaces_layer.set_hidden(true);
+        }
+    }
+
+    /// Called once when a closing gesture is committed (expose is open, user swipes down).
+    /// Resets the accumulator and immediately hides the selection overlay so it doesn't
+    /// remain visible while the user drags downward.
+    pub fn expose_gesture_close_start(&self) {
+        self.expose_gesture_active.store(true, std::sync::atomic::Ordering::Relaxed);
+        // Reset gesture accumulator to fully-open position
+        self.show_all_gesture
+            .store(1000, std::sync::atomic::Ordering::Relaxed);
+
+        // Cancel any in-flight fade-in and hide the overlay immediately
+        let num_workspaces = self.with_model(|m| m.workspaces.len());
+        for i in 0..num_workspaces {
+            if let Some(workspace_view) = self.get_workspace_at(i) {
+                tracing::debug!("wsv: gesture_close_start workspace={} → opacity=0", i);
+                workspace_view
+                    .window_selector_view
+                    .window_selector_view
+                    .set_opacity(0.0, None);
+                workspace_view.window_selector_view.clear_selection();
+            }
         }
     }
 
@@ -858,6 +917,9 @@ impl Workspaces {
         self.show_all_gesture
             .store(target_gesture, std::sync::atomic::Ordering::Relaxed);
 
+        // Gesture is finished — clear the active flag so on_finish callbacks can act
+        self.expose_gesture_active.store(false, std::sync::atomic::Ordering::Relaxed);
+
         // Update all workspaces so they all transition together
         let num_workspaces = self.with_model(|m| m.workspaces.len());
         for i in 0..num_workspaces {
@@ -895,6 +957,14 @@ impl Workspaces {
         let current_workspace = self.get_current_workspace_index();
         let delta_normalized = if show { 1.0 } else { 0.0 };
 
+        // Clear hover state on both open and close
+        let num_workspaces = self.with_model(|m| m.workspaces.len());
+        for i in 0..num_workspaces {
+            if let Some(workspace_view) = self.get_workspace_at(i) {
+                workspace_view.window_selector_view.clear_selection();
+            }
+        }
+
         // When showing expose via keyboard, hide workspace content layers now (mirrors take over).
         self.expose_show_all_end(current_workspace, delta_normalized, show, Some(transition));
     }
@@ -908,6 +978,13 @@ impl Workspaces {
         end_gesture: bool,
         animated: bool,
     ) {
+        tracing::trace!(
+            workspace_index,
+            delta,
+            end_gesture,
+            animated,
+            "Processing expose gesture for workspace"
+        );
         const MULTIPLIER: f32 = 1000.0;
         let gesture = self
             .show_all_gesture
@@ -1251,6 +1328,8 @@ impl Workspaces {
             let workspace_selector_view_layer = self.workspace_selector_view.layer.clone();
             let layer_shell_overlay_ref = self.layer_shell_overlay.clone();
             let show_all_ref = self.show_all.clone();
+            let show_all_gesture_ref = self.show_all_gesture.clone();
+            let expose_gesture_active_ref = self.expose_gesture_active.clone();
             let expose_dragged_window_ref = self.expose_dragged_window.clone();
 
             // Collect secondary output expose layers to sync with primary
@@ -1303,20 +1382,39 @@ impl Workspaces {
                     move |_: &Layer, _: f32| {
                         let is_dragging =
                             expose_dragged_window_ref.lock().unwrap().is_some();
+                        // Re-read the current state at finish time — the gesture may have
+                        // reversed since this animation started.
+                        let current_show_all =
+                            show_all_ref.load(std::sync::atomic::Ordering::Relaxed);
+                        let gesture_value =
+                            show_all_gesture_ref.load(std::sync::atomic::Ordering::Relaxed);
+                        let gesture_at_rest = gesture_value == 0 || gesture_value == 1000;
+                        let gesture_active =
+                            expose_gesture_active_ref.load(std::sync::atomic::Ordering::Relaxed);
+                        tracing::debug!("wsv: on_finish check: show_all={} current={} gesture={} at_rest={} gesture_active={}", show_all, current_show_all, gesture_value, gesture_at_rest, gesture_active);
+                        // Bail out if state changed, gesture still in progress, or gesture is active.
+                        if current_show_all != show_all || !gesture_at_rest || gesture_active {
+                            tracing::debug!("wsv: on_finish bailed");
+                            return;
+                        }
                         // Reveal or hide the selection overlay based on final state,
                         // but not while a window drag is in progress.
                         if !is_dragging {
                             for ol in &all_window_selector_views {
                                 if show_all {
+                                    tracing::debug!("wsv: on_finish(open) → opacity=1.0 fade");
                                     let fade_in = Transition {
                                         delay: 0.05,
                                         timing: TimingFunction::ease_in_out(0.2),
                                     };
                                     ol.set_opacity(1.0, Some(fade_in));
                                 } else {
+                                    tracing::debug!("wsv: on_finish(close) → opacity=0");
                                     ol.set_opacity(0.0, None);
                                 }
                             }
+                        } else {
+                            tracing::debug!("wsv: on_finish skipped (dragging)");
                         }
                         expose_layer.set_hidden(!show_all);
                         for el in &secondary_expose_layers {
@@ -1595,7 +1693,8 @@ impl Workspaces {
     }
     pub fn expose_update_if_needed_workspace(&self, workspace_index: usize) {
         let relayout = self.expose_show_all_layout(workspace_index);
-        if self.get_show_all() && relayout {
+        let gesture_active = self.expose_gesture_active.load(std::sync::atomic::Ordering::Relaxed);
+        if self.get_show_all() && relayout && !gesture_active {
             let transition = Transition {
                 delay: 0.0,
                 timing: TimingFunction::Spring(Spring::with_duration_and_bounce(0.3, 0.1)),
@@ -2684,6 +2783,13 @@ impl Workspaces {
             // overlay contains dnd and osd
             self.overlay_layer.add_sublayer(&self.dnd_view.layer);
             self.overlay_layer.add_sublayer(&self.osd.wrap_layer);
+            // App icons manager lives at the root — sibling of output layers, never rendered
+            // on any output, but present in the scene so its subtree gets laid out.
+            if let Some(root) = self.layers_engine.scene_root()
+                .and_then(|id| self.layers_engine.get_layer(&id))
+            {
+                root.add_sublayer(&self.app_icons_manager.container);
+            }
             output_layer.add_sublayer(&self.dock.wrap_layer.clone());
             output_layer.add_sublayer(&self.layer_shell_top);
             output_layer.add_sublayer(&self.workspace_selector_view.layer.clone());
@@ -2728,6 +2834,7 @@ impl Workspaces {
         self.output_workspaces.insert(output.name(), ows);
         self.sync_model_from_primary();
         self.update_workspaces_layout();
+        self.with_model(|m| self.notify_observers(m));
     }
 
     /// Returns the primary output (used for dock placement and hot zone).
@@ -3156,20 +3263,9 @@ impl Workspaces {
             .next();
         if let Some(tr) = &tr {
             let is_animating = self.is_animating.clone();
-            let workspace_view = self.get_current_workspace();
-            let window_selector_view =
-                workspace_view.map(|wv| wv.window_selector_view.window_selector_view.clone());
-            let show_all = self.get_show_all();
             tr.on_finish(
                 move |_: &Layer, _: f32| {
                     is_animating.store(false, std::sync::atomic::Ordering::Relaxed);
-                    if show_all {
-                        if let Some(ref overlay) = window_selector_view {
-                            if !overlay.hidden() {
-                                overlay.set_opacity(1.0, None);
-                            }
-                        }
-                    }
                 },
                 true,
             );
@@ -3362,23 +3458,9 @@ impl Workspaces {
             // Clear animating flag when animation completes
             if let Some(tr) = &tr {
                 let is_animating = self.is_animating.clone();
-
-                let workspace_view = self.get_current_workspace();
-                let window_selector_view =
-                    workspace_view.map(|wv| wv.window_selector_view.window_selector_view.clone());
-                let show_all = self.get_show_all();
                 tr.on_finish(
                     move |_: &Layer, _: f32| {
                         is_animating.store(false, std::sync::atomic::Ordering::Relaxed);
-
-                        // Ensure overlay is visible after workspace scroll animation
-                        if show_all {
-                            if let Some(ref overlay) = window_selector_view {
-                                if !overlay.hidden() {
-                                    overlay.set_opacity(1.0, None);
-                                }
-                            }
-                        }
                     },
                     true,
                 );

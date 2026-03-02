@@ -22,16 +22,16 @@ use crate::{
     theme::theme_colors,
     utils::{parse_hex_color, Observer},
     workspaces::{
-        apps_info::ApplicationsInfo, utils::ContextMenuView, Application, WorkspacesModel,
+        app_icons_manager::AppIconsManager,
+        apps_info::ApplicationsInfo,
+        utils::ContextMenuView,
+        Application, WorkspacesModel,
     },
 };
 
 use super::{
     model::DockModel,
-    render::{
-        draw_app_icon, draw_badge, draw_progress, setup_app_icon, setup_badge_layer, setup_label,
-        setup_miniwindow_icon, setup_progress_layer,
-    },
+    render::{setup_app_icon, setup_label, setup_miniwindow_icon},
 };
 
 pub const BASE_ICON_SIZE: f32 = 300.0;
@@ -42,15 +42,9 @@ pub(super) struct AppLayerEntry {
     pub(super) layer: Layer,
     /// Icon scaler: fixed-size wrapper that applies a uniform scale to fit the magnified slot.
     pub(super) icon_scaler: Layer,
-    /// Icon stack: contains the icon, badge, and progress layers
-    pub(super) icon_stack: Layer,
-    pub(super) icon_layer: Layer,
-    /// Overlay layer showing the badge (red circle + number). Hidden when no badge is set.
-    pub(super) badge_layer: Layer,
-    /// Overlay layer showing the progress bar. Hidden when no progress is set.
-    pub(super) progress_layer: Layer,
+    /// Mirror layer: replicates the icon stack from `AppIconsManager` (icon + badge + progress).
+    pub(super) icon_mirror: Layer,
     pub(super) label_layer: Layer,
-    pub(super) icon_id: Option<u32>,
     pub(super) running: bool,
     pub(super) identifier: String,
 }
@@ -76,6 +70,7 @@ pub struct DockView {
     latest_event: Arc<tokio::sync::RwLock<Option<WorkspacesModel>>>,
     magnification_position: Arc<RwLock<f32>>,
     pub dragging: Arc<AtomicBool>,
+    app_icons_manager: Arc<AppIconsManager>,
 
     pub context_menu: Arc<RwLock<Option<ContextMenuView>>>,
     /// The identifier of the app whose icon is currently showing the context-menu pressed state.
@@ -138,7 +133,7 @@ impl DockView {
         icon_size + padding_top + padding_bottom
     }
 
-    pub fn new(layers_engine: Arc<Engine>) -> Self {
+    pub fn new(layers_engine: Arc<Engine>, app_icons_manager: Arc<AppIconsManager>) -> Self {
         let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
         let dock_size_multiplier = Config::with(|config| config.dock.size.clamp(0.5, 2.0)) as f32;
         let base_icon_size = 95.0;
@@ -311,6 +306,7 @@ impl DockView {
             cached_hot_zone: Arc::new(RwLock::new(None)),
             cached_dock_bounds: Arc::new(RwLock::new(None)),
             active_label: Arc::new(RwLock::new(None)),
+            app_icons_manager,
         };
         // Sync AtomicBool from dock_config (single source)
         dock.magnification_enabled.store(
@@ -513,24 +509,18 @@ impl DockView {
                     let entry = occ.get_mut();
                     entry.identifier = app.identifier.clone();
 
-                    let icon_layer = entry.icon_layer.clone();
+                    let icon_mirror = entry.icon_mirror.clone();
                     let layer = entry.layer.clone();
-                    // let label = entry.label_layer.clone();
 
-                    icon_layer.set_color_filter(icon_color_filter.clone());
+                    icon_mirror.set_color_filter(icon_color_filter.clone());
 
-                    // Update icon content if the icon changed.
-                    // Running state is shown via the running_indicator_layer (separate from icon_stack).
-                    let current_icon_id = app_copy.icon.as_ref().map(|i| i.unique_id());
-                    if entry.icon_id != current_icon_id {
-                        let draw_picture = draw_app_icon(&app_copy);
-                        icon_layer.set_draw_content(draw_picture);
-                        entry.icon_id = current_icon_id;
-                    }
+                    // Update icon content if the icon changed (AppIconsManager tracks icon_id).
+                    self.app_icons_manager.update_app(&match_id, &app_copy);
+
                     entry.running = *running;
                     let entry_is_running = entry.running;
 
-                    // update main layer render function
+                    // update main layer render function (running indicator dot)
                     layer.set_draw_content(move |canvas: &skia::Canvas, w: f32, h: f32| {
                         if entry_is_running {
                             let color = theme_colors().text_primary.opacity(0.9).c4f();
@@ -539,7 +529,7 @@ impl DockView {
                             paint.set_style(layers::skia::paint::Style::Fill);
                             let radius = 2.0 * draw_scale;
                             canvas.draw_circle(
-                                (w / 2.0, h - radius + 2.0 * draw_scale),
+                                (w / 2.0, h - radius + 4.0 * draw_scale),
                                 radius,
                                 &paint,
                             );
@@ -551,23 +541,19 @@ impl DockView {
                 }
                 Entry::Vacant(vac) => {
                     let new_layer = self.layers_engine.new_layer();
-                    // icon_scaler wraps icon_stack: fixed size, scales to fill the magnified slot
+                    // icon_scaler wraps icon_mirror: fixed size, scales to fill the magnified slot
                     let icon_scaler = self.layers_engine.new_layer();
-                    // icon_stack holds icon + badge + progress (not label) — mirrored by app switcher
-                    let icon_stack = self.layers_engine.new_layer();
-                    let icon_layer = self.layers_engine.new_layer();
-                    let badge_layer = self.layers_engine.new_layer();
-                    let progress_layer = self.layers_engine.new_layer();
 
+                    // Dummy icon_layer just to set up new_layer's container layout via setup_app_icon.
+                    // The real icon content lives in AppIconsManager.
+                    let dummy_icon_layer = self.layers_engine.new_layer();
                     setup_app_icon(
                         &new_layer,
-                        &icon_layer,
+                        &dummy_icon_layer,
                         app_copy.clone(),
                         available_icon_width,
                         *running,
                     );
-                    icon_layer.set_image_cached(true);
-                    icon_layer.set_color_filter(icon_color_filter.clone());
 
                     // Set up icon_scaler as an absolute-positioned square with a fixed size.
                     // Its scale is animated during magnification to fill the parent slot;
@@ -591,64 +577,54 @@ impl DockView {
                         icon_scaler.build_layer_tree(&scaler_tree);
                     }
                     icon_scaler.set_position(
-                        Point::new(
-                            available_icon_width / 2.0,
-                            available_icon_width / 2.0,
-                            // available_icon_width
-                        ),
+                        Point::new(available_icon_width / 2.0, available_icon_width / 2.0),
                         None,
                     );
                     let initial_scaler = (available_icon_width * ICON_SCALER_FILL) / BASE_ICON_SIZE;
                     icon_scaler.set_scale(Point::new(initial_scaler, initial_scaler), None);
 
-                    // Set up icon_stack as a fixed-size square inside icon_scaler.
-                    // icon_stack stays at its original size; visual scaling is handled by icon_scaler.
+                    // Get or create the permanent icon stack from AppIconsManager.
+                    // This stack (icon + badge + progress) is owned by AppIconsManager and
+                    // never freed — mirrors pointing at it are always valid.
+                    let icon_stack = self.app_icons_manager.get_or_create_stack(&match_id, &app_copy);
+                    let icon_stack_ref = icon_stack.id();
+
+                    // Create a mirror layer in the dock slot that replicates the managed stack.
+                    let icon_mirror = self.layers_engine.new_layer();
                     {
                         use layers::view::BuildLayerTree;
 
-                        let stack_tree = layers::view::LayerTreeBuilder::default()
-                            .key(format!("icon_stack_{}", app.identifier))
+                        let mirror_tree = layers::view::LayerTreeBuilder::default()
+                            .key(format!("dock_icon_mirror_{}", app.identifier))
                             .layout_style(taffy::Style {
                                 position: taffy::Position::Absolute,
                                 ..Default::default()
                             })
                             .size(Size::points(BASE_ICON_SIZE, BASE_ICON_SIZE))
+                            .replicate_node(Some(icon_stack_ref))
                             .picture_cached(true)
                             .image_cache(true)
                             .pointer_events(false)
                             .build()
                             .unwrap();
-                        icon_stack.build_layer_tree(&stack_tree);
+                        icon_mirror.build_layer_tree(&mirror_tree);
                     }
-                    icon_stack.set_position(Point::new(0.0, 0.0), None);
-                    // icon_stack.set_anchor_point(layers::types::Point::new(0.5, 0.0), None);
-                    setup_badge_layer(&badge_layer, BASE_ICON_SIZE);
-                    setup_progress_layer(&progress_layer, BASE_ICON_SIZE);
+                    icon_mirror.set_color_filter(icon_color_filter.clone());
 
                     let label_layer = self.layers_engine.new_layer();
                     setup_label(&label_layer, app_name);
 
                     self.dock_apps_container.add_sublayer(&new_layer);
-                    // icon_scaler wraps icon_stack; icon_stack holds icon + badge + progress
                     new_layer.add_sublayer(&icon_scaler);
-                    icon_scaler.add_sublayer(&icon_stack);
-                    icon_stack.add_sublayer(&icon_layer);
-                    icon_stack.add_sublayer(&badge_layer);
-                    icon_stack.add_sublayer(&progress_layer);
-                    // label is a direct child of new_layer, NOT inside icon_stack
+                    icon_scaler.add_sublayer(&icon_mirror);
+                    // label is a direct child of new_layer, NOT inside icon_mirror
                     new_layer.add_sublayer(&label_layer);
-
-                    let icon_id = app_copy.icon.as_ref().map(|i| i.unique_id());
 
                     vac.insert(AppLayerEntry {
                         layer: new_layer.clone(),
                         icon_scaler: icon_scaler.clone(),
-                        icon_stack: icon_stack.clone(),
-                        icon_layer: icon_layer.clone(),
+                        icon_mirror: icon_mirror.clone(),
                         label_layer: label_layer.clone(),
-                        badge_layer: badge_layer.clone(),
-                        progress_layer: progress_layer.clone(),
-                        icon_id,
                         running: *running,
                         identifier: app.identifier.clone(),
                     });
@@ -958,7 +934,7 @@ impl DockView {
     }
     // Magnify elements
     fn magnify_elements(&self) {
-        self.magnify_elements_with_scale(None, None);
+        self.magnify_elements_with_scale(None, Some(Transition::spring(0.005, 0.0)));
     }
 
     fn magnify_elements_with_scale(&self, scale_override: Option<f64>, transtion: Option<Transition>) {
@@ -978,8 +954,22 @@ impl DockView {
         let dock_size_multiplier = self.dock_config.read().unwrap().size.clamp(0.5, 2.0) as f32;
         let base_icon_size = 80.0;
         let icon_size: f32 = base_icon_size * dock_size_multiplier * draw_scale;
-        let padding = icon_size * 20.0 / base_icon_size;
-        let focus = pos / (bounds.width() - padding);
+
+        // Compute focus as a normalized position [0, 1] across all icon slots.
+        // The view_layer contains [apps_container | resize_handle | windows_container].
+        // We need to skip the handle gap so that icon_pos maps to actual cursor positions.
+        let apps_bounds = self.dock_apps_container.render_bounds_transformed();
+        let windows_bounds = self.dock_windows_container.render_bounds_transformed();
+        let elements_start = apps_bounds.x() - bounds.x();
+        let handle_gap = (windows_bounds.x() - apps_bounds.right()).max(0.0);
+        let elements_width = (apps_bounds.width() + windows_bounds.width()).max(1.0);
+        // Subtract the handle gap for any cursor position that is past the apps container.
+        let pos_in_elements = if pos - elements_start > apps_bounds.width() {
+            pos - elements_start - handle_gap
+        } else {
+            pos - elements_start
+        };
+        let focus = pos_in_elements / elements_width;
 
         let apps_len = display_apps.len() as f32;
         let windows_len = state.minimized_windows.len() as f32;
@@ -1106,15 +1096,9 @@ impl DockView {
             })
             .cloned()
     }
-    /// Returns the icon_stack layer for `identifier` so the app switcher can mirror it.
-    /// The icon_stack contains icon + badge + progress overlays (not the label tooltip).
+    /// Returns the icon_stack layer for `identifier` from AppIconsManager (always valid).
     pub fn get_icon_stack_for_app(&self, identifier: &str) -> Option<Layer> {
-        self.app_layers
-            .read()
-            .unwrap()
-            .values()
-            .find(|e| e.identifier == identifier)
-            .map(|e| e.icon_stack.clone())
+        self.app_icons_manager.get_stack(identifier)
     }
 
     pub fn bookmark_application(&self, match_id: &str) -> Option<Application> {
@@ -1130,39 +1114,13 @@ impl DockView {
     /// Update the badge shown on the dock icon for `app_id`.
     /// Pass `None` or an empty string to hide the badge.
     pub fn update_badge_for_app(&self, app_id: &str, text: Option<String>) {
-        let app_layers = self.app_layers.read().unwrap();
-        if let Some(entry) = app_layers.values().find(|e| e.identifier == app_id) {
-            let badge_layer = entry.badge_layer.clone();
-            drop(app_layers);
-            match text {
-                Some(t) if !t.is_empty() => {
-                    badge_layer.set_draw_content(draw_badge(t));
-                    badge_layer.set_opacity(1.0, Some(Transition::ease_in_quad(0.15)));
-                }
-                _ => {
-                    badge_layer.set_opacity(0.0, Some(Transition::ease_in_quad(0.15)));
-                }
-            }
-        }
+        self.app_icons_manager.update_badge(app_id, text);
     }
 
     /// Update the progress bar shown on the dock icon for `app_id`.
     /// Pass `None` or a negative value to hide the progress bar.
     pub fn update_progress_for_app(&self, app_id: &str, value: Option<f64>) {
-        let app_layers = self.app_layers.read().unwrap();
-        if let Some(entry) = app_layers.values().find(|e| e.identifier == app_id) {
-            let progress_layer = entry.progress_layer.clone();
-            drop(app_layers);
-            match value {
-                Some(v) if v >= 0.0 => {
-                    progress_layer.set_draw_content(draw_progress(v.clamp(0.0, 1.0)));
-                    progress_layer.set_opacity(1.0, Some(Transition::ease_in_quad(0.15)));
-                }
-                _ => {
-                    progress_layer.set_opacity(0.0, Some(Transition::ease_in_quad(0.15)));
-                }
-            }
-        }
+        self.app_icons_manager.update_progress(app_id, value);
     }
 
     /// Open the dock-settings context menu anchored to the handle.
