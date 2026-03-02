@@ -1,0 +1,70 @@
+    Finished `release` profile [optimized] target(s) in 0.18s
+    Finished `release` profile [optimized] target(s) in 0.18s
+warning: the following packages contain code that will be rejected by a future version of Rust: quick-xml v0.21.0
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+warning: the following packages contain code that will be rejected by a future version of Rust: quick-xml v0.21.0
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `target/release/otto`
+     Running `target/release/otto`
+[1;33mwarning[0m[1m:[0m [1msome trace filter directives would enable traces that are disabled statically[0m
+ [1;38;5;21m|[0m `otto=trace` would enable the TRACE level for the `otto` target
+ [1;38;5;21m=[0m [1mnote:[0m the static max level is `debug`
+ [1;38;5;21m=[0m [1mhelp:[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate
+[1;33mwarning[0m[1m:[0m [1msome trace filter directives would enable traces that are disabled statically[0m
+ [1;38;5;21m|[0m `otto=trace` would enable the TRACE level for the `otto` target
+ [1;38;5;21m=[0m [1mnote:[0m the static max level is `debug`
+ [1;38;5;21m=[0m [1mhelp:[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate
+MESA-INTEL: warning: ../mesa-25.3.4/src/intel/vulkan/anv_formats.c:993: FINISHME: support more multi-planar formats with DRM modifiers
+MESA-INTEL: warning: ../mesa-25.3.4/src/intel/vulkan/anv_formats.c:993: FINISHME: support more multi-planar formats with DRM modifiers
+MESA-INTEL: warning: ../mesa-25.3.4/src/intel/vulkan/anv_formats.c:959: FINISHME: support YUV colorspace with DRM format modifiers
+MESA-INTEL: warning: ../mesa-25.3.4/src/intel/vulkan/anv_formats.c:959: FINISHME: support YUV colorspace with DRM format modifiers
+
+thread 'main' (94581) panicked at /home/riccardo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/indextree-4.7.4/src/node.rs:45:13:
+internal error: entered unreachable code: Try to access a freed node
+stack backtrace:
+
+thread 'main' (94581) panicked at /home/riccardo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/indextree-4.7.4/src/node.rs:45:13:
+internal error: entered unreachable code: Try to access a freed node
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+   1: core::panicking::panic_fmt
+   0: __rustc::rust_begin_unwind
+   1: core::panicking::panic_fmt
+     2: layers::engine::scene:: 2: layers::engine::scene::Scene::with_arena
+Scene::with_arena
+   3: layers::   3: layers::layers::layer::Layer::render_layer
+layers::layer::Layer::render_layer
+   4:    4: otto::workspaces::window_view::view::WindowView::apply_minimized_scaleotto::workspaces::window_view::view::WindowView::apply_minimized_scale
+
+   5: otto::   5: otto::workspaces::Workspaces::minimize_window::{workspaces::Workspaces::minimize_window::{{closure}}::{{closure{closure}}::{{closure}}
+}}
+   6: layers::engine::stages::transaction_callbacks   6: layers::engine::stages::transaction_callbacks
+
+   7:    7: layers::engine::storage::FlatStorage<Vlayers::engine::storage::FlatStorage<V>::with_data_cloned
+>::with_data_cloned
+   8: layers::engine   8: layers::engine::stages::trigger_callbacks
+::stages::trigger_callbacks
+   9: layers::   9: layers::engine::Engine::update
+engine::Engine::update
+  10: otto  10: otto::render_elements::scene_element::SceneElement::update
+::render_elements::scene_element::SceneElement::update
+  11: otto::udev  11: otto::udev::render::<impl otto::state::Otto<otto::render::<impl otto::state::Otto<otto::udev::types::UdevData>::udev::types::UdevData>>::render_surface
+>::render_surface
+  12: otto::udev  12: otto::udev::render::<impl otto::state::render::<impl otto::state::Otto<otto::udev::types::::Otto<otto::udev::types::UdevData>>::render
+UdevData>>::render
+  13: <  13: <core::cell::RefCell<calloop::sources::DispatcherInnercore::cell::RefCell<calloop::sources::DispatcherInner<S,F<S,F>> as calloop::sources::>> as calloop::sources::EventDispatcher<Data>>::process_events
+  14: calloop::loop_logic::EventLoopEventDispatcher<Data>>::process_events
+  14: calloop::loop_logic::EventLoop<Data>::dispatch
+<Data>::dispatch
+  15: otto  15: otto::udev::init::run_udev
+::udev::init::run_udev
+    16: tokio::runtime::16: tokio::runtime::park::CachedParkThread::block_on
+park::CachedParkThread::block_on
+  17:   17: tokio::runtime::context::runtimetokio::runtime::context::runtime::enter_runtime
+::enter_runtime
+  18:   18: otto::main
+otto::main
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+Gdk-Message: 21:39:04.462: Error reading events from display: Connection reset by peer
+Gdk-Message: 21:39:04.462: Error reading events from display: Connection reset by peer

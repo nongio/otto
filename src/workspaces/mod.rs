@@ -2292,6 +2292,7 @@ impl Workspaces {
 
         let mut window_views = self.window_views.write().unwrap();
         if let Some(view) = window_views.remove(object_id) {
+            view.set_is_unmapped(true);
             view.window_layer.remove();
         }
 

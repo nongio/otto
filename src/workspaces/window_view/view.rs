@@ -28,6 +28,7 @@ pub struct WindowView {
 
     pub unmaximised_rect: smithay::utils::Rectangle<i32, Logical>,
     pub minimizing_animation: Arc<AtomicBool>,
+    pub is_unmapped: Arc<AtomicBool>,
 }
 
 impl WindowView {
@@ -84,6 +85,7 @@ impl WindowView {
             mirror_layer,
             unmaximised_rect: smithay::utils::Rectangle::default(),
             minimizing_animation: Arc::new(AtomicBool::new(false)),
+            is_unmapped: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -104,6 +106,15 @@ impl WindowView {
     pub fn is_minimizing(&self) -> bool {
         self.minimizing_animation
             .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn set_is_unmapped(&self, unmapped: bool) {
+        self.is_unmapped
+            .store(unmapped, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn is_unmapped(&self) -> bool {
+        self.is_unmapped.load(std::sync::atomic::Ordering::SeqCst)
     }
     pub fn minimize(&self, to_rect: skia::Rect) -> TransactionRef {
         self.window_layer.set_effect(self.genie_effect.clone());
@@ -127,6 +138,9 @@ impl WindowView {
         let view_ref = self.clone();
         tr.on_finish(
             move |l: &Layer, _| {
+                if view_ref.is_unmapped() {
+                    return;
+                }
                 view_ref.set_is_minimizing(false);
                 // After the animation, drop the shader and keep a simple scaled layer
                 l.remove_effect();
@@ -172,6 +186,9 @@ impl WindowView {
     /// Apply a scale/position to make the window fit inside the minimized drawer rect.
     /// This is used both after the minimize animation and when the dock resizes.
     pub fn apply_minimized_scale(&self, target: skia::Rect) {
+        if self.is_unmapped() {
+            return;
+        }
         let bounds = self.window_layer.render_layer().bounds_with_children;
         let base_size = (bounds.width(), bounds.height());
         self.apply_minimized_scale_to_layer(&self.window_layer, base_size, target);
