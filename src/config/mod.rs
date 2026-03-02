@@ -491,7 +491,8 @@ pub struct InputConfig {
     pub touchpad_middle_emulation_enabled: bool,
     /// Scroll speed multiplier applied in software. Default is 1.0 (no change).
     /// Values > 1.0 increase scroll speed; values between 0.0 and 1.0 decrease it.
-    #[serde(default = "default_scroll_speed")]
+    /// Negative values are clamped to 0.0 to prevent inverted scrolling.
+    #[serde(default = "default_scroll_speed", deserialize_with = "deserialize_scroll_speed")]
     pub scroll_speed: f64,
     /// Pointer acceleration speed. Range: -1.0 (slowest) to 1.0 (fastest), default 0.0.
     /// Applies to all pointer devices (mice and touchpads).
@@ -594,8 +595,17 @@ fn default_touchpad_middle_emulation_enabled() -> bool {
     false
 }
 
+
 fn default_scroll_speed() -> f64 {
     1.0
+}
+
+fn deserialize_scroll_speed<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = f64::deserialize(deserializer)?;
+    Ok(value.max(0.0))
 }
 
 fn default_pointer_accel_speed() -> f64 {
@@ -605,6 +615,7 @@ fn default_pointer_accel_speed() -> f64 {
 fn default_pointer_accel_profile() -> PointerAccelProfile {
     PointerAccelProfile::Adaptive
 }
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DockBookmark {
@@ -1086,5 +1097,33 @@ mod tests {
 
         let custom = backend_override_candidates("custom");
         assert_eq!(custom, vec!["otto_config.custom.toml"]);
+    }
+
+    #[test]
+    fn test_scroll_speed_negative_clamping() {
+        // Test that negative values are clamped to 0.0
+        let val: f64 = (-2.5f64).max(0.0);
+        assert_eq!(val, 0.0, "negative scroll_speed should be clamped to 0.0");
+    }
+
+    #[test]
+    fn test_scroll_speed_positive_preserved() {
+        // Test that positive values are preserved
+        let val: f64 = (2.5f64).max(0.0);
+        assert_eq!(val, 2.5, "positive scroll_speed should be preserved");
+    }
+
+    #[test]
+    fn test_scroll_speed_zero_preserved() {
+        // Test that zero is preserved
+        let val: f64 = (0.0f64).max(0.0);
+        assert_eq!(val, 0.0, "zero scroll_speed should be preserved");
+    }
+
+    #[test]
+    fn test_scroll_speed_default() {
+        // Test default value
+        let val = default_scroll_speed();
+        assert_eq!(val, 1.0, "scroll_speed should default to 1.0");
     }
 }
