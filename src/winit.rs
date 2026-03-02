@@ -559,7 +559,12 @@ pub fn run_winit() {
                     #[cfg(feature = "fps_ticker")]
                     elements.push(WorkspaceRenderElements::Fps(fps_element.clone()));
 
-                    let scene_element = state.scene_element.clone();
+                    let scene_element = state
+                        .workspaces
+                        .output_workspaces
+                        .get(&output.name())
+                        .map(|ows| state.scene_element.for_output_layer(&ows.output_layer))
+                        .unwrap_or_else(|| state.scene_element.clone());
                     elements.push(WorkspaceRenderElements::Scene(scene_element));
 
                     render_output(

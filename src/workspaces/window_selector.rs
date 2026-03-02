@@ -229,6 +229,7 @@ impl WindowSelectorView {
 
     /// Clear the current window selection (e.g. when expose is reopened).
     pub fn clear_selection(&self) {
+        *self.cursor_location.write().unwrap() = None;
         let mut state = self.view.get_state();
         if state.current_selection.is_some() {
             state.current_selection = None;
@@ -912,6 +913,10 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
                     self.bring_window_to_front(&window_id);
                     return;
                 }
+            } else {
+                // Cursor moved off all windows — explicitly clear selection.
+                self.clear_selection();
+                return;
             }
         }
 

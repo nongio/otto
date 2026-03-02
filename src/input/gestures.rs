@@ -82,9 +82,10 @@ impl crate::Otto<crate::udev::UdevData> {
                     crate::state::SwipeDirection::Vertical(_) => {
                         self.dismiss_all_popups();
 
-                        // Only run start logic when opening expose, not when closing.
                         if !self.workspaces.get_show_all() {
                             self.workspaces.expose_gesture_start();
+                        } else {
+                            self.workspaces.expose_gesture_close_start();
                         }
 
                         self.swipe_gesture = crate::state::SwipeGestureState::Expose {
