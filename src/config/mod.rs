@@ -492,7 +492,10 @@ pub struct InputConfig {
     /// Scroll speed multiplier applied in software. Default is 1.0 (no change).
     /// Values > 1.0 increase scroll speed; values between 0.0 and 1.0 decrease it.
     /// Negative values are clamped to 0.0 to prevent inverted scrolling.
-    #[serde(default = "default_scroll_speed", deserialize_with = "deserialize_scroll_speed")]
+    #[serde(
+        default = "default_scroll_speed",
+        deserialize_with = "deserialize_scroll_speed"
+    )]
     pub scroll_speed: f64,
     /// Pointer acceleration speed. Range: -1.0 (slowest) to 1.0 (fastest), default 0.0.
     /// Applies to all pointer devices (mice and touchpads).
@@ -595,7 +598,6 @@ fn default_touchpad_middle_emulation_enabled() -> bool {
     false
 }
 
-
 fn default_scroll_speed() -> f64 {
     1.0
 }
@@ -615,7 +617,6 @@ fn default_pointer_accel_speed() -> f64 {
 fn default_pointer_accel_profile() -> PointerAccelProfile {
     PointerAccelProfile::Adaptive
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DockBookmark {

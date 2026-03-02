@@ -537,9 +537,9 @@ impl Workspaces {
                 workspace.update_layout(logical_index, w, h, scale);
                 let selector_layer = workspace.window_selector_view.window_selector_root.clone();
                 selector_layer.set_size(Size::points(w, h), None);
-                let workspace_gap = WORKSPACE_SPACING * scale;
+                let workspace_gap_px = WORKSPACE_SPACING * scale;
                 selector_layer
-                    .set_position((logical_index as f32 * (w + workspace_gap), 0.0), None);
+                    .set_position((logical_index as f32 * (w + workspace_gap_px), 0.0), None);
             }
         }
     }
@@ -3194,8 +3194,8 @@ impl Workspaces {
         }
 
         // Scroll only this output's layer
-        let workspace_gap = WORKSPACE_SPACING * scale;
-        let offset = i as f32 * (workspace_width + workspace_gap);
+        let workspace_gap_px = WORKSPACE_SPACING * scale;
+        let offset = i as f32 * (workspace_width + workspace_gap_px);
         let transition = transition.unwrap_or(Transition {
             delay: 0.0,
             timing: TimingFunction::Spring(Spring::with_duration_and_bounce(1.0, 0.1)),
@@ -3290,8 +3290,8 @@ impl Workspaces {
                 .unwrap_or(1.0);
             let w = output_width;
 
-            let workspace_gap = WORKSPACE_SPACING * scale;
-            let offset = i as f32 * (w + workspace_gap);
+            let workspace_gap_px = WORKSPACE_SPACING * scale;
+            let offset = i as f32 * (w + workspace_gap_px);
             changes.push(ows.workspaces_layer.change_position((-offset, 0.0)));
             changes.push(ows.expose_layer.change_position((-offset, 0.0)));
         }
@@ -3346,8 +3346,8 @@ impl Workspaces {
 
         const SWIPE_DAMPENING: f32 = 0.6;
         let physical_delta = delta_x * scale * SWIPE_DAMPENING;
-        let workspace_gap = WORKSPACE_SPACING * scale;
-        let max_offset = (num_workspaces - 1) as f32 * (workspace_width + workspace_gap);
+        let workspace_gap_px = WORKSPACE_SPACING * scale;
+        let max_offset = (num_workspaces - 1) as f32 * (workspace_width + workspace_gap_px);
 
         let new_offset = if current_offset < 0.0 {
             let resistance_factor = 1.0 / (1.0 + (-current_offset) / 100.0);
@@ -3418,8 +3418,8 @@ impl Workspaces {
         let physical_velocity = velocity * scale;
         const VELOCITY_THRESHOLD: f32 = 15.0;
 
-        let workspace_gap = WORKSPACE_SPACING * scale;
-        let progress = current_offset / (workspace_width + workspace_gap);
+        let workspace_gap_px = WORKSPACE_SPACING * scale;
+        let progress = current_offset / (workspace_width + workspace_gap_px);
 
         let target_index = if physical_velocity.abs() > VELOCITY_THRESHOLD {
             if physical_velocity > 0.0 {
