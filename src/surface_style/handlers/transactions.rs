@@ -62,8 +62,8 @@ impl<BackendData: Backend> Dispatch<OttoStyleTransactionV1, ()> for Otto<Backend
             otto_style_transaction_v1::Request::Cancel => {
                 // Cancel the transaction - discard all pending changes without applying them
                 let transaction = state.style_transactions.remove(&txn_id);
-                if transaction.is_some() {
-                    if let Some(animation) = transaction.unwrap().animation {
+                if let Some(transaction) = transaction {
+                    if let Some(animation) = transaction.animation {
                         state.layers_engine.cancel_animation(animation);
                     }
                 }

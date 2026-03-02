@@ -70,21 +70,6 @@ pub struct WindowSelectorWindow {
     pub title: String,
 }
 
-#[derive(Clone)]
-pub struct HandlerFunction(pub std::sync::Arc<dyn Fn(usize) + 'static + Send + Sync>);
-
-impl PartialEq for HandlerFunction {
-    fn eq(&self, other: &Self) -> bool {
-        std::sync::Arc::ptr_eq(&self.0, &other.0)
-    }
-}
-
-impl<F: Fn(usize) + Send + Sync + 'static> From<F> for HandlerFunction {
-    fn from(f: F) -> Self {
-        HandlerFunction(std::sync::Arc::new(f))
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct DragState {
     pub window_layer: Layer,
@@ -101,10 +86,10 @@ pub struct DragState {
 
 #[derive(Clone)]
 pub struct WindowSelectorView {
-    pub layer: layers::prelude::Layer,
-    pub background_layer: layers::prelude::Layer,
-    pub windows_layer: layers::prelude::Layer,
-    pub overlay_layer: layers::prelude::Layer,
+    pub window_selector_root: layers::prelude::Layer,
+    pub window_selector_background: layers::prelude::Layer,
+    pub window_selector_windows_container: layers::prelude::Layer,
+    pub window_selector_view: layers::prelude::Layer,
     pub drag_overlay_layer: layers::prelude::Layer,
     pub view: layers::prelude::View<WindowSelectorState>,
     pub windows: std::sync::Arc<RwLock<HashMap<ObjectId, Layer>>>,
@@ -121,17 +106,17 @@ pub struct WindowSelectorView {
 ///
 /// ```diagram
 /// WindowSelectorView
-/// ├── layer
-/// │   ├── background_layer
-/// │   ├── windows_layer
-/// │   ├── overlay_layer (view(view_window_selector))
+/// ├── window_selector_root
+/// │   ├── window_selector_background
+/// │   ├── window_selector_windows_container
+/// │   ├── window_selector_view (view(view_window_selector))
 /// │   │   └── window_selector_label
 /// ```
 ///
-/// - `layer`: The root layer for the window selector view.
-/// - `background_layer`: a replica of the workspace background
-/// - `windows_layer`: windows replica container
-/// - `overlay_layer`: draw the window selection and text
+/// - `window_selector_root`: The root layer for the window selector view.
+/// - `window_selector_background`: a replica of the workspace background
+/// - `window_selector_windows_container`: windows replica container
+/// - `window_selector_view`: draw the window selection and text
 /// - `window_selector_label`: text layer for the window title
 impl WindowSelectorView {
     pub fn new(
@@ -152,21 +137,20 @@ impl WindowSelectorView {
         // window_selector_root.set_image_cached(false);
         layers_engine.add_layer(&window_selector_root);
         window_selector_root.set_size(layers::types::Size::percent(1.0, 1.0), None);
+        window_selector_root.set_clip_children(true, None);
+        window_selector_root.set_clip_content(true, None);
 
-        // window_selector_root.set_background_color(Color::new_hex("#ff0000ff"), None);
-        let overlay_layer = layers_engine.new_layer();
-        overlay_layer.set_layout_style(taffy::Style {
+        let window_selector_view = layers_engine.new_layer();
+        window_selector_view.set_layout_style(taffy::Style {
             position: taffy::Position::Absolute,
             ..Default::default()
         });
         // let mut overlay_color = theme_colors().accents_green;
         // overlay_color.alpha = 0.5;
-        // overlay_layer.set_background_color(overlay_color, None);
-        overlay_layer.set_size(layers::types::Size::percent(1.0, 1.0), None);
-        overlay_layer.set_pointer_events(false);
-        // overlay_layer.set_picture_cached(false);
-        // overlay_layer.set_image_cached(false);
-        overlay_layer.set_hidden(true);
+        // window_selector_view.set_background_color(overlay_color, None);
+        window_selector_view.set_size(layers::types::Size::percent(1.0, 1.0), None);
+        window_selector_view.set_pointer_events(false);
+        window_selector_view.set_opacity(0.0, None);
 
         let state = WindowSelectorState {
             rects: vec![],
@@ -177,42 +161,43 @@ impl WindowSelectorView {
             state,
             view_window_selector,
         );
-        view.mount_layer(overlay_layer.clone());
+        view.mount_layer(window_selector_view.clone());
 
-        let clone_background_layer = layers_engine.new_layer();
-        clone_background_layer.set_key(format!("window_selector_background_{}", index));
-        clone_background_layer.set_layout_style(taffy::Style {
+        let window_selector_background = layers_engine.new_layer();
+        window_selector_background.set_key(format!("window_selector_background_{}", index));
+        window_selector_background.set_layout_style(taffy::Style {
             position: taffy::Position::Absolute,
             ..Default::default()
         });
-        clone_background_layer.set_size(layers::types::Size::percent(1.0, 1.0), None);
-        clone_background_layer.set_draw_content(background_layer.as_content());
-        clone_background_layer.set_picture_cached(false);
-        background_layer.add_follower_node(&clone_background_layer);
-        clone_background_layer.set_opacity(1.0, None);
-        let windows_layer = layers_engine.new_layer();
-        windows_layer.set_key(format!("window_selector_windows_container_{}", index));
-        windows_layer.set_layout_style(taffy::Style {
+        window_selector_background.set_size(layers::types::Size::percent(1.0, 1.0), None);
+        window_selector_background.set_draw_content(background_layer.as_content());
+        window_selector_background.set_picture_cached(false);
+        background_layer.add_follower_node(&window_selector_background);
+        window_selector_background.set_opacity(1.0, None);
+        let window_selector_windows_container = layers_engine.new_layer();
+        window_selector_windows_container
+            .set_key(format!("window_selector_windows_container_{}", index));
+        window_selector_windows_container.set_layout_style(taffy::Style {
             position: taffy::Position::Absolute,
             ..Default::default()
         });
-        // windows_layer.set_pointer_events(false);
-        // windows_layer.set_picture_cached(false);
-        // windows_layer.set_image_cached(false);
-        windows_layer.set_size(layers::types::Size::percent(1.0, 1.0), None);
+        window_selector_windows_container.set_pointer_events(false);
+        // window_selector_windows_container.set_picture_cached(false);
+        // window_selector_windows_container.set_image_cached(false);
+        window_selector_windows_container.set_size(layers::types::Size::percent(1.0, 1.0), None);
 
-        window_selector_root.add_sublayer(&clone_background_layer);
+        window_selector_root.add_sublayer(&window_selector_background);
 
-        window_selector_root.add_sublayer(&windows_layer);
+        window_selector_root.add_sublayer(&window_selector_windows_container);
 
-        window_selector_root.add_sublayer(&overlay_layer);
+        window_selector_root.add_sublayer(&window_selector_view);
 
         Self {
             view,
-            layer: window_selector_root,
-            background_layer: clone_background_layer,
-            windows_layer,
-            overlay_layer,
+            window_selector_root,
+            window_selector_background,
+            window_selector_windows_container,
+            window_selector_view,
             drag_overlay_layer,
             windows: std::sync::Arc::new(RwLock::new(HashMap::new())),
             cursor_location: Arc::new(RwLock::new(None)),
@@ -228,10 +213,26 @@ impl WindowSelectorView {
         self.windows.read().unwrap().get(window).cloned()
     }
 
+    /// Clear the current window selection (e.g. when expose is reopened).
+    pub fn clear_selection(&self) {
+        *self.cursor_location.write().unwrap() = None;
+        let mut state = self.view.get_state();
+        if state.current_selection.is_some() {
+            state.current_selection = None;
+            self.view.update_state(&state);
+        }
+    }
+
+    /// Invalidate the cached layout so the next `update_windows` call forces a fresh
+    /// natural layout recalculation regardless of whether the window set changed.
+    pub fn invalidate_layout(&self) {
+        *self.layout_hash.write().unwrap() = 0;
+    }
+
     /// add a window layer to windows map
-    /// and append the window to the windows_layer
+    /// and append the window to the window_selector_windows_container
     pub fn map_window(&self, window_id: ObjectId, layer: &Layer) {
-        self.windows_layer.add_sublayer(layer);
+        self.window_selector_windows_container.add_sublayer(layer);
         self.windows
             .write()
             .unwrap()
@@ -247,14 +248,49 @@ impl WindowSelectorView {
             if let Some(layer) = windows.get(window_id) {
                 // Re-append in state order; append detaches first, so this
                 // effectively reorders the siblings without changing parents.
-                self.windows_layer.add_sublayer(layer);
+                self.window_selector_windows_container.add_sublayer(layer);
             }
         }
     }
     /// remove the window from the windows map
-    /// and remove the layer from windows_layer
+    /// and remove the layer from window_selector_windows_container
     pub fn unmap_window(&self, window_id: &ObjectId) -> Option<Layer> {
         self.windows.write().unwrap().remove(window_id)
+    }
+
+    /// Returns the window ID of the currently hovered/selected preview, if any.
+    pub fn get_selected_window_id(&self) -> Option<ObjectId> {
+        let state = self.view.get_state();
+        let index = state.current_selection?;
+        state.rects.get(index)?.window_id.clone()
+    }
+
+    pub fn bring_window_to_front(&self, window_id: &ObjectId) {
+        let mut state = self.view.get_state().clone();
+        let Some(position) = state
+            .rects
+            .iter()
+            .position(|rect| rect.window_id.as_ref() == Some(window_id))
+        else {
+            return;
+        };
+
+        let mut rect = state.rects.remove(position);
+        rect.index = state.rects.len();
+        state.rects.push(rect);
+
+        for (idx, rect) in state.rects.iter_mut().enumerate() {
+            rect.index = idx;
+        }
+        state.current_selection = state
+            .rects
+            .iter()
+            .position(|rect| rect.window_id.as_ref() == Some(window_id));
+        self.view.update_state(&state);
+
+        if let Some(layer) = self.layer_for_window(window_id) {
+            self.window_selector_windows_container.add_sublayer(&layer);
+        }
     }
 
     fn record_cursor_location(&self, location: (f32, f32)) {
@@ -275,7 +311,7 @@ impl WindowSelectorView {
     }
 
     fn preview_scale(&self) -> f32 {
-        let workspace_width = self.layer.render_size().x.max(1.0);
+        let workspace_width = self.window_selector_root.render_size().x.max(1.0);
         WORKSPACE_SELECTOR_PREVIEW_WIDTH / workspace_width
     }
 
@@ -301,16 +337,13 @@ impl WindowSelectorView {
         let mut drag_state = self.drag_state.write().unwrap();
         let state = drag_state.take()?;
 
-        state.window_layer.set_position(
-            state.original_position,
-            Some(Transition::ease_out_quad(0.12)),
-        );
-        state
+        // Reattach the dragged preview to the window selector container immediately.
+        // The expose re-layout animation will then move/scale all windows (including this one)
+        // in a single synchronized transition.
+        let restored_position = state
             .window_layer
-            .set_scale(state.original_scale, Some(Transition::ease_out_quad(0.12)));
-        state
-            .window_layer
-            .set_anchor_point(state.original_anchor, Some(Transition::ease_out_quad(0.12)));
+            .set_anchor_point_preserving_position(state.original_anchor);
+        state.window_layer.set_position(restored_position, None);
         state.original_parent.add_sublayer(&state.window_layer);
 
         Some(state)
@@ -462,7 +495,7 @@ impl WindowSelectorView {
             original_position,
             original_scale,
             original_anchor,
-            original_parent: self.windows_layer.clone(),
+            original_parent: self.window_selector_windows_container.clone(),
             current_drop_target: None,
         };
 
@@ -539,8 +572,7 @@ pub fn view_window_selector(
         .map(|(window_selection, _)| window_selection.clone());
 
     let draw_container = Some(move |canvas: &skia::Canvas, w, h| {
-        if window_selection.is_some() {
-            let window_selection = window_selection.as_ref().unwrap();
+        if let Some(window_selection) = window_selection.as_ref() {
             let color = crate::theme::accent_color().c4f();
             let mut paint = skia::Paint::new(color, None);
             paint.set_stroke(true);
@@ -739,14 +771,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
     }
 
     fn is_alive(&self) -> bool {
-        !self
-            .view
-            .layer
-            .read()
-            .unwrap()
-            .as_ref()
-            .map(|l| l.hidden())
-            .unwrap_or(true)
+        !self.window_selector_root.hidden()
     }
     fn on_motion(
         &self,
@@ -755,7 +780,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
         event: &smithay::input::pointer::MotionEvent,
     ) {
         // println!("on_motion");
-        let mut state = self.view.get_state().clone();
+        let state = self.view.get_state().clone();
         let screen_scale = Config::with(|config| config.screen_scale);
         let location = event.location.to_physical(screen_scale);
         let cursor_point = (location.x as f32, location.y as f32);
@@ -843,30 +868,46 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
                 }
             }
         }
-        let rect = state
+        let previous_selection = state.current_selection;
+        let hovered_selection = state
             .rects
             .iter()
             .find(|rect| {
-                if rect.x < location.x as f32
+                rect.x < location.x as f32
                     && rect.x + rect.w > location.x as f32
                     && rect.y < location.y as f32
                     && rect.y + rect.h > location.y as f32
-                {
-                    state.current_selection = Some(rect.index);
-                    let cursor = CursorImageStatus::Named(CursorIcon::Pointer);
-                    otto.set_cursor(&cursor);
-                    true
-                } else {
-                    let cursor = CursorImageStatus::Named(CursorIcon::default());
-                    otto.set_cursor(&cursor);
-                    false
-                }
             })
             .map(|x| x.index);
 
+        if hovered_selection.is_some() {
+            let cursor = CursorImageStatus::Named(CursorIcon::Pointer);
+            otto.set_cursor(&cursor);
+        } else {
+            let cursor = CursorImageStatus::Named(CursorIcon::default());
+            otto.set_cursor(&cursor);
+        }
+
+        if hovered_selection != previous_selection {
+            if let Some(index) = hovered_selection {
+                if let Some(window_id) = state
+                    .rects
+                    .get(index)
+                    .and_then(|rect| rect.window_id.clone())
+                {
+                    self.bring_window_to_front(&window_id);
+                    return;
+                }
+            } else {
+                // Cursor moved off all windows — explicitly clear selection.
+                self.clear_selection();
+                return;
+            }
+        }
+
         self.view.update_state(&WindowSelectorState {
             rects: state.rects,
-            current_selection: rect,
+            current_selection: hovered_selection,
         });
     }
     fn on_button(
@@ -877,6 +918,8 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
     ) {
         match event.state {
             ButtonState::Pressed => {
+                // Start a potential click/drag gesture: remember current pointer position
+                // and the item that was selected at press time.
                 self.pointer_down.store(true, Ordering::SeqCst);
                 let pointer_location = self.current_pointer_or_default(otto);
                 *self.press_location.write().unwrap() = Some(pointer_location);
@@ -889,10 +932,13 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
                 if let Some(selection) = selection {
                     *self.pressed_selection.write().unwrap() = Some(selection);
                 } else {
+                    // Pressed outside any selection: clear press context so motion/release
+                    // cannot accidentally act on stale state.
                     self.clear_press_context();
                 }
             }
             ButtonState::Released => {
+                // End of gesture. If a drag is active, resolve drop/restore first.
                 self.pointer_down.store(false, Ordering::SeqCst);
                 let was_dragging = self.drag_state.read().unwrap().is_some();
 
@@ -904,6 +950,8 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
                         otto.workspaces.workspace_selector_view.set_drop_hover(None);
 
                         if let Some(target_workspace) = drop_target {
+                            // Valid drop target: move the real window to the target workspace,
+                            // then refresh expose previews.
                             let target_pos = otto
                                 .workspaces
                                 .workspace_position_by_view_index(target_workspace);
@@ -954,11 +1002,11 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
                                 "Expose drop: no target workspace, restoring window {:?} to original position",
                                 drag_state.window_id
                             );
-                            // No drop target - restore to original position
+                            // No drop target: restore the dragged item in state and trigger
+                            // a single expose re-layout animation for all previews in sync.
                             self.restore_rect_to_state(drag_state.selection.clone());
                             self.restore_layer_order_from_state();
-                            otto.workspaces
-                                .end_window_selector_drag(&drag_state.window_id);
+                            *otto.workspaces.expose_dragged_window.lock().unwrap() = None;
                             otto.workspaces.expose_update_if_needed();
                         }
                     }
@@ -966,18 +1014,21 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
                     otto.set_cursor(&CursorImageStatus::default_named());
                     return;
                 }
+                // Not dragging: treat release as click-to-focus on the currently hovered preview.
                 self.clear_press_context();
 
                 let selector_state = self.view.get_state();
                 if let Some(index) = selector_state.current_selection {
                     if let Some(window_selection) = selector_state.rects.get(index) {
                         if let Some(wid) = window_selection.window_id.clone() {
-                            otto.workspaces.focus_app_with_window(&wid);
-                            otto.set_keyboard_focus_on_surface(&wid);
+                            // Keep clicked selection on top in expose order, then let the
+                            // centralized close path commit ordering and focus top window.
+                            self.bring_window_to_front(&wid);
                         }
                     }
                 }
-                otto.workspaces.expose_set_visible(false);
+                // Exit expose mode after click handling and clear selector highlight.
+                otto.close_expose_show_all_and_focus_top();
                 otto.set_cursor(&CursorImageStatus::default_named());
                 let state = WindowSelectorState {
                     current_selection: None,

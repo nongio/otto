@@ -1,8 +1,10 @@
 use std::{cell::RefCell, os::unix::io::OwnedFd};
 
+use layers::prelude::Transition;
 use smithay::{
-    desktop::{space::SpaceElement, Window, WindowSurface},
+    desktop::WindowSurface,
     input::pointer::Focus,
+    reexports::wayland_server::Resource,
     utils::{Logical, Rectangle, SERIAL_COUNTER},
     wayland::{
         compositor::with_states,
@@ -28,8 +30,8 @@ use tracing::{error, trace};
 use crate::{focus::KeyboardFocusTarget, state::Backend, Otto};
 
 use super::{
-    place_new_window, FullscreenSurface, PointerMoveSurfaceGrab, PointerResizeSurfaceGrab,
-    ResizeData, ResizeState, SurfaceData, TouchMoveSurfaceGrab, WindowElement,
+    FullscreenSurface, PointerMoveSurfaceGrab, PointerResizeSurfaceGrab, ResizeData, ResizeState,
+    SurfaceData, TouchMoveSurfaceGrab,
 };
 
 #[derive(Debug, Default)]
@@ -54,35 +56,39 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
 
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
         window.set_mapped(true).unwrap();
-        let window = WindowElement(Window::new_x11_window(window));
-        place_new_window(
-            &mut self.space,
-            self.pointer.current_location(),
-            &window,
-            true,
-        );
-        let bbox = self.space.element_bbox(&window).unwrap();
-        let Some(xsurface) = window.0.x11_surface() else {
-            unreachable!()
-        };
-        xsurface.configure(Some(bbox)).unwrap();
-        // window.set_ssd(!xsurface.is_decorated());
+        // Actual mapping deferred to XWaylandShellHandler::surface_associated,
+        // which fires once the wl_surface association is committed and wl_surface() is valid.
     }
 
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
-        let location = window.geometry().loc;
-        let window = WindowElement(Window::new_x11_window(window));
-        self.space.map_element(window, location, true);
+        tracing::debug!(
+            "x11::mapped_override_redirect_window: geometry={:?} title={:?} (deferring to surface_associated)",
+            window.geometry(),
+            window.title()
+        );
+        // Do not map here: wl_surface is not yet available, so window_element.id() would panic.
+        // Actual mapping is done in XWaylandShellHandler::surface_associated when the wl_surface
+        // is associated, which handles both regular and override-redirect windows.
     }
 
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
-        let maybe = self
-            .space
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
-            .cloned();
+        let maybe = self.workspaces.space().and_then(|s| {
+            s.elements()
+                .find(|e| {
+                    if let WindowSurface::X11(x) = e.underlying_surface() {
+                        x == &window
+                    } else {
+                        false
+                    }
+                })
+                .cloned()
+        });
         if let Some(elem) = maybe {
-            self.space.unmap_elem(&elem)
+            if let Some(surface) = elem.wl_surface() {
+                self.workspaces.unmap_window(&surface.as_ref().id());
+            } else if let Some(space) = self.workspaces.space_mut() {
+                space.unmap_elem(&elem);
+            }
         }
         if !window.is_override_redirect() {
             window.set_mapped(false).unwrap();
@@ -119,17 +125,19 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
         geometry: Rectangle<i32, Logical>,
         _above: Option<u32>,
     ) {
-        let Some(elem) = self
-            .space
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
-            .cloned()
-        else {
+        tracing::debug!(
+            "x11::configure_notify: geometry={:?} title={:?}",
+            geometry,
+            window.title()
+        );
+        let Some(elem) = self.workspaces.space().and_then(|s| {
+            s.elements()
+                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
+                .cloned()
+        }) else {
             return;
         };
-        self.space.map_element(elem, geometry.loc, false);
-        // TODO: We don't properly handle the order of override-redirect windows here,
-        //       they are always mapped top and then never reordered.
+        self.workspaces.map_window(&elem, geometry.loc, false, None);
     }
 
     fn maximize_request(&mut self, _xwm: XwmId, window: X11Surface) {
@@ -137,12 +145,11 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
     }
 
     fn unmaximize_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        let Some(elem) = self
-            .space
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
-            .cloned()
-        else {
+        let Some(elem) = self.workspaces.space().and_then(|s| {
+            s.elements()
+                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
+                .cloned()
+        }) else {
             return;
         };
 
@@ -152,66 +159,200 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
             .get::<OldGeometry>()
             .and_then(|data| data.restore())
         {
+            tracing::debug!(
+                "x11::unmaximize_request: restoring to old_geo={:?} title={:?}",
+                old_geo,
+                window.title()
+            );
             window.configure(old_geo).unwrap();
-            self.space.map_element(elem, old_geo.loc, false);
+            self.workspaces
+                .map_window(&elem, old_geo.loc, false, Some(Transition::ease_out(0.3)));
         }
     }
 
     fn fullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        if let Some(elem) = self
-            .space
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
-        {
-            let outputs_for_window = self.space.outputs_for_element(elem);
-            let output = outputs_for_window
-                .first()
-                // The window hasn't been mapped yet, use the primary output instead
-                .or_else(|| self.space.outputs().next())
-                // Assumes that at least one output exists
-                .expect("No outputs found");
-            let geometry = self.space.output_geometry(output).unwrap();
+        let Some(elem) = self.workspaces.space().and_then(|s| {
+            s.elements()
+                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
+                .cloned()
+        }) else {
+            return;
+        };
 
-            window.set_fullscreen(true).unwrap();
-            // elem.set_ssd(false);
-            window.configure(geometry).unwrap();
-            output
-                .user_data()
-                .insert_if_missing(FullscreenSurface::default);
+        if elem.is_fullscreen() {
+            return;
+        }
+
+        // Guard: don't stack fullscreen transitions
+        let mut i = 0;
+        while let Some(ws) = self.workspaces.get_workspace_at(i) {
+            if ws.get_fullscreen_animating() {
+                return;
+            }
+            i += 1;
+        }
+
+        let outputs_for_window = self.workspaces.outputs_for_element(&elem);
+        let output = outputs_for_window
+            .first()
+            .or_else(|| self.workspaces.outputs().next())
+            .expect("No outputs found")
+            .clone();
+        let geometry = self.workspaces.output_geometry(&output).unwrap();
+
+        // Tell the X11 window its new size immediately
+        window.set_fullscreen(true).unwrap();
+        window.configure(geometry).unwrap();
+
+        tracing::debug!(
+            "x11::fullscreen_request: title={:?} output_geometry={:?} output={}",
+            window.title(),
+            geometry,
+            output.name(),
+        );
+
+        // Register for direct scanout path
+        output
+            .user_data()
+            .insert_if_missing(FullscreenSurface::default);
+        output
+            .user_data()
+            .get::<FullscreenSurface>()
+            .unwrap()
+            .set(elem.clone());
+
+        self.backend_data.reset_buffers(&output);
+
+        // Allocate a new dedicated workspace, mirror the XDG fullscreen flow
+        let current_workspace_index = self.workspaces.get_current_workspace_index();
+        let (next_workspace_index, next_workspace) = self.workspaces.get_next_free_workspace();
+        next_workspace.set_fullscreen_mode(true);
+        next_workspace.set_name(Some(window.title()));
+
+        elem.set_fullscreen(true, next_workspace_index);
+
+        self.workspaces.expose_set_visible(false);
+        self.workspaces.set_fullscreen_overlay_visibility(true);
+        self.workspaces
+            .move_window_to_workspace(&elem, next_workspace_index, (0, 0));
+        elem.set_workspace(current_workspace_index);
+        self.workspaces
+            .set_current_workspace_index(next_workspace_index, None);
+
+        trace!("Fullscreening X11: {:?}", elem);
+    }
+
+    fn unfullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        let Some(elem) = self.workspaces.space().and_then(|s| {
+            s.elements()
+                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
+                .cloned()
+        }) else {
+            return;
+        };
+
+        if !elem.is_fullscreen() {
+            return;
+        }
+
+        // Clear direct-scanout registration
+        if let Some(output) = self
+            .workspaces
+            .outputs()
+            .find(|o| {
+                o.user_data()
+                    .get::<FullscreenSurface>()
+                    .and_then(|f| f.get())
+                    .map(|w| w == elem)
+                    .unwrap_or(false)
+            })
+            .cloned()
+        {
             output
                 .user_data()
                 .get::<FullscreenSurface>()
                 .unwrap()
-                .set(elem.clone());
-            trace!("Fullscreening: {:?}", elem);
+                .clear();
+            self.backend_data.reset_buffers(&output);
         }
-    }
 
-    fn unfullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        if let Some(elem) = self
-            .space
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
-        {
-            window.set_fullscreen(false).unwrap();
-            // elem.set_ssd(!window.is_decorated());
-            if let Some(output) = self.space.outputs().find(|o| {
-                o.user_data()
-                    .get::<FullscreenSurface>()
-                    .and_then(|f| f.get())
-                    .map(|w| &w == elem)
-                    .unwrap_or(false)
-            }) {
-                trace!("Unfullscreening: {:?}", elem);
-                output
-                    .user_data()
-                    .get::<FullscreenSurface>()
-                    .unwrap()
-                    .clear();
-                window.configure(self.space.element_bbox(elem)).unwrap();
-                self.backend_data.reset_buffers(output);
-            }
+        let prev_workspace = elem.get_workspace();
+        let fullscreen_workspace_index = self.workspaces.get_current_workspace_index();
+
+        if let Some(workspace) = self.workspaces.get_current_workspace() {
+            workspace.set_fullscreen_mode(false);
+            workspace.set_fullscreen_animating(false);
         }
+
+        elem.set_fullscreen(false, 0);
+        window.set_fullscreen(false).unwrap();
+
+        let restore_loc = self
+            .workspaces
+            .get_window_view(&elem.id())
+            .map(|v| v.unmaximised_rect.loc)
+            .unwrap_or_default();
+
+        let transition = Transition::ease_in_out_quad(1.4);
+
+        self.workspaces
+            .move_window_to_workspace(&elem, prev_workspace, restore_loc);
+        self.workspaces
+            .set_current_workspace_index(prev_workspace, Some(transition));
+
+        // Remove workspace BEFORE calling expose_set_visible so that its on_finish
+        // callback doesn't capture freed layer nodes from the fullscreen workspace.
+        self.workspaces
+            .remove_workspace_at(fullscreen_workspace_index);
+
+        self.workspaces.expose_set_visible(false);
+        self.workspaces.set_fullscreen_overlay_visibility(false);
+        self.workspaces.dock.show(None);
+
+        // Park the window layer under dnd_view before removing the fullscreen workspace,
+        // then animate it to the restored position and re-parent it to the workspace on finish.
+        // This mirrors the XDG unfullscreen flow and prevents freed-node panics from pending
+        // transaction callbacks still holding references to the removed workspace's layers.
+        if let Some(view) = self.workspaces.get_window_view(&elem.id()) {
+            let scale = self
+                .workspaces
+                .outputs_for_element(&elem)
+                .first()
+                .map(|o| o.current_scale().fractional_scale())
+                .unwrap_or(1.0);
+            let position = restore_loc.to_f64().to_physical(scale);
+
+            let target_workspace = self.workspaces.get_workspace_at(prev_workspace);
+            let workspace_layer = target_workspace.map(|ws| ws.windows_layer.clone());
+
+            self.workspaces
+                .dnd_view
+                .layer
+                .add_sublayer(&view.window_layer);
+
+            view.window_layer
+                .set_position(
+                    layers::types::Point {
+                        x: position.x as f32,
+                        y: position.y as f32,
+                    },
+                    Some(transition),
+                )
+                .on_finish(
+                    move |l: &layers::prelude::Layer, _| {
+                        if let Some(wl) = workspace_layer.as_ref() {
+                            wl.add_sublayer(l);
+                        }
+                    },
+                    true,
+                );
+        }
+
+        // Tell X11 app its restored size
+        let bbox = self.workspaces.space().and_then(|s| s.element_bbox(&elem));
+        window.configure(bbox).unwrap();
+
+        trace!("Unfullscreening X11: {:?}", elem);
     }
 
     fn resize_request(
@@ -221,19 +362,18 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
         _button: u32,
         edges: X11ResizeEdge,
     ) {
-        // luckily anvil only supports one seat anyway...
         let start_data = self.pointer.grab_start_data().unwrap();
 
-        let Some(element) = self
-            .space
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
-        else {
+        let Some(element) = self.workspaces.space().and_then(|s| {
+            s.elements()
+                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
+                .cloned()
+        }) else {
             return;
         };
 
         let geometry = element.geometry();
-        let loc = self.space.element_location(element).unwrap();
+        let loc = self.workspaces.element_location(&element).unwrap();
         let (initial_window_location, initial_window_size) = (loc, geometry.size);
 
         with_states(&element.wl_surface().unwrap(), move |states| {
@@ -338,24 +478,33 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
 
 impl<BackendData: Backend> Otto<BackendData> {
     pub fn maximize_request_x11(&mut self, window: &X11Surface) {
-        let Some(elem) = self
-            .space
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == window))
-            .cloned()
-        else {
+        let Some(elem) = self.workspaces.space().and_then(|s| {
+            s.elements()
+                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == window))
+                .cloned()
+        }) else {
             return;
         };
 
-        let old_geo = self.space.element_bbox(&elem).unwrap();
-        let outputs_for_window = self.space.outputs_for_element(&elem);
+        let old_geo = self
+            .workspaces
+            .space()
+            .and_then(|s| s.element_bbox(&elem))
+            .unwrap();
+        let outputs_for_window = self.workspaces.outputs_for_element(&elem);
         let output = outputs_for_window
             .first()
-            // The window hasn't been mapped yet, use the primary output instead
-            .or_else(|| self.space.outputs().next())
-            // Assumes that at least one output exists
-            .expect("No outputs found");
-        let geometry = self.space.output_geometry(output).unwrap();
+            .or_else(|| self.workspaces.outputs().next())
+            .expect("No outputs found")
+            .clone();
+        let geometry = self.workspaces.output_geometry(&output).unwrap();
+
+        tracing::debug!(
+            "x11::maximize_request: title={:?} old_geo={:?} new_geometry={:?}",
+            window.title(),
+            old_geo,
+            geometry
+        );
 
         window.set_maximized(true).unwrap();
         window.configure(geometry).unwrap();
@@ -365,16 +514,16 @@ impl<BackendData: Backend> Otto<BackendData> {
             .get::<OldGeometry>()
             .unwrap()
             .save(old_geo);
-        self.space.map_element(elem, geometry.loc, false);
+        self.workspaces
+            .map_window(&elem, geometry.loc, false, Some(Transition::ease_out(0.3)));
     }
 
     pub fn unmaximize_request_x11(&mut self, window: &X11Surface) {
-        let Some(elem) = self
-            .space
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == window))
-            .cloned()
-        else {
+        let Some(elem) = self.workspaces.space().and_then(|s| {
+            s.elements()
+                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == window))
+                .cloned()
+        }) else {
             return;
         };
 
@@ -384,8 +533,14 @@ impl<BackendData: Backend> Otto<BackendData> {
             .get::<OldGeometry>()
             .and_then(|data| data.restore())
         {
+            tracing::debug!(
+                "x11::unmaximize_request_x11: restoring to old_geo={:?} title={:?}",
+                old_geo,
+                window.title()
+            );
             window.configure(old_geo).unwrap();
-            self.space.map_element(elem, old_geo.loc, false);
+            self.workspaces
+                .map_window(&elem, old_geo.loc, false, Some(Transition::ease_out(0.3)));
         }
     }
 
@@ -393,24 +548,29 @@ impl<BackendData: Backend> Otto<BackendData> {
         if let Some(touch) = self.seat.get_touch() {
             if let Some(start_data) = touch.grab_start_data() {
                 let element = self
-                    .space
-                    .elements()
-                    .find(|e| matches!(e.0.x11_surface(), Some(w) if w == window));
+                    .workspaces
+                    .space()
+                    .and_then(|s| {
+                        s.elements()
+                            .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == window))
+                            .cloned()
+                    });
 
                 if let Some(element) = element {
-                    let mut initial_window_location = self.space.element_location(element).unwrap();
+                    let mut initial_window_location =
+                        self.workspaces.element_location(&element).unwrap();
 
-                    // If surface is maximized then unmaximize it
                     if window.is_maximized() {
-                        // Get current maximized geometry before unmaximizing
-                        let maximized_geometry = self.space.element_bbox(element).unwrap();
+                        let maximized_geometry = self
+                            .workspaces
+                            .space()
+                            .and_then(|s| s.element_bbox(&element))
+                            .unwrap();
                         let touch_location = start_data.location;
 
-                        // Calculate grab point relative to maximized window
                         let grab_offset_x = touch_location.x - maximized_geometry.loc.x as f64;
                         let grab_offset_y = touch_location.y - maximized_geometry.loc.y as f64;
 
-                        // Calculate grab ratio (0.0 to 1.0)
                         let grab_ratio_x = if maximized_geometry.size.w > 0 {
                             (grab_offset_x / maximized_geometry.size.w as f64).clamp(0.0, 1.0)
                         } else {
@@ -429,24 +589,18 @@ impl<BackendData: Backend> Otto<BackendData> {
                             .get::<OldGeometry>()
                             .and_then(|data| data.restore())
                         {
-                            // Calculate new grab offset based on restored size
                             let new_grab_offset_x = grab_ratio_x * old_geo.size.w as f64;
                             let new_grab_offset_y = grab_ratio_y * old_geo.size.h as f64;
 
-                            // Position window so grab point stays under touch point
                             let new_x = touch_location.x - new_grab_offset_x;
                             let new_y = touch_location.y - new_grab_offset_y;
 
                             initial_window_location = (new_x as i32, new_y as i32).into();
 
                             window
-                                .configure(Rectangle::new(
-                                    initial_window_location.into(),
-                                    old_geo.size,
-                                ))
+                                .configure(Rectangle::new(initial_window_location, old_geo.size))
                                 .unwrap();
                         } else {
-                            // Fallback: use touch location if no old geometry
                             let pos = start_data.location;
                             initial_window_location = (pos.x as i32, pos.y as i32).into();
                         }
@@ -464,32 +618,31 @@ impl<BackendData: Backend> Otto<BackendData> {
             }
         }
 
-        // luckily anvil only supports one seat anyway...
         let Some(start_data) = self.pointer.grab_start_data() else {
             return;
         };
 
-        let Some(element) = self
-            .space
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == window))
-        else {
+        let Some(element) = self.workspaces.space().and_then(|s| {
+            s.elements()
+                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == window))
+                .cloned()
+        }) else {
             return;
         };
 
-        let mut initial_window_location = self.space.element_location(element).unwrap();
+        let mut initial_window_location = self.workspaces.element_location(&element).unwrap();
 
-        // If surface is maximized then unmaximize it
         if window.is_maximized() {
-            // Get current maximized geometry before unmaximizing
-            let maximized_geometry = self.space.element_bbox(element).unwrap();
+            let maximized_geometry = self
+                .workspaces
+                .space()
+                .and_then(|s| s.element_bbox(&element))
+                .unwrap();
             let pointer_location = self.pointer.current_location();
 
-            // Calculate grab point relative to maximized window
             let grab_offset_x = pointer_location.x - maximized_geometry.loc.x as f64;
             let grab_offset_y = pointer_location.y - maximized_geometry.loc.y as f64;
 
-            // Calculate grab ratio (0.0 to 1.0)
             let grab_ratio_x = if maximized_geometry.size.w > 0 {
                 (grab_offset_x / maximized_geometry.size.w as f64).clamp(0.0, 1.0)
             } else {
@@ -508,21 +661,18 @@ impl<BackendData: Backend> Otto<BackendData> {
                 .get::<OldGeometry>()
                 .and_then(|data| data.restore())
             {
-                // Calculate new grab offset based on restored size
                 let new_grab_offset_x = grab_ratio_x * old_geo.size.w as f64;
                 let new_grab_offset_y = grab_ratio_y * old_geo.size.h as f64;
 
-                // Position window so grab point stays under cursor
                 let new_x = pointer_location.x - new_grab_offset_x;
                 let new_y = pointer_location.y - new_grab_offset_y;
 
                 initial_window_location = (new_x as i32, new_y as i32).into();
 
                 window
-                    .configure(Rectangle::new(initial_window_location.into(), old_geo.size))
+                    .configure(Rectangle::new(initial_window_location, old_geo.size))
                     .unwrap();
             } else {
-                // Fallback: use pointer location if no old geometry
                 let pos = self.pointer.current_location();
                 initial_window_location = (pos.x as i32, pos.y as i32).into();
             }

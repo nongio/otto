@@ -1,7 +1,7 @@
 use std::sync::{atomic::AtomicBool, Arc};
 
 use layers::{
-    engine::animation::{TimingFunction, Transition},
+    engine::animation::{Spring, TimingFunction, Transition},
     prelude::{taffy, BorderRadius, Layer, LayerTree, LayerTreeBuilder, Point, View},
     taffy::style::Style,
     types::{BlendMode, Size},
@@ -106,7 +106,7 @@ impl ContextMenuView {
             1.0,
             Some(Transition {
                 delay: 0.0,
-                timing: TimingFunction::ease_out_quad(0.15),
+                timing: TimingFunction::Spring(Spring::with_duration_and_bounce(0.05, 0.0)),
             }),
         );
     }
@@ -120,7 +120,7 @@ impl ContextMenuView {
                 0.0,
                 Some(Transition {
                     delay: 0.0,
-                    timing: TimingFunction::ease_in_quad(0.05),
+                    timing: TimingFunction::Spring(Spring::with_duration_and_bounce(0.10, 0.0)),
                 }),
             )
             .on_finish(

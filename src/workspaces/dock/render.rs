@@ -114,7 +114,7 @@ pub fn setup_progress_layer(layer: &Layer, icon_width: f32) {
     let bar_width = icon_width * 0.78;
     let bar_height = icon_width * 0.062;
     // 3% margin from the bottom edge of the square icon_stack.
-    let pos_y = icon_width - bar_height + (icon_width * 0.01);
+    let pos_y = icon_width - bar_height;
     let pos_x = (icon_width - bar_width) / 2.0;
     let tree = LayerTreeBuilder::default()
         .key("progress")
@@ -150,7 +150,7 @@ pub fn setup_app_icon(
     // to keep the public signature stable — running indicator is a separate layer.
     let _ = running;
     let draw_picture = Some(draw_app_icon(&application));
-    let height_padding = icon_width * 0.20;
+    let _height_padding = icon_width * 0.20;
     let container_tree = LayerTreeBuilder::default()
         .key(app_name)
         .layout_style(taffy::Style {
@@ -166,9 +166,9 @@ pub fn setup_app_icon(
             Size {
                 width: taffy::Dimension::Length(icon_width),
                 // Outer container keeps height_padding for the running indicator dot.
-                height: taffy::Dimension::Length(icon_width + height_padding),
+                height: taffy::Dimension::Percent(1.0),
             },
-            Some(Transition::ease_in_quad(0.2)),
+            None,
         ))
         .picture_cached(false)
         .image_cache(false)

@@ -12,7 +12,7 @@ pub fn layout_metrics(state: &AppSwitcherModel) -> (f32, f32, f32, f32, f32, f32
     let icon_size: f32 = 160.0 * draw_scale;
     let icon_padding: f32 = available_width * 0.006 * draw_scale;
     let gap: f32 = icon_padding / 2.0;
-    let apps_len = state.apps.len().max(1) as f32;
+    let apps_len = state.apps.len() as f32;
     let total_gaps = (apps_len - 1.0) * gap;
     let total_padding = apps_len * icon_padding * 2.0 + total_gaps;
 

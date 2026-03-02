@@ -19,16 +19,11 @@ pub use gen::otto_style_transaction_v1::OttoStyleTransactionV1 as ZTransactionV1
 pub use gen::otto_surface_style_v1::OttoSurfaceStyleV1 as ZSurfaceStyleV1;
 
 /// Z-order configuration for surface style relative to parent surface content
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OttoSurfaceStyleZOrder {
     BelowSurface,
+    #[default]
     AboveSurface,
-}
-
-impl Default for OttoSurfaceStyleZOrder {
-    fn default() -> Self {
-        Self::AboveSurface
-    }
 }
 
 /// Compositor-side layer state (pure augmentation, no wl_surface)
