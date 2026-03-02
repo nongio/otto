@@ -953,7 +953,7 @@ impl DockView {
     fn magnify_elements_with_scale(
         &self,
         scale_override: Option<f64>,
-        transtion: Option<Transition>,
+        transition: Option<Transition>,
     ) {
         let magnification_enabled = self
             .magnification_enabled
@@ -994,7 +994,7 @@ impl DockView {
         let tot_elements = apps_len + windows_len;
 
         let animation =
-            transtion.map(|t| self.layers_engine.add_animation_from_transition(&t, false));
+            transition.map(|t| self.layers_engine.add_animation_from_transition(&t, false));
         let mut changes = Vec::new();
         let genie_scale =
             scale_override.unwrap_or_else(|| self.dock_config.read().unwrap().genie_scale);
