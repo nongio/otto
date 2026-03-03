@@ -570,6 +570,11 @@ impl Workspaces {
             return false;
         }
 
+        // Check if OSD (volume/brightness) is visible
+        if self.osd.is_visible() {
+            return false;
+        }
+
         // Check if workspace is animating
         if self.is_animating.load(std::sync::atomic::Ordering::Relaxed) {
             return false;
