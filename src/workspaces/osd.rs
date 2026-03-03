@@ -155,6 +155,11 @@ impl OsdView {
                 true,
             );
     }
+    /// Returns true if the OSD is currently visible (not hidden)
+    pub fn is_visible(&self) -> bool {
+        !self.wrap_layer.hidden()
+    }
+
     /// Hide the OSD
     pub fn hide(&self) {
         let w = self.wrap_layer.clone();
@@ -252,7 +257,7 @@ pub fn view_osd(state: &OsdViewState, _view: &View<OsdViewState>) -> LayerTree {
     };
     let scale_factor = crate::config::Config::with(|c| c.screen_scale) as f32;
     LayerTreeBuilder::default()
-        .key("osd_container")
+        .key("osd_view")
         .size((Size::percent(1.0, 1.0), None))
         .layout_style(taffy::style::Style {
             display: taffy::style::Display::Flex,
