@@ -135,6 +135,10 @@ impl Backend for UdevData {
     fn set_cursor(&mut self, _image: &CursorImageStatus) {
         // No-op: cursor rendering handled directly in render_surface
     }
+    fn request_redraw(&mut self) {
+        self.render_requested
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
     fn renderer_context(&mut self) -> Option<layers::skia::gpu::DirectContext> {
         let r = self.gpus.single_renderer(&self.primary_gpu).unwrap();
         let r = r.as_ref();

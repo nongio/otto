@@ -3,7 +3,7 @@
 // Handles session setup, GPU initialization, libinput configuration,
 // and the main event loop for the udev backend.
 
-use std::{collections::HashMap, sync::atomic::Ordering, time::Duration};
+use std::{collections::HashMap, sync::atomic::{AtomicBool, Ordering}, time::Duration};
 
 use smithay::{
     backend::{
@@ -258,6 +258,7 @@ pub fn run_udev() {
         fps_texture: None,
 
         context_id: None, // Will be set after device initialization
+        render_requested: AtomicBool::new(false),
     };
     let mut state = Otto::init(display, event_loop.handle(), data, true);
 
@@ -294,7 +295,11 @@ pub fn run_udev() {
         .handle()
         .insert_source(libinput_backend, move |event, _, data| {
             let dh = data.backend_data.dh.clone();
-            data.process_input_event(&dh, event)
+            data.process_input_event(&dh, event);
+            // Input may move the cursor or trigger visual changes — request a render.
+            data.backend_data
+                .render_requested
+                .store(true, std::sync::atomic::Ordering::Release);
         })
         .unwrap();
 
@@ -577,14 +582,55 @@ pub fn run_udev() {
 
     // FIXME: check if we can delay this
     while state.running.load(Ordering::SeqCst) {
-        let result = event_loop.dispatch(Some(Duration::from_millis(16)), &mut state);
+        // Use tight timing when animations are active or the idle countdown
+        // is still running (recent input/damage keeps us at frame rate).
+        let has_animations = state.scene_element.has_pending_animations();
+        let has_active_countdown = state
+            .backend_data
+            .backends
+            .values()
+            .flat_map(|d| d.surfaces.values())
+            .any(|s| s.idle_countdown > 0);
+        let dispatch_timeout = if has_animations || has_active_countdown {
+            Some(Duration::from_millis(1))
+        } else {
+            Some(Duration::from_secs(1))
+        };
+
+        let result = event_loop.dispatch(dispatch_timeout, &mut state);
         if result.is_err() {
             state.running.store(false, Ordering::SeqCst);
         } else {
+            // If a redraw was requested (e.g. client commit, input), reset
+            // idle countdowns. Only trigger an explicit render() when fully
+            // idle (countdown was 0) to kick-start the render loop; otherwise
+            // the existing reschedule timer will pick it up — calling render()
+            // while a timer is pending causes double-renders and stuttering.
+            let was_requested = state
+                .backend_data
+                .render_requested
+                .swap(false, Ordering::AcqRel);
+            if was_requested {
+                let was_idle = state
+                    .backend_data
+                    .backends
+                    .values()
+                    .flat_map(|d| d.surfaces.values())
+                    .all(|s| s.idle_countdown == 0);
+                for device in state.backend_data.backends.values_mut() {
+                    for surface in device.surfaces.values_mut() {
+                        surface.idle_countdown = 30;
+                    }
+                }
+                if was_idle {
+                    let device_nodes: Vec<_> =
+                        state.backend_data.backends.keys().copied().collect();
+                    for node in device_nodes {
+                        state.render(node, None);
+                    }
+                }
+            }
             display_handle.flush_clients().unwrap();
-            // Log rendering metrics periodically
-            #[cfg(feature = "metrics")]
-            state.render_metrics.maybe_log_stats(false);
         }
     }
 }
