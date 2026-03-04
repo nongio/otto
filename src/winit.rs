@@ -8,7 +8,7 @@ use once_cell::sync::Lazy;
 #[cfg(feature = "perf-counters")]
 use std::sync::atomic::AtomicU64;
 #[cfg(feature = "perf-counters")]
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;

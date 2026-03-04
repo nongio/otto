@@ -123,6 +123,10 @@ impl SceneElement {
         self.engine.scene_set_size(width, height);
         self.size = (width, height);
     }
+    /// Returns true if the scene graph has pending animations/transactions.
+    pub fn has_pending_animations(&self) -> bool {
+        self.engine.pending_transactions_count() > 0
+    }
 }
 
 #[cfg(feature = "perf-counters")]
@@ -288,11 +292,20 @@ impl RenderElement<SkiaRenderer> for SceneElement {
         let mut surface = frame.skia_surface.clone();
 
         let canvas = surface.canvas();
-
+        // canvas.clear(layers::skia::Color::TRANSPARENT);
         let scene = self.engine.scene();
         // Use per-output root if set, otherwise fall back to global scene root.
         let root_id = self.output_root.or_else(|| self.engine.scene_root());
         let save_point = canvas.save();
+
+        // Clip to the output destination rectangle to prevent drawing outside screen bounds.
+        let output_clip = layers::skia::Rect::from_xywh(
+            dst.loc.x as f32,
+            dst.loc.y as f32,
+            dst.size.w as f32,
+            dst.size.h as f32,
+        );
+        canvas.clip_rect(output_clip, Some(layers::skia::ClipOp::Intersect), false);
 
         // If rendering from an output sub-tree, translate so the output_layer's
         // scene-space position maps to (0,0) on the output framebuffer.

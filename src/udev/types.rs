@@ -1,6 +1,7 @@
 use std::collections::hash_map::HashMap;
 #[cfg(feature = "metrics")]
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use smithay::{
     backend::{
@@ -80,6 +81,8 @@ pub struct UdevData {
     #[cfg(feature = "fps_ticker")]
     pub(super) fps_texture: Option<smithay::backend::renderer::multigpu::MultiTexture>,
     pub context_id: Option<ContextId<MultiTexture>>,
+    /// Flag set by `request_redraw` to trigger a render on next loop iteration.
+    pub(super) render_requested: AtomicBool,
 }
 
 /// Per-device backend data
@@ -114,6 +117,13 @@ pub struct SurfaceData {
     /// Rendering metrics
     #[cfg(feature = "metrics")]
     pub(super) render_metrics: Option<Arc<crate::render_metrics::RenderMetrics>>,
+    /// Exponential moving average of render time in microseconds.
+    /// Used to schedule reschedule timers with proper headroom.
+    pub(super) avg_render_time_us: f32,
+    /// Frames remaining before going idle. Reset on activity, counts down
+    /// each no-damage frame so animations that briefly report zero pending
+    /// transactions aren't cut short.
+    pub(super) idle_countdown: u32,
 }
 
 impl Drop for SurfaceData {
