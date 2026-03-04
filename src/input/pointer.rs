@@ -463,6 +463,7 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
 
         let scale = output.current_scale().fractional_scale();
         let pos = pos.to_physical(scale);
+        self.cursor_physical_position = (pos.x, pos.y);
         self.layers_engine
             .pointer_move(&(pos.x as f32, pos.y as f32).into(), None);
 
@@ -589,6 +590,7 @@ impl crate::Otto<crate::udev::UdevData> {
 
         let scale = Config::with(|c| c.screen_scale);
         let pos = pointer_location.to_physical(scale);
+        self.cursor_physical_position = (pos.x, pos.y);
 
         self.layers_engine
             .pointer_move(&(pos.x as f32, pos.y as f32).into(), None);
@@ -664,6 +666,7 @@ impl crate::Otto<crate::udev::UdevData> {
 
         let scale = Config::with(|c| c.screen_scale);
         let pos = pointer_location.to_physical(scale);
+        self.cursor_physical_position = (pos.x, pos.y);
 
         self.layers_engine
             .pointer_move(&(pos.x as f32, pos.y as f32).into(), None);
