@@ -180,9 +180,7 @@ impl<BackendData: Backend> Otto<BackendData> {
     }
 
     pub(crate) fn handle_app_switcher_next_window(&mut self) {
-        if let Some(wid) = self.workspaces.raise_next_app_window() {
-            self.set_keyboard_focus_on_surface(&wid);
-        }
+        self.raise_next_app_window();
     }
 
     pub(crate) fn handle_expose_show_desktop(&mut self) {
