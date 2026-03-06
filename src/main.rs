@@ -42,10 +42,11 @@ async fn main() {
             print_help();
             return;
         }
-        Some(other) if !other.starts_with("--winit")
-            && !other.starts_with("--tty-udev")
-            && !other.starts_with("--probe")
-            && !other.starts_with("--x11") =>
+        Some(other)
+            if !other.starts_with("--winit")
+                && !other.starts_with("--tty-udev")
+                && !other.starts_with("--probe")
+                && !other.starts_with("--x11") =>
         {
             eprintln!("Unknown argument: {}", other);
             eprintln!();
