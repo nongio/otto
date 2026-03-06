@@ -31,7 +31,10 @@ fn find_active_transaction_for_client<BackendData: Backend>(
     state
         .style_transactions
         .iter()
-        .find(|(_, txn)| txn.wl_style_transaction.client().map(|c| c.id()) == Some(client.id()))
+        .find(|(_, txn)| {
+            !txn.committed
+                && txn.wl_style_transaction.client().map(|c| c.id()) == Some(client.id())
+        })
         .map(|(id, _)| id.clone())
 }
 
@@ -42,6 +45,7 @@ fn accumulate_change<BackendData: Backend>(
     change: layers::engine::AnimatedNodeChange,
 ) {
     if let Some(txn) = state.style_transactions.get_mut(&txn_id) {
+        tracing::debug!("accumulate_change: total changes now {}", txn.accumulated_changes.len() + 1);
         txn.accumulated_changes.push(change);
     }
 }
@@ -64,6 +68,8 @@ fn commit_transaction<BackendData: Backend>(
     let Some(txn) = state.style_transactions.get_mut(&txn_id) else {
         return;
     };
+
+    txn.committed = true;
 
     // Use client-configured timing function, or create default from duration
     let mut transition = if let Some(mut trans) = txn.timing_function {
@@ -113,6 +119,21 @@ fn commit_transaction<BackendData: Backend>(
     // Schedule all accumulated changes together
     if !txn.accumulated_changes.is_empty() {
         if let Some(ref trans) = transition {
+            // Collect gravity info for diagnostics (before mutable borrow of state)
+            let gravities: Vec<_> = state
+                .surfaces_style
+                .values()
+                .flatten()
+                .map(|s| (s.wl_style.id(), s.contents_gravity))
+                .collect();
+            tracing::debug!(
+                "Committing animation: {} changes, duration={:?}s, delay={:?}s, timing={:?}, surface_gravities={:?}",
+                txn.accumulated_changes.len(),
+                txn.duration,
+                txn.delay,
+                trans.timing,
+                gravities,
+            );
             // Create animation and store it in the transaction
             let animation = state
                 .layers_engine
@@ -138,6 +159,10 @@ fn commit_transaction<BackendData: Backend>(
 
             state.layers_engine.start_animation(animation, trans.delay);
         } else {
+            tracing::debug!(
+                "Committing {} changes immediately (no animation)",
+                txn.accumulated_changes.len()
+            );
             // No animation - send completion immediately if requested
             if txn.send_completion {
                 if let Some(txn) = state.style_transactions.remove(&txn_id) {
@@ -230,6 +255,8 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleManagerV1, ()> for Otto<Back
                     layer: layer.clone(),
                     surface: surface.clone(),
                     z_order: crate::surface_style::OttoSurfaceStyleZOrder::default(),
+                    contents_gravity: crate::surface_style::ContentsGravity::default(),
+                    client_owns_size: false,
                 };
 
                 // Notify handler
@@ -252,6 +279,7 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleManagerV1, ()> for Otto<Back
                     send_completion: false,
                     accumulated_changes: Vec::new(),
                     animation: None,
+                    committed: false,
                 };
 
                 state.style_transactions.insert(txn_id.clone(), transaction);

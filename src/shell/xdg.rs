@@ -1257,7 +1257,10 @@ impl<BackendData: Backend> Otto<BackendData> {
         let surface_id = surface.id();
 
         if let Some(layer) = self.surface_layers.get(&surface_id) {
-            return layer.clone();
+            if self.layers_engine.is_layer_alive(&layer.id) {
+                return layer.clone();
+            }
+            self.surface_layers.remove(&surface_id);
         }
 
         let key = format!("surface_{:?}", surface_id);

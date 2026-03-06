@@ -29,12 +29,13 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleV1, OttoLayerUserData> for O
     ) {
         let layer_id = layer_obj.id();
 
-        // Find the surface style in any parent's list
+        // Find the surface style in any parent's list — clone it to release the borrow on state
         let surface_style = state
             .surfaces_style
             .values()
             .flat_map(|layers| layers.iter())
-            .find(|layer| layer.wl_style.id() == layer_id);
+            .find(|layer| layer.wl_style.id() == layer_id)
+            .cloned();
 
         let Some(sstyle) = surface_style else {
             tracing::warn!("Layer {:?} not found in state", layer_id);
@@ -63,6 +64,14 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleV1, OttoLayerUserData> for O
             otto_surface_style_v1::Request::SetSize { width, height } => {
                 let width = wl_fixed_to_f32(width);
                 let height = wl_fixed_to_f32(height);
+
+                // Mark that the client now owns the layer bounds
+                let surface_id = sstyle.surface.id();
+                if let Some(style_list) = state.surfaces_style.get_mut(&surface_id) {
+                    if let Some(s) = style_list.iter_mut().find(|l| l.wl_style.id() == layer_id) {
+                        s.client_owns_size = true;
+                    }
+                }
 
                 if let Some(txn_id) = active_transaction {
                     let change = sstyle
@@ -249,6 +258,30 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleV1, OttoLayerUserData> for O
                 };
 
                 sstyle.layer.set_clip_content(masks_to_bounds, None);
+            }
+
+            otto_surface_style_v1::Request::SetContentsGravity { gravity } => {
+                use super::super::protocol::gen::otto_surface_style_v1::ContentsGravity as WlGravity;
+                use crate::surface_style::ContentsGravity;
+
+                let new_gravity = match gravity.into_result().ok() {
+                    Some(WlGravity::Resize) => ContentsGravity::Resize,
+                    Some(WlGravity::ResizeAspect) => ContentsGravity::ResizeAspect,
+                    Some(WlGravity::ResizeAspectFill) => ContentsGravity::ResizeAspectFill,
+                    Some(WlGravity::Center) => ContentsGravity::Center,
+                    Some(WlGravity::TopLeft) => ContentsGravity::TopLeft,
+                    _ => {
+                        tracing::warn!("Invalid contents_gravity value: {:?}", gravity);
+                        return;
+                    }
+                };
+
+                let surface_id = sstyle.surface.id();
+                if let Some(style_list) = state.surfaces_style.get_mut(&surface_id) {
+                    if let Some(s) = style_list.iter_mut().find(|l| l.wl_style.id() == layer_id) {
+                        s.contents_gravity = new_gravity;
+                    }
+                }
             }
 
             otto_surface_style_v1::Request::SetBlendMode { mode } => {
