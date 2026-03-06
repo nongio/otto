@@ -190,11 +190,7 @@ impl crate::Otto<crate::udev::UdevData> {
             .workspace_swipe_end(&output_name, velocity as f32);
 
         // Update keyboard focus to top window of the target workspace
-        if let Some(top_wid) = self.workspaces.get_top_window_of_workspace(target_index) {
-            self.set_keyboard_focus_on_surface(&top_wid);
-        } else {
-            self.clear_keyboard_focus();
-        }
+        self.focus_top_window_or_clear(target_index);
     }
 
     pub(crate) fn on_gesture_pinch_begin<B: InputBackend>(

@@ -669,11 +669,13 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
                 if let (Some(pressed_key), Some(release_key)) = (pressed.clone(), release_key) {
                     if pressed_key == release_key {
                         if release_key == "workspace_selector_desktop_add" {
+                            // Add new workspace
                             otto.workspaces.add_workspace();
                         } else if let Some(index) = release_key
                             .strip_prefix("workspace_selector_desktop_remove_")
                             .and_then(|idx| idx.parse::<usize>().ok())
                         {
+                            // remove workspace with animation, then notify Otto to remove it from state
                             let parent_key = format!("workspace_selector_desktop_{}", index);
                             let wrap_key = format!("workspace_selector_desktop_wrap_{}", index);
                             if let Some(parent_layer) = self.view.layer_by_key(parent_key.as_str())
@@ -702,6 +704,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
                             .strip_prefix("workspace_selector_desktop_")
                             .and_then(|idx| idx.parse::<usize>().ok())
                         {
+                            // Navigate to workspace
                             if let Some(pos) = get_position_worspace_by_index(index) {
                                 otto.set_current_workspace_index(pos);
                             }

@@ -6,8 +6,6 @@
 // - Direct scanout optimization
 // - Screenshare integration
 
-#[cfg(feature = "metrics")]
-use std::sync::Arc;
 use std::{
     io,
     time::{Duration, Instant},
@@ -353,7 +351,15 @@ impl Otto<UdevData> {
         );
 
         let reschedule = match &result {
-            Ok(outcome) => !outcome.rendered,
+            Ok(outcome) => {
+                if outcome.rendered {
+                    // Frame was submitted — VBlank callback will drive the next render.
+                    false
+                } else {
+                    // No damage — defer idle decision to after borrow is released.
+                    true
+                }
+            }
             Err(err) => {
                 // Log as debug for DeviceInactive (expected during suspend), warn for others
                 let is_device_inactive = matches!(
@@ -556,22 +562,59 @@ impl Otto<UdevData> {
             self.update_dnd();
         }
 
+        // Update the running average of render time and idle countdown (EMA with α=0.1)
+        let render_time_us = start.elapsed().as_micros() as f32;
+        let has_animations = self.scene_element.has_pending_animations();
+        let was_rendered = result.as_ref().map(|o| o.rendered).unwrap_or(false);
+        if let Some(device) = self.backend_data.backends.get_mut(&node) {
+            if let Some(surface) = device.surfaces.get_mut(&crtc) {
+                surface.avg_render_time_us =
+                    surface.avg_render_time_us * 0.9 + render_time_us * 0.1;
+                // Reset countdown on any activity: animations, actual frame
+                // submitted, or a render triggered by input/client commit.
+                if has_animations || was_rendered {
+                    surface.idle_countdown = 30; // ~0.5s at 60Hz
+                }
+            }
+        }
+
+        // Apply idle countdown: if reschedule was requested (no-damage path)
+        // but no animations, count down before going idle.
+        let reschedule = if reschedule && !has_animations {
+            let remaining = self
+                .backend_data
+                .backends
+                .get_mut(&node)
+                .and_then(|d| d.surfaces.get_mut(&crtc))
+                .map(|s| {
+                    s.idle_countdown = s.idle_countdown.saturating_sub(1);
+                    s.idle_countdown
+                })
+                .unwrap_or(0);
+            remaining > 0
+        } else {
+            reschedule
+        };
+
         if reschedule {
             let output_refresh = match output.current_mode() {
                 Some(mode) => mode.refresh,
                 None => return,
             };
-            // If reschedule is true we either hit a temporary failure or more likely rendering
-            // did not cause any damage on the output. In this case we just re-schedule a repaint
-            // after approx. one frame to re-test for damage.
-            let reschedule_duration =
-                Duration::from_millis((1_000_000f32 / output_refresh as f32) as u64);
-            //            trace!(
-            //                "reschedule repaint timer with delay {:?} on {:?}",
-            //                reschedule_duration,
-            //                crtc,
-            //            );
-            let timer = Timer::from_duration(reschedule_duration);
+            // Schedule next render early enough to guarantee we finish before
+            // the next VBlank. We subtract 2× the average render time as safety
+            // margin (accounts for variance, scheduling jitter, etc).
+            // Clamped to at least 1ms to avoid busy-spinning.
+            let frame_period_us = 1_000_000f32 / output_refresh as f32;
+            let avg_us = self
+                .backend_data
+                .backends
+                .get(&node)
+                .and_then(|d| d.surfaces.get(&crtc))
+                .map(|s| s.avg_render_time_us)
+                .unwrap_or(2000.0);
+            let delay_us = (frame_period_us - avg_us * 2.0).max(1000.0);
+            let timer = Timer::from_duration(Duration::from_micros(delay_us as u64));
             self.handle
                 .insert_source(timer, move |_, _, data| {
                     data.render(node, Some(crtc));
@@ -968,8 +1011,10 @@ pub(super) fn render_surface<'a>(
             // Normal mode: render the full scene
             workspace_render_elements.push(WorkspaceRenderElements::Scene(scene_element));
 
-            // Render if scene has damage, dnd icon needs drawing, or cursor is visible
-            // Hardware cursor plane (ALLOW_CURSOR_PLANE_SCANOUT flag) will handle cursor independently when possible
+            // We still pass cursor elements to render_frame so the DRM compositor
+            // can manage the hardware cursor plane (ALLOW_CURSOR_PLANE_SCANOUT).
+            // When nothing actually changed, render_frame returns is_empty=true
+            // and no page flip occurs, so this is cheap in the idle case.
             let cursor_needs_draw = pointer_in_output;
             let should_draw = scene_has_damage || dnd_needs_draw || cursor_needs_draw;
             if !should_draw {

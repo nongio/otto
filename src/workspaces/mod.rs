@@ -241,6 +241,7 @@ impl Workspaces {
             ..Default::default()
         });
         layer_shell_background.set_pointer_events(false);
+        layer_shell_background.set_hidden(true);
         // attached to output_layer in map_output_with_primary
 
         let expose_layer = layers_engine.new_layer();
@@ -288,6 +289,7 @@ impl Workspaces {
             ..Default::default()
         });
         layer_shell_top.set_pointer_events(false);
+        layer_shell_top.set_hidden(true);
         // attached to output_layer in map_output_with_primary
 
         // Create popup overlay AFTER dock so it renders on top
@@ -312,6 +314,7 @@ impl Workspaces {
             ..Default::default()
         });
         layer_shell_overlay.set_pointer_events(false);
+        layer_shell_overlay.set_hidden(true);
         // attached to output_layer in map_output_with_primary
 
         let (workspace_selector_view, remove_receiver) =
@@ -567,6 +570,11 @@ impl Workspaces {
 
         // Check if app switcher is visible
         if self.app_switcher.alive() {
+            return false;
+        }
+
+        // Check if OSD (volume/brightness) is visible
+        if self.osd.is_visible() {
             return false;
         }
 
@@ -3619,15 +3627,19 @@ impl Workspaces {
         // Add to appropriate container based on layer
         match wlr_layer {
             WlrLayer::Background => {
+                self.layer_shell_background.set_hidden(false);
                 self.layer_shell_background.add_sublayer(&layer);
             }
             WlrLayer::Bottom => {
+                self.layer_shell_background.set_hidden(false);
                 self.layer_shell_background.add_sublayer(&layer);
             }
             WlrLayer::Top => {
+                self.layer_shell_top.set_hidden(false);
                 self.layer_shell_top.add_sublayer(&layer);
             }
             WlrLayer::Overlay => {
+                self.layer_shell_overlay.set_hidden(false);
                 self.layer_shell_overlay.add_sublayer(&layer);
             }
         }

@@ -298,9 +298,7 @@ impl<BackendData: Backend>
                 state.set_keyboard_focus_on_surface(&window_id);
             }
             zwlr_foreign_toplevel_handle_v1::Request::Activate { seat: _seat } => {
-                if let Some(wid) = state.workspaces.focus_app_with_window(&window_id) {
-                    state.set_keyboard_focus_on_surface(&wid);
-                }
+                state.activate_window(&window_id);
             }
             zwlr_foreign_toplevel_handle_v1::Request::Close => {
                 if let Some(window) = state.workspaces.get_window_for_surface(&window_id) {
