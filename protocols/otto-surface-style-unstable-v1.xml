@@ -259,6 +259,20 @@
       <entry name="disabled" value="0" summary="do not clip content"/>
       <entry name="enabled" value="1" summary="clip content to surface bounds"/>
     </enum>
+
+    <enum name="contents_gravity">
+      <description summary="how the surface buffer is rendered within layer bounds">
+        Controls how the Wayland buffer texture is positioned and scaled within
+        the layer bounds. Mirrors Core Animation's contentsGravity. When the
+        layer bounds differ from the buffer size (e.g. during a size animation),
+        this determines the rendering strategy.
+      </description>
+      <entry name="resize" value="0" summary="stretch to fill layer bounds (default)"/>
+      <entry name="resize_aspect" value="1" summary="scale uniformly to fit, preserving aspect ratio (letterbox)"/>
+      <entry name="resize_aspect_fill" value="2" summary="scale uniformly to fill, preserving aspect ratio (crop)"/>
+      <entry name="center" value="3" summary="natural buffer size, centred in bounds"/>
+      <entry name="top_left" value="4" summary="natural buffer size, pinned to top-left"/>
+    </enum>
     
     <request name="set_blend_mode">
       <description summary="set surface blend mode">
@@ -281,6 +295,16 @@
       </description>
       <arg name="clip_mode" type="uint" enum="clip_mode"/>
     </request> 
+
+    <request name="set_contents_gravity">
+      <description summary="set how the buffer texture is rendered within layer bounds">
+        Set the contents gravity, controlling how the Wayland buffer texture is
+        positioned and scaled when the layer bounds differ from the buffer size.
+        The default is resize (stretch to fill). Changes take effect immediately
+        and are not animatable.
+      </description>
+      <arg name="gravity" type="uint" enum="contents_gravity"/>
+    </request>
 
     <!-- Animation Control -->
     

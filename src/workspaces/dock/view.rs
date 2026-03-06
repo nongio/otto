@@ -1273,7 +1273,7 @@ impl DockView {
                 // so y = top-edge of the icon relative to the wrap_layer (in logical px).
                 Point::new(
                     (icon_bounds.x() + icon_bounds.width() / 2.0 - wrap_bounds.x()) / scale,
-                    (icon_bounds.y() - wrap_bounds.y()) / scale,
+                    (icon_bounds.y() - wrap_bounds.y()) / scale - 10.0  * scale, // nudge up above the icon
                 )
             } else {
                 _pos
