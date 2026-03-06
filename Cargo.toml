@@ -49,9 +49,9 @@ mpris = "2.0"
 otto-kit = { path = "components/otto-kit" }
 
 [dependencies.laye-rs]
-path = "../layers"
-# git = "https://github.com/nongio/layers"
-# tag = "v1.4.1"
+# path = "../layers"
+git = "https://github.com/nongio/layers"
+tag = "v1.4.3"
 features = ["export-taffy"]
 
 [dependencies.smithay-drm-extras]
@@ -89,8 +89,8 @@ version = "0.12.0"
 perf-counters = []
 default = ["egl", "winit", "udev", "renderer_sync", "xwayland"]
 dev = ["debug", "profile", "debugger"]
-debug = ["image/png", "renderdoc", "debugger"] # "fps_ticker", 
-debugger = ["laye-rs/debugger"]
+debug = ["image/png", "renderdoc"] # "fps_ticker"
+debugger = ["laye-rs/debugger", "otto-kit/debugger"]
 profile = ["profile-with-puffin", "laye-rs/profile-with-puffin"]
 ticker = ["fps_ticker"]
 metrics = []
