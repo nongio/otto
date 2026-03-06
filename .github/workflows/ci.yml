@@ -137,16 +137,13 @@ jobs:
       - name: Install cargo-aur
         run: cargo install cargo-aur
       - name: Build workspace binaries
-        run: cargo build --release -p otto -p xdg-desktop-portal-otto
+        run: |
+          cargo build --release -p otto -p xdg-desktop-portal-otto
+          for bin in target/release/otto target/release/xdg-desktop-portal-otto; do
+            cp "$bin" "$bin.tmp" && mv "$bin.tmp" "$bin"
+          done
       - name: Build Arch package
         run: cargo aur -o .
-      - name: Fix symlinks in Arch tarball
-        run: |
-          TARBALL=$(ls otto-*.tar.gz)
-          mkdir -p /tmp/arch-repack
-          tar -xzf "$TARBALL" -C /tmp/arch-repack
-          tar -czf "$TARBALL" -C /tmp/arch-repack --dereference .
-          rm -rf /tmp/arch-repack
       - name: Upload Arch tarball
         uses: actions/upload-artifact@v4
         with:
