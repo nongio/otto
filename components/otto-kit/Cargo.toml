@@ -22,9 +22,12 @@ pipewire = "0.9"
 
 [dependencies.laye-rs]
 git = "https://github.com/nongio/layers"
-tag = "v1.4.1"
+tag = "v1.4.3"
 # path = "../../../layers"
-features = ["export-taffy", "debugger"]
+features = ["export-taffy"]
+
+[features]
+debugger = ["laye-rs/debugger"]
 
 [dependencies.skia-safe]
 version = "=0.88"

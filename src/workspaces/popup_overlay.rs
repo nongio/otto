@@ -132,7 +132,7 @@ impl PopupOverlayView {
             };
 
             // Configure layer with all properties and draw callback
-            crate::workspaces::utils::configure_surface_layer(&layer, wvs);
+            crate::workspaces::utils::configure_surface_layer(&layer, wvs, crate::surface_style::ContentsGravity::Resize, false);
 
             // Set up parent-child relationship
             if let Some(ref parent_id) = wvs.parent_id {

@@ -8,7 +8,8 @@ use crate::state::Backend;
 
 pub use handlers::create_style_manager_global;
 pub use protocol::{
-    gen, OttoSurfaceStyleZOrder, StyleTransaction, SurfaceStyle, SurfaceStyleHandler,
+    gen, ContentsGravity, OttoSurfaceStyleZOrder, StyleTransaction, SurfaceStyle,
+    SurfaceStyleHandler,
 };
 
 /// Shell global state

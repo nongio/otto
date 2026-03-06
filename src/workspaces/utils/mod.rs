@@ -157,49 +157,50 @@ pub fn draw_balloon_rect(
     path
 }
 
-/// Configure a surface layer with all rendering properties and draw callback
-///
-/// This sets up:
-/// - Position (relative to parent)
-/// - Size
-/// - Layout style (absolute positioning)
-/// - Pointer events (disabled)
-/// - Picture caching (disabled)
-/// - Draw content callback with texture rendering
-pub fn configure_surface_layer(layer: &Layer, wvs: &WindowViewSurface) {
+pub fn configure_surface_layer(
+    layer: &Layer,
+    wvs: &WindowViewSurface,
+    gravity: crate::surface_style::ContentsGravity,
+    client_owns_size: bool,
+) {
+    use crate::surface_style::ContentsGravity;
+
     // Position calculation: phy_dst is the buffer viewport offset, log_offset is from tree traversal
-    // log_offset is now relative to parent (or absolute for root surfaces)
     let pos_x = wvs.phy_dst_x + wvs.log_offset_x;
     let pos_y = wvs.phy_dst_y + wvs.log_offset_y;
 
-    // Apply all layer properties
     layer.set_layout_style(taffy::Style {
         position: taffy::Position::Absolute,
         ..Default::default()
     });
 
-    layer.set_size(
-        Size {
-            width: taffy::Dimension::Length(wvs.phy_dst_w),
-            height: taffy::Dimension::Length(wvs.phy_dst_h),
-        },
-        None,
-    );
+    // Skip size/position override when client owns the bounds.
+    // The compositor initializes from buffer on first commit (before client_owns_size is set).
+    if !client_owns_size {
+        layer.set_size(
+            Size {
+                width: taffy::Dimension::Length(wvs.phy_dst_w),
+                height: taffy::Dimension::Length(wvs.phy_dst_h),
+            },
+            None,
+        );
 
-    // Account for the layer's anchor point when positioning
-    // set_position places the anchor point at the given coordinates,
-    // so we need to offset by (size * anchor_point) to get the desired visual position
-    let anchor_point = layer.anchor_point();
-    let adjusted_pos = Point {
-        x: pos_x + (wvs.phy_dst_w * anchor_point.x),
-        y: pos_y + (wvs.phy_dst_h * anchor_point.y),
-    };
-    layer.set_position(adjusted_pos, None);
+        let anchor_point = layer.anchor_point();
+        let adjusted_pos = Point {
+            x: pos_x + (wvs.phy_dst_w * anchor_point.x),
+            y: pos_y + (wvs.phy_dst_h * anchor_point.y),
+        };
+        layer.set_position(adjusted_pos, None);
+    } else {
+        tracing::debug!(
+            "configure_surface_layer: client owns bounds, skipping set_size/set_position (gravity={:?}, buf={}x{})",
+            gravity, wvs.phy_dst_w, wvs.phy_dst_h
+        );
+    }
 
     layer.set_pointer_events(false);
-    layer.set_picture_cached(true); // Enable picture caching for proper opacity inheritance
+    layer.set_picture_cached(true);
 
-    // Set the draw content callback for texture rendering
     let draw_wvs = wvs.clone();
     layer.set_draw_content(move |canvas: &layers::skia::Canvas, w: f32, h: f32| {
         if w == 0.0 || h == 0.0 {
@@ -225,16 +226,42 @@ pub fn configure_surface_layer(layer: &Layer, wvs: &WindowViewSurface) {
 
         let src_h = (draw_wvs.phy_src_h - draw_wvs.phy_src_y).max(1.0);
         let src_w = (draw_wvs.phy_src_w - draw_wvs.phy_src_x).max(1.0);
-        let scale_y = draw_wvs.phy_dst_h / src_h;
-        let scale_x = draw_wvs.phy_dst_w / src_w;
+
+        // Use live w/h for all gravity modes so the draw scales correctly during animations.
+        let (scale_x, scale_y, tx, ty) = match gravity {
+            ContentsGravity::Resize => {
+                (w / src_w, h / src_h, 0.0f32, 0.0f32)
+            }
+            ContentsGravity::ResizeAspect => {
+                let s = (w / src_w).min(h / src_h);
+                let tx = (w - src_w * s) / 2.0;
+                let ty = (h - src_h * s) / 2.0;
+                (s, s, tx, ty)
+            }
+            ContentsGravity::ResizeAspectFill => {
+                let s = (w / src_w).max(h / src_h);
+                let tx = (w - src_w * s) / 2.0;
+                let ty = (h - src_h * s) / 2.0;
+                (s, s, tx, ty)
+            }
+            ContentsGravity::Center => {
+                let tx = (w - src_w) / 2.0;
+                let ty = (h - src_h) / 2.0;
+                (1.0f32, 1.0f32, tx, ty)
+            }
+            ContentsGravity::TopLeft => {
+                (1.0f32, 1.0f32, 0.0f32, 0.0f32)
+            }
+        };
+
         let mut matrix = layers::skia::Matrix::new_identity();
         match draw_wvs.transform {
             Transform::Normal => {
-                matrix.pre_translate((-draw_wvs.phy_src_x, -draw_wvs.phy_src_y));
+                matrix.pre_translate((-draw_wvs.phy_src_x + tx / scale_x, -draw_wvs.phy_src_y + ty / scale_y));
                 matrix.pre_scale((scale_x, scale_y), None);
             }
             Transform::Flipped180 => {
-                matrix.pre_translate((draw_wvs.phy_src_x, draw_wvs.phy_src_y));
+                matrix.pre_translate((draw_wvs.phy_src_x + tx / scale_x, draw_wvs.phy_src_y + ty / scale_y));
                 matrix.pre_scale((scale_x, -scale_y), None);
             }
             Transform::_90 => {}
