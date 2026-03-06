@@ -1,7 +1,7 @@
 use std::collections::hash_map::HashMap;
+use std::sync::atomic::AtomicBool;
 #[cfg(feature = "metrics")]
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 
 use smithay::{
     backend::{

@@ -229,9 +229,7 @@ pub fn configure_surface_layer(
 
         // Use live w/h for all gravity modes so the draw scales correctly during animations.
         let (scale_x, scale_y, tx, ty) = match gravity {
-            ContentsGravity::Resize => {
-                (w / src_w, h / src_h, 0.0f32, 0.0f32)
-            }
+            ContentsGravity::Resize => (w / src_w, h / src_h, 0.0f32, 0.0f32),
             ContentsGravity::ResizeAspect => {
                 let s = (w / src_w).min(h / src_h);
                 let tx = (w - src_w * s) / 2.0;
@@ -249,19 +247,23 @@ pub fn configure_surface_layer(
                 let ty = (h - src_h) / 2.0;
                 (1.0f32, 1.0f32, tx, ty)
             }
-            ContentsGravity::TopLeft => {
-                (1.0f32, 1.0f32, 0.0f32, 0.0f32)
-            }
+            ContentsGravity::TopLeft => (1.0f32, 1.0f32, 0.0f32, 0.0f32),
         };
 
         let mut matrix = layers::skia::Matrix::new_identity();
         match draw_wvs.transform {
             Transform::Normal => {
-                matrix.pre_translate((-draw_wvs.phy_src_x + tx / scale_x, -draw_wvs.phy_src_y + ty / scale_y));
+                matrix.pre_translate((
+                    -draw_wvs.phy_src_x + tx / scale_x,
+                    -draw_wvs.phy_src_y + ty / scale_y,
+                ));
                 matrix.pre_scale((scale_x, scale_y), None);
             }
             Transform::Flipped180 => {
-                matrix.pre_translate((draw_wvs.phy_src_x + tx / scale_x, draw_wvs.phy_src_y + ty / scale_y));
+                matrix.pre_translate((
+                    draw_wvs.phy_src_x + tx / scale_x,
+                    draw_wvs.phy_src_y + ty / scale_y,
+                ));
                 matrix.pre_scale((scale_x, -scale_y), None);
             }
             Transform::_90 => {}

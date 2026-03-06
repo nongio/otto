@@ -447,10 +447,18 @@ impl<BackendData: Backend> Otto<BackendData> {
             if let Some(wvs) = render_elements.iter().find(|e| &e.id == surface_id) {
                 // Configure layer with all properties and draw callback
                 surface_layer.set_hidden(false);
-                let style = self.surfaces_style.get(surface_id).and_then(|v: &Vec<_>| v.first());
+                let style = self
+                    .surfaces_style
+                    .get(surface_id)
+                    .and_then(|v: &Vec<_>| v.first());
                 let gravity = style.map(|s| s.contents_gravity).unwrap_or_default();
                 let client_owns_size = style.map(|s| s.client_owns_size).unwrap_or(false);
-                crate::workspaces::utils::configure_surface_layer(&surface_layer, wvs, gravity, client_owns_size);
+                crate::workspaces::utils::configure_surface_layer(
+                    &surface_layer,
+                    wvs,
+                    gravity,
+                    client_owns_size,
+                );
 
                 // Set up parent-child relationship
                 // Only append if there's a parent - root surface is handled separately below

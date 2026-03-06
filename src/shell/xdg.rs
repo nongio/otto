@@ -694,12 +694,7 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             }
             if let Some(we) = self.workspaces.get_window_for_surface(&id).cloned() {
                 we.set_fullscreen(false, 0);
-                let Some(output) = self
-                    .workspaces
-                    .outputs_for_element(&we)
-                    .first()
-                    .cloned()
-                else {
+                let Some(output) = self.workspaces.outputs_for_element(&we).first().cloned() else {
                     return;
                 };
                 let scale = output.current_scale().fractional_scale();

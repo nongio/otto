@@ -15,7 +15,6 @@ use layers::{
 use otto_kit::prelude::{ContextMenuStyle, MenuItem};
 use smithay::{reexports::wayland_server::backend::ObjectId, utils::IsAlive};
 use tokio::sync::mpsc;
-use tracing;
 
 use crate::{
     config::{Config, DockBookmark},
@@ -935,15 +934,18 @@ impl DockView {
             ..self.get_state()
         });
         let layers_map = self.miniwindow_layers.read().unwrap();
-        
+
         // If the window element was just added, it should exist in the map
         // If it doesn't, it means state update hasn't processed yet - create fallback layers
         if let Some((drawer, inner, ..)) = layers_map.get(&window.id()) {
             (drawer.clone(), inner.clone())
         } else {
             drop(layers_map); // Release read lock
-            tracing::warn!("Window {} not in miniwindow_layers map after state update, creating fallback", window.id());
-            
+            tracing::warn!(
+                "Window {} not in miniwindow_layers map after state update, creating fallback",
+                window.id()
+            );
+
             // Create fallback layers
             let new_layer = self.layers_engine.new_layer();
             let inner_layer = self.layers_engine.new_layer();
@@ -1273,7 +1275,7 @@ impl DockView {
                 // so y = top-edge of the icon relative to the wrap_layer (in logical px).
                 Point::new(
                     (icon_bounds.x() + icon_bounds.width() / 2.0 - wrap_bounds.x()) / scale,
-                    (icon_bounds.y() - wrap_bounds.y()) / scale - 10.0  * scale, // nudge up above the icon
+                    (icon_bounds.y() - wrap_bounds.y()) / scale - 10.0 * scale, // nudge up above the icon
                 )
             } else {
                 _pos
