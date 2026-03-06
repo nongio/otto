@@ -1033,7 +1033,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
                 // Configure layer with all properties
                 if let Some(wvs) = render_elements.iter().find(|e| &e.id == surface_id) {
-                    crate::workspaces::utils::configure_surface_layer(&layer, wvs);
+                    let style = self.surfaces_style.get(surface_id).and_then(|v| v.first());
+                    let gravity = style.map(|s| s.contents_gravity).unwrap_or_default();
+                    let client_owns_size = style.map(|s| s.client_owns_size).unwrap_or(false);
+                    crate::workspaces::utils::configure_surface_layer(&layer, wvs, gravity, client_owns_size);
 
                     // Build parent-child hierarchy
                     if let Some(parent_id) = parent_id {
@@ -1305,7 +1308,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 // Configure layer with all properties and draw callback
                 if let Some(wvs) = render_elements.iter().find(|e| &e.id == surface_id) {
                     layer.set_hidden(false);
-                    crate::workspaces::utils::configure_surface_layer(&layer, wvs);
+                    let style = self.surfaces_style.get(surface_id).and_then(|v| v.first());
+                    let gravity = style.map(|s| s.contents_gravity).unwrap_or_default();
+                    let client_owns_size = style.map(|s| s.client_owns_size).unwrap_or(false);
+                    crate::workspaces::utils::configure_surface_layer(&layer, wvs, gravity, client_owns_size);
 
                     // Set up parent-child relationship using layers_engine
                     if let Some(parent_id) = parent_id {

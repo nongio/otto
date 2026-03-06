@@ -26,6 +26,23 @@ pub enum OttoSurfaceStyleZOrder {
     AboveSurface,
 }
 
+/// How the surface buffer texture is rendered within the layer bounds.
+/// Mirrors Core Animation's contentsGravity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContentsGravity {
+    /// Stretch to fill layer bounds (default — backward compatible).
+    #[default]
+    Resize,
+    /// Scale uniformly to fit within bounds, preserving aspect ratio (letterbox).
+    ResizeAspect,
+    /// Scale uniformly to fill bounds, preserving aspect ratio (crop).
+    ResizeAspectFill,
+    /// Natural buffer size, centred in bounds.
+    Center,
+    /// Natural buffer size, pinned to top-left.
+    TopLeft,
+}
+
 /// Compositor-side layer state (pure augmentation, no wl_surface)
 #[derive(Debug, Clone)]
 pub struct SurfaceStyle {
@@ -40,6 +57,13 @@ pub struct SurfaceStyle {
 
     /// Z-order relative to surface content
     pub z_order: OttoSurfaceStyleZOrder,
+
+    /// How the buffer texture is rendered within the layer bounds
+    pub contents_gravity: ContentsGravity,
+
+    /// When true, the client has called set_size at least once and now owns the layer bounds.
+    /// The compositor will no longer override size/position from the buffer.
+    pub client_owns_size: bool,
 }
 
 impl PartialEq for SurfaceStyle {
@@ -78,6 +102,9 @@ pub struct StyleTransaction {
     pub accumulated_changes: Vec<layers::engine::AnimatedNodeChange>,
 
     pub animation: Option<layers::engine::AnimationRef>,
+
+    /// Whether this transaction has already been committed (prevents re-use after commit)
+    pub committed: bool,
 }
 
 impl Clone for StyleTransaction {
@@ -93,6 +120,7 @@ impl Clone for StyleTransaction {
             send_completion: self.send_completion,
             accumulated_changes: self.accumulated_changes.clone(),
             animation: self.animation,
+            committed: self.committed,
         }
     }
 }
