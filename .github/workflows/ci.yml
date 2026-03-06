@@ -140,6 +140,13 @@ jobs:
         run: cargo build --release -p otto -p xdg-desktop-portal-otto
       - name: Build Arch package
         run: cargo aur -o .
+      - name: Fix symlinks in Arch tarball
+        run: |
+          TARBALL=$(ls otto-*.tar.gz)
+          mkdir -p /tmp/arch-repack
+          tar -xzf "$TARBALL" -C /tmp/arch-repack
+          tar -czf "$TARBALL" -C /tmp/arch-repack --dereference .
+          rm -rf /tmp/arch-repack
       - name: Upload Arch tarball
         uses: actions/upload-artifact@v4
         with:
@@ -199,18 +206,18 @@ jobs:
           ```
 
           ### Arch Linux
-          **Option 1: Binary package**
+          **Install from PKGBUILD (recommended)**
           ```bash
-          # Download and extract the tarball, then use makepkg
-          tar -xzf otto-*-x86_64.tar.gz
-          cd otto-*
+          # Download the PKGBUILD from the release assets, then:
           makepkg -si
           ```
 
-          **Option 2: From PKGBUILD**
+          **Manual binary install**
           ```bash
-          # Download PKGBUILD and build locally
-          makepkg -si
+          # Download and extract the tarball
+          tar -xzf otto-*-x86_64.tar.gz
+          sudo install -Dm755 target/release/otto /usr/bin/otto
+          sudo install -Dm755 target/release/xdg-desktop-portal-otto /usr/libexec/xdg-desktop-portal-otto
           ```
 
           ---
