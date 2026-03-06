@@ -447,7 +447,10 @@ impl<BackendData: Backend> Otto<BackendData> {
             if let Some(wvs) = render_elements.iter().find(|e| &e.id == surface_id) {
                 // Configure layer with all properties and draw callback
                 surface_layer.set_hidden(false);
-                crate::workspaces::utils::configure_surface_layer(&surface_layer, wvs);
+                let style = self.surfaces_style.get(surface_id).and_then(|v: &Vec<_>| v.first());
+                let gravity = style.map(|s| s.contents_gravity).unwrap_or_default();
+                let client_owns_size = style.map(|s| s.client_owns_size).unwrap_or(false);
+                crate::workspaces::utils::configure_surface_layer(&surface_layer, wvs, gravity, client_owns_size);
 
                 // Set up parent-child relationship
                 // Only append if there's a parent - root surface is handled separately below
@@ -462,7 +465,9 @@ impl<BackendData: Backend> Otto<BackendData> {
             }
         }
 
-        // Update the container layer with size and position
+        // Update the container layer with size and position.
+        // Skip size/position if a surface style with non-Resize gravity is registered
+        // (the style owns the layer bounds in that case).
         let layer = {
             let Some(layer_shell_surf) = self.layer_surfaces.get(surface_id) else {
                 return;
@@ -470,20 +475,28 @@ impl<BackendData: Backend> Otto<BackendData> {
             layer_shell_surf.layer.clone()
         };
 
-        layer.set_size(
-            layers::types::Size::points(
-                (geometry.size.w as f64 * scale_factor) as f32,
-                (geometry.size.h as f64 * scale_factor) as f32,
-            ),
-            None,
-        );
-        layer.set_position(
-            (
-                (geometry.loc.x as f64 * scale_factor) as f32,
-                (geometry.loc.y as f64 * scale_factor) as f32,
-            ),
-            None,
-        );
+        let container_style = self
+            .surfaces_style
+            .get(surface_id)
+            .and_then(|v: &Vec<_>| v.first());
+        let container_owns_size = container_style.map(|s| s.client_owns_size).unwrap_or(false);
+
+        if !container_owns_size {
+            layer.set_size(
+                layers::types::Size::points(
+                    (geometry.size.w as f64 * scale_factor) as f32,
+                    (geometry.size.h as f64 * scale_factor) as f32,
+                ),
+                None,
+            );
+            layer.set_position(
+                (
+                    (geometry.loc.x as f64 * scale_factor) as f32,
+                    (geometry.loc.y as f64 * scale_factor) as f32,
+                ),
+                None,
+            );
+        }
         layer.set_hidden(false);
 
         // For layer shells, the workspace layer IS the surface layer
