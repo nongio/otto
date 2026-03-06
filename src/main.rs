@@ -1,14 +1,29 @@
-#[cfg(not(feature = "udev"))]
 static POSSIBLE_BACKENDS: &[&str] = &[
     #[cfg(feature = "winit")]
-    "--winit : Run anvil as a X11 or Wayland client using winit.",
+    "--winit      Run otto as a X11 or Wayland client using winit.",
     #[cfg(feature = "udev")]
-    "--tty-udev : Run anvil as a tty udev client (requires root if without logind).",
+    "--tty-udev   Run otto on a tty using udev (requires root or logind).",
     #[cfg(feature = "udev")]
-    "--probe : Probe available displays and resolutions, then exit.",
+    "--probe      Probe available displays and resolutions, then exit.",
     #[cfg(feature = "x11")]
-    "--x11 : Run anvil as an X11 client.",
+    "--x11        Run otto as an X11 client.",
 ];
+
+fn print_help() {
+    println!("otto {}", env!("CARGO_PKG_VERSION"));
+    println!();
+    println!("USAGE:");
+    println!("    otto [OPTION]");
+    println!();
+    println!("OPTIONS:");
+    println!("    -h, --help   Print this help message");
+    println!("    --version    Print version information");
+    for b in POSSIBLE_BACKENDS {
+        println!("    {}", b);
+    }
+    println!();
+    println!("If no backend is specified, otto auto-detects based on the environment.");
+}
 
 #[cfg(feature = "profile-with-tracy-mem")]
 #[global_allocator]
@@ -17,6 +32,30 @@ static GLOBAL: profiling::tracy_client::ProfiledAllocator<std::alloc::System> =
 
 #[tokio::main]
 async fn main() {
+    // Handle informational flags before any side-effectful initialization.
+    match std::env::args().nth(1).as_deref() {
+        Some("--version") => {
+            println!("otto {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        Some("--help") | Some("-h") => {
+            print_help();
+            return;
+        }
+        Some(other)
+            if !other.starts_with("--winit")
+                && !other.starts_with("--tty-udev")
+                && !other.starts_with("--probe")
+                && !other.starts_with("--x11") =>
+        {
+            eprintln!("Unknown argument: {}", other);
+            eprintln!();
+            print_help();
+            std::process::exit(1);
+        }
+        _ => {}
+    }
+
     if let Ok(env_filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
         tracing_subscriber::fmt()
             .compact()
@@ -64,8 +103,17 @@ async fn main() {
             std::env::set_var("OTTO_BACKEND", "x11");
             otto::x11::run_x11();
         }
+        Some("--version") => {
+            println!("otto {}", env!("CARGO_PKG_VERSION"));
+        }
+        Some("--help") | Some("-h") => {
+            print_help();
+        }
         Some(other) => {
-            tracing::error!("Unknown backend: {}", other);
+            eprintln!("Unknown argument: {}", other);
+            eprintln!();
+            print_help();
+            std::process::exit(1);
         }
         None => {
             // Auto-detect backend based on environment
@@ -92,12 +140,7 @@ async fn main() {
                 #[cfg(not(feature = "udev"))]
                 {
                     tracing::error!("No WAYLAND_DISPLAY and udev feature is not enabled");
-                    println!("USAGE: otto [--backend]");
-                    println!();
-                    println!("Possible backends are:");
-                    for b in POSSIBLE_BACKENDS {
-                        println!("\t{}", b);
-                    }
+                    print_help();
                 }
             }
         }
