@@ -193,10 +193,14 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
                             if !state.focus_app(&identifier) {
                                 if let Some(bookmark) = self.bookmark_config_for(&match_id) {
                                     if let Some(app) = self.bookmark_application(&match_id) {
-                                        if let Some((cmd, args)) = app.command(&bookmark.exec_args) {
+                                        if let Some((cmd, args)) = app.command(&bookmark.exec_args)
+                                        {
                                             state.launch_program(cmd, args);
                                         } else {
-                                            warn!("bookmark {} has no executable command", identifier);
+                                            warn!(
+                                                "bookmark {} has no executable command",
+                                                identifier
+                                            );
                                         }
                                     } else {
                                         warn!("bookmark {} not loaded into dock", identifier);
