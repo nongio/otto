@@ -15,7 +15,6 @@ use layers::{
 use otto_kit::prelude::{ContextMenuStyle, MenuItem};
 use smithay::{reexports::wayland_server::backend::ObjectId, utils::IsAlive};
 use tokio::sync::mpsc;
-use tracing;
 
 use crate::{
     config::{Config, DockBookmark},

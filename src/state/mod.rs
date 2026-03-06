@@ -24,7 +24,6 @@ use smithay::{
     delegate_relative_pointer, delegate_shm, delegate_text_input_manager, delegate_viewporter,
     delegate_virtual_keyboard_manager, delegate_xdg_foreign, delegate_xdg_shell,
     desktop::{
-        space::SpaceElement,
         utils::{
             surface_presentation_feedback_flags_from_states, surface_primary_scanout_output,
             update_surface_primary_scanout_output, with_surfaces_surface_tree,
@@ -96,7 +95,6 @@ use crate::cursor::{CursorManager, CursorTextureCache};
 use crate::{
     audio::{AudioManager, SoundPlayer},
     config::Config,
-    focus::KeyboardFocusTarget,
     render_elements::scene_element::SceneElement,
     shell::{LayerShellSurface, WindowElement},
     skia_renderer::SkiaTextureImage,
