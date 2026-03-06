@@ -32,8 +32,7 @@ fn find_active_transaction_for_client<BackendData: Backend>(
         .style_transactions
         .iter()
         .find(|(_, txn)| {
-            !txn.committed
-                && txn.wl_style_transaction.client().map(|c| c.id()) == Some(client.id())
+            !txn.committed && txn.wl_style_transaction.client().map(|c| c.id()) == Some(client.id())
         })
         .map(|(id, _)| id.clone())
 }
@@ -45,7 +44,10 @@ fn accumulate_change<BackendData: Backend>(
     change: layers::engine::AnimatedNodeChange,
 ) {
     if let Some(txn) = state.style_transactions.get_mut(&txn_id) {
-        tracing::debug!("accumulate_change: total changes now {}", txn.accumulated_changes.len() + 1);
+        tracing::debug!(
+            "accumulate_change: total changes now {}",
+            txn.accumulated_changes.len() + 1
+        );
         txn.accumulated_changes.push(change);
     }
 }

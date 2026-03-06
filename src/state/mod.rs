@@ -54,8 +54,7 @@ use smithay::{
     utils::{self, Clock, Monotonic, SERIAL_COUNTER},
     wayland::{
         compositor::{
-            CompositorClientState, CompositorState, SurfaceAttributes, SurfaceData,
-            TraversalAction,
+            CompositorClientState, CompositorState, SurfaceAttributes, SurfaceData, TraversalAction,
         },
         cursor_shape::CursorShapeManagerState,
         dmabuf::DmabufFeedback,
@@ -899,7 +898,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// so it can safely be called from any handler (including button
     /// and DnD handlers) without risking a deadlock.
     pub fn get_cursor_position(&self) -> utils::Point<f64, utils::Physical> {
-        (self.cursor_physical_position.0, self.cursor_physical_position.1).into()
+        (
+            self.cursor_physical_position.0,
+            self.cursor_physical_position.1,
+        )
+            .into()
     }
 
     pub fn get_render_elements(
@@ -1036,7 +1039,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     let style = self.surfaces_style.get(surface_id).and_then(|v| v.first());
                     let gravity = style.map(|s| s.contents_gravity).unwrap_or_default();
                     let client_owns_size = style.map(|s| s.client_owns_size).unwrap_or(false);
-                    crate::workspaces::utils::configure_surface_layer(&layer, wvs, gravity, client_owns_size);
+                    crate::workspaces::utils::configure_surface_layer(
+                        &layer,
+                        wvs,
+                        gravity,
+                        client_owns_size,
+                    );
 
                     // Build parent-child hierarchy
                     if let Some(parent_id) = parent_id {
@@ -1311,7 +1319,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     let style = self.surfaces_style.get(surface_id).and_then(|v| v.first());
                     let gravity = style.map(|s| s.contents_gravity).unwrap_or_default();
                     let client_owns_size = style.map(|s| s.client_owns_size).unwrap_or(false);
-                    crate::workspaces::utils::configure_surface_layer(&layer, wvs, gravity, client_owns_size);
+                    crate::workspaces::utils::configure_surface_layer(
+                        &layer,
+                        wvs,
+                        gravity,
+                        client_owns_size,
+                    );
 
                     // Set up parent-child relationship using layers_engine
                     if let Some(parent_id) = parent_id {

@@ -1,8 +1,6 @@
 use smithay::{
-    desktop::space::SpaceElement,
-    reexports::wayland_protocols::xdg::shell::server::xdg_toplevel,
-    reexports::wayland_server::backend::ObjectId,
-    utils::SERIAL_COUNTER,
+    desktop::space::SpaceElement, reexports::wayland_protocols::xdg::shell::server::xdg_toplevel,
+    reexports::wayland_server::backend::ObjectId, utils::SERIAL_COUNTER,
 };
 
 use crate::focus::KeyboardFocusTarget;
@@ -219,10 +217,7 @@ impl<BackendData: Backend> Otto<BackendData> {
             self.workspaces
                 .apply_window_selector_order_to_workspace(workspace_index);
             if let Some(wid) = hovered {
-                tracing::debug!(
-                    "expose_end_with_velocity_and_focus_top: focused={:?}",
-                    wid
-                );
+                tracing::debug!("expose_end_with_velocity_and_focus_top: focused={:?}", wid);
                 self.activate_window(&wid);
             } else {
                 tracing::debug!(

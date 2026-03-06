@@ -3,7 +3,11 @@
 // Handles session setup, GPU initialization, libinput configuration,
 // and the main event loop for the udev backend.
 
-use std::{collections::HashMap, sync::atomic::{AtomicBool, Ordering}, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 
 use smithay::{
     backend::{
