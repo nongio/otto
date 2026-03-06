@@ -32,6 +32,29 @@ static GLOBAL: profiling::tracy_client::ProfiledAllocator<std::alloc::System> =
 
 #[tokio::main]
 async fn main() {
+    // Handle informational flags before any side-effectful initialization.
+    match std::env::args().nth(1).as_deref() {
+        Some("--version") => {
+            println!("otto {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        Some("--help") | Some("-h") => {
+            print_help();
+            return;
+        }
+        Some(other) if !other.starts_with("--winit")
+            && !other.starts_with("--tty-udev")
+            && !other.starts_with("--probe")
+            && !other.starts_with("--x11") =>
+        {
+            eprintln!("Unknown argument: {}", other);
+            eprintln!();
+            print_help();
+            std::process::exit(1);
+        }
+        _ => {}
+    }
+
     if let Ok(env_filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
         tracing_subscriber::fmt()
             .compact()
