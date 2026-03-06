@@ -15,6 +15,7 @@ use layers::{
 use otto_kit::prelude::{ContextMenuStyle, MenuItem};
 use smithay::{reexports::wayland_server::backend::ObjectId, utils::IsAlive};
 use tokio::sync::mpsc;
+use tracing;
 
 use crate::{
     config::{Config, DockBookmark},
@@ -366,6 +367,10 @@ impl DockView {
     }
     pub fn is_autohide_enabled(&self) -> bool {
         self.dock_config.read().unwrap().autohide
+    }
+    pub fn set_active_flag(&self, active: bool) {
+        self.active
+            .store(active, std::sync::atomic::Ordering::Relaxed);
     }
     pub fn hide(&self, transition: Option<Transition>) -> TransactionRef {
         tracing::debug!("dock: hide");
@@ -930,9 +935,21 @@ impl DockView {
             ..self.get_state()
         });
         let layers_map = self.miniwindow_layers.read().unwrap();
-        let (drawer, inner, ..) = layers_map.get(&window.id()).unwrap();
-
-        (drawer.clone(), inner.clone())
+        
+        // If the window element was just added, it should exist in the map
+        // If it doesn't, it means state update hasn't processed yet - create fallback layers
+        if let Some((drawer, inner, ..)) = layers_map.get(&window.id()) {
+            (drawer.clone(), inner.clone())
+        } else {
+            drop(layers_map); // Release read lock
+            tracing::warn!("Window {} not in miniwindow_layers map after state update, creating fallback", window.id());
+            
+            // Create fallback layers
+            let new_layer = self.layers_engine.new_layer();
+            let inner_layer = self.layers_engine.new_layer();
+            self.dock_windows_container.add_sublayer(&new_layer);
+            (new_layer, inner_layer)
+        }
     }
     pub fn remove_window_element(&self, wid: &ObjectId) -> Option<Layer> {
         let mut drawer = None;
@@ -1010,7 +1027,7 @@ impl DockView {
                 .change_position(Point { x: 0.0, y: 0.0 });
 
             changes.push(position_change);
-            let layers_map = self.app_layers.read().unwrap();
+            let layers_map = self.app_layers.read().unwrap_or_else(|e| e.into_inner());
             for (index, (app, _running)) in display_apps.iter().enumerate() {
                 if let Some(entry) = layers_map.get(&app.match_id) {
                     let layer = entry.layer.clone();

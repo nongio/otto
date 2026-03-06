@@ -190,25 +190,24 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
                             return;
                         } else {
                             // Normal left-click: focus or launch app
-                            if let Some(wid) = state.workspaces.focus_app(&identifier) {
-                                state.set_keyboard_focus_on_surface(&wid);
-                            } else if let Some(bookmark) = self.bookmark_config_for(&match_id) {
-                                if let Some(app) = self.bookmark_application(&match_id) {
-                                    if let Some((cmd, args)) = app.command(&bookmark.exec_args) {
-                                        state.launch_program(cmd, args);
+                            if !state.focus_app(&identifier) {
+                                if let Some(bookmark) = self.bookmark_config_for(&match_id) {
+                                    if let Some(app) = self.bookmark_application(&match_id) {
+                                        if let Some((cmd, args)) = app.command(&bookmark.exec_args) {
+                                            state.launch_program(cmd, args);
+                                        } else {
+                                            warn!("bookmark {} has no executable command", identifier);
+                                        }
                                     } else {
-                                        warn!("bookmark {} has no executable command", identifier);
+                                        warn!("bookmark {} not loaded into dock", identifier);
                                     }
-                                } else {
-                                    warn!("bookmark {} not loaded into dock", identifier);
                                 }
                             }
                         }
                     } else if let Some(wid) = self.get_window_from_layer(&layer_id) {
                         // if we click on a minimized window, unminimize it
                         if let Some(wid) = state.workspaces.unminimize_window(&wid) {
-                            state.workspaces.focus_app_with_window(&wid);
-                            state.set_keyboard_focus_on_surface(&wid);
+                            state.activate_window(&wid);
                         }
                     }
                 }
@@ -342,7 +341,7 @@ impl DockView {
             "open" | "new_window" => {
                 // Focus if running, otherwise launch
                 if self.is_app_running(app_id) {
-                    state.workspaces.focus_app(app_id);
+                    state.focus_app(app_id);
                 } else if let Some(match_id) = self.match_id_for(app_id) {
                     if let Some(app) = self.bookmark_application(&match_id) {
                         if let Some((cmd, args)) = app.command(&[]) {
