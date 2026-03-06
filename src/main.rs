@@ -13,10 +13,10 @@ fn print_help() {
     println!("otto {}", env!("CARGO_PKG_VERSION"));
     println!();
     println!("USAGE:");
-    println!("    otto [OPTIONS]");
+    println!("    otto [OPTION]");
     println!();
     println!("OPTIONS:");
-    println!("    --help       Print this help message");
+    println!("    -h, --help   Print this help message");
     println!("    --version    Print version information");
     for b in POSSIBLE_BACKENDS {
         println!("    {}", b);
