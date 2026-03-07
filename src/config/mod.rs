@@ -49,6 +49,10 @@ pub struct Config {
     pub virtual_outputs: Vec<VirtualOutputConfig>,
     #[serde(default)]
     pub exec_once: Vec<RunCommandConfig>,
+    #[serde(default)]
+    pub xdg_autostart: bool,
+    #[serde(default)]
+    pub systemd_notify: bool,
     #[serde(skip)]
     #[serde(default)]
     shortcut_bindings: Vec<ShortcutBinding>,
@@ -83,6 +87,8 @@ impl Default for Config {
             shortcut_bindings: Vec::new(),
             virtual_outputs: Vec::new(),
             exec_once: Vec::new(),
+            xdg_autostart: false,
+            systemd_notify: false,
         };
         config.rebuild_shortcut_bindings();
         config

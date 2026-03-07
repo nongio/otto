@@ -1,11 +1,12 @@
 use std::{fs, process::Command, sync::atomic::Ordering};
 
 use brightness::blocking::Brightness;
+use freedesktop_desktop_entry::DesktopEntry;
 use smithay::{
     reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1,
     wayland::{compositor::with_states, shell::xdg::XdgToplevelSurfaceData},
 };
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::{
     audio::MediaController,
@@ -85,6 +86,88 @@ impl<BackendData: Backend> Otto<BackendData> {
         let entries = Config::with(|c| c.exec_once.clone());
         for entry in entries {
             self.launch_program(entry.cmd, entry.args);
+        }
+
+        if Config::with(|c| c.xdg_autostart) {
+            self.launch_xdg_autostart();
+        }
+    }
+
+    fn launch_xdg_autostart(&mut self) {
+        // Collect autostart .desktop files from system then user dirs (user overrides system)
+        let xdg_config_dirs = std::env::var("XDG_CONFIG_DIRS")
+            .unwrap_or_else(|_| "/etc/xdg".to_string());
+        let xdg_config_home = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+            format!("{}/.config", home)
+        });
+
+        // Build ordered list: system dirs first, user dir last (user overrides by basename)
+        let mut search_dirs: Vec<std::path::PathBuf> = xdg_config_dirs
+            .split(':')
+            .map(|d| std::path::PathBuf::from(d).join("autostart"))
+            .collect();
+        search_dirs.push(std::path::PathBuf::from(&xdg_config_home).join("autostart"));
+
+        // Collect entries: later entries (user) override earlier (system) by filename
+        let mut entries: std::collections::HashMap<String, std::path::PathBuf> =
+            std::collections::HashMap::new();
+        for dir in &search_dirs {
+            let Ok(read_dir) = std::fs::read_dir(dir) else {
+                continue;
+            };
+            for entry in read_dir.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("desktop") {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        entries.insert(name.to_string(), path);
+                    }
+                }
+            }
+        }
+
+        let locales = Config::with(|c| c.locales.clone());
+        let locale_refs: Vec<&str> = locales.iter().map(|s| s.as_str()).collect();
+
+        for (_, path) in entries {
+            let entry = match DesktopEntry::from_path(&path, Some(&locale_refs)) {
+                Ok(e) => e,
+                Err(e) => {
+                    warn!(path = %path.display(), error = %e, "Failed to parse autostart entry");
+                    continue;
+                }
+            };
+
+            // Respect Hidden=true
+            if entry.hidden() {
+                continue;
+            }
+
+            // Respect OnlyShowIn / NotShowIn against "Otto"
+            if let Some(only) = entry.only_show_in() {
+                if !only.iter().any(|de| de.eq_ignore_ascii_case("Otto")) {
+                    continue;
+                }
+            }
+            if let Some(not) = entry.not_show_in() {
+                if not.iter().any(|de| de.eq_ignore_ascii_case("Otto")) {
+                    continue;
+                }
+            }
+
+            match entry.parse_exec() {
+                Ok(mut args) if !args.is_empty() => {
+                    let cmd = args.remove(0);
+                    info!(cmd = %cmd, args = ?args, path = %path.display(), "Launching XDG autostart entry");
+                    self.launch_program(cmd, args);
+                }
+                Ok(_) => {
+                    warn!(path = %path.display(), "Autostart entry has empty Exec field");
+                }
+                Err(e) => {
+                    warn!(path = %path.display(), error = ?e, "Failed to parse Exec field");
+                }
+            }
         }
     }
 
