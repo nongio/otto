@@ -351,8 +351,10 @@ mod tests {
 
     // These tests require fonts-dejavu-core (Ubuntu/Debian) or ttf-dejavu (Arch)
     // to be installed, providing "DejaVu Sans", "DejaVu Sans Condensed", etc.
+    // Run manually with: cargo test --lib -p otto -- workspaces::utils::tests --ignored
 
     #[test]
+    #[ignore]
     fn exact_match_works() {
         let cache = make_test_cache();
         let style = layers::skia::FontStyle::normal();
@@ -363,6 +365,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn case_insensitive_match() {
         let cache = make_test_cache();
         let style = layers::skia::FontStyle::normal();
@@ -376,6 +379,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn prefix_match_picks_shortest() {
         let cache = make_test_cache();
         let style = layers::skia::FontStyle::normal();
@@ -390,6 +394,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn fallback_with_fuzzy_returns_font() {
         let cache = make_test_cache();
         let style = layers::skia::FontStyle::normal();
@@ -404,6 +409,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn nonexistent_font_falls_back() {
         let cache = make_test_cache();
         let style = layers::skia::FontStyle::normal();
