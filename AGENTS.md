@@ -142,6 +142,13 @@ See `otto_config.example.toml` for all options.
 - **pipewire** — Video streaming for screenshare
 - **tokio** — Async runtime for D-Bus service
 
+## Git Commit Messages
+
+- Keep the subject line short (50 characters or fewer)
+- Use the imperative mood ("Add feature", not "Added feature")
+- Omit bullet-point body unless the change genuinely needs explanation
+- Do not repeat the diff — the subject line alone is usually sufficient
+
 ## Documentation
 
 Otto maintains two documentation tiers:
