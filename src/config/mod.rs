@@ -7,7 +7,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub mod default_apps;
 pub mod shortcuts;
 
-use shortcuts::{build_bindings, ShortcutBinding, ShortcutMap};
+use shortcuts::{build_bindings, RunCommandConfig, ShortcutBinding, ShortcutMap};
 use toml::map::Entry;
 use tracing::warn;
 
@@ -47,6 +47,12 @@ pub struct Config {
     pub keyboard_shortcuts: ShortcutMap,
     #[serde(default)]
     pub virtual_outputs: Vec<VirtualOutputConfig>,
+    #[serde(default)]
+    pub exec_once: Vec<RunCommandConfig>,
+    #[serde(default)]
+    pub xdg_autostart: bool,
+    #[serde(default)]
+    pub systemd_notify: bool,
     #[serde(skip)]
     #[serde(default)]
     shortcut_bindings: Vec<ShortcutBinding>,
@@ -80,6 +86,9 @@ impl Default for Config {
             keyboard_shortcuts: shortcuts::default_shortcut_map(),
             shortcut_bindings: Vec::new(),
             virtual_outputs: Vec::new(),
+            exec_once: Vec::new(),
+            xdg_autostart: false,
+            systemd_notify: false,
         };
         config.rebuild_shortcut_bindings();
         config

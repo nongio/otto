@@ -388,6 +388,8 @@ pub fn run_winit() {
 
     info!("Initialization completed, starting the main loop.");
 
+    state.autostart();
+
     // rendering / events loop
     while state.running.load(Ordering::SeqCst) {
         #[cfg(feature = "profile-with-puffin")]
