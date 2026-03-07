@@ -610,6 +610,8 @@ pub fn run_udev() {
      * And run our loop
      */
 
+    state.autostart();
+
     // FIXME: check if we can delay this
     while state.running.load(Ordering::SeqCst) {
         // Use tight timing when animations are active or the idle countdown

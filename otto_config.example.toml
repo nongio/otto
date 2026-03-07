@@ -185,3 +185,19 @@ bookmarks = [
   { desktop_id = "org.mozilla.firefox.desktop", label = "Web", exec_args = ["--private-window"] },
   { desktop_id = "org.gnome.Terminal.desktop" }
 ]
+
+# Autostart — commands to run once at startup, in order.
+# Each entry is spawned non-blocking (fire-and-forget). Otto does not
+# restart crashed processes; use systemd or another supervisor for that.
+#
+# [[exec_once]]
+# cmd = "waybar"
+# args = []
+#
+# [[exec_once]]
+# cmd = "dunst"
+# args = []
+#
+# [[exec_once]]
+# cmd = "wlsunset"
+# args = ["-l", "48.8", "-L", "2.3"]
