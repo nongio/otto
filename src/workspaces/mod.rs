@@ -69,6 +69,9 @@ pub struct OutputWorkspaces {
     pub workspaces_layer: Layer,
     /// Per-output expose layer (window overview mode).
     pub expose_layer: Layer,
+    /// Per-output container for wlr-layer-shell background/bottom surfaces.
+    /// Mirrored into each workspace view and expose window selector.
+    pub layer_shell_background: Layer,
     pub workspace_views: Vec<Arc<WorkspaceView>>,
 }
 
@@ -137,8 +140,6 @@ pub struct Workspaces {
     // layers
     pub layers_engine: Arc<Engine>,
     pub overlay_layer: Layer,
-    /// Container for wlr-layer-shell background layer surfaces
-    pub layer_shell_background: Layer,
 
     pub layer_shell_top: Layer,
     /// Container for wlr-layer-shell overlay layer surfaces  
@@ -153,31 +154,37 @@ pub struct Workspaces {
 /// ```diagram
 /// Workspaces
 /// root
-/// ├── workspaces
-/// │   ├── workspace_view_1
-/// │   │   ├── background_view (mirrored)
-/// │   │   └── workwspace_windows_container_1
-/// │   │       ├── window_view_1
-/// │   │       ├── window_view_2
-/// │   │       ...
-/// │   ├── workspace_view_2
-/// │   ...
-/// ├── expose
-/// │   ├── windows_selector_root_1
-/// │   │   ├── window_selector_background_1 (mirror: background_view)
-/// │   │   ├── window_selector_windows_container_1
-/// │   │   │   ├── mirror_window_1
-/// │   │   │   ├── mirror_window_2
-/// │   │   │   ...
-/// │   │   ├── window_selector_view_1
-/// │   ├── expose_view
-/// │   ├── app_switcher
+/// ├── output_layer (per output)
+/// │   ├── layer_shell_background (per-output wlr-layer-shell bg/bottom surfaces)
+/// │   ├── workspaces
+/// │   │   ├── workspace_view_1
+/// │   │   │   ├── background_view (config-driven)
+/// │   │   │   ├── layer_shell_bg_mirror (mirror: layer_shell_background)
+/// │   │   │   └── workspace_windows_container_1
+/// │   │   │       ├── window_view_1
+/// │   │   │       ├── window_view_2
+/// │   │   │       ...
+/// │   │   ├── workspace_view_2
+/// │   │   ...
+/// │   ├── expose
+/// │   │   ├── window_selector_root_1
+/// │   │   │   ├── window_selector_background_1 (mirror: background_view)
+/// │   │   │   ├── layer_shell_bg_expose_mirror (mirror: layer_shell_background)
+/// │   │   │   ├── window_selector_windows_container_1
+/// │   │   │   │   ├── mirror_window_1
+/// │   │   │   │   ├── mirror_window_2
+/// │   │   │   │   ...
+/// │   │   │   ├── window_selector_view_1
+/// │   │   ├── expose_view
+/// │   │   ├── app_switcher
+/// │   │
+/// │   ├── dock (primary only)
+/// │   ├── layer_shell_top (primary only)
+/// │   ├── popup_overlay (primary only)
+/// │   ├── layer_shell_overlay (primary only)
+/// │   ├── overlay (primary only)
 /// │
-/// ├── dnd_view
-/// ├── dock
-/// ├── popup_overlay (popups rendered on top of everything)
-/// ├── app_switcher
-/// ├── workspace_selector_view
+/// ├── workspace_selector_view (primary only)
 /// │   ├── workspace_selector_view_content
 /// │   │   ├── workspace_selector_desktop_1
 /// │   │   │   ├── workspace_selector_desktop_content_1
@@ -228,21 +235,6 @@ impl Workspaces {
         display_handle: DisplayHandle,
     ) -> (Self, smithay::reexports::calloop::channel::Channel<usize>) {
         let model = WorkspacesModel::default();
-
-        // Layer shell background layer (z-order: below workspaces)
-        let layer_shell_background = layers_engine.new_layer();
-        layer_shell_background.set_key("layer_shell_background");
-        layer_shell_background.set_layout_style(taffy::Style {
-            position: taffy::Position::Absolute,
-            size: taffy::Size {
-                width: taffy::Dimension::Percent(1.0),
-                height: taffy::Dimension::Percent(1.0),
-            },
-            ..Default::default()
-        });
-        layer_shell_background.set_pointer_events(false);
-        layer_shell_background.set_hidden(true);
-        // attached to output_layer in map_output_with_primary
 
         let expose_layer = layers_engine.new_layer();
         expose_layer.set_key("expose");
@@ -340,7 +332,6 @@ impl Workspaces {
             osd,
             app_icons_manager,
             overlay_layer,
-            layer_shell_background,
             layer_shell_top,
             layer_shell_overlay,
             show_all: Arc::new(AtomicBool::new(false)),
@@ -2901,14 +2892,26 @@ impl Workspaces {
 
         let is_this_primary = self.primary_output.as_ref().map(|o| o.name()) == Some(output.name());
 
+        // Create per-output layer_shell_background container
+        let layer_shell_background = self.layers_engine.new_layer();
+        layer_shell_background.set_key(format!("layer_shell_background_{}", output.name()));
+        layer_shell_background.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            size: taffy::Size {
+                width: taffy::Dimension::Percent(1.0),
+                height: taffy::Dimension::Percent(1.0),
+            },
+            ..Default::default()
+        });
+        layer_shell_background.set_pointer_events(false);
+        layer_shell_background.set_hidden(true);
+
         // Attach layers to output_layer in z-order (bottom to top):
-        // layer_shell_background (primary) → workspaces → expose → overlay (dnd, osd) →
+        // layer_shell_background → workspaces → expose → overlay (dnd, osd) →
         // dock (primary) → layer_shell_top → workspace_selector →
         // layer_shell_overlay → app_switcher (primary) → popup_overlay (primary)
-        if is_this_primary {
-            let _ = output_layer.add_sublayer(&self.layer_shell_background);
-        }
-        let _ = output_layer.add_sublayer(&workspaces_layer);
+        output_layer.add_sublayer(&layer_shell_background);
+        output_layer.add_sublayer(&workspaces_layer);
 
         // Create a per-output expose layer
         let expose_layer = self.layers_engine.new_layer();
@@ -2963,6 +2966,7 @@ impl Workspaces {
                 self.layers_engine.clone(),
                 &workspaces_layer,
                 self.overlay_layer.clone(),
+                &layer_shell_background,
             ));
             let _ = expose_layer.add_sublayer(&workspace.window_selector_view.window_selector_root);
             workspace_views.push(workspace);
@@ -2978,6 +2982,7 @@ impl Workspaces {
             output_layer,
             workspaces_layer,
             expose_layer,
+            layer_shell_background,
             workspace_views,
         };
         self.output_workspaces.insert(output.name(), ows);
@@ -3048,6 +3053,7 @@ impl Workspaces {
                     layers_engine.clone(),
                     &ows.workspaces_layer,
                     overlay_layer.clone(),
+                    &ows.layer_shell_background,
                 ));
                 let _ = ows
                     .expose_layer
@@ -3717,6 +3723,7 @@ impl Workspaces {
         &self,
         wlr_layer: smithay::wayland::shell::wlr_layer::Layer,
         namespace: &str,
+        output: &Output,
     ) -> Layer {
         use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
 
@@ -3730,21 +3737,17 @@ impl Workspaces {
             position: taffy::Position::Absolute,
             ..Default::default()
         });
-        // Layer shell surfaces handle their own pointer events
-        layer.set_pointer_events(true);
+        // Background layer surfaces sit behind everything — no pointer events.
+        // Other layer shell surfaces handle their own pointer events.
+        let has_pointer = !matches!(wlr_layer, WlrLayer::Background);
+        layer.set_pointer_events(has_pointer);
 
         // Add to appropriate container based on layer
         match wlr_layer {
-            WlrLayer::Background => {
-                self.layer_shell_background.set_hidden(false);
-                if let Err(e) = self.layer_shell_background.add_sublayer(&layer) {
-                    tracing::warn!("layer_shell: failed to add background layer: {e}");
-                }
-            }
-            WlrLayer::Bottom => {
-                self.layer_shell_background.set_hidden(false);
-                if let Err(e) = self.layer_shell_background.add_sublayer(&layer) {
-                    tracing::warn!("layer_shell: failed to add bottom layer: {e}");
+            WlrLayer::Background | WlrLayer::Bottom => {
+                if let Some(ows) = self.output_workspaces.get(&output.name()) {
+                    ows.layer_shell_background.set_hidden(false);
+                    ows.layer_shell_background.add_sublayer(&layer);
                 }
             }
             WlrLayer::Top => {
