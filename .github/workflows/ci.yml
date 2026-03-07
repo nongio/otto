@@ -209,7 +209,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install dependencies
-        run: pacman -Sy --noconfirm base-devel git
+        run: pacman -Syu --noconfirm base-devel git
       - name: Setup build user
         run: |
           useradd -m builder
