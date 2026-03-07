@@ -200,7 +200,6 @@ jobs:
             To update, re-download the tarball and re-run `makepkg`.
 
   validate-pkgbuild:
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     container:
       image: archlinux:latest
