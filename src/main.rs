@@ -13,14 +13,17 @@ fn print_help() {
     println!("otto {}", env!("CARGO_PKG_VERSION"));
     println!();
     println!("USAGE:");
-    println!("    otto [OPTION]");
+    println!("    otto [OPTION] [FLAGS]");
     println!();
     println!("OPTIONS:");
-    println!("    -h, --help   Print this help message");
-    println!("    --version    Print version information");
+    println!("    -h, --help         Print this help message");
+    println!("    --version          Print version information");
     for b in POSSIBLE_BACKENDS {
         println!("    {}", b);
     }
+    println!();
+    println!("FLAGS:");
+    println!("    --systemd-notify   Send sd_notify(READY=1) and activate graphical-session.target");
     println!();
     println!("If no backend is specified, otto auto-detects based on the environment.");
 }
@@ -46,7 +49,8 @@ async fn main() {
             if !other.starts_with("--winit")
                 && !other.starts_with("--tty-udev")
                 && !other.starts_with("--probe")
-                && !other.starts_with("--x11") =>
+                && !other.starts_with("--x11")
+                && !other.starts_with("--systemd-notify") =>
         {
             eprintln!("Unknown argument: {}", other);
             eprintln!();
@@ -54,6 +58,12 @@ async fn main() {
             std::process::exit(1);
         }
         _ => {}
+    }
+
+    // Check for --systemd-notify flag (can appear as first or second argument)
+    if std::env::args().any(|a| a == "--systemd-notify") {
+        // SAFETY: setting env var before any threads are spawned
+        unsafe { std::env::set_var("OTTO_SYSTEMD_NOTIFY", "1") };
     }
 
     if let Ok(env_filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
@@ -78,7 +88,9 @@ async fn main() {
     #[cfg(feature = "profile-with-puffin")]
     profiling::puffin::set_scopes_on(true);
 
-    let arg = ::std::env::args().nth(1);
+    let arg = ::std::env::args()
+        .skip(1)
+        .find(|a| a != "--systemd-notify");
     match arg.as_ref().map(|s| &s[..]) {
         #[cfg(feature = "winit")]
         Some("--winit") => {

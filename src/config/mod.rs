@@ -51,6 +51,10 @@ pub struct Config {
     pub occlusion_culling: bool,
     #[serde(default)]
     pub exec_once: Vec<RunCommandConfig>,
+    #[serde(default)]
+    pub xdg_autostart: bool,
+    #[serde(default)]
+    pub systemd_notify: bool,
     #[serde(skip)]
     #[serde(default)]
     shortcut_bindings: Vec<ShortcutBinding>,
@@ -86,6 +90,8 @@ impl Default for Config {
             virtual_outputs: Vec::new(),
             occlusion_culling: false,
             exec_once: Vec::new(),
+            xdg_autostart: false,
+            systemd_notify: false,
         };
         config.rebuild_shortcut_bindings();
         config
