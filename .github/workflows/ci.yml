@@ -48,7 +48,7 @@ jobs:
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: ${{ runner.os }}-cargo-registry-
       - name: System dependencies
-        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev hicolor-icon-theme
+        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev hicolor-icon-theme fonts-dejavu-core
       - name: Clippy
         run: cargo clippy --features "default" -- -D warnings
       - name: Run tests
@@ -137,24 +137,28 @@ jobs:
       - name: Install cargo-aur
         run: cargo install cargo-aur
       - name: Build workspace binaries
-        run: |
-          cargo build --release -p otto -p xdg-desktop-portal-otto
-          for bin in target/release/otto target/release/xdg-desktop-portal-otto; do
-            cp "$bin" "$bin.tmp" && mv "$bin.tmp" "$bin"
-          done
+        run: cargo build --release -p otto -p xdg-desktop-portal-otto
       - name: Build Arch package
-        run: cargo aur -o .
+        run: |
+          cp PKGBUILD PKGBUILD.repo
+          cargo aur -o .
+      - name: Repack tarball with PKGBUILD
+        run: |
+          # cargo aur creates symlinks (e.g. LICENSE) that break bsdtar extraction,
+          # and its generated PKGBUILD has wrong permissions (644 for binaries).
+          # Use the repo's hand-written PKGBUILD instead.
+          TARBALL=$(ls otto-*.tar.gz)
+          cp PKGBUILD.repo PKGBUILD
+          tmpdir=$(mktemp -d)
+          tar -xzf "$TARBALL" -C "$tmpdir"
+          cp PKGBUILD "$tmpdir/"
+          tar -czf "$TARBALL" -C "$tmpdir" --dereference .
+          rm -rf "$tmpdir"
       - name: Upload Arch tarball
         uses: actions/upload-artifact@v4
         with:
           name: otto-arch
           path: otto-*.tar.gz
-          retention-days: 30
-      - name: Upload PKGBUILD
-        uses: actions/upload-artifact@v4
-        with:
-          name: otto-pkgbuild
-          path: PKGBUILD
           retention-days: 30
   
   release:
@@ -179,11 +183,6 @@ jobs:
         with:
           name: otto-arch
           path: artifacts/arch
-      - name: Download PKGBUILD
-        uses: actions/download-artifact@v4
-        with:
-          name: otto-pkgbuild
-          path: artifacts/arch
       - name: Create release body
         run: |
           cat > release_notes.md << 'EOF'
@@ -203,18 +202,11 @@ jobs:
           ```
 
           ### Arch Linux
-          **Install from PKGBUILD (recommended)**
           ```bash
-          # Download the PKGBUILD from the release assets, then:
-          makepkg -si
-          ```
-
-          **Manual binary install**
-          ```bash
-          # Download and extract the tarball
+          # Download the tarball from releases, then:
           tar -xzf otto-*-x86_64.tar.gz
-          sudo install -Dm755 target/release/otto /usr/bin/otto
-          sudo install -Dm755 target/release/xdg-desktop-portal-otto /usr/libexec/xdg-desktop-portal-otto
+          cd otto-*
+          makepkg -si
           ```
 
           ---
@@ -226,7 +218,6 @@ jobs:
             artifacts/deb/*.deb
             artifacts/rpm/*.rpm
             artifacts/arch/*.tar.gz
-            artifacts/arch/PKGBUILD
           body_path: release_notes.md
           generate_release_notes: true
           draft: true
