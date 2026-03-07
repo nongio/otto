@@ -127,17 +127,11 @@ sudo rpm -i otto-*.rpm
 
 #### Arch Linux
 
-**Option 1: Binary package (recommended)**
+**Install from PKGBUILD (recommended)**
 ```bash
 # Download the tarball from releases, then:
 tar -xzf otto-*-x86_64.tar.gz
 cd otto-*
-makepkg -si
-```
-
-**Option 2: From PKGBUILD**
-```bash
-# Download PKGBUILD from releases, then:
 makepkg -si
 ```
 
