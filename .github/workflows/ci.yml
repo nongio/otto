@@ -144,21 +144,22 @@ jobs:
           PKGVER=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           TARBALL="otto-${PKGVER}-x86_64.tar.gz"
           tmpdir=$(mktemp -d)
-          install -Dm755 target/release/otto "$tmpdir/target/release/otto"
-          install -Dm755 target/release/xdg-desktop-portal-otto "$tmpdir/target/release/xdg-desktop-portal-otto"
-          install -m644 LICENSE "$tmpdir/LICENSE"
-          install -m644 README.md "$tmpdir/README.md"
-          install -m644 otto_config.example.toml "$tmpdir/otto_config.example.toml"
-          install -Dm644 resources/otto.desktop "$tmpdir/resources/otto.desktop"
-          install -Dm644 components/xdg-desktop-portal-otto/otto.portal "$tmpdir/components/xdg-desktop-portal-otto/otto.portal"
-          install -Dm644 components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service "$tmpdir/components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service"
-          install -Dm644 components/xdg-desktop-portal-otto/portals.conf.example "$tmpdir/components/xdg-desktop-portal-otto/portals.conf.example"
-          install -m644 PKGBUILD "$tmpdir/PKGBUILD"
-          install -m644 PKGBUILD-git "$tmpdir/PKGBUILD-git"
-          install -m644 PKGBUILD-nightly-bin "$tmpdir/PKGBUILD-nightly-bin"
+          PKGDIR="otto-${PKGVER}"
+          install -Dm755 target/release/otto "$tmpdir/$PKGDIR/target/release/otto"
+          install -Dm755 target/release/xdg-desktop-portal-otto "$tmpdir/$PKGDIR/target/release/xdg-desktop-portal-otto"
+          install -m644 LICENSE "$tmpdir/$PKGDIR/LICENSE"
+          install -m644 README.md "$tmpdir/$PKGDIR/README.md"
+          install -m644 otto_config.example.toml "$tmpdir/$PKGDIR/otto_config.example.toml"
+          install -Dm644 resources/otto.desktop "$tmpdir/$PKGDIR/resources/otto.desktop"
+          install -Dm644 components/xdg-desktop-portal-otto/otto.portal "$tmpdir/$PKGDIR/components/xdg-desktop-portal-otto/otto.portal"
+          install -Dm644 components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service "$tmpdir/$PKGDIR/components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service"
+          install -Dm644 components/xdg-desktop-portal-otto/portals.conf.example "$tmpdir/$PKGDIR/components/xdg-desktop-portal-otto/portals.conf.example"
+          install -m644 PKGBUILD "$tmpdir/$PKGDIR/PKGBUILD"
+          install -m644 PKGBUILD-git "$tmpdir/$PKGDIR/PKGBUILD-git"
+          install -m644 PKGBUILD-nightly-bin "$tmpdir/$PKGDIR/PKGBUILD-nightly-bin"
           # VERSION file for PKGBUILD-nightly-bin pkgver()
-          echo "${PKGVER}.r$(git rev-list --count HEAD).$(git rev-parse --short HEAD)" > "$tmpdir/VERSION"
-          tar -czf "$TARBALL" -C "$tmpdir" .
+          echo "${PKGVER}.r$(git rev-list --count HEAD).$(git rev-parse --short HEAD)" > "$tmpdir/$PKGDIR/VERSION"
+          tar -czf "$TARBALL" -C "$tmpdir" "$PKGDIR"
           # Also produce a fixed-name copy for the nightly release
           cp "$TARBALL" otto-nightly-x86_64.tar.gz
           rm -rf "$tmpdir"
