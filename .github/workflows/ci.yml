@@ -48,7 +48,7 @@ jobs:
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: ${{ runner.os }}-cargo-registry-
       - name: System dependencies
-        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev hicolor-icon-theme
+        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev hicolor-icon-theme fonts-dejavu-core
       - name: Clippy
         run: cargo clippy --features "default" -- -D warnings
       - name: Run tests
@@ -145,6 +145,8 @@ jobs:
           # cargo aur creates symlinks (e.g. LICENSE) that break bsdtar extraction,
           # and doesn't include the PKGBUILD. Repack with both fixes.
           TARBALL=$(ls otto-*.tar.gz)
+          # Use SKIP since the tarball contains the PKGBUILD (circular checksum)
+          sed -i 's/sha256sums=(.*/sha256sums=("SKIP")/' PKGBUILD
           tmpdir=$(mktemp -d)
           tar -xzf "$TARBALL" -C "$tmpdir"
           cp PKGBUILD "$tmpdir/"
