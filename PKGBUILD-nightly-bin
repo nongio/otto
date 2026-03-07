@@ -14,10 +14,11 @@ optdepends=("xdg-desktop-portal: Desktop integration")
 source=("otto-nightly-x86_64.tar.gz::https://github.com/nongio/otto/releases/download/nightly/otto-nightly-x86_64.tar.gz")
 sha256sums=("SKIP")
 noextract=("otto-nightly-x86_64.tar.gz")
+backup=("etc/otto/config.toml")
 
 prepare() {
-    mkdir -p "$srcdir/otto"
-    tar -xzf "$srcdir/otto-nightly-x86_64.tar.gz" -C "$srcdir/otto"
+    tar -xzf "$srcdir/otto-nightly-x86_64.tar.gz" -C "$srcdir"
+    mv "$srcdir"/otto-*/ "$srcdir/otto"
 }
 
 pkgver() {

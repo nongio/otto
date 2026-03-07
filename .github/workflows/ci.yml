@@ -86,7 +86,6 @@ jobs:
           retention-days: 30
   
   build-rpm:
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout sources
@@ -118,7 +117,6 @@ jobs:
           retention-days: 30
   
   build-arch:
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout sources
