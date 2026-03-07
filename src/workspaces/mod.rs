@@ -2809,11 +2809,21 @@ impl Workspaces {
         layer_shell_background.set_pointer_events(false);
         layer_shell_background.set_hidden(true);
 
+        // Attach layer_shell_background to the scene root (not the output_layer) so it
+        // doesn't get rendered directly — it only serves as a content source for mirror
+        // layers inside workspaces and expose views.
+        if let Some(root) = self
+            .layers_engine
+            .scene_root()
+            .and_then(|id| self.layers_engine.get_layer(&id))
+        {
+            root.add_sublayer(&layer_shell_background);
+        }
+
         // Attach layers to output_layer in z-order (bottom to top):
-        // layer_shell_background → workspaces → expose → overlay (dnd, osd) →
+        // workspaces → expose → overlay (dnd, osd) →
         // dock (primary) → layer_shell_top → workspace_selector →
         // layer_shell_overlay → app_switcher (primary) → popup_overlay (primary)
-        output_layer.add_sublayer(&layer_shell_background);
         output_layer.add_sublayer(&workspaces_layer);
 
         // Create a per-output expose layer
