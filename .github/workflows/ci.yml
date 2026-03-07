@@ -137,13 +137,23 @@ jobs:
       - name: Install cargo-aur
         run: cargo install cargo-aur
       - name: Build workspace binaries
-        run: |
-          cargo build --release -p otto -p xdg-desktop-portal-otto
-          for bin in target/release/otto target/release/xdg-desktop-portal-otto; do
-            cp "$bin" "$bin.tmp" && mv "$bin.tmp" "$bin"
-          done
+        run: cargo build --release -p otto -p xdg-desktop-portal-otto
       - name: Build Arch package
-        run: cargo aur -o .
+        run: |
+          cp PKGBUILD PKGBUILD.repo
+          cargo aur -o .
+      - name: Repack tarball with PKGBUILD
+        run: |
+          # cargo aur creates symlinks (e.g. LICENSE) that break bsdtar extraction,
+          # and its generated PKGBUILD has wrong permissions (644 for binaries).
+          # Use the repo's hand-written PKGBUILD instead.
+          TARBALL=$(ls otto-*.tar.gz)
+          cp PKGBUILD.repo PKGBUILD
+          tmpdir=$(mktemp -d)
+          tar -xzf "$TARBALL" -C "$tmpdir"
+          cp PKGBUILD "$tmpdir/"
+          tar -czf "$TARBALL" -C "$tmpdir" --dereference .
+          rm -rf "$tmpdir"
       - name: Upload Arch tarball
         uses: actions/upload-artifact@v4
         with:
