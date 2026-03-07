@@ -81,6 +81,13 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
     }
 
+    pub fn autostart(&mut self) {
+        let entries = Config::with(|c| c.exec_once.clone());
+        for entry in entries {
+            self.launch_program(entry.cmd, entry.args);
+        }
+    }
+
     pub(crate) fn process_common_key_action(&mut self, action: KeyAction) {
         match action {
             KeyAction::None => (),

@@ -444,6 +444,32 @@ Unlike GPU shader-based implementations, Otto's gamma control uses hardware look
 
 ---
 
+### Autostart (exec-once)
+
+Define commands to run automatically when Otto starts. Entries are executed in order; each process is spawned non-blocking (fire-and-forget). Otto does not restart crashed processes — use systemd or another supervisor for process management.
+
+```toml
+[[exec_once]]
+cmd = "waybar"
+args = []
+
+[[exec_once]]
+cmd = "dunst"
+args = []
+
+[[exec_once]]
+cmd = "wlsunset"
+args = ["-l", "48.8", "-L", "2.3"]
+```
+
+Each entry takes:
+- `cmd` — the executable to run (must be on `$PATH` or an absolute path)
+- `args` — optional list of command-line arguments (defaults to empty)
+
+Commands are spawned after the Wayland socket is ready, so `WAYLAND_DISPLAY` and `DISPLAY` (when XWayland is active) are already set in the child environment.
+
+---
+
 ## Tips
 
 1. **Start with the example**: Copy `otto_config.example.toml` to `~/.config/otto/config.toml` and modify as needed
