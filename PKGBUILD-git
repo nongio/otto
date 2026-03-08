@@ -1,7 +1,7 @@
 # Maintainer: Riccardo Canalicchio <riccardo.canalicchio@gmail.com>
 
 pkgname=otto-git
-pkgver=0.14.0
+pkgver=0.r30.g9ca88b8
 pkgrel=1
 pkgdesc="A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail, inspired by familiar macOS interactions."
 url="https://github.com/nongio/otto"
@@ -12,24 +12,25 @@ conflicts=("otto" "otto-bin")
 depends=("libdrm" "systemd-libs" "mesa" "libxkbcommon" "wayland" "libinput" "dbus" "seatd" "pipewire" "freetype2" "fontconfig" "pixman" "noto-fonts")
 makedepends=("git" "rust" "cargo" "libdisplay-info" "clang")
 optdepends=("xdg-desktop-portal: Desktop integration")
-source=("git+https://github.com/nongio/otto.git")
-sha256sums=("SKIP")
+source=()
+sha256sums=()
 backup=("etc/otto/config.toml")
 
 pkgver() {
-    cd otto
+    cd "$startdir"
     git describe --long --tags 2>/dev/null | sed 's/^v//;s/-/.r/;s/-/./' ||
     printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
 }
 
 build() {
-    cd otto
+    cd "$startdir"
+    unset CFLAGS CXXFLAGS LDFLAGS CPPFLAGS
     cargo build --release
     cargo build --release -p xdg-desktop-portal-otto
 }
 
 package() {
-    cd otto
+    cd "$startdir"
 
     # Install binaries
     install -Dm755 target/release/otto "$pkgdir/usr/bin/otto"
