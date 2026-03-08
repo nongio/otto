@@ -18,6 +18,7 @@ backup=("etc/otto/config.toml")
 
 prepare() {
     tar -xzf "$srcdir/otto-nightly-x86_64.tar.gz" -C "$srcdir"
+    rm -rf "$srcdir/otto"
     mv "$srcdir"/otto-*/ "$srcdir/otto"
 }
 
