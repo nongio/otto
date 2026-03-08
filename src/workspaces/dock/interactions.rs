@@ -1,4 +1,4 @@
-use layers::{prelude::Transition, skia};
+use layers::prelude::Transition;
 use otto_kit::components::context_menu::ContextMenuRenderer;
 use smithay::{
     backend::input::{ButtonState, KeyState},
@@ -79,19 +79,11 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
 
         match event.state {
             ButtonState::Pressed => {
-                // println!("dock Button pressed");
                 if let Some(layer_id) = state.layers_engine.current_hover() {
-                    if let Some((_identifier, match_id)) = self.get_app_from_layer(&layer_id) {
-                        let apps_layers = self.app_layers.read().unwrap();
-                        if let Some(entry) = apps_layers.get(&match_id) {
-                            let darken_color = skia::Color::from_argb(100, 100, 100, 100);
-                            let add = skia::Color::from_argb(0, 0, 0, 0);
-                            let filter = skia::color_filters::lighting(darken_color, add);
-                            entry.icon_scaler.set_color_filter(filter);
-                            entry.icon_scaler.set_opacity(1.0, None);
-                            entry
-                                .label_layer
-                                .set_opacity(1.0, Some(Transition::ease_in_quad(0.05)));
+                    if let Some((target, label)) = self.darkening_target_for_hover(&layer_id) {
+                        self.darken_pressed(&target);
+                        if let Some(l) = label {
+                            l.set_opacity(1.0, Some(Transition::ease_in_quad(0.05)));
                         }
                     }
                 }
@@ -160,74 +152,69 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
                                 event.serial,
                             );
                         }
+                        self.clear_pressed();
                         return;
                     }
 
-                    if let Some((identifier, match_id)) = self.get_app_from_layer(&layer_id) {
-                        // Check for right-click on protocol layer item
-                        if event.button == BTN_RIGHT {
-                            tracing::info!(
-                                "🖱️ Right-click detected on protocol layer app: {}",
-                                identifier
-                            );
-
-                            let pos = state.last_pointer_location;
-                            let pos = layers::prelude::Point::new(pos.0 as f32, pos.1 as f32);
-                            state
-                                .workspaces
-                                .dock
-                                .open_context_menu(pos, identifier.clone());
-                            let view = InteractiveView {
-                                view: Box::new(self.clone()),
-                            };
-                            if let Some(keyboard) = seat.get_keyboard() {
-                                keyboard.set_focus(
-                                    state,
-                                    Some(crate::focus::KeyboardFocusTarget::View(view)),
-                                    event.serial,
+                    // Only execute the click action when released on the same
+                    // element that was initially pressed.
+                    if self.is_released_on_pressed(&layer_id) {
+                        if let Some((identifier, match_id)) = self.get_app_from_layer(&layer_id) {
+                            // Check for right-click on protocol layer item
+                            if event.button == BTN_RIGHT {
+                                tracing::info!(
+                                    "🖱️ Right-click detected on protocol layer app: {}",
+                                    identifier
                                 );
-                            }
-                            return;
-                        } else {
-                            // Normal left-click: focus or launch app
-                            if !state.focus_app(&identifier) {
-                                if let Some(bookmark) = self.bookmark_config_for(&match_id) {
-                                    if let Some(app) = self.bookmark_application(&match_id) {
-                                        if let Some((cmd, args)) = app.command(&bookmark.exec_args)
-                                        {
-                                            state.launch_program(cmd, args);
+
+                                let pos = state.last_pointer_location;
+                                let pos =
+                                    layers::prelude::Point::new(pos.0 as f32, pos.1 as f32);
+                                state
+                                    .workspaces
+                                    .dock
+                                    .open_context_menu(pos, identifier.clone());
+                                let view = InteractiveView {
+                                    view: Box::new(self.clone()),
+                                };
+                                if let Some(keyboard) = seat.get_keyboard() {
+                                    keyboard.set_focus(
+                                        state,
+                                        Some(crate::focus::KeyboardFocusTarget::View(view)),
+                                        event.serial,
+                                    );
+                                }
+                            } else {
+                                // Normal left-click: focus or launch app
+                                if !state.focus_app(&identifier) {
+                                    if let Some(bookmark) = self.bookmark_config_for(&match_id) {
+                                        if let Some(app) = self.bookmark_application(&match_id) {
+                                            if let Some((cmd, args)) =
+                                                app.command(&bookmark.exec_args)
+                                            {
+                                                state.launch_program(cmd, args);
+                                            } else {
+                                                warn!(
+                                                    "bookmark {} has no executable command",
+                                                    identifier
+                                                );
+                                            }
                                         } else {
-                                            warn!(
-                                                "bookmark {} has no executable command",
-                                                identifier
-                                            );
+                                            warn!("bookmark {} not loaded into dock", identifier);
                                         }
-                                    } else {
-                                        warn!("bookmark {} not loaded into dock", identifier);
                                     }
                                 }
                             }
-                        }
-                    } else if let Some(wid) = self.get_window_from_layer(&layer_id) {
-                        // if we click on a minimized window, unminimize it
-                        if let Some(wid) = state.workspaces.unminimize_window(&wid) {
-                            state.activate_window(&wid);
-                        }
-                    }
-                }
-                // Clear darken filter on any pressed app icon
-                if let Some(layer_id) = state.layers_engine.current_hover() {
-                    if let Some((_identifier, match_id)) = self.get_app_from_layer(&layer_id) {
-                        let apps_layers = self.app_layers.read().unwrap();
-                        if let Some(entry) = apps_layers.get(&match_id) {
-                            entry.icon_scaler.set_color_filter(None);
-                            entry.icon_scaler.set_opacity(1.0, None);
-                            entry
-                                .label_layer
-                                .set_opacity(1.0, Some(Transition::ease_in_quad(0.05)));
+                        } else if let Some(wid) = self.get_window_from_layer(&layer_id) {
+                            // if we click on a minimized window, unminimize it
+                            if let Some(wid) = state.workspaces.unminimize_window(&wid) {
+                                state.activate_window(&wid);
+                            }
                         }
                     }
                 }
+                // Always clear the pressed darkening — handles release outside too.
+                self.clear_pressed();
                 self.dragging
                     .store(false, std::sync::atomic::Ordering::SeqCst);
             }

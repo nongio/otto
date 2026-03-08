@@ -216,6 +216,7 @@ pub fn setup_miniwindow_icon(layer: &Layer, inner_layer: &Layer, icon_width: f32
             None,
         ))
         .background_color(Color::new_rgba(1.0, 0.0, 0.0, 0.0))
+        // .image_cache(true)
         .build()
         .unwrap();
     layer.build_layer_tree(&container_tree);

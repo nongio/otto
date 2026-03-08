@@ -1815,7 +1815,7 @@ impl Workspaces {
                 // add_window_element triggers render_dock → magnify_elements_with_scale
                 // which animates the drawer from width 0 → icon_size and stores the
                 // AnimationRef in last_layout_animation.
-                let (drawer, _) = self.dock.add_window_element(we);
+                let (drawer, inner) = self.dock.add_window_element(we);
                 let layout_anim = self.dock.last_layout_animation();
 
                 view.mirror_layer.set_hidden(true);
@@ -1824,6 +1824,7 @@ impl Workspaces {
                 let dock_ref = self.dock.clone();
                 let view = view.clone();
                 let drawer = drawer.clone();
+                let inner = inner.clone();
 
                 tokio::spawn(async move {
                     // Phase 1: dock slide-in + drawer expand in parallel.
@@ -1847,28 +1848,29 @@ impl Workspaces {
                         _ = tokio::time::sleep(tokio::time::Duration::from_millis(350)) => {}
                     }
 
-                    // Phase 2: move window layer into the drawer and run genie.
+                    // Phase 2: move window layer into the inner container and run genie.
                     view.window_layer.set_layout_style(taffy::Style {
                         position: taffy::Position::Absolute,
                         ..Default::default()
                     });
                     layers_engine
-                        .add_layer_to_positioned(view.window_layer.clone(), Some(drawer.id));
+                        .add_layer_to_positioned(view.window_layer.clone(), Some(inner.id));
 
-                    let drawer_bounds = drawer.render_bounds_transformed();
+                    let inner_bounds = inner.render_bounds_transformed();
                     let minimize_tr = view.minimize(skia::Rect::from_xywh(
-                        drawer_bounds.x(),
-                        drawer_bounds.y(),
-                        drawer_bounds.width(),
-                        drawer_bounds.height(),
+                        inner_bounds.x(),
+                        inner_bounds.y(),
+                        inner_bounds.width(),
+                        inner_bounds.height(),
                     ));
 
                     // Keep the miniwindow fitted when the drawer resizes later.
                     let view_ref = view.clone();
+                    let inner_ref = inner.clone();
                     drawer.clear_on_change_size_handlers();
                     drawer.on_change_size(
-                        move |layer: &Layer, _| {
-                            view_ref.apply_minimized_scale(layer.render_bounds_transformed());
+                        move |_layer: &Layer, _| {
+                            view_ref.apply_minimized_scale(inner_ref.render_bounds_transformed());
                         },
                         false,
                     );
