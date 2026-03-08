@@ -20,7 +20,7 @@ docs/investigations/
 pkg/
 *.pkg.tar.zst
 *.pkg.tar.xz
-src/otto
-src/*.tar.gz
-src/*.tar.xz
-src/*.tar.zst
+*.tar.gz
+*.tar.xz
+*.tar.zst
+src/
