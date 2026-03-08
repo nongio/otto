@@ -1542,6 +1542,24 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 keyboard.unset_grab(self);
             }
         }
+
+        // Restore pointer focus to whatever surface is now under the cursor.
+        // Without this the pointer retains no focus after the grab is dropped,
+        // leaving the parent window unresponsive to mouse input.
+        let pointer = self.pointer.clone();
+        let pointer_location = pointer.current_location();
+        let under = self.surface_under(pointer_location);
+        let serial = SERIAL_COUNTER.next_serial();
+        pointer.motion(
+            self,
+            under,
+            &smithay::input::pointer::MotionEvent {
+                location: pointer_location,
+                serial,
+                time: 0,
+            },
+        );
+        pointer.frame(self);
     }
 
     pub fn get_gamma_size(&self, output: &Output) -> Option<u32> {

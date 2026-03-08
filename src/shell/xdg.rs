@@ -287,6 +287,12 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 self.update_window_view(&window);
             }
         }
+
+        // Release any pointer/keyboard grab that was held by this popup and
+        // restore pointer focus to the surface now under the cursor.  Without
+        // this the parent window becomes unresponsive to mouse input after the
+        // popup is dismissed (e.g. GTK4/Ghostty context menus, fcitx5 popups).
+        self.dismiss_all_popups();
     }
     fn reposition_request(
         &mut self,
