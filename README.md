@@ -130,8 +130,8 @@ sudo rpm -i otto-*.rpm
 **Install from PKGBUILD (recommended)**
 ```bash
 # Download the tarball from releases, then:
-tar -xzf otto-*-x86_64.tar.gz
-cd otto-*
+mkdir otto && tar -xzf otto-*-x86_64.tar.gz -C otto
+cd otto
 makepkg -si
 ```
 
