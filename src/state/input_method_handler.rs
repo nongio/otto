@@ -27,8 +27,10 @@ impl<BackendData: Backend> InputMethodHandler for Otto<BackendData> {
         if let Some(parent) = surface.get_parent().map(|parent| parent.surface.clone()) {
             let _ = PopupManager::dismiss_popup(&parent, &PopupKind::from(surface));
         }
-        // Restore pointer focus after the input-method popup is gone.
-        self.dismiss_all_popups();
+        // Note: we intentionally do NOT release grabs or restore pointer focus here.
+        // This callback is invoked while smithay's input_method mutex (and sometimes the
+        // keyboard mutex) is held — touching keyboard/pointer handles would deadlock.
+        // Stale grabs are cleaned up proactively in xdg::grab and in popup_destroyed.
     }
 
     fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, smithay::utils::Logical> {

@@ -1525,7 +1525,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         );
     }
 
-    /// Dismiss all active popups and release any pointer/keyboard grabs
+    /// Dismiss all active popups and release any pointer/keyboard grabs.
+    ///
+    /// Must NOT be called from within a keyboard grab callback (e.g. `KeyboardTarget::leave`)
+    /// or while smithay's input_method mutex is held, as it calls `keyboard.is_grabbed()` /
+    /// `pointer.is_grabbed()` which may re-acquire those mutexes and deadlock.
     pub fn dismiss_all_popups(&mut self) {
         let serial = SERIAL_COUNTER.next_serial();
 
@@ -1543,9 +1547,14 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             }
         }
 
-        // Restore pointer focus to whatever surface is now under the cursor.
-        // Without this the pointer retains no focus after the grab is dropped,
-        // leaving the parent window unresponsive to mouse input.
+        self.restore_pointer_focus();
+    }
+
+    /// Restore pointer focus to the surface currently under the cursor.
+    ///
+    /// Unlike `dismiss_all_popups`, this does not touch the keyboard handle and is safe to call
+    /// from within keyboard grab callbacks where the keyboard mutex is already held.
+    pub fn restore_pointer_focus(&mut self) {
         let pointer = self.pointer.clone();
         let pointer_location = pointer.current_location();
         let under = self.surface_under(pointer_location);
