@@ -134,25 +134,31 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-registry-
       - name: System dependencies
         run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev hicolor-icon-theme
-      - name: Install cargo-aur
-        run: cargo install cargo-aur
       - name: Build workspace binaries
         run: cargo build --release -p otto -p xdg-desktop-portal-otto
-      - name: Build Arch package
+      - name: Build Arch tarball
         run: |
-          cp PKGBUILD PKGBUILD.repo
-          cargo aur -o .
-      - name: Repack tarball with PKGBUILD
-        run: |
-          # cargo aur creates symlinks (e.g. LICENSE) that break bsdtar extraction,
-          # and its generated PKGBUILD has wrong permissions (644 for binaries).
-          # Use the repo's hand-written PKGBUILD instead.
-          TARBALL=$(ls otto-*.tar.gz)
-          cp PKGBUILD.repo PKGBUILD
+          PKGVER=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          TARBALL="otto-${PKGVER}-x86_64.tar.gz"
           tmpdir=$(mktemp -d)
-          tar -xzf "$TARBALL" -C "$tmpdir"
-          cp PKGBUILD "$tmpdir/"
-          tar -czf "$TARBALL" -C "$tmpdir" --dereference .
+          PKGDIR="otto-${PKGVER}"
+          install -Dm755 target/release/otto "$tmpdir/$PKGDIR/target/release/otto"
+          install -Dm755 target/release/xdg-desktop-portal-otto "$tmpdir/$PKGDIR/target/release/xdg-desktop-portal-otto"
+          install -m644 LICENSE "$tmpdir/$PKGDIR/LICENSE"
+          install -m644 README.md "$tmpdir/$PKGDIR/README.md"
+          install -m644 otto_config.example.toml "$tmpdir/$PKGDIR/otto_config.example.toml"
+          install -Dm644 resources/otto.desktop "$tmpdir/$PKGDIR/resources/otto.desktop"
+          install -Dm644 components/xdg-desktop-portal-otto/otto.portal "$tmpdir/$PKGDIR/components/xdg-desktop-portal-otto/otto.portal"
+          install -Dm644 components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service "$tmpdir/$PKGDIR/components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service"
+          install -Dm644 components/xdg-desktop-portal-otto/portals.conf.example "$tmpdir/$PKGDIR/components/xdg-desktop-portal-otto/portals.conf.example"
+          install -m644 PKGBUILD "$tmpdir/$PKGDIR/PKGBUILD"
+          install -m644 PKGBUILD-git "$tmpdir/$PKGDIR/PKGBUILD-git"
+          install -m644 PKGBUILD-nightly-bin "$tmpdir/$PKGDIR/PKGBUILD-nightly-bin"
+          # VERSION file for PKGBUILD-nightly-bin pkgver()
+          echo "${PKGVER}.r$(git rev-list --count HEAD).$(git rev-parse --short HEAD)" > "$tmpdir/$PKGDIR/VERSION"
+          tar -czf "$TARBALL" -C "$tmpdir" "$PKGDIR"
+          # Also produce a fixed-name copy for the nightly release
+          cp "$TARBALL" otto-nightly-x86_64.tar.gz
           rm -rf "$tmpdir"
       - name: Upload Arch tarball
         uses: actions/upload-artifact@v4
@@ -160,10 +166,68 @@ jobs:
           name: otto-arch
           path: otto-*.tar.gz
           retention-days: 30
+
+  publish-nightly:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build-arch]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download Arch tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: otto-arch
+      - name: Publish nightly release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: nightly
+          name: Nightly
+          prerelease: true
+          files: otto-nightly-x86_64.tar.gz
+          body: |
+            Automated nightly build from the latest commit on `main`.
+
+            ### Arch Linux (binary, no compilation needed)
+            ```bash
+            mkdir otto && tar -xzf otto-nightly-x86_64.tar.gz -C otto
+            cd otto
+            makepkg -p PKGBUILD-nightly-bin -si
+            ```
+
+            To update, re-download the tarball and re-run `makepkg`.
+
+  validate-pkgbuild:
+    runs-on: ubuntu-24.04
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install dependencies
+        run: pacman -Syu --noconfirm base-devel git
+      - name: Setup build user
+        run: |
+          useradd -m builder
+          chown -R builder:builder .
+      - name: Validate PKGBUILD (bin)
+        run: |
+          DIR=$PWD
+          su builder -c "cd $DIR && makepkg --printsrcinfo"
+      - name: Validate PKGBUILD-git
+        run: |
+          DIR=$PWD
+          su builder -c "cd $DIR && makepkg --printsrcinfo -p PKGBUILD-git"
+      - name: Validate PKGBUILD-nightly-bin
+        run: |
+          DIR=$PWD
+          su builder -c "cd $DIR && makepkg --printsrcinfo -p PKGBUILD-nightly-bin"
   
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-deb, build-rpm, build-arch]
+    needs: [build-deb, build-rpm, build-arch, validate-pkgbuild]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -202,10 +266,17 @@ jobs:
           ```
 
           ### Arch Linux
+          **Option 1: Binary package**
           ```bash
-          # Download the tarball from releases, then:
+          # Download and extract the tarball, then use makepkg
           tar -xzf otto-*-x86_64.tar.gz
           cd otto-*
+          makepkg -si
+          ```
+
+          **Option 2: From PKGBUILD**
+          ```bash
+          # Download PKGBUILD and build locally
           makepkg -si
           ```
 

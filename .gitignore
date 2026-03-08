@@ -15,3 +15,12 @@ docs/inbox/
 
 # Code investigations (scratch space, not committed)
 docs/investigations/
+
+# makepkg artifacts
+pkg/
+*.pkg.tar.zst
+*.pkg.tar.xz
+src/otto
+src/*.tar.gz
+src/*.tar.xz
+src/*.tar.zst

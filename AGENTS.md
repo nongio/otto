@@ -142,6 +142,26 @@ See `otto_config.example.toml` for all options.
 - **pipewire** — Video streaming for screenshare
 - **tokio** — Async runtime for D-Bus service
 
+## Git Commit Messages
+
+Commits are parsed by [git-cliff](https://git-cliff.org) to generate `CHANGELOG.md`, so follow [Conventional Commits](https://www.conventionalcommits.org):
+
+```
+<type>[optional scope]: <short description>
+```
+
+Common types (from `cliff.toml`):
+- `feat` — new feature
+- `fix` — bug fix
+- `refactor` — code restructure
+- `doc` — documentation
+- `perf` — performance improvement
+- `style` — formatting/styling
+- `test` — tests
+- `chore` / `ci` — maintenance tasks
+
+Keep the subject line short (50 characters or fewer). Omit a body unless the change genuinely needs explanation — do not repeat the diff.
+
 ## Documentation
 
 Otto maintains two documentation tiers:
