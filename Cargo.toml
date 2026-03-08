@@ -49,9 +49,9 @@ mpris = "2.0"
 otto-kit = { path = "components/otto-kit" }
 
 [dependencies.laye-rs]
-# path = "../layers"
-git = "https://github.com/nongio/layers"
-tag = "v1.4.3"
+path = "../layers"
+# git = "https://github.com/nongio/layers"
+# branch = "feat/animation-ref-future"
 features = ["export-taffy"]
 
 [dependencies.smithay-drm-extras]

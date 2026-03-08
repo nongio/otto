@@ -21,9 +21,9 @@ lazy_static = "1.4"
 pipewire = "0.9"
 
 [dependencies.laye-rs]
-git = "https://github.com/nongio/layers"
-tag = "v1.4.3"
-# path = "../../../layers"
+path = "../../../layers"
+# git = "https://github.com/nongio/layers"
+# branch = "feat/animation-ref-future"
 features = ["export-taffy"]
 
 [features]
