@@ -1899,7 +1899,11 @@ impl Workspaces {
                         .get(&eid)
                         .map(|w| w.is_minimised() || w.id() == we.id())
                         .unwrap_or(false);
-                    if dominated { None } else { Some(eid) }
+                    if dominated {
+                        None
+                    } else {
+                        Some(eid)
+                    }
                 })
             })
     }
@@ -2691,9 +2695,9 @@ impl Workspaces {
                 .minimized_windows
                 .iter()
                 .filter_map(|(id, _)| {
-                    self.windows_map.get(id).and_then(|we| {
-                        we.wl_surface().map(|s| (s.as_ref().id(), we.clone()))
-                    })
+                    self.windows_map
+                        .get(id)
+                        .and_then(|we| we.wl_surface().map(|s| (s.as_ref().id(), we.clone())))
                 })
                 .collect()
         };
@@ -2768,9 +2772,7 @@ impl Workspaces {
                 // windows are unmapped from Space but remain in windows_map).
                 model
                     .minimized_windows
-                    .retain(|(id, _)| {
-                        all_windows.iter().any(|(wid, _)| wid == id)
-                    });
+                    .retain(|(id, _)| all_windows.iter().any(|(wid, _)| wid == id));
             }
         }
 

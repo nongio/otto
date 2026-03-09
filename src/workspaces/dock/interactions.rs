@@ -168,8 +168,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
                                 );
 
                                 let pos = state.last_pointer_location;
-                                let pos =
-                                    layers::prelude::Point::new(pos.0 as f32, pos.1 as f32);
+                                let pos = layers::prelude::Point::new(pos.0 as f32, pos.1 as f32);
                                 state
                                     .workspaces
                                     .dock
