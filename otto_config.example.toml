@@ -172,3 +172,29 @@ bookmarks = [
   { desktop_id = "org.mozilla.firefox.desktop", label = "Web", exec_args = ["--private-window"] },
   { desktop_id = "org.gnome.Terminal.desktop" }
 ]
+
+# Autostart — commands to run once at startup, in order.
+# Each entry is spawned non-blocking (fire-and-forget). Otto does not
+# restart crashed processes; use systemd or another supervisor for that.
+#
+# [[exec_once]]
+# cmd = "waybar"
+# args = []
+#
+# [[exec_once]]
+# cmd = "dunst"
+# args = []
+#
+# [[exec_once]]
+# cmd = "wlsunset"
+# args = ["-l", "48.8", "-L", "2.3"]
+
+# XDG Autostart — launch apps from ~/.config/autostart/*.desktop and /etc/xdg/autostart/*.desktop
+# Respects Hidden=true, OnlyShowIn= and NotShowIn= fields (desktop identifier: "Otto").
+# Disabled by default.
+# xdg_autostart = true
+
+# Systemd integration — send READY=1 via sd_notify and activate graphical-session.target
+# when the Wayland socket is ready. Enable this when running Otto as a systemd user service
+# (Type=notify in the unit file). Can also be triggered with the --systemd-notify CLI flag.
+# systemd_notify = true

@@ -346,6 +346,8 @@ pub fn run_x11() {
 
     info!("Initialization completed, starting the main loop.");
 
+    state.autostart();
+
     // Removed unused PointerElement - cursor now rendered directly using CursorManager
 
     while state.running.load(Ordering::SeqCst) {
