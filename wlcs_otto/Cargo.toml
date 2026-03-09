@@ -19,9 +19,14 @@ otto = { path = "../", default-features = false,  features = [
     "winit",
     "debug",
 ] }
-layers = { path = "../../layers", features = ["export-taffy"] }
 wayland-sys = { version = "0.30.1", features = ["client", "server"] }
 libc = "0.2"
 memoffset = "0.6"
 cgmath = "0.18"
 nix = "0.24"
+
+[dependencies.laye-rs]
+# path = "../layers"
+git = "https://github.com/nongio/layers"
+tag = "v1.5.0"
+features = ["export-taffy"]
