@@ -1777,13 +1777,39 @@ impl Workspaces {
         }
     }
 
-    /// Minimise a WindowElement
+    /// Minimise a WindowElement.
+    ///
+    /// The animation runs in three phases:
+    ///   1. Dock slide-in (if auto-hidden) + drawer expand — in parallel.
+    ///   2. Move window layer into the drawer, run genie effect.
+    ///   3. Schedule dock auto-hide (if it was revealed for this minimize).
     pub fn minimize_window(&mut self, we: &WindowElement) -> Option<ObjectId> {
         let id = we.id();
+
+        // Already minimised — nothing to do (guards against rapid double-clicks).
+        if we.is_minimised() {
+            return None;
+        }
 
         if let Some(window) = self.windows_map.get_mut(&id) {
             window.set_is_minimised(true);
         }
+
+        // Unmap from all spaces so hit-testing ignores the minimised window.
+        for output in &self.outputs {
+            if let Some(ows) = self.output_workspaces.get_mut(&output.name()) {
+                for space in &mut ows.spaces {
+                    space.unmap_elem(we);
+                }
+            }
+        }
+
+        let dock_was_hidden = self.dock.is_autohide_enabled() && self.dock.is_hidden();
+        let show_tr = if dock_was_hidden {
+            self.dock.show_autohide()
+        } else {
+            None
+        };
 
         self.with_model_mut(|model| {
             model
@@ -1791,70 +1817,119 @@ impl Workspaces {
                 .push((id.clone(), we.xdg_title().to_string()));
 
             if let Some(view) = self.get_window_view(&id) {
-                let (drawer, _) = self.dock.add_window_element(we);
+                // add_window_element triggers render_dock → magnify_elements_with_scale
+                // which animates the drawer from width 0 → icon_size and stores the
+                // AnimationRef in last_layout_animation.
+                let (drawer, inner) = self.dock.add_window_element(we);
+                let layout_anim = self.dock.last_layout_animation();
 
-                view.window_layer.set_layout_style(taffy::Style {
-                    position: taffy::Position::Absolute,
-                    ..Default::default()
-                });
-
-                // Hide mirror layer so it won't appear in expose
                 view.mirror_layer.set_hidden(true);
 
-                self.layers_engine
-                    .add_layer_to_positioned(view.window_layer.clone(), Some(drawer.id));
-                // bounds are calculate after this call
-                let drawer_bounds = drawer.render_bounds_transformed();
-                view.minimize(skia::Rect::from_xywh(
-                    drawer_bounds.x(),
-                    drawer_bounds.y(),
-                    drawer_bounds.width(),
-                    drawer_bounds.height(),
-                ));
+                let layers_engine = self.layers_engine.clone();
+                let dock_ref = self.dock.clone();
+                let view = view.clone();
+                let drawer = drawer.clone();
+                let inner = inner.clone();
 
-                let view_ref = view.clone();
-                drawer.clear_on_change_size_handlers();
-                drawer.on_change_size(
-                    move |layer: &Layer, _| {
-                        let bounds = layer.render_bounds_transformed();
-                        // Keep the minimized window scaled to the drawer bounds
-                        view_ref.apply_minimized_scale(bounds);
-                    },
-                    false,
-                );
+                tokio::spawn(async move {
+                    // Reparent window into the drawer and start the genie
+                    // immediately — both run in parallel with dock slide-in
+                    // and drawer expansion.
+                    view.window_layer.set_layout_style(taffy::Style {
+                        position: taffy::Position::Absolute,
+                        ..Default::default()
+                    });
+                    layers_engine
+                        .add_layer_to_positioned(view.window_layer.clone(), Some(inner.id));
+
+                    let inner_bounds = inner.render_bounds_transformed();
+                    let minimize_tr = view.minimize(skia::Rect::from_xywh(
+                        inner_bounds.x(),
+                        inner_bounds.y(),
+                        inner_bounds.width(),
+                        inner_bounds.height(),
+                    ));
+
+                    // Track the expanding drawer: update the genie destination
+                    // while the animation runs, keep the miniwindow fitted
+                    // after the genie finishes.
+                    let genie_ref = view.genie_effect.clone();
+                    let view_ref = view.clone();
+                    let inner_ref = inner.clone();
+                    drawer.clear_on_change_size_handlers();
+                    drawer.on_change_size(
+                        move |_layer: &Layer, _| {
+                            let bounds = inner_ref.render_bounds_transformed();
+                            if view_ref.is_minimizing() {
+                                genie_ref.set_destination(
+                                    skia::Rect::from_xywh(
+                                        bounds.x(),
+                                        bounds.y(),
+                                        bounds.width(),
+                                        bounds.height(),
+                                    ),
+                                    true,
+                                );
+                            } else {
+                                view_ref.apply_minimized_scale(bounds);
+                            }
+                        },
+                        false,
+                    );
+
+                    // Wait for all animations to complete.
+                    let show_fut = async {
+                        if let Some(tr) = show_tr {
+                            tr.await;
+                        }
+                    };
+                    let layout_fut = async {
+                        if let Some(anim) = layout_anim {
+                            anim.await;
+                        }
+                    };
+                    tokio::join!(minimize_tr, show_fut, layout_fut);
+
+                    // Re-hide the dock if we revealed it for this minimize.
+                    if dock_was_hidden {
+                        dock_ref.schedule_autohide();
+                    }
+                });
             }
 
             self.notify_observers(model);
         });
 
-        // Focus should move to the next topmost (non-minimized) window or to none.
+        // Find the next topmost non-minimized window for focus.
         let index = self.with_model(|m| m.current_workspace);
-        let next = self
-            .primary_output_workspaces()
+        self.primary_output_workspaces()
             .and_then(|ows| ows.spaces.get(index))
             .and_then(|s| {
                 s.elements().rev().find_map(|e| {
-                    let id = e.id();
-                    if let Some(window) = self.windows_map.get(&id) {
-                        if window.is_minimised() || window.id() == we.id() {
-                            return None;
-                        }
+                    let eid = e.id();
+                    let dominated = self
+                        .windows_map
+                        .get(&eid)
+                        .map(|w| w.is_minimised() || w.id() == we.id())
+                        .unwrap_or(false);
+                    if dominated {
+                        None
+                    } else {
+                        Some(eid)
                     }
-                    Some(id)
                 })
-            });
-
-        if let Some(next_id) = next {
-            // Raise and activate the next topmost window
-            self.raise_element(&next_id, true, true);
-            Some(next_id)
-        } else {
-            None
-        }
+            })
     }
 
     /// Unminimise a WindowElement
     pub fn unminimize_window(&mut self, wid: &ObjectId) -> Option<ObjectId> {
+        // Already not minimised — nothing to do (guards against rapid double-clicks).
+        if let Some(window) = self.windows_map.get(wid) {
+            if !window.is_minimised() {
+                return None;
+            }
+        }
+
         let workspace_for_window = self.with_model(|model| {
             model
                 .workspaces
@@ -1870,6 +1945,17 @@ impl Workspaces {
         }
         let workspace_for_window = workspace_for_window.unwrap();
         let current_workspace_index = self.get_current_workspace_index();
+
+        // The window was unmapped from the space during minimize (for hit-test
+        // exclusion).  Re-map it now so build_unminimize_context can find it.
+        let window = self.get_window_for_surface(wid)?.clone();
+        let view = self.get_window_view(wid)?;
+        let loc = view.unmaximised_rect.loc;
+        if let Some(ows) = self.primary_output_workspaces_mut() {
+            if let Some(space) = ows.spaces.get_mut(workspace_for_window) {
+                space.map_element(window, loc, false);
+            }
+        }
 
         let ctx = self.build_unminimize_context(wid)?;
 
@@ -2531,7 +2617,7 @@ impl Workspaces {
                 } else {
                     // if minimised and there is only one window in the app, unminimize it
                     if windows.len() == 1 {
-                        self.unminimize_window(window_id);
+                        focus_wid = self.unminimize_window(window_id);
                     }
                 }
             }
@@ -2622,6 +2708,23 @@ impl Workspaces {
             .filter_map(|we| we.wl_surface().map(|s| (s.as_ref().id(), we.clone())))
             .collect();
 
+        // Include minimized windows — they are unmapped from Space but still alive.
+        let minimized: Vec<(ObjectId, WindowElement)> = {
+            let model = self.model.read().unwrap();
+            model
+                .minimized_windows
+                .iter()
+                .filter_map(|(id, _)| {
+                    self.windows_map
+                        .get(id)
+                        .and_then(|we| we.wl_surface().map(|s| (s.as_ref().id(), we.clone())))
+                })
+                .collect()
+        };
+
+        let all_windows: Vec<&(ObjectId, WindowElement)> =
+            minimized.iter().chain(windows.iter()).collect();
+
         {
             // reset the model
             if let Ok(mut model_mut) = self.model.write() {
@@ -2633,7 +2736,7 @@ impl Workspaces {
         }
 
         let mut app_set = HashSet::new();
-        for (window_id, we) in windows.iter() {
+        for (window_id, we) in all_windows.iter() {
             let raw_app_id = we.xdg_app_id();
             let display_app_id = we.display_app_id(&self.display_handle);
 
@@ -2684,10 +2787,12 @@ impl Workspaces {
             }
 
             {
-                // update minimized windows
+                // update minimized windows — keep entries that are either still
+                // mapped in a Space *or* still tracked in windows_map (minimized
+                // windows are unmapped from Space but remain in windows_map).
                 model
                     .minimized_windows
-                    .retain(|(id, _)| windows.iter().any(|(wid, _)| wid == id));
+                    .retain(|(id, _)| all_windows.iter().any(|(wid, _)| wid == id));
             }
         }
 

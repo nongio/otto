@@ -201,7 +201,7 @@ pub fn setup_app_icon(
     icon_layer.build_layer_tree(&icon_tree);
 }
 
-pub fn setup_miniwindow_icon(layer: &Layer, inner_layer: &Layer, _icon_width: f32) {
+pub fn setup_miniwindow_icon(layer: &Layer, inner_layer: &Layer, icon_width: f32) {
     let container_tree = LayerTreeBuilder::default()
         .key("miniwindow")
         .layout_style(taffy::Style {
@@ -211,11 +211,12 @@ pub fn setup_miniwindow_icon(layer: &Layer, inner_layer: &Layer, _icon_width: f3
         .size((
             Size {
                 width: taffy::Dimension::Length(0.0),
-                height: taffy::Dimension::Percent(1.0),
+                height: taffy::Dimension::Length(icon_width),
             },
-            Some(Transition::ease_in_quad(0.2)),
+            None,
         ))
         .background_color(Color::new_rgba(1.0, 0.0, 0.0, 0.0))
+        // .image_cache(true)
         .build()
         .unwrap();
     layer.build_layer_tree(&container_tree);

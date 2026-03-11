@@ -4,7 +4,8 @@ use layers::prelude::{taffy, Interpolate, Layer, Transition};
 use smithay::{
     desktop::{
         find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output,
-        PopupKeyboardGrab, PopupKind, PopupPointerGrab, Window, WindowSurface, WindowSurfaceType,
+        space::SpaceElement, PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy,
+        Window, WindowSurface, WindowSurfaceType,
     },
     input::{pointer::Focus, Seat},
     output::Output,
@@ -958,9 +959,22 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 .contains(xdg_toplevel::WmCapabilities::Minimize)
         }) {
             let id = surface.wl_surface().id();
-            let window = self.workspaces.get_window_for_surface(&id).unwrap().clone();
+            let Some(window) = self.workspaces.get_window_for_surface(&id).cloned() else {
+                surface.send_configure();
+                return;
+            };
 
-            let current_element_geometry = self.workspaces.element_geometry(&window).unwrap();
+            // Ignore duplicate minimize requests (e.g. rapid clicks while the
+            // genie animation is still running).
+            if window.is_minimised() {
+                surface.send_configure();
+                return;
+            }
+
+            let Some(current_element_geometry) = self.workspaces.element_geometry(&window) else {
+                surface.send_configure();
+                return;
+            };
 
             if let Some(mut view) = self.workspaces.get_window_view(&id) {
                 view.unmaximised_rect = current_element_geometry;
@@ -968,6 +982,18 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             }
 
             let next_focus = self.workspaces.minimize_window(&window);
+
+            // Deactivate the minimized surface and send configure so the
+            // client receives the correct (deactivated) state.
+            window.set_activate(false);
+            if let Some(view) = self.workspaces.get_window_view(&id) {
+                view.set_active(false);
+            }
+            if let Some(toplevel) = window.toplevel() {
+                toplevel.send_configure();
+            }
+            self.send_foreign_toplevel_state(&id, false);
+
             match next_focus {
                 Some(wid) => self.set_keyboard_focus_on_surface(&wid),
                 None => self.clear_keyboard_focus(),
@@ -975,7 +1001,7 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         }
 
         // The protocol demands us to always reply with a configure,
-        // regardless of we fulfilled the request or not
+        // regardless of whether we fulfilled the request or not
         surface.send_configure();
     }
 
