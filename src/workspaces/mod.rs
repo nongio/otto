@@ -1832,28 +1832,9 @@ impl Workspaces {
                 let inner = inner.clone();
 
                 tokio::spawn(async move {
-                    // Phase 1: dock slide-in + drawer expand in parallel.
-                    // Start the genie slightly before phase 1 settles for a
-                    // smoother, overlapping feel.
-                    let phase1 = async {
-                        let show_fut = async {
-                            if let Some(tr) = show_tr {
-                                tr.await;
-                            }
-                        };
-                        let layout_fut = async {
-                            if let Some(anim) = layout_anim {
-                                anim.await;
-                            }
-                        };
-                        tokio::join!(show_fut, layout_fut);
-                    };
-                    tokio::select! {
-                        _ = phase1 => {}
-                        _ = tokio::time::sleep(tokio::time::Duration::from_millis(350)) => {}
-                    }
-
-                    // Phase 2: move window layer into the inner container and run genie.
+                    // Reparent window into the drawer and start the genie
+                    // immediately — both run in parallel with dock slide-in
+                    // and drawer expansion.
                     view.window_layer.set_layout_style(taffy::Style {
                         position: taffy::Position::Absolute,
                         ..Default::default()
@@ -1869,20 +1850,47 @@ impl Workspaces {
                         inner_bounds.height(),
                     ));
 
-                    // Keep the miniwindow fitted when the drawer resizes later.
+                    // Track the expanding drawer: update the genie destination
+                    // while the animation runs, keep the miniwindow fitted
+                    // after the genie finishes.
+                    let genie_ref = view.genie_effect.clone();
                     let view_ref = view.clone();
                     let inner_ref = inner.clone();
                     drawer.clear_on_change_size_handlers();
                     drawer.on_change_size(
                         move |_layer: &Layer, _| {
-                            view_ref.apply_minimized_scale(inner_ref.render_bounds_transformed());
+                            let bounds = inner_ref.render_bounds_transformed();
+                            if view_ref.is_minimizing() {
+                                genie_ref.set_destination(
+                                    skia::Rect::from_xywh(
+                                        bounds.x(),
+                                        bounds.y(),
+                                        bounds.width(),
+                                        bounds.height(),
+                                    ),
+                                    true,
+                                );
+                            } else {
+                                view_ref.apply_minimized_scale(bounds);
+                            }
                         },
                         false,
                     );
 
-                    minimize_tr.await;
+                    // Wait for all animations to complete.
+                    let show_fut = async {
+                        if let Some(tr) = show_tr {
+                            tr.await;
+                        }
+                    };
+                    let layout_fut = async {
+                        if let Some(anim) = layout_anim {
+                            anim.await;
+                        }
+                    };
+                    tokio::join!(minimize_tr, show_fut, layout_fut);
 
-                    // Phase 3: re-hide the dock if we revealed it for this minimize.
+                    // Re-hide the dock if we revealed it for this minimize.
                     if dock_was_hidden {
                         dock_ref.schedule_autohide();
                     }
