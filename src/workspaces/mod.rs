@@ -1839,8 +1839,11 @@ impl Workspaces {
                         position: taffy::Position::Absolute,
                         ..Default::default()
                     });
-                    layers_engine
-                        .add_layer_to_positioned(view.window_layer.clone(), Some(inner.id));
+                    if let Err(e) = layers_engine
+                        .add_layer_to_positioned(view.window_layer.clone(), Some(inner.id))
+                    {
+                        tracing::warn!("minimize: failed to reparent window into drawer: {e}");
+                    }
 
                     let inner_bounds = inner.render_bounds_transformed();
                     let minimize_tr = view.minimize(skia::Rect::from_xywh(
@@ -2894,7 +2897,7 @@ impl Workspaces {
         output_layer.set_size(layers::types::Size::points(phys_w, phys_h), None);
         output_layer.set_position((phys_x, phys_y), None);
         output_layer.set_pointer_events(false);
-        self.layers_engine.add_layer(&output_layer);
+        let _ = self.layers_engine.add_layer(&output_layer);
 
         // Create the workspaces_layer for this output (workspace content, inside container)
         let workspaces_layer = self.layers_engine.new_layer();
@@ -2914,9 +2917,9 @@ impl Workspaces {
         // dock (primary) → layer_shell_top → workspace_selector →
         // layer_shell_overlay → app_switcher (primary) → popup_overlay (primary)
         if is_this_primary {
-            output_layer.add_sublayer(&self.layer_shell_background);
+            let _ = output_layer.add_sublayer(&self.layer_shell_background);
         }
-        output_layer.add_sublayer(&workspaces_layer);
+        let _ = output_layer.add_sublayer(&workspaces_layer);
 
         // Create a per-output expose layer
         let expose_layer = self.layers_engine.new_layer();
@@ -2929,15 +2932,15 @@ impl Workspaces {
         expose_layer.set_hidden(true);
         expose_layer.set_picture_cached(false);
         expose_layer.set_image_cached(false);
-        output_layer.add_sublayer(&expose_layer);
+        let _ = output_layer.add_sublayer(&expose_layer);
 
         if is_this_primary {
             // Wire the primary output's expose layer into self.expose_layer so all
             // existing show/hide logic works unchanged.
             self.expose_layer = expose_layer.clone();
             // overlay contains dnd and osd
-            self.overlay_layer.add_sublayer(&self.dnd_view.layer);
-            self.overlay_layer.add_sublayer(&self.osd.wrap_layer);
+            let _ = self.overlay_layer.add_sublayer(&self.dnd_view.layer);
+            let _ = self.overlay_layer.add_sublayer(&self.osd.wrap_layer);
             // App icons manager lives at the root — sibling of output layers, never rendered
             // on any output, but present in the scene so its subtree gets laid out.
             if let Some(root) = self
@@ -2945,15 +2948,15 @@ impl Workspaces {
                 .scene_root()
                 .and_then(|id| self.layers_engine.get_layer(&id))
             {
-                root.add_sublayer(&self.app_icons_manager.container);
+                let _ = root.add_sublayer(&self.app_icons_manager.container);
             }
-            output_layer.add_sublayer(&self.dock.wrap_layer.clone());
-            output_layer.add_sublayer(&self.layer_shell_top);
-            output_layer.add_sublayer(&self.workspace_selector_view.layer.clone());
-            output_layer.add_sublayer(&self.app_switcher.wrap_layer.clone());
-            output_layer.add_sublayer(&self.popup_overlay.layer.clone());
-            output_layer.add_sublayer(&self.layer_shell_overlay);
-            output_layer.add_sublayer(&self.overlay_layer);
+            let _ = output_layer.add_sublayer(&self.dock.wrap_layer.clone());
+            let _ = output_layer.add_sublayer(&self.layer_shell_top);
+            let _ = output_layer.add_sublayer(&self.workspace_selector_view.layer.clone());
+            let _ = output_layer.add_sublayer(&self.app_switcher.wrap_layer.clone());
+            let _ = output_layer.add_sublayer(&self.popup_overlay.layer.clone());
+            let _ = output_layer.add_sublayer(&self.layer_shell_overlay);
+            let _ = output_layer.add_sublayer(&self.overlay_layer);
         }
 
         let workspace_counter_start = self.with_model(|m| m.workspace_counter);
@@ -2972,7 +2975,7 @@ impl Workspaces {
                 &workspaces_layer,
                 self.overlay_layer.clone(),
             ));
-            expose_layer.add_sublayer(&workspace.window_selector_view.window_selector_root);
+            let _ = expose_layer.add_sublayer(&workspace.window_selector_view.window_selector_root);
             workspace_views.push(workspace);
         }
 
@@ -3057,7 +3060,8 @@ impl Workspaces {
                     &ows.workspaces_layer,
                     overlay_layer.clone(),
                 ));
-                ows.expose_layer
+                let _ = ows
+                    .expose_layer
                     .add_sublayer(&workspace.window_selector_view.window_selector_root);
 
                 let index = ows.workspace_views.len();
@@ -3733,19 +3737,27 @@ impl Workspaces {
         match wlr_layer {
             WlrLayer::Background => {
                 self.layer_shell_background.set_hidden(false);
-                self.layer_shell_background.add_sublayer(&layer);
+                if let Err(e) = self.layer_shell_background.add_sublayer(&layer) {
+                    tracing::warn!("layer_shell: failed to add background layer: {e}");
+                }
             }
             WlrLayer::Bottom => {
                 self.layer_shell_background.set_hidden(false);
-                self.layer_shell_background.add_sublayer(&layer);
+                if let Err(e) = self.layer_shell_background.add_sublayer(&layer) {
+                    tracing::warn!("layer_shell: failed to add bottom layer: {e}");
+                }
             }
             WlrLayer::Top => {
                 self.layer_shell_top.set_hidden(false);
-                self.layer_shell_top.add_sublayer(&layer);
+                if let Err(e) = self.layer_shell_top.add_sublayer(&layer) {
+                    tracing::warn!("layer_shell: failed to add top layer: {e}");
+                }
             }
             WlrLayer::Overlay => {
                 self.layer_shell_overlay.set_hidden(false);
-                self.layer_shell_overlay.add_sublayer(&layer);
+                if let Err(e) = self.layer_shell_overlay.add_sublayer(&layer) {
+                    tracing::warn!("layer_shell: failed to add overlay layer: {e}");
+                }
             }
         }
 
@@ -3807,6 +3819,16 @@ impl UnminimizeContext {
         window.set_is_minimised(false);
 
         if let Some(drawer) = dock.remove_window_element(&wid) {
+            // If the window layer was cleaned up (stale handle), skip the
+            // animation and just remap the window so it reappears.
+            if !view.is_alive() {
+                tracing::warn!("unminimize: window layer is stale, skipping animation");
+                drawer.remove();
+                workspace.map_window(&window, (pos_logical.0, pos_logical.1).into(), None);
+                crate::utils::notify_observers(&observers, &event);
+                return;
+            }
+
             let windows_layer_ref = workspace.windows_layer.clone();
             let expose_windows_ref = expose_layer.clone();
             let layer_ref = view.window_layer.clone();
@@ -3834,8 +3856,12 @@ impl UnminimizeContext {
                 .on_start(
                     move |_layer: &Layer, _| {
                         layer_ref.remove_draw_content();
-                        windows_layer_ref.add_sublayer(&layer_ref);
-                        expose_windows_ref.add_sublayer(&mirror_ref);
+                        if let Err(e) = windows_layer_ref.add_sublayer(&layer_ref) {
+                            tracing::warn!("unminimize: failed to reparent window layer: {e}");
+                        }
+                        if let Err(e) = expose_windows_ref.add_sublayer(&mirror_ref) {
+                            tracing::warn!("unminimize: failed to reparent mirror layer: {e}");
+                        }
                         layer_ref.set_position(target_pos, None);
                     },
                     true,

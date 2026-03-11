@@ -22,7 +22,7 @@ impl DndView {
             ..Default::default()
         });
 
-        layer.add_sublayer(&content_layer);
+        let _ = layer.add_sublayer(&content_layer);
 
         Self {
             layer,

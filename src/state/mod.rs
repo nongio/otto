@@ -611,7 +611,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             position: taffy::Position::Absolute,
             ..Default::default()
         });
-        layers_engine.add_layer(&root_layer);
+        let _ = layers_engine.add_layer(&root_layer);
         let scene_element = SceneElement::with_engine(layers_engine.clone());
         let (workspaces, remove_workspace_receiver) =
             Workspaces::new(layers_engine.clone(), dh.clone());
@@ -1047,11 +1047,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     // Build parent-child hierarchy
                     if let Some(parent_id) = parent_id {
                         if let Some(parent_layer) = self.surface_layers.get(parent_id) {
-                            self.layers_engine.append_layer(&layer, parent_layer.id());
+                            let _ = self.layers_engine.append_layer(&layer, parent_layer.id());
                         }
                     } else {
                         // Root surface - attach to DnD content layer
-                        self.layers_engine
+                        let _ = self
+                            .layers_engine
                             .append_layer(&layer, self.workspaces.dnd_view.content_layer.id());
                     }
                 }
@@ -1327,7 +1328,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     // Set up parent-child relationship using layers_engine
                     if let Some(parent_id) = parent_id {
                         if let Some(parent_layer) = self.surface_layers.get(parent_id) {
-                            self.layers_engine.append_layer(&layer, parent_layer.id());
+                            let _ = self.layers_engine.append_layer(&layer, parent_layer.id());
                         }
                     }
                 }
@@ -1350,7 +1351,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
                 if let Some(root_layer) = self.surface_layers.get(&id) {
                     // Use layers_engine to set parent-child relationship
-                    self.layers_engine
+                    let _ = self
+                        .layers_engine
                         .append_layer(root_layer, content_layer.id());
                 }
 

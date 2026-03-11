@@ -157,7 +157,7 @@ impl DockView {
 
         let view_layer = layers_engine.new_layer();
 
-        wrap_layer.add_sublayer(&view_layer);
+        let _ = wrap_layer.add_sublayer(&view_layer);
         // FIXME: initial dock position
         view_layer.set_position((0.0, 1000.0), None);
         let view_tree = LayerTreeBuilder::default()
@@ -169,7 +169,7 @@ impl DockView {
         view_layer.build_layer_tree(&view_tree);
 
         let bar_layer = layers_engine.new_layer();
-        view_layer.add_sublayer(&bar_layer);
+        let _ = view_layer.add_sublayer(&bar_layer);
         let initial_bar_height =
             Self::calculate_bar_height(scaled_icon_size, dock_size_multiplier * draw_scale);
         let bar_tree = LayerTreeBuilder::default()
@@ -196,7 +196,7 @@ impl DockView {
         bar_layer.build_layer_tree(&bar_tree);
 
         let dock_apps_container = layers_engine.new_layer();
-        view_layer.add_sublayer(&dock_apps_container);
+        let _ = view_layer.add_sublayer(&dock_apps_container);
 
         let container_tree = LayerTreeBuilder::default()
             .key("dock_app_container")
@@ -225,7 +225,7 @@ impl DockView {
             None,
         );
         let resize_handle = layers_engine.new_layer();
-        view_layer.add_sublayer(&resize_handle);
+        let _ = view_layer.add_sublayer(&resize_handle);
 
         let handle_tree = LayerTreeBuilder::default()
             .key("dock_handle")
@@ -256,7 +256,7 @@ impl DockView {
         resize_handle.build_layer_tree(&handle_tree);
 
         let dock_windows_container = layers_engine.new_layer();
-        view_layer.add_sublayer(&dock_windows_container);
+        let _ = view_layer.add_sublayer(&dock_windows_container);
 
         let container_tree = LayerTreeBuilder::default()
             .key("dock_windows_container")
@@ -627,11 +627,11 @@ impl DockView {
                     let label_layer = self.layers_engine.new_layer();
                     setup_label(&label_layer, app_name);
 
-                    self.dock_apps_container.add_sublayer(&new_layer);
-                    new_layer.add_sublayer(&icon_scaler);
-                    icon_scaler.add_sublayer(&icon_mirror);
+                    let _ = self.dock_apps_container.add_sublayer(&new_layer);
+                    let _ = new_layer.add_sublayer(&icon_scaler);
+                    let _ = icon_scaler.add_sublayer(&icon_mirror);
                     // label is a direct child of new_layer, NOT inside icon_mirror
-                    new_layer.add_sublayer(&label_layer);
+                    let _ = new_layer.add_sublayer(&label_layer);
 
                     vac.insert(AppLayerEntry {
                         layer: new_layer.clone(),
@@ -660,13 +660,13 @@ impl DockView {
                         let inner_layer = self.layers_engine.new_layer();
                         let label_layer = self.layers_engine.new_layer();
 
-                        self.dock_windows_container.add_sublayer(&new_layer);
+                        let _ = self.dock_windows_container.add_sublayer(&new_layer);
 
                         setup_miniwindow_icon(&new_layer, &inner_layer, available_icon_width);
-                        new_layer.add_sublayer(&inner_layer);
+                        let _ = new_layer.add_sublayer(&inner_layer);
 
                         setup_label(&label_layer, title.clone());
-                        new_layer.add_sublayer(&label_layer);
+                        let _ = new_layer.add_sublayer(&label_layer);
 
                         (new_layer, inner_layer, label_layer, None)
                     });
@@ -715,17 +715,10 @@ impl DockView {
         // Mini window layers
         for layer in previous_miniwindows {
             layer.set_opacity(0.0, Transition::ease_out_quad(0.2));
-            layer
-                .set_size(
-                    layers::types::Size::points(0.0, miniwindow_height),
-                    Transition::ease_out_quad(0.3),
-                )
-                .on_finish(
-                    |l: &Layer, _| {
-                        l.remove();
-                    },
-                    true,
-                );
+            layer.set_size(
+                layers::types::Size::points(0.0, miniwindow_height),
+                Transition::ease_out_quad(0.3),
+            );
 
             miniwindows_layers_map.retain(|_k, (v, ..)| v.id() != layer.id());
         }
@@ -1011,7 +1004,7 @@ impl DockView {
             // Create fallback layers
             let new_layer = self.layers_engine.new_layer();
             let inner_layer = self.layers_engine.new_layer();
-            self.dock_windows_container.add_sublayer(&new_layer);
+            let _ = self.dock_windows_container.add_sublayer(&new_layer);
             (new_layer, inner_layer)
         }
     }

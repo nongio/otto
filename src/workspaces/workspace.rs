@@ -107,9 +107,9 @@ impl WorkspaceView {
         });
         windows_layer.set_pointer_events(false);
 
-        layers_engine.append_layer(&workspace_layer, parent.id);
-        layers_engine.append_layer(&background_layer, Some(workspace_layer.id));
-        layers_engine.append_layer(&windows_layer, Some(workspace_layer.id));
+        let _ = layers_engine.append_layer(&workspace_layer, parent.id);
+        let _ = layers_engine.append_layer(&background_layer, Some(workspace_layer.id));
+        let _ = layers_engine.append_layer(&windows_layer, Some(workspace_layer.id));
 
         // Parse background color from config
         let background_color = Config::with(|c| parse_hex_color(&c.background_color));
@@ -176,13 +176,15 @@ impl WorkspaceView {
         if !window_list.contains(&wid) {
             window_list.push(wid.clone());
 
-            self.windows_layer
+            let _ = self
+                .windows_layer
                 .add_sublayer(&window_element.base_layer().id);
 
             let mirror_window = window_element.mirror_layer();
             let size = window_element.base_layer().render_size_transformed();
             mirror_window.set_size(Size::points(size.x, size.y), None);
-            self.window_selector_view
+            let _ = self
+                .window_selector_view
                 .window_selector_windows_container
                 .add_sublayer(mirror_window);
 
@@ -266,7 +268,10 @@ impl WorkspaceView {
             .get(window_id)
             .cloned()
         {
-            self.windows_layer.add_sublayer(&base_layer);
+            if let Err(e) = self.windows_layer.add_sublayer(&base_layer) {
+                tracing::warn!("raise_window_to_front: failed to reparent window layer: {e}");
+                return;
+            }
         }
 
         self.window_selector_view.bring_window_to_front(window_id);

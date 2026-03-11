@@ -52,8 +52,8 @@ impl WindowView {
             ..Default::default()
         });
 
-        layers_engine.append_layer(&shadow_layer, layer.id());
-        layers_engine.append_layer(&content_layer, layer.id());
+        let _ = layers_engine.append_layer(&shadow_layer, layer.id());
+        let _ = layers_engine.append_layer(&content_layer, layer.id());
 
         let base_rect = WindowViewBaseModel {
             x: 0.0,
@@ -116,6 +116,14 @@ impl WindowView {
     pub fn is_unmapped(&self) -> bool {
         self.is_unmapped.load(std::sync::atomic::Ordering::SeqCst)
     }
+
+    /// Returns true if the window layer's scene node is still alive.
+    pub fn is_alive(&self) -> bool {
+        self.window_layer
+            .engine
+            .is_layer_alive(&self.window_layer.id)
+    }
+
     pub fn minimize(&self, to_rect: skia::Rect) -> TransactionRef {
         self.window_layer.set_effect(self.genie_effect.clone());
         self.genie_effect.set_destination(to_rect, true);
