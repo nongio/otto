@@ -1786,6 +1786,11 @@ impl Workspaces {
     pub fn minimize_window(&mut self, we: &WindowElement) -> Option<ObjectId> {
         let id = we.id();
 
+        // Already minimised — nothing to do (guards against rapid double-clicks).
+        if we.is_minimised() {
+            return None;
+        }
+
         if let Some(window) = self.windows_map.get_mut(&id) {
             window.set_is_minimised(true);
         }
@@ -1910,6 +1915,13 @@ impl Workspaces {
 
     /// Unminimise a WindowElement
     pub fn unminimize_window(&mut self, wid: &ObjectId) -> Option<ObjectId> {
+        // Already not minimised — nothing to do (guards against rapid double-clicks).
+        if let Some(window) = self.windows_map.get(wid) {
+            if !window.is_minimised() {
+                return None;
+            }
+        }
+
         let workspace_for_window = self.with_model(|model| {
             model
                 .workspaces

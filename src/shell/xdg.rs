@@ -959,9 +959,22 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 .contains(xdg_toplevel::WmCapabilities::Minimize)
         }) {
             let id = surface.wl_surface().id();
-            let window = self.workspaces.get_window_for_surface(&id).unwrap().clone();
+            let Some(window) = self.workspaces.get_window_for_surface(&id).cloned() else {
+                surface.send_configure();
+                return;
+            };
 
-            let current_element_geometry = self.workspaces.element_geometry(&window).unwrap();
+            // Ignore duplicate minimize requests (e.g. rapid clicks while the
+            // genie animation is still running).
+            if window.is_minimised() {
+                surface.send_configure();
+                return;
+            }
+
+            let Some(current_element_geometry) = self.workspaces.element_geometry(&window) else {
+                surface.send_configure();
+                return;
+            };
 
             if let Some(mut view) = self.workspaces.get_window_view(&id) {
                 view.unmaximised_rect = current_element_geometry;
