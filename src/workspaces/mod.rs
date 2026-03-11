@@ -2723,7 +2723,7 @@ impl Workspaces {
         };
 
         let all_windows: Vec<&(ObjectId, WindowElement)> =
-            windows.iter().chain(minimized.iter()).collect();
+            minimized.iter().chain(windows.iter()).collect();
 
         {
             // reset the model
