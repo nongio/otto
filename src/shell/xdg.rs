@@ -4,8 +4,7 @@ use layers::prelude::{taffy, Interpolate, Layer, Transition};
 use smithay::{
     desktop::{
         find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output,
-        PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Window, WindowSurface,
-        WindowSurfaceType,
+        PopupKeyboardGrab, PopupKind, PopupPointerGrab, Window, WindowSurface, WindowSurfaceType,
     },
     input::{pointer::Focus, Seat},
     output::Output,
@@ -287,6 +286,12 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 self.update_window_view(&window);
             }
         }
+
+        // Release any pointer/keyboard grab that was held by this popup and
+        // restore pointer focus to the surface now under the cursor.  Without
+        // this the parent window becomes unresponsive to mouse input after the
+        // popup is dismissed (e.g. GTK4/Ghostty context menus, fcitx5 popups).
+        self.dismiss_all_popups();
     }
     fn reposition_request(
         &mut self,
@@ -996,14 +1001,17 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         }) {
             let ret = self.popups.grab_popup(root, kind, &seat, serial);
 
-            if let Ok(mut grab) = ret {
+            if let Ok(grab) = ret {
                 if let Some(keyboard) = seat.get_keyboard() {
                     if keyboard.is_grabbed()
                         && !(keyboard.has_grab(serial)
                             || keyboard.has_grab(grab.previous_serial().unwrap_or(serial)))
                     {
-                        grab.ungrab(PopupUngrabStrategy::All);
-                        return;
+                        // The keyboard is grabbed by a previous popup session with a different
+                        // serial.  This is typically a stale grab left behind after an
+                        // input-method popup or another popup was dismissed without proper
+                        // cleanup.  Unset it so the new popup can proceed.
+                        keyboard.unset_grab(self);
                     }
                     keyboard.set_focus(self, grab.current_grab(), serial);
                     keyboard.set_grab(self, PopupKeyboardGrab::new(&grab), serial);
@@ -1014,8 +1022,8 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                             || pointer
                                 .has_grab(grab.previous_serial().unwrap_or_else(|| grab.serial())))
                     {
-                        grab.ungrab(PopupUngrabStrategy::All);
-                        return;
+                        // Same as above: stale pointer grab from a previous popup session.
+                        pointer.unset_grab(self, serial, 0);
                     }
                     pointer.set_grab(self, PopupPointerGrab::new(&grab), serial, Focus::Keep);
                 }
