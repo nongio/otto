@@ -178,51 +178,50 @@ impl Otto<UdevData> {
                 Some(mode) => mode.refresh,
                 None => return,
             };
-            // What are we trying to solve by introducing a delay here:
-            //
-            // Basically it is all about latency of client provided buffers.
-            // A client driven by frame callbacks will wait for a frame callback
-            // to repaint and submit a new buffer. As we send frame callbacks
-            // as part of the repaint in the compositor the latency would always
-            // be approx. 2 frames. By introducing a delay before we repaint in
-            // the compositor we can reduce the latency to approx. 1 frame + the
-            // remaining duration from the repaint to the next VBlank.
-            //
-            // With the delay it is also possible to further reduce latency if
-            // the client is driven by presentation feedback. As the presentation
-            // feedback is directly sent after a VBlank the client can submit a
-            // new buffer during the repaint delay that can hit the very next
-            // VBlank, thus reducing the potential latency to below one frame.
-            //
-            // Choosing a good delay is a topic on its own so we just implement
-            // a simple strategy here. We just split the duration between two
-            // VBlanks into two steps, one for the client repaint and one for the
-            // compositor repaint. Theoretically the repaint in the compositor should
-            // be faster so we give the client a bit more time to repaint. On a typical
-            // modern system the repaint in the compositor should not take more than 2ms
-            // so this should be safe for refresh rates up to at least 120 Hz. For 120 Hz
-            // this results in approx. 3.33ms time for repainting in the compositor.
-            // A too big delay could result in missing the next VBlank in the compositor.
-            //
-            // A more complete solution could work on a sliding window analyzing past repaints
-            // and do some prediction for the next repaint.
-            let _repaint_delay =
-                Duration::from_millis(((1_000_000f32 / output_refresh as f32) * 0.6f32) as u64);
 
-            let timer = if self.backend_data.primary_gpu != surface.render_node {
-                // However, if we need to do a copy, that might not be enough.
-                // (And without actual comparision to previous frames we cannot really know.)
-                // So lets ignore that in those cases to avoid thrashing performance.
-                //                trace!("scheduling repaint timer immediately on {:?}", crtc);
+            // ── Frame-pipeline Phase 1: CPU scene update ─────────────────────
+            //
+            // The GPU is still scanning out the frame we just acknowledged, so
+            // the CPU is free.  We tick the scene graph now, at VBlank time,
+            // and cache the result.  The upcoming draw phase (Phase 2) will
+            // consume the cached value instead of calling update() inline,
+            // which shortens the critical path on the GPU-submit side and
+            // keeps the two stages maximally overlapped.
+            //
+            // `scene_element` and `backend_data` are distinct fields of `self`,
+            // so Rust's field-projection rules allow concurrent access here.
+            let scene_has_damage = self.scene_element.update();
+            surface.prefetched_scene_damage = Some(scene_has_damage);
+
+            // ── Frame-pipeline Phase 2: schedule the draw at the deadline ─────
+            //
+            // We want to submit the next page flip as close to the upcoming
+            // VBlank as possible (minimises input latency) while still leaving
+            // enough margin for the GPU command recording to finish on time.
+            //
+            // Target deadline = frame_period − 2×avg_render_time
+            //   • 2× gives a safety margin for render-time variance.
+            //   • Clamped to at least 1 ms to avoid busy-spinning.
+            //
+            // For multi-GPU paths a buffer copy is needed after rendering; we
+            // have no reliable estimate for the copy duration, so we fire
+            // immediately and accept the slightly-wider timing window.
+            let is_multi_gpu = self.backend_data.primary_gpu != surface.render_node;
+            let timer = if is_multi_gpu {
                 Timer::immediate()
             } else {
-                //                trace!(
-                //                    "scheduling repaint timer with delay {:?} on {:?}",
-                //                    repaint_delay,
-                //                    crtc
-                //                );
-                // Timer::from_duration(repaint_delay)
-                Timer::immediate()
+                // output_refresh is in millihertz (mHz); convert to µs/frame.
+                let frame_period_us = 1_000_000_000f32 / output_refresh as f32;
+                let avg_us = surface.avg_render_time_us;
+                let draw_delay_us = (frame_period_us - avg_us * 2.0).max(1_000.0);
+                trace!(
+                    draw_delay_us,
+                    frame_period_us,
+                    avg_us,
+                    "scheduling draw phase on {:?}",
+                    crtc
+                );
+                Timer::from_duration(Duration::from_micros(draw_delay_us as u64))
             };
 
             self.handle
@@ -263,6 +262,31 @@ impl Otto<UdevData> {
 
         // Tick gamma transitions before rendering
         self.tick_gamma_transitions();
+
+        // ── Frame-pipeline: consume pre-computed scene update ─────────────────
+        //
+        // When the VBlank callback (`frame_finish`) ran at the start of this
+        // frame period it already called `scene_element.update()` and stored
+        // the damage flag in `surface.prefetched_scene_damage`.  We take that
+        // value here so the CPU work (scene-graph evaluation, layout, animation
+        // ticking) stays on the VBlank side of the pipeline and only the GPU
+        // work (render-element building, command recording, page-flip) runs on
+        // the deadline side.
+        //
+        // We extract the cached value *before* the long-lived `surface` borrow
+        // below so that Rust's borrow checker does not see two simultaneous
+        // `&mut` borrows of `backend_data.backends`.
+        //
+        // If no pre-computed value is available — e.g. on the very first frame,
+        // after an idle wakeup, or when the render was triggered by a path that
+        // bypasses `frame_finish` — we fall back to calling `update()` inline
+        // (after the `surface` borrow is established, using field-split rules).
+        let prefetched_scene_damage = self
+            .backend_data
+            .backends
+            .get_mut(&node)
+            .and_then(|d| d.surfaces.get_mut(&crtc))
+            .and_then(|s| s.prefetched_scene_damage.take());
 
         // Get screenshare sessions before borrowing backend_data
         // let _has_screenshare = !self.screenshare_sessions.is_empty();
@@ -310,7 +334,13 @@ impl Otto<UdevData> {
         // let integer_scale = output_scale.round() as u32;
         let _config_scale = Config::with(|c| c.screen_scale);
 
-        let scene_has_damage = self.scene_element.update();
+        // Use the pre-computed damage flag, or tick the scene inline if the
+        // pre-fetch was not available.  `scene_element` and `backend_data` are
+        // distinct fields, so field-projection rules allow the mutable borrow
+        // of `self.scene_element` here even though `surface` (derived from
+        // `self.backend_data`) is also live.
+        let scene_has_damage =
+            prefetched_scene_damage.unwrap_or_else(|| self.scene_element.update());
         let all_window_elements: Vec<&WindowElement> = self.workspaces.spaces_elements().collect();
 
         // Determine if direct scanout should be allowed:
@@ -601,11 +631,14 @@ impl Otto<UdevData> {
                 Some(mode) => mode.refresh,
                 None => return,
             };
-            // Schedule next render early enough to guarantee we finish before
-            // the next VBlank. We subtract 2× the average render time as safety
-            // margin (accounts for variance, scheduling jitter, etc).
-            // Clamped to at least 1ms to avoid busy-spinning.
-            let frame_period_us = 1_000_000f32 / output_refresh as f32;
+            // Schedule the next render early enough to guarantee we finish before
+            // the next VBlank.  We subtract 2× the average render time as a
+            // safety margin (accounts for variance, scheduling jitter, etc.).
+            // Clamped to at least 1 ms to avoid busy-spinning.
+            //
+            // `output_refresh` is in millihertz (mHz), so the frame period in
+            // microseconds is 1_000_000_000 / refresh_mHz (not 1_000_000).
+            let frame_period_us = 1_000_000_000f32 / output_refresh as f32;
             let avg_us = self
                 .backend_data
                 .backends
