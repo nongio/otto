@@ -24,7 +24,7 @@ pub mod textures;
 // Re-export commonly used types
 pub use egl_context::EGLSurfaceWrapper;
 pub use skia_surface::SkiaSurface;
-pub use sync::{finished_proc, FlushInfo2, SkiaSync, FINISHED_PROC_STATE};
+pub use sync::SkiaSync;
 pub use textures::{SkiaFrame, SkiaGLesFbo, SkiaTexture, SkiaTextureImage, SkiaTextureMapping};
 
 use smithay::{

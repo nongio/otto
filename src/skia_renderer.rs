@@ -225,6 +225,7 @@ impl SkiaRenderer {
     pub fn egl_context(&self) -> &EGLContext {
         self.gl_renderer.egl_context()
     }
+
     pub fn current_skia_renderer(&mut self) -> Option<&SkiaSurface> {
         let renderer = self
             .current_target
@@ -554,7 +555,6 @@ impl Renderer for SkiaRenderer {
 
         unsafe {
             self.gl.BindFramebuffer(ffi::FRAMEBUFFER, buffer.fbo);
-
             let status = self.gl.CheckFramebufferStatus(ffi::FRAMEBUFFER);
             self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
 
@@ -562,12 +562,23 @@ impl Renderer for SkiaRenderer {
                 println!("framebuffer incomplete");
                 return Err(GlesError::FramebufferBindingError);
             }
-            self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
         }
         let surface = self
             .target_renderer
             .get_mut(self.current_target.as_ref().unwrap())
             .unwrap();
+
+        // Tell Skia that FBO and texture binding state is unknown.  Between
+        // frames, Smithay's GlesRenderer (texture imports, cursor rendering,
+        // etc.) and the FBO check above change these GL states behind Skia's
+        // back.  Without this reset, Skia's cached state from the previous
+        // buffer's flush is stale and it may skip necessary GL calls.
+        {
+            use layers::skia::gpu::gl::BackendState;
+            surface.gr_context.reset(Some(
+                (BackendState::RENDER_TARGET | BackendState::TEXTURE_BINDING).bits(),
+            ));
+        }
 
         Ok(SkiaFrame {
             skia_surface: surface.clone(),

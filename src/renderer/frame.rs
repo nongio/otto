@@ -3,14 +3,13 @@
 //! This module contains all the trait implementations for SkiaFrame,
 //! handling frame rendering, texture drawing, and buffer blitting operations.
 
-use layers::{sb, skia};
+use layers::skia;
 use smithay::{
     backend::renderer::{gles::GlesError, sync::SyncPoint, Color32F, ContextId, Frame, Renderer},
     utils::{Buffer, Physical, Rectangle, Transform},
 };
-use std::sync::atomic::Ordering;
 
-use super::{finished_proc, FlushInfo2, SkiaFrame, SkiaSync, SkiaTexture, FINISHED_PROC_STATE};
+use super::{SkiaFrame, SkiaSync, SkiaTexture};
 
 impl Frame for SkiaFrame<'_> {
     type Error = GlesError;
@@ -185,46 +184,30 @@ impl Frame for SkiaFrame<'_> {
     fn finish(self) -> Result<SyncPoint, Self::Error> {
         let mut surface = self.skia_surface;
 
-        let info = FlushInfo2 {
-            fNumSemaphores: 0,
-            fGpuStatsFlags: 0,
-            fSignalSemaphores: std::ptr::null_mut(),
-            fFinishedProc: Some(finished_proc),
-            fFinishedWithStatsProc: None,
-            fFinishedContext: std::ptr::null_mut(),
-            fSubmittedProc: None,
-            fSubmittedContext: std::ptr::null_mut(),
-        };
+        // IMPORTANT: Use the *surface-specific* flush, not a bare context flush.
+        //
+        // Skia defers draw calls and records them against the target surface.
+        // `gr_context.flush_and_submit()` flushes the context globally, but does
+        // NOT guarantee that the pending ops recorded against *this* surface have
+        // been resolved to GL commands on its FBO.
+        //
+        // `flush_and_submit_surface()` explicitly resolves the given surface's
+        // recorded ops first, then submits the resulting GL commands.  Without
+        // this, the EGL fence we create below may be inserted *before* Skia has
+        // actually emitted the GL draw calls for this frame's content — causing
+        // the GPU to scan out a partially/un-rendered buffer (black frame).
+        surface
+            .gr_context
+            .flush_and_submit_surface(&mut surface.surface, None);
 
-        // Transmute flushinfo2 into flushinfo
-        let info = unsafe {
-            let native = &*(&info as *const FlushInfo2 as *const sb::GrFlushInfo);
-            &*(native as *const sb::GrFlushInfo as *const layers::skia::gpu::FlushInfo)
-        };
+        let sync = SkiaSync::create(self.renderer.egl_context().display())
+            .map(SyncPoint::from)
+            .unwrap_or_else(|err| {
+                tracing::warn!(?err, "Failed to create EGL fence, falling back to signaled");
+                SyncPoint::signaled()
+            });
 
-        FINISHED_PROC_STATE.store(false, Ordering::SeqCst);
-
-        let semaphores = surface.gr_context.flush(info);
-
-        // FIXME review sync logic
-        let syncpoint = if semaphores == skia::gpu::SemaphoresSubmitted::Yes {
-            profiling::scope!("FINISHED_PROC_STATE");
-            let skia_sync = SkiaSync::create(self.renderer.egl_context().display())
-                .map_err(|_err| GlesError::FramebufferBindingError)?;
-            SyncPoint::from(skia_sync)
-        } else {
-            SyncPoint::signaled()
-        };
-
-        {
-            profiling::scope!("context_submit");
-            surface.gr_context.submit(None);
-            // surface
-            //     .gr_context
-            //     .flush_and_submit_surface(&mut surface.surface, GrSyncCpu::Yes);
-        }
-
-        Ok(syncpoint)
+        Ok(sync)
     }
 
     fn wait(
