@@ -345,8 +345,7 @@ impl RenderElement<SkiaRenderer> for SceneElement {
         let occluded_set = if crate::config::Config::with(|c| c.occlusion_culling) {
             if let Some(root_id) = root_id {
                 self.engine.compute_occlusion(root_id);
-                scene.occlusion_map()
-                    .and_then(|m| m.get(&root_id).cloned())
+                scene.occlusion_map().and_then(|m| m.get(&root_id).cloned())
             } else {
                 None
             }

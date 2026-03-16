@@ -91,9 +91,7 @@ impl Fence for SkiaSync {
         // missing the call returns -1 and we fall back to CPU wait.
         use smithay::backend::egl::ffi::egl;
 
-        let fd = unsafe {
-            egl::DupNativeFenceFDANDROID(**self.0.display_handle, self.0.handle)
-        };
+        let fd = unsafe { egl::DupNativeFenceFDANDROID(**self.0.display_handle, self.0.handle) };
         if fd >= 0 {
             Some(unsafe { std::os::unix::io::OwnedFd::from_raw_fd(fd) })
         } else {
