@@ -73,6 +73,10 @@ impl PopupOverlayView {
                 });
                 content_layer.set_pointer_events(false);
 
+                // Start hidden — only show after the initial configure has been
+                // acknowledged and the popup has committed at its correct position.
+                layer.set_hidden(true);
+
                 let _ = self.layers_engine.append_layer(&layer, self.layer.id());
                 let _ = self.layers_engine.append_layer(&content_layer, layer.id());
 
