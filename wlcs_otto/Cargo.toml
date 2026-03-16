@@ -28,5 +28,5 @@ nix = "0.24"
 [dependencies.laye-rs]
 # path = "../layers"
 git = "https://github.com/nongio/layers"
-tag = "v1.5.0"
+tag = "v1.6.0"
 features = ["export-taffy"]
