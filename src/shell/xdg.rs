@@ -4,8 +4,7 @@ use layers::prelude::{taffy, Interpolate, Layer, Transition};
 use smithay::{
     desktop::{
         find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output,
-        PopupKeyboardGrab, PopupKind, PopupPointerGrab, Window, WindowSurface,
-        WindowSurfaceType,
+        PopupKeyboardGrab, PopupKind, PopupPointerGrab, Window, WindowSurface, WindowSurfaceType,
     },
     input::{pointer::Focus, Seat},
     output::Output,
