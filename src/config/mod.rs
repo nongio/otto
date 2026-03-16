@@ -47,6 +47,8 @@ pub struct Config {
     pub keyboard_shortcuts: ShortcutMap,
     #[serde(default)]
     pub virtual_outputs: Vec<VirtualOutputConfig>,
+    #[serde(default)]
+    pub occlusion_culling: bool,
     #[serde(skip)]
     #[serde(default)]
     shortcut_bindings: Vec<ShortcutBinding>,
@@ -80,6 +82,7 @@ impl Default for Config {
             keyboard_shortcuts: shortcuts::default_shortcut_map(),
             shortcut_bindings: Vec::new(),
             virtual_outputs: Vec::new(),
+            occlusion_culling: false,
         };
         config.rebuild_shortcut_bindings();
         config

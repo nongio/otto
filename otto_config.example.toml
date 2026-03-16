@@ -2,6 +2,10 @@
 screen_scale = 1.0
 locales = ["en"]  # Language preferences for app names/desktop entries (e.g., ["fr", "en"])
 
+# Occlusion culling: skip rendering of layers fully hidden behind opaque layers.
+# Improves GPU/CPU throughput when windows overlap. Disable if you see missing content.
+# occlusion_culling = false
+
 # Theme
 cursor_size = 24
 font_family = "Inter"
