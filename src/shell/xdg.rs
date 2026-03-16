@@ -4,7 +4,7 @@ use layers::prelude::{taffy, Interpolate, Layer, Transition};
 use smithay::{
     desktop::{
         find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output,
-        space::SpaceElement, PopupKeyboardGrab, PopupKind, PopupPointerGrab, Window, WindowSurface,
+        PopupKeyboardGrab, PopupKind, PopupPointerGrab, Window, WindowSurface,
         WindowSurfaceType,
     },
     input::{pointer::Focus, Seat},
@@ -997,17 +997,6 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             }
 
             let next_focus = self.workspaces.minimize_window(&window);
-
-            // Deactivate the minimized surface and send configure so the
-            // client receives the correct (deactivated) state.
-            window.set_activate(false);
-            if let Some(view) = self.workspaces.get_window_view(&id) {
-                view.set_active(false);
-            }
-            if let Some(toplevel) = window.toplevel() {
-                toplevel.send_configure();
-            }
-            self.send_foreign_toplevel_state(&id, false);
 
             match next_focus {
                 Some(wid) => self.set_keyboard_focus_on_surface(&wid),
