@@ -3169,6 +3169,10 @@ impl Workspaces {
                 if n < ows.workspace_views.len() {
                     ows.workspace_views.remove(n);
                 }
+                // Clamp current_workspace so it never exceeds the new spaces length.
+                if !ows.spaces.is_empty() && ows.current_workspace >= ows.spaces.len() {
+                    ows.current_workspace = ows.spaces.len() - 1;
+                }
             }
 
             for (e, location) in windows_to_move {
@@ -3188,6 +3192,13 @@ impl Workspaces {
             }
         }
         self.update_workspaces_layout();
+        self.scroll_to_workspace_index(
+            workspace_model.current_workspace,
+            Some(Transition {
+                delay: 0.0,
+                timing: TimingFunction::linear(0.0),
+            }),
+        );
         self.notify_observers(&workspace_model);
     }
 
