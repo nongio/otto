@@ -621,12 +621,15 @@ impl Workspaces {
 
         // Find the fullscreen window in the current workspace
         let current_index = self.with_model(|m| m.current_workspace);
-        self.primary_output_workspaces()?
+        let window = self
+            .primary_output_workspaces()?
             .spaces
             .get(current_index)?
             .elements()
             .find(|w| w.is_fullscreen())
-            .cloned()
+            .cloned()?;
+
+        Some(window)
     }
 
     /// Return if we are in window selection mode
@@ -2416,6 +2419,16 @@ impl Workspaces {
         workspace_index: usize,
         location: impl Into<smithay::utils::Point<i32, smithay::utils::Logical>>,
     ) {
+        self.move_window_to_workspace_with_activate(we, workspace_index, location, false);
+    }
+
+    pub fn move_window_to_workspace_with_activate(
+        &mut self,
+        we: &WindowElement,
+        workspace_index: usize,
+        location: impl Into<smithay::utils::Point<i32, smithay::utils::Logical>>,
+        activate: bool,
+    ) {
         let location = location.into();
 
         let mut source_workspace_index = None;
@@ -2460,7 +2473,7 @@ impl Workspaces {
             };
             for ows in self.output_workspaces.values_mut() {
                 if let Some(space) = ows.spaces.get_mut(workspace_index) {
-                    space.map_element(we.clone(), location, false);
+                    space.map_element(we.clone(), location, activate);
                 }
             }
             tracing::info!(

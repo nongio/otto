@@ -183,15 +183,6 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
             return;
         }
 
-        // Guard: don't stack fullscreen transitions
-        let mut i = 0;
-        while let Some(ws) = self.workspaces.get_workspace_at(i) {
-            if ws.get_fullscreen_animating() {
-                return;
-            }
-            i += 1;
-        }
-
         let outputs_for_window = self.workspaces.outputs_for_element(&elem);
         let output = outputs_for_window
             .first()
@@ -200,18 +191,16 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
             .clone();
         let geometry = self.workspaces.output_geometry(&output).unwrap();
 
-        // Tell the X11 window its new size immediately
-        window.set_fullscreen(true).unwrap();
-        window.configure(geometry).unwrap();
+        let id = elem.id();
 
-        tracing::debug!(
-            "x11::fullscreen_request: title={:?} output_geometry={:?} output={}",
-            window.title(),
-            geometry,
-            output.name(),
-        );
+        // Save the current geometry so unfullscreen can restore it
+        if let Some(mut view) = self.workspaces.get_window_view(&id) {
+            let current_element_geometry = self.workspaces.element_geometry(&elem).unwrap();
+            view.unmaximised_rect = current_element_geometry;
+            self.workspaces.set_window_view(&id, view);
+        }
 
-        // Register for direct scanout path
+        // Register for direct scanout
         output
             .user_data()
             .insert_if_missing(FullscreenSurface::default);
@@ -223,23 +212,28 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
 
         self.backend_data.reset_buffers(&output);
 
-        // Allocate a new dedicated workspace, mirror the XDG fullscreen flow
+        // Create a dedicated fullscreen workspace
         let current_workspace_index = self.workspaces.get_current_workspace_index();
         let (next_workspace_index, next_workspace) = self.workspaces.get_next_free_workspace();
         next_workspace.set_fullscreen_mode(true);
-        next_workspace.set_name(Some(window.title()));
-
-        elem.set_fullscreen(true, next_workspace_index);
 
         self.workspaces.expose_set_visible(false);
-        self.workspaces.set_fullscreen_overlay_visibility(true);
+
+        elem.set_fullscreen(true, next_workspace_index);
+        elem.set_workspace(current_workspace_index);
+
         self.workspaces
             .move_window_to_workspace(&elem, next_workspace_index, (0, 0));
-        elem.set_workspace(current_workspace_index);
-        self.workspaces
-            .set_current_workspace_index(next_workspace_index, None);
 
-        trace!("Fullscreening X11: {:?}", elem);
+        let transition = Transition::ease_in_out_quad(1.4);
+        self.workspaces
+            .set_current_workspace_index(next_workspace_index, Some(transition));
+
+        self.workspaces.set_fullscreen_overlay_visibility(true);
+        self.workspaces.dock.hide(None);
+
+        window.set_fullscreen(true).unwrap();
+        window.configure(geometry).unwrap();
     }
 
     fn unfullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
