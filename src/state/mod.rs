@@ -1175,22 +1175,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 .to_f64()
                 .to_physical(scale_factor);
             let title = window.xdg_title();
-            let fullscreen = window.xdg_is_fullscreen();
-
-            let is_x11 = matches!(
-                window.underlying_surface(),
-                smithay::desktop::WindowSurface::X11(_)
-            );
-            if is_x11 {
-                // tracing::debug!(
-                //     "update_window_view x11: title={:?} fullscreen={} location={:?} geometry={:?} surface_id={:?}",
-                //     title,
-                //     window.is_fullscreen(),
-                //     location,
-                //     window_geometry,
-                //     id
-                // );
-            }
+            let fullscreen = window.is_fullscreen();
 
             let mut render_elements = VecDeque::new();
 
