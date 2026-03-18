@@ -646,10 +646,14 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 );
                 self.layers_engine.start_animation(animation, 0.0);
 
-                self.workspaces
+                if let Err(e) = self
+                    .workspaces
                     .dnd_view
                     .layer
-                    .add_sublayer(&view.window_layer);
+                    .add_sublayer(&view.window_layer)
+                {
+                    tracing::warn!("fullscreen: failed to park window in dnd layer: {e}");
+                }
 
                 view.window_layer
                     .set_position(layers::types::Point { x: 0.0, y: 0.0 }, Some(transition))
@@ -660,8 +664,11 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                                 state.size = Some(geometry.size);
                                 state.fullscreen_output = wl_output_ref.clone();
                             });
-                            // println!("append window layer to workspace");
-                            next_workspace_layer.add_sublayer(l);
+                            if let Err(e) = next_workspace_layer.add_sublayer(l) {
+                                tracing::warn!(
+                                    "fullscreen: failed to reparent window to workspace: {e}"
+                                );
+                            }
                             // The protocol demands us to always reply with a configure,
                             // regardless of we fulfilled the request or not
                             surface_clone.send_configure();
@@ -770,10 +777,14 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                     let restored_size = view.unmaximised_rect.size;
                     let workspace_layer = next_workspace.windows_layer.clone();
 
-                    self.workspaces
+                    if let Err(e) = self
+                        .workspaces
                         .dnd_view
                         .layer
-                        .add_sublayer(&view.window_layer);
+                        .add_sublayer(&view.window_layer)
+                    {
+                        tracing::warn!("unmaximize: failed to park window in dnd layer: {e}");
+                    }
 
                     view.window_layer
                         .set_position(
@@ -788,7 +799,11 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                                 surface_clone.with_pending_state(|state| {
                                     state.size = Some(restored_size);
                                 });
-                                workspace_layer.add_sublayer(l);
+                                if let Err(e) = workspace_layer.add_sublayer(l) {
+                                    tracing::warn!(
+                                        "unmaximize: failed to reparent window to workspace: {e}"
+                                    );
+                                }
                                 surface_clone.send_configure();
                             },
                             true,
@@ -958,9 +973,22 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 .contains(xdg_toplevel::WmCapabilities::Minimize)
         }) {
             let id = surface.wl_surface().id();
-            let window = self.workspaces.get_window_for_surface(&id).unwrap().clone();
+            let Some(window) = self.workspaces.get_window_for_surface(&id).cloned() else {
+                surface.send_configure();
+                return;
+            };
 
-            let current_element_geometry = self.workspaces.element_geometry(&window).unwrap();
+            // Ignore duplicate minimize requests (e.g. rapid clicks while the
+            // genie animation is still running).
+            if window.is_minimised() {
+                surface.send_configure();
+                return;
+            }
+
+            let Some(current_element_geometry) = self.workspaces.element_geometry(&window) else {
+                surface.send_configure();
+                return;
+            };
 
             if let Some(mut view) = self.workspaces.get_window_view(&id) {
                 view.unmaximised_rect = current_element_geometry;
@@ -968,6 +996,7 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             }
 
             let next_focus = self.workspaces.minimize_window(&window);
+
             match next_focus {
                 Some(wid) => self.set_keyboard_focus_on_surface(&wid),
                 None => self.clear_keyboard_focus(),
@@ -975,7 +1004,7 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         }
 
         // The protocol demands us to always reply with a configure,
-        // regardless of we fulfilled the request or not
+        // regardless of whether we fulfilled the request or not
         surface.send_configure();
     }
 

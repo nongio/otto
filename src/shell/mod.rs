@@ -465,7 +465,8 @@ impl<BackendData: Backend> Otto<BackendData> {
                 if let Some(parent_id) = parent_id {
                     if surface_id != parent_id {
                         if let Some(parent_layer) = self.surface_layers.get(parent_id) {
-                            self.layers_engine
+                            let _ = self
+                                .layers_engine
                                 .append_layer(&surface_layer, parent_layer.id());
                         }
                     }

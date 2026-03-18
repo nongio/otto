@@ -332,10 +332,10 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleV1, OttoLayerUserData> for O
                     // For now we can only add to the top
                     match new_z_order {
                         OttoSurfaceStyleZOrder::BelowSurface => {
-                            window.layer().add_sublayer(&sstyle.layer);
+                            let _ = window.layer().add_sublayer(&sstyle.layer);
                         }
                         OttoSurfaceStyleZOrder::AboveSurface => {
-                            window.layer().add_sublayer(&sstyle.layer);
+                            let _ = window.layer().add_sublayer(&sstyle.layer);
                         }
                     }
 

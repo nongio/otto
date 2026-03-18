@@ -200,6 +200,9 @@ pub fn configure_surface_layer(
 
     layer.set_pointer_events(false);
     layer.set_picture_cached(true);
+    // The draw_content callback fills the entire bounds with the surface texture,
+    // so this layer can act as an occluder in occlusion culling.
+    layer.set_content_opaque(true);
 
     let draw_wvs = wvs.clone();
     layer.set_draw_content(move |canvas: &layers::skia::Canvas, w: f32, h: f32| {

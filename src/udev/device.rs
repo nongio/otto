@@ -487,6 +487,7 @@ impl Otto<UdevData> {
                 render_metrics: Some(self.render_metrics.clone()),
                 avg_render_time_us: 2000.0, // start with 2ms estimate
                 idle_countdown: 0,
+                prefetched_scene_damage: None,
             };
 
             let device = self.backend_data.backends.get_mut(&node).unwrap();

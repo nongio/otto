@@ -15,7 +15,7 @@ impl LayersRenderer {
         let root = engine.new_layer();
         root.set_key("root");
         root.set_size(layers::types::Size::points(width, height), None);
-        engine.add_layer(&root);
+        let _ = engine.add_layer(&root);
         engine.scene_set_root(root);
         engine.scene_set_size(width, height);
         #[cfg(feature = "debugger")]

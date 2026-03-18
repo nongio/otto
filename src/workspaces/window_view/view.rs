@@ -52,8 +52,8 @@ impl WindowView {
             ..Default::default()
         });
 
-        layers_engine.append_layer(&shadow_layer, layer.id());
-        layers_engine.append_layer(&content_layer, layer.id());
+        let _ = layers_engine.append_layer(&shadow_layer, layer.id());
+        let _ = layers_engine.append_layer(&content_layer, layer.id());
 
         let base_rect = WindowViewBaseModel {
             x: 0.0,
@@ -116,6 +116,14 @@ impl WindowView {
     pub fn is_unmapped(&self) -> bool {
         self.is_unmapped.load(std::sync::atomic::Ordering::SeqCst)
     }
+
+    /// Returns true if the window layer's scene node is still alive.
+    pub fn is_alive(&self) -> bool {
+        self.window_layer
+            .engine
+            .is_layer_alive(&self.window_layer.id)
+    }
+
     pub fn minimize(&self, to_rect: skia::Rect) -> TransactionRef {
         self.window_layer.set_effect(self.genie_effect.clone());
         self.genie_effect.set_destination(to_rect, true);
@@ -125,9 +133,13 @@ impl WindowView {
         let w = render_layer.width();
         let h = render_layer.height();
 
+        // Read live destination from the genie effect so the draw area
+        // tracks the expanding drawer during parallel animation.
+        let dst_ref = self.genie_effect.dst.clone();
         self.window_layer
             .set_draw_content(move |_: &skia::Canvas, _w, _h| {
-                skia::Rect::join2(skia::Rect::from_wh(w, h), to_rect).with_outset((100.0, 100.0))
+                let dst = *dst_ref.read().unwrap();
+                skia::Rect::join2(skia::Rect::from_wh(w, h), dst).with_outset((100.0, 100.0))
             });
 
         let tr = self
@@ -136,15 +148,17 @@ impl WindowView {
 
         self.set_is_minimizing(true);
         let view_ref = self.clone();
+        let dst_ref = self.genie_effect.dst.clone();
         tr.on_finish(
             move |l: &Layer, _| {
                 if view_ref.is_unmapped() {
                     return;
                 }
                 view_ref.set_is_minimizing(false);
+                let final_dst = *dst_ref.read().unwrap();
                 // After the animation, drop the shader and keep a simple scaled layer
                 l.remove_effect();
-                view_ref.apply_minimized_scale_to_layer(l, (w, h), to_rect);
+                view_ref.apply_minimized_scale_to_layer(l, (w, h), final_dst);
                 l.set_position(Point { x: 0.0, y: 0.0 }, None);
             },
             true,

@@ -124,6 +124,25 @@ pub struct SurfaceData {
     /// each no-damage frame so animations that briefly report zero pending
     /// transactions aren't cut short.
     pub(super) idle_countdown: u32,
+    /// Pre-computed scene-graph damage state for the upcoming draw phase.
+    ///
+    /// Frame pipelining splits each render cycle into two phases:
+    ///
+    /// 1. **Update (CPU)** – `scene_element.update()` is called at VBlank time
+    ///    (inside `frame_finish`).  Because the GPU is still scanning out the
+    ///    previous frame, the CPU and GPU overlap, maximising throughput.
+    ///    The resulting damage flag is stored here.
+    ///
+    /// 2. **Draw (GPU)** – `render_surface` fires near the VBlank deadline.
+    ///    It takes this pre-computed value instead of calling `update()` again,
+    ///    so the critical path on the draw side is only GPU command recording
+    ///    and page-flip submission.
+    ///
+    /// The field is `take`n at the start of every `render_surface` call.
+    /// `None` means no update has been pre-computed yet (e.g. on the very
+    /// first frame or after an idle wakeup); the draw phase falls back to
+    /// calling `update()` inline in that case.
+    pub(super) prefetched_scene_damage: Option<bool>,
 }
 
 impl Drop for SurfaceData {

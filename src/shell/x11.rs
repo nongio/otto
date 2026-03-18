@@ -325,10 +325,14 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
             let target_workspace = self.workspaces.get_workspace_at(prev_workspace);
             let workspace_layer = target_workspace.map(|ws| ws.windows_layer.clone());
 
-            self.workspaces
+            if let Err(e) = self
+                .workspaces
                 .dnd_view
                 .layer
-                .add_sublayer(&view.window_layer);
+                .add_sublayer(&view.window_layer)
+            {
+                tracing::warn!("x11 unfullscreen: failed to park window in dnd layer: {e}");
+            }
 
             view.window_layer
                 .set_position(
@@ -341,7 +345,9 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
                 .on_finish(
                     move |l: &layers::prelude::Layer, _| {
                         if let Some(wl) = workspace_layer.as_ref() {
-                            wl.add_sublayer(l);
+                            if let Err(e) = wl.add_sublayer(l) {
+                                tracing::warn!("x11 unfullscreen: failed to reparent window: {e}");
+                            }
                         }
                     },
                     true,
