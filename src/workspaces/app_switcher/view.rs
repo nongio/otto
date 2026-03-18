@@ -177,7 +177,7 @@ impl AppSwitcherView {
             .iter()
             .map(|app| {
                 self.app_icons_manager
-                    .get_stack(&app.identifier)
+                    .get_stack(&app.match_id)
                     .map(|layer| layer.id())
             })
             .collect();
