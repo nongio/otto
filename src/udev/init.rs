@@ -254,6 +254,7 @@ pub fn run_udev() {
     let data = UdevData {
         dh: display_handle.clone(),
         dmabuf_state: None,
+        syncobj_state: None,
         session,
         primary_gpu,
         gpus,
@@ -435,6 +436,31 @@ pub fn run_udev() {
     let global = dmabuf_state
         .create_global_with_default_feedback::<Otto<UdevData>>(&display_handle, &default_feedback);
     state.backend_data.dmabuf_state = Some((dmabuf_state, global));
+
+    // Expose explicit sync (wp_linux_drm_syncobj) if supported by primary GPU
+    {
+        use smithay::backend::drm::NodeType;
+        use smithay::wayland::drm_syncobj::{supports_syncobj_eventfd, DrmSyncobjState};
+
+        if let Some(primary_node) = state
+            .backend_data
+            .primary_gpu
+            .node_with_type(NodeType::Primary)
+            .and_then(|x| x.ok())
+        {
+            if let Some(backend) = state.backend_data.backends.get(&primary_node) {
+                let import_device = backend.drm.device_fd().clone();
+                if supports_syncobj_eventfd(&import_device) {
+                    let syncobj_state =
+                        DrmSyncobjState::new::<Otto<UdevData>>(&display_handle, import_device);
+                    state.backend_data.syncobj_state = Some(syncobj_state);
+                    info!("Explicit sync (wp_linux_drm_syncobj) enabled");
+                } else {
+                    info!("Explicit sync not supported by GPU (syncobj_eventfd unavailable)");
+                }
+            }
+        }
+    }
 
     let gpus = &mut state.backend_data.gpus;
     state
