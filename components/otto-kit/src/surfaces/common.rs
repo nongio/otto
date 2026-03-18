@@ -41,7 +41,7 @@ impl BaseWaylandSurface {
         let layer_node = AppContext::layers_engine().map(|engine| {
             let l = engine.new_layer();
             l.set_size(Size::points(width as f32, height as f32), None);
-            engine.add_layer(&l);
+            let _ = engine.add_layer(&l);
             l
         });
         let surface_style = AppContext::surface_style_manager()

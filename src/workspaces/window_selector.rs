@@ -135,7 +135,7 @@ impl WindowSelectorView {
         window_selector_root.set_size(layers::types::Size::percent(1.0, 1.0), None);
         // window_selector_root.set_picture_cached(false);
         // window_selector_root.set_image_cached(false);
-        layers_engine.add_layer(&window_selector_root);
+        let _ = layers_engine.add_layer(&window_selector_root);
         window_selector_root.set_size(layers::types::Size::percent(1.0, 1.0), None);
         window_selector_root.set_clip_children(true, None);
         window_selector_root.set_clip_content(true, None);
@@ -186,11 +186,11 @@ impl WindowSelectorView {
         // window_selector_windows_container.set_image_cached(false);
         window_selector_windows_container.set_size(layers::types::Size::percent(1.0, 1.0), None);
 
-        window_selector_root.add_sublayer(&window_selector_background);
+        let _ = window_selector_root.add_sublayer(&window_selector_background);
 
-        window_selector_root.add_sublayer(&window_selector_windows_container);
+        let _ = window_selector_root.add_sublayer(&window_selector_windows_container);
 
-        window_selector_root.add_sublayer(&window_selector_view);
+        let _ = window_selector_root.add_sublayer(&window_selector_view);
 
         Self {
             view,
@@ -232,7 +232,7 @@ impl WindowSelectorView {
     /// add a window layer to windows map
     /// and append the window to the window_selector_windows_container
     pub fn map_window(&self, window_id: ObjectId, layer: &Layer) {
-        self.window_selector_windows_container.add_sublayer(layer);
+        let _ = self.window_selector_windows_container.add_sublayer(layer);
         self.windows
             .write()
             .unwrap()
@@ -248,7 +248,7 @@ impl WindowSelectorView {
             if let Some(layer) = windows.get(window_id) {
                 // Re-append in state order; append detaches first, so this
                 // effectively reorders the siblings without changing parents.
-                self.window_selector_windows_container.add_sublayer(layer);
+                let _ = self.window_selector_windows_container.add_sublayer(layer);
             }
         }
     }
@@ -289,7 +289,7 @@ impl WindowSelectorView {
         self.view.update_state(&state);
 
         if let Some(layer) = self.layer_for_window(window_id) {
-            self.window_selector_windows_container.add_sublayer(&layer);
+            let _ = self.window_selector_windows_container.add_sublayer(&layer);
         }
     }
 
@@ -344,7 +344,7 @@ impl WindowSelectorView {
             .window_layer
             .set_anchor_point_preserving_position(state.original_anchor);
         state.window_layer.set_position(restored_position, None);
-        state.original_parent.add_sublayer(&state.window_layer);
+        let _ = state.original_parent.add_sublayer(&state.window_layer);
 
         Some(state)
     }
@@ -470,7 +470,7 @@ impl WindowSelectorView {
         let original_anchor = window_layer.anchor_point();
 
         // Move window to drag overlay
-        self.drag_overlay_layer.add_sublayer(&window_layer);
+        let _ = self.drag_overlay_layer.add_sublayer(&window_layer);
 
         // Remove from state grid
         self.remove_rect_from_state(selection.index);

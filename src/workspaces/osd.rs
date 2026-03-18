@@ -62,7 +62,7 @@ impl OsdView {
 
         // Create inner view layer
         let layer = layers_engine.new_layer();
-        wrap.add_sublayer(&layer);
+        let _ = wrap.add_sublayer(&layer);
         layer.set_opacity(0.0, None);
         layer.set_pointer_events(false);
         wrap.set_hidden(true);

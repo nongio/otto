@@ -120,10 +120,10 @@ impl AppIconsManager {
         setup_badge_layer(&badge_layer, BASE_ICON_SIZE);
         setup_progress_layer(&progress_layer, BASE_ICON_SIZE);
 
-        self.container.add_sublayer(&stack);
-        stack.add_sublayer(&icon_layer);
-        stack.add_sublayer(&badge_layer);
-        stack.add_sublayer(&progress_layer);
+        let _ = self.container.add_sublayer(&stack);
+        let _ = stack.add_sublayer(&icon_layer);
+        let _ = stack.add_sublayer(&badge_layer);
+        let _ = stack.add_sublayer(&progress_layer);
 
         let icon_id = app.icon.as_ref().map(|i| i.unique_id());
         self.entries.write().unwrap().insert(

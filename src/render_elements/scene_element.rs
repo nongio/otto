@@ -28,7 +28,6 @@ pub struct SceneElement {
     last_update: Instant,
     pub size: (f32, f32),
     damage: Rc<RefCell<DamageBag<i32, Physical>>>,
-    empty_damage_count: Rc<RefCell<u32>>,
     /// When set, render from this node instead of the global scene root.
     /// Used to render only a specific output's sub-tree (coordinates are output-local).
     pub output_root: Option<NodeRef>,
@@ -45,7 +44,6 @@ impl SceneElement {
             last_update: Instant::now(),
             size: (0.0, 0.0),
             damage: Rc::new(RefCell::new(DamageBag::new(5))),
-            empty_damage_count: Rc::new(RefCell::new(0)),
             output_root: None,
             #[cfg(feature = "perf-counters")]
             perf_stats: Rc::new(RefCell::new(ScenePerfStats::new())),
@@ -76,6 +74,10 @@ impl SceneElement {
             stats.log_if_due();
             return false;
         }
+
+        // Reset occlusion data for the new frame; each output will
+        // recompute its own occlusion set during draw().
+        self.engine.clear_occlusion();
 
         #[cfg(feature = "perf-counters")]
         {
@@ -238,24 +240,21 @@ impl Element for SceneElement {
         commit: Option<CommitCounter>,
     ) -> smithay::backend::renderer::utils::DamageSet<i32, Physical> {
         let geometry_size = self.geometry(scale).size;
+        if geometry_size.w <= 0 || geometry_size.h <= 0 {
+            return DamageSet::default();
+        }
+
+        let full_damage = Rectangle::new((0, 0).into(), geometry_size);
         let damage = self.damage.borrow().damage_since(commit);
 
         match damage {
-            Some(rects) if !rects.is_empty() => {
-                *self.empty_damage_count.borrow_mut() = 0;
-                DamageSet::from_slice(&rects)
-            }
-            None if geometry_size.w > 0 && geometry_size.h > 0 => {
-                let mut count = self.empty_damage_count.borrow_mut();
-                *count += 1;
-                if *count >= 3 {
-                    *count = 0;
-                    let full_damage = Rectangle::new((0, 0).into(), geometry_size);
-                    DamageSet::from_slice(&[full_damage])
-                } else {
-                    DamageSet::default()
-                }
-            }
+            // Known damage rects — return them as partial damage.
+            // The canvas will be clipped to these rects so only the
+            // changed region is cleared and redrawn.
+            Some(rects) if !rects.is_empty() => DamageSet::from_slice(&rects),
+            // Commit too old or unknown (new buffer) — must repaint everything.
+            None => DamageSet::from_slice(&[full_damage]),
+            // Nothing changed — Smithay can safely skip this element.
             _ => DamageSet::default(),
         }
     }
@@ -292,7 +291,6 @@ impl RenderElement<SkiaRenderer> for SceneElement {
         let mut surface = frame.skia_surface.clone();
 
         let canvas = surface.canvas();
-        // canvas.clear(layers::skia::Color::TRANSPARENT);
         let scene = self.engine.scene();
         // Use per-output root if set, otherwise fall back to global scene root.
         let root_id = self.output_root.or_else(|| self.engine.scene_root());
@@ -307,6 +305,31 @@ impl RenderElement<SkiaRenderer> for SceneElement {
         );
         canvas.clip_rect(output_clip, Some(layers::skia::ClipOp::Intersect), false);
 
+        // Build a Skia Region from the damage rects for canvas clipping and
+        // node-level culling. Each damage rect is offset by the destination
+        // position so it aligns with scene-space coordinates on the canvas.
+        let damage_region = if !damage.is_empty() {
+            let irects: Vec<layers::skia::IRect> = damage
+                .iter()
+                .map(|r| {
+                    layers::skia::IRect::from_xywh(
+                        r.loc.x + dst.loc.x,
+                        r.loc.y + dst.loc.y,
+                        r.size.w,
+                        r.size.h,
+                    )
+                })
+                .collect();
+            let mut region = layers::skia::Region::new();
+            region.set_rects(&irects);
+            // Clip the canvas to the damage region so Skia skips drawing
+            // outside the damaged area entirely.
+            canvas.clip_region(&region, Some(layers::skia::ClipOp::Intersect));
+            Some(region)
+        } else {
+            None
+        };
+
         // If rendering from an output sub-tree, translate so the output_layer's
         // scene-space position maps to (0,0) on the output framebuffer.
         if let Some(oid) = self.output_root {
@@ -318,83 +341,38 @@ impl RenderElement<SkiaRenderer> for SceneElement {
             }
         }
 
+        // Compute occlusion for this output's root and retrieve the occluded set.
+        let occluded_set = if crate::config::Config::with(|c| c.occlusion_culling) {
+            if let Some(root_id) = root_id {
+                self.engine.compute_occlusion(root_id);
+                scene.occlusion_map().and_then(|m| m.get(&root_id).cloned())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let occluded_ref = occluded_set.as_ref();
+        let damage_ref = damage_region.as_ref();
+
         scene.with_arena(|arena| {
             scene.with_renderable_arena(|renderable_arena| {
                 if let Some(root_id) = root_id {
-                    // Check if we should use damage clipping or render full scene
-                    // Only use damage clipping when:
-                    // 1. Damage is provided (not empty)
-                    // 2. Damage is partial (not covering entire element)
-                    // This ensures buffer preservation is working correctly
-
-                    let should_clip = if damage.is_empty() {
-                        false // No damage info, render full
-                    } else {
-                        // Check if damage covers the entire element
-                        let total_damage_area: i32 =
-                            damage.iter().map(|r| r.size.w * r.size.h).sum();
-                        let element_area = dst.size.w * dst.size.h;
-
-                        // If damage is less than 95% of element, use clipping
-                        // (95% threshold to account for rounding)
-                        total_damage_area < (element_area * 95 / 100)
-                    };
-
-                    if should_clip {
-                        // Use Skia Region for efficient multi-rect clipping
-                        let mut clip_region = layers::skia::Region::new();
-                        for d in damage.iter() {
-                            if d.size.w <= 0 || d.size.h <= 0 {
-                                continue;
-                            }
-                            let irect = layers::skia::IRect::from_xywh(
-                                d.loc.x, d.loc.y, d.size.w, d.size.h,
-                            );
-                            clip_region.op_rect(irect, layers::skia::region::RegionOp::Union);
-                        }
-
-                        // Render scene once with complex clip region
-                        if !clip_region.is_empty() {
-                            canvas.save();
-                            canvas.clip_region(&clip_region, Some(layers::skia::ClipOp::Intersect));
-                            render_node_tree(root_id, arena, renderable_arena, canvas, 1.0);
-                            canvas.restore();
-                        }
-                    } else {
-                        // No damage or full screen damage - render everything
-                        render_node_tree(root_id, arena, renderable_arena, canvas, 1.0);
-                    }
-                    // Optional debug: outline damage rect
-                    // let mut paint = layers::skia::Paint::default();
-                    // paint.set_color(layers::skia::Color::from_argb(255, 255, 0, 0));
-                    // paint.set_stroke(true);
-                    // paint.set_stroke_width(1.0);
-                    // for damage_rect in damage.iter() {
-                    //     if !damage_rect.is_empty() {
-                    //         let r = layers::skia::Rect::from_xywh(
-                    //             damage_rect.loc.x as f32,
-                    //             damage_rect.loc.y as f32,
-                    //             damage_rect.size.w as f32,
-                    //             damage_rect.size.h as f32,
-                    //         );
-                    //         canvas.draw_rect(r, &paint);
-                    //     }
-                    // }
-                    // let typeface = crate::workspace::utils::FONT_CACHE
-                    // .with(|font_cache| {
-                    //     font_cache
-                    //         .font_mgr
-                    //         .match_family_style("Inter", layers::skia::FontStyle::default())
-                    // })
-                    // .unwrap();
-                    // let font = layers::skia::Font::from_typeface_with_params(typeface, 22.0, 1.0, 0.0);
-                    // let pos = self.engine.get_pointer_position();
-                    // canvas.draw_str(format!("{},{}", pos.x, pos.y), (50.0, 50.0), &font, &paint);
+                    render_node_tree(
+                        root_id,
+                        arena,
+                        renderable_arena,
+                        canvas,
+                        1.0,
+                        occluded_ref,
+                        damage_ref,
+                    );
                 }
                 self.engine.clear_damage();
             });
         });
         canvas.restore_to_count(save_point);
+
         Ok(())
     }
 }

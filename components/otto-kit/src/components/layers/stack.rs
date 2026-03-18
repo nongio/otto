@@ -38,7 +38,7 @@ impl LayerStack {
             ..Default::default()
         });
 
-        engine.add_layer(&layer.id());
+        let _ = engine.add_layer(&layer.id());
 
         LayerStack { layer }
     }
@@ -78,11 +78,11 @@ impl LayerStack {
     }
 
     pub fn add_child(&self, child: &super::frame::LayerFrame) {
-        self.layer.add_sublayer(&child.id());
+        let _ = self.layer.add_sublayer(&child.id());
     }
 
     pub fn add_stack(&self, child: &LayerStack) {
-        self.layer.add_sublayer(&child.id());
+        let _ = self.layer.add_sublayer(&child.id());
     }
 
     pub fn set_draw(&self, draw_fn: impl Into<ContentDrawFunction>) {

@@ -73,8 +73,12 @@ impl PopupOverlayView {
                 });
                 content_layer.set_pointer_events(false);
 
-                self.layers_engine.append_layer(&layer, self.layer.id());
-                self.layers_engine.append_layer(&content_layer, layer.id());
+                // Start hidden — only show after the initial configure has been
+                // acknowledged and the popup has committed at its correct position.
+                layer.set_hidden(true);
+
+                let _ = self.layers_engine.append_layer(&layer, self.layer.id());
+                let _ = self.layers_engine.append_layer(&content_layer, layer.id());
 
                 PopupLayer {
                     popup_id,
@@ -142,14 +146,14 @@ impl PopupOverlayView {
             // Set up parent-child relationship
             if let Some(ref parent_id) = wvs.parent_id {
                 if let Some(parent_layer) = surface_layers.get(parent_id) {
-                    layers_engine.append_layer(&layer, parent_layer.id());
+                    let _ = layers_engine.append_layer(&layer, parent_layer.id());
                 } else {
                     // Parent not yet created, append to content layer
-                    layers_engine.append_layer(&layer, popup.content_layer.id());
+                    let _ = layers_engine.append_layer(&layer, popup.content_layer.id());
                 }
             } else {
                 // Root surface, append to content layer
-                layers_engine.append_layer(&layer, popup.content_layer.id());
+                let _ = layers_engine.append_layer(&layer, popup.content_layer.id());
             }
 
             surface_layers.insert(wvs.id.clone(), layer);

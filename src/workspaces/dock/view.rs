@@ -5,7 +5,7 @@ use std::{
 };
 
 use layers::{
-    engine::{animation::Transition, Engine, NodeRef, TransactionRef},
+    engine::{animation::Transition, AnimationRef, Engine, NodeRef, TransactionRef},
     prelude::{taffy, Layer, Point, Spring, TimingFunction},
     skia,
     taffy::{prelude::FromLength, style::Style},
@@ -87,6 +87,11 @@ pub struct DockView {
     pub cached_dock_bounds: Arc<RwLock<Option<skia::Rect>>>,
     /// The label layer currently shown as a tooltip — only one visible at a time.
     active_label: Arc<RwLock<Option<Layer>>>,
+    /// The `AnimationRef` from the most recent `magnify_elements_with_scale` call,
+    /// so callers can attach `on_finish` callbacks to the dock layout animation.
+    last_layout_animation: Arc<RwLock<Option<AnimationRef>>>,
+    /// The layer currently showing the "pressed" darkening effect.
+    pressed_layer: Arc<RwLock<Option<Layer>>>,
 }
 impl PartialEq for DockView {
     fn eq(&self, other: &Self) -> bool {
@@ -152,7 +157,7 @@ impl DockView {
 
         let view_layer = layers_engine.new_layer();
 
-        wrap_layer.add_sublayer(&view_layer);
+        let _ = wrap_layer.add_sublayer(&view_layer);
         // FIXME: initial dock position
         view_layer.set_position((0.0, 1000.0), None);
         let view_tree = LayerTreeBuilder::default()
@@ -164,7 +169,7 @@ impl DockView {
         view_layer.build_layer_tree(&view_tree);
 
         let bar_layer = layers_engine.new_layer();
-        view_layer.add_sublayer(&bar_layer);
+        let _ = view_layer.add_sublayer(&bar_layer);
         let initial_bar_height =
             Self::calculate_bar_height(scaled_icon_size, dock_size_multiplier * draw_scale);
         let bar_tree = LayerTreeBuilder::default()
@@ -191,7 +196,7 @@ impl DockView {
         bar_layer.build_layer_tree(&bar_tree);
 
         let dock_apps_container = layers_engine.new_layer();
-        view_layer.add_sublayer(&dock_apps_container);
+        let _ = view_layer.add_sublayer(&dock_apps_container);
 
         let container_tree = LayerTreeBuilder::default()
             .key("dock_app_container")
@@ -220,7 +225,7 @@ impl DockView {
             None,
         );
         let resize_handle = layers_engine.new_layer();
-        view_layer.add_sublayer(&resize_handle);
+        let _ = view_layer.add_sublayer(&resize_handle);
 
         let handle_tree = LayerTreeBuilder::default()
             .key("dock_handle")
@@ -251,7 +256,7 @@ impl DockView {
         resize_handle.build_layer_tree(&handle_tree);
 
         let dock_windows_container = layers_engine.new_layer();
-        view_layer.add_sublayer(&dock_windows_container);
+        let _ = view_layer.add_sublayer(&dock_windows_container);
 
         let container_tree = LayerTreeBuilder::default()
             .key("dock_windows_container")
@@ -307,6 +312,8 @@ impl DockView {
             cached_hot_zone: Arc::new(RwLock::new(None)),
             cached_dock_bounds: Arc::new(RwLock::new(None)),
             active_label: Arc::new(RwLock::new(None)),
+            last_layout_animation: Arc::new(RwLock::new(None)),
+            pressed_layer: Arc::new(RwLock::new(None)),
             app_icons_manager,
         };
         // Sync AtomicBool from dock_config (single source)
@@ -620,11 +627,11 @@ impl DockView {
                     let label_layer = self.layers_engine.new_layer();
                     setup_label(&label_layer, app_name);
 
-                    self.dock_apps_container.add_sublayer(&new_layer);
-                    new_layer.add_sublayer(&icon_scaler);
-                    icon_scaler.add_sublayer(&icon_mirror);
+                    let _ = self.dock_apps_container.add_sublayer(&new_layer);
+                    let _ = new_layer.add_sublayer(&icon_scaler);
+                    let _ = icon_scaler.add_sublayer(&icon_mirror);
                     // label is a direct child of new_layer, NOT inside icon_mirror
-                    new_layer.add_sublayer(&label_layer);
+                    let _ = new_layer.add_sublayer(&label_layer);
 
                     vac.insert(AppLayerEntry {
                         layer: new_layer.clone(),
@@ -653,12 +660,13 @@ impl DockView {
                         let inner_layer = self.layers_engine.new_layer();
                         let label_layer = self.layers_engine.new_layer();
 
-                        self.dock_windows_container.add_sublayer(&new_layer);
+                        let _ = self.dock_windows_container.add_sublayer(&new_layer);
 
                         setup_miniwindow_icon(&new_layer, &inner_layer, available_icon_width);
+                        let _ = new_layer.add_sublayer(&inner_layer);
 
                         setup_label(&label_layer, title.clone());
-                        new_layer.add_sublayer(&label_layer);
+                        let _ = new_layer.add_sublayer(&label_layer);
 
                         (new_layer, inner_layer, label_layer, None)
                     });
@@ -707,17 +715,10 @@ impl DockView {
         // Mini window layers
         for layer in previous_miniwindows {
             layer.set_opacity(0.0, Transition::ease_out_quad(0.2));
-            layer
-                .set_size(
-                    layers::types::Size::points(0.0, miniwindow_height),
-                    Transition::ease_out_quad(0.3),
-                )
-                .on_finish(
-                    |l: &Layer, _| {
-                        l.remove();
-                    },
-                    true,
-                );
+            layer.set_size(
+                layers::types::Size::points(0.0, miniwindow_height),
+                Transition::ease_out_quad(0.3),
+            );
 
             miniwindows_layers_map.retain(|_k, (v, ..)| v.id() != layer.id());
         }
@@ -924,6 +925,60 @@ impl DockView {
         }
         *active = label;
     }
+
+    /// Apply the "pressed" darkening filter to the given layer and track it
+    /// so it can be cleared later. Clears any previously pressed layer first.
+    pub(super) fn darken_pressed(&self, layer: &Layer) {
+        self.clear_pressed();
+        let darken = skia::Color::from_argb(100, 100, 100, 100);
+        let add = skia::Color::from_argb(0, 0, 0, 0);
+        layer.set_color_filter(skia::color_filters::lighting(darken, add));
+        *self.pressed_layer.write().unwrap() = Some(layer.clone());
+    }
+
+    /// Remove the darkening filter from the currently pressed layer, if any.
+    pub(super) fn clear_pressed(&self) {
+        if let Some(layer) = self.pressed_layer.write().unwrap().take() {
+            layer.set_color_filter(None);
+        }
+    }
+
+    /// Returns `true` when the currently hovered layer resolves to the same
+    /// darkening target that was recorded on press.
+    pub(super) fn is_released_on_pressed(&self, layer_id: &layers::engine::NodeRef) -> bool {
+        let pressed = self.pressed_layer.read().unwrap();
+        let Some(pressed) = pressed.as_ref() else {
+            return false;
+        };
+        self.darkening_target_for_hover(layer_id)
+            .map(|(target, _)| target.id() == pressed.id())
+            .unwrap_or(false)
+    }
+
+    /// Resolve the hovered `NodeRef` into the layer that should receive the
+    /// press darkening effect. Returns the target layer and (optionally) the
+    /// label layer that should be shown alongside it.
+    pub(super) fn darkening_target_for_hover(
+        &self,
+        layer_id: &layers::engine::NodeRef,
+    ) -> Option<(Layer, Option<Layer>)> {
+        // App icon — darken the icon_scaler, show its label.
+        if let Some((_, match_id)) = self.get_app_from_layer(layer_id) {
+            let app_layers = self.app_layers.read().unwrap();
+            if let Some(entry) = app_layers.get(&match_id) {
+                return Some((entry.icon_scaler.clone(), Some(entry.label_layer.clone())));
+            }
+        }
+        // Miniwindow — darken the inner content layer (image_cache=true).
+        if let Some(wid) = self.get_window_from_layer(layer_id) {
+            let miniwindow_layers = self.miniwindow_layers.read().unwrap();
+            if let Some((_drawer, inner, label, _)) = miniwindow_layers.get(&wid) {
+                return Some((inner.clone(), Some(label.clone())));
+            }
+        }
+        None
+    }
+
     pub fn add_window_element(&self, window: &WindowElement) -> (Layer, Layer) {
         let state = self.get_state();
         let mut minimized_windows = state.minimized_windows.clone();
@@ -949,7 +1004,7 @@ impl DockView {
             // Create fallback layers
             let new_layer = self.layers_engine.new_layer();
             let inner_layer = self.layers_engine.new_layer();
-            self.dock_windows_container.add_sublayer(&new_layer);
+            let _ = self.dock_windows_container.add_sublayer(&new_layer);
             (new_layer, inner_layer)
         }
     }
@@ -964,6 +1019,21 @@ impl DockView {
         }
         drawer
     }
+    /// Returns the resting icon size used for miniwindow drawers when
+    /// magnification is at rest (same formula as `magnify_elements_with_scale`).
+    pub fn miniwindow_icon_size(&self) -> f32 {
+        let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
+        let dock_size_multiplier = self.dock_config.read().unwrap().size.clamp(0.5, 2.0) as f32;
+        let base_icon_size = 80.0;
+        base_icon_size * dock_size_multiplier * draw_scale
+    }
+
+    /// Returns the `AnimationRef` from the most recent dock layout animation
+    /// (set by `magnify_elements_with_scale`), if any.
+    pub fn last_layout_animation(&self) -> Option<AnimationRef> {
+        *self.last_layout_animation.read().unwrap()
+    }
+
     // Magnify elements
     fn magnify_elements(&self) {
         self.magnify_elements_with_scale(None, Some(Transition::spring(0.005, 0.0)));
@@ -1088,6 +1158,7 @@ impl DockView {
 
         self.layers_engine.schedule_changes(&changes, animation);
         // self.layers_engine.schedule_changes(&changes, None);
+        *self.last_layout_animation.write().unwrap() = animation;
         if let Some(animation) = animation {
             self.layers_engine.start_animation(animation, 0.0);
         }
@@ -1385,23 +1456,28 @@ impl DockView {
     }
 
     /// Show the dock (used from the hot-zone when autohide is on).
-    pub fn show_autohide(&self) {
-        if self.dock_config.read().unwrap().autohide {
-            if self.active.load(std::sync::atomic::Ordering::Relaxed) {
-                return;
-            }
-            self.view_layer.set_hidden(false);
-            tracing::debug!("dock: show (override pending hide)");
-            self.active
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            self.view_layer.set_position(
-                (0.0, 0.0),
-                Some(Transition {
-                    timing: TimingFunction::Spring(Spring::with_duration_and_bounce(0.5, 0.2)),
-                    delay: 0.0,
-                }),
-            );
+    ///
+    /// Returns `Some(TransactionRef)` when the dock was hidden and an animation
+    /// was started, so callers can chain work via `on_finish`. Returns `None` if
+    /// autohide is off or the dock is already visible.
+    pub fn show_autohide(&self) -> Option<TransactionRef> {
+        if !self.dock_config.read().unwrap().autohide {
+            return None;
         }
+        if self.active.load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
+        self.view_layer.set_hidden(false);
+        tracing::debug!("dock: show (override pending hide)");
+        self.active
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        Some(self.view_layer.set_position(
+            (0.0, 0.0),
+            Some(Transition {
+                timing: TimingFunction::Spring(Spring::with_duration_and_bounce(0.5, 0.2)),
+                delay: 0.0,
+            }),
+        ))
     }
 
     /// Hide the context menu and immediately re-run magnification so the dock

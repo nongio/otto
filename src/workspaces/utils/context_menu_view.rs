@@ -69,8 +69,8 @@ impl ContextMenuView {
         });
         // wrap.set_pointer_events(true);
         let view_layer = layers_engine.new_layer();
-        layers_engine.add_layer(&wrap);
-        wrap.add_sublayer(&view_layer);
+        let _ = layers_engine.add_layer(&wrap);
+        let _ = wrap.add_sublayer(&view_layer);
         // view_layer.set_pointer_events(true);
 
         view_layer.set_anchor_point((0.5, 1.0), None);
@@ -78,7 +78,7 @@ impl ContextMenuView {
         let view = View::new("context_menu_inner", initial_state, Box::new(render_menu));
         view.mount_layer(view_layer.clone());
 
-        base_layer.add_sublayer(&wrap);
+        let _ = base_layer.add_sublayer(&wrap);
         Self {
             wrap_layer: wrap,
             view_layer,

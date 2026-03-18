@@ -67,7 +67,7 @@ impl AppSwitcherView {
         wrap.set_hidden(true);
 
         let view_layer = layers_engine.new_layer();
-        wrap.add_sublayer(&view_layer);
+        let _ = wrap.add_sublayer(&view_layer);
 
         let view = View::new(
             "app_switcher_view",

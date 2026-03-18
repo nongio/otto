@@ -42,6 +42,8 @@ impl BackgroundView {
             Box::new(view_background),
         );
         view.mount_layer(layer.clone());
+        // The draw callback fills the entire bounds with opaque pixels (image or gradient).
+        layer.set_content_opaque(true);
         Self {
             view,
             base_layer: layer,
