@@ -1466,10 +1466,7 @@ impl Workspaces {
                     true,
                 );
             }
-            let _tr = self
-                .workspace_selector_view
-                .layer
-                .set_opacity(1.0, None);
+            let _tr = self.workspace_selector_view.layer.set_opacity(1.0, None);
 
             // Animate layer shell overlay opacity (fade out when entering expose)
             self.layer_shell_overlay
