@@ -1114,7 +1114,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             if let Some(view) = render_surface.view() {
                 let mut texture_id = None;
                 if let Some(t) = self.backend_data.texture_for_surface(&render_surface) {
-                    // Store for debug comparison rendering (unique per surface id)
                     texture_id = Some(t.tid);
                     crate::textures_storage::set(&id, t);
                 }
@@ -1175,22 +1174,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 .to_f64()
                 .to_physical(scale_factor);
             let title = window.xdg_title();
-            let fullscreen = window.xdg_is_fullscreen();
-
-            let is_x11 = matches!(
-                window.underlying_surface(),
-                smithay::desktop::WindowSurface::X11(_)
-            );
-            if is_x11 {
-                // tracing::debug!(
-                //     "update_window_view x11: title={:?} fullscreen={} location={:?} geometry={:?} surface_id={:?}",
-                //     title,
-                //     window.is_fullscreen(),
-                //     location,
-                //     window_geometry,
-                //     id
-                // );
-            }
+            let fullscreen = window.is_fullscreen();
 
             let mut render_elements = VecDeque::new();
 

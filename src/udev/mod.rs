@@ -39,7 +39,7 @@ use smithay::{
         session::{libseat::LibSeatSession, Session},
         udev::UdevBackend,
     },
-    delegate_dmabuf, delegate_drm_lease,
+    delegate_dmabuf, delegate_drm_lease, delegate_drm_syncobj,
     input::pointer::CursorImageStatus,
     output::Output,
     reexports::{
@@ -83,6 +83,13 @@ impl DmabufHandler for Otto<UdevData> {
     }
 }
 delegate_dmabuf!(Otto<UdevData>);
+
+impl smithay::wayland::drm_syncobj::DrmSyncobjHandler for Otto<UdevData> {
+    fn drm_syncobj_state(&mut self) -> Option<&mut smithay::wayland::drm_syncobj::DrmSyncobjState> {
+        self.backend_data.syncobj_state.as_mut()
+    }
+}
+delegate_drm_syncobj!(Otto<UdevData>);
 
 impl Backend for UdevData {
     const HAS_RELATIVE_MOTION: bool = true;

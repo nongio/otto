@@ -51,12 +51,25 @@ impl<BackendData: Backend + 'static> XWaylandShellHandler for Otto<BackendData> 
         let is_override_redirect = window.is_override_redirect();
         let window_layer = self.layers_engine.new_layer();
         let mirror_layer = self.layers_engine.new_layer();
+
         mirror_layer.set_draw_content(window_layer.as_content());
+        mirror_layer.set_picture_cached(false);
+        mirror_layer.set_layout_style(layers::prelude::taffy::Style {
+            position: layers::prelude::taffy::Position::Absolute,
+            ..Default::default()
+        });
+        window_layer.add_follower_node(&mirror_layer);
+
         let window_element = WindowElement::new(
             Window::new_x11_window(window.clone()),
-            window_layer,
-            mirror_layer,
+            window_layer.clone(),
+            mirror_layer.clone(),
         );
+
+        // Set keys after construction so we can use window_element.id() for consistency
+        let surface_id = window_element.id();
+        window_layer.set_key(format!("surface_{:?}", surface_id));
+        mirror_layer.set_key(format!("mirror_window_{}", window_layer.id.0));
 
         let location = if is_override_redirect {
             // Override-redirect windows self-position; use their declared geometry.

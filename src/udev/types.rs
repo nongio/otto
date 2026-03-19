@@ -75,6 +75,7 @@ pub struct UdevData {
     pub session: LibSeatSession,
     pub(super) dh: DisplayHandle,
     pub(super) dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
+    pub(super) syncobj_state: Option<smithay::wayland::drm_syncobj::DrmSyncobjState>,
     pub(super) primary_gpu: DrmNode,
     pub(super) gpus: GpuManager<GbmGlesBackend<SkiaRenderer, DrmDeviceFd>>,
     pub backends: HashMap<DrmNode, BackendData>,
