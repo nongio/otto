@@ -112,8 +112,8 @@ impl AppSwitcherView {
         self.wrap_layer.set_opacity(
             1.0,
             Some(Transition {
-                delay: 0.1,
-                timing: TimingFunction::ease_out_quad(0.3),
+                delay: 0.05,
+                timing: TimingFunction::ease_out_quad(0.1),
             }),
         );
     }
@@ -133,8 +133,8 @@ impl AppSwitcherView {
         self.wrap_layer.set_opacity(
             1.0,
             Some(Transition {
-                delay: 0.05,
-                timing: TimingFunction::linear(0.3),
+                delay: 0.0,
+                timing: TimingFunction::ease_out_quad(0.1),
             }),
         );
     }
