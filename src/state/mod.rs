@@ -1114,7 +1114,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             if let Some(view) = render_surface.view() {
                 let mut texture_id = None;
                 if let Some(t) = self.backend_data.texture_for_surface(&render_surface) {
-                    // Store for debug comparison rendering (unique per surface id)
                     texture_id = Some(t.tid);
                     crate::textures_storage::set(&id, t);
                 }
