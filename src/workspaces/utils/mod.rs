@@ -199,7 +199,11 @@ pub fn configure_surface_layer(
     }
 
     layer.set_pointer_events(false);
-    layer.set_picture_cached(true);
+    // Do NOT cache the picture — the draw closure reads from textures_storage
+    // which is updated on every wl_surface.commit.  Caching would keep a stale
+    // bitmap when a surface commits partial damage, causing half the window to
+    // show old content.
+    layer.set_picture_cached(false);
     // The draw_content callback fills the entire bounds with the surface texture,
     // so this layer can act as an occluder in occlusion culling.
     layer.set_content_opaque(true);
@@ -214,18 +218,6 @@ pub fn configure_surface_layer(
             return layers::skia::Rect::default();
         }
         let tex = tex.unwrap();
-        let mut damage = layers::skia::Rect::default();
-        if let Some(tex_damage) = tex.damage {
-            tex_damage.iter().for_each(|bd| {
-                let r = layers::skia::Rect::from_xywh(
-                    bd.loc.x as f32,
-                    bd.loc.y as f32,
-                    bd.size.w as f32,
-                    bd.size.h as f32,
-                );
-                damage.join(r);
-            });
-        }
 
         let src_h = (draw_wvs.phy_src_h - draw_wvs.phy_src_y).max(1.0);
         let src_w = (draw_wvs.phy_src_w - draw_wvs.phy_src_x).max(1.0);
@@ -252,6 +244,21 @@ pub fn configure_surface_layer(
             }
             ContentsGravity::TopLeft => (1.0f32, 1.0f32, 0.0f32, 0.0f32),
         };
+
+        // Convert buffer-pixel damage to layer-local coords using the same
+        // scale + offset that the texture is drawn with.
+        let mut damage = layers::skia::Rect::default();
+        if let Some(tex_damage) = tex.damage {
+            tex_damage.iter().for_each(|bd| {
+                let r = layers::skia::Rect::from_xywh(
+                    bd.loc.x as f32 * scale_x + tx,
+                    bd.loc.y as f32 * scale_y + ty,
+                    bd.size.w as f32 * scale_x,
+                    bd.size.h as f32 * scale_y,
+                );
+                damage.join(r);
+            });
+        }
 
         let mut matrix = layers::skia::Matrix::new_identity();
         match draw_wvs.transform {
