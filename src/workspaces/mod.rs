@@ -1353,8 +1353,6 @@ impl Workspaces {
             // Workspace selector
             let workspace_selector_y = (-400.0).interpolate(&0.0, delta);
             let workspace_selector_y = workspace_selector_y.clamp(-400.0, 0.0);
-            let workspace_opacity = 0.0.interpolate(&1.0, delta);
-            let workspace_opacity = workspace_opacity.clamp(0.0, 1.0);
 
             // Layer shell overlay fades out when entering expose (inverse of workspace opacity)
             let layer_shell_overlay_opacity = 1.0.interpolate(&0.0, delta);
@@ -1402,15 +1400,7 @@ impl Workspaces {
             for wl in &all_workspaces_layers {
                 wl.set_hidden(show_expose);
             }
-            // During a gesture (no transition, not end) the selector is only visible when expose
-            // was already open (closing gesture).  When opening from closed, keep it hidden until
-            // the open animation completes (on_finish callback below sets the final state).
-            let show_selector = if is_gesture_ongoing {
-                show_all
-            } else {
-                show_expose
-            };
-            workspace_selector_view_layer.set_hidden(!show_selector);
+            workspace_selector_view_layer.set_hidden(false);
 
             let transaction = self.workspace_selector_view.layer.set_position(
                 layers::types::Point {
@@ -1463,7 +1453,7 @@ impl Workspaces {
                         for el in &secondary_expose_layers {
                             el.set_hidden(!show_all);
                         }
-                        workspace_selector_view_layer.set_hidden(!show_all);
+                        // workspace_selector_view stays visible (positioned off-screen when closed)
                         // Restore workspace content layers when closing expose
                         for wl in &all_workspaces_layers {
                             wl.set_hidden(show_all);
@@ -1476,25 +1466,14 @@ impl Workspaces {
                     true,
                 );
             }
-            let tr = self
+            let _tr = self
                 .workspace_selector_view
                 .layer
-                .set_opacity(workspace_opacity, transition);
+                .set_opacity(1.0, None);
 
             // Animate layer shell overlay opacity (fade out when entering expose)
             self.layer_shell_overlay
                 .set_opacity(layer_shell_overlay_opacity, transition);
-
-            if end_gesture {
-                let wsv = self.workspace_selector_view.layer.clone();
-                tr.on_finish(
-                    move |_: &Layer, _: f32| {
-                        // Animation finished
-                        wsv.set_hidden(!show_expose);
-                    },
-                    true,
-                );
-            }
         }
         // Animate dock position
         if let Some(current_workspace) = current_workspace {
