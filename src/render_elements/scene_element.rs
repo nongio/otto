@@ -353,7 +353,15 @@ impl RenderElement<SkiaRenderer> for SceneElement {
             None
         };
         let occluded_ref = occluded_set.as_ref();
-        let damage_ref = damage_region.as_ref();
+        // When occlusion culling is disabled, also skip damage-based subtree
+        // culling so that no layer is hidden by any rendering optimisation.
+        // The canvas is already clipped to the damage region by Skia, so
+        // correctness is preserved — only extra tree traversal is incurred.
+        let damage_ref = if occluded_ref.is_some() {
+            damage_region.as_ref()
+        } else {
+            None
+        };
 
         scene.with_arena(|arena| {
             scene.with_renderable_arena(|renderable_arena| {

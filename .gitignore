@@ -23,4 +23,3 @@ pkg/
 *.tar.gz
 *.tar.xz
 *.tar.zst
-src/
