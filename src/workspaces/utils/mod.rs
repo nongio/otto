@@ -2,6 +2,7 @@ pub mod context_menu_view;
 pub use context_menu_view::ContextMenuView;
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 
 use layers::prelude::{taffy, Layer};
 use layers::types::{Point, Size};
@@ -14,6 +15,9 @@ pub struct FontCache {
     pub font_collection: layers::skia::textlayout::FontCollection,
     pub font_mgr: layers::skia::FontMgr,
     pub type_face_font_provider: RefCell<layers::skia::textlayout::TypefaceFontProvider>,
+    /// Maps requested family name (lowercased) → resolved system family name from fuzzy matching.
+    /// Avoids re-scanning all system families on every call to `make_font_with_fallback`.
+    family_name_cache: RefCell<HashMap<String, String>>,
 }
 
 impl FontCache {
@@ -47,7 +51,7 @@ impl FontCache {
             let name_lower = name.to_lowercase();
 
             if name_lower == family_lower {
-                tracing::info!("Font '{}' matched (case-insensitive) to '{}'", family, name);
+                tracing::debug!("Font '{}' matched (case-insensitive) to '{}'", family, name);
                 return self.make_font(&name, style, size);
             }
 
@@ -61,7 +65,7 @@ impl FontCache {
         }
 
         if let Some(ref matched_name) = best_prefix_match {
-            tracing::info!("Font '{}' fuzzy-matched to '{}'", family, matched_name);
+            tracing::debug!("Font '{}' fuzzy-matched to '{}'", family, matched_name);
             return self.make_font(matched_name, style, size);
         }
 
@@ -79,8 +83,23 @@ impl FontCache {
             return font;
         }
 
-        // Try fuzzy matching (case-insensitive, prefix)
-        if let Some(font) = self.fuzzy_match_font(family.as_ref(), style, size) {
+        // Try fuzzy matching (case-insensitive, prefix), using the cache to avoid
+        // re-scanning all system families on every call from the render path.
+        let family_lower = family.as_ref().to_lowercase();
+        let cached_name = self
+            .family_name_cache
+            .borrow()
+            .get(&family_lower)
+            .cloned();
+        if let Some(ref resolved) = cached_name {
+            if let Some(font) = self.make_font(resolved, style, size) {
+                return font;
+            }
+        } else if let Some(font) = self.fuzzy_match_font(family.as_ref(), style, size) {
+            // Store the resolved name so future calls skip the O(N) scan.
+            self.family_name_cache
+                .borrow_mut()
+                .insert(family_lower, font.typeface().family_name());
             return font;
         }
 
@@ -119,7 +138,7 @@ thread_local! {
         let mut font_collection = layers::skia::textlayout::FontCollection::new();
         font_collection.set_asset_font_manager(Some(type_face_font_provider.clone().into()));
         font_collection.set_dynamic_font_manager(font_mgr.clone());
-        FontCache { font_collection, font_mgr, type_face_font_provider: RefCell::new(type_face_font_provider) }
+        FontCache { font_collection, font_mgr, type_face_font_provider: RefCell::new(type_face_font_provider), family_name_cache: RefCell::new(HashMap::new()) }
     };
 }
 
@@ -346,6 +365,7 @@ mod tests {
             font_collection,
             font_mgr,
             type_face_font_provider: RefCell::new(type_face_font_provider),
+            family_name_cache: RefCell::new(HashMap::new()),
         }
     }
 
