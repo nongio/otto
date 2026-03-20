@@ -15,7 +15,7 @@ source=("https://github.com/nongio/otto/releases/download/v$pkgver/otto-$pkgver-
 sha256sums=("SKIP")
 
 package() {
-    cd "$srcdir"
+    cd "$srcdir/otto-$pkgver"
     
     # Install binaries
     install -Dm755 target/release/otto "$pkgdir/usr/bin/otto"

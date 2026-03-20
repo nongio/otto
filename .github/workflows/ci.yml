@@ -151,7 +151,6 @@ jobs:
           install -Dm644 components/xdg-desktop-portal-otto/otto.portal "$tmpdir/$PKGDIR/components/xdg-desktop-portal-otto/otto.portal"
           install -Dm644 components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service "$tmpdir/$PKGDIR/components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service"
           install -Dm644 components/xdg-desktop-portal-otto/portals.conf.example "$tmpdir/$PKGDIR/components/xdg-desktop-portal-otto/portals.conf.example"
-          install -m644 PKGBUILD "$tmpdir/$PKGDIR/PKGBUILD"
           install -m644 PKGBUILD-git "$tmpdir/$PKGDIR/PKGBUILD-git"
           install -m644 PKGBUILD-nightly-bin "$tmpdir/$PKGDIR/PKGBUILD-nightly-bin"
           # VERSION file for PKGBUILD-nightly-bin pkgver()
@@ -266,19 +265,11 @@ jobs:
           ```
 
           ### Arch Linux
-          **Option 1: Binary package**
           ```bash
-          # Download and extract the tarball, then use makepkg
-          tar -xzf otto-*-x86_64.tar.gz
-          cd otto-*
+          curl -O https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD
           makepkg -si
           ```
-
-          **Option 2: From PKGBUILD**
-          ```bash
-          # Download PKGBUILD and build locally
-          makepkg -si
-          ```
+          If you already downloaded the tarball, place the PKGBUILD in the same directory and run `makepkg -si` — it will use the local file without re-downloading.
 
           ---
           EOF
