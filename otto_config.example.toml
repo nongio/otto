@@ -171,6 +171,15 @@ genie_span = 10.0
 colorize_icons = false
 colorize_color = "#ffffff"
 colorize_intensity = 1.0
+# Auto-hide the dock when the pointer leaves (default: false)
+# The dock reappears when the pointer enters the dock hot-zone.
+autohide = false
+
+# Icon magnification on hover (default: true)
+# Icons scale up as the pointer approaches, similar to macOS Dock.
+# The effect intensity is controlled by genie_scale and genie_span above.
+magnification = true
+
 bookmarks = [
   { desktop_id = "org.gnome.Nautilus.desktop" },
   { desktop_id = "org.mozilla.firefox.desktop", label = "Web", exec_args = ["--private-window"] },

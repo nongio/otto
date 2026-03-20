@@ -88,7 +88,18 @@ font_family = "Inter"
 
 # Background image (path relative to config file or absolute)
 background_image = "./resources/background.jpg"
+
+# Accent color for workspace and window selector borders
+accent_color = "blue"
 ```
+
+**Accent Color**
+
+The `accent_color` option sets the highlight color used for workspace and window selection borders. Available colors:
+
+`red`, `orange`, `yellow`, `green`, `mint`, `teal`, `cyan`, `blue`, `indigo`, `purple`, `pink`, `gray`, `brown`
+
+The actual shade adapts to the current `theme_scheme` (Light or Dark). If an invalid name is provided, Otto falls back to `blue`.
 
 ### Cursor Settings
 
@@ -183,6 +194,27 @@ max_bottom = 100    # Bottom panels/docks
 max_left = 50       # Left side panels
 max_right = 50      # Right side panels
 ```
+
+---
+
+### Power Management
+
+Configure how Otto handles laptop lid events:
+
+```toml
+[power_management]
+# Enable Otto's lid switch handling (default: true)
+# When false, all lid handling is delegated to systemd-logind
+manage_lid_switch = true
+
+# What to do when laptop lid closes (default: "auto")
+# Options:
+#   "auto" - Disable internal screen; allow suspend if no external monitor
+#   "disable_internal_screen" - Always disable screen but stay running
+on_lid_close = "auto"
+```
+
+When `manage_lid_switch` is enabled, Otto coordinates with systemd-logind to manage display state on lid close and open. In `"auto"` mode the internal display is disabled and the system may suspend if no external monitor is connected. Use `"disable_internal_screen"` for setups like docking stations where the laptop should keep running with the lid closed.
 
 ---
 
@@ -375,6 +407,15 @@ size = 1.0
 genie_scale = 0.5
 genie_span = 10.0
 
+# Auto-hide the dock when the pointer leaves (default: false)
+# The dock reappears when the pointer enters the dock hot-zone.
+autohide = false
+
+# Icon magnification on hover (default: true)
+# Icons scale up as the pointer approaches, similar to macOS Dock.
+# The effect intensity is controlled by genie_scale and genie_span.
+magnification = true
+
 # Optional icon colorization
 # When enabled, dock app icons are tinted to this color (hex RGB).
 colorize_icons = false
@@ -388,6 +429,14 @@ bookmarks = [
   { desktop_id = "code.desktop" }
 ]
 ```
+
+**Autohide**
+
+When `autohide` is enabled the dock slides off-screen when the pointer leaves and reappears when the pointer enters the dock hot-zone. The animation uses a spring curve (0.5 s duration). Autohide can also be toggled at runtime from the dock right-click context menu.
+
+**Magnification**
+
+When `magnification` is enabled (the default), dock icons scale up as the pointer approaches them, similar to macOS. The maximum magnification is controlled by `genie_scale` (default 0.5, meaning icons grow up to 150 % of their base size) and the falloff curve is controlled by `genie_span` (default 10.0 — higher values make the effect more localised).
 
 **Dock Bookmark Options**
 
