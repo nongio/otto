@@ -192,8 +192,7 @@ impl WindowSelectorView {
         // Mirror the per-output wlr-layer-shell background into expose,
         // above the config background mirror and below windows.
         let layer_shell_bg_expose_mirror = layers_engine.new_layer();
-        layer_shell_bg_expose_mirror
-            .set_key(format!("layer_shell_bg_expose_mirror_{}", index));
+        layer_shell_bg_expose_mirror.set_key(format!("layer_shell_bg_expose_mirror_{}", index));
         layer_shell_bg_expose_mirror.set_layout_style(taffy::Style {
             position: taffy::Position::Absolute,
             ..Default::default()
