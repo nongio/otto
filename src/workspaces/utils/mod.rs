@@ -86,11 +86,7 @@ impl FontCache {
         // Try fuzzy matching (case-insensitive, prefix), using the cache to avoid
         // re-scanning all system families on every call from the render path.
         let family_lower = family.as_ref().to_lowercase();
-        let cached_name = self
-            .family_name_cache
-            .borrow()
-            .get(&family_lower)
-            .cloned();
+        let cached_name = self.family_name_cache.borrow().get(&family_lower).cloned();
         if let Some(ref resolved) = cached_name {
             if let Some(font) = self.make_font(resolved, style, size) {
                 return font;
@@ -411,8 +407,7 @@ mod tests {
             .expect("prefix match for 'DejaVu' should find a font");
         let family_name = font.typeface().family_name();
         assert_eq!(
-            family_name,
-            "DejaVu Sans",
+            family_name, "DejaVu Sans",
             "expected shortest DejaVu family ('DejaVu Sans'), got '{}'",
             family_name
         );
