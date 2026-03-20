@@ -403,7 +403,7 @@ mod tests {
     fn fallback_with_fuzzy_returns_font() {
         let cache = make_test_cache();
         let style = layers::skia::FontStyle::normal();
-        // make_font_with_fallback should use fuzzy matching before falling to generic fallbacks
+        // make_font_with_fallback should use fuzzy matching before falling back to generic fallbacks
         let font = cache.make_font_with_fallback("dejavu sans", style, 12.0);
         let family_name = font.typeface().family_name();
         assert!(
