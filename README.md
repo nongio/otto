@@ -127,11 +127,16 @@ sudo rpm -i otto-*.rpm
 
 #### Arch Linux
 
-**Install from PKGBUILD (recommended)**
 ```bash
-# Download the tarball from releases, then:
-mkdir otto && tar -xzf otto-*-x86_64.tar.gz -C otto
-cd otto
+# Download PKGBUILD and let makepkg fetch the tarball automatically:
+curl -O https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD
+makepkg -si
+```
+
+If you already downloaded the tarball from GitHub Releases, put the PKGBUILD in the same directory — makepkg will use it without re-downloading:
+```bash
+cd ~/Downloads  # wherever your otto-*-x86_64.tar.gz is
+curl -O https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD
 makepkg -si
 ```
 
