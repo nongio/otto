@@ -15,6 +15,7 @@ use smithay::{
         },
         renderer::{
             multigpu::{gbm::GbmGlesBackend, GpuManager, MultiRenderer, MultiTexture},
+            sync::SyncPoint,
             ContextId,
         },
         session::libseat::LibSeatSession,
@@ -144,6 +145,14 @@ pub struct SurfaceData {
     /// first frame or after an idle wakeup); the draw phase falls back to
     /// calling `update()` inline in that case.
     pub(super) prefetched_scene_damage: Option<bool>,
+    /// Deferred GPU sync point from the previous frame.
+    ///
+    /// Instead of blocking immediately after `render_frame()`, we store the
+    /// fence here and wait for it at the **start** of the next `render_surface()`
+    /// call.  This lets the GPU finish rendering in parallel with the CPU work
+    /// that happens between frames (scene-graph update, input processing, etc.).
+    #[cfg(feature = "renderer_sync")]
+    pub(super) pending_gpu_fence: SyncPoint,
 }
 
 impl Drop for SurfaceData {

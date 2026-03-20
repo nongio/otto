@@ -522,14 +522,33 @@ impl Renderer for SkiaRenderer {
                     ctx.reset(None);
                 }
                 let context = self.context.as_ref();
-                let color_type = match buffer.format {
-                    Fourcc::Argb8888 => skia::ColorType::RGBA8888,
-                    Fourcc::Abgr2101010 => skia::ColorType::RGBA1010102,
-                    _ => skia::ColorType::RGBA8888,
-                };
+                // Derive gl_internal first, then map it to the matching Skia ColorType.
+                // This is the same mapping used in import_skia_image_from_texture and
+                // ensures the GL format and Skia's logical channel order are consistent.
+                // Deriving ColorType directly from Fourcc is wrong because, e.g.,
+                // Argb8888 maps to GL_BGRA_EXT (not GL_RGBA8), so the Skia surface
+                // must use BGRA8888 to avoid R↔B swaps.
                 let gl_internal = fourcc_to_gl_formats(buffer.format)
                     .map(|(internal, _, _)| internal)
                     .unwrap_or(ffi::RGBA8);
+                let color_type = match gl_internal {
+                    ffi::BGRA_EXT => skia::ColorType::BGRA8888,
+                    ffi::RGB10_A2 => skia::ColorType::RGBA1010102,
+                    ffi::RGBA16F => skia::ColorType::RGBAF16,
+                    ffi::RGB8 => skia::ColorType::RGB888x,
+                    _ => skia::ColorType::RGBA8888, // GL_RGBA8, GL_RGBA, and any fallback
+                };
+                // Route through Skia's Format enum to get the sized GL constant Skia
+                // expects in FramebufferInfo.format. GL_BGRA_EXT (0x80E1) is unsized and
+                // not recognised by GrGLFormatFromGLEnum; we need GL_BGRA8_EXT (0x93A1).
+                let skia_gl_format = match gl_internal {
+                    ffi::RGBA | ffi::RGBA8 => skia::gpu::gl::Format::RGBA8,
+                    ffi::BGRA_EXT => skia::gpu::gl::Format::BGRA8,
+                    ffi::RGB8 => skia::gpu::gl::Format::RGB8,
+                    ffi::RGB10_A2 => skia::gpu::gl::Format::RGB10_A2,
+                    ffi::RGBA16F => skia::gpu::gl::Format::RGBA16F,
+                    _ => skia::gpu::gl::Format::RGBA8,
+                };
                 SkiaSurface::new_with_fbo(
                     output_size.w,
                     output_size.h,
@@ -539,7 +558,7 @@ impl Renderer for SkiaRenderer {
                     color_type,
                     context,
                     buffer.origin,
-                    gl_internal as u32,
+                    skia_gl_format.into(),
                 )
                 // SkiaSurface::new_with_texture(
                 //     output_size.w,
@@ -1118,10 +1137,12 @@ impl Bind<Rc<EGLSurface>> for SkiaRenderer {
         if !self.buffers.contains_key(&render_target) {
             let format = surface.pixel_format();
             let format = match (format.color_bits, format.alpha_bits) {
-                (24, 8) => ffi::RGB8,
+                // Use RGBA formats (not RGB) so alpha-bearing surfaces are represented
+                // correctly and gl_internal_format_to_fourcc can round-trip without panic.
+                (24, 8) => ffi::RGBA8,
                 (30, 2) => ffi::RGB10_A2,
-                (48, 16) => ffi::RGB16F,
-                _ => ffi::RGB8,
+                (48, 16) => ffi::RGBA16F,
+                _ => ffi::RGBA8,
             };
             let sfbo = SkiaGLesFbo {
                 fbo: 0,
@@ -1246,7 +1267,7 @@ impl Bind<Dmabuf> for SkiaRenderer {
                     SkiaGLesFbo {
                         fbo,
                         tex_id: texture,
-                        format: Fourcc::Abgr8888,
+                        format: dmabuf.format().code,
                         origin: skia::gpu::SurfaceOrigin::TopLeft,
                         width,
                         height,
