@@ -386,10 +386,15 @@ mod tests {
 
         // "DejaVu" should prefix-match to "DejaVu Sans" (shortest family starting with "DejaVu")
         // rather than "DejaVu Sans Mono" or "DejaVu Sans Condensed"
-        let font = cache.fuzzy_match_font("DejaVu", style, 12.0);
-        assert!(
-            font.is_some(),
-            "prefix match for 'DejaVu' should find a font"
+        let font = cache
+            .fuzzy_match_font("DejaVu", style, 12.0)
+            .expect("prefix match for 'DejaVu' should find a font");
+        let family_name = font.typeface().family_name();
+        assert_eq!(
+            family_name,
+            "DejaVu Sans",
+            "expected shortest DejaVu family ('DejaVu Sans'), got '{}'",
+            family_name
         );
     }
 
