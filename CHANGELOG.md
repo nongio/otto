@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [unreleased]
+## [0.15.0] - 2026-03-20
 
 ### 🚀 Features
 
@@ -12,16 +12,27 @@ All notable changes to this project will be documented in this file.
 - Audio and brightness osd attached to fn keys (#48)
 - *(power-management)* Lid close detection (#49)
 - *(audio)* Add configurable volume sound feedback with XDG Sound Th… (#50)
-- Virtual outputs streamed via PipeWire (#53)
-- *(multi-monitor)* Per-output independent workspace sets (wip) (#56)
 
 ### 🐛 Bug Fixes
 
 - Wlr layer popup focus (#46)
+- *(pkgbuild)* Fix nightly prepare() failing on re-run and broaden gitignore
+- Popup grabs not released
+- Minimise window on auto-hide dock (#73)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(pkgbuild)* Reset PKGBUILD-git pkgver placeholder
+
+### Fix
+
+- Arch packaging (#60)
 
 ### Wip
 
 - Otto-kit frontend ui components (#54)
+- Virtual outputs streamed via PipeWire (#53)
+- *(multi-monitor)* Per-output independent workspace sets (wip) (#56)
 
 ## [0.14.0] - 2026-02-06
 
@@ -41,7 +52,6 @@ All notable changes to this project will be documented in this file.
 
 ### 📚 Documentation
 
-- Separate user / developer documentation
 - Separate user / developer documentation
 - Update config example
 
