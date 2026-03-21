@@ -989,8 +989,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
                                 // Get position in current workspace before moving
                                 let position = otto
                                     .workspaces
-                                    .space()
-                                    .and_then(|s| s.element_location(&window_element))
+                                    .element_location(&window_element)
                                     .unwrap_or_default();
 
                                 // Clear dragging state

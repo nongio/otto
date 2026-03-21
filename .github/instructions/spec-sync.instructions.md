@@ -41,3 +41,10 @@ When the user states a new requirement, reports a bug, or asks for a behavior ch
 - Do not remove behavior from a spec unless it was explicitly dropped — add new behavior alongside existing.
 - Keep the spec concise. One sentence per behavior rule where possible.
 - Status stays `draft` until the feature is fully implemented and stable.
+- **Always delegate spec writes to a background sub-agent** (agent_type: `general-purpose`, mode: `background`). Never write specs inline in the main conversation.
+
+## Spec File Mapping
+
+- Workspace management, multi-output, virtual outputs → `specs/workspaces-multi-output.md`
+- Dynamic island → `specs/dynamic-island.md`
+- Notifications → `specs/notification-daemon.md`

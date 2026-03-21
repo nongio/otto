@@ -33,6 +33,8 @@ Otto supports multiple workspaces across multiple outputs (physical monitors and
 - **Secondary physical outputs:** Additional monitors. Each gets its own workspace set.
 - **Virtual outputs:** Outputs created for PipeWire screensharing. Identified by a virtual-output marker. Treated identically to secondary physical outputs for all workspace operations.
 
+All workspace operations (add, remove, navigate, maximize, drag, expose, window mapping) are output-type-agnostic. Virtual and physical secondary outputs share the same code paths — there is no special-casing by output type.
+
 ### Workspace Lifecycle
 
 **Adding a workspace:**
@@ -66,6 +68,12 @@ Otto supports multiple workspaces across multiple outputs (physical monitors and
 - Global keyboard shortcuts (e.g. Ctrl+Left/Right) switch the workspace on the focused output only.
 - The focused output is determined by pointer location.
 
+**Workspace index independence:**
+
+- Switching the current workspace on one output must not change the current workspace on any other output.
+- A global `set_current_workspace_index` call only updates the primary output's active workspace. Secondary and virtual outputs retain their own independently-set workspace index.
+- New windows are mapped to the target output's own current workspace, not the primary output's current workspace.
+
 **Three-finger swipe gesture:**
 
 - A horizontal swipe gesture scrolls only the output the pointer is on.
@@ -95,11 +103,23 @@ Otto supports multiple workspaces across multiple outputs (physical monitors and
 - The pointer position is converted to the target output's physical coordinate space before testing against workspace selector previews and window previews.
 - Clicking on a workspace preview on output A must never cause navigation on output B.
 
+### Window Focus
+
+- When the user clicks on a window on any output (including virtual outputs), that window receives keyboard focus and is raised to the top of the stacking order on its output.
+- Window lookup under the pointer searches all outputs' current workspaces, not just the primary output.
+- Raising a window to the top searches all outputs to find which workspace contains the window, then raises it on all outputs that share that workspace index.
+
 ### Rendering
 
 - Each output renders its own scene subtree independently.
 - Output layers are positioned at (0, 0) in the scene graph — each output renders into its own framebuffer with no global offset.
 - Workspace layers, expose layers, and workspace selector layers are all per-output sublayers.
+
+### Output Positioning
+
+- When a new output is connected, it is placed to the right of the rightmost existing output with no gap.
+- If the configuration file defines an explicit position for the output, that position is used instead.
+- Virtual outputs follow the same placement rule as physical outputs.
 
 ## Constraints & Edge Cases
 
@@ -109,6 +129,7 @@ Otto supports multiple workspaces across multiple outputs (physical monitors and
 - **Model mirrors primary only:** The shared `WorkspacesModel` (used by observers like the dock and app switcher) reflects only the primary output's workspace list and current index. Secondary outputs do not update the shared model directly.
 - **Dock and app switcher are shared:** These are attached to the primary output layer and respond to the shared model. They are not duplicated on secondary outputs.
 - **Layer engine pointer overlap:** Since all output layers are positioned at (0, 0), layers from different outputs overlap in scene-graph space. Pointer hit-testing through the layer engine with a global root may hit layers belonging to the wrong output. All pointer interactions in expose mode must use output-scoped hit-testing.
+- **Window focus across outputs:** Clicking a window on a secondary output must find the window by searching all outputs' spaces. The primary output's space alone is not sufficient since windows may only exist on secondary outputs.
 
 ## Rationale
 
