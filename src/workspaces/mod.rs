@@ -154,8 +154,8 @@ pub struct Workspaces {
 /// ```diagram
 /// Workspaces
 /// root
+/// ├── layer_shell_background (per output, hidden — content source only, not rendered directly)
 /// ├── output_layer (per output)
-/// │   ├── layer_shell_background (per-output wlr-layer-shell bg/bottom surfaces)
 /// │   ├── workspaces
 /// │   │   ├── workspace_view_1
 /// │   │   │   ├── background_view (config-driven)
@@ -2836,6 +2836,10 @@ impl Workspaces {
                 for space in ows.spaces.iter_mut() {
                     space.map_output(output, location);
                 }
+                // Keep layer_shell_background bounds in sync with the (possibly new) output size.
+                if let Some((w, h)) = output.current_mode().map(|m| (m.size.w as f32, m.size.h as f32)) {
+                    ows.layer_shell_background.set_size(layers::types::Size::points(w, h), None);
+                }
             }
             self.sync_model_from_primary();
             self.update_workspaces_layout();
@@ -2892,17 +2896,15 @@ impl Workspaces {
 
         let is_this_primary = self.primary_output.as_ref().map(|o| o.name()) == Some(output.name());
 
-        // Create per-output layer_shell_background container
+        // Create per-output layer_shell_background container, sized to the output's physical
+        // dimensions so mirror bounds are output-local rather than scene-root-relative.
         let layer_shell_background = self.layers_engine.new_layer();
         layer_shell_background.set_key(format!("layer_shell_background_{}", output.name()));
         layer_shell_background.set_layout_style(taffy::Style {
             position: taffy::Position::Absolute,
-            size: taffy::Size {
-                width: taffy::Dimension::Percent(1.0),
-                height: taffy::Dimension::Percent(1.0),
-            },
             ..Default::default()
         });
+        layer_shell_background.set_size(layers::types::Size::points(phys_w, phys_h), None);
         layer_shell_background.set_pointer_events(false);
         layer_shell_background.set_hidden(true);
 
@@ -3758,6 +3760,13 @@ impl Workspaces {
                 if let Some(ows) = self.output_workspaces.get(&output.name()) {
                     ows.layer_shell_background.set_hidden(false);
                     let _ = ows.layer_shell_background.add_sublayer(&layer);
+                } else {
+                    tracing::warn!(
+                        "create_layer_shell_layer: no output_workspaces entry for output '{}' \
+                         when creating {:?} layer; layer-shell surface may not be visible",
+                        output.name(),
+                        wlr_layer,
+                    );
                 }
             }
             WlrLayer::Top => {
