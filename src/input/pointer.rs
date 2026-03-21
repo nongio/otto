@@ -256,34 +256,36 @@ impl<BackendData: Backend> Otto<BackendData> {
         // Workspace selector — skip when a window drag is active so the window selector
         // keeps receiving motion events and the dragged window keeps following the pointer.
         if self.workspaces.get_show_all() && !self.workspaces.is_window_selector_dragging() {
-            let focus = self
+            // Use the per-output workspace selector for the output under the pointer.
+            let output_local_phys = (physical_pos.x as f32 - output_geo.loc.x as f32 * scale as f32,
+                                     physical_pos.y as f32 - output_geo.loc.y as f32 * scale as f32);
+            let output_selector = self
                 .workspaces
-                .workspace_selector_view
-                .as_ref()
-                .clone()
-                .into();
+                .output_workspaces
+                .get(&output.name())
+                .map(|ows| &ows.workspace_selector_view);
+            let selector = output_selector.unwrap_or(&self.workspaces.workspace_selector_view);
 
-            let layer = self.workspaces.workspace_selector_view.layer.clone();
-
-            if layer.cointains_point((physical_pos.x as f32, physical_pos.y as f32)) {
-                let position = self
-                    .workspaces
-                    .workspace_selector_view
-                    .layer
-                    .render_position();
-                return Some((focus, (position.x as f64, position.y as f64).into()));
+            let layer = selector.layer.clone();
+            if layer.cointains_point(output_local_phys) {
+                let focus: PointerFocusTarget<BackendData> = selector.as_ref().clone().into();
+                // Return the output origin so event.location becomes output-local,
+                // matching the output-local scene coordinates used by hover_layer.
+                let origin = output_geo.loc.to_f64();
+                return Some((focus, origin));
             }
         }
         // Window selector check
         if self.workspaces.get_show_all() {
-            let workspace = self.workspaces.get_current_workspace()?;
+            // Use the per-output workspace view for the output under the pointer.
+            let ows = self.workspaces.output_workspaces.get(&output.name());
+            let workspace = ows
+                .and_then(|ows| ows.workspace_views.get(ows.current_workspace).cloned())
+                .or_else(|| self.workspaces.get_current_workspace())?;
             let focus = workspace.window_selector_view.as_ref().clone().into();
-            let position = workspace
-                .window_selector_view
-                .window_selector_root
-                .render_position();
-
-            return Some((focus, (position.x as f64, position.y as f64).into()));
+            // Return the output origin so event.location becomes output-local.
+            let origin = output_geo.loc.to_f64();
+            return Some((focus, origin));
         }
 
         if let Some(layer) = layers

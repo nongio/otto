@@ -121,7 +121,10 @@ pub enum BuiltinAction {
     ExposeShowDesktop,
     ExposeShowAll,
     WorkspaceNum { index: usize },
-    SceneSnapshot,
+    #[cfg(feature = "dev")]
+    ExportSceneJson,
+    #[cfg(feature = "dev")]
+    ExportSceneSkp,
     BrightnessUp,
     BrightnessDown,
     VolumeUp,
@@ -229,7 +232,10 @@ fn parse_builtin(name: &str, index: Option<usize>) -> Result<BuiltinAction, Shor
         "ToggleMaximizeWindow" => BuiltinAction::ToggleMaximizeWindow,
         "ExposeShowDesktop" => BuiltinAction::ExposeShowDesktop,
         "ExposeShowAll" => BuiltinAction::ExposeShowAll,
-        "SceneSnapshot" => BuiltinAction::SceneSnapshot,
+        #[cfg(feature = "dev")]
+        "ExportSceneJson" => BuiltinAction::ExportSceneJson,
+        #[cfg(feature = "dev")]
+        "ExportSceneSkp" => BuiltinAction::ExportSceneSkp,
         "BrightnessUp" => BuiltinAction::BrightnessUp,
         "BrightnessDown" => BuiltinAction::BrightnessDown,
         "VolumeUp" => BuiltinAction::VolumeUp,

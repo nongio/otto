@@ -329,16 +329,6 @@ impl RenderElement<SkiaRenderer> for SceneElement {
         } else {
             None
         };
-        // If rendering from an output sub-tree, translate so the output_layer's
-        // scene-space position maps to (0,0) on the output framebuffer.
-        if let Some(oid) = self.output_root {
-            if let Some(layer) = self.engine.get_layer(&oid) {
-                let pos = layer.render_position();
-                if pos.x != 0.0 || pos.y != 0.0 {
-                    canvas.translate((-pos.x, -pos.y));
-                }
-            }
-        }
 
         // Compute occlusion for this output's root and retrieve the occluded set.
         let occluded_set = if crate::config::Config::with(|c| c.occlusion_culling) {
@@ -377,6 +367,7 @@ impl RenderElement<SkiaRenderer> for SceneElement {
                 self.engine.clear_damage();
             });
         });
+
         canvas.restore_to_count(save_point);
 
         Ok(())
