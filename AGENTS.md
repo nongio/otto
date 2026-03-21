@@ -175,6 +175,9 @@ Otto maintains two documentation tiers:
 **For code review guidelines, see:**
 - [`.github/instructions/review.instructions.md`](./.github/instructions/review.instructions.md)
 
+**For spec sync guidelines (keeping specs up to date with requirements), see:**
+- [`.github/instructions/spec-sync.instructions.md`](./.github/instructions/spec-sync.instructions.md)
+
 Key developer docs:
 - `rendering.md`, `render_loop.md` — Rendering pipeline
 - `wayland.md` — Protocol implementation details
