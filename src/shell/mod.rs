@@ -537,7 +537,7 @@ impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
         // Create a lay_rs layer for rendering (container layer for the layer shell surface)
         let layer = self
             .workspaces
-            .create_layer_shell_layer(wlr_layer, &namespace);
+            .create_layer_shell_layer(wlr_layer, &namespace, &output);
 
         // For layer shells, the workspace layer IS the rendering layer
         // Register it in surface_layers so get_or_create_layer_for_surface returns it

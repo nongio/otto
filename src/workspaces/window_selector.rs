@@ -124,6 +124,7 @@ impl WindowSelectorView {
         layers_engine: Arc<Engine>,
         background_layer: Layer,
         drag_overlay_layer: Layer,
+        layer_shell_background: &Layer,
     ) -> Self {
         let window_selector_root = layers_engine.new_layer();
         window_selector_root.set_layout_style(taffy::Style {
@@ -187,6 +188,21 @@ impl WindowSelectorView {
         window_selector_windows_container.set_size(layers::types::Size::percent(1.0, 1.0), None);
 
         let _ = window_selector_root.add_sublayer(&window_selector_background);
+
+        // Mirror the per-output wlr-layer-shell background into expose,
+        // above the config background mirror and below windows.
+        let layer_shell_bg_expose_mirror = layers_engine.new_layer();
+        layer_shell_bg_expose_mirror.set_key(format!("layer_shell_bg_expose_mirror_{}", index));
+        layer_shell_bg_expose_mirror.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        layer_shell_bg_expose_mirror.set_size(layers::types::Size::percent(1.0, 1.0), None);
+        layer_shell_bg_expose_mirror.set_draw_content(layer_shell_background.as_content());
+        layer_shell_bg_expose_mirror.set_picture_cached(false);
+        layer_shell_background.add_follower_node(&layer_shell_bg_expose_mirror);
+        layer_shell_bg_expose_mirror.set_pointer_events(false);
+        let _ = window_selector_root.add_sublayer(&layer_shell_bg_expose_mirror);
 
         let _ = window_selector_root.add_sublayer(&window_selector_windows_container);
 

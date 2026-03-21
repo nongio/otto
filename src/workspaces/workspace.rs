@@ -58,7 +58,8 @@ impl fmt::Debug for WorkspaceView {
 /// ```diagram
 /// WorkspaceView
 /// └── workspace_view
-///     ├── background_view
+///     ├── background_view (config-driven gradient/image)
+///     ├── layer_shell_bg_mirror (mirror: per-output wlr-layer-shell background)
 ///     ├── workspace_windows_container
 ///     │   ├── window
 ///     │   ├── window
@@ -73,6 +74,7 @@ impl WorkspaceView {
         layers_engine: Arc<Engine>,
         parent: &Layer,
         overlay_layer: Layer,
+        layer_shell_background: &Layer,
     ) -> Self {
         println!("add_workspace {}", index);
 
@@ -109,6 +111,22 @@ impl WorkspaceView {
 
         let _ = layers_engine.append_layer(&workspace_layer, parent.id);
         let _ = layers_engine.append_layer(&background_layer, Some(workspace_layer.id));
+
+        // Mirror the per-output wlr-layer-shell background container into this workspace,
+        // above the config-driven background_view and below windows.
+        let layer_shell_bg_mirror = layers_engine.new_layer();
+        layer_shell_bg_mirror.set_key(format!("layer_shell_bg_mirror_{}", index));
+        layer_shell_bg_mirror.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        layer_shell_bg_mirror.set_size(layers::types::Size::percent(1.0, 1.0), None);
+        layer_shell_bg_mirror.set_draw_content(layer_shell_background.as_content());
+        layer_shell_bg_mirror.set_picture_cached(false);
+        layer_shell_background.add_follower_node(&layer_shell_bg_mirror);
+        layer_shell_bg_mirror.set_pointer_events(false);
+        let _ = layers_engine.append_layer(&layer_shell_bg_mirror, Some(workspace_layer.id));
+
         let _ = layers_engine.append_layer(&windows_layer, Some(workspace_layer.id));
 
         // Parse background color from config
@@ -126,6 +144,7 @@ impl WorkspaceView {
             layers_engine.clone(),
             background_view.base_layer.clone(),
             overlay_layer,
+            layer_shell_background,
         );
 
         let window_selector_view = Arc::new(window_selector_view);
