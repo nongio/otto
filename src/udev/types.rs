@@ -3,6 +3,8 @@ use std::sync::atomic::AtomicBool;
 #[cfg(feature = "metrics")]
 use std::sync::Arc;
 
+#[cfg(feature = "renderer_sync")]
+use smithay::backend::renderer::sync::SyncPoint;
 use smithay::{
     backend::{
         allocator::{
@@ -35,16 +37,13 @@ use smithay_drm_extras::drm_scanner::DrmScanner;
 
 use crate::skia_renderer::SkiaRenderer;
 
-// Supported pixel formats for rendering
-// We pick ARGB2101010 (10-bit) or ARGB8888 (8-bit) as they are widely supported.
-pub const SUPPORTED_FORMATS: &[Fourcc] = &[
-    Fourcc::Abgr2101010,
-    Fourcc::Argb2101010,
-    Fourcc::Abgr8888,
-    Fourcc::Argb8888,
-];
+// Supported pixel formats for rendering, in preference order.
+// Argb8888 maps to GL_BGRA_EXT which is Skia's native kN32 (BGRA8888) — no
+// channel swizzle needed.  Abgr2101010 is the only 10-bit format with a GL
+// mapping in smithay; Argb2101010 has none and is omitted.
+pub const SUPPORTED_FORMATS: &[Fourcc] = &[Fourcc::Abgr2101010, Fourcc::Argb8888, Fourcc::Abgr8888];
 
-pub const SUPPORTED_FORMATS_8BIT_ONLY: &[Fourcc] = &[Fourcc::Abgr8888, Fourcc::Argb8888];
+pub const SUPPORTED_FORMATS_8BIT_ONLY: &[Fourcc] = &[Fourcc::Argb8888, Fourcc::Abgr8888];
 
 /// Multi-GPU renderer type for udev backend
 pub type UdevRenderer<'a> = MultiRenderer<
@@ -144,6 +143,14 @@ pub struct SurfaceData {
     /// first frame or after an idle wakeup); the draw phase falls back to
     /// calling `update()` inline in that case.
     pub(super) prefetched_scene_damage: Option<bool>,
+    /// Deferred GPU sync point from the previous frame.
+    ///
+    /// Instead of blocking immediately after `render_frame()`, we store the
+    /// fence here and wait for it at the **start** of the next `render_surface()`
+    /// call.  This lets the GPU finish rendering in parallel with the CPU work
+    /// that happens between frames (scene-graph update, input processing, etc.).
+    #[cfg(feature = "renderer_sync")]
+    pub(super) pending_gpu_fence: SyncPoint,
 }
 
 impl Drop for SurfaceData {
