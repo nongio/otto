@@ -38,6 +38,8 @@ use super::{
         SUPPORTED_FORMATS, SUPPORTED_FORMATS_8BIT_ONLY,
     },
 };
+#[cfg(feature = "renderer_sync")]
+use smithay::backend::renderer::sync::SyncPoint;
 
 impl Otto<UdevData> {
     /// Handles addition of a new DRM device
@@ -488,6 +490,8 @@ impl Otto<UdevData> {
                 avg_render_time_us: 2000.0, // start with 2ms estimate
                 idle_countdown: 0,
                 prefetched_scene_damage: None,
+                #[cfg(feature = "renderer_sync")]
+                pending_gpu_fence: SyncPoint::signaled(),
             };
 
             let device = self.backend_data.backends.get_mut(&node).unwrap();

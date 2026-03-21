@@ -303,6 +303,22 @@ impl Otto<UdevData> {
             return;
         };
 
+        // ── Deferred GPU fence: wait for the *previous* frame's GPU work ─────
+        //
+        // We stored the EGL fence from the last render_frame() call instead of
+        // blocking on it immediately.  By the time we arrive here the GPU has
+        // had the entire inter-frame period (scene update, input dispatch, timer
+        // scheduling) to finish, so in the common case this wait is a no-op.
+        // If the GPU is still busy we block here — same guarantee as before, but
+        // with much better pipelining.
+        #[cfg(feature = "renderer_sync")]
+        {
+            let fence = std::mem::take(&mut surface.pending_gpu_fence);
+            if let Err(err) = fence.wait() {
+                tracing::warn!(?err, "Deferred GPU fence wait failed");
+            }
+        }
+
         let start = Instant::now();
 
         let render_node = surface.render_node;
@@ -1098,9 +1114,13 @@ pub(super) fn render_surface<'a>(
 
     #[cfg(feature = "renderer_sync")]
     {
+        // Store this frame's GPU fence for deferred waiting.  The fence will be
+        // consumed at the start of the *next* render_surface() call, giving the
+        // GPU the entire inter-frame period to finish while the CPU handles
+        // scene updates, input processing, etc.
         use smithay::backend::drm::compositor::PrimaryPlaneElement;
         if let PrimaryPlaneElement::Swapchain(element) = render_frame_result.primary_element {
-            let _ = element.sync.wait();
+            surface.pending_gpu_fence = element.sync.clone();
         }
     }
 
