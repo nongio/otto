@@ -2914,14 +2914,14 @@ impl Workspaces {
             .scene_root()
             .and_then(|id| self.layers_engine.get_layer(&id))
         {
-            root.add_sublayer(&layer_shell_background);
+            let _ = root.add_sublayer(&layer_shell_background);
         }
 
         // Attach layers to output_layer in z-order (bottom to top):
         // workspaces → expose → overlay (dnd, osd) →
         // dock (primary) → layer_shell_top → workspace_selector →
         // layer_shell_overlay → app_switcher (primary) → popup_overlay (primary)
-        output_layer.add_sublayer(&workspaces_layer);
+        let _ = output_layer.add_sublayer(&workspaces_layer);
 
         // Create a per-output expose layer
         let expose_layer = self.layers_engine.new_layer();
@@ -3757,7 +3757,7 @@ impl Workspaces {
             WlrLayer::Background | WlrLayer::Bottom => {
                 if let Some(ows) = self.output_workspaces.get(&output.name()) {
                     ows.layer_shell_background.set_hidden(false);
-                    ows.layer_shell_background.add_sublayer(&layer);
+                    let _ = ows.layer_shell_background.add_sublayer(&layer);
                 }
             }
             WlrLayer::Top => {

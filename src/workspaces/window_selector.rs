@@ -202,9 +202,9 @@ impl WindowSelectorView {
         layer_shell_bg_expose_mirror.set_picture_cached(false);
         layer_shell_background.add_follower_node(&layer_shell_bg_expose_mirror);
         layer_shell_bg_expose_mirror.set_pointer_events(false);
-        window_selector_root.add_sublayer(&layer_shell_bg_expose_mirror);
+        let _ = window_selector_root.add_sublayer(&layer_shell_bg_expose_mirror);
 
-        window_selector_root.add_sublayer(&window_selector_windows_container);
+        let _ = window_selector_root.add_sublayer(&window_selector_windows_container);
 
         let _ = window_selector_root.add_sublayer(&window_selector_view);
 

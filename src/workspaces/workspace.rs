@@ -109,8 +109,8 @@ impl WorkspaceView {
         });
         windows_layer.set_pointer_events(false);
 
-        layers_engine.append_layer(&workspace_layer, parent.id);
-        layers_engine.append_layer(&background_layer, Some(workspace_layer.id));
+        let _ = layers_engine.append_layer(&workspace_layer, parent.id);
+        let _ = layers_engine.append_layer(&background_layer, Some(workspace_layer.id));
 
         // Mirror the per-output wlr-layer-shell background container into this workspace,
         // above the config-driven background_view and below windows.
@@ -125,9 +125,9 @@ impl WorkspaceView {
         layer_shell_bg_mirror.set_picture_cached(false);
         layer_shell_background.add_follower_node(&layer_shell_bg_mirror);
         layer_shell_bg_mirror.set_pointer_events(false);
-        layers_engine.append_layer(&layer_shell_bg_mirror, Some(workspace_layer.id));
+        let _ = layers_engine.append_layer(&layer_shell_bg_mirror, Some(workspace_layer.id));
 
-        layers_engine.append_layer(&windows_layer, Some(workspace_layer.id));
+        let _ = layers_engine.append_layer(&windows_layer, Some(workspace_layer.id));
 
         // Parse background color from config
         let background_color = Config::with(|c| parse_hex_color(&c.background_color));
