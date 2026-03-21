@@ -1119,9 +1119,7 @@ pub(super) fn render_surface<'a>(
         // GPU the entire inter-frame period to finish while the CPU handles
         // scene updates, input processing, etc.
         use smithay::backend::drm::compositor::PrimaryPlaneElement;
-        if let PrimaryPlaneElement::Swapchain(element) =
-            render_frame_result.primary_element
-        {
+        if let PrimaryPlaneElement::Swapchain(element) = render_frame_result.primary_element {
             surface.pending_gpu_fence = element.sync.clone();
         }
     }

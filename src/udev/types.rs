@@ -40,11 +40,7 @@ use crate::skia_renderer::SkiaRenderer;
 // Argb8888 maps to GL_BGRA_EXT which is Skia's native kN32 (BGRA8888) — no
 // channel swizzle needed.  Abgr2101010 is the only 10-bit format with a GL
 // mapping in smithay; Argb2101010 has none and is omitted.
-pub const SUPPORTED_FORMATS: &[Fourcc] = &[
-    Fourcc::Abgr2101010,
-    Fourcc::Argb8888,
-    Fourcc::Abgr8888,
-];
+pub const SUPPORTED_FORMATS: &[Fourcc] = &[Fourcc::Abgr2101010, Fourcc::Argb8888, Fourcc::Abgr8888];
 
 pub const SUPPORTED_FORMATS_8BIT_ONLY: &[Fourcc] = &[Fourcc::Argb8888, Fourcc::Abgr8888];
 
