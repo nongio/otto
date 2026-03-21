@@ -3,6 +3,8 @@ use std::sync::atomic::AtomicBool;
 #[cfg(feature = "metrics")]
 use std::sync::Arc;
 
+#[cfg(feature = "renderer_sync")]
+use smithay::backend::renderer::sync::SyncPoint;
 use smithay::{
     backend::{
         allocator::{
@@ -17,8 +19,6 @@ use smithay::{
             multigpu::{gbm::GbmGlesBackend, GpuManager, MultiRenderer, MultiTexture},
             ContextId,
         },
-        #[cfg(feature = "renderer_sync")]
-        renderer::sync::SyncPoint,
         session::libseat::LibSeatSession,
     },
     desktop::utils::OutputPresentationFeedback,
