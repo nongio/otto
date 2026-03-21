@@ -15,9 +15,10 @@ use smithay::{
         },
         renderer::{
             multigpu::{gbm::GbmGlesBackend, GpuManager, MultiRenderer, MultiTexture},
-            sync::SyncPoint,
             ContextId,
         },
+        #[cfg(feature = "renderer_sync")]
+        renderer::sync::SyncPoint,
         session::libseat::LibSeatSession,
     },
     desktop::utils::OutputPresentationFeedback,
