@@ -2837,8 +2837,12 @@ impl Workspaces {
                     space.map_output(output, location);
                 }
                 // Keep layer_shell_background bounds in sync with the (possibly new) output size.
-                if let Some((w, h)) = output.current_mode().map(|m| (m.size.w as f32, m.size.h as f32)) {
-                    ows.layer_shell_background.set_size(layers::types::Size::points(w, h), None);
+                if let Some((w, h)) = output
+                    .current_mode()
+                    .map(|m| (m.size.w as f32, m.size.h as f32))
+                {
+                    ows.layer_shell_background
+                        .set_size(layers::types::Size::points(w, h), None);
                 }
             }
             self.sync_model_from_primary();
