@@ -616,12 +616,23 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             Workspaces::new(layers_engine.clone(), dh.clone());
         handle
             .insert_source(remove_workspace_receiver, |event, _, otto| {
-                if let ChannelEvent::Msg(index) = event {
-                    let pos = otto
-                        .workspaces
-                        .with_model(|m| m.workspaces.iter().position(|w| w.index == index));
-                    if let Some(pos) = pos {
-                        otto.workspaces.remove_workspace_at(pos);
+                if let ChannelEvent::Msg((index, output_name)) = event {
+                    if let Some(ref name) = output_name {
+                        // Per-output removal: find position in that output's workspace_views
+                        let pos = otto.workspaces.output_workspaces.get(name).and_then(|ows| {
+                            ows.workspace_views.iter().position(|w| w.index == index)
+                        });
+                        if let Some(pos) = pos {
+                            otto.workspaces.remove_workspace_at_for_output(pos, name);
+                        }
+                    } else {
+                        // Global removal: find position in the shared model
+                        let pos = otto
+                            .workspaces
+                            .with_model(|m| m.workspaces.iter().position(|w| w.index == index));
+                        if let Some(pos) = pos {
+                            otto.workspaces.remove_workspace_at(pos);
+                        }
                     }
                 }
             })
@@ -1485,184 +1496,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     //     }
     // }
 
-    pub fn quit_appswitcher_app(&mut self) {
-        self.workspaces.quit_appswitcher_app();
-        // FIXME focus the previous window
-    }
-    pub fn toggle_maximize_focused_window(&mut self) {
-        let Some(window) = self
-            .seat
-            .get_keyboard()
-            .and_then(|keyboard| keyboard.current_focus())
-            .and_then(|focus| match focus {
-                KeyboardFocusTarget::Window(window) => Some(window),
-                _ => None,
-            })
-        else {
-            return;
-        };
-
-        match window.underlying_surface() {
-            smithay::desktop::WindowSurface::Wayland(_) => {
-                if let Some(toplevel) = window.toplevel() {
-                    let toplevel = toplevel.clone();
-                    let is_maximized = toplevel.with_pending_state(|state| {
-                        state.states.contains(xdg_toplevel::State::Maximized)
-                    });
-                    if is_maximized {
-                        <Self as smithay::wayland::shell::xdg::XdgShellHandler>::unmaximize_request(
-                            self, toplevel,
-                        );
-                    } else {
-                        <Self as smithay::wayland::shell::xdg::XdgShellHandler>::maximize_request(
-                            self, toplevel,
-                        );
-                    }
-                }
-            }
-            #[cfg(feature = "xwayland")]
-            smithay::desktop::WindowSurface::X11(surface) => {
-                if surface.is_maximized() {
-                    self.unmaximize_request_x11(&surface);
-                } else {
-                    self.maximize_request_x11(&surface);
-                }
-            }
-        }
-    }
-    /// Re-run maximize_request on every currently-maximized window so that the
-    /// new usable geometry (e.g. dock just became visible) is applied immediately.
-    pub fn remaximize_maximized_windows(&mut self) {
-        let windows: Vec<_> = self.workspaces.spaces_elements().cloned().collect();
-        for window in windows {
-            match window.underlying_surface() {
-                smithay::desktop::WindowSurface::Wayland(_) => {
-                    if let Some(toplevel) = window.toplevel() {
-                        let is_maximized = toplevel.with_pending_state(|state| {
-                            state.states.contains(xdg_toplevel::State::Maximized)
-                        });
-                        if is_maximized {
-                            let toplevel = toplevel.clone();
-                            <Self as smithay::wayland::shell::xdg::XdgShellHandler>::maximize_request(
-                                self, toplevel,
-                            );
-                        }
-                    }
-                }
-                #[cfg(feature = "xwayland")]
-                smithay::desktop::WindowSurface::X11(surface) => {
-                    if surface.is_maximized() {
-                        self.maximize_request_x11(&surface);
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn close_focused_window(&mut self) {
-        if let Some(keyboard) = self.seat.get_keyboard() {
-            if let Some(KeyboardFocusTarget::Window(window)) = keyboard.current_focus() {
-                match window.underlying_surface() {
-                    smithay::desktop::WindowSurface::Wayland(toplevel) => toplevel.send_close(),
-                    #[cfg(feature = "xwayland")]
-                    smithay::desktop::WindowSurface::X11(surface) => {
-                        let _ = surface.close();
-                    }
-                }
-            }
-        }
-    }
-    pub fn raise_next_app_window(&mut self) {
-        if let Some(wid) = self.workspaces.raise_next_app_window() {
-            self.set_keyboard_focus_on_surface(&wid);
-        }
-    }
-    pub fn focus_app(&mut self, app_id: &str) {
-        if let Some(wid) = self.workspaces.focus_app(app_id) {
-            self.set_keyboard_focus_on_surface(&wid);
-        }
-    }
-    pub fn set_current_workspace_index(&mut self, index: usize) {
-        // Use the focused output from the model cache — safe to call from button handlers
-        // (avoids re-acquiring the pointer lock, which would deadlock inside a Smithay handler).
-        let target_output = self.workspaces.focused_output().cloned();
-        if let Some(output) = target_output {
-            self.workspaces
-                .set_workspace_for_output(&output, index, None);
-        } else {
-            self.workspaces.set_current_workspace_index(index, None);
-        }
-        // Focus the top window of the new workspace, or clear focus if empty
-        if let Some(top_wid) = self.workspaces.get_top_window_of_workspace(index) {
-            self.set_keyboard_focus_on_surface(&top_wid);
-        } else {
-            self.clear_keyboard_focus();
-        }
-    }
-
-    pub fn set_keyboard_focus_on_surface(&mut self, wid: &ObjectId) {
-        if let Some(window) = self.workspaces.get_window_for_surface(wid) {
-            let keyboard = self.seat.get_keyboard().unwrap();
-            let serial = SERIAL_COUNTER.next_serial();
-
-            // Deactivate the previously focused window
-            if let Some(old_focus) = keyboard.current_focus() {
-                if let crate::focus::KeyboardFocusTarget::Window(old_window) = old_focus {
-                    if old_window.wl_surface() != window.wl_surface() {
-                        old_window.set_activate(false);
-                        // Update shadow for deactivated window
-                        if let Some(view) = self.workspaces.get_window_view(&old_window.id()) {
-                            view.set_active(false);
-                        }
-                        if let Some(toplevel) = old_window.toplevel() {
-                            toplevel.send_configure();
-                        }
-                        // Notify foreign toplevel: deactivated
-                        let old_id = old_window.id();
-                        self.send_foreign_toplevel_state(&old_id, false);
-                    }
-                }
-            }
-
-            // Activate the new window and send configure
-            window.set_activate(true);
-            // Update shadow for activated window
-            if let Some(view) = self.workspaces.get_window_view(wid) {
-                view.set_active(true);
-            }
-            if let Some(toplevel) = window.toplevel() {
-                toplevel.send_configure();
-            }
-            // Notify foreign toplevel: activated
-            let wid = wid.clone();
-            self.send_foreign_toplevel_state(&wid, true);
-            keyboard.set_focus(self, Some(window.clone().into()), serial);
-        }
-    }
-
-    pub fn clear_keyboard_focus(&mut self) {
-        if let Some(keyboard) = self.seat.get_keyboard() {
-            let serial = SERIAL_COUNTER.next_serial();
-
-            // Deactivate the currently focused window when clearing focus
-            if let Some(old_focus) = keyboard.current_focus() {
-                if let crate::focus::KeyboardFocusTarget::Window(old_window) = old_focus {
-                    old_window.set_activate(false);
-                    // Update shadow for deactivated window
-                    if let Some(view) = self.workspaces.get_window_view(&old_window.id()) {
-                        view.set_active(false);
-                    }
-                    if let Some(toplevel) = old_window.toplevel() {
-                        toplevel.send_configure();
-                    }
-                    let old_id = old_window.id();
-                    self.send_foreign_toplevel_state(&old_id, false);
-                }
-            }
-
-            keyboard.set_focus(self, None, serial);
-        }
-    }
 
     /// Compute and send the wlr foreign toplevel `state` event for a window.
     pub fn send_foreign_toplevel_state(&self, wid: &ObjectId, activated: bool) {

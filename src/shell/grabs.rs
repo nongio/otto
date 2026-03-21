@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 
+use tracing::debug;
 use smithay::{
     desktop::WindowSurface,
     input::{
@@ -51,19 +52,44 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
         // While the grab is active, no client has pointer focus
         handle.motion(state, None, event);
 
-        let scale = state
-            .workspaces
-            .outputs_for_element(&self.window)
-            .first()
-            .unwrap()
-            .current_scale()
-            .fractional_scale();
         let delta = event.location - self.start_data.location;
         let new_location = self.initial_window_location.to_f64() + delta;
 
-        state
+        let output_under = state
             .workspaces
-            .map_window(&self.window, new_location.to_i32_round(), true, None);
+            .output_under(event.location)
+            .next()
+            .cloned();
+
+        let scale = output_under
+            .as_ref()
+            .or_else(|| {
+                debug!("window drag: no output under pointer, falling back to first output");
+                state.workspaces.outputs().next()
+            })
+            .map(|o| {
+                let s = o.current_scale().fractional_scale();
+                debug!(output = %o.name(), scale = s, "window drag: using output scale");
+                s
+            })
+            .unwrap_or(1.0);
+
+        debug!(
+            ?new_location,
+            pointer = ?event.location,
+            output = ?output_under.as_ref().map(|o| o.name()),
+            "window drag: new location"
+        );
+
+        if let Some(output) = output_under {
+            state
+                .workspaces
+                .map_window_for_output(&output, &self.window, new_location.to_i32_round(), true, None);
+        } else {
+            state
+                .workspaces
+                .map_window(&self.window, new_location.to_i32_round(), true, None);
+        }
 
         if let Some(view) = state.workspaces.get_window_view(&self.window.id()) {
             let location = new_location.to_physical(scale);

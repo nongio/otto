@@ -43,7 +43,10 @@ pub enum KeyAction {
     ExposeShowDesktop,
     ExposeShowAll,
     WorkspaceNum(usize),
-    SceneSnapshot,
+    #[cfg(feature = "dev")]
+    ExportSceneJson,
+    #[cfg(feature = "dev")]
+    ExportSceneSkp,
     BrightnessUp,
     BrightnessDown,
     VolumeUp,
@@ -129,18 +132,62 @@ impl<BackendData: Backend> Otto<BackendData> {
                 }
             }
 
-            KeyAction::SceneSnapshot => {
+            #[cfg(feature = "dev")]
+            KeyAction::ExportSceneJson => {
                 let scene = self.layers_engine.scene();
-
                 match scene.serialize_state_pretty() {
                     Ok(json) => {
                         if let Err(err) = fs::write("scene.json", json) {
-                            error!(?err, "Failed to write scene snapshot");
+                            error!(?err, "Failed to write scene JSON");
                         } else {
-                            info!("Scene snapshot saved to scene.json");
+                            info!("Scene exported to scene.json");
                         }
                     }
-                    Err(err) => error!(?err, "Failed to serialize scene snapshot"),
+                    Err(err) => error!(?err, "Failed to serialize scene to JSON"),
+                }
+            }
+
+            #[cfg(feature = "dev")]
+            KeyAction::ExportSceneSkp => {
+                use layers::{drawing::render_node_tree, skia};
+                let root_id = self.layers_engine.scene_root();
+                let scene = self.layers_engine.scene();
+                let (w, h) = self
+                    .workspaces
+                    .outputs()
+                    .next()
+                    .and_then(|o| o.current_mode())
+                    .map(|m| (m.size.w as f32, m.size.h as f32))
+                    .unwrap_or((1920.0, 1080.0));
+                let mut recorder = skia::PictureRecorder::new();
+                let canvas =
+                    recorder.begin_recording(skia::Rect::from_wh(w, h), false);
+                scene.with_arena(|arena| {
+                    scene.with_renderable_arena(|renderable_arena| {
+                        if let Some(root_id) = root_id {
+                            render_node_tree(
+                                root_id,
+                                arena,
+                                renderable_arena,
+                                canvas,
+                                1.0,
+                                None,
+                                None,
+                            );
+                        }
+                    });
+                });
+                if let Some(picture) = recorder.finish_recording_as_picture(None) {
+                    let data = picture.serialize();
+                    if let Err(err) = fs::create_dir_all("skps") {
+                        error!(?err, "Failed to create skps directory");
+                    } else if let Err(err) = fs::write("skps/scene.skp", data.as_bytes()) {
+                        error!(?err, "Failed to write scene SKP");
+                    } else {
+                        info!("Scene exported to skps/scene.skp");
+                    }
+                } else {
+                    error!("Failed to finish SKP recording");
                 }
             }
 
@@ -357,7 +404,10 @@ pub fn resolve_shortcut_action(config: &Config, action: &ShortcutAction) -> Opti
             BuiltinAction::ExposeShowDesktop => Some(KeyAction::ExposeShowDesktop),
             BuiltinAction::ExposeShowAll => Some(KeyAction::ExposeShowAll),
             BuiltinAction::WorkspaceNum { index } => Some(KeyAction::WorkspaceNum(*index)),
-            BuiltinAction::SceneSnapshot => Some(KeyAction::SceneSnapshot),
+            #[cfg(feature = "dev")]
+            BuiltinAction::ExportSceneJson => Some(KeyAction::ExportSceneJson),
+            #[cfg(feature = "dev")]
+            BuiltinAction::ExportSceneSkp => Some(KeyAction::ExportSceneSkp),
             BuiltinAction::BrightnessUp => Some(KeyAction::BrightnessUp),
             BuiltinAction::BrightnessDown => Some(KeyAction::BrightnessDown),
             BuiltinAction::VolumeUp => Some(KeyAction::VolumeUp),

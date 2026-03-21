@@ -78,9 +78,11 @@ pub struct WorkspaceSelectorView {
     pub cursor_location: Arc<RwLock<Point>>,
     pub drop_targets: Arc<RwLock<Vec<WorkspaceDropTarget>>>,
     pub drop_hover_index: Arc<RwLock<Option<usize>>>,
+    /// The output this selector belongs to (used to scope add/remove to the correct output).
+    pub output_name: Arc<RwLock<Option<String>>>,
     known_indices: Arc<RwLock<HashSet<usize>>>,
     pressed_action: Arc<RwLock<Option<String>>>,
-    remove_sender: CalloopSender<usize>,
+    remove_sender: CalloopSender<(usize, Option<String>)>,
 }
 
 /// # WorkspaceSelectorView Layer Structure
@@ -103,7 +105,7 @@ impl WorkspaceSelectorView {
     pub fn new(
         _layers_engine: Arc<Engine>,
         layer: Layer,
-    ) -> (Self, smithay::reexports::calloop::channel::Channel<usize>) {
+    ) -> (Self, smithay::reexports::calloop::channel::Channel<(usize, Option<String>)>) {
         let state = WorkspaceSelectorViewState {
             workspaces: Vec::new(),
             current: 0,
@@ -122,7 +124,7 @@ impl WorkspaceSelectorView {
         let drop_targets = Arc::new(RwLock::new(Vec::new()));
         let drop_hover_index = Arc::new(RwLock::new(None));
         let pressed_action = Arc::new(RwLock::new(None));
-        let (remove_sender, remove_receiver) = channel::<usize>();
+        let (remove_sender, remove_receiver) = channel::<(usize, Option<String>)>();
 
         // Setup post-render hook to update drop targets and animate new workspaces
         let drop_targets_clone = drop_targets.clone();
@@ -193,12 +195,113 @@ impl WorkspaceSelectorView {
                 cursor_location: Arc::new(RwLock::new(Point::default())),
                 drop_targets,
                 drop_hover_index,
+                output_name: Arc::new(RwLock::new(None)),
                 known_indices,
                 pressed_action,
                 remove_sender,
             },
             remove_receiver,
         )
+    }
+
+    /// Create a workspace selector that shares a remove channel with an existing selector.
+    pub fn with_shared_sender(
+        _layers_engine: Arc<Engine>,
+        layer: Layer,
+        remove_sender: CalloopSender<(usize, Option<String>)>,
+    ) -> Self {
+        let state = WorkspaceSelectorViewState {
+            workspaces: Vec::new(),
+            current: 0,
+            drop_hover_index: None,
+        };
+        let view = View::new(
+            "workspace_selector_view",
+            state,
+            render_workspace_selector_view,
+        );
+        layer.set_pointer_events(false);
+        layer.set_position((0.0, -400.0), None);
+        layer.set_opacity(1.0, None);
+        view.set_layer(layer.clone());
+
+        let drop_targets = Arc::new(RwLock::new(Vec::new()));
+        let drop_hover_index = Arc::new(RwLock::new(None));
+        let pressed_action = Arc::new(RwLock::new(None));
+        let known_indices: Arc<RwLock<HashSet<usize>>> = Arc::new(RwLock::new(HashSet::new()));
+
+        let drop_targets_clone = drop_targets.clone();
+        let known_indices_for_hook = known_indices.clone();
+
+        view.add_post_render_hook(move |state, view, _layer| {
+            let targets: Vec<WorkspaceDropTarget> = state
+                .workspaces
+                .iter()
+                .filter_map(|w| {
+                    let key = format!("workspace_selector_desktop_content_{}", w.index);
+                    view.layer_by_key(&key).map(|layer| WorkspaceDropTarget {
+                        workspace_index: w.index,
+                        drop_layer: layer.clone(),
+                    })
+                })
+                .collect();
+            *drop_targets_clone.write().unwrap() = targets;
+
+            let mut known = known_indices_for_hook.write().unwrap();
+            for w in state.workspaces.iter() {
+                let is_new = !known.contains(&w.index);
+                known.insert(w.index);
+                let workspace_width = w.workspace_width.max(1.0);
+                let preview_width = WORKSPACE_SELECTOR_PREVIEW_WIDTH;
+                let full_width = preview_width + WORKSPACE_SELECTOR_GAP;
+
+                let key = format!("workspace_selector_desktop_{}", w.index);
+                let wrap_key = format!("workspace_selector_desktop_wrap_{}", w.index);
+                if let Some(layer) = view.layer_by_key(&key) {
+                    if is_new {
+                        layer.set_size(layers::types::Size::points(0.0, 0.0), None);
+                        layer.set_size(
+                            layers::types::Size {
+                                width: layers::taffy::style::Dimension::Length(full_width),
+                                height: layers::taffy::style::Dimension::Percent(1.0),
+                            },
+                            Transition::ease_out(0.5),
+                        );
+                    }
+                }
+
+                if let Some(wrap) = view.layer_by_key(&wrap_key) {
+                    if is_new {
+                        let offset_x = workspace_width / 2.0;
+                        wrap.set_position(Point::new(offset_x, 0.0), None);
+                        wrap.set_position(
+                            Point::new(WORKSPACE_SELECTOR_GAP / 2.0, 0.0),
+                            Transition::spring(1.2, 0.1),
+                        );
+                    } else {
+                        wrap.set_position(Point::new(WORKSPACE_SELECTOR_GAP / 2.0, 0.0), None);
+                    }
+                }
+            }
+            known.retain(|idx| state.workspaces.iter().any(|w| w.index == *idx));
+        });
+
+        Self {
+            layer,
+            view,
+            cursor_location: Arc::new(RwLock::new(Point::default())),
+            drop_targets,
+            drop_hover_index,
+            output_name: Arc::new(RwLock::new(None)),
+            known_indices,
+            pressed_action,
+            remove_sender,
+        }
+    }
+
+    /// Get the remove sender so secondary selectors can share the same channel.
+    pub fn remove_sender(&self) -> CalloopSender<(usize, Option<String>)> {
+        self.remove_sender.clone()
     }
 
     /// Get current drop targets (updated after each render)
@@ -319,28 +422,6 @@ fn render_workspace_selector_view(
                     },
                     None,
                 ))
-                .on_pointer_move({
-                    let view_ref = view.clone();
-                    move |_layer: &Layer, _x, _y| {
-                        let key = format!("workspace_selector_desktop_remove_{}", workspace_index);
-                        if let Some(remove_button) = view_ref.layer_by_key(key.as_str()) {
-                            remove_button.set_opacity(1.0, Transition::spring(0.3, 0.1));
-                            remove_button
-                                .set_scale(Point::new(1.0, 1.0), Transition::spring(0.3, 0.1));
-                        }
-                    }
-                })
-                .on_pointer_out({
-                    let view_ref = view.clone();
-                    move |_layer: &Layer, _x, _y| {
-                        let key = format!("workspace_selector_desktop_remove_{}", workspace_index);
-                        if let Some(remove_button) = view_ref.layer_by_key(key.as_str()) {
-                            remove_button.set_opacity(0.0, Transition::spring(0.3, 0.1));
-                            remove_button
-                                .set_scale(Point::new(0.8, 0.8), Transition::spring(0.3, 0.1));
-                        }
-                    }
-                })
                 .children::<LayerTree>({
                     let children: Vec<Option<LayerTree>> = vec![
                         Some(
@@ -600,19 +681,31 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
             hover = true;
         }
         for w in state.workspaces.iter() {
+            let content_key = format!("workspace_selector_desktop_content_{}", w.index);
+            let remove_key = format!("workspace_selector_desktop_remove_{}", w.index);
+            let hovering_content = self.view.hover_layer(&content_key, &location);
+
+            if let Some(remove_button) = self.view.layer_by_key(&remove_key) {
+                if hovering_content {
+                    remove_button.set_opacity(1.0, Transition::spring(0.3, 0.1));
+                    remove_button.set_scale(Point::new(1.0, 1.0), Transition::spring(0.3, 0.1));
+                } else {
+                    remove_button.set_opacity(0.0, Transition::spring(0.3, 0.1));
+                    remove_button.set_scale(Point::new(0.8, 0.8), Transition::spring(0.3, 0.1));
+                }
+            }
+
+            if hovering_content {
+                hover = true;
+            }
             if self.view.hover_layer(
                 &format!("workspace_selector_desktop_{}", w.index),
                 &location,
             ) {
                 hover = true;
-                break;
             }
-            if self.view.hover_layer(
-                &format!("workspace_selector_desktop_remove_{}", w.index),
-                &location,
-            ) {
+            if self.view.hover_layer(&remove_key, &location) {
                 hover = true;
-                break;
             }
         }
 
@@ -668,8 +761,12 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
                 if let (Some(pressed_key), Some(release_key)) = (pressed.clone(), release_key) {
                     if pressed_key == release_key {
                         if release_key == "workspace_selector_desktop_add" {
-                            // Add new workspace
-                            otto.workspaces.add_workspace();
+                            // Add new workspace to this selector's output
+                            if let Some(ref name) = *self.output_name.read().unwrap() {
+                                otto.workspaces.add_workspace_for_output(name);
+                            } else {
+                                otto.workspaces.add_workspace();
+                            }
                         } else if let Some(index) = release_key
                             .strip_prefix("workspace_selector_desktop_remove_")
                             .and_then(|idx| idx.parse::<usize>().ok())
@@ -681,13 +778,14 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
                             {
                                 let current_size = parent_layer.render_size();
                                 let remove_sender = self.remove_sender.clone();
+                                let output_name_for_remove = self.output_name.read().unwrap().clone();
                                 parent_layer
                                     .set_size(
                                         layers::types::Size::points(0.0, current_size.y),
                                         Transition::spring(0.6, 0.1),
                                     )
                                     .then(move |_layer: &Layer, _| {
-                                        let _ = remove_sender.send(index);
+                                        let _ = remove_sender.send((index, output_name_for_remove.clone()));
                                     });
                             }
                             if let Some(wrap_layer) = self.view.layer_by_key(wrap_key.as_str()) {
@@ -703,9 +801,17 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
                             .strip_prefix("workspace_selector_desktop_")
                             .and_then(|idx| idx.parse::<usize>().ok())
                         {
-                            // Navigate to workspace
+                            // Navigate to workspace on this selector's output
                             if let Some(pos) = get_position_worspace_by_index(index) {
-                                otto.set_current_workspace_index(pos);
+                                let output_name = self.output_name.read().unwrap().clone();
+                                let output = output_name.as_ref().and_then(|name| {
+                                    otto.workspaces.outputs().find(|o| o.name() == *name).cloned()
+                                });
+                                if let Some(output) = output {
+                                    otto.workspaces.set_workspace_for_output(&output, pos, None);
+                                } else {
+                                    otto.set_current_workspace_index(pos);
+                                }
                             }
                         }
                     }
