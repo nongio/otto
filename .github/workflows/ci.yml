@@ -53,6 +53,8 @@ jobs:
         run: cargo clippy --features "default" -- -D warnings
       - name: Run tests
         run: cargo test --lib --workspace
+      - name: Run font matching tests
+        run: cargo test --lib -p otto -- workspaces::utils::tests --ignored
   
   build-deb:
     runs-on: ubuntu-24.04
