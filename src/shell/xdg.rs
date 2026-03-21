@@ -833,15 +833,11 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             let outputs_for_window = self.workspaces.outputs_for_element(&window);
             let output = outputs_for_window
                 .first()
-                // The window hasn't been mapped yet, use the primary physical output instead
-                .or_else(|| {
-                    self.workspaces
-                        .outputs()
-                        .find(|o| !crate::virtual_output::is_virtual_output(o))
-                })
+                // The window hasn't been mapped yet, use any available output
+                .or_else(|| self.workspaces.outputs().next())
                 // Assumes that at least one output exists
                 .expect("No outputs found")
-                .clone(); // Clone to avoid borrow conflicts
+                .clone();
 
             let output_geom = self.workspaces.output_geometry(&output).unwrap();
 
@@ -912,7 +908,7 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             self.layers_engine.start_animation(animation, 0.0);
 
             self.workspaces
-                .map_window(&window, new_geometry.loc, true, Some(transition));
+                .map_window_for_output(&output, &window, new_geometry.loc, true, Some(transition));
         }
     }
 
@@ -961,8 +957,23 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             );
             self.layers_engine.start_animation(animation, 0.0);
 
-            self.workspaces
-                .map_window(&window, view.unmaximised_rect.loc, true, Some(transition));
+            let outputs_for_window = self.workspaces.outputs_for_element(&window);
+            let output = outputs_for_window
+                .first()
+                .or_else(|| self.workspaces.outputs().next())
+                .cloned();
+            if let Some(output) = output {
+                self.workspaces.map_window_for_output(
+                    &output,
+                    &window,
+                    view.unmaximised_rect.loc,
+                    true,
+                    Some(transition),
+                );
+            } else {
+                self.workspaces
+                    .map_window(&window, view.unmaximised_rect.loc, true, Some(transition));
+            }
         }
     }
 

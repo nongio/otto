@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 
-use tracing::debug;
 use smithay::{
     desktop::WindowSurface,
     input::{
@@ -14,6 +13,7 @@ use smithay::{
         touch::{GrabStartData as TouchGrabStartData, TouchGrab},
     },
     reexports::wayland_protocols::xdg::shell::server::xdg_toplevel,
+    output::Output,
     utils::{IsAlive, Logical, Point, Serial, Size},
     wayland::{compositor::with_states, shell::xdg::SurfaceCachedState},
 };
@@ -63,40 +63,53 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
 
         let scale = output_under
             .as_ref()
-            .or_else(|| {
-                debug!("window drag: no output under pointer, falling back to first output");
-                state.workspaces.outputs().next()
-            })
-            .map(|o| {
-                let s = o.current_scale().fractional_scale();
-                debug!(output = %o.name(), scale = s, "window drag: using output scale");
-                s
-            })
+            .or_else(|| state.workspaces.outputs().next())
+            .map(|o| o.current_scale().fractional_scale())
             .unwrap_or(1.0);
 
-        debug!(
-            ?new_location,
-            pointer = ?event.location,
-            output = ?output_under.as_ref().map(|o| o.name()),
-            "window drag: new location"
-        );
-
-        if let Some(output) = output_under {
-            state
+        // During drag, only update the Smithay Space position (lightweight)
+        // and the layer position directly. Don't reparent through workspace views.
+        if let Some(ref output) = output_under {
+            let name = output.name();
+            // Unmap from other outputs' spaces to avoid duplicates
+            let other_names: Vec<String> = state
                 .workspaces
-                .map_window_for_output(&output, &self.window, new_location.to_i32_round(), true, None);
-        } else {
-            state
-                .workspaces
-                .map_window(&self.window, new_location.to_i32_round(), true, None);
+                .output_workspaces
+                .keys()
+                .filter(|k| k.as_str() != name)
+                .cloned()
+                .collect();
+            for other_name in other_names {
+                if let Some(ows) = state.workspaces.output_workspaces.get_mut(&other_name) {
+                    for space in ows.spaces.iter_mut() {
+                        space.unmap_elem(&self.window);
+                    }
+                }
+            }
+            if let Some(ows) = state.workspaces.output_workspaces.get_mut(&name) {
+                let idx = ows.current_workspace;
+                ows.spaces[idx].map_element(
+                    self.window.clone(),
+                    new_location.to_i32_round(),
+                    true,
+                );
+            }
+        } else if let Some(space) = state.workspaces.space_mut() {
+            space.map_element(self.window.clone(), new_location.to_i32_round(), true);
         }
 
+        // Update the layer position directly (output-local physical coords)
         if let Some(view) = state.workspaces.get_window_view(&self.window.id()) {
-            let location = new_location.to_physical(scale);
+            let output_origin = output_under
+                .as_ref()
+                .and_then(|o| state.workspaces.output_geometry(o))
+                .map(|geo| geo.loc.to_f64())
+                .unwrap_or_default();
+            let local_location = (new_location - output_origin).to_physical(scale);
             view.window_layer.set_position(
                 layers::types::Point {
-                    x: location.x as f32,
-                    y: location.y as f32,
+                    x: local_location.x as f32,
+                    y: local_location.y as f32,
                 },
                 None,
             );
@@ -121,6 +134,30 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
     ) {
         handle.button(data, event);
         if handle.current_pressed().is_empty() {
+            // Drag ended — settle the window into the correct output
+            let pointer_loc = handle.current_location();
+            let final_loc = self.initial_window_location.to_f64()
+                + (pointer_loc - self.start_data.location);
+
+            let output_under: Option<Output> = data
+                .workspaces
+                .output_under(pointer_loc)
+                .next()
+                .cloned();
+
+            if let Some(output) = output_under {
+                data.workspaces.map_window_for_output(
+                    &output,
+                    &self.window,
+                    final_loc.to_i32_round(),
+                    true,
+                    None,
+                );
+            } else {
+                data.workspaces
+                    .map_window(&self.window, final_loc.to_i32_round(), true, None);
+            }
+
             // No more buttons are pressed, release the grab.
             handle.unset_grab(self, data, event.serial, event.time, true);
         }

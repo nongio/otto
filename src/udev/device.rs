@@ -402,23 +402,41 @@ impl Otto<UdevData> {
             },
         );
 
-        // FIXME handle multimonitor setup
-        let root = self.scene_element.root_layer().unwrap();
-        let w = wl_mode.size.w as f32;
-        let h = wl_mode.size.h as f32;
-        self.workspaces
-            .set_screen_dimension(wl_mode.size.w, wl_mode.size.h);
-        let scene_size = layers::types::Size::points(w, h);
-        root.set_size(scene_size, None);
-        self.scene_element.set_size(w, h);
-        self.layers_engine.scene_set_size(w, h);
+        // Global scene/model dimensions only reflect the primary output.
+        // Per-output sizes are set inside map_output_with_primary.
+        let is_primary = config_profile.as_ref().map(|p| p.primary).unwrap_or(false);
+        let is_first_output = self.workspaces.outputs().count() == 0;
+        if is_primary || is_first_output {
+            let root = self.scene_element.root_layer().unwrap();
+            let w = wl_mode.size.w as f32;
+            let h = wl_mode.size.h as f32;
+            self.workspaces
+                .set_screen_dimension(wl_mode.size.w, wl_mode.size.h);
+            let scene_size = layers::types::Size::points(w, h);
+            root.set_size(scene_size, None);
+            self.scene_element.set_size(w, h);
+            self.layers_engine.scene_set_size(w, h);
+        }
 
         let global = output.create_global::<Otto<UdevData>>(&self.display_handle);
 
-        let x = self.workspaces.outputs().fold(0, |acc, o| {
-            acc + self.workspaces.output_geometry(o).unwrap().size.w
-        });
-        let position = (x, 0).into();
+        // Use config-defined position if available, otherwise place to the right
+        // of the rightmost existing output.
+        let position = if let Some(pos) = config_profile.as_ref().and_then(|p| p.position) {
+            info!("Output {}: using config position ({}, {})", output_name, pos.x, pos.y);
+            (pos.x, pos.y).into()
+        } else {
+            let x = self.workspaces.outputs().fold(0, |acc, o| {
+                let right_edge = self
+                    .workspaces
+                    .output_geometry(o)
+                    .map(|geo| geo.loc.x + geo.size.w)
+                    .unwrap_or(acc);
+                acc.max(right_edge)
+            });
+            info!("Output {}: auto-placing at ({}, 0), existing outputs: {}", output_name, x, self.workspaces.outputs().count());
+            (x, 0).into()
+        };
         output.set_preferred(wl_mode);
         let screen_scale = Config::with(|c| c.screen_scale);
         output.change_current_state(
@@ -428,7 +446,6 @@ impl Otto<UdevData> {
             Some(position),
         );
 
-        let is_primary = config_profile.as_ref().map(|p| p.primary).unwrap_or(false);
         self.workspaces
             .map_output_with_primary(&output, position, is_primary);
 
@@ -492,6 +509,7 @@ impl Otto<UdevData> {
                 prefetched_scene_damage: None,
                 #[cfg(feature = "renderer_sync")]
                 pending_gpu_fence: SyncPoint::signaled(),
+                had_cursor: false,
             };
 
             let device = self.backend_data.backends.get_mut(&node).unwrap();

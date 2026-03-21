@@ -151,6 +151,9 @@ pub struct SurfaceData {
     /// that happens between frames (scene-graph update, input processing, etc.).
     #[cfg(feature = "renderer_sync")]
     pub(super) pending_gpu_fence: SyncPoint,
+    /// Whether cursor was rendered on the previous frame. Used to detect
+    /// cursor exit and force one more redraw to clear the stale cursor image.
+    pub(super) had_cursor: bool,
 }
 
 impl Drop for SurfaceData {

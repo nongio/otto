@@ -381,12 +381,25 @@ impl Otto<UdevData> {
             .map(|ows| self.scene_element.for_output_layer(&ows.output_layer))
             .unwrap_or_else(|| self.scene_element.clone());
 
+        // Convert global pointer to output-local coordinates for rendering
+        let pointer_location = self.pointer.current_location();
+        let output_geo = self.workspaces.output_geometry(&output);
+        let local_pointer: Point<f64, Logical> = output_geo
+            .map(|geo| {
+                (
+                    pointer_location.x - geo.loc.x as f64,
+                    pointer_location.y - geo.loc.y as f64,
+                )
+                    .into()
+            })
+            .unwrap_or(pointer_location);
+
         let result = render_surface(
             surface,
             &mut renderer,
             &all_window_elements,
             &output,
-            self.pointer.current_location(),
+            local_pointer,
             &self.cursor_manager,
             &self.cursor_texture_cache,
             self.dnd_icon.as_ref(),
@@ -1060,12 +1073,14 @@ pub(super) fn render_surface<'a>(
             // Normal mode: render the full scene
             workspace_render_elements.push(WorkspaceRenderElements::Scene(scene_element));
 
-            // We still pass cursor elements to render_frame so the DRM compositor
-            // can manage the hardware cursor plane (ALLOW_CURSOR_PLANE_SCANOUT).
-            // When nothing actually changed, render_frame returns is_empty=true
-            // and no page flip occurs, so this is cheap in the idle case.
+            // Detect cursor entering/leaving this output. When the cursor has
+            // just left, we must redraw once more to clear the stale image.
             let cursor_needs_draw = pointer_in_output;
-            let should_draw = scene_has_damage || dnd_needs_draw || cursor_needs_draw;
+            let cursor_just_left = surface.had_cursor && !pointer_in_output;
+            surface.had_cursor = pointer_in_output;
+
+            let should_draw =
+                scene_has_damage || dnd_needs_draw || cursor_needs_draw || cursor_just_left;
             if !should_draw {
                 return Ok(RenderOutcome::skipped());
             }

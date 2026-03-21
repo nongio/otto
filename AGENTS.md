@@ -177,6 +177,7 @@ Otto maintains two documentation tiers:
 
 **For spec sync guidelines (keeping specs up to date with requirements), see:**
 - [`.github/instructions/spec-sync.instructions.md`](./.github/instructions/spec-sync.instructions.md)
+- **Always delegate spec writes/updates to a background sub-agent** — never write specs inline in the main conversation.
 
 Key developer docs:
 - `rendering.md`, `render_loop.md` — Rendering pipeline

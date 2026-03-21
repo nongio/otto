@@ -1128,124 +1128,30 @@ impl Workspaces {
     /// This ensures the bin has correct layout positions for all windows
     /// Returns true when a relayout was performed.
     fn expose_show_all_layout(&self, workspace_index: usize) -> bool {
-        let Some(workspace) = self.get_workspace_at(workspace_index) else {
-            tracing::warn!("Workspace {} not found for expose layout", workspace_index);
-            return false;
-        };
-
-        // FIXME: remove hardcoded values
-        let workspace_selector_height = 250.0;
-        let padding_top = 10.0;
-        let padding_bottom = 10.0;
-
-        let size = self
-            .primary_workspaces_layer()
-            .map(|l| l.render_size_transformed())
-            .unwrap_or_default();
-        let scale = Config::with(|c| c.screen_scale);
-        let screen_size_w = size.x;
-        let screen_size_h = size.y - padding_top - padding_bottom - workspace_selector_height;
-
-        let offset_y = 200.0;
-        let layout_rect = LayoutRect::new(
-            0.0,
-            workspace_selector_height,
-            screen_size_w,
-            screen_size_h - offset_y,
-        );
-        let dragging_window = self.expose_dragged_window.lock().unwrap().clone();
-        let mut windows = self.with_model(|model| {
-            if let Some(workspace_model) = model.workspaces.get(workspace_index) {
-                let windows_list = workspace_model.windows_list.read().unwrap();
-                let Some(space) = self
-                    .primary_output_workspaces()
-                    .and_then(|ows| ows.spaces.get(workspace_index))
-                else {
-                    return Vec::new();
-                };
-                let mut windows = Vec::new();
-
-                for window_id in windows_list.iter() {
-                    if dragging_window.as_ref() == Some(window_id) {
-                        continue;
-                    }
-                    if let Some(window) = self.get_window_for_surface(window_id) {
-                        if window.is_minimised() {
-                            continue;
-                        }
-                        if let Some(bbox) = space.element_geometry(window) {
-                            let bbox = bbox.to_f64().to_physical(scale);
-                            window.mirror_layer().set_size(
-                                Size::points(bbox.size.w as f32, bbox.size.h as f32),
-                                None,
-                            );
-                            windows.push(WindowSelectorWindow {
-                                id: window_id.clone(),
-                                rect: LayoutRect::new(
-                                    bbox.loc.x as f32,
-                                    bbox.loc.y as f32,
-                                    bbox.size.w as f32,
-                                    bbox.size.h as f32,
-                                ),
-                                title: window.xdg_title().to_string(),
-                            });
-                        }
-                    }
-                }
-
-                windows
-            } else {
-                Vec::new()
-            }
-        });
-
-        // Keep expose layout stable regardless of runtime z-order changes.
-        // Window stacking may change (hover raise/focus), but tiling positions should not.
-        windows.sort_by_key(|w| w.id.protocol_id());
-
-        // Skip relayout if window set and geometry match previous layout
-        if workspace
-            .window_selector_view
-            .is_layout_up_to_date(&layout_rect, offset_y, &windows)
-        {
-            // Also layout secondary outputs even if primary didn't change
-            self.expose_layout_secondary_outputs(workspace_index);
-            return false;
-        }
-
-        workspace
-            .window_selector_view
-            .update_windows(layout_rect, offset_y, &windows);
-
-        // Sync expose layout for all secondary outputs
-        self.expose_layout_secondary_outputs(workspace_index);
-        true
-    }
-
-    /// Layout expose windows for all non-primary outputs at the given workspace index.
-    fn expose_layout_secondary_outputs(&self, workspace_index: usize) {
-        let primary_name = match self.primary_output_name() {
-            Some(n) => n,
-            None => return,
-        };
-        let scale = Config::with(|c| c.screen_scale);
         let dragging_window = self.expose_dragged_window.lock().unwrap().clone();
         // FIXME: remove hardcoded values
         let workspace_selector_height = 250.0;
         let padding_top = 10.0;
         let padding_bottom = 10.0;
         let offset_y = 200.0;
+        let mut any_relayout = false;
 
         for (output_name, ows) in &self.output_workspaces {
-            if *output_name == primary_name {
-                continue;
-            }
             let Some(workspace_view) = ows.workspace_views.get(workspace_index) else {
                 continue;
             };
             let Some(space) = ows.spaces.get(workspace_index) else {
                 continue;
             };
+
+            let output = self.outputs.iter().find(|o| o.name() == *output_name);
+            let output_scale = output
+                .map(|o| o.current_scale().fractional_scale())
+                .unwrap_or(1.0);
+            let output_origin = output
+                .and_then(|o| self.output_geometry(o))
+                .map(|geo| geo.loc)
+                .unwrap_or_default();
 
             let size = ows.workspaces_layer.render_size_transformed();
             let screen_size_w = size.x;
@@ -1268,7 +1174,15 @@ impl Workspaces {
                         continue;
                     }
                     if let Some(bbox) = space.element_geometry(window) {
-                        let bbox = bbox.to_f64().to_physical(scale);
+                        let local_bbox = smithay::utils::Rectangle::new(
+                            (bbox.loc.x - output_origin.x, bbox.loc.y - output_origin.y).into(),
+                            bbox.size,
+                        );
+                        let bbox = local_bbox.to_f64().to_physical(output_scale);
+                        window.mirror_layer().set_size(
+                            Size::points(bbox.size.w as f32, bbox.size.h as f32),
+                            None,
+                        );
                         windows.push(WindowSelectorWindow {
                             id: window_id.clone(),
                             rect: LayoutRect::new(
@@ -1282,116 +1196,23 @@ impl Workspaces {
                     }
                 }
             }
+
             windows.sort_by_key(|w| w.id.protocol_id());
+
+            if workspace_view
+                .window_selector_view
+                .is_layout_up_to_date(&layout_rect, offset_y, &windows)
+            {
+                continue;
+            }
+
             workspace_view
                 .window_selector_view
                 .update_windows(layout_rect, offset_y, &windows);
+            any_relayout = true;
         }
-    }
 
-    /// Animate expose windows for all non-primary outputs in sync with the primary.
-    fn expose_animate_secondary_outputs(
-        &self,
-        workspace_index: usize,
-        delta: f32,
-        transition: &Option<Transition>,
-        is_current_workspace: bool,
-        dragged_window: &Option<ObjectId>,
-    ) {
-        let primary_name = match self.primary_output_name() {
-            Some(n) => n,
-            None => return,
-        };
-        let phys_scale = Config::with(|c| c.screen_scale);
-        let offset_y = 200.0;
-
-        for (output_name, ows) in &self.output_workspaces {
-            if *output_name == primary_name {
-                continue;
-            }
-            let Some(workspace_view) = ows.workspace_views.get(workspace_index) else {
-                continue;
-            };
-            let Some(space) = ows.spaces.get(workspace_index) else {
-                continue;
-            };
-
-            let bin = workspace_view
-                .window_selector_view
-                .expose_bin
-                .read()
-                .unwrap();
-
-            // Show/hide the secondary output's window selector root
-            workspace_view
-                .window_selector_view
-                .window_selector_root
-                .set_hidden(false);
-            workspace_view
-                .window_selector_view
-                .window_selector_windows_container
-                .set_hidden(false);
-
-            let window_selector = workspace_view.window_selector_view.clone();
-            let mut changes = Vec::new();
-
-            let animation = transition
-                .as_ref()
-                .map(|t| self.layers_engine.add_animation_from_transition(t, false));
-
-            let windows_list = workspace_view.windows_list.read().unwrap();
-            for window_id in windows_list.iter() {
-                if dragged_window.as_ref() == Some(window_id) {
-                    continue;
-                }
-                if let Some(window) = self.get_window_for_surface(window_id) {
-                    if window.is_minimised() {
-                        continue;
-                    }
-                    if let Some(bbox) = space.element_geometry(window) {
-                        let bbox = bbox.to_f64().to_physical(phys_scale);
-                        if let Some(rect) = bin.get(window_id) {
-                            let to_x = rect.x;
-                            let to_y = rect.y + offset_y;
-                            let to_width = rect.width;
-                            let to_height = rect.height;
-                            let (window_width, window_height) =
-                                (bbox.size.w as f32, bbox.size.h as f32);
-
-                            let scale_x = to_width / window_width;
-                            let scale_y = to_height / window_height;
-                            let target_scale = scale_x.min(scale_y).min(1.0);
-
-                            let s = 1.0_f32.interpolate(&target_scale, delta);
-                            let delta_clamped = delta.clamp(0.0, 1.0);
-                            let window_x = bbox.loc.x as f32;
-                            let window_y = bbox.loc.y as f32;
-                            let x = window_x.interpolate(&to_x, delta_clamped);
-                            let y = window_y.interpolate(&to_y, delta_clamped);
-
-                            if let Some(layer) = window_selector.layer_for_window(window_id) {
-                                if transition.is_some() && is_current_workspace {
-                                    changes.push(
-                                        layer.change_position(layers::types::Point { x, y }),
-                                    );
-                                    changes.push(layer.change_scale(layers::types::Point {
-                                        x: s,
-                                        y: s,
-                                    }));
-                                } else {
-                                    layer.set_position(layers::types::Point { x, y }, None);
-                                    layer.set_scale(layers::types::Point { x: s, y: s }, None);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if let Some(anim_ref) = animation {
-                let _transactions = self.layers_engine.schedule_changes(&changes, anim_ref);
-            }
-        }
+        any_relayout
     }
 
     /// Update expose state during gesture (no animation).
@@ -1452,135 +1273,127 @@ impl Workspaces {
 
         // Hide popup overlay when entering expose mode
         self.popup_overlay.set_hidden(is_gesture_ongoing);
-        let scale = Config::with(|c| c.screen_scale);
 
         let offset_y = 200.0;
         let mut changes = Vec::new();
-        let Some(workspace_view) = self.get_workspace_at(workspace_index) else {
-            tracing::warn!(
-                "Workspace {} not found for expose animation",
-                workspace_index
-            );
-            return;
-        };
-        let bin = workspace_view
-            .window_selector_view
-            .expose_bin
-            .read()
-            .unwrap();
         let dragged_window = self.expose_dragged_window.lock().unwrap().clone();
 
-        // window_selector_root (.layer) must be visible during gesture and animation.
-        workspace_view
-            .window_selector_view
-            .window_selector_root
-            .set_hidden(false);
-        workspace_view
-            .window_selector_view
-            .window_selector_windows_container
-            .set_hidden(false);
-
-        // overlay_layer (selection UI) stays hidden throughout; revealed only in on_finish when open.
-        let window_selector_view = workspace_view
-            .window_selector_view
-            .window_selector_view
-            .clone();
         self.is_animating
             .store(is_starting_animation, std::sync::atomic::Ordering::Relaxed);
-
-        window_selector_view.set_opacity(0.0, None);
 
         // Create animation if transition is specified
         let animation = transition
             .as_ref()
             .map(|t| self.layers_engine.add_animation_from_transition(t, false));
 
-        // Animate window layers
-        let current_workspace = self.with_model(|model| {
-            if let Some(workspace) = model.workspaces.get(workspace_index) {
-                let windows_list = workspace.windows_list.read().unwrap();
-                let window_selector = workspace.window_selector_view.clone();
-                let space = match self
-                    .primary_output_workspaces()
-                    .and_then(|ows| ows.spaces.get(workspace_index))
-                {
-                    Some(s) => s,
-                    None => return model.workspaces.get(workspace_index).cloned(),
-                };
+        // Animate window layers across all outputs
+        for (output_name, ows) in &self.output_workspaces {
+            let Some(workspace_view) = ows.workspace_views.get(workspace_index) else {
+                continue;
+            };
+            let Some(space) = ows.spaces.get(workspace_index) else {
+                continue;
+            };
 
-                for window_id in windows_list.iter() {
-                    if dragged_window.as_ref() == Some(window_id) {
+            let output = self.outputs.iter().find(|o| o.name() == *output_name);
+            let output_scale = output
+                .map(|o| o.current_scale().fractional_scale())
+                .unwrap_or(1.0);
+            let output_origin = output
+                .and_then(|o| self.output_geometry(o))
+                .map(|geo| geo.loc)
+                .unwrap_or_default();
+
+            let bin = workspace_view
+                .window_selector_view
+                .expose_bin
+                .read()
+                .unwrap();
+
+            workspace_view
+                .window_selector_view
+                .window_selector_root
+                .set_hidden(false);
+            workspace_view
+                .window_selector_view
+                .window_selector_windows_container
+                .set_hidden(false);
+            // Hide overlay during gesture; skip when expose is already fully open (relayout)
+            // to avoid a visible flash.
+            if !self.get_show_all() || is_gesture_ongoing {
+                workspace_view
+                    .window_selector_view
+                    .window_selector_view
+                    .set_opacity(0.0, None);
+            }
+
+            let window_selector = workspace_view.window_selector_view.clone();
+            let windows_list = workspace_view.windows_list.read().unwrap();
+
+            for window_id in windows_list.iter() {
+                if dragged_window.as_ref() == Some(window_id) {
+                    continue;
+                }
+                if let Some(window) = self.get_window_for_surface(window_id) {
+                    if window.is_minimised() {
                         continue;
                     }
-                    if let Some(window) = self.get_window_for_surface(window_id) {
-                        if window.is_minimised() {
-                            continue;
-                        }
-                        if let Some(bbox) = space.element_geometry(window) {
-                            let bbox = bbox.to_f64().to_physical(scale);
-                            if let Some(rect) = bin.get(window_id) {
-                                let to_x = rect.x;
-                                let to_y = rect.y + offset_y;
-                                let to_width = rect.width;
-                                let to_height = rect.height;
-                                let (window_width, window_height) =
-                                    (bbox.size.w as f32, bbox.size.h as f32);
+                    if let Some(bbox) = space.element_geometry(window) {
+                        let local_bbox = smithay::utils::Rectangle::new(
+                            (bbox.loc.x - output_origin.x, bbox.loc.y - output_origin.y).into(),
+                            bbox.size,
+                        );
+                        let bbox = local_bbox.to_f64().to_physical(output_scale);
+                        if let Some(rect) = bin.get(window_id) {
+                            let to_x = rect.x;
+                            let to_y = rect.y + offset_y;
+                            let to_width = rect.width;
+                            let to_height = rect.height;
+                            let (window_width, window_height) =
+                                (bbox.size.w as f32, bbox.size.h as f32);
 
-                                let scale_x = to_width / window_width;
-                                let scale_y = to_height / window_height;
-                                let target_scale = scale_x.min(scale_y).min(1.0);
+                            let scale_x = to_width / window_width;
+                            let scale_y = to_height / window_height;
+                            let target_scale = scale_x.min(scale_y).min(1.0);
 
-                                // Interpolate between current and target positions
-                                let scale = 1.0.interpolate(&target_scale, delta);
-                                let delta_clamped = delta.clamp(0.0, 1.0);
-                                let window_x = bbox.loc.x as f32;
-                                let window_y = bbox.loc.y as f32;
-                                let x = window_x.interpolate(&to_x, delta_clamped);
-                                let y = window_y.interpolate(&to_y, delta_clamped);
+                            let scale = 1.0_f32.interpolate(&target_scale, delta);
+                            let delta_clamped = delta.clamp(0.0, 1.0);
+                            let window_x = bbox.loc.x as f32;
+                            let window_y = bbox.loc.y as f32;
+                            let x = window_x.interpolate(&to_x, delta_clamped);
+                            let y = window_y.interpolate(&to_y, delta_clamped);
 
-                                if let Some(layer) = window_selector.layer_for_window(window_id) {
-                                    // Only animate if this is the current workspace AND a transition is provided
-                                    if transition.is_some() && is_current_workspace {
-                                        let translation =
-                                            layer.change_position(layers::types::Point { x, y });
-                                        let scale_change =
-                                            layer.change_scale(layers::types::Point {
-                                                x: scale,
-                                                y: scale,
-                                            });
-                                        changes.push(translation);
-                                        changes.push(scale_change);
-                                    } else {
-                                        // Non-current workspaces: instant update without animation
-                                        layer.set_position(layers::types::Point { x, y }, None);
-                                        layer.set_scale(
-                                            layers::types::Point { x: scale, y: scale },
-                                            None,
-                                        );
-                                    }
+                            if let Some(layer) = window_selector.layer_for_window(window_id) {
+                                if transition.is_some() && is_current_workspace {
+                                    changes.push(
+                                        layer.change_position(layers::types::Point { x, y }),
+                                    );
+                                    changes.push(layer.change_scale(layers::types::Point {
+                                        x: scale,
+                                        y: scale,
+                                    }));
+                                } else {
+                                    layer.set_position(layers::types::Point { x, y }, None);
+                                    layer.set_scale(
+                                        layers::types::Point { x: scale, y: scale },
+                                        None,
+                                    );
                                 }
                             }
                         }
                     }
                 }
             }
+        }
 
-            model.workspaces.get(workspace_index).cloned()
-        });
-
-        // Schedule layer changes with animation
+        // Schedule all layer changes with one animation
         if let Some(anim_ref) = animation {
             let _transactions = self.layers_engine.schedule_changes(&changes, anim_ref);
         };
 
-        // Animate expose windows for all secondary outputs in sync with the primary.
-        self.expose_animate_secondary_outputs(
-            workspace_index,
-            delta,
-            &transition,
-            is_current_workspace,
-            &dragged_window,
-        );
+        // Get current workspace for dock animation
+        let current_workspace =
+            self.with_model(|model| model.workspaces.get(workspace_index).cloned());
 
         // Animate workspace selector and dock (only affects UI when is_current_workspace)
         let delta = delta.max(0.0);
@@ -1596,7 +1409,6 @@ impl Workspaces {
 
             // Set overlay opacity to match the workspace selector opacity (fade in as we enter expose)
 
-            let window_selector_view_ref = window_selector_view.clone();
             let expose_layer = self.expose_layer.clone();
             let workspace_selector_view_layer = self.workspace_selector_view.layer.clone();
             let layer_shell_overlay_ref = self.layer_shell_overlay.clone();
@@ -1604,14 +1416,6 @@ impl Workspaces {
             let show_all_gesture_ref = self.show_all_gesture.clone();
             let expose_gesture_active_ref = self.expose_gesture_active.clone();
             let expose_dragged_window_ref = self.expose_dragged_window.clone();
-
-            // Collect secondary output expose layers to sync with primary
-            let secondary_expose_layers: Vec<Layer> = self
-                .output_workspaces
-                .values()
-                .filter(|ows| ows.expose_layer != expose_layer)
-                .map(|ows| ows.expose_layer.clone())
-                .collect();
 
             // Collect all output workspaces_layers so the on_finish callback can restore them
             let all_workspaces_layers: Vec<Layer> = self
@@ -1621,21 +1425,15 @@ impl Workspaces {
                 .collect();
 
             // Collect all overlay_layers (selection UI) so on_finish can show them when expose opens
-            let mut all_window_selector_views: Vec<Layer> = self
-                .with_model(|m| m.workspaces.clone())
-                .iter()
-                .map(|wv| wv.window_selector_view.window_selector_view.clone())
+            let all_window_selector_views: Vec<Layer> = self
+                .output_workspaces
+                .values()
+                .flat_map(|ows| {
+                    ows.workspace_views.iter().map(|wv| {
+                        wv.window_selector_view.window_selector_view.clone()
+                    })
+                })
                 .collect();
-            // Also include secondary output workspace selector views
-            for (oname, ows) in &self.output_workspaces {
-                if self.primary_output_name().as_ref() == Some(oname) {
-                    continue;
-                }
-                for ws_view in &ows.workspace_views {
-                    all_window_selector_views
-                        .push(ws_view.window_selector_view.window_selector_view.clone());
-                }
-            }
 
             // Collect secondary output expose layers to sync with primary
             let secondary_expose_layers: Vec<Layer> = self.output_workspaces.values()
@@ -1677,7 +1475,9 @@ impl Workspaces {
                 }
             }
             if transition.is_some() {
-                window_selector_view_ref.set_position((0.0, 0.0), None);
+                for wsv in &all_window_selector_views {
+                    wsv.set_position((0.0, 0.0), None);
+                }
                 transaction.on_finish(
                     move |_: &Layer, _: f32| {
                         let is_dragging =
@@ -2435,14 +2235,29 @@ impl Workspaces {
         );
 
         // Map into the correct output's current space
+        let target_workspace_idx;
         let mapped = if let Some(ows) = self.output_workspaces.get_mut(&name) {
             let idx = ows.current_workspace;
+            target_workspace_idx = idx;
             tracing::debug!(output = %name, workspace = idx, "map_window_for_output: mapping into workspace");
             ows.spaces[idx].map_element(window_element.clone(), location, activate);
             true
         } else {
+            target_workspace_idx = 0;
             false
         };
+
+        // Remove from other outputs' spaces to avoid duplicate mappings
+        if mapped {
+            for (oname, ows) in self.output_workspaces.iter_mut() {
+                if *oname == name {
+                    continue;
+                }
+                for space in ows.spaces.iter_mut() {
+                    space.unmap_elem(window_element);
+                }
+            }
+        }
 
         if !mapped {
             tracing::debug!(output = %name, "map_window_for_output: output has no workspace, falling back to primary");
@@ -2498,7 +2313,12 @@ impl Workspaces {
             let _view = self.get_or_add_window_view(window_element);
         }
         self.refresh_space();
-        self.expose_update_if_needed();
+        // Update expose layout for the target output's workspace and the primary's
+        self.expose_update_if_needed_workspace(target_workspace_idx);
+        let primary_idx = self.get_current_workspace_index();
+        if primary_idx != target_workspace_idx {
+            self.expose_update_if_needed_workspace(primary_idx);
+        }
     }
 
     /// remove a WindowElement from the workspace model,
@@ -2711,22 +2531,23 @@ impl Workspaces {
         let location = location.into();
 
         let mut source_workspace_index = None;
+        let mut source_output_name = None;
 
-        // Find source workspace index from primary output
-        let primary_name = self.primary_output_name();
-        let source_index_opt = primary_name
-            .as_ref()
-            .and_then(|n| self.output_workspaces.get(n))
-            .and_then(|ows| {
-                ows.spaces
-                    .iter()
-                    .enumerate()
-                    .find(|(_, s)| s.elements().any(|e| e.id() == we.id()))
-                    .map(|(i, _)| i)
-            });
+        // Find source workspace index by searching all outputs
+        for (oname, ows) in &self.output_workspaces {
+            if let Some((i, _)) = ows
+                .spaces
+                .iter()
+                .enumerate()
+                .find(|(_, s)| s.elements().any(|e| e.id() == we.id()))
+            {
+                source_workspace_index = Some(i);
+                source_output_name = Some(oname.clone());
+                break;
+            }
+        }
 
-        if let Some(source_index) = source_index_opt {
-            source_workspace_index = Some(source_index);
+        if let Some(source_index) = source_workspace_index {
             let id = we.id();
             let model = self.model.read().unwrap();
             if let Some(workspace) = model.workspaces.get(source_index) {
@@ -2743,21 +2564,27 @@ impl Workspaces {
             }
         }
 
-        // map to new space on all outputs
+        // Map to new space only on the source output (keep window on its output)
         {
             let id = if let Some(s) = we.wl_surface() {
                 s.as_ref().id()
             } else {
                 return;
             };
-            for ows in self.output_workspaces.values_mut() {
-                if let Some(space) = ows.spaces.get_mut(workspace_index) {
-                    space.map_element(we.clone(), location, activate);
+            let target_output = source_output_name
+                .clone()
+                .or_else(|| self.primary_output_name());
+            if let Some(ref target) = target_output {
+                if let Some(ows) = self.output_workspaces.get_mut(target.as_str()) {
+                    if let Some(space) = ows.spaces.get_mut(workspace_index) {
+                        space.map_element(we.clone(), location, activate);
+                    }
                 }
             }
             tracing::info!(
-                "workspaces::move_window_to_workspace: {:?}",
-                workspace_index
+                "workspaces::move_window_to_workspace: {:?} on output {:?}",
+                workspace_index,
+                source_output_name,
             );
             let model = self.model.read().unwrap();
             if let Some(workspace) = model.workspaces.get(workspace_index) {
@@ -2808,31 +2635,33 @@ impl Workspaces {
     /// activate: will set the window as active
     /// update: will update the workspace model
     fn raise_element(&mut self, window_id: &ObjectId, activate: bool, update: bool) {
-        // get the space with the window
-        // tracing::info!("workspaces::raise_element: {:?}", window_id);
-        // Find window index in primary output's spaces
-        let primary_name = self.primary_output_name();
-        let index_opt = primary_name
-            .as_ref()
-            .and_then(|n| self.output_workspaces.get(n))
-            .and_then(|ows| {
-                ows.spaces
-                    .iter()
-                    .enumerate()
-                    .find(|(_, s)| s.elements().any(|e| e.id() == *window_id))
-                    .map(|(i, _)| i)
-            });
+        // Find which workspace index contains this window, searching all outputs
+        let mut index_opt: Option<usize> = None;
+        for ows in self.output_workspaces.values() {
+            if let Some((i, _)) = ows
+                .spaces
+                .iter()
+                .enumerate()
+                .find(|(_, s)| s.elements().any(|e| e.id() == *window_id))
+            {
+                index_opt = Some(i);
+                break;
+            }
+        }
 
         if let Some(index) = index_opt {
             if let Some(window) = self.windows_map.get(window_id) {
-                // Check if already on top in primary space
-                let already_on_top = primary_name
-                    .as_ref()
-                    .and_then(|n| self.output_workspaces.get(n))
-                    .and_then(|ows| ows.spaces.get(index))
-                    .and_then(|s| s.elements().last())
-                    .map(|last| last.id() == *window_id)
-                    .unwrap_or(false);
+                // Check if already on top in any space that has it
+                let already_on_top = self
+                    .output_workspaces
+                    .values()
+                    .any(|ows| {
+                        ows.spaces
+                            .get(index)
+                            .and_then(|s| s.elements().last())
+                            .map(|last| last.id() == *window_id)
+                            .unwrap_or(false)
+                    });
                 if already_on_top {
                     return;
                 }
@@ -2845,13 +2674,16 @@ impl Workspaces {
                     return;
                 }
 
-                // Get the currently top window from primary space before raising
-                let previous_top = primary_name
-                    .as_ref()
-                    .and_then(|n| self.output_workspaces.get(n))
-                    .and_then(|ows| ows.spaces.get(index))
-                    .and_then(|s| s.elements().last())
-                    .map(|w| w.id());
+                // Get the currently top window before raising (from the first output that has this space)
+                let previous_top = self
+                    .output_workspaces
+                    .values()
+                    .find_map(|ows| {
+                        ows.spaces
+                            .get(index)
+                            .and_then(|s| s.elements().last())
+                            .map(|w| w.id())
+                    });
 
                 // Raise on all outputs' spaces at same index
                 for ows in self.output_workspaces.values_mut() {
@@ -3100,18 +2932,27 @@ impl Workspaces {
     /// Returns all the window elements from all the spaces
     /// starting from current space
     pub fn spaces_elements(&self) -> impl Iterator<Item = &WindowElement> {
-        let pows = match self.primary_output_workspaces() {
-            Some(p) => p,
-            None => return Vec::new().into_iter(),
-        };
-        let current_idx = pows.current_workspace;
         let mut result: Vec<&WindowElement> = Vec::new();
-        for (i, space) in pows.spaces.iter().enumerate() {
-            if i != current_idx {
-                result.extend(space.elements());
+        let mut seen = std::collections::HashSet::new();
+        for ows in self.output_workspaces.values() {
+            let current_idx = ows.current_workspace;
+            for (i, space) in ows.spaces.iter().enumerate() {
+                if i != current_idx {
+                    for e in space.elements() {
+                        if seen.insert(std::ptr::addr_of!(*e) as usize) {
+                            result.push(e);
+                        }
+                    }
+                }
+            }
+            if current_idx < ows.spaces.len() {
+                for e in ows.spaces[current_idx].elements() {
+                    if seen.insert(std::ptr::addr_of!(*e) as usize) {
+                        result.push(e);
+                    }
+                }
             }
         }
-        result.extend(pows.spaces[current_idx].elements());
         result.into_iter()
     }
 
@@ -3811,8 +3652,10 @@ impl Workspaces {
         if !valid {
             return None;
         }
-        for ows in self.output_workspaces.values_mut() {
-            if i < ows.spaces.len() {
+        // Only update the primary output's current workspace.
+        // Secondary outputs have independent workspace navigation.
+        if let Some(primary) = self.primary_output().map(|o| o.name()) {
+            if let Some(ows) = self.output_workspaces.get_mut(&primary) {
                 ows.current_workspace = i;
             }
         }
@@ -4071,9 +3914,17 @@ impl Workspaces {
     // Space management
 
     pub fn outputs_for_element(&self, element: &WindowElement) -> Vec<Output> {
-        self.space()
-            .map(|s| s.outputs_for_element(element))
-            .unwrap_or_default()
+        // Search all outputs' spaces to find which output contains this element
+        for (output_name, ows) in &self.output_workspaces {
+            for space in &ows.spaces {
+                if space.elements().any(|e| e.id() == element.id()) {
+                    if let Some(output) = self.outputs.iter().find(|o| o.name() == *output_name) {
+                        return vec![output.clone()];
+                    }
+                }
+            }
+        }
+        Vec::new()
     }
     #[allow(dead_code)]
     fn apply_scroll_offset(
@@ -4138,7 +3989,16 @@ impl Workspaces {
         &WindowElement,
         smithay::utils::Point<i32, smithay::utils::Logical>,
     )> {
-        self.space()?.element_under(point)
+        let point = point.into();
+        // Search all outputs' current workspace spaces, not just primary
+        for ows in self.output_workspaces.values() {
+            if let Some(space) = ows.spaces.get(ows.current_workspace) {
+                if let Some(result) = space.element_under(point) {
+                    return Some(result);
+                }
+            }
+        }
+        None
     }
 
     pub fn output_geometry(
@@ -4157,8 +4017,10 @@ impl Workspaces {
     }
 
     pub fn refresh_space(&mut self) {
-        if let Some(space) = self.space_mut() {
-            space.refresh();
+        for ows in self.output_workspaces.values_mut() {
+            for space in ows.spaces.iter_mut() {
+                space.refresh();
+            }
         }
     }
 
@@ -4166,7 +4028,14 @@ impl Workspaces {
         &self,
         we: &WindowElement,
     ) -> Option<smithay::utils::Point<i32, smithay::utils::Logical>> {
-        self.space()?.element_location(we)
+        for ows in self.output_workspaces.values() {
+            if let Some(space) = ows.spaces.get(ows.current_workspace) {
+                if let Some(loc) = space.element_location(we) {
+                    return Some(loc);
+                }
+            }
+        }
+        None
     }
 
     pub fn output_under<P: Into<smithay::utils::Point<f64, smithay::utils::Logical>>>(
@@ -4190,24 +4059,35 @@ impl Workspaces {
         &self,
         we: &WindowElement,
     ) -> Option<smithay::utils::Rectangle<i32, smithay::utils::Logical>> {
-        self.space()?.element_geometry(we)
+        for ows in self.output_workspaces.values() {
+            for space in &ows.spaces {
+                if let Some(geo) = space.element_geometry(we) {
+                    return Some(geo);
+                }
+            }
+        }
+        None
     }
 
     // Add these helper methods
     #[allow(dead_code)]
     fn find_space_for_element(&self, element: &WindowElement) -> Option<&Space<WindowElement>> {
-        self.primary_output_workspaces()?
-            .spaces
-            .iter()
-            .find(|space| space.elements().any(|e| e.id() == element.id()))
+        for ows in self.output_workspaces.values() {
+            if let Some(space) = ows.spaces.iter().find(|s| s.elements().any(|e| e.id() == element.id())) {
+                return Some(space);
+            }
+        }
+        None
     }
 
     #[allow(dead_code)]
     fn find_space_index_for_element(&self, element: &WindowElement) -> Option<usize> {
-        self.primary_output_workspaces()?
-            .spaces
-            .iter()
-            .position(|space| space.elements().any(|e| e.id() == element.id()))
+        for ows in self.output_workspaces.values() {
+            if let Some(idx) = ows.spaces.iter().position(|s| s.elements().any(|e| e.id() == element.id())) {
+                return Some(idx);
+            }
+        }
+        None
     }
 
     // ─────────────────────────────────────────────────────────────────────────────

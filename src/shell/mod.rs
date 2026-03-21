@@ -732,21 +732,29 @@ fn ensure_initial_configure<Backend: crate::state::Backend>(
 }
 
 pub fn fixup_positions(workspaces: &mut Workspaces, pointer_location: Point<f64, Logical>) {
-    // fixup outputs
-    let mut offset = Point::<i32, Logical>::from((0, 0));
+    // fixup outputs — place each to the right of the rightmost existing one
+    let mut next_x: i32 = 0;
     for output in workspaces
         .outputs()
         .cloned()
         .collect::<Vec<_>>()
         .into_iter()
     {
-        let size = workspaces
-            .output_geometry(&output)
-            .map(|geo| geo.size)
+        let geo = workspaces.output_geometry(&output);
+        let size = geo
+            .map(|g| g.size)
             .unwrap_or_else(|| Size::from((0, 0)));
+        let offset = Point::<i32, Logical>::from((next_x, 0));
+        tracing::info!(
+            output = output.name(),
+            prev_geo = ?geo,
+            new_pos = ?(offset.x, 0),
+            size = ?(size.w, size.h),
+            "fixup_positions: placing output"
+        );
         workspaces.map_output(&output, offset);
         layer_map_for_output(&output).arrange();
-        offset.x += size.w;
+        next_x = offset.x + size.w;
     }
 
     // fixup windows
