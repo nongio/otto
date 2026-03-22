@@ -4,13 +4,19 @@
 /// Bar height in logical points.
 pub const BAR_HEIGHT: u32 = 24;
 
-/// Bar width in logical points (centered, less than half the screen).
-pub const BAR_WIDTH: u32 = 580;
+/// Left panel width (app name + menus).
+pub const LEFT_WIDTH: u32 = 260;
+
+/// Right panel width (tray icons + clock).
+pub const RIGHT_WIDTH: u32 = 360;
 
 /// Top margin from screen edge.
 pub const BAR_MARGIN_TOP: i32 = 3;
 
-/// Horizontal padding inside the bar (left and right edges).
+/// Side margin from screen edge.
+pub const BAR_MARGIN_SIDE: i32 = 6;
+
+/// Horizontal padding inside a panel.
 pub const BAR_PADDING_H: f32 = 14.0;
 
 /// Spacing between tray icons.

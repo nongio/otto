@@ -2,6 +2,7 @@ mod app;
 mod bar;
 mod clock;
 mod config;
+mod tray;
 
 use app::TopBarApp;
 use otto_kit::AppRunner;

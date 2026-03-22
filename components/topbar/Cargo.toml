@@ -15,5 +15,7 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop"] }
 chrono = "0.4"
 tokio = { version = "1", features = ["full"] }
+zbus = { version = "4", default-features = false, features = ["tokio"] }
+futures-util = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
