@@ -58,6 +58,20 @@ impl LayerShellSurface {
         width: u32,
         height: u32,
     ) -> Result<Self, SurfaceError> {
+        Self::with_anchor(layer, namespace, width, height, None, None)
+    }
+
+    /// Create a new layer shell surface with anchor and exclusive zone set
+    /// before the initial commit. Required when using width=0 or height=0
+    /// (fill mode), since the compositor needs anchors before the first commit.
+    pub fn with_anchor(
+        layer: Layer,
+        namespace: &str,
+        width: u32,
+        height: u32,
+        anchor: Option<Anchor>,
+        exclusive_zone: Option<i32>,
+    ) -> Result<Self, SurfaceError> {
         use crate::app_runner::AppContext;
 
         let compositor = AppContext::compositor_state();
@@ -71,6 +85,8 @@ impl LayerShellSurface {
             namespace,
             width,
             height,
+            anchor,
+            exclusive_zone,
             compositor,
             layer_shell,
             sc_layer_shell,
@@ -97,6 +113,8 @@ impl LayerShellSurface {
         namespace: &str,
         width: u32,
         height: u32,
+        anchor: Option<Anchor>,
+        exclusive_zone: Option<i32>,
         compositor: &CompositorState,
         layer_shell: &ZwlrLayerShellV1,
         surface_style: Option<&otto_surface_style_manager_v1::OttoSurfaceStyleManagerV1>,
@@ -128,6 +146,14 @@ impl LayerShellSurface {
 
         // Create sc_layer immediately if sc_layer_shell is available
         let surface_style = surface_style.map(|shell| shell.get_surface_style(&wl_surface, qh, ()));
+
+        // Set anchor and exclusive zone before commit (required for width/height = 0)
+        if let Some(anchor) = anchor {
+            layer_surface.set_anchor(anchor);
+        }
+        if let Some(zone) = exclusive_zone {
+            layer_surface.set_exclusive_zone(zone);
+        }
 
         // Set initial size on the layer surface
         layer_surface.set_size(width, height);

@@ -63,10 +63,15 @@ impl App for TopBarApp {
         tracing::info!("creating topbar layer surface");
 
         // width=0 means fill available width when anchored left+right
-        let surface = LayerShellSurface::new(Layer::Top, "otto-topbar", 0, BAR_HEIGHT)?;
+        let surface = LayerShellSurface::with_anchor(
+            Layer::Top,
+            "otto-topbar",
+            0,
+            BAR_HEIGHT,
+            Some(Anchor::Top | Anchor::Left | Anchor::Right),
+            Some(BAR_HEIGHT as i32),
+        )?;
 
-        surface.set_anchor(Anchor::Top | Anchor::Left | Anchor::Right);
-        surface.set_exclusive_zone(BAR_HEIGHT as i32);
         surface.set_keyboard_interactivity(KeyboardInteractivity::None);
 
         Self::apply_surface_style(&surface);
