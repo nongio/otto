@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, LazyLock};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures_util::StreamExt;
 use zbus::zvariant::{OwnedValue, Value};
@@ -13,6 +14,9 @@ use zbus::{interface, proxy, Connection, SignalContext};
 
 /// Global shared tray state readable from the draw loop.
 static TRAY_STATE: LazyLock<TrayState> = LazyLock::new(|| Arc::new(Mutex::new(Vec::new())));
+
+/// Monotonic counter bumped every time TRAY_STATE changes.
+static TRAY_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// Global D-Bus connection for calling methods on tray items.
 static TRAY_CONNECTION: LazyLock<Mutex<Option<Connection>>> =
@@ -63,6 +67,11 @@ pub struct TrayItem {
 /// Read current snapshot of tray items for rendering.
 pub fn current_items() -> Vec<TrayItem> {
     TRAY_STATE.lock().unwrap().clone()
+}
+
+/// Current generation counter — changes whenever tray items are added/removed/updated.
+pub fn generation() -> u64 {
+    TRAY_GENERATION.load(Ordering::Relaxed)
 }
 
 /// Take the pending menu (if any) for rendering by the UI.
@@ -469,6 +478,7 @@ async fn monitor_disconnects(
                 !removed.contains(&key)
             });
             tracing::info!("SNI items removed (owner vanished: {vanished}): {removed:?}");
+            TRAY_GENERATION.fetch_add(1, Ordering::Relaxed);
         }
     }
 }
@@ -553,6 +563,7 @@ async fn fetch_item(
         item.icon_name, item.icon_file, item.icon_data.is_some(), item.menu_path
     );
     state.lock().unwrap().push(item);
+    TRAY_GENERATION.fetch_add(1, Ordering::Relaxed);
 
     // Watch for property changes
     let state_clone = state.clone();
@@ -615,6 +626,7 @@ async fn watch_item_signals(conn: &Connection, bus_name: &str, path: &str, state
             item.icon_height = icon_h;
             item.icon_name = icon_name;
         }
+        TRAY_GENERATION.fetch_add(1, Ordering::Relaxed);
         tracing::debug!("SNI icon updated: {bus}{p}");
     }
 }

@@ -106,6 +106,12 @@ pub trait App {
     fn on_dock_menu_requested(&mut self, _ctx: &AppContext, _x: i32, _y: i32) {
         // Default: do nothing
     }
+
+    /// Called once per event loop iteration, after dispatching Wayland events.
+    /// Use for periodic checks (timers, polling state changes) without frame callbacks.
+    fn on_update(&mut self, _ctx: &AppContext) {
+        // Default: do nothing
+    }
 }
 
 /// DefaultApp - Wrapper for using App trait objects with AppRunner
@@ -165,6 +171,9 @@ impl App for DefaultApp {
     }
     fn on_pointer_event(&mut self, ctx: &AppContext, events: &[PointerEvent]) {
         self.inner.on_pointer_event(ctx, events)
+    }
+    fn on_update(&mut self, ctx: &AppContext) {
+        self.inner.on_update(ctx)
     }
 }
 
@@ -329,23 +338,17 @@ impl<A: App + 'static> AppRunnerInitialized<A> {
     ///
     /// Note: The renderer thread is spawned when AppContext::enable_layer_engine() is called.
     pub fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // Main thread: blocking Wayland event loop
         while !self.app_data.exit {
-            // Block until at least one Wayland event is available, then dispatch all pending
             self.event_queue.blocking_dispatch(&mut self.app_data)?;
-
-            // Flush outgoing requests to the compositor
             self.conn.flush()?;
 
-            // AppContext::
-            // Update windows
             AppContext::update_windows();
-            std::thread::sleep(std::time::Duration::from_millis(5));
+
+            let ctx = AppContext::new(&self.app_data.context_data);
+            self.app_data.app.on_update(&ctx);
         }
 
-        // Clean up global context (this will also stop the renderer thread)
         AppContext::clear();
-
         Ok(())
     }
 }

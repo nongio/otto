@@ -22,6 +22,8 @@ pub struct TopBarApp {
     _spacer_surface: Option<LayerShellSurface>,
     left: LeftPanel,
     right: RightPanel,
+    last_right_width: f32,
+    last_tray_gen: u64,
 }
 
 impl TopBarApp {
@@ -32,6 +34,8 @@ impl TopBarApp {
             _spacer_surface: None,
             left: LeftPanel::new(),
             right: RightPanel::new(),
+            last_right_width: 0.0,
+            last_tray_gen: 0,
         }
     }
 
@@ -88,38 +92,19 @@ impl TopBarApp {
         txn.commit();
     }
 
-    fn setup_right_frame_callback(&self) {
+    fn update_right_panel(&mut self, animate: bool) {
         let Some(ref surface) = self.right_surface else { return };
 
-        let surface_clone = surface.clone();
-        let height = self.right.height;
-        let mut last_target_width: f32 = 0.0;
-
-        surface.on_frame(move || {
-            let mut right = RightPanel::new();
-            right.height = height;
-            right.clock.tick();
-
-            let target = right.target_width();
-            if (target - last_target_width).abs() >= 1.0 {
-                last_target_width = target;
-                // Resize the client buffer immediately so the next draw is correct
-                surface_clone.set_size(target.ceil() as u32, height as u32);
-                // Animate the compositor-side layer with a spring
-                Self::animate_right_size(&surface_clone, target, height);
+        let target = self.right.target_width();
+        if (target - self.last_right_width).abs() >= 1.0 {
+            self.last_right_width = target;
+            surface.set_size(target.ceil() as u32, self.right.height as u32);
+            if animate {
+                Self::animate_right_size(surface, target, self.right.height);
             }
-            right.width = target;
-
-            surface_clone.draw(|canvas| {
-                canvas.clear(skia_safe::Color::TRANSPARENT);
-                right.draw(canvas);
-            });
-
-            surface_clone.base_surface().wl_surface().commit();
-            AppContext::request_frame(&surface_clone.wl_surface());
-        });
-
-        AppContext::request_frame(&surface.wl_surface());
+        }
+        self.right.width = target;
+        self.redraw_right();
     }
 }
 
@@ -178,24 +163,12 @@ impl App for TopBarApp {
         Ok(())
     }
 
-    fn on_configure_layer(&mut self, _ctx: &AppContext, width: i32, height: i32, _serial: u32) {
-        tracing::debug!("configure: {width}x{height}");
-
-        // Both panels share the same height
-        if height > 0 {
-            self.left.height = height as f32;
-            self.right.height = height as f32;
-        }
-
-        // Update widths from configure if provided
-        if width > 0 {
-            // We get called for each surface; just use the fixed widths
-        }
-
+    fn on_configure_layer(&mut self, _ctx: &AppContext, _width: i32, _height: i32, _serial: u32) {
+        // Configure fires for each layer surface (spacer, left, right).
+        // We use fixed dimensions, so just redraw on any configure.
         self.right.clock.tick();
         self.redraw_left();
-        self.redraw_right();
-        self.setup_right_frame_callback();
+        self.update_right_panel(false);
     }
 
     fn on_configure(&mut self, _ctx: &AppContext, _configure: WindowConfigure, _serial: u32) {}
@@ -210,6 +183,34 @@ impl App for TopBarApp {
     }
 
     fn on_keyboard_leave(&mut self, _ctx: &AppContext, _surface: &wl_surface::WlSurface) {}
+
+    fn on_update(&mut self, _ctx: &AppContext) {
+        let mut dirty = false;
+
+        // Check if clock text changed
+        if self.right.clock.tick() {
+            dirty = true;
+        }
+
+        // Check if tray items changed
+        let gen = crate::tray::generation();
+        if gen != self.last_tray_gen {
+            self.last_tray_gen = gen;
+            dirty = true;
+        }
+
+        if dirty {
+            self.update_right_panel(true);
+        }
+
+        // Schedule a wakeup so the loop doesn't sleep forever —
+        // the frame callback will trigger the next blocking_dispatch return.
+        // A commit is needed for the compositor to process the frame request.
+        if let Some(ref surface) = self.right_surface {
+            AppContext::request_frame(&surface.wl_surface());
+            surface.wl_surface().commit();
+        }
+    }
 
     fn on_pointer_event(&mut self, _ctx: &AppContext, events: &[PointerEvent]) {
         if !events.is_empty() {
