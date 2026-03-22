@@ -294,6 +294,9 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         // Start background color-scheme watcher (reads XDG portal, updates global atomic)
         crate::color_scheme::spawn_color_scheme_watcher();
 
+        // Start background icon-theme watcher (reads XDG portal, updates global string)
+        crate::icon_theme::spawn_icon_theme_watcher();
+
         // Call the app's ready callback
         let ctx = AppContext::new(&app_data.context_data);
         app_data.app.on_app_ready(&ctx)?;

@@ -19,13 +19,15 @@ tracing = "0.1"
 tokio = { version = "1", features = ["full"] }
 zbus = { version = "4", default-features = false, features = ["tokio"] }
 futures-util = "0.3"
+xdgkit = "3.2.5"
+resvg = "0.44.0"
+usvg = "0.44.0"
 lazy_static = "1.4"
 pipewire = "0.9"
 
 [dependencies.laye-rs]
-# git = "https://github.com/nongio/layers"
-# tag = "v1.3.0"
-path = "../../../layers"
+git = "https://github.com/nongio/layers"
+tag = "v1.7.0"
 features = ["export-taffy", "debugger"]
 
 [dependencies.skia-safe]

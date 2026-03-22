@@ -41,6 +41,8 @@ pub struct Theme {
     // Material colors (surfaces)
     pub material_titlebar: Color,
     pub material_sidebar: Color,
+    pub material_medium: Color,
+    pub material_highlight: Color,
     pub material_selection_focused: Color,
 
     // Shadow
@@ -65,6 +67,8 @@ impl Theme {
 
             material_titlebar: Color::from_argb(0xCC, 0xEA, 0xEA, 0xEA),
             material_sidebar: Color::from_argb(0xAF, 0xEA, 0xEA, 0xEA),
+            material_medium: Color::from_argb(0x7A, 0xF6, 0xF6, 0xF6),
+            material_highlight: Color::from_argb(0x9E, 0xF7, 0xF7, 0xF7),
             material_selection_focused: Color::from_argb(0xBF, 0x0A, 0x82, 0xFF),
 
             shadow: Color::from_argb(0x66, 0x1B, 0x1B, 0x1B),
@@ -90,6 +94,8 @@ impl Theme {
             // Dark translucent surfaces
             material_titlebar: Color::from_argb(0xBF, 0x28, 0x28, 0x28),
             material_sidebar: Color::from_argb(0xA8, 0x1E, 0x1E, 0x1E),
+            material_medium: Color::from_argb(0x83, 0x28, 0x28, 0x28),
+            material_highlight: Color::from_argb(0xA2, 0x69, 0x67, 0x67),
             material_selection_focused: Color::from_argb(0xBF, 0x0A, 0x82, 0xFF),
 
             shadow: Color::from_argb(0x99, 0x00, 0x00, 0x00),
