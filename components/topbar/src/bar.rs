@@ -83,7 +83,6 @@ impl Bar {
         let (_, metrics) = font.metrics();
         let cap_height = metrics.cap_height;
         let h = self.height * scale;
-        // Center the cap-height region, then place baseline accordingly
-        (h + cap_height) / 2.0
+        (h + cap_height) / 2.0 - 2.0 * scale
     }
 }
