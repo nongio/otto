@@ -81,8 +81,8 @@ impl Bar {
     /// Vertically center text using font metrics.
     fn baseline_y(&self, scale: f32, font: &skia_safe::Font) -> f32 {
         let (_, metrics) = font.metrics();
-        let text_height = metrics.descent - metrics.ascent;
         let h = self.height * scale;
-        (h - text_height) / 2.0 - metrics.ascent
+        // Center using ascent only (ignore descenders to avoid bottom clipping)
+        (h - metrics.ascent) / 2.0
     }
 }
