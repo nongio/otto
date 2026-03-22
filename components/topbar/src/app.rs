@@ -213,9 +213,6 @@ impl App for TopBarApp {
     }
 
     fn on_pointer_event(&mut self, _ctx: &AppContext, events: &[PointerEvent]) {
-        if !events.is_empty() {
-            tracing::info!("on_pointer_event: {} events", events.len());
-        }
         let Some(ref right_surface) = self.right_surface else { return };
         let right_wl = right_surface.wl_surface();
 

@@ -234,8 +234,14 @@ fn parse_menu_item(value: &OwnedValue) -> Option<MenuItem> {
 
 fn extract_props(value: &Value<'_>) -> HashMap<String, OwnedValue> {
     let mut map = HashMap::new();
-    if let Value::Dict(dict) = value {
-        // Iterate through the dict entries
+
+    // The properties dict may be wrapped in a Variant
+    let dict_value = match value {
+        Value::Value(boxed) => boxed.as_ref(),
+        other => other,
+    };
+
+    if let Value::Dict(dict) = dict_value {
         for entry in dict.iter() {
             if let (Value::Str(k), v) = entry {
                 if let Ok(owned) = OwnedValue::try_from(v) {
@@ -252,6 +258,10 @@ fn prop_string(props: &HashMap<String, OwnedValue>, key: &str) -> Option<String>
     let v: Value<'_> = Value::try_from(val).ok()?;
     match v {
         Value::Str(s) => Some(s.to_string()),
+        Value::Value(boxed) => match *boxed {
+            Value::Str(s) => Some(s.to_string()),
+            _ => None,
+        },
         _ => None,
     }
 }
