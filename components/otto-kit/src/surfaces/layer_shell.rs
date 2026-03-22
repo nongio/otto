@@ -282,7 +282,18 @@ impl LayerShellSurface {
     /// Width or height of 0 means the surface will be sized to fill available space
     /// in that dimension (constrained by anchors).
     pub fn set_size(&self, width: u32, height: u32) {
-        self.inner.borrow().layer_surface.set_size(width, height);
+        let mut inner = self.inner.borrow_mut();
+        inner.layer_surface.set_size(width, height);
+        // Also resize the Skia buffer immediately so the next draw uses the
+        // new dimensions — avoids a frame where the old buffer is stretched
+        // into the new layer shell geometry.
+        if inner.configured {
+            let w = width as i32;
+            let h = height as i32;
+            if w != inner.base_surface.width || h != inner.base_surface.height {
+                inner.base_surface.resize(w, h);
+            }
+        }
     }
 
     /// Set margins from the anchor edges

@@ -33,17 +33,11 @@ impl LeftPanel {
 
     pub fn draw(&self, canvas: &Canvas) {
         let theme = AppContext::current_theme();
-        let w = self.width;
         let h = self.height;
-
-        let mut bg = Paint::default();
-        bg.set_anti_alias(true);
-        bg.set_color(theme.material_medium);
-        canvas.draw_rect(Rect::from_xywh(0.0, 0.0, w, h), &bg);
 
         let font = typography::TextStyle {
             family: "Inter",
-            weight: 500,
+            weight: 700,
             size: 13.0,
         }.font();
         let x = BAR_PADDING_H;
@@ -70,13 +64,6 @@ impl RightPanel {
 
     pub fn draw(&self, canvas: &Canvas) {
         let theme = AppContext::current_theme();
-        let w = self.width;
-        let h = self.height;
-
-        let mut bg = Paint::default();
-        bg.set_anti_alias(true);
-        bg.set_color(theme.material_medium);
-        canvas.draw_rect(Rect::from_xywh(0.0, 0.0, w, h), &bg);
 
         // Clock on the right edge
         let clock_width = self.draw_clock(canvas, &theme);
@@ -145,6 +132,20 @@ impl RightPanel {
 
             x -= TRAY_ICON_SPACING;
         }
+    }
+
+    /// Compute the ideal panel width based on current clock text and tray icon count.
+    pub fn target_width(&self) -> f32 {
+        let font = typography::styles::BODY.font();
+        let clock_text_width = font.measure_str(&self.clock.text, None).0;
+        let num_tray = tray::current_items().len() as f32;
+        let tray_width = if num_tray > 0.0 {
+            num_tray * (TRAY_ICON_SIZE + TRAY_ICON_SPACING) + TRAY_ICON_SPACING
+        } else {
+            0.0
+        };
+        let content = clock_text_width + BAR_PADDING_H * 2.0 + tray_width;
+        content.max(MIN_RIGHT_WIDTH as f32)
     }
 
     /// Hit-test: return the tray item index at position x (in logical coords).

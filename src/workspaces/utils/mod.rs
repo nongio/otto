@@ -248,11 +248,6 @@ pub fn configure_surface_layer(
             y: pos_y + (wvs.phy_dst_h * anchor_point.y),
         };
         layer.set_position(adjusted_pos, None);
-    } else {
-        tracing::debug!(
-            "configure_surface_layer: client owns bounds, skipping set_size/set_position (gravity={:?}, buf={}x{})",
-            gravity, wvs.phy_dst_w, wvs.phy_dst_h
-        );
     }
 
     layer.set_pointer_events(false);
@@ -276,8 +271,12 @@ pub fn configure_surface_layer(
         }
         let tex = tex.unwrap();
 
-        let src_h = (draw_wvs.phy_src_h - draw_wvs.phy_src_y).max(1.0);
-        let src_w = (draw_wvs.phy_src_w - draw_wvs.phy_src_x).max(1.0);
+        // Read actual texture dimensions at draw time so gravity stays
+        // consistent with the current buffer even mid-animation.
+        let tex_w = tex.image.width() as f32;
+        let tex_h = tex.image.height() as f32;
+        let src_w = tex_w.max(1.0);
+        let src_h = tex_h.max(1.0);
 
         // Use live w/h for all gravity modes so the draw scales correctly during animations.
         let (scale_x, scale_y, tx, ty) = match gravity {
@@ -300,6 +299,10 @@ pub fn configure_surface_layer(
                 (1.0f32, 1.0f32, tx, ty)
             }
             ContentsGravity::TopLeft => (1.0f32, 1.0f32, 0.0f32, 0.0f32),
+            ContentsGravity::TopRight => {
+                let tx = w - src_w;
+                (1.0f32, 1.0f32, tx, 0.0f32)
+            }
         };
 
         // Convert buffer-pixel damage to layer-local coords using the same

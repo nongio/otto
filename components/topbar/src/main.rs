@@ -1,7 +1,9 @@
+mod animation;
 mod app;
 mod bar;
 mod clock;
 mod config;
+mod dbusmenu;
 mod tray;
 
 use app::TopBarApp;

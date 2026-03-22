@@ -1,5 +1,5 @@
 use otto_kit::{
-    protocols::otto_surface_style_v1::{BlendMode, ClipMode},
+    protocols::otto_surface_style_v1::{BlendMode, ClipMode, ContentsGravity},
     surfaces::LayerShellSurface,
     App, AppContext,
 };
@@ -55,32 +55,63 @@ impl TopBarApp {
         surface.base_surface().wl_surface().commit();
     }
 
-    fn apply_surface_style(surface: &LayerShellSurface) {
+    fn apply_surface_style(surface: &LayerShellSurface, gravity: ContentsGravity) {
         let Some(style) = surface.base_surface().surface_style() else {
             tracing::debug!("surface style protocol not available");
             return;
         };
 
+        let theme = AppContext::current_theme();
+        let c = skia_safe::Color4f::from(theme.material_medium);
+        style.set_background_color(c.r as f64, c.g as f64, c.b as f64, c.a as f64);
         style.set_blend_mode(BlendMode::BackgroundBlur);
         style.set_masks_to_bounds(ClipMode::Enabled);
         style.set_corner_radius(BAR_CORNER_RADIUS as f64);
         style.set_shadow(0.25, 8.0, 0.0, 3.0, 0.0, 0.0, 0.0);
+        style.set_contents_gravity(gravity);
+    }
+
+    fn animate_right_size(surface: &LayerShellSurface, width: f32, height: f32) {
+        let Some(style) = surface.base_surface().surface_style() else { return };
+        let Some(scene) = AppContext::surface_style_manager() else { return };
+        let qh = AppContext::queue_handle();
+
+        let timing = scene.create_timing_function(qh, ());
+        timing.set_spring(0.35, 0.5);
+        let txn = scene.begin_transaction(qh, ());
+        txn.set_duration(0.35);
+        txn.set_timing_function(&timing);
+
+        let scale = 2.0_f64;
+        style.set_size(width as f64 * scale, height as f64 * scale);
+
+        txn.commit();
     }
 
     fn setup_right_frame_callback(&self) {
         let Some(ref surface) = self.right_surface else { return };
 
         let surface_clone = surface.clone();
-        let width = self.right.width;
         let height = self.right.height;
+        let mut last_target_width: f32 = 0.0;
 
         surface.on_frame(move || {
+            let mut right = RightPanel::new();
+            right.height = height;
+            right.clock.tick();
+
+            let target = right.target_width();
+            if (target - last_target_width).abs() >= 1.0 {
+                last_target_width = target;
+                // Resize the client buffer immediately so the next draw is correct
+                surface_clone.set_size(target.ceil() as u32, height as u32);
+                // Animate the compositor-side layer with a spring
+                Self::animate_right_size(&surface_clone, target, height);
+            }
+            right.width = target;
+
             surface_clone.draw(|canvas| {
                 canvas.clear(skia_safe::Color::TRANSPARENT);
-                let mut right = RightPanel::new();
-                right.width = width;
-                right.height = height;
-                right.clock.tick();
                 right.draw(canvas);
             });
 
@@ -122,7 +153,7 @@ impl App for TopBarApp {
         )?;
         left.set_margin(BAR_MARGIN_TOP, 0, 0, BAR_MARGIN_SIDE);
         left.set_keyboard_interactivity(KeyboardInteractivity::None);
-        Self::apply_surface_style(&left);
+        Self::apply_surface_style(&left, ContentsGravity::TopLeft); // TopLeft
 
         // Right panel: tray + clock, anchored top-right (no exclusive zone)
         let right = LayerShellSurface::with_anchor(
@@ -135,7 +166,7 @@ impl App for TopBarApp {
         )?;
         right.set_margin(BAR_MARGIN_TOP, BAR_MARGIN_SIDE, 0, 0);
         right.set_keyboard_interactivity(KeyboardInteractivity::None);
-        Self::apply_surface_style(&right);
+        Self::apply_surface_style(&right, ContentsGravity::TopRight); // TopRight
 
         self.left_surface = Some(left);
         self.right_surface = Some(right);

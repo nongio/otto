@@ -18,6 +18,20 @@ static TRAY_STATE: LazyLock<TrayState> = LazyLock::new(|| Arc::new(Mutex::new(Ve
 static TRAY_CONNECTION: LazyLock<Mutex<Option<Connection>>> =
     LazyLock::new(|| Mutex::new(None));
 
+/// Pending context menu waiting to be rendered by the UI.
+static PENDING_MENU: LazyLock<Mutex<Option<PendingMenu>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+/// A context menu fetched from dbusmenu, ready for the UI to display.
+#[derive(Clone, Debug)]
+pub struct PendingMenu {
+    pub service: String,
+    pub menu_path: String,
+    pub layout: crate::dbusmenu::MenuLayout,
+    pub anchor_x: i32,
+    pub anchor_y: i32,
+}
+
 /// Thread-safe list of tray items shared between D-Bus tasks and renderer.
 pub type TrayState = Arc<Mutex<Vec<TrayItem>>>;
 
@@ -42,11 +56,33 @@ pub struct TrayItem {
     pub tooltip: Option<String>,
     /// Status: Active, Passive, NeedsAttention.
     pub status: String,
+    /// Object path of the dbusmenu interface (for apps that use dbusmenu instead of ContextMenu).
+    pub menu_path: Option<String>,
 }
 
 /// Read current snapshot of tray items for rendering.
 pub fn current_items() -> Vec<TrayItem> {
     TRAY_STATE.lock().unwrap().clone()
+}
+
+/// Take the pending menu (if any) for rendering by the UI.
+pub fn take_pending_menu() -> Option<PendingMenu> {
+    PENDING_MENU.lock().unwrap().take()
+}
+
+/// Activate a dbusmenu item by sending a "clicked" event.
+pub fn activate_menu_item(service: &str, menu_path: &str, item_id: i32) {
+    let conn = TRAY_CONNECTION.lock().unwrap().clone();
+    let Some(conn) = conn else { return };
+    let service = service.to_string();
+    let menu_path = menu_path.to_string();
+
+    tokio::spawn(async move {
+        match crate::dbusmenu::activate_menu_item(&conn, &service, &menu_path, item_id).await {
+            Ok(_) => tracing::info!("dbusmenu item activated: id={item_id}"),
+            Err(e) => tracing::warn!("dbusmenu activate failed: {e}"),
+        }
+    });
 }
 
 /// Activate a tray item by index (left click).
@@ -55,8 +91,70 @@ pub fn activate_item(index: usize, x: i32, y: i32) {
 }
 
 /// Open context menu for a tray item by index (right click).
+/// Tries SNI ContextMenu first, falls back to dbusmenu if available.
 pub fn context_menu_item(index: usize, x: i32, y: i32) {
-    call_item_method(index, x, y, "context_menu");
+    let items = TRAY_STATE.lock().unwrap();
+    let Some(item) = items.get(index) else { return };
+    let service = item.service.clone();
+    let path = item.path.clone();
+    let menu_path = item.menu_path.clone();
+    drop(items);
+
+    let conn = TRAY_CONNECTION.lock().unwrap().clone();
+    let Some(conn) = conn else { return };
+
+    tokio::spawn(async move {
+        // Try SNI ContextMenu first
+        let proxy = StatusNotifierItemProxy::builder(&conn)
+            .destination(service.as_str())
+            .unwrap()
+            .path(path.as_str())
+            .unwrap()
+            .build()
+            .await;
+
+        let sni_ok = match proxy {
+            Ok(p) => p.context_menu(x, y).await.is_ok(),
+            Err(_) => false,
+        };
+
+        if sni_ok {
+            tracing::info!("SNI context_menu success: {service}");
+            return;
+        }
+
+        // Fall back to dbusmenu
+        if let Some(ref mpath) = menu_path {
+            tracing::debug!("falling back to dbusmenu: {service} {mpath}");
+            match crate::dbusmenu::fetch_menu(&conn, &service, mpath).await {
+                Ok(layout) => {
+                    tracing::info!(
+                        "dbusmenu fetched: {} items, revision {}",
+                        layout.items.len(),
+                        layout.revision
+                    );
+                    for item in &layout.items {
+                        if item.visible {
+                            tracing::info!("  menu: [{}] {:?}", item.id, item.label);
+                        }
+                    }
+                    // Store the menu for the UI to render
+                    *PENDING_MENU.lock().unwrap() = Some(PendingMenu {
+                        service: service.clone(),
+                        menu_path: mpath.clone(),
+                        layout,
+                        anchor_x: x,
+                        anchor_y: y,
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!("dbusmenu fetch failed: {service}: {e}");
+                }
+            }
+        } else {
+            tracing::warn!("no context menu available for {service} (no ContextMenu method, no Menu path)");
+        }
+    });
 }
 
 fn call_item_method(index: usize, x: i32, y: i32, method: &str) {
@@ -237,6 +335,9 @@ trait StatusNotifierItem {
 
     #[zbus(property)]
     fn id(&self) -> zbus::Result<String>;
+
+    #[zbus(property, name = "Menu")]
+    fn menu(&self) -> zbus::Result<zbus::zvariant::OwnedObjectPath>;
 
     fn activate(&self, x: i32, y: i32) -> zbus::Result<()>;
     fn context_menu(&self, x: i32, y: i32) -> zbus::Result<()>;
@@ -419,6 +520,9 @@ async fn fetch_item(
         None
     };
 
+    // Read the Menu property (dbusmenu object path)
+    let menu_path = proxy.menu().await.ok().map(|p| p.to_string());
+
     let item = TrayItem {
         service: bus_name.to_string(),
         path: path.to_string(),
@@ -429,11 +533,12 @@ async fn fetch_item(
         icon_height: icon_h,
         tooltip,
         status,
+        menu_path,
     };
 
     tracing::info!(
-        "SNI item fetched: {bus_name}{path} icon_name={:?} icon_file={:?} has_pixmap={}",
-        item.icon_name, item.icon_file, item.icon_data.is_some()
+        "SNI item fetched: {bus_name}{path} icon_name={:?} icon_file={:?} has_pixmap={} menu={:?}",
+        item.icon_name, item.icon_file, item.icon_data.is_some(), item.menu_path
     );
     state.lock().unwrap().push(item);
 

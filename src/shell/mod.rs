@@ -474,9 +474,10 @@ impl<BackendData: Backend> Otto<BackendData> {
             }
         }
 
-        // Update the container layer with size and position.
-        // Skip size/position if a surface style with non-Resize gravity is registered
-        // (the style owns the layer bounds in that case).
+        // Update the container layer's Taffy layout style from anchors/margins/size.
+        // This lets the layout engine position the layer automatically — including
+        // during surface-style size animations (the animated size feeds back into
+        // Taffy and the position adjusts every frame).
         let layer = {
             let Some(layer_shell_surf) = self.layer_surfaces.get(surface_id) else {
                 return;
@@ -490,19 +491,23 @@ impl<BackendData: Backend> Otto<BackendData> {
             .and_then(|v: &Vec<_>| v.first());
         let container_owns_size = container_style.map(|s| s.client_owns_size).unwrap_or(false);
 
+        // Always refresh the Taffy style so position tracks anchor+margin changes.
+        // When the client owns the size (surface style animation), Taffy still
+        // controls the inset positioning — the animated size on the layer feeds
+        // back into layout automatically.
+        {
+            let Some(layer_shell_surf) = self.layer_surfaces.get(surface_id) else {
+                return;
+            };
+            let style = layer_shell_surf.taffy_style(scale_factor);
+            layer.set_layout_style(style);
+        }
+
         if !container_owns_size {
+            let container_w = (geometry.size.w as f64 * scale_factor) as f32;
+            let container_h = (geometry.size.h as f64 * scale_factor) as f32;
             layer.set_size(
-                layers::types::Size::points(
-                    (geometry.size.w as f64 * scale_factor) as f32,
-                    (geometry.size.h as f64 * scale_factor) as f32,
-                ),
-                None,
-            );
-            layer.set_position(
-                (
-                    (geometry.loc.x as f64 * scale_factor) as f32,
-                    (geometry.loc.y as f64 * scale_factor) as f32,
-                ),
+                layers::types::Size::points(container_w, container_h),
                 None,
             );
         }

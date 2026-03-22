@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use layers::prelude::Layer;
+use layers::taffy;
 use smithay::{
     desktop::LayerSurface,
     output::Output,
@@ -231,6 +232,36 @@ impl LayerShellSurface {
         height = height.max(0);
 
         Rectangle::new((x, y).into(), (width, height).into())
+    }
+
+    /// Build a Taffy layout style that encodes the layer shell anchors and margins
+    /// so the layout engine positions the layer automatically.
+    /// The layer's actual size (set via surface style or `set_size`) drives layout;
+    /// Taffy only provides the inset constraints for positioning.
+    /// `scale` is the output scale factor (physical / logical).
+    pub fn taffy_style(&self, scale: f64) -> taffy::Style {
+        let anchor = self.anchor();
+        let (mt, mr, mb, ml) = self.margin();
+
+        let anchor_top = anchor.contains(Anchor::TOP);
+        let anchor_bottom = anchor.contains(Anchor::BOTTOM);
+        let anchor_left = anchor.contains(Anchor::LEFT);
+        let anchor_right = anchor.contains(Anchor::RIGHT);
+
+        let s = |v: i32| taffy::LengthPercentageAuto::Length((v as f64 * scale) as f32);
+        let auto = taffy::LengthPercentageAuto::Auto;
+
+        // Inset: pin to an edge when anchored, otherwise auto.
+        let top = if anchor_top { s(mt) } else { auto };
+        let bottom = if anchor_bottom { s(mb) } else { auto };
+        let left = if anchor_left { s(ml) } else { auto };
+        let right = if anchor_right { s(mr) } else { auto };
+
+        taffy::Style {
+            position: taffy::Position::Absolute,
+            inset: taffy::Rect { left, right, top, bottom },
+            ..Default::default()
+        }
     }
 }
 

@@ -91,6 +91,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 29. When an SNI icon deregisters, it fades out and the remaining icons slide to close the gap.
 30. Menu entry highlight uses a rounded-rect fill with spring-based scale feedback on press.
 31. Menus open with a fade-in + slight upward slide. Menus close with a fade-out.
+32. The right panel width animates smoothly when tray icons are added or removed, using an exponential ease-out interpolation. On the first frame after creation, the width snaps to the content-driven target without animating.
 
 ## Constraints & Edge Cases
 
