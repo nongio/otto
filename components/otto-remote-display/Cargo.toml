@@ -1,0 +1,21 @@
+[package]
+name = "otto-remote-display"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "otto-remote-display"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+gstreamer = "0.23"
+gstreamer-app = "0.23"
+gstreamer-video = "0.23"
+mdns-sd = "0.11"
+plist = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+zbus = "5"
