@@ -145,6 +145,7 @@ members = [
     "components/xdg-desktop-portal-otto",
     "components/apps-manager",
     "components/otto-kit",
+    "components/topbar",
     "sample-clients/client-rainbow",
     "sample-clients/submenu",
     "sample-clients/submenu-gtk",

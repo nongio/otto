@@ -110,12 +110,17 @@ pub struct TextStyle {
 }
 
 impl TextStyle {
-    /// Create a Skia Font from this text style with proper antialiasing
+    /// Create a Skia Font from this text style with proper antialiasing.
     pub fn font(&self) -> Font {
+        self.font_scaled(1.0)
+    }
+
+    /// Create a Skia Font scaled by the given factor (e.g. output scale).
+    pub fn font_scaled(&self, scale: f32) -> Font {
         use skia::font_style::{Slant, Weight, Width};
         let weight = Weight::from(self.weight);
         let style = FontStyle::new(weight, Width::NORMAL, Slant::Upright);
-        let mut font = get_font_with_fallback(self.family, style, self.size);
+        let mut font = get_font_with_fallback(self.family, style, self.size * scale);
         font.set_subpixel(true);
         font.set_edging(skia::font::Edging::SubpixelAntiAlias);
         font
