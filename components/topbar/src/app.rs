@@ -16,7 +16,6 @@ use crate::config::*;
 pub struct TopBarApp {
     surface: Option<LayerShellSurface>,
     bar: Bar,
-    scale: f32,
 }
 
 impl TopBarApp {
@@ -24,7 +23,6 @@ impl TopBarApp {
         Self {
             surface: None,
             bar: Bar::new(),
-            scale: 2.0,
         }
     }
 
@@ -32,12 +30,11 @@ impl TopBarApp {
         let Some(ref surface) = self.surface else {
             return;
         };
-        let scale = self.scale;
         let bar = &self.bar;
 
         surface.draw(|canvas| {
             canvas.clear(skia_safe::Color::TRANSPARENT);
-            bar.draw(canvas, scale);
+            bar.draw(canvas);
         });
 
         surface.base_surface().wl_surface().commit();
@@ -100,15 +97,8 @@ impl App for TopBarApp {
             let surface_clone = surface.clone();
             let bar_width = self.bar.width;
             let bar_height = self.bar.height;
-            let scale = self.scale;
 
             surface.on_frame(move || {
-                // Re-create a minimal bar state just for the clock tick.
-                // In the real implementation the app will own the bar; for now
-                // we just redraw to keep the frame callback chain alive.
-                let theme = otto_kit::prelude::AppContext::current_theme();
-                let _ = theme; // will be used for redraw
-
                 surface_clone.draw(|canvas| {
                     canvas.clear(skia_safe::Color::TRANSPARENT);
 
@@ -116,7 +106,7 @@ impl App for TopBarApp {
                     bar.width = bar_width;
                     bar.height = bar_height;
                     bar.clock.tick();
-                    bar.draw(canvas, scale);
+                    bar.draw(canvas);
                 });
 
                 surface_clone.base_surface().wl_surface().commit();

@@ -26,12 +26,12 @@ impl Bar {
         }
     }
 
-    /// Draw the entire bar onto the given canvas. The canvas coordinate space
-    /// is in physical pixels (already scaled by buffer_scale).
-    pub fn draw(&self, canvas: &Canvas, scale: f32) {
+    /// Draw the entire bar onto the given canvas.
+    /// Canvas is in logical coordinates (not scaled by buffer_scale).
+    pub fn draw(&self, canvas: &Canvas) {
         let theme = AppContext::current_theme();
-        let w = self.width * scale;
-        let h = self.height * scale;
+        let w = self.width;
+        let h = self.height;
 
         // Background fill (semi-transparent, composited with blur by the compositor)
         let mut bg = Paint::default();
@@ -40,16 +40,16 @@ impl Bar {
         canvas.draw_rect(Rect::from_xywh(0.0, 0.0, w, h), &bg);
 
         // Left zone: app name
-        self.draw_app_name(canvas, scale, &theme);
+        self.draw_app_name(canvas, &theme);
 
         // Right zone: clock
-        self.draw_clock(canvas, scale, &theme);
+        self.draw_clock(canvas, &theme);
     }
 
-    fn draw_app_name(&self, canvas: &Canvas, scale: f32, theme: &Theme) {
-        let font = typography::styles::FOOTNOTE_EMPHASIZED.font_scaled(scale);
-        let x = BAR_PADDING_H * scale;
-        let y = self.baseline_y(scale, &font);
+    fn draw_app_name(&self, canvas: &Canvas, theme: &Theme) {
+        let font = typography::styles::BODY_EMPHASIZED.font();
+        let x = BAR_PADDING_H;
+        let y = self.baseline_y(&font);
 
         let mut paint = Paint::default();
         paint.set_anti_alias(true);
@@ -60,14 +60,14 @@ impl Bar {
         }
     }
 
-    fn draw_clock(&self, canvas: &Canvas, scale: f32, theme: &Theme) {
-        let font = typography::styles::FOOTNOTE.font_scaled(scale);
+    fn draw_clock(&self, canvas: &Canvas, theme: &Theme) {
+        let font = typography::styles::BODY.font();
         let text = &self.clock.text;
         let text_width = font.measure_str(text, None).0;
 
-        let w = self.width * scale;
-        let x = w - text_width - BAR_PADDING_H * scale;
-        let y = self.baseline_y(scale, &font);
+        let w = self.width;
+        let x = w - text_width - BAR_PADDING_H;
+        let y = self.baseline_y(&font);
 
         let mut paint = Paint::default();
         paint.set_anti_alias(true);
@@ -79,10 +79,9 @@ impl Bar {
     }
 
     /// Vertically center text using font metrics.
-    fn baseline_y(&self, scale: f32, font: &skia_safe::Font) -> f32 {
+    fn baseline_y(&self, font: &skia_safe::Font) -> f32 {
         let (_, metrics) = font.metrics();
-        let cap_height = metrics.cap_height;
-        let h = self.height * scale;
-        (h + cap_height) / 2.0 - 2.0 * scale
+        let h = self.height;
+        (h + metrics.cap_height) / 2.0
     }
 }

@@ -23,4 +23,4 @@ pub const TRAY_ICON_SIZE: f32 = 16.0;
 pub const CLOCK_FORMAT: &str = "%H:%M";
 
 /// Corner radius for the bar's corners.
-pub const BAR_CORNER_RADIUS: f32 = 10.0;
+pub const BAR_CORNER_RADIUS: f32 = 8.0;
