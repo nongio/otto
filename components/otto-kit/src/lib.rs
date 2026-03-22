@@ -1,4 +1,5 @@
 pub mod app_runner;
+pub mod color_scheme;
 pub mod common;
 pub mod components;
 pub mod input;
@@ -44,6 +45,8 @@ pub mod prelude {
     pub use crate::components::menu_item::{MenuItem, MenuItemGroup, MenuItemKind, MenuItemState};
     pub use crate::components::window::Window;
     pub use crate::theme::Theme;
+    pub use crate::theme::ColorScheme;
+    pub use crate::color_scheme::current_color_scheme;
     pub use crate::typography::{get_font, get_font_with_fallback, styles, TextStyle};
     pub use skia_safe::{Canvas, Color, Font, Paint, Rect};
     // Add more common types as needed

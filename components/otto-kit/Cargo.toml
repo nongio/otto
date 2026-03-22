@@ -17,6 +17,8 @@ khronos-egl = { version = "6", features = ["dynamic"] }
 calloop = "0.13"
 tracing = "0.1"
 tokio = { version = "1", features = ["full"] }
+zbus = { version = "4", default-features = false, features = ["tokio"] }
+futures-util = "0.3"
 lazy_static = "1.4"
 pipewire = "0.9"
 

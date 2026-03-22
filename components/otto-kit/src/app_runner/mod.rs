@@ -291,6 +291,9 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         // Box ensures context_data won't move even when app_data is moved
         AppContext::init::<A>(&app_data.context_data, &qh);
 
+        // Start background color-scheme watcher (reads XDG portal, updates global atomic)
+        crate::color_scheme::spawn_color_scheme_watcher();
+
         // Call the app's ready callback
         let ctx = AppContext::new(&app_data.context_data);
         app_data.app.on_app_ready(&ctx)?;

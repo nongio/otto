@@ -348,6 +348,15 @@ impl<'a> AppContext<'a> {
         Self::queue_handle_typed::<super::DefaultApp>()
     }
 
+    /// Return the theme matching the current system color scheme.
+    ///
+    /// Reads the value maintained by the background color-scheme watcher started
+    /// by `AppRunner`. Falls back to the light theme when no preference is set.
+    pub fn current_theme() -> crate::theme::Theme {
+        use crate::theme::Theme;
+        Theme::for_scheme(crate::color_scheme::current_color_scheme())
+    }
+
     // ========================================================================
     // Callback registration (public API for components)
     // ========================================================================
