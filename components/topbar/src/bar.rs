@@ -41,7 +41,11 @@ impl LeftPanel {
         bg.set_color(theme.material_medium);
         canvas.draw_rect(Rect::from_xywh(0.0, 0.0, w, h), &bg);
 
-        let font = typography::styles::BODY_EMPHASIZED.font();
+        let font = typography::TextStyle {
+            family: "Inter",
+            weight: 500,
+            size: 13.0,
+        }.font();
         let x = BAR_PADDING_H;
         let y = baseline_y(h, &font);
 

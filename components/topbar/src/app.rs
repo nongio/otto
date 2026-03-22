@@ -19,6 +19,7 @@ use crate::config::*;
 pub struct TopBarApp {
     left_surface: Option<LayerShellSurface>,
     right_surface: Option<LayerShellSurface>,
+    _spacer_surface: Option<LayerShellSurface>,
     left: LeftPanel,
     right: RightPanel,
 }
@@ -28,6 +29,7 @@ impl TopBarApp {
         Self {
             left_surface: None,
             right_surface: None,
+            _spacer_surface: None,
             left: LeftPanel::new(),
             right: RightPanel::new(),
         }
@@ -62,7 +64,7 @@ impl TopBarApp {
         style.set_blend_mode(BlendMode::BackgroundBlur);
         style.set_masks_to_bounds(ClipMode::Enabled);
         style.set_corner_radius(BAR_CORNER_RADIUS as f64);
-        style.set_shadow(0.15, 6.0, 0.0, 2.0, 0.0, 0.0, 0.0);
+        style.set_shadow(0.25, 8.0, 0.0, 3.0, 0.0, 0.0, 0.0);
     }
 
     fn setup_right_frame_callback(&self) {
@@ -94,27 +96,42 @@ impl App for TopBarApp {
     fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("creating topbar surfaces");
 
-        // Left panel: app name + menus, anchored top-left
+        // Invisible spacer spanning the full top edge — its only job is to
+        // reserve exclusive space so maximized windows are pushed down.
+        // We cannot use the left or right panel for this because they are
+        // corner-anchored, and Smithay applies exclusive zones from both
+        // edges of a corner anchor.
+        let spacer = LayerShellSurface::with_anchor(
+            Layer::Top,
+            "otto-topbar-spacer",
+            0, // fill width
+            1, // minimal height (transparent)
+            Some(Anchor::Top | Anchor::Left | Anchor::Right),
+            Some(BAR_HEIGHT as i32 + BAR_MARGIN_TOP),
+        )?;
+        spacer.set_keyboard_interactivity(KeyboardInteractivity::None);
+
+        // Left panel: app name + menus, anchored top-left (no exclusive zone)
         let left = LayerShellSurface::with_anchor(
             Layer::Top,
             "otto-topbar-left",
             LEFT_WIDTH,
             BAR_HEIGHT,
             Some(Anchor::Top | Anchor::Left),
-            Some(BAR_HEIGHT as i32 + BAR_MARGIN_TOP),
+            None,
         )?;
         left.set_margin(BAR_MARGIN_TOP, 0, 0, BAR_MARGIN_SIDE);
         left.set_keyboard_interactivity(KeyboardInteractivity::None);
         Self::apply_surface_style(&left);
 
-        // Right panel: tray + clock, anchored top-right
+        // Right panel: tray + clock, anchored top-right (no exclusive zone)
         let right = LayerShellSurface::with_anchor(
             Layer::Top,
             "otto-topbar-right",
             RIGHT_WIDTH,
             BAR_HEIGHT,
             Some(Anchor::Top | Anchor::Right),
-            Some(BAR_HEIGHT as i32 + BAR_MARGIN_TOP),
+            None,
         )?;
         right.set_margin(BAR_MARGIN_TOP, BAR_MARGIN_SIDE, 0, 0);
         right.set_keyboard_interactivity(KeyboardInteractivity::None);
@@ -122,6 +139,7 @@ impl App for TopBarApp {
 
         self.left_surface = Some(left);
         self.right_surface = Some(right);
+        self._spacer_surface = Some(spacer);
 
         crate::tray::spawn_tray_watcher();
 
@@ -167,27 +185,48 @@ impl App for TopBarApp {
         let right_wl = right_surface.wl_surface();
 
         for event in events {
-            // Only handle clicks on the right panel
-            if event.surface != right_wl {
-                continue;
-            }
+            let on_right = event.surface == right_wl;
 
-            // BTN_LEFT = 0x110 = 272
-            if let PointerEventKind::Press { button: 272, .. } = event.kind {
-                let x = event.position.0 as f32;
-                if let Some(index) = self.right.tray_item_at(x) {
-                    tracing::info!("tray icon left-clicked: index={index}");
-                    crate::tray::activate_item(index, x as i32, event.position.1 as i32);
-                }
-            }
+            match event.kind {
+                PointerEventKind::Press { button, .. } => {
+                    tracing::debug!(
+                        "pointer press: button={button} pos=({:.0},{:.0}) on_right={on_right}",
+                        event.position.0, event.position.1
+                    );
 
-            // BTN_RIGHT = 0x111 = 273
-            if let PointerEventKind::Press { button: 273, .. } = event.kind {
-                let x = event.position.0 as f32;
-                if let Some(index) = self.right.tray_item_at(x) {
-                    tracing::info!("tray icon right-clicked: index={index}");
-                    crate::tray::context_menu_item(index, x as i32, event.position.1 as i32);
+                    if !on_right {
+                        continue;
+                    }
+
+                    let x = event.position.0 as f32;
+                    let hit = self.right.tray_item_at(x);
+                    tracing::debug!("tray hit-test: x={x:.0} result={hit:?}");
+
+                    if let Some(index) = hit {
+                        match button {
+                            // BTN_LEFT = 0x110 = 272
+                            272 => {
+                                tracing::info!("tray icon left-clicked: index={index}");
+                                crate::tray::activate_item(
+                                    index,
+                                    x as i32,
+                                    event.position.1 as i32,
+                                );
+                            }
+                            // BTN_RIGHT = 0x111 = 273
+                            273 => {
+                                tracing::info!("tray icon right-clicked: index={index}");
+                                crate::tray::context_menu_item(
+                                    index,
+                                    x as i32,
+                                    event.position.1 as i32,
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
                 }
+                _ => {}
             }
         }
     }

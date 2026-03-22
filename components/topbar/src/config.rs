@@ -2,7 +2,7 @@
 /// These will later be loaded from otto_config.toml.
 
 /// Bar height in logical points.
-pub const BAR_HEIGHT: u32 = 24;
+pub const BAR_HEIGHT: u32 = 30;
 
 /// Left panel width (app name + menus).
 pub const LEFT_WIDTH: u32 = 260;
@@ -23,7 +23,7 @@ pub const BAR_PADDING_H: f32 = 14.0;
 pub const TRAY_ICON_SPACING: f32 = 8.0;
 
 /// Tray icon size in logical points.
-pub const TRAY_ICON_SIZE: f32 = 16.0;
+pub const TRAY_ICON_SIZE: f32 = 24.0;
 
 /// Clock format string (chrono strftime).
 pub const CLOCK_FORMAT: &str = "%H:%M";
