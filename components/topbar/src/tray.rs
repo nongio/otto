@@ -162,6 +162,7 @@ pub fn context_menu_item(index: usize, x: i32, y: i32) {
                         anchor_x: x,
                         anchor_y: y,
                     });
+                    TRAY_GENERATION.fetch_add(1, Ordering::Relaxed);
                 }
                 Err(e) => {
                     tracing::warn!("dbusmenu fetch failed: {service}: {e}");

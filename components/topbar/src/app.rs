@@ -1,4 +1,6 @@
 use otto_kit::{
+    components::context_menu::ContextMenu,
+    components::menu_item::MenuItem as KitMenuItem,
     protocols::otto_surface_style_v1::{BlendMode, ClipMode, ContentsGravity},
     surfaces::LayerShellSurface,
     App, AppContext,
@@ -6,8 +8,10 @@ use otto_kit::{
 use smithay_client_toolkit::{
     seat::pointer::{PointerEvent, PointerEventKind},
     shell::xdg::window::WindowConfigure,
+    shell::xdg::XdgPositioner,
 };
 use wayland_client::protocol::{wl_keyboard, wl_surface};
+use wayland_protocols::xdg::shell::client::xdg_positioner;
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::Layer,
     zwlr_layer_surface_v1::{Anchor, KeyboardInteractivity},
@@ -15,6 +19,18 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 
 use crate::bar::{LeftPanel, RightPanel};
 use crate::config::*;
+
+/// Tracks which tray icon's context menu is currently open.
+struct OpenMenu {
+    /// The ContextMenu object managing the popup.
+    menu: ContextMenu,
+    /// Tray item index that owns this menu.
+    tray_index: usize,
+    /// D-Bus service name of the tray item.
+    service: String,
+    /// D-Bus menu path for activating items.
+    menu_path: String,
+}
 
 pub struct TopBarApp {
     left_surface: Option<LayerShellSurface>,
@@ -24,6 +40,8 @@ pub struct TopBarApp {
     right: RightPanel,
     last_right_width: f32,
     last_tray_gen: u64,
+    /// Currently open tray context menu (only one at a time).
+    open_menu: Option<OpenMenu>,
 }
 
 impl TopBarApp {
@@ -36,6 +54,7 @@ impl TopBarApp {
             right: RightPanel::new(),
             last_right_width: 0.0,
             last_tray_gen: 0,
+            open_menu: None,
         }
     }
 
@@ -105,6 +124,72 @@ impl TopBarApp {
         }
         self.right.width = target;
         self.redraw_right();
+    }
+
+    /// Close any open context menu.
+    fn close_menu(&mut self) {
+        if let Some(open) = self.open_menu.take() {
+            open.menu.hide();
+            tracing::debug!("closed context menu for tray index={}", open.tray_index);
+        }
+    }
+
+    /// Show a context menu from a pending dbusmenu fetch.
+    fn show_pending_menu(&mut self, pending: crate::tray::PendingMenu, tray_index: usize, serial: u32) {
+        let Some(ref surface) = self.right_surface else { return };
+
+        // Convert dbusmenu items to otto-kit MenuItems
+        let kit_items = convert_dbusmenu_items(&pending.layout.items);
+        if kit_items.is_empty() {
+            tracing::debug!("no visible menu items, skipping popup");
+            return;
+        }
+
+        // Create the ContextMenu
+        let service = pending.service.clone();
+        let menu_path = pending.menu_path.clone();
+        let svc = service.clone();
+        let mp = menu_path.clone();
+
+        let menu = ContextMenu::new(kit_items)
+            .on_item_click(move |action_id| {
+                if let Ok(id) = action_id.parse::<i32>() {
+                    tracing::info!("menu item clicked: id={id} service={svc}");
+                    crate::tray::activate_menu_item(&svc, &mp, id);
+                }
+            });
+
+        // Create positioner: anchor below the tray icon
+        if let Ok(positioner) = XdgPositioner::new(AppContext::xdg_shell_state()) {
+            // Measure menu dimensions
+            let style = otto_kit::components::context_menu::ContextMenuStyle::default();
+            let state = menu.state();
+            let items = state.borrow().items_at_depth(0).to_vec();
+            let (menu_w, menu_h) = otto_kit::components::context_menu::ContextMenuRenderer::measure_items(&items, &style);
+
+            positioner.set_size(menu_w as i32, menu_h as i32);
+
+            // Anchor rect: the tray icon area in the right panel's coordinate space
+            positioner.set_anchor_rect(
+                pending.anchor_x,
+                self.right.height as i32,
+                1,
+                1,
+            );
+            positioner.set_anchor(xdg_positioner::Anchor::BottomLeft);
+            positioner.set_gravity(xdg_positioner::Gravity::BottomRight);
+
+            menu.show_for_layer(&surface.layer_surface(), &positioner, serial);
+
+            self.open_menu = Some(OpenMenu {
+                menu,
+                tray_index,
+                service,
+                menu_path,
+            });
+
+            tracing::info!("context menu shown for tray index={tray_index}");
+        }
     }
 }
 
@@ -192,11 +277,26 @@ impl App for TopBarApp {
             dirty = true;
         }
 
-        // Check if tray items changed
+        // Check if tray items changed (also bumped when pending menu arrives)
         let gen = crate::tray::generation();
         if gen != self.last_tray_gen {
             self.last_tray_gen = gen;
             dirty = true;
+
+            // Check for a pending context menu to display
+            if let Some(pending) = crate::tray::take_pending_menu() {
+                // Find which tray index this menu belongs to
+                let items = crate::tray::current_items();
+                let tray_index = items
+                    .iter()
+                    .position(|t| t.service == pending.service)
+                    .unwrap_or(0);
+
+                // Close any existing menu first
+                self.close_menu();
+                // Use serial 0 — layer shell popups don't typically need a grab serial
+                self.show_pending_menu(pending, tray_index, 0);
+            }
         }
 
         if dirty {
@@ -220,12 +320,7 @@ impl App for TopBarApp {
             let on_right = event.surface == right_wl;
 
             match event.kind {
-                PointerEventKind::Press { button, .. } => {
-                    tracing::info!(
-                        "pointer press: button={button} pos=({:.0},{:.0}) on_right={on_right}",
-                        event.position.0, event.position.1
-                    );
-
+                PointerEventKind::Press { button, serial, .. } => {
                     if !on_right {
                         continue;
                     }
@@ -240,31 +335,65 @@ impl App for TopBarApp {
                     );
 
                     if let Some(index) = hit {
-                        match button {
-                            // BTN_LEFT = 0x110 = 272
-                            272 => {
-                                tracing::info!("tray icon left-clicked: index={index} service={item_name:?}");
-                                crate::tray::activate_item(
-                                    index,
-                                    x as i32,
-                                    event.position.1 as i32,
-                                );
-                            }
-                            // BTN_RIGHT = 0x111 = 273
-                            273 => {
-                                tracing::info!("tray icon right-clicked: index={index} service={item_name:?}");
-                                crate::tray::context_menu_item(
-                                    index,
-                                    x as i32,
-                                    event.position.1 as i32,
-                                );
-                            }
-                            _ => {}
+                        // macOS-style: any click on a tray icon opens/toggles its context menu
+                        let already_open = self
+                            .open_menu
+                            .as_ref()
+                            .map(|m| m.tray_index == index)
+                            .unwrap_or(false);
+
+                        if already_open {
+                            // Toggle off — close the menu
+                            tracing::info!("closing menu for tray index={index}");
+                            self.close_menu();
+                        } else {
+                            // Close any other open menu, then request this icon's menu
+                            self.close_menu();
+                            tracing::info!("requesting context menu: index={index} service={item_name:?}");
+                            crate::tray::context_menu_item(
+                                index,
+                                x as i32,
+                                event.position.1 as i32,
+                            );
                         }
+                    } else {
+                        // Clicked outside any tray icon — close menu
+                        self.close_menu();
                     }
                 }
                 _ => {}
             }
         }
     }
+}
+
+/// Convert dbusmenu items to otto-kit MenuItems.
+fn convert_dbusmenu_items(items: &[crate::dbusmenu::MenuItem]) -> Vec<KitMenuItem> {
+    items
+        .iter()
+        .filter(|item| item.visible)
+        .map(|item| {
+            if item.item_type == crate::dbusmenu::MenuItemType::Separator {
+                return KitMenuItem::separator();
+            }
+
+            let label = item.label.replace('_', ""); // strip mnemonics
+
+            if !item.children.is_empty() {
+                let children = convert_dbusmenu_items(&item.children);
+                let mut kit = KitMenuItem::submenu(label, children);
+                if !item.enabled {
+                    kit = kit.disabled();
+                }
+                kit
+            } else {
+                let mut kit = KitMenuItem::action(&label)
+                    .with_action_id(item.id.to_string());
+                if !item.enabled {
+                    kit = kit.disabled();
+                }
+                kit
+            }
+        })
+        .collect()
 }
