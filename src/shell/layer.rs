@@ -250,16 +250,33 @@ impl LayerShellSurface {
 
         let s = |v: i32| taffy::LengthPercentageAuto::Length((v as f64 * scale) as f32);
         let auto = taffy::LengthPercentageAuto::Auto;
+        let zero = taffy::LengthPercentageAuto::Length(0.0);
 
-        // Inset: pin to an edge when anchored, otherwise auto.
-        let top = if anchor_top { s(mt) } else { auto };
-        let bottom = if anchor_bottom { s(mb) } else { auto };
-        let left = if anchor_left { s(ml) } else { auto };
-        let right = if anchor_right { s(mr) } else { auto };
+        // wlr-layer-shell centering: surfaces not anchored on an axis are centered
+        // along that axis. For absolute items in Taffy, centering requires
+        // inset 0 on both sides + auto margins on that axis.
+        let horizontal_anchored = anchor_left || anchor_right;
+        let vertical_anchored = anchor_top || anchor_bottom;
+
+        let top = if anchor_top { s(mt) } else if !vertical_anchored { zero } else { auto };
+        let bottom = if anchor_bottom { s(mb) } else if !vertical_anchored { zero } else { auto };
+        let left = if anchor_left { s(ml) } else if !horizontal_anchored { zero } else { auto };
+        let right = if anchor_right { s(mr) } else if !horizontal_anchored { zero } else { auto };
+
+        let margin_top = if !vertical_anchored { auto } else { taffy::LengthPercentageAuto::Length(0.0) };
+        let margin_bottom = if !vertical_anchored { auto } else { taffy::LengthPercentageAuto::Length(0.0) };
+        let margin_left = if !horizontal_anchored { auto } else { taffy::LengthPercentageAuto::Length(0.0) };
+        let margin_right = if !horizontal_anchored { auto } else { taffy::LengthPercentageAuto::Length(0.0) };
 
         taffy::Style {
             position: taffy::Position::Absolute,
             inset: taffy::Rect { left, right, top, bottom },
+            margin: taffy::Rect {
+                left: margin_left,
+                right: margin_right,
+                top: margin_top,
+                bottom: margin_bottom,
+            },
             ..Default::default()
         }
     }

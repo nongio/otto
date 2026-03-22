@@ -77,7 +77,8 @@ pub fn activate_menu_item(service: &str, menu_path: &str, item_id: i32) {
     let service = service.to_string();
     let menu_path = menu_path.to_string();
 
-    tokio::spawn(async move {
+    let handle = tokio::runtime::Handle::current();
+    handle.spawn(async move {
         match crate::dbusmenu::activate_menu_item(&conn, &service, &menu_path, item_id).await {
             Ok(_) => tracing::info!("dbusmenu item activated: id={item_id}"),
             Err(e) => tracing::warn!("dbusmenu activate failed: {e}"),
@@ -101,9 +102,15 @@ pub fn context_menu_item(index: usize, x: i32, y: i32) {
     drop(items);
 
     let conn = TRAY_CONNECTION.lock().unwrap().clone();
-    let Some(conn) = conn else { return };
+    let Some(conn) = conn else {
+        tracing::warn!("no D-Bus connection for context_menu");
+        return;
+    };
 
-    tokio::spawn(async move {
+    tracing::info!("context_menu: {service}{path} at ({x},{y})");
+
+    let handle = tokio::runtime::Handle::current();
+    handle.spawn(async move {
         // Try SNI ContextMenu first
         let proxy = StatusNotifierItemProxy::builder(&conn)
             .destination(service.as_str())
@@ -165,11 +172,16 @@ fn call_item_method(index: usize, x: i32, y: i32, method: &str) {
     drop(items);
 
     let conn = TRAY_CONNECTION.lock().unwrap().clone();
-    let Some(conn) = conn else { return };
+    let Some(conn) = conn else {
+        tracing::warn!("no D-Bus connection for {method}");
+        return;
+    };
+
+    tracing::info!("SNI {method}: {service}{path} at ({x},{y})");
 
     let method = method.to_string();
-    tokio::spawn(async move {
-        tracing::debug!("SNI {method}: {service}{path} at ({x},{y})");
+    let handle = tokio::runtime::Handle::current();
+    handle.spawn(async move {
         let proxy = StatusNotifierItemProxy::builder(&conn)
             .destination(service.as_str())
             .unwrap()

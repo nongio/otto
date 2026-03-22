@@ -77,9 +77,9 @@ impl TopBarApp {
         let qh = AppContext::queue_handle();
 
         let timing = scene.create_timing_function(qh, ());
-        timing.set_spring(0.35, 0.5);
+        timing.set_spring(0.5, 0.7);
         let txn = scene.begin_transaction(qh, ());
-        txn.set_duration(0.35);
+        txn.set_duration(0.5);
         txn.set_timing_function(&timing);
 
         let scale = 2.0_f64;
@@ -212,6 +212,9 @@ impl App for TopBarApp {
     fn on_keyboard_leave(&mut self, _ctx: &AppContext, _surface: &wl_surface::WlSurface) {}
 
     fn on_pointer_event(&mut self, _ctx: &AppContext, events: &[PointerEvent]) {
+        if !events.is_empty() {
+            tracing::info!("on_pointer_event: {} events", events.len());
+        }
         let Some(ref right_surface) = self.right_surface else { return };
         let right_wl = right_surface.wl_surface();
 
@@ -220,7 +223,7 @@ impl App for TopBarApp {
 
             match event.kind {
                 PointerEventKind::Press { button, .. } => {
-                    tracing::debug!(
+                    tracing::info!(
                         "pointer press: button={button} pos=({:.0},{:.0}) on_right={on_right}",
                         event.position.0, event.position.1
                     );
@@ -231,13 +234,18 @@ impl App for TopBarApp {
 
                     let x = event.position.0 as f32;
                     let hit = self.right.tray_item_at(x);
-                    tracing::debug!("tray hit-test: x={x:.0} result={hit:?}");
+                    let items = crate::tray::current_items();
+                    let item_name = hit.and_then(|i| items.get(i).map(|t| t.service.clone()));
+                    tracing::info!(
+                        "tray hit-test: x={x:.0} hit={hit:?} item={item_name:?} (total={})",
+                        items.len()
+                    );
 
                     if let Some(index) = hit {
                         match button {
                             // BTN_LEFT = 0x110 = 272
                             272 => {
-                                tracing::info!("tray icon left-clicked: index={index}");
+                                tracing::info!("tray icon left-clicked: index={index} service={item_name:?}");
                                 crate::tray::activate_item(
                                     index,
                                     x as i32,
@@ -246,7 +254,7 @@ impl App for TopBarApp {
                             }
                             // BTN_RIGHT = 0x111 = 273
                             273 => {
-                                tracing::info!("tray icon right-clicked: index={index}");
+                                tracing::info!("tray icon right-clicked: index={index} service={item_name:?}");
                                 crate::tray::context_menu_item(
                                     index,
                                     x as i32,
