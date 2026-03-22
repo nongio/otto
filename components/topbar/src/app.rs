@@ -68,11 +68,11 @@ impl App for TopBarApp {
             "otto-topbar",
             BAR_WIDTH,
             BAR_HEIGHT,
-            Some(Anchor::Top),
+            Some(Anchor::Top | Anchor::Right),
             Some(BAR_HEIGHT as i32 + BAR_MARGIN_TOP),
         )?;
 
-        surface.set_margin(BAR_MARGIN_TOP, 0, 0, 0);
+        surface.set_margin(BAR_MARGIN_TOP, BAR_MARGIN_TOP, 0, 0);
         surface.set_keyboard_interactivity(KeyboardInteractivity::None);
 
         Self::apply_surface_style(&surface);
