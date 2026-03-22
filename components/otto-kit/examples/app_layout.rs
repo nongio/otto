@@ -8,7 +8,7 @@ struct AppLayoutApp {
 }
 
 impl App for AppLayoutApp {
-    fn on_app_ready(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
         let mut window = Window::new("Application Layout", 1200, 800)?;
         window.set_background(Color::from_rgb(245, 245, 247));
 
@@ -20,28 +20,28 @@ impl App for AppLayoutApp {
 
             // ===== TOOLBAR =====
             let leading = ToolbarGroup::new()
-                .add_item(
+                .add(
                     Button::icon("layout-dashboard")
                         .with_background(Color::TRANSPARENT)
                         .with_text_color(Color::from_rgb(59, 130, 246)),
                 )
                 .add_space(16.0)
-                .add_item(
+                .add(
                     Button::new("Dashboard")
                         .with_background(Color::TRANSPARENT)
                         .with_text_color(Color::from_rgb(30, 30, 30)),
                 )
-                .add_item(
+                .add(
                     Button::new("Projects")
                         .with_background(Color::TRANSPARENT)
                         .with_text_color(Color::from_rgb(100, 100, 100)),
                 )
-                .add_item(
+                .add(
                     Button::new("Team")
                         .with_background(Color::TRANSPARENT)
                         .with_text_color(Color::from_rgb(100, 100, 100)),
                 )
-                .add_item(
+                .add(
                     Button::new("Analytics")
                         .with_background(Color::TRANSPARENT)
                         .with_text_color(Color::from_rgb(100, 100, 100)),
@@ -49,18 +49,18 @@ impl App for AppLayoutApp {
                 .build();
 
             let trailing = ToolbarGroup::new()
-                .add_item(
+                .add(
                     Button::icon("search")
                         .with_background(Color::TRANSPARENT)
                         .with_text_color(Color::from_rgb(100, 100, 100)),
                 )
-                .add_item(
+                .add(
                     Button::icon("bell")
                         .with_background(Color::TRANSPARENT)
                         .with_text_color(Color::from_rgb(100, 100, 100)),
                 )
                 .add_separator()
-                .add_item(
+                .add(
                     Button::icon("user")
                         .with_background(Color::from_rgb(229, 231, 235))
                         .with_text_color(Color::from_rgb(60, 60, 60)),

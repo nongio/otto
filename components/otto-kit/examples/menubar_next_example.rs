@@ -28,7 +28,7 @@ impl MenuBarExample {
 }
 
 impl App for MenuBarExample {
-    fn on_app_ready(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
         println!("MenuBarNext Component Demo");
         println!("===========================");
         println!("This demo shows the menu bar rendering.");
@@ -134,6 +134,7 @@ impl App for MenuBarExample {
 
     fn on_keyboard_event(
         &mut self,
+        _ctx: &AppContext,
         _key: u32,
         _state: wayland_client::protocol::wl_keyboard::KeyState,
         _serial: u32,
@@ -152,7 +153,7 @@ impl App for MenuBarExample {
 
 fn main() {
     let app = MenuBarExample::new();
-    let runner = AppRunnerWithType::new(app);
+    let runner = AppRunner::new(app);
 
     if let Err(e) = runner.run() {
         eprintln!("Error running app: {}", e);

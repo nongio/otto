@@ -7,7 +7,7 @@ struct ButtonDemoApp {
 }
 
 impl App for ButtonDemoApp {
-    fn on_app_ready(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
         let mut window = Window::new("Button Component Demo", 1000, 800)?;
         window.set_background(Color::from_rgb(245, 245, 245));
 

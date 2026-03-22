@@ -161,7 +161,7 @@ impl ContainerDemo {
 }
 
 impl App for ContainerDemo {
-    fn on_app_ready(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
         let mut window = Window::new("Container Demo", 600, 550)?;
         window.set_background(Color::from_rgb(250, 250, 250));
 

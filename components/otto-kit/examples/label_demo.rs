@@ -6,7 +6,7 @@ struct LabelDemoApp {
 }
 
 impl App for LabelDemoApp {
-    fn on_app_ready(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
         let mut window = Window::new("Label Component Demo", 800, 600)?;
         window.set_background(Color::from_rgb(245, 245, 247));
 

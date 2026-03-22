@@ -8,7 +8,7 @@ struct WindowWithToolbarApp {
 }
 
 impl App for WindowWithToolbarApp {
-    fn on_app_ready(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
         let theme = Theme::light();
         let mut window = Window::new("Window with Toolbar", 1000, 700)?;
         window.set_background(Color::WHITE); // White content area
@@ -49,10 +49,10 @@ impl App for WindowWithToolbarApp {
 
             // Create toolbar groups
             let leading = ToolbarGroup::new()
-                .add_item(Button::icon("chevron-left").ghost())
-                .add_item(Button::icon("chevron-right").ghost())
+                .add(Button::icon("chevron-left").ghost())
+                .add(Button::icon("chevron-right").ghost())
                 .add_space(16.0)
-                .add_item(
+                .add(
                     Label::new("Toolbar window")
                         .with_style(styles::TITLE_3_EMPHASIZED)
                         .with_color(theme.text_primary),

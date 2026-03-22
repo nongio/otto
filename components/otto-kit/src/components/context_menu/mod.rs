@@ -1,4 +1,3 @@
-#[allow(clippy::module_inception)]
 mod context_menu;
 mod renderer;
 mod state;

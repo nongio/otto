@@ -18,11 +18,11 @@ struct MyApp {
 /// Implement the App trait to make your struct runnable with AppRunner
 ///
 /// Required methods:
-///   - fn on_app_ready(&mut self) -> Result<(), Box<dyn std::error::Error>>
-///   - fn on_close(&mut self) -> bool
+///   - fn on_app_ready(&mut self, ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>>
+///   - fn on_close(&mut self) -> bool  (optional, defaults to true)
 impl App for MyApp {
     /// Called when the app is ready and the window has been created
-    fn on_app_ready(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
         println!("App is ready!");
         AppContext::enable_layer_engine(1000.0, 1000.0);
 
@@ -60,7 +60,7 @@ impl App for MyApp {
 
         Ok(())
     }
-    fn on_keyboard_event(&mut self, key: u32, key_state: wl_keyboard::KeyState, _serial: u32) {
+    fn on_keyboard_event(&mut self, _ctx: &AppContext, key: u32, key_state: wl_keyboard::KeyState, _serial: u32) {
         // Only handle key press events
         if key_state != wl_keyboard::KeyState::Pressed {
             return;
@@ -129,6 +129,7 @@ impl App for MyApp {
     }
     fn on_pointer_event(
         &mut self,
+        _ctx: &AppContext,
         _events: &[smithay_client_toolkit::seat::pointer::PointerEvent],
     ) {
         // println!("Pointer event received: {:?}", _events);
@@ -205,7 +206,7 @@ fn render_menu(state: &ContextMenuState, _view: &View<ContextMenuState>) -> Laye
         };
 
         let depth_layer = LayerTreeBuilder::default()
-            .key(format!("menu-depth-{}", depth))
+            .key(&format!("menu-depth-{}", depth))
             .position(layers::types::Point::new(x_offset, 0.0))
             .size(layers::types::Size::points(width, height))
             .opacity((

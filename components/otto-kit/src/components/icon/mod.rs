@@ -1,4 +1,3 @@
-#[allow(clippy::module_inception)]
 mod icon;
 mod svg_icon;
 

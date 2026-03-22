@@ -7,7 +7,7 @@ struct LucideIconsApp {
 }
 
 impl App for LucideIconsApp {
-    fn on_app_ready(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
         let mut window = Window::new("Lucide Icons Demo", 1000, 700)?;
         window.set_background(Color::from_rgb(245, 245, 245));
 

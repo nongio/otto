@@ -5,7 +5,7 @@ struct TypographyDemo {
 }
 
 impl App for TypographyDemo {
-    fn on_app_ready(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
         let mut window = Window::new("Typography Demo", 600, 700)?;
 
         window.set_background(Color::from_rgb(250, 250, 250));
@@ -82,9 +82,6 @@ impl App for TypographyDemo {
         Ok(())
     }
 
-    fn on_close(&mut self) -> bool {
-        true
-    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
