@@ -21,7 +21,7 @@ impl Bar {
         Self {
             clock: Clock::new(),
             app_name: "Otto".into(),
-            width: 0.0,
+            width: BAR_WIDTH as f32,
             height: BAR_HEIGHT as f32,
         }
     }
@@ -47,7 +47,7 @@ impl Bar {
     }
 
     fn draw_app_name(&self, canvas: &Canvas, scale: f32, theme: &Theme) {
-        let font = typography::styles::HEADLINE.font_scaled(scale);
+        let font = typography::styles::CALLOUT_EMPHASIZED.font_scaled(scale);
         let x = BAR_PADDING_H * scale;
         let y = self.baseline_y(scale, &font);
 
@@ -61,7 +61,7 @@ impl Bar {
     }
 
     fn draw_clock(&self, canvas: &Canvas, scale: f32, theme: &Theme) {
-        let font = typography::styles::BODY_EMPHASIZED.font_scaled(scale);
+        let font = typography::styles::CALLOUT.font_scaled(scale);
         let text = &self.clock.text;
         let text_width = font.measure_str(text, None).0;
 

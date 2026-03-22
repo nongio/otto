@@ -62,16 +62,17 @@ impl App for TopBarApp {
     fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("creating topbar layer surface");
 
-        // width=0 means fill available width when anchored left+right
+        // Fixed width, anchored top-center with margin
         let surface = LayerShellSurface::with_anchor(
             Layer::Top,
             "otto-topbar",
-            0,
+            BAR_WIDTH,
             BAR_HEIGHT,
-            Some(Anchor::Top | Anchor::Left | Anchor::Right),
-            Some(BAR_HEIGHT as i32),
+            Some(Anchor::Top),
+            Some(BAR_HEIGHT as i32 + BAR_MARGIN_TOP),
         )?;
 
+        surface.set_margin(BAR_MARGIN_TOP, 0, 0, 0);
         surface.set_keyboard_interactivity(KeyboardInteractivity::None);
 
         Self::apply_surface_style(&surface);
