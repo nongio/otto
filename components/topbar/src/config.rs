@@ -8,7 +8,7 @@ pub const BAR_HEIGHT: u32 = 24;
 pub const BAR_WIDTH: u32 = 580;
 
 /// Top margin from screen edge.
-pub const BAR_MARGIN_TOP: i32 = 6;
+pub const BAR_MARGIN_TOP: i32 = 3;
 
 /// Horizontal padding inside the bar (left and right edges).
 pub const BAR_PADDING_H: f32 = 14.0;
