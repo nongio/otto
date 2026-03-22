@@ -2,20 +2,70 @@
 name = "otto-remote-display"
 version = "0.1.0"
 edition = "2021"
+license = "LGPL-2.1-or-later"
 
 [[bin]]
 name = "otto-remote-display"
 path = "src/main.rs"
 
+[features]
+default = ["rdp"]
+airplay = [
+    "dep:chacha20poly1305",
+    "dep:ed25519-dalek",
+    "dep:gstreamer",
+    "dep:gstreamer-app",
+    "dep:gstreamer-video",
+    "dep:hkdf",
+    "dep:mdns-sd",
+    "dep:plist",
+    "dep:sha2",
+    "dep:x25519-dalek",
+]
+rdp = [
+    "dep:bytes",
+    "dep:ironrdp-server",
+    "dep:async-trait",
+    "dep:rustls",
+    "dep:rustls-pemfile",
+    "dep:rcgen",
+    "dep:pipewire",
+    "dep:libc",
+]
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-gstreamer = "0.23"
-gstreamer-app = "0.23"
-gstreamer-video = "0.23"
-mdns-sd = "0.11"
-plist = "1"
+hex = "0.4"
+rand = "0.8"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zbus = "5"
+
+# GStreamer (only for airplay/hls)
+gstreamer = { version = "0.23", optional = true }
+gstreamer-app = { version = "0.23", optional = true }
+gstreamer-video = { version = "0.23", optional = true }
+
+# AirPlay dependencies (gated behind "airplay" feature)
+chacha20poly1305 = { version = "0.10", optional = true }
+ed25519-dalek = { version = "2", features = ["rand_core"], optional = true }
+hkdf = { version = "0.12", optional = true }
+mdns-sd = { version = "0.11", optional = true }
+plist = { version = "1", optional = true }
+sha2 = { version = "0.10", optional = true }
+x25519-dalek = { version = "2", features = ["static_secrets"], optional = true }
+
+# RDP dependencies (gated behind "rdp" feature)
+bytes = { version = "1", optional = true }
+ironrdp-server = { version = "0.10", features = ["helper"], optional = true }
+async-trait = { version = "0.1", optional = true }
+rustls = { version = "0.23", optional = true }
+rustls-pemfile = { version = "2", optional = true }
+rcgen = { version = "0.13", optional = true }
+pipewire = { version = "0.9", optional = true }
+libc = { version = "0.2", optional = true }
+
+[build-dependencies]
+cc = "1"

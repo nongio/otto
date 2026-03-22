@@ -45,6 +45,10 @@ pub fn browse_airplay(timeout: Duration) -> Result<Vec<AirPlayDevice>> {
 
                 let addr = info.get_addresses().iter().next().copied();
                 if let Some(addr) = addr {
+                    // Prefer IPv4 address if available
+                    let ipv4_addr = info.get_addresses().iter().find(|a| a.is_ipv4()).copied();
+                    let chosen_addr = ipv4_addr.unwrap_or(addr);
+
                     let raw_name = info.get_fullname();
                     let name = raw_name
                         .split("._airplay")
@@ -55,7 +59,7 @@ pub fn browse_airplay(timeout: Duration) -> Result<Vec<AirPlayDevice>> {
                     // Skip non-Apple TV devices (Macs, HomePods, etc.) unless explicitly targeted
                     let device = AirPlayDevice {
                         name,
-                        ip: addr.to_string(),
+                        ip: chosen_addr.to_string(),
                         port: info.get_port(),
                         model,
                         device_id,
