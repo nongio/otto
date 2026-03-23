@@ -114,11 +114,17 @@ pub async fn fetch_menu(
 }
 
 /// Activate a menu item by sending a "clicked" event.
+///
+/// Because some apps (e.g. nm-applet) regenerate their menu tree frequently,
+/// the `item_id` from a previous `get_layout` may already be stale.  We
+/// therefore re-fetch the layout with fresh IDs and match by `item_label`.
+/// The original `item_id` is used only as a fast-path shortcut.
 pub async fn activate_menu_item(
     conn: &Connection,
     service: &str,
     menu_path: &str,
     item_id: i32,
+    item_label: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let proxy = DBusMenuProxy::builder(conn)
         .destination(service)?
@@ -126,16 +132,62 @@ pub async fn activate_menu_item(
         .build()
         .await?;
 
+    // Re-fetch the layout to obtain current (valid) IDs.
+    let _ = proxy.about_to_show(0).await;
+    let (_revision, layout) = proxy.get_layout(0, -1, &[]).await?;
+    let fresh_items = parse_children(&layout.2);
+
+    // Resolve the item: try matching by original ID first, then by label.
+    let fresh_id = find_item_id(&fresh_items, item_id, item_label);
+
+    let target_id = fresh_id.unwrap_or(item_id);
+    tracing::debug!("dbusmenu activate: original_id={item_id} fresh_id={target_id} label={item_label:?}");
+
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as u32;
 
     proxy
-        .event(item_id, "clicked", &Value::I32(0), timestamp)
+        .event(target_id, "clicked", &Value::I32(0), timestamp)
         .await?;
 
     Ok(())
+}
+
+/// Find the current ID for a menu item, searching recursively.
+/// Prefers an exact ID match; falls back to label match.
+fn find_item_id(items: &[MenuItem], original_id: i32, label: &str) -> Option<i32> {
+    // First pass: exact ID match (fast path — IDs haven't changed)
+    if let Some(id) = find_by_id(items, original_id) {
+        return Some(id);
+    }
+    // Second pass: match by label
+    find_by_label(items, label)
+}
+
+fn find_by_id(items: &[MenuItem], target_id: i32) -> Option<i32> {
+    for item in items {
+        if item.id == target_id {
+            return Some(item.id);
+        }
+        if let Some(id) = find_by_id(&item.children, target_id) {
+            return Some(id);
+        }
+    }
+    None
+}
+
+fn find_by_label(items: &[MenuItem], label: &str) -> Option<i32> {
+    for item in items {
+        if item.label == label {
+            return Some(item.id);
+        }
+        if let Some(id) = find_by_label(&item.children, label) {
+            return Some(id);
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------

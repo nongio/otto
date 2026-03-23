@@ -80,16 +80,17 @@ pub fn take_pending_menu() -> Option<PendingMenu> {
 }
 
 /// Activate a dbusmenu item by sending a "clicked" event.
-pub fn activate_menu_item(service: &str, menu_path: &str, item_id: i32) {
+pub fn activate_menu_item(service: &str, menu_path: &str, item_id: i32, item_label: &str) {
     let conn = TRAY_CONNECTION.lock().unwrap().clone();
     let Some(conn) = conn else { return };
     let service = service.to_string();
     let menu_path = menu_path.to_string();
+    let label = item_label.to_string();
 
     let handle = tokio::runtime::Handle::current();
     handle.spawn(async move {
-        match crate::dbusmenu::activate_menu_item(&conn, &service, &menu_path, item_id).await {
-            Ok(_) => tracing::info!("dbusmenu item activated: id={item_id}"),
+        match crate::dbusmenu::activate_menu_item(&conn, &service, &menu_path, item_id, &label).await {
+            Ok(_) => tracing::info!("dbusmenu item activated: id={item_id} label={label:?}"),
             Err(e) => tracing::warn!("dbusmenu activate failed: {e}"),
         }
     });

@@ -10,6 +10,7 @@ use smithay_client_toolkit::{
     shell::xdg::window::WindowConfigure,
     shell::xdg::XdgPositioner,
 };
+use std::collections::HashMap;
 use wayland_client::protocol::{wl_keyboard, wl_surface};
 use wayland_protocols::xdg::shell::client::xdg_positioner;
 use wayland_protocols_wlr::layer_shell::v1::client::{
@@ -151,11 +152,15 @@ impl TopBarApp {
         let svc = service.clone();
         let mp = menu_path.clone();
 
+        // Build id→label map for resolving stale IDs at activation time
+        let id_labels = build_id_label_map(&pending.layout.items);
+
         let menu = ContextMenu::new(kit_items)
             .on_item_click(move |action_id| {
                 if let Ok(id) = action_id.parse::<i32>() {
-                    tracing::info!("menu item clicked: id={id} service={svc}");
-                    crate::tray::activate_menu_item(&svc, &mp, id);
+                    let label = id_labels.get(&id).cloned().unwrap_or_default();
+                    tracing::info!("menu item clicked: id={id} label={label:?} service={svc}");
+                    crate::tray::activate_menu_item(&svc, &mp, id, &label);
                 }
             });
 
@@ -178,6 +183,12 @@ impl TopBarApp {
             );
             positioner.set_anchor(xdg_positioner::Anchor::BottomLeft);
             positioner.set_gravity(xdg_positioner::Gravity::BottomRight);
+            positioner.set_constraint_adjustment(
+                xdg_positioner::ConstraintAdjustment::SlideX
+                    | xdg_positioner::ConstraintAdjustment::SlideY
+                    | xdg_positioner::ConstraintAdjustment::FlipX
+                    | xdg_positioner::ConstraintAdjustment::FlipY,
+            );
 
             menu.show_for_layer(&surface.layer_surface(), &positioner, serial);
 
@@ -367,7 +378,22 @@ impl App for TopBarApp {
     }
 }
 
-/// Convert dbusmenu items to otto-kit MenuItems.
+/// Build a map from dbusmenu item id → label (raw, with mnemonics).
+/// Used to resolve stale IDs when activating items.
+fn build_id_label_map(items: &[crate::dbusmenu::MenuItem]) -> HashMap<i32, String> {
+    let mut map = HashMap::new();
+    collect_id_labels(items, &mut map);
+    map
+}
+
+fn collect_id_labels(items: &[crate::dbusmenu::MenuItem], map: &mut HashMap<i32, String>) {
+    for item in items {
+        if !item.label.is_empty() {
+            map.insert(item.id, item.label.clone());
+        }
+        collect_id_labels(&item.children, map);
+    }
+}
 fn convert_dbusmenu_items(items: &[crate::dbusmenu::MenuItem]) -> Vec<KitMenuItem> {
     items
         .iter()

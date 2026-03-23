@@ -30,7 +30,7 @@ use smithay::{
                 Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler,
                 WlrLayerShellState,
             },
-            xdg::{XdgPopupSurfaceData, XdgToplevelSurfaceData},
+            xdg::{PopupSurface, XdgPopupSurfaceData, XdgToplevelSurfaceData},
         },
     },
 };
@@ -353,6 +353,23 @@ impl<BackendData: Backend> Otto<BackendData> {
             );
 
             self.surface_layers.extend(popup_layers);
+
+            // Show the popup only after the initial configure has been sent and
+            // the client has committed at the correct position. Until then the
+            // layer stays hidden (as initialised in get_or_create_popup_layer).
+            let initial_configure_sent =
+                smithay::wayland::compositor::with_states(popup_surface, |states| {
+                    states
+                        .data_map
+                        .get::<XdgPopupSurfaceData>()
+                        .map(|d: &std::sync::Mutex<_>| d.lock().unwrap().initial_configure_sent)
+                        .unwrap_or(false)
+                });
+            if initial_configure_sent {
+                if let Some(popup_layer) = self.workspaces.popup_overlay.get_popup(&popup_id) {
+                    popup_layer.layer.set_hidden(false);
+                }
+            }
         });
 
         // Ensure all surfaces in the tree have rendering layers
@@ -570,6 +587,32 @@ impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
 
         // Arrange the layer map which will handle the exclusive zone
         map.arrange();
+    }
+
+    fn new_popup(&mut self, _parent: WlrLayerSurface, popup: PopupSurface) {
+        // At this point Smithay has already set the popup's XdgPopupSurfaceData.parent
+        // to the layer surface's wl_surface (in zwlr_layer_surface_v1.get_popup handler).
+        // The earlier XdgShellHandler::new_popup fired before the parent was set, so
+        // track_popup failed there. Re-track now that the parent chain is valid.
+        let popup_kind = PopupKind::from(popup.clone());
+        let popup_id = popup.wl_surface().id();
+
+        if let Ok(root) = find_popup_root_surface(&popup_kind) {
+            let root_id = root.id();
+            self.popup_root_cache.insert(popup_id.clone(), root_id);
+            tracing::debug!(
+                "layer new_popup: {:?} root={:?}",
+                popup_id,
+                root.id()
+            );
+        }
+
+        if let Err(err) = self.popups.track_popup(popup_kind) {
+            tracing::warn!("layer new_popup: failed to track popup: {}", err);
+        }
+
+        // Unconstrain now that the parent chain is established
+        self.unconstrain_popup(&popup);
     }
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {

@@ -5,7 +5,7 @@ use smithay::{
         self, Axis, AxisSource, ButtonState, Event, InputBackend, PointerAxisEvent,
         PointerButtonEvent,
     },
-    desktop::{space::SpaceElement, WindowSurfaceType},
+    desktop::{space::SpaceElement, utils::under_from_surface_tree, WindowSurfaceType},
     input::pointer::{AxisFrame, ButtonEvent, MotionEvent},
     reexports::wayland_server::{protocol::wl_pointer, Resource},
     utils::{IsAlive, Logical, Point, Serial, SERIAL_COUNTER as SCOUNTER},
@@ -286,8 +286,49 @@ impl<BackendData: Backend> Otto<BackendData> {
             return Some((focus, (position.x as f64, position.y as f64).into()));
         }
 
+        // Check popup surfaces (layer shell popups) — they sit above everything
+        if under.is_none() {
+            use smithay::desktop::PopupManager;
+
+            for layer_shell_surf in self.layer_surfaces.values() {
+                let layer_wl = layer_shell_surf.layer_surface().wl_surface();
+                let popups: Vec<_> = PopupManager::popups_for_surface(layer_wl).collect();
+                if !popups.is_empty() {
+                    let lay_layer = &layer_shell_surf.layer;
+                    let render_pos = lay_layer.render_position();
+                    let layer_abs_pos: Point<f64, Logical> = Point::from((
+                        render_pos.x as f64 / scale,
+                        render_pos.y as f64 / scale,
+                    ));
+                    let cursor_rel_layer = pos - layer_abs_pos;
+                    // Match Smithay's LayerSurface::surface_under approach:
+                    // offset = popup_location - popup.geometry().loc
+                    for (popup, popup_location) in popups.into_iter() {
+                        let offset = popup_location - popup.geometry().loc;
+                        let popup_surface = popup.wl_surface();
+                        if let Some((surface, surface_loc)) = under_from_surface_tree(
+                            popup_surface,
+                            cursor_rel_layer,
+                            offset,
+                            WindowSurfaceType::ALL,
+                        ) {
+                            under = Some((
+                                PointerFocusTarget::WlSurface(surface),
+                                layer_abs_pos + surface_loc.to_f64(),
+                            ));
+                            break;
+                        }
+                    }
+                }
+                if under.is_some() {
+                    break;
+                }
+            }
+        }
+
         // Check Top/Overlay layer shell surfaces using lay-rs hit testing
         // (Smithay's layer_map geometry doesn't reflect Taffy/animated positions)
+        if under.is_none() {
         for layer_shell_surf in self.layer_surfaces.values() {
             let wlr = layer_shell_surf.wlr_layer();
             if !matches!(wlr, WlrLayer::Overlay | WlrLayer::Top) {
@@ -314,6 +355,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                 }
                 break;
             }
+        }
         }
 
         // Check dock
