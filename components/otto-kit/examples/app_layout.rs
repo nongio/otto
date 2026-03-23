@@ -297,8 +297,9 @@ impl App for AppLayoutApp {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = AppLayoutApp { window: None };
-    AppRunnerWithType::new(app).run()?;
+    AppRunner::new(app).run()?;
     Ok(())
 }

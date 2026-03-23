@@ -25,10 +25,11 @@ impl MenuBarRenderer {
         canvas: &Canvas,
         state: &MenuBarState,
         style: &MenuBarStyle,
-        _width: f32,
+        width: f32,
     ) -> RenderResult {
-        // Clear background
-        canvas.clear(Color4f::new(0.0, 0.0, 0.0, 0.0));
+        // Draw background bar
+        let bg_paint = Paint::new(Color4f::from(style.background_color), None);
+        canvas.draw_rect(Rect::new(0.0, 0.0, width, style.height), &bg_paint);
 
         // Get font
         let font = typography::get_font_with_fallback("Inter", style.font_style(), style.font_size);

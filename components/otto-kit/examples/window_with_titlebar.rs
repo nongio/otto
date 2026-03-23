@@ -91,7 +91,8 @@ impl App for WindowWithTitlebarApp {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = WindowWithTitlebarApp { window: None };
     AppRunner::new(app).run()?;
     Ok(())

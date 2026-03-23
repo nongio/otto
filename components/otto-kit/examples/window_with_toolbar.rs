@@ -88,7 +88,8 @@ impl App for WindowWithToolbarApp {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = WindowWithToolbarApp { window: None };
     AppRunner::new(app).run()?;
     Ok(())

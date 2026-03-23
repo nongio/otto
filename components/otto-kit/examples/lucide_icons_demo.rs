@@ -143,8 +143,9 @@ impl App for LucideIconsApp {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = LucideIconsApp { window: None };
-    AppRunnerWithType::new(app).run()?;
+    AppRunner::new(app).run()?;
     Ok(())
 }

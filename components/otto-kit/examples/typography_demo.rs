@@ -84,7 +84,8 @@ impl App for TypographyDemo {
 
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = TypographyDemo { window: None };
     AppRunner::new(app).run()?;
     Ok(())

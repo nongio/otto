@@ -179,7 +179,8 @@ impl NotificationDemoApp {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = NotificationDemoApp {
         window: None,
         notification_type: Arc::new(RwLock::new(0)),

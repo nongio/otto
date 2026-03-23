@@ -194,8 +194,9 @@ impl App for ContainerDemo {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = ContainerDemo::new();
-    AppRunnerWithType::new(app).run()?;
+    AppRunner::new(app).run()?;
     Ok(())
 }
