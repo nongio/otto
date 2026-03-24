@@ -11,12 +11,9 @@ use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 
 use otto_kit::components::context_menu::ContextMenu;
-use otto_kit::components::menu_bar::MenuBarStyle;
+use otto_kit::components::menu_bar::{MenuBarIcon, MenuBarRenderer, MenuBarState, MenuBarStyle};
 use otto_kit::components::menu_item::MenuItem;
-use otto_kit::components::{
-    label::Label,
-    menu_bar::{MenuBarRenderer, MenuBarState},
-};
+use otto_kit::components::label::Label;
 use otto_kit::prelude::*;
 use otto_kit::typography::styles;
 use skia_safe::Color;
@@ -25,8 +22,6 @@ use smithay_client_toolkit::shell::xdg::XdgPositioner;
 use smithay_client_toolkit::shell::xdg::XdgSurface as XdgSurfaceTrait;
 use wayland_protocols::xdg::shell::client::xdg_positioner;
 
-const MENU_ITEMS: &[&str] = &["File", "Edit", "View", "Window", "Help"];
-
 // Layout constants
 const BAR_X: f32 = 20.0;
 const BAR_Y: f32 = 30.0;
@@ -34,11 +29,26 @@ const BAR_WIDTH: f32 = 860.0;
 
 fn build_menu_bar() -> MenuBarState {
     let mut bar = MenuBarState::new();
-    for item in MENU_ITEMS {
-        bar.add_item(*item);
-    }
+    // Icon-only item (like an app logo / system icon)
+    bar.add_icon_item(MenuBarIcon::Named("nm-signal-75".into()));
+    // Text-only items
+    bar.add_item("File");
+    bar.add_item("Edit");
+    bar.add_item("View");
+    bar.add_item("Window");
+    bar.add_item("Help");
+    // Icon + label item
+    bar.add_icon_label_item(
+        MenuBarIcon::Named("audio-volume-medium".into()),
+        "Sound",
+    );
     bar
 }
+
+/// Number of items that have context menus (the text items: File..Help)
+const MENU_ITEM_COUNT: usize = 5;
+/// Indices of items that have context menus (skip the leading icon-only item at 0)
+const MENU_INDICES: [usize; MENU_ITEM_COUNT] = [1, 2, 3, 4, 5];
 
 fn file_menu_items() -> Vec<MenuItem> {
     vec![
@@ -143,7 +153,8 @@ impl App for MenuBarExample {
                 .render(canvas);
         });
 
-        // --- context menus (Rc since they're !Send, only used in pointer callback) ---
+        // --- context menus for the text items (indices 1..5) ---
+        let menu_labels = ["File", "Edit", "View", "Window", "Help"];
         let menus: Vec<ContextMenu> = vec![
             ContextMenu::new(file_menu_items()),
             ContextMenu::new(edit_menu_items()),
@@ -152,14 +163,17 @@ impl App for MenuBarExample {
             ContextMenu::new(help_menu_items()),
         ];
 
-        // Add on_item_click to each menu
         let menus: Vec<ContextMenu> = menus
             .into_iter()
             .enumerate()
             .map(|(i, menu)| {
-                let label = MENU_ITEMS[i];
+                let label = menu_labels[i];
+                let cb_state = bar_state.clone();
+                let cb_window = window.clone();
                 menu.on_item_click(move |item| {
                     println!("{label} > {item}");
+                    cb_state.write().unwrap().set_active(None);
+                    cb_window.request_frame();
                 })
             })
             .collect();
@@ -188,54 +202,65 @@ impl App for MenuBarExample {
                     let x = event.position.0 as f32;
                     let y = event.position.1 as f32;
 
-                    if let Some(idx) = hit_test_bar(x, y, &click_style) {
-                        // Update active state
-                        {
-                            let mut state = click_state.write().unwrap();
-                            let menus = click_menus.borrow();
+                    let mut state = click_state.write().unwrap();
+                    if let Some(idx) = hit_test_bar(x, y, &state, &click_style) {
+                        let menu_idx = MENU_INDICES.iter().position(|&mi| mi == idx);
+                        let menus = click_menus.borrow();
 
-                            // If clicking the already-active item, toggle off and hide menu
-                            if state.active_index() == Some(idx) {
-                                state.set_active(None);
-                                menus[idx].hide();
-                                click_window.request_frame();
-                                return;
+                        // If clicking the already-active item, toggle off
+                        if state.active_index() == Some(idx) {
+                            state.set_active(None);
+                            if let Some(mi) = menu_idx {
+                                menus[mi].hide();
                             }
-
-                            // Hide any previously open menu
-                            if let Some(prev) = state.active_index() {
-                                menus[prev].hide();
-                            }
-
-                            state.set_active(Some(idx));
+                            click_window.request_frame();
+                            return;
                         }
+
+                        // Hide any previously open menu
+                        if let Some(prev) = state.active_index() {
+                            if let Some(prev_mi) =
+                                MENU_INDICES.iter().position(|&mi| mi == prev)
+                            {
+                                menus[prev_mi].hide();
+                            }
+                        }
+
+                        state.set_active(Some(idx));
+                        let item_x = item_x_offset(idx, &state, &click_style);
+                        drop(state);
 
                         click_window.request_frame();
 
-                        // Show the context menu below the clicked item
-                        let surface = match click_window.surface() {
-                            Some(s) => s,
-                            None => return,
-                        };
+                        // Show context menu if this item has one
+                        if let Some(mi) = menu_idx {
+                            if let Some(surface) = click_window.surface() {
+                                let xdg_surface = surface.xdg_window().xdg_surface();
 
-                        let xdg_surface = surface.xdg_window().xdg_surface();
-                        let item_x = item_x_offset(idx, &click_style);
+                                if let Ok(positioner) =
+                                    XdgPositioner::new(AppContext::xdg_shell_state())
+                                {
+                                    let (menu_w, menu_h) =
+                                        menus[mi].get_size_at_depth(0);
 
-                        if let Ok(positioner) = XdgPositioner::new(AppContext::xdg_shell_state()) {
-                            let menus = click_menus.borrow();
-                            let (menu_w, menu_h) = menus[idx].get_size_at_depth(0);
+                                    positioner.set_size(menu_w as i32, menu_h as i32);
+                                    positioner.set_anchor_rect(
+                                        (BAR_X + item_x) as i32,
+                                        (BAR_Y + click_style.height) as i32,
+                                        1,
+                                        1,
+                                    );
+                                    positioner.set_anchor(
+                                        xdg_positioner::Anchor::BottomLeft,
+                                    );
+                                    positioner.set_gravity(
+                                        xdg_positioner::Gravity::BottomRight,
+                                    );
 
-                            positioner.set_size(menu_w as i32, menu_h as i32);
-                            positioner.set_anchor_rect(
-                                (BAR_X + item_x) as i32,
-                                (BAR_Y + click_style.height) as i32,
-                                1,
-                                1,
-                            );
-                            positioner.set_anchor(xdg_positioner::Anchor::BottomLeft);
-                            positioner.set_gravity(xdg_positioner::Gravity::BottomRight);
-
-                            menus[idx].show(xdg_surface, &positioner, serial);
+                                    menus[mi]
+                                        .show(xdg_surface, &positioner, serial);
+                                }
+                            }
                         }
                     }
                 }
@@ -253,7 +278,7 @@ impl App for MenuBarExample {
 }
 
 /// Check if (x, y) hits a menu item in the bar. Returns the item index.
-fn hit_test_bar(x: f32, y: f32, style: &MenuBarStyle) -> Option<usize> {
+fn hit_test_bar(x: f32, y: f32, state: &MenuBarState, style: &MenuBarStyle) -> Option<usize> {
     if y < BAR_Y || y > BAR_Y + style.height {
         return None;
     }
@@ -267,9 +292,9 @@ fn hit_test_bar(x: f32, y: f32, style: &MenuBarStyle) -> Option<usize> {
         otto_kit::typography::get_font_with_fallback("Inter", style.font_style(), style.font_size);
     let mut x_offset = style.bar_padding_horizontal;
 
-    for (i, label) in MENU_ITEMS.iter().enumerate() {
-        let text_width = style.text_width(label, &font);
-        let item_width = style.item_width(text_width);
+    for (i, item) in state.items().iter().enumerate() {
+        let content_width = style.item_content_width(item, &font);
+        let item_width = style.item_width(content_width);
 
         if local_x >= x_offset && local_x <= x_offset + item_width {
             return Some(i);
@@ -282,17 +307,17 @@ fn hit_test_bar(x: f32, y: f32, style: &MenuBarStyle) -> Option<usize> {
 }
 
 /// Get the x offset for a menu item (for positioning the popup).
-fn item_x_offset(index: usize, style: &MenuBarStyle) -> f32 {
+fn item_x_offset(index: usize, state: &MenuBarState, style: &MenuBarStyle) -> f32 {
     let font =
         otto_kit::typography::get_font_with_fallback("Inter", style.font_style(), style.font_size);
     let mut x_offset = style.bar_padding_horizontal;
 
-    for (i, label) in MENU_ITEMS.iter().enumerate() {
+    for (i, item) in state.items().iter().enumerate() {
         if i == index {
             return x_offset;
         }
-        let text_width = style.text_width(label, &font);
-        x_offset += style.item_width(text_width) + style.item_spacing;
+        let content_width = style.item_content_width(item, &font);
+        x_offset += style.item_width(content_width) + style.item_spacing;
     }
 
     x_offset
