@@ -185,7 +185,6 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for FocusState {
             }
             zwlr_foreign_toplevel_handle_v1::Event::State { state: raw_state } => {
                 if let Some(info) = state.toplevels.get_mut(&id) {
-                    // State is a list of u32 values; Activated = 2
                     let activated = raw_state
                         .chunks_exact(4)
                         .any(|chunk| {
@@ -193,6 +192,15 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for FocusState {
                             val == zwlr_foreign_toplevel_handle_v1::State::Activated as u32
                         });
                     info.activated = activated;
+
+                    // Deactivate all other toplevels when one becomes activated
+                    if activated {
+                        for (&other_id, other) in state.toplevels.iter_mut() {
+                            if other_id != id {
+                                other.activated = false;
+                            }
+                        }
+                    }
                 }
             }
             zwlr_foreign_toplevel_handle_v1::Event::Done => {
