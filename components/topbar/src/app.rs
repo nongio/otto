@@ -44,6 +44,8 @@ pub struct TopBarApp {
     last_tray_gen: u64,
     /// Currently open tray context menu (only one at a time).
     open_menu: Option<OpenMenu>,
+    /// Tray index awaiting an async dbusmenu fetch (keeps active highlight).
+    pending_menu_index: Option<usize>,
 }
 
 impl TopBarApp {
@@ -58,6 +60,7 @@ impl TopBarApp {
             last_right_width: 0.0,
             last_tray_gen: 0,
             open_menu: None,
+            pending_menu_index: None,
         }
     }
 
@@ -150,6 +153,7 @@ impl TopBarApp {
             open.menu.hide();
             tracing::debug!("closed context menu for tray index={}", open.tray_index);
         }
+        self.pending_menu_index = None;
         self.right.tray_menu_state.set_active(None);
         self.redraw_right();
     }
@@ -323,8 +327,11 @@ impl App for TopBarApp {
                     .position(|t| t.service == pending.service)
                     .unwrap_or(0);
 
+                self.pending_menu_index = None;
                 // Close any existing menu first
                 self.close_menu();
+                // Keep active highlight for the menu owner
+                self.right.tray_menu_state.set_active(Some(tray_index));
                 // Use serial 0 — layer shell popups don't typically need a grab serial
                 self.show_pending_menu(pending, tray_index, 0);
             }
@@ -334,8 +341,11 @@ impl App for TopBarApp {
             self.update_right_panel(true);
         }
 
-        // Clear active highlight if no menu is open
-        if self.open_menu.is_none() && self.right.tray_menu_state.active_index().is_some() {
+        // Clear active highlight if no menu is open and none is pending
+        if self.open_menu.is_none()
+            && self.pending_menu_index.is_none()
+            && self.right.tray_menu_state.active_index().is_some()
+        {
             self.right.tray_menu_state.set_active(None);
             self.redraw_right();
         }
@@ -387,6 +397,7 @@ impl App for TopBarApp {
                             // Close any other open menu, then request this icon's menu
                             self.close_menu();
                             self.right.tray_menu_state.set_active(Some(index));
+                            self.pending_menu_index = Some(index);
                             self.redraw_right();
                             tracing::info!("requesting context menu: index={index} service={item_name:?}");
                             crate::tray::context_menu_item(
