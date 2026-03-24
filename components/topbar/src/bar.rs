@@ -9,6 +9,7 @@ use crate::tray;
 
 /// Left panel: app name + menus.
 pub struct LeftPanel {
+    pub app_name: String,
     pub menu_state: MenuBarState,
     pub style: MenuBarStyle,
     pub width: f32,
@@ -102,6 +103,7 @@ fn build_left_menu_state() -> MenuBarState {
 impl LeftPanel {
     pub fn new() -> Self {
         Self {
+            app_name: "Otto".to_string(),
             menu_state: build_left_menu_state(),
             style: left_menu_style(),
             width: LEFT_WIDTH as f32,
@@ -115,8 +117,73 @@ impl LeftPanel {
 
     /// Set the app name shown in the left panel.
     pub fn set_app_name(&mut self, name: &str) {
-        self.menu_state = MenuBarState::new();
-        self.menu_state.add_item(name);
+        // Preserve any existing menu items after the app name
+        let had_menu = self.menu_state.items().len() > 1;
+        self.app_name = name.to_string();
+        if !had_menu {
+            self.menu_state = MenuBarState::new();
+            self.menu_state.add_item(name);
+        }
+    }
+
+    /// Set the app menu items from a fetched dbusmenu layout.
+    /// Keeps the app name as item 0, adds top-level menu labels after it.
+    pub fn set_app_menu(&mut self, menu: Option<&crate::appmenu::AppMenu>) {
+        let mut state = MenuBarState::new();
+        state.add_item(&self.app_name);
+
+        if let Some(menu) = menu {
+            for item in &menu.layout.items {
+                if item.visible && !item.label.is_empty() {
+                    let label = item.label.replace('_', "");
+                    state.add_item(&label);
+                }
+            }
+        }
+
+        self.menu_state = state;
+    }
+
+    /// Hit-test: return the menu item index at position x (in panel coords).
+    pub fn menu_item_at(&self, x: f32) -> Option<usize> {
+        if self.menu_state.items().is_empty() {
+            return None;
+        }
+
+        let font = otto_kit::typography::get_font_with_fallback(
+            "Inter",
+            self.style.font_style(),
+            self.style.font_size,
+        );
+        let mut offset = self.style.bar_padding_horizontal;
+        for (i, item) in self.menu_state.items().iter().enumerate() {
+            let cw = self.style.item_content_width(item, &font);
+            let iw = self.style.item_width(cw);
+            if x >= offset && x <= offset + iw {
+                return Some(i);
+            }
+            offset += iw + self.style.item_spacing;
+        }
+        None
+    }
+
+    /// Compute the x-offset of a menu item for popup positioning.
+    pub fn item_anchor_x(&self, index: usize) -> f32 {
+        let font = otto_kit::typography::get_font_with_fallback(
+            "Inter",
+            self.style.font_style(),
+            self.style.font_size,
+        );
+        let mut offset = self.style.bar_padding_horizontal;
+        for (i, item) in self.menu_state.items().iter().enumerate() {
+            if i == index {
+                return offset;
+            }
+            let cw = self.style.item_content_width(item, &font);
+            let iw = self.style.item_width(cw);
+            offset += iw + self.style.item_spacing;
+        }
+        offset
     }
 
     pub fn draw(&self, canvas: &Canvas) {

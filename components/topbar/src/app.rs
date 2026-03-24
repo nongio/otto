@@ -33,6 +33,17 @@ struct OpenMenu {
     menu_path: String,
 }
 
+/// Tracks an open app menu popup from the left panel.
+struct OpenAppMenu {
+    menu: ContextMenu,
+    /// Left panel menu item index (0 = app name, 1+ = menu items).
+    item_index: usize,
+    /// D-Bus service name.
+    service: String,
+    /// D-Bus menu path.
+    menu_path: String,
+}
+
 pub struct TopBarApp {
     left_surface: Option<LayerShellSurface>,
     right_surface: Option<LayerShellSurface>,
@@ -43,10 +54,15 @@ pub struct TopBarApp {
     last_right_width: f32,
     last_tray_gen: u64,
     last_focus_gen: u64,
+    last_appmenu_gen: u64,
     /// Currently open tray context menu (only one at a time).
     open_menu: Option<OpenMenu>,
     /// Tray index awaiting an async dbusmenu fetch (keeps active highlight).
     pending_menu_index: Option<usize>,
+    /// Currently open app menu popup from the left panel.
+    open_app_menu: Option<OpenAppMenu>,
+    /// Left panel item index awaiting an async submenu fetch.
+    pending_app_menu_index: Option<usize>,
 }
 
 impl TopBarApp {
@@ -61,8 +77,11 @@ impl TopBarApp {
             last_right_width: 0.0,
             last_tray_gen: 0,
             last_focus_gen: 0,
+            last_appmenu_gen: 0,
             open_menu: None,
             pending_menu_index: None,
+            open_app_menu: None,
+            pending_app_menu_index: None,
         }
     }
 
@@ -160,6 +179,17 @@ impl TopBarApp {
         self.redraw_right();
     }
 
+    /// Close any open app menu popup from the left panel.
+    fn close_app_menu(&mut self) {
+        if let Some(open) = self.open_app_menu.take() {
+            open.menu.hide();
+            tracing::debug!("closed app menu for index={}", open.item_index);
+        }
+        self.pending_app_menu_index = None;
+        self.left.menu_state.set_active(None);
+        self.redraw_left();
+    }
+
     /// Show a context menu from a pending dbusmenu fetch.
     fn show_pending_menu(&mut self, pending: crate::tray::PendingMenu, tray_index: usize, serial: u32) {
         let Some(ref surface) = self.right_surface else { return };
@@ -227,6 +257,157 @@ impl TopBarApp {
             tracing::info!("context menu shown for tray index={tray_index}");
         }
     }
+
+    /// Show a submenu popup from the left panel for an app menu item.
+    fn show_app_submenu(&mut self, pending: crate::appmenu::PendingSubmenu) {
+        let Some(ref surface) = self.left_surface else { return };
+
+        // The item_index in pending is relative to the visible menu items
+        // (0-based among non-empty visible items). We need to find the
+        // children of that top-level item.
+        let visible_items: Vec<_> = pending
+            .layout
+            .items
+            .iter()
+            .filter(|i| i.visible && !i.label.is_empty())
+            .collect();
+
+        let Some(top_item) = visible_items.get(pending.item_index) else {
+            tracing::debug!("appmenu: item_index {} out of range", pending.item_index);
+            return;
+        };
+
+        let kit_items = convert_dbusmenu_items(&top_item.children);
+        if kit_items.is_empty() {
+            tracing::debug!("appmenu: no children for item {}", top_item.label);
+            return;
+        }
+
+        let service = pending.service.clone();
+        let menu_path = pending.menu_path.clone();
+        let id_labels = build_id_label_map(&top_item.children);
+
+        let svc = service.clone();
+        let mp = menu_path.clone();
+
+        let menu = ContextMenu::new(kit_items).on_item_click(move |action_id| {
+            if let Ok(id) = action_id.parse::<i32>() {
+                let label = id_labels.get(&id).cloned().unwrap_or_default();
+                tracing::info!("app menu item clicked: id={id} label={label:?}");
+                crate::appmenu::activate_menu_item(id, &label);
+            }
+        });
+
+        if let Ok(positioner) = XdgPositioner::new(AppContext::xdg_shell_state()) {
+            let style = otto_kit::components::context_menu::ContextMenuStyle::default();
+            let state = menu.state();
+            let items = state.borrow().items_at_depth(0).to_vec();
+            let (menu_w, menu_h) =
+                otto_kit::components::context_menu::ContextMenuRenderer::measure_items(
+                    &items, &style,
+                );
+
+            positioner.set_size(menu_w as i32, menu_h as i32);
+            positioner.set_anchor_rect(pending.anchor_x, self.left.height as i32, 1, 1);
+            positioner.set_anchor(xdg_positioner::Anchor::BottomLeft);
+            positioner.set_gravity(xdg_positioner::Gravity::BottomRight);
+            positioner.set_constraint_adjustment(
+                xdg_positioner::ConstraintAdjustment::SlideX
+                    | xdg_positioner::ConstraintAdjustment::SlideY
+                    | xdg_positioner::ConstraintAdjustment::FlipX
+                    | xdg_positioner::ConstraintAdjustment::FlipY,
+            );
+
+            let item_index = pending.item_index;
+            menu.show_for_layer(&surface.layer_surface(), &positioner, 0);
+
+            self.open_app_menu = Some(OpenAppMenu {
+                menu,
+                item_index,
+                service,
+                menu_path,
+            });
+
+            tracing::info!("app menu popup shown for item index={item_index}");
+        }
+    }
+
+    /// Handle a click on the right panel (tray icons).
+    fn handle_right_click(&mut self, event: &PointerEvent) {
+        let x = event.position.0 as f32;
+        let hit = self.right.tray_item_at(x);
+        let items = crate::tray::current_items();
+        let item_name = hit.and_then(|i| items.get(i).map(|t| t.service.clone()));
+        tracing::info!(
+            "tray hit-test: x={x:.0} hit={hit:?} item={item_name:?} (total={})",
+            items.len()
+        );
+
+        if let Some(index) = hit {
+            let already_open = self
+                .open_menu
+                .as_ref()
+                .map(|m| m.tray_index == index)
+                .unwrap_or(false);
+
+            if already_open {
+                tracing::info!("closing menu for tray index={index}");
+                self.close_menu();
+            } else {
+                self.close_menu();
+                self.right.tray_menu_state.set_active(Some(index));
+                self.pending_menu_index = Some(index);
+                self.redraw_right();
+                tracing::info!("requesting context menu: index={index} service={item_name:?}");
+                crate::tray::context_menu_item(index, x as i32, event.position.1 as i32);
+            }
+        } else {
+            self.close_menu();
+        }
+    }
+
+    /// Handle a click on the left panel (app menu items).
+    fn handle_left_click(&mut self, event: &PointerEvent) {
+        let x = event.position.0 as f32;
+        let hit = self.left.menu_item_at(x);
+        tracing::info!("left panel hit-test: x={x:.0} hit={hit:?}");
+
+        let Some(index) = hit else {
+            self.close_app_menu();
+            return;
+        };
+
+        // Index 0 is the app name — skip it (or could open "about" in future)
+        if index == 0 {
+            self.close_app_menu();
+            return;
+        }
+
+        // Menu item indices are 1-based in the left panel MenuBar;
+        // the dbusmenu top-level item index is (index - 1).
+        let menu_index = index - 1;
+
+        let already_open = self
+            .open_app_menu
+            .as_ref()
+            .map(|m| m.item_index == menu_index)
+            .unwrap_or(false);
+
+        if already_open {
+            tracing::info!("closing app menu for index={menu_index}");
+            self.close_app_menu();
+        } else {
+            self.close_app_menu();
+            self.left.menu_state.set_active(Some(index));
+            self.pending_app_menu_index = Some(menu_index);
+            self.redraw_left();
+
+            // Compute anchor_x for the popup position
+            let anchor_x = self.left.item_anchor_x(index);
+            tracing::info!("requesting app submenu: menu_index={menu_index} anchor_x={anchor_x}");
+            crate::appmenu::fetch_submenu_for_item(menu_index, anchor_x as i32);
+        }
+    }
 }
 
 impl App for TopBarApp {
@@ -280,6 +461,7 @@ impl App for TopBarApp {
 
         crate::tray::spawn_tray_watcher();
         crate::focus::spawn_focus_watcher();
+        crate::appmenu::spawn_appmenu_registrar();
 
         tracing::info!("topbar ready, waiting for configure");
         Ok(())
@@ -365,8 +547,33 @@ impl App for TopBarApp {
                     None => "Otto".to_string(),
                 }
             };
+            // Close any open app menu when focus changes
+            self.close_app_menu();
             self.left.set_app_name(&name);
             self.update_left_panel(true);
+
+            // Request the app menu for the newly focused app
+            crate::appmenu::request_menu_for_app(&focused.app_id, 0);
+        }
+
+        // Check if app menu was fetched
+        let appmenu_gen = crate::appmenu::generation();
+        if appmenu_gen != self.last_appmenu_gen {
+            self.last_appmenu_gen = appmenu_gen;
+
+            // Check for a pending submenu popup
+            if let Some(pending) = crate::appmenu::take_pending_submenu() {
+                self.pending_app_menu_index = None;
+                self.close_app_menu();
+                // item_index is 0-based among visible menu items;
+                // in the left panel, index 0 = app name, so menu item N is at N+1
+                self.left.menu_state.set_active(Some(pending.item_index + 1));
+                self.show_app_submenu(pending);
+            } else {
+                // Menu layout itself changed — update left panel items
+                self.left.set_app_menu(crate::appmenu::current_menu().as_ref());
+                self.update_left_panel(true);
+            }
         }
 
         // Clear active highlight if no menu is open and none is pending
@@ -376,6 +583,15 @@ impl App for TopBarApp {
         {
             self.right.tray_menu_state.set_active(None);
             self.redraw_right();
+        }
+
+        // Clear left panel active highlight if no app menu popup is open
+        if self.open_app_menu.is_none()
+            && self.pending_app_menu_index.is_none()
+            && self.left.menu_state.active_index().is_some()
+        {
+            self.left.menu_state.set_active(None);
+            self.redraw_left();
         }
 
         // Schedule a wakeup so the loop doesn't sleep forever —
@@ -388,55 +604,19 @@ impl App for TopBarApp {
     }
 
     fn on_pointer_event(&mut self, _ctx: &AppContext, events: &[PointerEvent]) {
-        let Some(ref right_surface) = self.right_surface else { return };
-        let right_wl = right_surface.wl_surface();
+        let right_wl = self.right_surface.as_ref().map(|s| s.wl_surface().clone());
+        let left_wl = self.left_surface.as_ref().map(|s| s.wl_surface().clone());
 
         for event in events {
-            let on_right = event.surface == right_wl;
+            let on_right = right_wl.as_ref().map(|w| event.surface == *w).unwrap_or(false);
+            let on_left = left_wl.as_ref().map(|w| event.surface == *w).unwrap_or(false);
 
             match event.kind {
-                PointerEventKind::Press { button, serial, .. } => {
-                    if !on_right {
-                        continue;
-                    }
-
-                    let x = event.position.0 as f32;
-                    let hit = self.right.tray_item_at(x);
-                    let items = crate::tray::current_items();
-                    let item_name = hit.and_then(|i| items.get(i).map(|t| t.service.clone()));
-                    tracing::info!(
-                        "tray hit-test: x={x:.0} hit={hit:?} item={item_name:?} (total={})",
-                        items.len()
-                    );
-
-                    if let Some(index) = hit {
-                        // macOS-style: any click on a tray icon opens/toggles its context menu
-                        let already_open = self
-                            .open_menu
-                            .as_ref()
-                            .map(|m| m.tray_index == index)
-                            .unwrap_or(false);
-
-                        if already_open {
-                            // Toggle off — close the menu
-                            tracing::info!("closing menu for tray index={index}");
-                            self.close_menu();
-                        } else {
-                            // Close any other open menu, then request this icon's menu
-                            self.close_menu();
-                            self.right.tray_menu_state.set_active(Some(index));
-                            self.pending_menu_index = Some(index);
-                            self.redraw_right();
-                            tracing::info!("requesting context menu: index={index} service={item_name:?}");
-                            crate::tray::context_menu_item(
-                                index,
-                                x as i32,
-                                event.position.1 as i32,
-                            );
-                        }
-                    } else {
-                        // Clicked outside any tray icon — close menu
-                        self.close_menu();
+                PointerEventKind::Press { .. } => {
+                    if on_right {
+                        self.handle_right_click(event);
+                    } else if on_left {
+                        self.handle_left_click(event);
                     }
                 }
                 _ => {}

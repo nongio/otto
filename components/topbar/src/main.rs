@@ -1,5 +1,6 @@
 mod animation;
 mod app;
+mod appmenu;
 mod bar;
 mod clock;
 mod config;
