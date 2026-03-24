@@ -1,6 +1,6 @@
 use otto_kit::{
     components::context_menu::ContextMenu,
-    components::menu_item::MenuItem as KitMenuItem,
+    components::menu_item::{MenuItem as KitMenuItem, MenuItemIcon},
     protocols::otto_surface_style_v1::{BlendMode, ClipMode, ContentsGravity},
     surfaces::LayerShellSurface,
     App, AppContext,
@@ -637,9 +637,26 @@ fn convert_dbusmenu_items(items: &[crate::dbusmenu::MenuItem]) -> Vec<KitMenuIte
 
             let label = item.label.replace('_', ""); // strip mnemonics
 
+            // Resolve icon: prefer named XDG icon; fall back to raw pixmap
+            let icon = item
+                .icon_name
+                .as_deref()
+                .filter(|n| !n.is_empty())
+                .map(|n| MenuItemIcon::Named(n.to_string()))
+                .or_else(|| {
+                    item.icon_data.as_ref().map(|(w, h, data)| MenuItemIcon::Pixmap {
+                        data: data.clone(),
+                        width: *w,
+                        height: *h,
+                    })
+                });
+
             if !item.children.is_empty() {
                 let children = convert_dbusmenu_items(&item.children);
                 let mut kit = KitMenuItem::submenu(label, children);
+                if let Some(icon) = icon {
+                    kit = kit.with_icon(icon);
+                }
                 if !item.enabled {
                     kit = kit.disabled();
                 }
@@ -647,6 +664,9 @@ fn convert_dbusmenu_items(items: &[crate::dbusmenu::MenuItem]) -> Vec<KitMenuIte
             } else {
                 let mut kit = KitMenuItem::action(&label)
                     .with_action_id(item.id.to_string());
+                if let Some(icon) = icon {
+                    kit = kit.with_icon(icon);
+                }
                 if !item.enabled {
                     kit = kit.disabled();
                 }

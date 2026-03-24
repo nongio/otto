@@ -1,4 +1,4 @@
-use super::{MenuItem, MenuItemStyle, VisualState};
+use super::{MenuItem, MenuItemIcon, MenuItemStyle, VisualState};
 use crate::typography;
 use crate::{components::icon::Icon, Renderable};
 use skia_safe::{Canvas, Font, Paint, Point, RRect, Rect};
@@ -65,8 +65,20 @@ impl MenuItemRenderer {
         let font = typography::styles::BODY.font();
         let shortcut_font = typography::styles::BODY.font();
 
-        // Draw label
-        Self::draw_label(canvas, label, &font, text_color, x, y, data.height, style);
+        // Draw label (offset by icon if present)
+        let icon_size = 16.0;
+        let icon_gap = 6.0;
+        let label_x_offset = if data.icon.is_some() {
+            icon_size + icon_gap
+        } else {
+            0.0
+        };
+        Self::draw_label(canvas, label, &font, text_color, x, y, data.height, style, label_x_offset);
+
+        // Draw icon before label
+        if let Some(icon) = &data.icon {
+            Self::draw_icon(canvas, icon, text_color, x, y, data.height, style, icon_size);
+        }
 
         // Draw submenu indicator or shortcut
         if data.has_submenu() {
@@ -117,6 +129,7 @@ impl MenuItemRenderer {
         y: f32,
         height: f32,
         style: &MenuItemStyle,
+        extra_x_offset: f32,
     ) {
         let mut paint = Paint::default();
         paint.set_color(color);
@@ -129,10 +142,69 @@ impl MenuItemRenderer {
 
         canvas.draw_str(
             label,
-            Point::new(x + style.horizontal_padding, baseline_y),
+            Point::new(x + style.horizontal_padding + extra_x_offset, baseline_y),
             font,
             &paint,
         );
+    }
+
+    /// Draw icon before label
+    fn draw_icon(
+        canvas: &Canvas,
+        icon: &MenuItemIcon,
+        tint: skia_safe::Color,
+        x: f32,
+        y: f32,
+        height: f32,
+        style: &MenuItemStyle,
+        icon_size: f32,
+    ) {
+        let icon_x = x + style.horizontal_padding;
+        let icon_y = y + (height - icon_size) / 2.0;
+
+        match icon {
+            MenuItemIcon::Named(name) => {
+                canvas.save();
+                canvas.translate((icon_x, icon_y));
+                Icon::new(name.as_str())
+                    .with_size(icon_size)
+                    .with_color(tint)
+                    .render(canvas);
+                canvas.restore();
+            }
+            MenuItemIcon::Pixmap { data, width, height: h } => {
+                if *width <= 0 || *h <= 0 { return; }
+                // Convert ARGB32 big-endian network order → native BGRA8888
+                let mut native = data.clone();
+                for chunk in native.chunks_exact_mut(4) {
+                    let a = chunk[0];
+                    let r = chunk[1];
+                    let g = chunk[2];
+                    let b = chunk[3];
+                    chunk[0] = b;
+                    chunk[1] = g;
+                    chunk[2] = r;
+                    chunk[3] = a;
+                }
+                let info = skia_safe::ImageInfo::new(
+                    (*width, *h),
+                    skia_safe::ColorType::BGRA8888,
+                    skia_safe::AlphaType::Premul,
+                    None,
+                );
+                let row_bytes = (*width as usize) * 4;
+                if let Some(img) = skia_safe::images::raster_from_data(
+                    &info,
+                    skia_safe::Data::new_copy(&native),
+                    row_bytes,
+                ) {
+                    let dst = Rect::from_xywh(icon_x, icon_y, icon_size, icon_size);
+                    let mut paint = Paint::default();
+                    paint.set_anti_alias(true);
+                    canvas.draw_image_rect(&img, None, dst, &paint);
+                }
+            }
+        }
     }
 
     /// Draw submenu indicator (chevron)

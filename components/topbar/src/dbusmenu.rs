@@ -59,6 +59,8 @@ pub struct MenuItem {
     pub enabled: bool,
     pub visible: bool,
     pub icon_name: Option<String>,
+    /// Raw ARGB32 pixmap from `icon-data` property: (width, height, bytes)
+    pub icon_data: Option<(i32, i32, Vec<u8>)>,
     pub item_type: MenuItemType,
     pub toggle_type: ToggleType,
     pub toggle_state: i32,
@@ -255,6 +257,7 @@ fn parse_menu_item(value: &OwnedValue) -> Option<MenuItem> {
     let enabled = prop_bool(&props, "enabled").unwrap_or(true);
     let visible = prop_bool(&props, "visible").unwrap_or(true);
     let icon_name = prop_string(&props, "icon-name");
+    let icon_data = prop_icon_data(&props, "icon-data");
     let type_str = prop_string(&props, "type").unwrap_or_default();
     let toggle_type_str = prop_string(&props, "toggle-type").unwrap_or_default();
     let toggle_state = prop_i32(&props, "toggle-state").unwrap_or(-1);
@@ -277,6 +280,7 @@ fn parse_menu_item(value: &OwnedValue) -> Option<MenuItem> {
         enabled,
         visible,
         icon_name,
+        icon_data,
         item_type,
         toggle_type,
         toggle_state,
@@ -334,4 +338,57 @@ fn prop_i32(props: &HashMap<String, OwnedValue>, key: &str) -> Option<i32> {
         Value::I32(i) => Some(i),
         _ => None,
     }
+}
+
+/// Parse `icon-data` property: `a(iiay)` — array of (width, height, ARGB32 bytes).
+/// Returns the first (and usually only) entry if present.
+fn prop_icon_data(
+    props: &HashMap<String, OwnedValue>,
+    key: &str,
+) -> Option<(i32, i32, Vec<u8>)> {
+    let val = props.get(key)?;
+    let v: Value<'_> = Value::try_from(val).ok()?;
+
+    // Unwrap outer variant if wrapped
+    let v = match v {
+        Value::Value(boxed) => *boxed,
+        other => other,
+    };
+
+    // Expect Array of Struct
+    if let Value::Array(arr) = v {
+        for item in arr.iter() {
+            if let Value::Structure(s) = item {
+                let fields = s.fields();
+                if fields.len() < 3 {
+                    continue;
+                }
+                let w = match &fields[0] {
+                    Value::I32(n) => *n,
+                    _ => continue,
+                };
+                let h = match &fields[1] {
+                    Value::I32(n) => *n,
+                    _ => continue,
+                };
+                let data: Vec<u8> = match &fields[2] {
+                    Value::Array(bytes) => bytes
+                        .iter()
+                        .filter_map(|b| {
+                            if let Value::U8(byte) = b {
+                                Some(*byte)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
+                    _ => continue,
+                };
+                if !data.is_empty() {
+                    return Some((w, h, data));
+                }
+            }
+        }
+    }
+    None
 }

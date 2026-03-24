@@ -45,7 +45,7 @@ pub mod prelude {
     };
     pub use crate::components::context_menu::ContextMenuStyle;
     pub use crate::components::label::{Label, LabelBuilder, TextAlign};
-    pub use crate::components::menu_item::{MenuItem, MenuItemGroup, MenuItemKind, MenuItemState};
+    pub use crate::components::menu_item::{MenuItem, MenuItemGroup, MenuItemIcon, MenuItemKind, MenuItemState};
     pub use crate::components::window::Window;
     pub use crate::theme::Theme;
     pub use crate::theme::ColorScheme;
