@@ -164,13 +164,27 @@ impl MenuItemRenderer {
 
         match icon {
             MenuItemIcon::Named(name) => {
-                canvas.save();
-                canvas.translate((icon_x, icon_y));
-                Icon::new(name.as_str())
-                    .with_size(icon_size)
-                    .with_color(tint)
-                    .render(canvas);
-                canvas.restore();
+                tracing::debug!("menu_item render: named icon {:?} at ({}, {})", name, icon_x, icon_y);
+                // Use XDG theme lookup (same as tray icons), fall back to SVG set
+                if let Some(img) = crate::icons::named_icon_sized(name, icon_size as i32) {
+                    let dst = Rect::from_xywh(icon_x, icon_y, icon_size, icon_size);
+                    let mut paint = Paint::default();
+                    paint.set_anti_alias(true);
+                    paint.set_color_filter(skia_safe::color_filters::blend(
+                        tint,
+                        skia_safe::BlendMode::SrcIn,
+                    ));
+                    canvas.draw_image_rect(&img, None, dst, &paint);
+                } else {
+                    // Fall back to embedded SVG icon set
+                    canvas.save();
+                    canvas.translate((icon_x, icon_y));
+                    Icon::new(name.as_str())
+                        .with_size(icon_size)
+                        .with_color(tint)
+                        .render(canvas);
+                    canvas.restore();
+                }
             }
             MenuItemIcon::Pixmap { data, width, height: h } => {
                 if *width <= 0 || *h <= 0 { return; }
@@ -193,6 +207,10 @@ impl MenuItemRenderer {
                     None,
                 );
                 let row_bytes = (*width as usize) * 4;
+                tracing::debug!(
+                    "menu_item render: pixmap icon {}x{} ({} bytes) at ({}, {})",
+                    width, h, data.len(), icon_x, icon_y
+                );
                 if let Some(img) = skia_safe::images::raster_from_data(
                     &info,
                     skia_safe::Data::new_copy(&native),
@@ -202,6 +220,11 @@ impl MenuItemRenderer {
                     let mut paint = Paint::default();
                     paint.set_anti_alias(true);
                     canvas.draw_image_rect(&img, None, dst, &paint);
+                } else {
+                    tracing::warn!(
+                        "menu_item render: failed to create skia image from pixmap {}x{}",
+                        width, h
+                    );
                 }
             }
         }
