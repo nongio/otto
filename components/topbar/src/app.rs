@@ -42,6 +42,7 @@ pub struct TopBarApp {
     last_left_width: f32,
     last_right_width: f32,
     last_tray_gen: u64,
+    last_focus_gen: u64,
     /// Currently open tray context menu (only one at a time).
     open_menu: Option<OpenMenu>,
     /// Tray index awaiting an async dbusmenu fetch (keeps active highlight).
@@ -59,6 +60,7 @@ impl TopBarApp {
             last_left_width: 0.0,
             last_right_width: 0.0,
             last_tray_gen: 0,
+            last_focus_gen: 0,
             open_menu: None,
             pending_menu_index: None,
         }
@@ -277,6 +279,7 @@ impl App for TopBarApp {
         self._spacer_surface = Some(spacer);
 
         crate::tray::spawn_tray_watcher();
+        crate::focus::spawn_focus_watcher();
 
         tracing::info!("topbar ready, waiting for configure");
         Ok(())
@@ -339,6 +342,31 @@ impl App for TopBarApp {
 
         if dirty {
             self.update_right_panel(true);
+        }
+
+        // Check if focused app changed
+        let focus_gen = crate::focus::generation();
+        if focus_gen != self.last_focus_gen {
+            self.last_focus_gen = focus_gen;
+            let focused = crate::focus::current_focused_app();
+            let name = if focused.app_id.is_empty() {
+                "Otto".to_string()
+            } else {
+                // Use app_id, capitalize first letter for display
+                let mut name = focused.app_id.clone();
+                // Strip common prefixes like "org.gnome." or "com.example."
+                if let Some(last) = name.rsplit('.').next() {
+                    name = last.to_string();
+                }
+                // Capitalize first letter
+                let mut chars = name.chars();
+                match chars.next() {
+                    Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+                    None => "Otto".to_string(),
+                }
+            };
+            self.left.set_app_name(&name);
+            self.update_left_panel(true);
         }
 
         // Clear active highlight if no menu is open and none is pending

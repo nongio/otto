@@ -4,6 +4,7 @@ mod bar;
 mod clock;
 mod config;
 mod dbusmenu;
+mod focus;
 mod tray;
 
 use app::TopBarApp;
