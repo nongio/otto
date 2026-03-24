@@ -20,3 +20,4 @@ zbus = { version = "4", default-features = false, features = ["tokio"] }
 futures-util = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+toml = { version = "0.8", default-features = false, features = ["parse"] }

@@ -1,6 +1,6 @@
 use chrono::Local;
 
-use crate::config::CLOCK_FORMAT;
+use crate::config::clock_format;
 
 /// Minimal clock state — just the current formatted time string.
 pub struct Clock {
@@ -26,6 +26,6 @@ impl Clock {
     }
 
     fn formatted_now() -> String {
-        Local::now().format(CLOCK_FORMAT).to_string()
+        Local::now().format(clock_format()).to_string()
     }
 }

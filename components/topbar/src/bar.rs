@@ -223,9 +223,10 @@ impl RightPanel {
         // Clock on the right edge
         let clock_width = self.draw_clock(canvas, &theme);
 
-        // Tray icons to the left of the clock, rendered via MenuBar
+        // Tray icons to the left of the clock, with a gap
         let tray_width = MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
-        let tray_x = self.width - clock_width - tray_width;
+        let gap = if tray_width > 0.0 { TRAY_CLOCK_GAP } else { 0.0 };
+        let tray_x = self.width - clock_width - gap - tray_width;
 
         canvas.save();
         canvas.translate((tray_x, 0.0));
@@ -262,7 +263,8 @@ impl RightPanel {
         let font = typography::styles::BODY.font();
         let clock_text_width = font.measure_str(&self.clock.text, None).0;
         let tray_width = MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
-        let content = clock_text_width + BAR_PADDING_H * 2.0 + tray_width;
+        let gap = if tray_width > 0.0 { TRAY_CLOCK_GAP } else { 0.0 };
+        let content = clock_text_width + BAR_PADDING_H * 2.0 + gap + tray_width;
         content.max(MIN_RIGHT_WIDTH as f32)
     }
 
