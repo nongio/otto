@@ -531,22 +531,7 @@ impl App for TopBarApp {
         if focus_gen != self.last_focus_gen {
             self.last_focus_gen = focus_gen;
             let focused = crate::focus::current_focused_app();
-            let name = if focused.app_id.is_empty() {
-                "Otto".to_string()
-            } else {
-                // Use app_id, capitalize first letter for display
-                let mut name = focused.app_id.clone();
-                // Strip common prefixes like "org.gnome." or "com.example."
-                if let Some(last) = name.rsplit('.').next() {
-                    name = last.to_string();
-                }
-                // Capitalize first letter
-                let mut chars = name.chars();
-                match chars.next() {
-                    Some(c) => c.to_uppercase().to_string() + chars.as_str(),
-                    None => "Otto".to_string(),
-                }
-            };
+            let name = otto_kit::desktop_entry::display_name_for_app(&focused.app_id);
             // Close any open app menu when focus changes
             self.close_app_menu();
             self.left.set_app_name(&name);

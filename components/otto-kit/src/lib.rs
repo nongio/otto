@@ -2,6 +2,7 @@ pub mod app_runner;
 pub mod color_scheme;
 pub mod common;
 pub mod components;
+pub mod desktop_entry;
 pub mod icon_theme;
 pub mod icons;
 pub mod input;
