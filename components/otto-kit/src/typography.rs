@@ -208,6 +208,13 @@ pub mod styles {
         size: 13.0,
     };
 
+    /// Body Medium - Medium weight variant (13pt)
+    pub const BODY_MEDIUM: TextStyle = TextStyle {
+        family: "Inter",
+        weight: 500, // Medium
+        size: 13.0,
+    };
+
     /// Body Emphasized - Semibold variant (13pt)
     pub const BODY_EMPHASIZED: TextStyle = TextStyle {
         family: "Inter",

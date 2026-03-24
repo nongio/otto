@@ -240,7 +240,7 @@ impl RightPanel {
     }
 
     fn draw_clock(&self, canvas: &Canvas, theme: &Theme) -> f32 {
-        let font = typography::styles::BODY_EMPHASIZED.font();
+        let font = typography::styles::BODY_MEDIUM.font();
         let text = &self.clock.text;
         let text_width = font.measure_str(text, None).0;
 
@@ -260,7 +260,7 @@ impl RightPanel {
 
     /// Compute the ideal panel width based on current clock text and tray icon count.
     pub fn target_width(&self) -> f32 {
-        let font = typography::styles::BODY_EMPHASIZED.font();
+        let font = typography::styles::BODY_MEDIUM.font();
         let clock_text_width = font.measure_str(&self.clock.text, None).0;
         let tray_width = MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
         let gap = if tray_width > 0.0 { TRAY_CLOCK_GAP } else { 0.0 };
