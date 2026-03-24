@@ -1,6 +1,6 @@
 use skia_safe::{Canvas, Color4f, Data, Image, ImageInfo, Paint, Rect};
 
-use super::state::{MenuBarIcon, MenuBarItem, MenuBarState};
+use super::state::{MenuBarIcon, MenuBarState};
 use super::style::MenuBarStyle;
 use crate::typography;
 
@@ -122,7 +122,10 @@ impl MenuBarRenderer {
             }
             MenuBarIcon::File(path) => {
                 let size = style.icon_size as i32;
-                crate::icons::image_from_path(path, (size, size))
+                // Use the path as cache key via named_icon_sized's cache
+                // (it caches by string key, and find_icon will fail for a path,
+                // but we can call image_from_path directly and cache manually)
+                crate::icons::cached_file_icon(path, size)
             }
         };
 

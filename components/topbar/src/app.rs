@@ -39,6 +39,7 @@ pub struct TopBarApp {
     _spacer_surface: Option<LayerShellSurface>,
     left: LeftPanel,
     right: RightPanel,
+    last_left_width: f32,
     last_right_width: f32,
     last_tray_gen: u64,
     /// Currently open tray context menu (only one at a time).
@@ -53,6 +54,7 @@ impl TopBarApp {
             _spacer_surface: None,
             left: LeftPanel::new(),
             right: RightPanel::new(),
+            last_left_width: 0.0,
             last_right_width: 0.0,
             last_tray_gen: 0,
             open_menu: None,
@@ -110,6 +112,21 @@ impl TopBarApp {
         style.set_size(width as f64 * scale, height as f64 * scale);
 
         txn.commit();
+    }
+
+    fn update_left_panel(&mut self, animate: bool) {
+        let Some(ref surface) = self.left_surface else { return };
+
+        let target = self.left.target_width();
+        if (target - self.last_left_width).abs() >= 1.0 {
+            self.last_left_width = target;
+            surface.set_size(target.ceil() as u32, self.left.height as u32);
+            if animate {
+                Self::animate_right_size(surface, target, self.left.height);
+            }
+        }
+        self.left.width = target;
+        self.redraw_left();
     }
 
     fn update_right_panel(&mut self, animate: bool) {
@@ -263,7 +280,7 @@ impl App for TopBarApp {
         // Configure fires for each layer surface (spacer, left, right).
         // We use fixed dimensions, so just redraw on any configure.
         self.right.clock.tick();
-        self.redraw_left();
+        self.update_left_panel(false);
         self.update_right_panel(false);
     }
 
@@ -292,6 +309,7 @@ impl App for TopBarApp {
         let gen = crate::tray::generation();
         if gen != self.last_tray_gen {
             self.last_tray_gen = gen;
+            self.right.sync_tray_items();
             dirty = true;
 
             // Check for a pending context menu to display

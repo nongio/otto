@@ -64,6 +64,24 @@ pub fn named_icon_sized(icon_name: &str, size: i32) -> Option<skia::Image> {
     Some(icon)
 }
 
+/// Load an icon from a file path with caching.
+pub fn cached_file_icon(path: &str, size: i32) -> Option<skia::Image> {
+    let cache_key = format!("file:{path}@{size}");
+    let ic = icon_cache();
+
+    {
+        let cache = ic.read().unwrap();
+        if let Some(icon) = cache.get(&cache_key) {
+            return Some(icon.clone());
+        }
+    }
+
+    let icon = image_from_path(path, (size, size))?;
+
+    ic.write().unwrap().insert(cache_key, icon.clone());
+    Some(icon)
+}
+
 // ---------------------------------------------------------------------------
 // Icon theme lookup
 // ---------------------------------------------------------------------------
