@@ -181,6 +181,9 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
         let keyboard = self.seat.get_keyboard().unwrap();
         keyboard.set_focus(self, Some(window_element.into()), Serial::from(0));
+
+        // Notify foreign toplevel watchers that the new window is activated
+        self.send_foreign_toplevel_state(&surface_id, true);
     }
 
     fn toplevel_destroyed(&mut self, toplevel: ToplevelSurface) {
