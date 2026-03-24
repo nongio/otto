@@ -229,43 +229,46 @@ impl<BackendData: Backend> Otto<BackendData> {
     }
 
     pub fn set_keyboard_focus_on_surface(&mut self, wid: &ObjectId) {
-        if let Some(window) = self.workspaces.get_window_for_surface(wid) {
-            let keyboard = self.seat.get_keyboard().unwrap();
-            let serial = SERIAL_COUNTER.next_serial();
-
-            // Deactivate the previously focused window
-            if let Some(crate::focus::KeyboardFocusTarget::Window(old_window)) =
-                keyboard.current_focus()
-            {
-                if old_window.wl_surface() != window.wl_surface() {
-                    old_window.set_activate(false);
-                    // Update shadow for deactivated window
-                    if let Some(view) = self.workspaces.get_window_view(&old_window.id()) {
-                        view.set_active(false);
-                    }
-                    if let Some(toplevel) = old_window.toplevel() {
-                        toplevel.send_configure();
-                    }
-                    // Notify foreign toplevel: deactivated
-                    let old_id = old_window.id();
-                    self.send_foreign_toplevel_state(&old_id, false);
-                }
-            }
-
-            // Activate the new window and send configure
-            window.set_activate(true);
-            // Update shadow for activated window
-            if let Some(view) = self.workspaces.get_window_view(wid) {
-                view.set_active(true);
-            }
-            if let Some(toplevel) = window.toplevel() {
-                toplevel.send_configure();
-            }
-            // Notify foreign toplevel: activated
-            let wid = wid.clone();
-            self.send_foreign_toplevel_state(&wid, true);
-            keyboard.set_focus(self, Some(window.clone().into()), serial);
+        let window = self.workspaces.get_window_for_surface(wid).cloned();
+        if let Some(window) = window {
+            self.set_keyboard_focus_on_window(&window);
         }
+    }
+
+    /// Centralized keyboard focus change: deactivates old window, activates new one,
+    /// sends xdg configure and foreign-toplevel state for both.
+    pub fn set_keyboard_focus_on_window(&mut self, window: &crate::shell::WindowElement) {
+        let keyboard = self.seat.get_keyboard().unwrap();
+        let serial = SERIAL_COUNTER.next_serial();
+
+        // Deactivate the previously focused window
+        if let Some(crate::focus::KeyboardFocusTarget::Window(old_window)) =
+            keyboard.current_focus()
+        {
+            if old_window.wl_surface() != window.wl_surface() {
+                old_window.set_activate(false);
+                if let Some(view) = self.workspaces.get_window_view(&old_window.id()) {
+                    view.set_active(false);
+                }
+                if let Some(toplevel) = old_window.toplevel() {
+                    toplevel.send_configure();
+                }
+                let old_id = old_window.id();
+                self.send_foreign_toplevel_state(&old_id, false);
+            }
+        }
+
+        // Activate the new window and send configure
+        window.set_activate(true);
+        if let Some(view) = self.workspaces.get_window_view(&window.id()) {
+            view.set_active(true);
+        }
+        if let Some(toplevel) = window.toplevel() {
+            toplevel.send_configure();
+        }
+        let wid = window.id();
+        self.send_foreign_toplevel_state(&wid, true);
+        keyboard.set_focus(self, Some(window.clone().into()), serial);
     }
 
     pub fn clear_keyboard_focus(&mut self) {

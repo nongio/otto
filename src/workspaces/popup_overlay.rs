@@ -65,6 +65,7 @@ impl PopupOverlayView {
                     ..Default::default()
                 });
                 layer.set_pointer_events(false);
+                layer.set_picture_cached(true);
 
                 let content_layer = self.layers_engine.new_layer();
                 content_layer.set_layout_style(taffy::Style {
@@ -72,6 +73,7 @@ impl PopupOverlayView {
                     ..Default::default()
                 });
                 content_layer.set_pointer_events(false);
+                content_layer.set_picture_cached(true);
 
                 // Start hidden — only show after the initial configure has been
                 // acknowledged and the popup has committed at its correct position.
@@ -139,7 +141,7 @@ impl PopupOverlayView {
             crate::workspaces::utils::configure_surface_layer(
                 &layer,
                 wvs,
-                crate::surface_style::ContentsGravity::Resize,
+                crate::surface_style::ContentsGravity::TopLeft,
                 false,
             );
 

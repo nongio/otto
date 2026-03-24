@@ -105,20 +105,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                             self.xwm.as_mut().unwrap().raise_window(surf).unwrap();
                         }
 
-                        // Deactivate old focus if it was a different window
-                        if let Some(crate::focus::KeyboardFocusTarget::Window(old_window)) =
-                            old_focus.as_ref()
-                        {
-                            if old_window.wl_surface() != window.wl_surface() {
-                                old_window.set_activate(false);
-                                old_window.toplevel().map(|t| t.send_configure());
-                            }
-                        }
-
-                        // Activate new window and set focus
-                        window.set_activate(true);
-                        window.toplevel().map(|t| t.send_configure());
-                        keyboard.set_focus(self, Some(window.into()), serial);
+                        self.set_keyboard_focus_on_window(&window);
                         return;
                     }
                 }
@@ -173,34 +160,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                             }
                             self.workspaces.focus_app_with_window(&id);
 
-                            // Deactivate old focus if it was a different window
-                            if let Some(crate::focus::KeyboardFocusTarget::Window(old_window)) =
-                                old_focus.as_ref()
-                            {
-                                if old_window.wl_surface() != window.wl_surface() {
-                                    old_window.set_activate(false);
-                                    // Update shadow for deactivated window
-                                    if let Some(view) =
-                                        self.workspaces.get_window_view(&old_window.id())
-                                    {
-                                        view.set_active(false);
-                                    }
-                                    if let Some(toplevel) = old_window.toplevel() {
-                                        toplevel.send_configure();
-                                    }
-                                }
-                            }
-
-                            // Activate new window and set focus
-                            window.set_activate(true);
-                            // Update shadow for activated window
-                            if let Some(view) = self.workspaces.get_window_view(&id) {
-                                view.set_active(true);
-                            }
-                            if let Some(toplevel) = window.toplevel() {
-                                toplevel.send_configure();
-                            }
-                            keyboard.set_focus(self, Some(window.clone().into()), serial);
+                            self.set_keyboard_focus_on_window(&window);
                             self.workspaces.update_workspace_model();
                         }
                     }

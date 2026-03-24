@@ -76,7 +76,7 @@ impl Default for ContextMenuStyle {
             border_width: 1.0,
             show_delay_mouse: 0.2,
             show_delay_keyboard: 0.0, // Instant on keyboard
-            close_delay: 0.15,
+            close_delay: 0.4,
             draw_scale: 1.0,
             theme: Theme::light(),
         }

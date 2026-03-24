@@ -154,11 +154,9 @@ impl ContextMenu {
             let surface_id = popup.wl_surface().id();
             popup.wl_surface().commit();
             // Apply visual effects immediately
+            ContextMenu::apply_surface_effects(&self.style.borrow(), &popup);
             if let Some(surface_style) = popup.base_surface().surface_style() {
                 surface_style.set_opacity(1.0);
-                surface_style.set_blend_mode(BlendMode::BackgroundBlur);
-                surface_style.set_corner_radius(10.0);
-                surface_style.set_masks_to_bounds(ClipMode::Enabled);
             }
 
             // Register surface with depth
@@ -184,7 +182,7 @@ impl ContextMenu {
             // Register done callback to close menu when clicked outside
             let menu_self = Rc::new(self.clone());
             AppContext::register_popup_done_callback(surface_id.clone(), move || {
-                menu_self.hide();
+                menu_self.hide_animated();
             });
 
             AppContext::register_popup_configure_callback(surface_id, move |_serial| {
@@ -265,7 +263,7 @@ impl ContextMenu {
             // Register done callback to close menu when clicked outside
             let menu_self = Rc::new(self.clone());
             AppContext::register_popup_done_callback(surface_id.clone(), move || {
-                menu_self.hide();
+                menu_self.hide_animated();
             });
 
             AppContext::register_popup_configure_callback(surface_id, move |_serial| {
@@ -364,11 +362,8 @@ impl ContextMenu {
         if let Some(scene) = AppContext::surface_style_manager() {
             let qh = AppContext::queue_handle();
 
-            let timing = scene.create_timing_function(qh, ());
-            timing.set_spring(close_delay, 0.0);
             let animation = scene.begin_transaction(qh, ());
             animation.set_duration(close_delay);
-            animation.set_timing_function(&timing);
             animation.enable_completion_event();
 
             // Fade out all popups
@@ -968,9 +963,15 @@ impl ContextMenu {
 
     fn apply_surface_effects(style: &ContextMenuStyle, popup: &PopupSurface) {
         if let Some(scene_surface) = popup.base_surface().surface_style() {
+            let bg = style.background_color();
+            scene_surface.set_background_color(
+                bg.r() as f64 / 255.0,
+                bg.g() as f64 / 255.0,
+                bg.b() as f64 / 255.0,
+                bg.a() as f64 / 255.0,
+            );
             scene_surface.set_corner_radius(style.corner_radius as f64);
             scene_surface.set_masks_to_bounds(ClipMode::Enabled);
-            // scene_surface.set_background_color(1.0, 0.2, 0.2, 1.0);
             scene_surface.set_shadow(0.2, 2.0, 0.0, 7.0, 0.3, 0.3, 0.3);
             scene_surface.set_blend_mode(BlendMode::BackgroundBlur);
         }

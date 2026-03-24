@@ -1338,6 +1338,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         let key = format!("surface_{:?}", surface_id);
         let layer = self.layers_engine.new_layer();
         layer.set_key(&key);
+        layer.set_picture_cached(true);
 
         self.surface_layers
             .insert(surface_id.clone(), layer.clone());

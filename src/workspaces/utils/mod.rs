@@ -251,11 +251,11 @@ pub fn configure_surface_layer(
     }
 
     layer.set_pointer_events(false);
-    // Do NOT cache the picture — the draw closure reads from textures_storage
-    // which is updated on every wl_surface.commit.  Caching would keep a stale
-    // bitmap when a surface commits partial damage, causing half the window to
-    // show old content.
-    layer.set_picture_cached(false);
+    // // Do NOT cache the picture — the draw closure reads from textures_storage
+    // // which is updated on every wl_surface.commit.  Caching would keep a stale
+    // // bitmap when a surface commits partial damage, causing half the window to
+    // // show old content.
+    layer.set_picture_cached(true);
     // The draw_content callback fills the entire bounds with the surface texture,
     // so this layer can act as an occluder in occlusion culling.
     layer.set_content_opaque(true);
