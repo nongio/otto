@@ -150,6 +150,8 @@ impl TopBarApp {
             open.menu.hide();
             tracing::debug!("closed context menu for tray index={}", open.tray_index);
         }
+        self.right.tray_menu_state.set_active(None);
+        self.redraw_right();
     }
 
     /// Show a context menu from a pending dbusmenu fetch.
@@ -332,6 +334,12 @@ impl App for TopBarApp {
             self.update_right_panel(true);
         }
 
+        // Clear active highlight if no menu is open
+        if self.open_menu.is_none() && self.right.tray_menu_state.active_index().is_some() {
+            self.right.tray_menu_state.set_active(None);
+            self.redraw_right();
+        }
+
         // Schedule a wakeup so the loop doesn't sleep forever —
         // the frame callback will trigger the next blocking_dispatch return.
         // A commit is needed for the compositor to process the frame request.
@@ -378,6 +386,8 @@ impl App for TopBarApp {
                         } else {
                             // Close any other open menu, then request this icon's menu
                             self.close_menu();
+                            self.right.tray_menu_state.set_active(Some(index));
+                            self.redraw_right();
                             tracing::info!("requesting context menu: index={index} service={item_name:?}");
                             crate::tray::context_menu_item(
                                 index,
