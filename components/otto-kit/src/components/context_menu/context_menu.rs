@@ -349,24 +349,56 @@ impl ContextMenu {
         }
     }
 
-    /// Hide the menu (closes all popups)
+    /// Hide the menu immediately (closes all popups)
     pub fn hide(&self) {
-        // TODO: Add fade-out animation with close_delay from style
-        // For now, immediate close
         for popup in self.popups.borrow().iter() {
             *popup.borrow_mut() = None;
         }
         self.state.borrow_mut().reset();
     }
 
-    /// Hide the menu with animation delay
+    /// Hide the menu with fade-out animation
     pub fn hide_animated(&self) {
-        // let close_delay = self.style.borrow().close_delay;
+        let close_delay = self.style.borrow().close_delay as f64;
 
-        // TODO: Implement actual fade-out animation
-        // For now, just sleep for the delay then close
+        if let Some(scene) = AppContext::surface_style_manager() {
+            let qh = AppContext::queue_handle();
 
-        self.hide();
+            let timing = scene.create_timing_function(qh, ());
+            timing.set_spring(close_delay, 0.0);
+            let animation = scene.begin_transaction(qh, ());
+            animation.set_duration(close_delay);
+            animation.set_timing_function(&timing);
+            animation.enable_completion_event();
+
+            // Fade out all popups
+            for popup in self.popups.borrow().iter() {
+                if let Some(popup_ref) = popup.borrow().as_ref() {
+                    if let Some(scene_surface) = popup_ref.base_surface().surface_style() {
+                        scene_surface.set_opacity(0.0);
+                    }
+                }
+            }
+
+            // Register callback to destroy popups after animation completes
+            let popups = self.popups.clone();
+            let state = self.state.clone();
+            let transaction_id = animation.id();
+            AppContext::register_transaction_completion_callback(
+                transaction_id,
+                Box::new(move || {
+                    for popup in popups.borrow().iter() {
+                        *popup.borrow_mut() = None;
+                    }
+                    state.borrow_mut().reset();
+                }),
+            );
+
+            animation.commit();
+        } else {
+            // No style protocol available, close immediately
+            self.hide();
+        }
     }
 
     // === Submenu Management ===

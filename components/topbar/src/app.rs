@@ -171,7 +171,7 @@ impl TopBarApp {
     /// Close any open context menu.
     fn close_menu(&mut self) {
         if let Some(open) = self.open_menu.take() {
-            open.menu.hide();
+            open.menu.hide_animated();
             tracing::debug!("closed context menu for tray index={}", open.tray_index);
         }
         self.pending_menu_index = None;
@@ -182,7 +182,7 @@ impl TopBarApp {
     /// Close any open app menu popup from the left panel.
     fn close_app_menu(&mut self) {
         if let Some(open) = self.open_app_menu.take() {
-            open.menu.hide();
+            open.menu.hide_animated();
             tracing::debug!("closed app menu for index={}", open.item_index);
         }
         self.pending_app_menu_index = None;
