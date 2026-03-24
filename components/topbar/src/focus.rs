@@ -89,6 +89,7 @@ impl FocusState {
             tracing::debug!("focus changed: app_id={:?} title={:?}", app.app_id, app.title);
             *current = app;
             FOCUS_GENERATION.fetch_add(1, Ordering::Relaxed);
+            otto_kit::AppContext::request_wakeup();
         }
     }
 }

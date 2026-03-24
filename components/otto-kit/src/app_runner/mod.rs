@@ -112,6 +112,15 @@ pub trait App {
     fn on_update(&mut self, _ctx: &AppContext) {
         // Default: do nothing
     }
+
+    /// Maximum time to sleep between `on_update` calls.
+    ///
+    /// Return `Some(duration)` to ensure `on_update` fires at least every `duration`
+    /// (e.g., for clock ticks). Return `None` to block indefinitely until a Wayland
+    /// event or `AppContext::request_wakeup()` wakes the loop.
+    fn idle_timeout(&self) -> Option<std::time::Duration> {
+        None
+    }
 }
 
 /// DefaultApp - Wrapper for using App trait objects with AppRunner
@@ -174,6 +183,9 @@ impl App for DefaultApp {
     }
     fn on_update(&mut self, ctx: &AppContext) {
         self.inner.on_update(ctx)
+    }
+    fn idle_timeout(&self) -> Option<std::time::Duration> {
+        self.inner.idle_timeout()
     }
 }
 
@@ -336,16 +348,76 @@ pub struct AppRunnerInitialized<A: App + 'static> {
 impl<A: App + 'static> AppRunnerInitialized<A> {
     /// Run the event loop until the app exits
     ///
-    /// Note: The renderer thread is spawned when AppContext::enable_layer_engine() is called.
+    /// Uses `prepare_read` + `poll` so the loop can be woken by:
+    /// - Wayland events (compositor, input, frame callbacks)
+    /// - `AppContext::request_wakeup()` from background threads / tokio tasks
+    /// - `App::idle_timeout()` expiry (e.g., clock ticks)
     pub fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::fd::AsRawFd;
+
+        // Ensure wakeup pipe exists before entering the loop.
+        let wake_fd = AppContext::wakeup_read_fd();
+
         while !self.app_data.exit {
-            self.event_queue.blocking_dispatch(&mut self.app_data)?;
+            // 1. Drain any events already queued (no I/O).
+            self.event_queue.dispatch_pending(&mut self.app_data)?;
             self.conn.flush()?;
 
             AppContext::update_windows();
 
             let ctx = AppContext::new(&self.app_data.context_data);
             self.app_data.app.on_update(&ctx);
+
+            if self.app_data.exit {
+                break;
+            }
+
+            // 2. Prepare to block for the next batch of events.
+            let guard = loop {
+                match self.event_queue.prepare_read() {
+                    Some(guard) => break guard,
+                    None => {
+                        // Internal queue still has pending events — drain first.
+                        self.event_queue.dispatch_pending(&mut self.app_data)?;
+                    }
+                }
+            };
+
+            let wl_fd = guard.connection_fd().as_raw_fd();
+            let timeout_ms = self
+                .app_data
+                .app
+                .idle_timeout()
+                .map(|d| d.as_millis().min(i32::MAX as u128) as i32)
+                .unwrap_or(-1); // -1 = block forever
+
+            let mut fds = [
+                libc::pollfd {
+                    fd: wl_fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                },
+                libc::pollfd {
+                    fd: wake_fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                },
+            ];
+
+            let n = unsafe { libc::poll(fds.as_mut_ptr(), 2, timeout_ms) };
+
+            if n > 0 && fds[1].revents & libc::POLLIN != 0 {
+                AppContext::drain_wakeup();
+            }
+
+            if n > 0 && fds[0].revents & libc::POLLIN != 0 {
+                // Data arrived on the Wayland fd — read & enqueue.
+                if let Err(e) = guard.read() {
+                    tracing::error!("wayland read error: {e}");
+                    break;
+                }
+            }
+            // Otherwise (timeout or only wakeup), guard drops and cancels the read.
         }
 
         AppContext::clear();

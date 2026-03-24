@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, LazyLock};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use otto_kit::AppContext;
+
 use futures_util::StreamExt;
 use zbus::zvariant::{OwnedValue, Value};
 use zbus::{interface, proxy, Connection, SignalContext};
@@ -164,6 +166,7 @@ pub fn context_menu_item(index: usize, x: i32, y: i32) {
                         anchor_y: y,
                     });
                     TRAY_GENERATION.fetch_add(1, Ordering::Relaxed);
+                    AppContext::request_wakeup();
                 }
                 Err(e) => {
                     tracing::warn!("dbusmenu fetch failed: {service}: {e}");
@@ -481,6 +484,7 @@ async fn monitor_disconnects(
             });
             tracing::info!("SNI items removed (owner vanished: {vanished}): {removed:?}");
             TRAY_GENERATION.fetch_add(1, Ordering::Relaxed);
+            AppContext::request_wakeup();
         }
     }
 }
@@ -566,6 +570,7 @@ async fn fetch_item(
     );
     state.lock().unwrap().push(item);
     TRAY_GENERATION.fetch_add(1, Ordering::Relaxed);
+    AppContext::request_wakeup();
 
     // Watch for property changes
     let state_clone = state.clone();
@@ -629,6 +634,7 @@ async fn watch_item_signals(conn: &Connection, bus_name: &str, path: &str, state
             item.icon_name = icon_name;
         }
         TRAY_GENERATION.fetch_add(1, Ordering::Relaxed);
+        AppContext::request_wakeup();
         tracing::debug!("SNI icon updated: {bus}{p}");
     }
 }

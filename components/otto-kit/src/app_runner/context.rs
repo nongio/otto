@@ -61,6 +61,23 @@ static RENDERER_THREAD: LazyLock<std::sync::Mutex<Option<std::thread::JoinHandle
 static RENDERER_EXIT_FLAG: LazyLock<std::sync::atomic::AtomicBool> =
     LazyLock::new(|| std::sync::atomic::AtomicBool::new(false));
 
+// -- Wakeup pipe (cross-thread) --
+
+use std::sync::OnceLock;
+
+/// Wakeup pipe: (read_fd, write_fd). Created once, lives for process lifetime.
+static WAKEUP_PIPE: OnceLock<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)> = OnceLock::new();
+
+fn init_wakeup_pipe() -> &'static (std::os::fd::OwnedFd, std::os::fd::OwnedFd) {
+    WAKEUP_PIPE.get_or_init(|| {
+        use std::os::fd::FromRawFd;
+        let mut fds = [0i32; 2];
+        let ret = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_NONBLOCK | libc::O_CLOEXEC) };
+        assert!(ret == 0, "pipe2 failed");
+        unsafe { (std::os::fd::OwnedFd::from_raw_fd(fds[0]), std::os::fd::OwnedFd::from_raw_fd(fds[1])) }
+    })
+}
+
 // ============================================================================
 // Context data structures
 // ============================================================================
@@ -459,6 +476,36 @@ impl<'a> AppContext<'a> {
 
     pub fn request_initial_frame(surface: &wl_surface::WlSurface) {
         Self::request_frame(surface);
+    }
+
+    /// Wake the main event loop from any thread.
+    ///
+    /// Background tasks (tokio, threads) should call this after updating
+    /// shared state so the main loop re-enters `on_update` promptly.
+    /// Safe to call multiple times — extra wakeups are harmless.
+    pub fn request_wakeup() {
+        use std::os::fd::AsRawFd;
+        let (_, write_fd) = init_wakeup_pipe();
+        // Best-effort write; EAGAIN/EPIPE are fine (pipe already has data).
+        unsafe { libc::write(write_fd.as_raw_fd(), b"w".as_ptr() as *const _, 1) };
+    }
+
+    /// Return the raw read fd for the wakeup pipe (for poll integration).
+    pub(crate) fn wakeup_read_fd() -> std::os::unix::io::RawFd {
+        use std::os::fd::AsRawFd;
+        let (read_fd, _) = init_wakeup_pipe();
+        read_fd.as_raw_fd()
+    }
+
+    /// Drain all pending bytes from the wakeup pipe.
+    pub(crate) fn drain_wakeup() {
+        use std::os::fd::AsRawFd;
+        let (read_fd, _) = init_wakeup_pipe();
+        let mut buf = [0u8; 64];
+        loop {
+            let n = unsafe { libc::read(read_fd.as_raw_fd(), buf.as_mut_ptr() as *mut _, buf.len()) };
+            if n <= 0 { break; }
+        }
     }
 
     // ========================================================================

@@ -258,6 +258,19 @@ fn parse_menu_item(value: &OwnedValue) -> Option<MenuItem> {
     let visible = prop_bool(&props, "visible").unwrap_or(true);
     let icon_name = prop_string(&props, "icon-name");
     let icon_data = prop_icon_data(&props, "icon-data");
+
+    // Log when any icon info is present so we can verify parsing
+    if icon_name.is_some() || icon_data.is_some() {
+        tracing::debug!(
+            "dbusmenu parse_menu_item: label={:?} icon_name={:?} icon_data={}",
+            label,
+            icon_name,
+            icon_data
+                .as_ref()
+                .map(|(w, h, d)| format!("{}x{} ({} bytes)", w, h, d.len()))
+                .unwrap_or_else(|| "none".into())
+        );
+    }
     let type_str = prop_string(&props, "type").unwrap_or_default();
     let toggle_type_str = prop_string(&props, "toggle-type").unwrap_or_default();
     let toggle_state = prop_i32(&props, "toggle-state").unwrap_or(-1);

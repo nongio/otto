@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 
+use otto_kit::AppContext;
 use zbus::{interface, Connection};
 
 use crate::dbusmenu::MenuLayout;
@@ -95,6 +96,7 @@ pub fn request_menu_for_app(app_id: &str, window_id: u32) {
         if current.is_some() {
             *current = None;
             MENU_GENERATION.fetch_add(1, Ordering::Relaxed);
+            AppContext::request_wakeup();
         }
         return;
     };
@@ -120,6 +122,7 @@ pub fn request_menu_for_app(app_id: &str, window_id: u32) {
                     layout,
                 });
                 MENU_GENERATION.fetch_add(1, Ordering::Relaxed);
+                AppContext::request_wakeup();
             }
             Err(e) => {
                 tracing::warn!("appmenu: fetch failed for {app_id}: {e}");
@@ -127,6 +130,7 @@ pub fn request_menu_for_app(app_id: &str, window_id: u32) {
                 if current.as_ref().map(|m| m.app_id == app_id).unwrap_or(false) {
                     *current = None;
                     MENU_GENERATION.fetch_add(1, Ordering::Relaxed);
+                    AppContext::request_wakeup();
                 }
             }
         }
@@ -197,6 +201,7 @@ pub fn fetch_submenu_for_item(item_index: usize, anchor_x: i32) {
                     layout,
                 });
                 MENU_GENERATION.fetch_add(1, Ordering::Relaxed);
+                AppContext::request_wakeup();
             }
             Err(e) => {
                 tracing::warn!("appmenu: submenu fetch failed: {e}");

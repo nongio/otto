@@ -578,14 +578,11 @@ impl App for TopBarApp {
             self.left.menu_state.set_active(None);
             self.redraw_left();
         }
+    }
 
-        // Schedule a wakeup so the loop doesn't sleep forever —
-        // the frame callback will trigger the next blocking_dispatch return.
-        // A commit is needed for the compositor to process the frame request.
-        if let Some(ref surface) = self.right_surface {
-            AppContext::request_frame(&surface.wl_surface());
-            surface.wl_surface().commit();
-        }
+    fn idle_timeout(&self) -> Option<std::time::Duration> {
+        // Wake once per second to update the clock.
+        Some(std::time::Duration::from_secs(1))
     }
 
     fn on_pointer_event(&mut self, _ctx: &AppContext, events: &[PointerEvent]) {
@@ -642,12 +639,21 @@ fn convert_dbusmenu_items(items: &[crate::dbusmenu::MenuItem]) -> Vec<KitMenuIte
                 .icon_name
                 .as_deref()
                 .filter(|n| !n.is_empty())
-                .map(|n| MenuItemIcon::Named(n.to_string()))
+                .map(|n| {
+                    tracing::debug!("dbusmenu icon-name: label={:?} icon={:?}", label, n);
+                    MenuItemIcon::Named(n.to_string())
+                })
                 .or_else(|| {
-                    item.icon_data.as_ref().map(|(w, h, data)| MenuItemIcon::Pixmap {
-                        data: data.clone(),
-                        width: *w,
-                        height: *h,
+                    item.icon_data.as_ref().map(|(w, h, data)| {
+                        tracing::debug!(
+                            "dbusmenu icon-data: label={:?} size={}x{} bytes={}",
+                            label, w, h, data.len()
+                        );
+                        MenuItemIcon::Pixmap {
+                            data: data.clone(),
+                            width: *w,
+                            height: *h,
+                        }
                     })
                 });
 

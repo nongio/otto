@@ -23,6 +23,7 @@ xdgkit = "3.2.5"
 resvg = "0.44.0"
 usvg = "0.44.0"
 lazy_static = "1.4"
+libc = "0.2"
 pipewire = "0.9"
 freedesktop-desktop-entry = "0.7.5"
 
