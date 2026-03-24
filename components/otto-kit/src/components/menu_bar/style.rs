@@ -18,6 +18,7 @@ pub struct MenuBarStyle {
     // Colors
     pub background_color: Color,
     pub text_color: Color,
+    pub text_active_color: Color,
     pub hover_color: Color,
     pub active_color: Color,
     /// Tint color for icons in normal state
@@ -49,8 +50,9 @@ impl Default for MenuBarStyle {
             // Colors
             background_color: Color::from_rgb(240, 240, 240),
             text_color: Color::from_rgb(40, 40, 40),
+            text_active_color: Color::WHITE,
             hover_color: Color::from_argb(20, 0, 0, 0),
-            active_color: Color::from_argb(50, 0, 0, 0),
+            active_color: Color::from_argb(255, 0, 90, 220),
             icon_tint: Color::from_rgb(40, 40, 40),
             icon_active_tint: Color::WHITE,
 

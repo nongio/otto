@@ -36,7 +36,7 @@ impl Default for MenuItemStyle {
             text_color_disabled: Color::from_argb(64, 0, 0, 0), // 25% black
             shortcut_color_normal: Color::from_argb(64, 0, 0, 0),
             shortcut_color_hovered: Color::WHITE,
-            bg_color_hovered: Color::from_argb(191, 10, 130, 255),
+            bg_color_hovered: Color::from_argb(255, 0, 90, 220), // solid accent blue
             separator_color: Color::from_argb(26, 0, 0, 0), // 10% black
 
             font_size: 13.0,

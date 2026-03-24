@@ -1,4 +1,4 @@
-use skia_safe::{Canvas, Color4f, Data, Image, ImageInfo, Paint, Rect};
+use skia_safe::{Canvas, Color, Color4f, Data, Image, ImageInfo, Paint, Rect};
 
 use super::state::{MenuBarIcon, MenuBarState};
 use super::style::MenuBarStyle;
@@ -70,7 +70,12 @@ impl MenuBarRenderer {
             }
 
             if let Some(label) = &item.label {
-                Self::draw_item_text(canvas, label, cx, &font, style);
+                let text_color = if is_active {
+                    style.text_active_color
+                } else {
+                    style.text_color
+                };
+                Self::draw_item_text(canvas, label, cx, &font, style, text_color);
             }
 
             item_bounds.push(ItemBounds {
@@ -167,8 +172,9 @@ impl MenuBarRenderer {
         x: f32,
         font: &skia_safe::Font,
         style: &MenuBarStyle,
+        color: Color,
     ) {
-        let text_paint = Paint::new(Color4f::from(style.text_color), None);
+        let text_paint = Paint::new(Color4f::from(color), None);
         let text_y = (style.height + style.font_size) / 2.0 - 2.0;
         canvas.draw_str(text, (x, text_y), font, &text_paint);
     }
