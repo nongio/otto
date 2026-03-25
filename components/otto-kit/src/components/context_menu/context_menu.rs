@@ -120,14 +120,12 @@ impl ContextMenu {
     /// # Arguments
     /// * `layer_surface` - The parent layer shell surface
     /// * `positioner` - XDG positioner defining popup position and size
-    /// * `serial` - Serial from input event for popup grab
     pub fn show_for_layer(
         &self,
         layer_surface: &wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
         positioner: &smithay_client_toolkit::shell::xdg::XdgPositioner,
-        serial: u32,
     ) {
-        self.show_menu_at_depth_for_layer(0, layer_surface, positioner, Some(serial));
+        self.show_menu_at_depth_for_layer(0, layer_surface, positioner);
     }
 
     /// Internal: Show popup at a specific depth level for layer shell parent
@@ -136,7 +134,6 @@ impl ContextMenu {
         depth: usize,
         layer_surface: &wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
         positioner: &smithay_client_toolkit::shell::xdg::XdgPositioner,
-        _grab_serial: Option<u32>,
     ) {
         // Check if popup at this depth already exists and is Some
         if self.popups.borrow().len() > depth && self.popups.borrow()[depth].borrow().is_some() {
@@ -349,14 +346,21 @@ impl ContextMenu {
 
     /// Hide the menu immediately (closes all popups)
     pub fn hide(&self) {
+        tracing::debug!("context_menu: hide()");
+        let mut reg = self.registered_surfaces.borrow_mut();
         for popup in self.popups.borrow().iter() {
+            if let Some(p) = popup.borrow().as_ref() {
+                reg.remove(&p.wl_surface().id());
+            }
             *popup.borrow_mut() = None;
         }
+        drop(reg);
         self.state.borrow_mut().reset();
     }
 
     /// Hide the menu with fade-out animation
     pub fn hide_animated(&self) {
+        tracing::debug!("context_menu: hide_animated()");
         let close_delay = self.style.borrow().close_delay as f64;
 
         if let Some(scene) = AppContext::surface_style_manager() {
@@ -527,9 +531,10 @@ impl ContextMenu {
                     popups.borrow_mut().push(Rc::new(RefCell::new(None)));
                 }
 
-                // Create submenu surface
+                // Create submenu surface without grab — the root popup already
+                // holds the keyboard grab, so submenus must not steal focus.
                 if let Ok(popup) =
-                    PopupSurface::new(&parent_xdg, &positioner, width as i32, height as i32)
+                    PopupSurface::new_with_grab(&parent_xdg, &positioner, width as i32, height as i32, None)
                 {
                     let surface_id = popup.wl_surface().id();
                     ContextMenu::apply_surface_effects(&style, &popup);
@@ -597,10 +602,12 @@ impl ContextMenu {
         from_depth: usize,
     ) {
         let popups_borrowed = popups.borrow();
+        tracing::debug!("hide_submenus_from depth={from_depth}, total_popups={}", popups_borrowed.len());
         for i in from_depth..popups_borrowed.len() {
+            let had_popup = popups_borrowed[i].borrow().is_some();
             *popups_borrowed[i].borrow_mut() = None;
+            tracing::debug!("  popup[{i}]: had={had_popup} -> None");
         }
-        // Don't call close_submenus_from here - state is managed by caller
     }
 
     // === Event Handling ===
@@ -684,8 +691,35 @@ impl ContextMenu {
         let old_selection = state_mut.selected_at_depth(depth);
         state_mut.select_at_depth(depth, item_index);
 
-        if old_selection != item_index {
+        // Only one item should be selected across the entire menu tree.
+        // Clear selections at all other depths when the pointer is here.
+        let mut depths_to_redraw = Vec::new();
+        for d in 0..depth {
+            if state_mut.selected_at_depth(d).is_some() {
+                state_mut.select_at_depth(d, None);
+                depths_to_redraw.push(d);
+            }
+        }
+        // Also clear deeper depths (e.g. pointer moved back from submenu to parent)
+        let max_depth = state_mut.depth();
+        for d in (depth + 1)..=max_depth {
+            if state_mut.selected_at_depth(d).is_some() {
+                state_mut.select_at_depth(d, None);
+                depths_to_redraw.push(d);
+            }
+        }
+
+        if old_selection != item_index || !depths_to_redraw.is_empty() {
             drop(state_mut);
+
+            // Redraw menus whose selection was cleared
+            for d in depths_to_redraw {
+                if d < popups.borrow().len() {
+                    let popup_ref = popups.borrow()[d].clone();
+                    let style_borrowed = style.borrow();
+                    Self::render_menu_at_depth(state, &style_borrowed, &popup_ref, d);
+                }
+            }
 
             // Redraw at this depth - clone the popup Rc to avoid holding borrow
             if depth < popups.borrow().len() {
@@ -827,8 +861,19 @@ impl ContextMenu {
 
         match key {
             keycodes::DOWN => {
-                self.state.borrow_mut().select_next_at_depth(None); // Use state's depth
-                let current_depth = self.state.borrow().depth();
+                let mut state_mut = self.state.borrow_mut();
+                state_mut.select_next_at_depth(None);
+                let current_depth = state_mut.depth();
+                // Last input wins: keyboard owns the selection, clear all others
+                let cleared = state_mut.clear_selections_except(current_depth);
+                drop(state_mut);
+                // Re-render cleared depths
+                for d in cleared {
+                    if d < self.popups.borrow().len() {
+                        let popup_ref = self.popups.borrow()[d].clone();
+                        Self::render_menu_at_depth(&self.state, &style, &popup_ref, d);
+                    }
+                }
                 // Render at current depth
                 if current_depth < self.popups.borrow().len() {
                     let popup_ref = self.popups.borrow()[current_depth].clone();
@@ -836,8 +881,19 @@ impl ContextMenu {
                 }
             }
             keycodes::UP => {
-                self.state.borrow_mut().select_previous_at_depth(None); // Use state's depth
-                let current_depth = self.state.borrow().depth();
+                let mut state_mut = self.state.borrow_mut();
+                state_mut.select_previous_at_depth(None);
+                let current_depth = state_mut.depth();
+                // Last input wins: keyboard owns the selection, clear all others
+                let cleared = state_mut.clear_selections_except(current_depth);
+                drop(state_mut);
+                // Re-render cleared depths
+                for d in cleared {
+                    if d < self.popups.borrow().len() {
+                        let popup_ref = self.popups.borrow()[d].clone();
+                        Self::render_menu_at_depth(&self.state, &style, &popup_ref, d);
+                    }
+                }
                 // Render at current depth
                 if current_depth < self.popups.borrow().len() {
                     let popup_ref = self.popups.borrow()[current_depth].clone();
@@ -889,6 +945,7 @@ impl ContextMenu {
                 }
             }
             keycodes::ESC => {
+                tracing::debug!("context_menu: ESC pressed");
                 self.state.borrow_mut().request_close();
                 drop(style); // Drop before check_close
                 self.check_close();
@@ -904,12 +961,24 @@ impl ContextMenu {
                 if has_submenu {
                     if let Some(idx) = selected_idx {
                         // 1. Update state: open submenu and move to first item of submenu
+                        //    (open_submenu clears the parent selection)
                         self.state.borrow_mut().open_submenu(current_depth, idx);
                         self.state
                             .borrow_mut()
                             .select_at_depth(current_depth + 1, Some(0));
 
-                        // 2. Show the submenu surface
+                        // 2. Re-render parent to clear its highlight
+                        if current_depth < self.popups.borrow().len() {
+                            let popup_ref = self.popups.borrow()[current_depth].clone();
+                            Self::render_menu_at_depth(
+                                &self.state,
+                                &style,
+                                &popup_ref,
+                                current_depth,
+                            );
+                        }
+
+                        // 3. Show the submenu surface
                         let show_delay = self.style.borrow().show_delay_keyboard;
                         Self::show_submenu_static(
                             &self.state,
@@ -926,15 +995,31 @@ impl ContextMenu {
             }
             keycodes::LEFT => {
                 let current_depth = self.state.borrow().depth();
+                tracing::debug!("context_menu: LEFT pressed, current_depth={current_depth}");
                 // Close submenu and move back to parent
                 if current_depth > 0 {
                     let target_depth = current_depth - 1;
+                    tracing::debug!("context_menu: closing submenu at depth={current_depth}, target={target_depth}");
+
+                    // Remember which parent item had the open submenu so we
+                    // can restore selection on it after closing.
+                    let parent_item_idx = self
+                        .state
+                        .borrow()
+                        .open_submenu_at(target_depth);
 
                     // Hide submenu surfaces from current depth onwards
                     Self::hide_submenus_from_static(&self.state, &self.popups, current_depth);
 
                     // Update state: truncate to target_depth and set depth to target_depth
                     self.state.borrow_mut().close_submenus_from(target_depth);
+
+                    // Restore selection on the parent item that had the submenu
+                    if let Some(idx) = parent_item_idx {
+                        self.state.borrow_mut().select_at_depth(target_depth, Some(idx));
+                    }
+
+                    tracing::debug!("context_menu: after LEFT, is_visible={}", self.is_visible());
 
                     // Re-render parent menu
                     if target_depth < self.popups.borrow().len() {
@@ -984,6 +1069,12 @@ impl ContextMenu {
         &self.state
     }
 
+    /// Check whether a wl_surface belongs to this menu (any depth).
+    pub fn owns_surface(&self, surface: &wayland_client::protocol::wl_surface::WlSurface) -> bool {
+        let id = surface.id();
+        self.registered_surfaces.borrow().contains_key(&id)
+    }
+
     /// Handle keyboard focus lost - closes the menu
     pub fn handle_keyboard_leave(&mut self) {
         self.hide();
@@ -991,7 +1082,9 @@ impl ContextMenu {
 
     /// Check if menu should close and fire callback
     fn check_close(&mut self) {
-        if self.state.borrow().should_close() {
+        let should = self.state.borrow().should_close();
+        tracing::debug!("context_menu: check_close should_close={should}");
+        if should {
             if let Some(callback) = self.on_close.borrow().as_ref() {
                 callback();
             }

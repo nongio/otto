@@ -176,6 +176,10 @@ impl TopBarApp {
         }
         self.pending_menu_index = None;
         self.right.tray_menu_state.set_active(None);
+        // Release keyboard focus
+        if let Some(ref surface) = self.right_surface {
+            surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+        }
         self.redraw_right();
     }
 
@@ -187,11 +191,15 @@ impl TopBarApp {
         }
         self.pending_app_menu_index = None;
         self.left.menu_state.set_active(None);
+        // Release keyboard focus
+        if let Some(ref surface) = self.left_surface {
+            surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+        }
         self.redraw_left();
     }
 
     /// Show a context menu from a pending dbusmenu fetch.
-    fn show_pending_menu(&mut self, pending: crate::tray::PendingMenu, tray_index: usize, serial: u32) {
+    fn show_pending_menu(&mut self, pending: crate::tray::PendingMenu, tray_index: usize) {
         let Some(ref surface) = self.right_surface else { return };
 
         // Convert dbusmenu items to otto-kit MenuItems
@@ -219,7 +227,7 @@ impl TopBarApp {
                 }
             });
 
-        // Create positioner: anchor below the tray icon
+        // Create positioner: anchor below the tray icon, right-aligned
         if let Ok(positioner) = XdgPositioner::new(AppContext::xdg_shell_state()) {
             // Measure menu dimensions
             let style = otto_kit::components::context_menu::ContextMenuStyle::default();
@@ -229,15 +237,21 @@ impl TopBarApp {
 
             positioner.set_size(menu_w as i32, menu_h as i32);
 
-            // Anchor rect: the tray icon area in the right panel's coordinate space
-            positioner.set_anchor_rect(
-                pending.anchor_x,
-                self.right.height as i32,
-                1,
-                1,
-            );
-            positioner.set_anchor(xdg_positioner::Anchor::BottomLeft);
-            positioner.set_gravity(xdg_positioner::Gravity::BottomRight);
+            // Anchor rect: the tray icon bounding box in the right panel
+            if let Some((ix, iy, iw, ih)) = self.right.tray_item_rect(tray_index) {
+                positioner.set_anchor_rect(ix as i32, iy as i32, iw as i32, ih as i32);
+            } else {
+                // Fallback: thin rect at pointer X, full bar height
+                positioner.set_anchor_rect(
+                    pending.anchor_x,
+                    0,
+                    1,
+                    self.right.height as i32,
+                );
+            }
+            // Popup top-right corner aligns to icon bottom-right corner
+            positioner.set_anchor(xdg_positioner::Anchor::BottomRight);
+            positioner.set_gravity(xdg_positioner::Gravity::BottomLeft);
             positioner.set_constraint_adjustment(
                 xdg_positioner::ConstraintAdjustment::SlideX
                     | xdg_positioner::ConstraintAdjustment::SlideY
@@ -245,7 +259,10 @@ impl TopBarApp {
                     | xdg_positioner::ConstraintAdjustment::FlipY,
             );
 
-            menu.show_for_layer(&surface.layer_surface(), &positioner, serial);
+            menu.show_for_layer(&surface.layer_surface(), &positioner);
+
+            // Grab keyboard focus on the layer surface for arrow-key navigation
+            surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
 
             self.open_menu = Some(OpenMenu {
                 menu,
@@ -319,7 +336,10 @@ impl TopBarApp {
             );
 
             let item_index = pending.item_index;
-            menu.show_for_layer(&surface.layer_surface(), &positioner, 0);
+            menu.show_for_layer(&surface.layer_surface(), &positioner);
+
+            // Grab keyboard focus on the layer surface for arrow-key navigation
+            surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
 
             self.open_app_menu = Some(OpenAppMenu {
                 menu,
@@ -338,7 +358,7 @@ impl TopBarApp {
         let hit = self.right.tray_item_at(x);
         let items = crate::tray::current_items();
         let item_name = hit.and_then(|i| items.get(i).map(|t| t.service.clone()));
-        tracing::info!(
+        tracing::debug!(
             "tray hit-test: x={x:.0} hit={hit:?} item={item_name:?} (total={})",
             items.len()
         );
@@ -351,14 +371,14 @@ impl TopBarApp {
                 .unwrap_or(false);
 
             if already_open {
-                tracing::info!("closing menu for tray index={index}");
+                tracing::debug!("closing menu for tray index={index}");
                 self.close_menu();
             } else {
                 self.close_menu();
                 self.right.tray_menu_state.set_active(Some(index));
                 self.pending_menu_index = Some(index);
                 self.redraw_right();
-                tracing::info!("requesting context menu: index={index} service={item_name:?}");
+                tracing::debug!("requesting context menu: index={index} service={item_name:?}");
                 crate::tray::context_menu_item(index, x as i32, event.position.1 as i32);
             }
         } else {
@@ -370,7 +390,7 @@ impl TopBarApp {
     fn handle_left_click(&mut self, event: &PointerEvent) {
         let x = event.position.0 as f32;
         let hit = self.left.menu_item_at(x);
-        tracing::info!("left panel hit-test: x={x:.0} hit={hit:?}");
+        tracing::debug!("left panel hit-test: x={x:.0} hit={hit:?}");
 
         let Some(index) = hit else {
             self.close_app_menu();
@@ -394,7 +414,7 @@ impl TopBarApp {
             .unwrap_or(false);
 
         if already_open {
-            tracing::info!("closing app menu for index={menu_index}");
+            tracing::debug!("closing app menu for index={menu_index}");
             self.close_app_menu();
         } else {
             self.close_app_menu();
@@ -404,7 +424,7 @@ impl TopBarApp {
 
             // Compute anchor_x for the popup position
             let anchor_x = self.left.item_anchor_x(index);
-            tracing::info!("requesting app submenu: menu_index={menu_index} anchor_x={anchor_x}");
+            tracing::debug!("requesting app submenu: menu_index={menu_index} anchor_x={anchor_x}");
             crate::appmenu::fetch_submenu_for_item(menu_index, anchor_x as i32);
         }
     }
@@ -412,7 +432,7 @@ impl TopBarApp {
 
 impl App for TopBarApp {
     fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
-        tracing::info!("creating topbar surfaces");
+        tracing::debug!("creating topbar surfaces");
 
         // Invisible spacer spanning the full top edge — its only job is to
         // reserve exclusive space so maximized windows are pushed down.
@@ -480,13 +500,64 @@ impl App for TopBarApp {
     fn on_keyboard_event(
         &mut self,
         _ctx: &AppContext,
-        _key: u32,
-        _state: wl_keyboard::KeyState,
-        _serial: u32,
+        key: u32,
+        state: wl_keyboard::KeyState,
+        serial: u32,
     ) {
+        tracing::debug!("keyboard_event key={key} state={state:?} serial={serial}");
+        // Forward to open tray context menu
+        if let Some(ref mut open) = self.open_menu {
+            open.menu.handle_key(key, state);
+            tracing::debug!("after handle_key: tray menu visible={}", open.menu.is_visible());
+            if !open.menu.is_visible() {
+                self.open_menu = None;
+                self.right.tray_menu_state.set_active(None);
+                self.redraw_right();
+            }
+            return;
+        }
+
+        // Forward to open app menu
+        if let Some(ref mut open) = self.open_app_menu {
+            open.menu.handle_key(key, state);
+            if !open.menu.is_visible() {
+                self.open_app_menu = None;
+                self.left.menu_state.set_active(None);
+                self.redraw_left();
+            }
+        }
     }
 
-    fn on_keyboard_leave(&mut self, _ctx: &AppContext, _surface: &wl_surface::WlSurface) {}
+    fn on_keyboard_leave(&mut self, _ctx: &AppContext, surface: &wl_surface::WlSurface) {
+        // Only close menus when focus leaves one of our layer surfaces.
+        // Submenu popups are created without a keyboard grab, so they never
+        // steal focus and this callback only fires when the user truly
+        // leaves the topbar (e.g. clicks on another window).
+        let is_our_layer = self
+            .right_surface
+            .as_ref()
+            .map(|s| s.wl_surface() == *surface)
+            .unwrap_or(false)
+            || self
+                .left_surface
+                .as_ref()
+                .map(|s| s.wl_surface() == *surface)
+                .unwrap_or(false);
+
+        if !is_our_layer {
+            tracing::debug!("keyboard_leave from non-layer surface, ignoring");
+            return;
+        }
+
+        tracing::debug!("keyboard_leave from layer surface — closing menus");
+
+        if self.open_menu.is_some() {
+            self.close_menu();
+        }
+        if self.open_app_menu.is_some() {
+            self.close_app_menu();
+        }
+    }
 
     fn on_update(&mut self, _ctx: &AppContext) {
         let mut dirty = false;
@@ -517,8 +588,8 @@ impl App for TopBarApp {
                 self.close_menu();
                 // Keep active highlight for the menu owner
                 self.right.tray_menu_state.set_active(Some(tray_index));
-                // Use serial 0 — layer shell popups don't typically need a grab serial
-                self.show_pending_menu(pending, tray_index, 0);
+                // Use stored input serial for popup keyboard grab
+                self.show_pending_menu(pending, tray_index);
             }
         }
 

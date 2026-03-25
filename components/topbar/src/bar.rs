@@ -216,7 +216,9 @@ impl RightPanel {
 
     /// Rebuild the tray MenuBarState from current tray items.
     pub fn sync_tray_items(&mut self) {
+        let active = self.tray_menu_state.active_index();
         self.tray_menu_state = build_tray_menu_state();
+        self.tray_menu_state.set_active(active);
     }
 
     pub fn draw(&self, canvas: &Canvas) {
@@ -303,6 +305,38 @@ impl RightPanel {
             offset += iw + self.tray_style.item_spacing;
         }
 
+        None
+    }
+
+    /// Return the bounding rect (x, y, w, h) in surface-local coords for a tray icon.
+    pub fn tray_item_rect(&self, index: usize) -> Option<(f32, f32, f32, f32)> {
+        let items = self.tray_menu_state.items();
+        if index >= items.len() {
+            return None;
+        }
+        let font = otto_kit::typography::get_font_with_fallback(
+            "Inter",
+            self.tray_style.font_style(),
+            self.tray_style.font_size,
+        );
+        let clock_width = {
+            let cfont = typography::styles::BODY.font();
+            cfont.measure_str(&self.clock.text, None).0 + BAR_PADDING_H
+        };
+        let tray_width = MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
+        let gap = if tray_width > 0.0 { TRAY_CLOCK_GAP } else { 0.0 };
+        let tray_x = self.width - clock_width - gap - tray_width;
+
+        let mut offset = self.tray_style.bar_padding_horizontal;
+        for (i, item) in items.iter().enumerate() {
+            let cw = self.tray_style.item_content_width(item, &font);
+            let iw = self.tray_style.item_width(cw);
+            if i == index {
+                let x = tray_x + offset;
+                return Some((x, 0.0, iw, self.tray_style.height));
+            }
+            offset += iw + self.tray_style.item_spacing;
+        }
         None
     }
 }

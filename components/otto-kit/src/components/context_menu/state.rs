@@ -151,6 +151,11 @@ impl ContextMenuState {
         self.open_submenu_by_depth.get(depth).and_then(|idx| *idx) == Some(item_idx)
     }
 
+    /// Get the item index that has an open submenu at the given depth
+    pub fn open_submenu_at(&self, depth: usize) -> Option<usize> {
+        self.open_submenu_by_depth.get(depth).and_then(|idx| *idx)
+    }
+
     /// Check if any submenu is open at the given depth
     pub fn has_open_submenu_at(&self, depth: usize) -> bool {
         self.open_submenu_by_depth
@@ -241,6 +246,11 @@ impl ContextMenuState {
 
         // Clear any deeper submenus
         self.open_submenu_by_depth.truncate(depth + 1);
+
+        // Only one item should be selected across the entire menu tree.
+        // Clear the parent's selection so only the submenu shows a highlight.
+        self.select_at_depth(depth, None);
+
         self.depth = depth + 1;
     }
 
@@ -265,6 +275,26 @@ impl ContextMenuState {
     /// Close all submenus
     pub fn close_all_submenus(&mut self) {
         self.close_submenus_from(0);
+    }
+
+    /// Clear selections at all depths except the given one.
+    /// Returns the depths that were cleared (for re-rendering).
+    pub fn clear_selections_except(&mut self, keep_depth: usize) -> Vec<usize> {
+        let mut cleared = Vec::new();
+        // Check depth 0
+        if keep_depth != 0 && self.selected_index.is_some() {
+            self.selected_index = None;
+            cleared.push(0);
+        }
+        // Check deeper depths
+        for (i, sel) in self.selections_by_depth.iter_mut().enumerate() {
+            let d = i + 1; // selections_by_depth[0] corresponds to depth 1
+            if d != keep_depth && sel.is_some() {
+                *sel = None;
+                cleared.push(d);
+            }
+        }
+        cleared
     }
 
     // === Utility ===

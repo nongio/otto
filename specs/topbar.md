@@ -1,7 +1,7 @@
 # Top Bar
 
-**Status:** draft  
-**Related specs:** dynamic-island.md, notification-daemon.md
+**Status:** draft
+**Related specs:** context-menus.md, dynamic-island.md, notification-daemon.md
 
 ## Summary
 
@@ -63,35 +63,36 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 
 11. Menu data is sourced via the `com.canonical.dbusmenu` D-Bus interface. The bar looks for the menu at the well-known bus name registered for the focused window.
 12. The bar queries the menu structure once per focus change and caches it. It listens for `ItemsPropertiesUpdated` and `LayoutUpdated` signals to refresh the cache incrementally.
-13. Clicking a top-level menu entry renders a dropdown popup as a new layer-shell surface (`overlay` layer) positioned below the bar at the correct horizontal offset.
-14. Keyboard navigation within a menu follows standard conventions: arrow keys move selection, Enter activates, Escape closes. The bar requests keyboard grab from the compositor while a menu is open.
-15. If no dbusmenu is registered for the focused app, the left zone shows only the application name with no menu entries.
-16. Menu entries support: labels, icons, keyboard shortcuts (displayed right-aligned), separators, checkboxes, radio groups, and submenus.
-17. Disabled menu entries are rendered at reduced opacity and do not respond to activation.
+13. Clicking a top-level menu entry renders a dropdown popup as a new layer-shell surface (`overlay` layer) positioned below the bar at the correct horizontal offset. The popup is managed by the context menu system (see context-menus.md for detailed menu behavior).
+14. Keyboard navigation within a menu follows standard conventions: arrow keys move selection, Enter activates, Escape closes. The bar requests keyboard grab from the compositor while a menu is open. Submenus do not request a grab; the root menu retains focus throughout the entire menu tree.
+15. When a submenu is opened or the pointer moves between menu depths, only one item is selected across the entire menu tree. If a submenu is visible, parent menu items are not highlighted.
+16. If no dbusmenu is registered for the focused app, the left zone shows only the application name with no menu entries.
+17. Menu entries support: labels, icons, keyboard shortcuts (displayed right-aligned), separators, checkboxes, radio groups, and submenus.
+18. Disabled menu entries are rendered at reduced opacity and do not respond to activation.
 
 ### System Tray — StatusNotifierItem (Right Zone)
 
-18. The bar implements the `org.kde.StatusNotifierHost` D-Bus role and monitors `org.kde.StatusNotifierWatcher` for icon registrations.
-19. Each registered SNI item is rendered as an icon in the right zone. Icons are ordered by registration time, newest leftmost.
-20. Tray icon images are fetched via the SNI `IconPixmap` or `IconThemePath`/`IconName` properties. A fallback generic icon is shown if none is available.
-21. On hover, a tooltip is shown below the tray icon, sourced from the SNI `ToolTip` property.
-22. Left-click on a tray icon calls the SNI `Activate(x, y)` method. Right-click calls `ContextMenu(x, y)` and renders the resulting dbusmenu popup.
-23. Middle-click calls the SNI `SecondaryActivate(x, y)` method.
-24. The bar listens for `NewIcon`, `NewStatus`, and `NewToolTip` signals to update icons without polling.
-25. Icons with `Status = Passive` may be hidden by user configuration (hidden icons tray, revealed on click of a chevron button).
+19. The bar implements the `org.kde.StatusNotifierHost` D-Bus role and monitors `org.kde.StatusNotifierWatcher` for icon registrations.
+20. Each registered SNI item is rendered as an icon in the right zone. Icons are ordered by registration time, newest leftmost.
+21. Tray icon images are fetched via the SNI `IconPixmap` or `IconThemePath`/`IconName` properties. A fallback generic icon is shown if none is available.
+22. On hover, a tooltip is shown below the tray icon, sourced from the SNI `ToolTip` property.
+23. Left-click on a tray icon calls the SNI `Activate(x, y)` method. Right-click calls `ContextMenu(x, y)` and renders the resulting dbusmenu popup using the context menu system. Context menu behavior (selection, submenus, keyboard/mouse navigation) follows context-menus.md.
+24. Middle-click calls the SNI `SecondaryActivate(x, y)` method.
+25. The bar listens for `NewIcon`, `NewStatus`, and `NewToolTip` signals to update icons without polling.
+26. Icons with `Status = Passive` may be hidden by user configuration (hidden icons tray, revealed on click of a chevron button).
 
 ### Clock (Right Zone)
 
-26. The clock displays the current local time. Default format: `HH:MM` (24-hour). Configurable to include date or switch to 12-hour format.
-27. Clicking the clock opens a calendar popup (future milestone; not in initial implementation).
+27. The clock displays the current local time. Default format: `HH:MM` (24-hour). Configurable to include date or switch to 12-hour format.
+28. Clicking the clock opens a calendar popup (future milestone; not in initial implementation).
 
 ### Animations & Visual Behavior
 
-28. When a new SNI icon registers, it slides in from the right with a spring animation.
-29. When an SNI icon deregisters, it fades out and the remaining icons slide to close the gap.
-30. Menu entry highlight uses a rounded-rect fill with spring-based scale feedback on press.
-31. Menus open with a fade-in + slight upward slide. Menus close with a fade-out.
-32. The right panel width animates smoothly when tray icons are added or removed, using an exponential ease-out interpolation. On the first frame after creation, the width snaps to the content-driven target without animating.
+29. When a new SNI icon registers, it slides in from the right with a spring animation.
+30. When an SNI icon deregisters, it fades out and the remaining icons slide to close the gap.
+31. Menu entry highlight uses a rounded-rect fill with spring-based scale feedback on press.
+32. Menus open with a fade-in + slight upward slide. Menus close with a fade-out.
+33. The right panel width animates smoothly when tray icons are added or removed, using an exponential ease-out interpolation. On the first frame after creation, the width snaps to the content-driven target without animating.
 
 ## Constraints & Edge Cases
 
@@ -111,6 +112,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 - **Compositor-side focus tracking via ext-foreign-toplevel-list:** This protocol provides reliable, race-free focus events and app_id without requiring any cooperation from the client app.
 - **Center zone reserved for Dynamic Island:** The Dynamic Island spec places a pill in the top-center. Keeping the bar center empty avoids visual clutter and text-behind-pill rendering artifacts.
 - **SNI over Wayland tray protocols:** No stable Wayland tray protocol exists. SNI (via D-Bus) is the de-facto standard supported by virtually all Linux desktop apps.
+- **Context menu system:** Both global menus (left zone) and tray icon context menus (right zone) use the shared context menu component, which ensures consistent keyboard and mouse behavior, submenu handling, and focus management across the topbar.
 
 ## Open Questions
 
