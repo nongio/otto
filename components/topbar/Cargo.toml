@@ -1,0 +1,23 @@
+[package]
+name = "otto-topbar"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "otto-topbar"
+path = "src/main.rs"
+
+[dependencies]
+otto-kit = { path = "../otto-kit" }
+skia-safe = { version = "=0.88", features = ["gl", "textlayout"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop"] }
+chrono = "0.4"
+tokio = { version = "1", features = ["full"] }
+zbus = { version = "4", default-features = false, features = ["tokio"] }
+futures-util = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+toml = { version = "0.8", default-features = false, features = ["parse"] }
