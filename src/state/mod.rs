@@ -9,6 +9,7 @@ use std::{
 };
 
 use layers::{engine::Engine, prelude::taffy};
+use sd_notify::NotifyState;
 use tracing::{info, warn};
 
 use smithay::{
@@ -481,6 +482,26 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     name = socket_name,
                     "Exported WAYLAND_DISPLAY to systemd user session"
                 );
+            }
+
+            // Notify systemd that the compositor is ready (opt-in via --systemd-notify or config)
+            let systemd_notify_enabled =
+                Config::with(|c| c.systemd_notify) || std::env::var("OTTO_SYSTEMD_NOTIFY").is_ok();
+            if systemd_notify_enabled {
+                if let Err(e) = sd_notify::notify(false, &[NotifyState::Ready]) {
+                    warn!(error = ?e, "Failed to send sd_notify READY=1");
+                } else {
+                    info!("Sent sd_notify READY=1 to systemd");
+                }
+                // Activate graphical-session.target so dependent user services can start
+                if let Err(e) = std::process::Command::new("systemctl")
+                    .args(["--user", "start", "graphical-session.target"])
+                    .output()
+                {
+                    warn!(error = ?e, "Failed to start graphical-session.target");
+                } else {
+                    info!("Started systemd user graphical-session.target");
+                }
             }
 
             Some(socket_name)

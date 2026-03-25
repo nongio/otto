@@ -388,6 +388,12 @@ pub fn run_winit() {
 
     info!("Initialization completed, starting the main loop.");
 
+    // Perform an initial event dispatch to give XWayland a chance to emit
+    // XWaylandEvent::Ready and set DISPLAY before running autostart programs.
+    let _ = winit.dispatch_new_events(|_event| {});
+
+    state.autostart();
+
     // rendering / events loop
     while state.running.load(Ordering::SeqCst) {
         #[cfg(feature = "profile-with-puffin")]

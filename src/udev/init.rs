@@ -610,7 +610,19 @@ pub fn run_udev() {
      * And run our loop
      */
 
-    // FIXME: check if we can delay this
+    // Perform an initial dispatch so that backends (including XWayland) can
+    // finish asynchronous setup (e.g. setting DISPLAY) before autostart.
+    if event_loop
+        .dispatch(Some(Duration::from_millis(0)), &mut state)
+        .is_err()
+    {
+        state.running.store(false, Ordering::SeqCst);
+    }
+
+    if state.running.load(Ordering::SeqCst) {
+        state.autostart();
+    }
+
     while state.running.load(Ordering::SeqCst) {
         // Use tight timing when animations are active or the idle countdown
         // is still running (recent input/damage keeps us at frame rate).
