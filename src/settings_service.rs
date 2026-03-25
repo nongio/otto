@@ -27,6 +27,13 @@ impl SettingsInterface {
             ThemeScheme::Light => 2,
         })
     }
+
+    /// Returns the configured icon theme name (e.g. "Adwaita", "Papirus").
+    ///
+    /// Returns an empty string if no theme is configured (auto-detect).
+    async fn get_icon_theme(&self) -> String {
+        Config::with(|config| config.icon_theme.clone().unwrap_or_default())
+    }
 }
 
 /// Registers the Settings interface on the existing D-Bus connection.

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use tracing::{debug, error};
 use zbus::fdo;
 use zbus::interface;
-use zbus::zvariant::OwnedValue;
+use zbus::zvariant::{OwnedValue, Value};
 
 use crate::otto_client::settings::OttoSettingsProxy;
 use crate::otto_client::OttoClient;
@@ -24,11 +24,16 @@ impl SettingsPortal {
     /// Returns all settings as a nested HashMap.
     async fn get_all_settings(&self) -> fdo::Result<HashMap<String, HashMap<String, OwnedValue>>> {
         let color_scheme = self.read_color_scheme().await?;
+        let icon_theme = self.read_icon_theme().await?;
 
         let mut namespaces = HashMap::new();
         let mut appearance = HashMap::new();
 
         appearance.insert("color-scheme".to_string(), color_scheme.into());
+        appearance.insert(
+            "icon-theme".to_string(),
+            Value::from(icon_theme).try_into().unwrap(),
+        );
 
         namespaces.insert("org.freedesktop.appearance".to_string(), appearance);
         Ok(namespaces)
@@ -40,6 +45,10 @@ impl SettingsPortal {
             ("org.freedesktop.appearance", "color-scheme") => {
                 let color_scheme = self.read_color_scheme().await?;
                 Ok(color_scheme.into())
+            }
+            ("org.freedesktop.appearance", "icon-theme") => {
+                let icon_theme = self.read_icon_theme().await?;
+                Ok(Value::from(icon_theme).try_into().unwrap())
             }
             _ => Err(fdo::Error::Failed(format!(
                 "Unknown setting: {}.{}",
@@ -64,6 +73,15 @@ impl SettingsPortal {
         proxy.get_color_scheme().await.map_err(|err| {
             error!(?err, "Failed to read color scheme from compositor");
             fdo::Error::Failed(format!("Failed to read color scheme: {err}"))
+        })
+    }
+
+    /// Reads the icon theme name from the compositor.
+    async fn read_icon_theme(&self) -> fdo::Result<String> {
+        let proxy = self.get_settings_proxy().await?;
+        proxy.get_icon_theme().await.map_err(|err| {
+            error!(?err, "Failed to read icon theme from compositor");
+            fdo::Error::Failed(format!("Failed to read icon theme: {err}"))
         })
     }
 
