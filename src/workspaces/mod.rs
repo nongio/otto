@@ -16,7 +16,10 @@ use layers::{
 use smithay::{
     desktop::{layer_map_for_output, Space, WindowSurface},
     output::Output,
-    reexports::wayland_server::{backend::ObjectId, Resource},
+    reexports::{
+        calloop::channel::{channel, Sender as CalloopSender},
+        wayland_server::{backend::ObjectId, Resource},
+    },
     utils::{IsAlive, Rectangle},
 };
 
@@ -147,6 +150,7 @@ pub struct Workspaces {
     expose_layer: Layer,
     observers: Vec<Weak<dyn Observer<WorkspacesModel>>>,
     expose_dragged_window: Arc<std::sync::Mutex<Option<ObjectId>>>,
+    remove_workspace_sender: CalloopSender<usize>,
 }
 
 /// # Workspaces Layer Structure
@@ -309,8 +313,9 @@ impl Workspaces {
         layer_shell_overlay.set_hidden(true);
         // attached to output_layer in map_output_with_primary
 
-        let (workspace_selector_view, remove_receiver) =
-            WorkspaceSelectorView::new(layers_engine.clone(), workspace_selector_layer.clone());
+        let (remove_workspace_sender, remove_receiver) = channel::<usize>();
+        let workspace_selector_view =
+            WorkspaceSelectorView::new(layers_engine.clone(), workspace_selector_layer.clone(), remove_workspace_sender.clone());
         let workspace_selector_view = Arc::new(workspace_selector_view);
 
         // Create OSD view; attach it to overlay_layer in map_output_with_primary
@@ -344,6 +349,7 @@ impl Workspaces {
             observers: Vec::new(),
             layers_engine,
             expose_dragged_window: Arc::new(std::sync::Mutex::new(None)),
+            remove_workspace_sender,
             display_handle,
         };
 
@@ -3208,6 +3214,21 @@ impl Workspaces {
             }
         }
         self.add_workspace()
+    }
+
+    /// Schedule workspace removal after an animation completes.
+    /// The workspace at position `n` will be removed when `transaction` finishes.
+    pub fn defer_remove_workspace_at(&self, n: usize, transaction: &TransactionRef) {
+        let ws_model_index = self.with_model(|m| m.workspaces.get(n).map(|w| w.index));
+        if let Some(index) = ws_model_index {
+            let sender = self.remove_workspace_sender.clone();
+            transaction.on_finish(
+                move |_: &Layer, _: f32| {
+                    let _ = sender.send(index);
+                },
+                true,
+            );
+        }
     }
 
     pub fn remove_workspace_at(&mut self, n: usize) {

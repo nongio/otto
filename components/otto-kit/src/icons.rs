@@ -12,9 +12,9 @@ use skia_safe as skia;
 // Icon cache
 // ---------------------------------------------------------------------------
 
-static ICON_CACHE: OnceLock<Arc<RwLock<HashMap<String, skia::Image>>>> = OnceLock::new();
+static ICON_CACHE: OnceLock<Arc<RwLock<HashMap<String, Option<skia::Image>>>>> = OnceLock::new();
 
-fn icon_cache() -> Arc<RwLock<HashMap<String, skia::Image>>> {
+fn icon_cache() -> Arc<RwLock<HashMap<String, Option<skia::Image>>>> {
     ICON_CACHE
         .get_or_init(|| Arc::new(RwLock::new(HashMap::new())))
         .clone()
@@ -27,22 +27,21 @@ fn icon_cache() -> Arc<RwLock<HashMap<String, skia::Image>>> {
 pub fn named_icon(icon_name: &str) -> Option<skia::Image> {
     let ic = icon_cache();
 
-    // Check cache
+    // Check cache (includes negative lookups)
     {
         let cache = ic.read().unwrap();
-        if let Some(icon) = cache.get(icon_name) {
-            return Some(icon.clone());
+        if let Some(entry) = cache.get(icon_name) {
+            return entry.clone();
         }
     }
 
     // Cache miss — look up and load
-    let icon_path = find_icon(icon_name, 512, 1)?;
-    let icon = image_from_path(&icon_path, (512, 512))?;
+    let icon = find_icon(icon_name, 512, 1).and_then(|p| image_from_path(&p, (512, 512)));
 
     ic.write()
         .unwrap()
         .insert(icon_name.to_string(), icon.clone());
-    Some(icon)
+    icon
 }
 
 /// Look up an icon by name with a specific size, with caching.
@@ -54,16 +53,15 @@ pub fn named_icon_sized(icon_name: &str, size: i32) -> Option<skia::Image> {
 
     {
         let cache = ic.read().unwrap();
-        if let Some(icon) = cache.get(&cache_key) {
-            return Some(icon.clone());
+        if let Some(entry) = cache.get(&cache_key) {
+            return entry.clone();
         }
     }
 
-    let icon_path = find_icon(icon_name, size, 1)?;
-    let icon = image_from_path(&icon_path, (size, size))?;
+    let icon = find_icon(icon_name, size, 1).and_then(|p| image_from_path(&p, (size, size)));
 
     ic.write().unwrap().insert(cache_key, icon.clone());
-    Some(icon)
+    icon
 }
 
 /// Load an icon from a file path with caching.
@@ -73,15 +71,15 @@ pub fn cached_file_icon(path: &str, size: i32) -> Option<skia::Image> {
 
     {
         let cache = ic.read().unwrap();
-        if let Some(icon) = cache.get(&cache_key) {
-            return Some(icon.clone());
+        if let Some(entry) = cache.get(&cache_key) {
+            return entry.clone();
         }
     }
 
-    let icon = image_from_path(path, (size, size))?;
+    let icon = image_from_path(path, (size, size));
 
     ic.write().unwrap().insert(cache_key, icon.clone());
-    Some(icon)
+    icon
 }
 
 // ---------------------------------------------------------------------------

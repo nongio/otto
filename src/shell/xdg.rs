@@ -752,15 +752,20 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                         we.get_workspace(),
                         view.unmaximised_rect.loc,
                     );
-                    self.workspaces
-                        .set_current_workspace_index(we.get_workspace(), Some(transition.clone()));
+                    let scroll_transaction = self.workspaces
+                        .set_current_workspace_index(we.get_workspace(), Some(transition));
 
-                    // Delete the temporary fullscreen workspace BEFORE setting up animations
-                    // so that expose_set_visible's on_finish callbacks don't capture freed layer nodes.
-                    self.workspaces
-                        .remove_workspace_at(fullscreen_workspace_index);
+                    // Defer fullscreen workspace removal until the scroll animation completes,
+                    // so the workspace remains visible while scrolling away from it.
+                    if let Some(tr) = &scroll_transaction {
+                        self.workspaces
+                            .defer_remove_workspace_at(fullscreen_workspace_index, tr);
+                    } else {
+                        self.workspaces
+                            .remove_workspace_at(fullscreen_workspace_index);
+                    }
 
-                    // Exit expose mode (after remove, so freed workspace layers aren't captured)
+                    // Exit expose mode
                     self.workspaces.expose_set_visible(false);
 
                     // Fade in layer_shell_overlay when exiting fullscreen
