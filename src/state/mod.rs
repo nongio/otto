@@ -1157,16 +1157,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     commit: render_surface.current_commit(),
                     transform: surface_attributes.buffer_transform.into(),
                 };
-                // tracing::trace!(
-                //     "window_view_for_surface: id={:?} texture_id={:?} \
-                //      src=({},{} {}x{}) dst=({},{} {}x{}) log_offset=({},{}) scale={}",
-                //     id,
-                //     wvs.texture_id,
-                //     wvs.phy_src_x, wvs.phy_src_y, wvs.phy_src_w, wvs.phy_src_h,
-                //     wvs.phy_dst_x, wvs.phy_dst_y, wvs.phy_dst_w, wvs.phy_dst_h,
-                //     wvs.log_offset_x, wvs.log_offset_y,
-                //     scale
-                // );
                 return Some(wvs);
             }
         };

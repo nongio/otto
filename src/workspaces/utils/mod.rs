@@ -271,12 +271,11 @@ pub fn configure_surface_layer(
         }
         let tex = tex.unwrap();
 
-        // Read actual texture dimensions at draw time so gravity stays
-        // consistent with the current buffer even mid-animation.
-        let tex_w = tex.image.width() as f32;
-        let tex_h = tex.image.height() as f32;
-        let src_w = tex_w.max(1.0);
-        let src_h = tex_h.max(1.0);
+        // Use the viewport source dimensions, NOT the raw GPU texture size.
+        // Clients like Chrome reuse oversized GPU texture allocations; the
+        // viewport crop (phy_src) tells us the actual content region.
+        let src_w = draw_wvs.phy_src_w.max(1.0);
+        let src_h = draw_wvs.phy_src_h.max(1.0);
 
         // Use live w/h for all gravity modes so the draw scales correctly during animations.
         let (scale_x, scale_y, tx, ty) = match gravity {
