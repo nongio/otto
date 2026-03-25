@@ -21,6 +21,12 @@ pub struct ScTimingFunctionInner {
     pub spring_initial_velocity: f32,
 }
 
+impl Default for ScTimingFunctionData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ScTimingFunctionData {
     pub fn new() -> Self {
         Self {

@@ -2889,22 +2889,36 @@ impl Workspaces {
     ) {
         let location = location.into();
 
-        // Guard against re-mapping an already-mapped output (e.g., on resize).
-        // Just re-register the output with each space so Smithay knows the new geometry,
-        // then refresh layout sizes.
+        // Guard against re-mapping an already-mapped output (e.g., on resize or
+        // resume after suspend).  Re-register the output with each space so
+        // Smithay knows the new geometry, then refresh layout sizes.
         if self.output_workspaces.contains_key(&output.name()) {
+            // The output may have been suspended (removed from self.outputs but
+            // output_workspaces kept intact). Re-add it if missing.
+            if !self.outputs.iter().any(|o| o.name() == output.name()) {
+                self.outputs.push(output.clone());
+            }
+            if is_primary || self.primary_output.is_none() {
+                self.primary_output = Some(output.clone());
+            }
+
             if let Some(ows) = self.output_workspaces.get_mut(&output.name()) {
                 for space in ows.spaces.iter_mut() {
                     space.map_output(output, location);
                 }
-                // Keep layer_shell_background bounds in sync with the (possibly new) output size.
+                // Keep layer sizes in sync with the (possibly new) output mode.
                 if let Some((w, h)) = output
                     .current_mode()
                     .map(|m| (m.size.w as f32, m.size.h as f32))
                 {
                     ows.layer_shell_background
                         .set_size(layers::types::Size::points(w, h), None);
+                    ows.output_layer
+                        .set_size(layers::types::Size::points(w, h), None);
                 }
+                let scale = output.current_scale().fractional_scale() as f32;
+                let phys_x = location.x as f32 * scale;
+                ows.output_layer.set_position((phys_x, 0.0_f32), None);
             }
             self.sync_model_from_primary();
             self.update_workspaces_layout();
@@ -3090,6 +3104,20 @@ impl Workspaces {
         }
         // Remove the output's workspace set (dropping workspaces_layer removes it from scene)
         self.output_workspaces.remove(&output.name());
+        self.sync_model_from_primary();
+    }
+
+    /// Suspend an output without destroying its workspace data.
+    ///
+    /// Used for lid-close: the DRM surface is torn down (no rendering) but
+    /// all workspaces, windows, and scene-graph layers are preserved so they
+    /// can be instantly restored when the output comes back.
+    pub fn suspend_output(&mut self, output: &Output) {
+        self.outputs.retain(|o| o != output);
+        if self.primary_output.as_ref() == Some(output) {
+            self.primary_output = self.outputs.first().cloned();
+        }
+        // Intentionally do NOT remove from output_workspaces — keep windows alive.
         self.sync_model_from_primary();
     }
 
