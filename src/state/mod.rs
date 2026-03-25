@@ -9,8 +9,8 @@ use std::{
 };
 
 use layers::{engine::Engine, prelude::taffy};
-use tracing::{info, warn};
 use sd_notify::NotifyState;
+use tracing::{info, warn};
 
 use smithay::{
     backend::renderer::{
@@ -485,8 +485,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             }
 
             // Notify systemd that the compositor is ready (opt-in via --systemd-notify or config)
-            let systemd_notify_enabled = Config::with(|c| c.systemd_notify)
-                || std::env::var("OTTO_SYSTEMD_NOTIFY").is_ok();
+            let systemd_notify_enabled =
+                Config::with(|c| c.systemd_notify) || std::env::var("OTTO_SYSTEMD_NOTIFY").is_ok();
             if systemd_notify_enabled {
                 if let Err(e) = sd_notify::notify(false, &[NotifyState::Ready]) {
                     warn!(error = ?e, "Failed to send sd_notify READY=1");

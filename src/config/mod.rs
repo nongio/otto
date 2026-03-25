@@ -1139,4 +1139,38 @@ mod tests {
         let val = default_scroll_speed();
         assert_eq!(val, 1.0, "scroll_speed should default to 1.0");
     }
+
+    #[test]
+    fn test_exec_once_deserialization() {
+        let toml_str = r#"
+            [[exec_once]]
+            cmd = "waybar"
+
+            [[exec_once]]
+            cmd = "swaybg"
+            args = ["-i", "/path/to/wallpaper.png"]
+        "#;
+
+        let config: Config = toml::from_str(toml_str).expect("Config should deserialize");
+        assert_eq!(config.exec_once.len(), 2);
+        assert_eq!(config.exec_once[0].cmd, "waybar");
+        assert!(
+            config.exec_once[0].args.is_empty(),
+            "args should default to empty"
+        );
+        assert_eq!(config.exec_once[1].cmd, "swaybg");
+        assert_eq!(
+            config.exec_once[1].args,
+            vec!["-i", "/path/to/wallpaper.png"]
+        );
+    }
+
+    #[test]
+    fn test_exec_once_defaults_to_empty() {
+        let config = Config::default();
+        assert!(
+            config.exec_once.is_empty(),
+            "exec_once should default to empty"
+        );
+    }
 }

@@ -23,7 +23,9 @@ fn print_help() {
     }
     println!();
     println!("FLAGS:");
-    println!("    --systemd-notify   Send sd_notify(READY=1) and activate graphical-session.target");
+    println!(
+        "    --systemd-notify   Send sd_notify(READY=1) and activate graphical-session.target"
+    );
     println!();
     println!("If no backend is specified, otto auto-detects based on the environment.");
 }
@@ -88,9 +90,7 @@ async fn main() {
     #[cfg(feature = "profile-with-puffin")]
     profiling::puffin::set_scopes_on(true);
 
-    let arg = ::std::env::args()
-        .skip(1)
-        .find(|a| a != "--systemd-notify");
+    let arg = ::std::env::args().skip(1).find(|a| a != "--systemd-notify");
     match arg.as_ref().map(|s| &s[..]) {
         #[cfg(feature = "winit")]
         Some("--winit") => {

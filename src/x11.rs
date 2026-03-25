@@ -346,7 +346,18 @@ pub fn run_x11() {
 
     info!("Initialization completed, starting the main loop.");
 
-    state.autostart();
+    // Perform an initial dispatch so that backends (including XWayland) can
+    // finish asynchronous setup (e.g. setting DISPLAY) before autostart.
+    if event_loop
+        .dispatch(Some(Duration::from_millis(0)), &mut state)
+        .is_err()
+    {
+        state.running.store(false, Ordering::SeqCst);
+    }
+
+    if state.running.load(Ordering::SeqCst) {
+        state.autostart();
+    }
 
     // Removed unused PointerElement - cursor now rendered directly using CursorManager
 

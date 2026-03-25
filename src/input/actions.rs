@@ -95,8 +95,8 @@ impl<BackendData: Backend> Otto<BackendData> {
 
     fn launch_xdg_autostart(&mut self) {
         // Collect autostart .desktop files from system then user dirs (user overrides system)
-        let xdg_config_dirs = std::env::var("XDG_CONFIG_DIRS")
-            .unwrap_or_else(|_| "/etc/xdg".to_string());
+        let xdg_config_dirs =
+            std::env::var("XDG_CONFIG_DIRS").unwrap_or_else(|_| "/etc/xdg".to_string());
         let xdg_config_home = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
             let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
             format!("{}/.config", home)

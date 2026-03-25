@@ -515,7 +515,7 @@ Each entry takes:
 - `cmd` — the executable to run (must be on `$PATH` or an absolute path)
 - `args` — optional list of command-line arguments (defaults to empty)
 
-Commands are spawned after the Wayland socket is ready, so `WAYLAND_DISPLAY` and `DISPLAY` (when XWayland is active) are already set in the child environment.
+Commands are spawned after the Wayland socket is ready, so `WAYLAND_DISPLAY` is already set in the child environment. When XWayland is active, `DISPLAY` will be set once XWayland is ready, but it may not be available immediately for very early autostart commands.
 
 ---
 
