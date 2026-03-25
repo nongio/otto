@@ -248,19 +248,14 @@ pub fn configure_surface_layer(
             y: pos_y + (wvs.phy_dst_h * anchor_point.y),
         };
         layer.set_position(adjusted_pos, None);
-    } else {
-        tracing::debug!(
-            "configure_surface_layer: client owns bounds, skipping set_size/set_position (gravity={:?}, buf={}x{})",
-            gravity, wvs.phy_dst_w, wvs.phy_dst_h
-        );
     }
 
     layer.set_pointer_events(false);
-    // Do NOT cache the picture — the draw closure reads from textures_storage
-    // which is updated on every wl_surface.commit.  Caching would keep a stale
-    // bitmap when a surface commits partial damage, causing half the window to
-    // show old content.
-    layer.set_picture_cached(false);
+    // Picture caching is enabled so opacity/transform animations on the layer
+    // (e.g. popup fade-in) can composite the cached bitmap without re-rasterizing.
+    // The draw closure still reads live state from textures_storage, but lay-rs
+    // invalidates the cache when set_draw_content marks the layer dirty on commit.
+    layer.set_picture_cached(true);
     // The draw_content callback fills the entire bounds with the surface texture,
     // so this layer can act as an occluder in occlusion culling.
     layer.set_content_opaque(true);
@@ -276,8 +271,11 @@ pub fn configure_surface_layer(
         }
         let tex = tex.unwrap();
 
-        let src_h = (draw_wvs.phy_src_h - draw_wvs.phy_src_y).max(1.0);
-        let src_w = (draw_wvs.phy_src_w - draw_wvs.phy_src_x).max(1.0);
+        // Use the viewport source dimensions, NOT the raw GPU texture size.
+        // Clients like Chrome reuse oversized GPU texture allocations; the
+        // viewport crop (phy_src) tells us the actual content region.
+        let src_w = draw_wvs.phy_src_w.max(1.0);
+        let src_h = draw_wvs.phy_src_h.max(1.0);
 
         // Use live w/h for all gravity modes so the draw scales correctly during animations.
         let (scale_x, scale_y, tx, ty) = match gravity {
@@ -300,6 +298,10 @@ pub fn configure_surface_layer(
                 (1.0f32, 1.0f32, tx, ty)
             }
             ContentsGravity::TopLeft => (1.0f32, 1.0f32, 0.0f32, 0.0f32),
+            ContentsGravity::TopRight => {
+                let tx = w - src_w;
+                (1.0f32, 1.0f32, tx, 0.0f32)
+            }
         };
 
         // Convert buffer-pixel damage to layer-local coords using the same

@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use layers::prelude::Layer;
+use layers::taffy;
 use smithay::{
     desktop::LayerSurface,
     output::Output,
@@ -231,6 +232,98 @@ impl LayerShellSurface {
         height = height.max(0);
 
         Rectangle::new((x, y).into(), (width, height).into())
+    }
+
+    /// Build a Taffy layout style that encodes the layer shell anchors and margins
+    /// so the layout engine positions the layer automatically.
+    /// The layer's actual size (set via surface style or `set_size`) drives layout;
+    /// Taffy only provides the inset constraints for positioning.
+    /// `scale` is the output scale factor (physical / logical).
+    pub fn taffy_style(&self, scale: f64) -> taffy::Style {
+        let anchor = self.anchor();
+        let (mt, mr, mb, ml) = self.margin();
+
+        let anchor_top = anchor.contains(Anchor::TOP);
+        let anchor_bottom = anchor.contains(Anchor::BOTTOM);
+        let anchor_left = anchor.contains(Anchor::LEFT);
+        let anchor_right = anchor.contains(Anchor::RIGHT);
+
+        let s = |v: i32| taffy::LengthPercentageAuto::Length((v as f64 * scale) as f32);
+        let auto = taffy::LengthPercentageAuto::Auto;
+        let zero = taffy::LengthPercentageAuto::Length(0.0);
+
+        // wlr-layer-shell centering: surfaces not anchored on an axis are centered
+        // along that axis. For absolute items in Taffy, centering requires
+        // inset 0 on both sides + auto margins on that axis.
+        let horizontal_anchored = anchor_left || anchor_right;
+        let vertical_anchored = anchor_top || anchor_bottom;
+
+        let top = if anchor_top {
+            s(mt)
+        } else if !vertical_anchored {
+            zero
+        } else {
+            auto
+        };
+        let bottom = if anchor_bottom {
+            s(mb)
+        } else if !vertical_anchored {
+            zero
+        } else {
+            auto
+        };
+        let left = if anchor_left {
+            s(ml)
+        } else if !horizontal_anchored {
+            zero
+        } else {
+            auto
+        };
+        let right = if anchor_right {
+            s(mr)
+        } else if !horizontal_anchored {
+            zero
+        } else {
+            auto
+        };
+
+        let margin_top = if !vertical_anchored {
+            auto
+        } else {
+            taffy::LengthPercentageAuto::Length(0.0)
+        };
+        let margin_bottom = if !vertical_anchored {
+            auto
+        } else {
+            taffy::LengthPercentageAuto::Length(0.0)
+        };
+        let margin_left = if !horizontal_anchored {
+            auto
+        } else {
+            taffy::LengthPercentageAuto::Length(0.0)
+        };
+        let margin_right = if !horizontal_anchored {
+            auto
+        } else {
+            taffy::LengthPercentageAuto::Length(0.0)
+        };
+
+        taffy::Style {
+            position: taffy::Position::Absolute,
+            inset: taffy::Rect {
+                left,
+                right,
+                top,
+                bottom,
+            },
+            margin: taffy::Rect {
+                left: margin_left,
+                right: margin_right,
+                top: margin_top,
+                bottom: margin_bottom,
+            },
+            ..Default::default()
+        }
     }
 }
 

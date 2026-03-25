@@ -270,6 +270,7 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleV1, OttoLayerUserData> for O
                     Some(WlGravity::ResizeAspectFill) => ContentsGravity::ResizeAspectFill,
                     Some(WlGravity::Center) => ContentsGravity::Center,
                     Some(WlGravity::TopLeft) => ContentsGravity::TopLeft,
+                    Some(WlGravity::TopRight) => ContentsGravity::TopRight,
                     _ => {
                         tracing::warn!("Invalid contents_gravity value: {:?}", gravity);
                         return;

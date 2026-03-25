@@ -1,12 +1,6 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, OnceLock, RwLock},
-};
-
 use layers::{
     prelude::{ContentDrawFunction, Layer, PointerHandlerFunction, Transition},
     skia::{self},
-    utils::load_svg_image,
 };
 
 use crate::{config::Config, workspaces::utils::FONT_CACHE};
@@ -31,68 +25,16 @@ pub fn parse_hex_color(hex: &str) -> skia::Color4f {
     skia::Color4f::new(r, g, b, 1.0)
 }
 
-static ICON_CACHE: OnceLock<Arc<RwLock<HashMap<String, skia::Image>>>> = OnceLock::new();
+// Delegate icon functions to otto-kit
+pub use otto_kit::icons::{image_from_path, named_icon};
 
-fn icon_cache() -> Arc<RwLock<HashMap<String, skia::Image>>> {
-    ICON_CACHE
-        .get_or_init(|| Arc::new(RwLock::new(HashMap::new())))
-        .clone()
-}
-
-// FIXME check why skia_safe svg is broken
-// pub fn image_from_svg(
-//     image_data: &[u8],
-//     ctx: Option<skia::gpu::DirectContext>,
-// ) -> layers::skia::Image {
-//     let options = usvg::Options::default();
-//     let mut rtree = usvg::Tree::from_data(image_data, &options).unwrap();
-//     rtree.size = usvg::Size::from_wh(512.0, 512.0).unwrap();
-//     let xml_options = usvg::XmlOptions::default();
-//     let xml = usvg::TreeWriting::to_string(&rtree, &xml_options);
-//     let font_mgr = layers::skia::FontMgr::new();
-//     let svg = layers::skia::svg::Dom::from_bytes(xml.as_bytes(), font_mgr).unwrap();
-
-//     let mut surface = {
-//         if let Some(mut ctx) = ctx {
-//             let image_info = skia::ImageInfo::new(
-//                 (512, 512),
-//                 skia::ColorType::RGBA8888,
-//                 skia::AlphaType::Premul,
-//                 None,
-//             );
-//             skia::gpu::surfaces::render_target(
-//                 &mut ctx,
-//                 skia::gpu::Budgeted::No,
-//                 &image_info,
-//                 None,
-//                 skia::gpu::SurfaceOrigin::TopLeft,
-//                 None,
-//                 false,
-//                 false,
-//             )
-//             .unwrap()
-//         } else {
-//             skia::surfaces::raster_n32_premul((512, 512)).unwrap()
-//         }
-//     };
-
-//     let canvas = surface.canvas();
-//     svg.render(canvas);
-//     surface.image_snapshot()
-// }
-
-pub fn image_from_path(path: &str, size: impl Into<skia::ISize>) -> Option<layers::skia::Image> {
-    let image_path = std::path::Path::new(path);
-
-    let image = if image_path.extension().and_then(std::ffi::OsStr::to_str) == Some("svg") {
-        load_svg_image(path, size).ok()?
-    } else {
-        let image_data = std::fs::read(image_path).ok()?;
-        layers::skia::Image::from_encoded(layers::skia::Data::new_copy(image_data.as_slice()))
-            .unwrap()
-    };
-
-    Some(image)
+/// Find an icon using the configured theme or auto-detection.
+///
+/// Reads the theme name from otto's Config and delegates to otto-kit.
+pub fn find_icon_with_theme(icon_name: &str, size: i32, scale: i32) -> Option<String> {
+    Config::with(|config| {
+        otto_kit::icons::find_icon_in_theme(icon_name, size, scale, config.icon_theme.as_deref())
+    })
 }
 
 /// Load an image from resources directory, falling back to system locations and theme icons
@@ -142,64 +84,6 @@ pub fn resource_path(path: &str) -> Option<std::path::PathBuf> {
     }
 
     None
-}
-
-pub fn named_icon(icon_name: &str) -> Option<layers::skia::Image> {
-    let ic = icon_cache();
-    let mut ic = ic.write().unwrap();
-    if let Some(icon) = ic.get(icon_name) {
-        return Some(icon.clone());
-    }
-    // not found
-    let icon_path = find_icon_with_theme(icon_name, 512, 1);
-    let icon = icon_path
-        .as_ref()
-        .and_then(|icon_path| image_from_path(icon_path, (512, 512)));
-    if let Some(i) = icon.as_ref() {
-        ic.insert(icon_name.to_string(), i.clone());
-    }
-    icon
-}
-
-/// Find an icon using the configured theme or auto-detection
-pub fn find_icon_with_theme(icon_name: &str, size: i32, scale: i32) -> Option<String> {
-    Config::with(|config| {
-        if let Some(theme_name) = &config.icon_theme {
-            // Use specified theme
-            let dir_list_vector = xdgkit::icon_finder::generate_dir_list();
-
-            // Try to find the theme by name
-            let theme_dir = dir_list_vector
-                .iter()
-                .find(|dir| &dir.theme == theme_name)
-                .cloned();
-
-            if let Some(theme_dir) = theme_dir {
-                // Load the IconTheme from the found directory
-                let theme = xdgkit::icon_theme::IconTheme::from_pathbuff(theme_dir.index());
-
-                xdgkit::icon_finder::multiple_find_icon(
-                    icon_name.to_string(),
-                    size,
-                    scale,
-                    dir_list_vector,
-                    theme,
-                )
-                .map(|p| p.to_str().unwrap().to_string())
-            } else {
-                tracing::warn!(
-                    "Icon theme '{}' not found, falling back to auto-detection",
-                    theme_name
-                );
-                xdgkit::icon_finder::find_icon(icon_name.to_string(), size, scale)
-                    .map(|p| p.to_str().unwrap().to_string())
-            }
-        } else {
-            // Use auto-detection (None or omitted)
-            xdgkit::icon_finder::find_icon(icon_name.to_string(), size, scale)
-                .map(|p| p.to_str().unwrap().to_string())
-        }
-    })
 }
 pub fn draw_named_icon(icon_name: &str) -> Option<ContentDrawFunction> {
     let icon = named_icon(icon_name);

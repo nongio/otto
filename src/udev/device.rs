@@ -712,22 +712,33 @@ impl Otto<UdevData> {
             }
         }
 
-        // Disconnect laptop panels that should be disabled
-        let disconnect_with_connectors: Vec<_> = to_disconnect
-            .into_iter()
-            .filter_map(|(node, crtc)| {
-                self.backend_data.backends.get(&node).and_then(|device| {
-                    device
-                        .drm_scanner
-                        .crtcs()
-                        .find(|(_, c)| *c == crtc)
-                        .map(|(connector, _)| (node, connector.clone(), crtc))
-                })
-            })
-            .collect();
+        // Suspend laptop panels that should be disabled.
+        // Unlike a real connector disconnect, we only tear down the DRM surface
+        // (stops rendering and drops the Wayland global) but keep all workspace
+        // data intact so windows survive the lid-close/reopen cycle.
+        for (node, crtc) in to_disconnect {
+            let device = match self.backend_data.backends.get_mut(&node) {
+                Some(d) => d,
+                None => continue,
+            };
 
-        for (node, connector, crtc) in disconnect_with_connectors {
-            self.connector_disconnected(node, connector, crtc);
+            // Find the output before removing the surface (which drops the Wayland global).
+            let output = self
+                .workspaces
+                .outputs()
+                .find(|o| {
+                    o.user_data()
+                        .get::<UdevOutputId>()
+                        .map(|id| id.device_id == node && id.crtc == crtc)
+                        .unwrap_or(false)
+                })
+                .cloned();
+
+            device.surfaces.remove(&crtc);
+
+            if let Some(output) = output {
+                self.workspaces.suspend_output(&output);
+            }
         }
 
         // Reconnect laptop panels that should be re-enabled
