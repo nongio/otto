@@ -62,8 +62,8 @@ impl MenuItemRenderer {
         };
 
         // Create font
-        let font = typography::styles::BODY.font();
-        let shortcut_font = typography::styles::BODY.font();
+        let font = typography::styles::BODY_MEDIUM.font();
+        let shortcut_font = typography::styles::BODY_MEDIUM.font();
 
         // Draw label (offset by icon if present)
         let icon_size = 16.0;
@@ -192,14 +192,12 @@ impl MenuItemRenderer {
                     icon_y
                 );
                 // Use XDG theme lookup (same as tray icons), fall back to SVG set
-                if let Some(img) = crate::icons::named_icon_sized(name, icon_size as i32) {
+                // Load at physical size for HiDPI crispness
+                let scale = crate::app_runner::context::AppContext::scale_factor().max(1);
+                let load_size = (icon_size as i32) * scale;
+                if let Some(img) = crate::icons::named_icon_sized(name, load_size) {
                     let dst = Rect::from_xywh(icon_x, icon_y, icon_size, icon_size);
-                    let mut paint = Paint::default();
-                    paint.set_anti_alias(true);
-                    paint.set_color_filter(skia_safe::color_filters::blend(
-                        tint,
-                        skia_safe::BlendMode::SrcIn,
-                    ));
+                    let paint = Paint::default();
                     canvas.draw_image_rect(&img, None, dst, &paint);
                 } else {
                     // Fall back to embedded SVG icon set

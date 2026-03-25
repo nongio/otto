@@ -252,6 +252,7 @@ impl TopBarApp {
             // Popup top-right corner aligns to icon bottom-right corner
             positioner.set_anchor(xdg_positioner::Anchor::BottomRight);
             positioner.set_gravity(xdg_positioner::Gravity::BottomLeft);
+            positioner.set_offset(0, 1); // Small gap below the bar
             positioner.set_constraint_adjustment(
                 xdg_positioner::ConstraintAdjustment::SlideX
                     | xdg_positioner::ConstraintAdjustment::SlideY
@@ -328,6 +329,7 @@ impl TopBarApp {
             positioner.set_anchor_rect(pending.anchor_x, self.left.height as i32, 1, 1);
             positioner.set_anchor(xdg_positioner::Anchor::BottomLeft);
             positioner.set_gravity(xdg_positioner::Gravity::BottomRight);
+            positioner.set_offset(0, 1); // Small gap below the bar
             positioner.set_constraint_adjustment(
                 xdg_positioner::ConstraintAdjustment::SlideX
                     | xdg_positioner::ConstraintAdjustment::SlideY

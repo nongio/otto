@@ -13,7 +13,7 @@ pub const RIGHT_WIDTH: u32 = 80;
 pub const BAR_MARGIN_TOP: i32 = 3;
 
 /// Side margin from screen edge.
-pub const BAR_MARGIN_SIDE: i32 = 6;
+pub const BAR_MARGIN_SIDE: i32 = 2;
 
 /// Horizontal padding inside a panel.
 pub const BAR_PADDING_H: f32 = 14.0;
