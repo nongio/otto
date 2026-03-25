@@ -287,7 +287,7 @@ impl LayerShellSurface {
         // Also resize the Skia buffer immediately so the next draw uses the
         // new dimensions — avoids a frame where the old buffer is stretched
         // into the new layer shell geometry.
-        if inner.configured {
+        if inner.configured && width > 0 && height > 0 {
             let w = width as i32;
             let h = height as i32;
             if w != inner.base_surface.width || h != inner.base_surface.height {

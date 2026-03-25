@@ -19,6 +19,7 @@ impl LayersRenderer {
         engine.scene_set_root(root);
         engine.scene_set_size(width, height);
 
+        #[cfg(feature = "debugger")]
         engine.start_debugger();
         Self {
             engine,

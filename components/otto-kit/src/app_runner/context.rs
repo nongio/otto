@@ -73,7 +73,10 @@ fn init_wakeup_pipe() -> &'static (std::os::fd::OwnedFd, std::os::fd::OwnedFd) {
         use std::os::fd::FromRawFd;
         let mut fds = [0i32; 2];
         let ret = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_NONBLOCK | libc::O_CLOEXEC) };
-        assert!(ret == 0, "pipe2 failed");
+        if ret != 0 {
+            let err = std::io::Error::last_os_error();
+            tracing::error!("failed to create wakeup pipe: {err}");
+        }
         unsafe { (std::os::fd::OwnedFd::from_raw_fd(fds[0]), std::os::fd::OwnedFd::from_raw_fd(fds[1])) }
     })
 }

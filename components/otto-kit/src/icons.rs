@@ -117,15 +117,15 @@ pub fn find_icon_in_theme(
                 dir_list.clone(),
                 theme,
             )
-            .map(|p| p.to_str().unwrap().to_string())
+            .map(|p| p.to_string_lossy().into_owned())
         } else {
             tracing::warn!("Icon theme '{name}' not found, falling back to auto-detection");
             xdgkit::icon_finder::find_icon(icon_name.to_string(), size, scale)
-                .map(|p| p.to_str().unwrap().to_string())
+                .map(|p| p.to_string_lossy().into_owned())
         }
     } else {
         xdgkit::icon_finder::find_icon(icon_name.to_string(), size, scale)
-            .map(|p| p.to_str().unwrap().to_string())
+            .map(|p| p.to_string_lossy().into_owned())
     };
 
     // Fallbacks

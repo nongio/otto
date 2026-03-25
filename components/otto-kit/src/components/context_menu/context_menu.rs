@@ -775,21 +775,6 @@ impl ContextMenu {
                     None
                 };
 
-                // Click animation (slowed down for verification)
-                state.borrow_mut().select_at_depth(depth, None);
-                if let Some(ref popup_ref) = popup_ref {
-                    let style_borrowed = style.borrow();
-                    Self::render_menu_at_depth(state, &style_borrowed, popup_ref, depth);
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50)); // Slowed: was 50ms
-
-                state.borrow_mut().select_at_depth(depth, Some(idx));
-                if let Some(ref popup_ref) = popup_ref {
-                    let style_borrowed = style.borrow();
-                    Self::render_menu_at_depth(state, &style_borrowed, popup_ref, depth);
-                }
-                std::thread::sleep(std::time::Duration::from_millis(100)); // Slowed: was 100ms
-
                 // Fire callback with action_id (falls back to label)
                 if let Some(callback) = on_item_click.borrow().as_ref() {
                     callback(&callback_id);

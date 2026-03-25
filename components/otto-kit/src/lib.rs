@@ -11,7 +11,6 @@ pub mod rendering;
 pub mod surfaces;
 pub mod theme;
 pub mod typography;
-#[path = "utils.rs"]
 pub mod utils;
 
 // Re-export commonly used items

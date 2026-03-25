@@ -164,7 +164,7 @@ impl MenuItemRenderer {
 
         match icon {
             MenuItemIcon::Named(name) => {
-                tracing::debug!("menu_item render: named icon {:?} at ({}, {})", name, icon_x, icon_y);
+                tracing::trace!("menu_item render: named icon {:?} at ({}, {})", name, icon_x, icon_y);
                 // Use XDG theme lookup (same as tray icons), fall back to SVG set
                 if let Some(img) = crate::icons::named_icon_sized(name, icon_size as i32) {
                     let dst = Rect::from_xywh(icon_x, icon_y, icon_size, icon_size);

@@ -312,11 +312,13 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         // Box ensures context_data won't move even when app_data is moved
         AppContext::init::<A>(&app_data.context_data, &qh);
 
-        // Start background color-scheme watcher (reads XDG portal, updates global atomic)
-        crate::color_scheme::spawn_color_scheme_watcher();
-
-        // Start background icon-theme watcher (reads XDG portal, updates global string)
-        crate::icon_theme::spawn_icon_theme_watcher();
+        // Start background watchers if a tokio runtime is available
+        if tokio::runtime::Handle::try_current().is_ok() {
+            crate::color_scheme::spawn_color_scheme_watcher();
+            crate::icon_theme::spawn_icon_theme_watcher();
+        } else {
+            tracing::debug!("no tokio runtime found, skipping portal watchers");
+        }
 
         // Call the app's ready callback
         let ctx = AppContext::new(&app_data.context_data);
@@ -405,6 +407,15 @@ impl<A: App + 'static> AppRunnerInitialized<A> {
             ];
 
             let n = unsafe { libc::poll(fds.as_mut_ptr(), 2, timeout_ms) };
+
+            if n < 0 {
+                let err = std::io::Error::last_os_error();
+                if err.raw_os_error() == Some(libc::EINTR) {
+                    continue;
+                }
+                tracing::error!("poll error: {err}");
+                break;
+            }
 
             if n > 0 && fds[1].revents & libc::POLLIN != 0 {
                 AppContext::drain_wakeup();

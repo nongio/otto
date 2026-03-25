@@ -27,10 +27,14 @@ libc = "0.2"
 pipewire = "0.9"
 freedesktop-desktop-entry = "0.7.5"
 
+[features]
+default = []
+debugger = ["laye-rs/debugger"]
+
 [dependencies.laye-rs]
 git = "https://github.com/nongio/layers"
 tag = "v1.7.0"
-features = ["export-taffy", "debugger"]
+features = ["export-taffy"]
 
 [dependencies.skia-safe]
 version = "=0.88"
