@@ -1,0 +1,9 @@
+# Otto Topbar configuration
+# Loaded from (in order):
+#   /etc/otto/topbar.toml
+#   ~/.config/otto/topbar.toml
+#   ./otto_topbar.toml  (dev override)
+
+# Clock display format — uses chrono strftime syntax.
+# Default: "March 23, Thursday 21:16"
+clock_format = "%B %-d, %A %H:%M"
