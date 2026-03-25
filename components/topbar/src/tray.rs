@@ -533,21 +533,37 @@ async fn fetch_item(
         Err(_) => title,
     };
 
-    // Resolve icon file from theme if we have a name but no pixmap
-    // Request at physical size for HiDPI crispness
+    // Resolve icon file from theme if we have a name but no pixmap.
+    // Search at logical size (24) — most themes top out at 32px and these
+    // are SVGs anyway, so the renderer can scale them up for HiDPI.
     let scale = otto_kit::app_runner::context::AppContext::scale_factor().max(1);
-    let icon_load_size = 24 * scale;
+    let icon_load_size = 24;
     let icon_file = if icon_data.is_none() {
         icon_name.as_deref().and_then(|name| {
-            // Try non-symbolic variant first (colored, visible on any background)
-            let non_symbolic = name.trim_end_matches("-symbolic");
-            if non_symbolic != name {
-                if let Some(path) = otto_kit::icons::find_icon(non_symbolic, icon_load_size, scale)
-                {
+            // Helper: try finding an icon at the current scale, then fall back to 1x
+            let find = |n: &str| {
+                let result = otto_kit::icons::find_icon(n, icon_load_size, scale);
+                if result.is_some() {
+                    tracing::debug!("icon found: {n} scale={scale} -> {:?}", result);
+                    return result;
+                }
+                if scale > 1 {
+                    let result = otto_kit::icons::find_icon(n, icon_load_size, 1);
+                    tracing::debug!("icon fallback: {n} scale=1 -> {:?}", result);
+                    return result;
+                }
+                tracing::debug!("icon not found: {n}");
+                None
+            };
+            // Prefer symbolic variant — single-color SVGs that can be recolored
+            // to match the bar's text color, ensuring visibility on any background.
+            if !name.ends_with("-symbolic") {
+                let symbolic = format!("{name}-symbolic");
+                if let Some(path) = find(&symbolic) {
                     return Some(path);
                 }
             }
-            otto_kit::icons::find_icon(name, icon_load_size, scale)
+            find(name)
         })
     } else {
         None

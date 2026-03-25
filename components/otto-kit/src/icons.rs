@@ -58,7 +58,8 @@ pub fn named_icon_sized(icon_name: &str, size: i32) -> Option<skia::Image> {
         }
     }
 
-    let icon = find_icon(icon_name, size, 1).and_then(|p| image_from_path(&p, (size, size)));
+    let scale = crate::app_runner::context::AppContext::scale_factor().max(1);
+    let icon = find_icon(icon_name, size, scale).and_then(|p| image_from_path(&p, (size, size)));
 
     ic.write().unwrap().insert(cache_key, icon.clone());
     icon
@@ -92,7 +93,18 @@ pub fn cached_file_icon(path: &str, size: i32) -> Option<skia::Image> {
 /// then falls back to auto-detection.
 pub fn find_icon(icon_name: &str, size: i32, scale: i32) -> Option<String> {
     let theme = crate::icon_theme::current_icon_theme();
-    find_icon_in_theme(icon_name, size, scale, theme.as_deref())
+    let result = find_icon_in_theme(icon_name, size, scale, theme.as_deref());
+
+    // xdgkit may return a fallback icon (e.g. application-default-icon) even
+    // when the requested icon doesn't exist.  Reject results whose filename
+    // doesn't match what we asked for.
+    result.filter(|path| {
+        std::path::Path::new(path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|stem| stem.starts_with(icon_name))
+            .unwrap_or(false)
+    })
 }
 
 /// Find an icon in a specific theme (or auto-detect if `theme_name` is None).

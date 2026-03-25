@@ -115,23 +115,17 @@ impl MenuBarRenderer {
         style: &MenuBarStyle,
         tint: skia_safe::Color,
     ) {
+        // Load icons at physical size for HiDPI crispness
+        let scale = crate::app_runner::context::AppContext::scale_factor().max(1);
+        let load_size = (style.icon_size as i32) * scale;
         let image = match icon {
             MenuBarIcon::Pixmap {
                 data,
                 width,
                 height,
             } => Self::image_from_pixmap(data, *width, *height),
-            MenuBarIcon::Named(name) => {
-                let size = style.icon_size as i32;
-                crate::icons::named_icon_sized(name, size)
-            }
-            MenuBarIcon::File(path) => {
-                let size = style.icon_size as i32;
-                // Use the path as cache key via named_icon_sized's cache
-                // (it caches by string key, and find_icon will fail for a path,
-                // but we can call image_from_path directly and cache manually)
-                crate::icons::cached_file_icon(path, size)
-            }
+            MenuBarIcon::Named(name) => crate::icons::named_icon_sized(name, load_size),
+            MenuBarIcon::File(path) => crate::icons::cached_file_icon(path, load_size),
         };
 
         if let Some(image) = image {
@@ -139,11 +133,17 @@ impl MenuBarRenderer {
             let dst = Rect::from_xywh(x, y, style.icon_size, style.icon_size);
 
             let mut paint = Paint::default();
-            paint.set_anti_alias(true);
-            paint.set_color_filter(skia_safe::color_filters::blend(
-                tint,
-                skia_safe::BlendMode::SrcIn,
-            ));
+
+            // Tint symbolic icons (monochrome SVGs designed for recoloring).
+            // SrcIn replaces the icon's color with the tint while preserving alpha.
+            let is_symbolic = matches!(icon, MenuBarIcon::File(p) if p.contains("-symbolic"))
+                || matches!(icon, MenuBarIcon::Named(n) if n.contains("-symbolic"));
+            if is_symbolic {
+                paint.set_color_filter(skia_safe::color_filters::blend(
+                    tint,
+                    skia_safe::BlendMode::SrcIn,
+                ));
+            }
 
             canvas.draw_image_rect(&image, None, dst, &paint);
         }
