@@ -69,7 +69,7 @@ impl SkiaSurface {
     }
 
     /// Resize the surface
-    pub fn resize(&mut self, width: i32, height: i32) {
+    pub fn resize(&self, width: i32, height: i32) {
         AppContext::with_egl_resources(&self.surface_id, |res| {
             res.width = width;
             res.height = height;

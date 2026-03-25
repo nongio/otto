@@ -5,6 +5,8 @@ use super::traits::{
     EdgeInsets, LayoutConstraints, SurfaceBackend,
 };
 
+type DrawFn = Option<Box<dyn FnMut(&Canvas, Rect) + Send>>;
+
 /// A flexible container component that can use either drawing-based or surface-based rendering
 ///
 /// Frame provides a simple rectangular container with styling support (background, borders,
@@ -152,7 +154,6 @@ impl<B: ContainerBackend> Container for Frame<B> {
 /// Builder for creating Frame instances
 ///
 /// Provides a fluent API for configuring frames before creation.
-#[allow(clippy::type_complexity)]
 pub struct FrameBuilder {
     width: f32,
     height: f32,
@@ -162,7 +163,7 @@ pub struct FrameBuilder {
     constraints: LayoutConstraints,
     use_surface: bool,
     subsurface_id: Option<String>,
-    draw_fn: Option<Box<dyn FnMut(&Canvas, Rect) + Send>>,
+    draw_fn: DrawFn,
 }
 
 impl FrameBuilder {

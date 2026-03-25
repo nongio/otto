@@ -17,6 +17,8 @@ fn default_layer_augmentation(layer: &otto_surface_style_v1::OttoSurfaceStyleV1)
     layer.set_masks_to_bounds(otto_surface_style_v1::ClipMode::Enabled);
 }
 
+type CanvasDrawFn = Arc<Mutex<Option<Box<dyn FnMut(&skia_safe::Canvas) + Send>>>>;
+
 /// Window component using ToplevelSurface
 ///
 /// This is a high-level window component that uses ToplevelSurface for
@@ -30,12 +32,12 @@ fn default_layer_augmentation(layer: &otto_surface_style_v1::OttoSurfaceStyleV1)
 ///
 /// Window is Clone-able, allowing it to be shared across the application.
 #[derive(Clone)]
-#[allow(clippy::type_complexity)]
 pub struct Window {
+    #[allow(clippy::arc_with_non_send_sync)]
     surface: Arc<RwLock<Option<ToplevelSurface>>>,
     background_color: Arc<RwLock<skia_safe::Color>>,
     title: Arc<RwLock<String>>,
-    on_draw_fn: Arc<Mutex<Option<Box<dyn FnMut(&skia_safe::Canvas) + Send>>>>,
+    on_draw_fn: CanvasDrawFn,
 }
 
 impl Window {
@@ -56,8 +58,9 @@ impl Window {
         } else {
             eprintln!("Warning: No surface style available - window will not have rounded corners");
         }
-        #[allow(clippy::arc_with_non_send_sync)]
+
         let window = Self {
+            #[allow(clippy::arc_with_non_send_sync)]
             surface: Arc::new(RwLock::new(Some(surface))),
             background_color: Arc::new(RwLock::new(skia_safe::Color::from_rgb(245, 245, 245))),
             title: Arc::new(RwLock::new(title.to_string())),
@@ -177,38 +180,34 @@ impl Window {
     where
         F: FnOnce(),
     {
-        #[allow(clippy::single_match)]
-        match self.surface.read() {
-            Ok(surface_guard) => {
-                if let Some(ref surface) = *surface_guard {
-                    if !surface.is_configured() {
-                        return;
-                    }
-
-                    let on_draw_fn = self.on_draw_fn.clone();
-                    let background_color = self
-                        .background_color
-                        .read()
-                        .ok()
-                        .map(|c| *c)
-                        .unwrap_or(skia_safe::Color::WHITE);
-
-                    surface.draw(|canvas| {
-                        canvas.clear(background_color);
-
-                        // Draw custom content on top if provided
-                        if let Ok(mut draw_fn_guard) = on_draw_fn.lock() {
-                            if let Some(ref mut content_fn) = *draw_fn_guard {
-                                content_fn(canvas);
-                            }
-                        }
-                    });
-
-                    // Render extra content (e.g., subsurfaces)
-                    render_extra();
+        if let Ok(surface_guard) = self.surface.read() {
+            if let Some(ref surface) = *surface_guard {
+                if !surface.is_configured() {
+                    return;
                 }
+
+                let on_draw_fn = self.on_draw_fn.clone();
+                let background_color = self
+                    .background_color
+                    .read()
+                    .ok()
+                    .map(|c| *c)
+                    .unwrap_or(skia_safe::Color::WHITE);
+
+                surface.draw(|canvas| {
+                    canvas.clear(background_color);
+
+                    // Draw custom content on top if provided
+                    if let Ok(mut draw_fn_guard) = on_draw_fn.lock() {
+                        if let Some(ref mut content_fn) = *draw_fn_guard {
+                            content_fn(canvas);
+                        }
+                    }
+                });
+
+                // Render extra content (e.g., subsurfaces)
+                render_extra();
             }
-            Err(_) => {}
         }
     }
 

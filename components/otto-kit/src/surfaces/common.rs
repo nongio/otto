@@ -97,17 +97,14 @@ impl BaseWaylandSurface {
         Ok(())
     }
 
-    /// Resize the surface and recreate Skia surface
+    /// Resize the surface and update the Skia surface dimensions
     pub fn resize(&mut self, width: i32, height: i32) {
         self.width = width;
         self.height = height;
 
-        // Only recreate Skia surface if one already exists
-        if self.skia_surface.is_some() {
-            let res = self.create_skia_surface();
-            if let Err(e) = res {
-                eprintln!("Error resizing surface {}: {}", self.wl_surface.id(), e);
-            }
+        // Resize existing Skia surface in-place (resizes EGL window, invalidates cache)
+        if let Some(skia) = &self.skia_surface {
+            skia.resize(width * self.buffer_scale, height * self.buffer_scale);
         }
 
         // Update layer node size if using layers engine

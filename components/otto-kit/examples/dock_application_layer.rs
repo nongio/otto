@@ -5,7 +5,7 @@ use otto_kit::{
     },
     protocols::otto_dock_item_v1,
     surfaces::{BaseWaylandSurface, LayerShellSurface},
-    App, AppRunner,
+    App, AppContext, AppRunner,
 };
 
 use smithay_client_toolkit::shell::xdg::window::WindowConfigure;
@@ -56,7 +56,7 @@ impl DockApp {
                         Some((&src_rect, skia_safe::canvas::SrcRectConstraint::Fast)),
                         // dst_rect,
                         dst_rect,
-                        &skia_safe::Paint::new(white, None),
+                        &skia_safe::Paint::new(&white, None),
                     );
                 }
             }
@@ -66,7 +66,7 @@ impl DockApp {
 }
 
 impl App for DockApp {
-    fn on_app_ready(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
         println!("Creating dock icon layer surface...");
         // Create a layer shell surface for the dock icon
 
@@ -86,7 +86,7 @@ impl App for DockApp {
             surface_style.set_corner_radius(20.0);
         }
 
-        self.draw_icon(layer_surface.base_surface());
+        self.draw_icon(&layer_surface.base_surface());
         // Get the otto_dock_manager global and assign this layer surface to the dock
         // let wl_surface = layer_surface.wl_surface();
         // if let Some(dock_manager) = AppContext::otto_dock_manager() {
@@ -170,7 +170,7 @@ impl App for DockApp {
         Ok(())
     }
 
-    fn on_configure_layer(&mut self, width: i32, height: i32, serial: u32) {
+    fn on_configure_layer(&mut self, _ctx: &AppContext, width: i32, height: i32, serial: u32) {
         println!(
             "App on_configure_layer: {}x{}, serial: {}",
             width, height, serial
@@ -181,15 +181,17 @@ impl App for DockApp {
         }
     }
 
-    fn on_configure(&mut self, _configure: WindowConfigure, _serial: u32) {
+    fn on_configure(&mut self, _ctx: &AppContext, _configure: WindowConfigure, _serial: u32) {
         // Not used for layer shell
     }
 
-    fn on_close(&mut self) -> bool {
-        true
-    }
-
-    fn on_keyboard_event(&mut self, key: u32, key_state: wl_keyboard::KeyState, serial: u32) {
+    fn on_keyboard_event(
+        &mut self,
+        ctx: &AppContext,
+        key: u32,
+        key_state: wl_keyboard::KeyState,
+        serial: u32,
+    ) {
         println!(
             "Keyboard event: key={}, state={:?}, serial={}",
             key, key_state, serial
@@ -227,14 +229,18 @@ impl App for DockApp {
         if key == 50 {
             // 'm' key
             println!("'m' pressed, showing layer shell menu");
-            self.on_dock_menu_requested(0, 0);
+            self.on_dock_menu_requested(ctx, 0, 0);
         } else if let Some(ref mut menu) = self.menu {
             // Forward other keys to menu for keyboard navigation
             menu.handle_key(key, key_state);
         }
     }
 
-    fn on_keyboard_leave(&mut self, _surface: &wayland_client::protocol::wl_surface::WlSurface) {
+    fn on_keyboard_leave(
+        &mut self,
+        _ctx: &AppContext,
+        _surface: &wayland_client::protocol::wl_surface::WlSurface,
+    ) {
         // No-op
     }
 }

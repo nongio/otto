@@ -29,7 +29,7 @@ struct PointerState {
 const DRAG_THRESHOLD: f64 = 5.0; // pixels
 
 impl App for DockApp {
-    fn on_app_ready(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
         // let theme = Theme::light();
         let mut window = Window::new("Ghostty", 160, 160)?;
         window.set_background(Color::TRANSPARENT);
@@ -181,7 +181,7 @@ impl App for DockApp {
         Ok(())
     }
 
-    fn on_configure(&mut self, configure: WindowConfigure, _serial: u32) {
+    fn on_configure(&mut self, _ctx: &AppContext, configure: WindowConfigure, _serial: u32) {
         // Check if window activation state changed
         let was_activated = self.is_activated;
         let is_activated = configure.is_activated();
@@ -198,14 +198,13 @@ impl App for DockApp {
         }
     }
 
-    fn on_close(&mut self) -> bool {
-        // if let Some(ref mut menu) = self.menu {
-        //     // menu.hide();
-        // }
-        true
-    }
-
-    fn on_keyboard_event(&mut self, key: u32, key_state: wl_keyboard::KeyState, serial: u32) {
+    fn on_keyboard_event(
+        &mut self,
+        _ctx: &AppContext,
+        key: u32,
+        key_state: wl_keyboard::KeyState,
+        serial: u32,
+    ) {
         // Save the serial for popup grabs
         self.last_input_serial = serial;
 
@@ -240,7 +239,7 @@ impl App for DockApp {
                     );
 
                     // Pass the serial to show() for popup grab
-                    menu.show(xdg_surface, &positioner, serial);
+                    menu.show(&xdg_surface, &positioner, serial);
                 }
             } else {
                 // menu.hide();
@@ -250,7 +249,7 @@ impl App for DockApp {
         }
     }
 
-    fn on_keyboard_leave(&mut self, _surface: &wl_surface::WlSurface) {
+    fn on_keyboard_leave(&mut self, _ctx: &AppContext, _surface: &wl_surface::WlSurface) {
         // Don't close menu on keyboard leave - the menu popup itself
         // causes keyboard focus to shift, which would close it immediately.
         // Instead, rely on Escape key and popup done event (clicking outside).

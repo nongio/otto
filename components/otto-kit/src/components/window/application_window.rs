@@ -29,25 +29,30 @@ impl Default for WindowLayout {
     }
 }
 
+type CanvasDrawFn = Arc<Mutex<Option<Box<dyn FnMut(&skia_safe::Canvas) + Send>>>>;
+
 /// Application window component (simplified version)
 ///
 /// Currently has a toplevel window with a titlebar subsurface.
 /// Content and sidebar subsurfaces will be added incrementally.
 #[derive(Clone)]
-#[allow(clippy::type_complexity)]
 pub struct ApplicationWindow {
+    #[allow(clippy::arc_with_non_send_sync)]
     surface: Arc<RwLock<Option<ToplevelSurface>>>,
+    #[allow(clippy::arc_with_non_send_sync)]
     titlebar: Arc<RwLock<Option<SubsurfaceSurface>>>,
+    #[allow(clippy::arc_with_non_send_sync)]
     sidebar: Arc<RwLock<Option<SubsurfaceSurface>>>,
+    #[allow(clippy::arc_with_non_send_sync)]
     content: Arc<RwLock<Option<SubsurfaceSurface>>>,
     layout: Arc<RwLock<WindowLayout>>,
     initial_width: i32,
     initial_height: i32,
     background_color: skia_safe::Color,
-    on_draw_fn: Arc<Mutex<Option<Box<dyn FnMut(&skia_safe::Canvas) + Send>>>>,
-    titlebar_draw_fn: Arc<Mutex<Option<Box<dyn FnMut(&skia_safe::Canvas) + Send>>>>,
-    sidebar_draw_fn: Arc<Mutex<Option<Box<dyn FnMut(&skia_safe::Canvas) + Send>>>>,
-    content_draw_fn: Arc<Mutex<Option<Box<dyn FnMut(&skia_safe::Canvas) + Send>>>>,
+    on_draw_fn: CanvasDrawFn,
+    titlebar_draw_fn: CanvasDrawFn,
+    sidebar_draw_fn: CanvasDrawFn,
+    content_draw_fn: CanvasDrawFn,
 }
 
 impl ApplicationWindow {
@@ -75,11 +80,15 @@ impl ApplicationWindow {
             layer.set_corner_radius(36.0);
             layer.set_masks_to_bounds(otto_surface_style_v1::ClipMode::Enabled);
         }
-        #[allow(clippy::arc_with_non_send_sync)]
+
         let window = Self {
+            #[allow(clippy::arc_with_non_send_sync)]
             surface: Arc::new(RwLock::new(Some(surface))),
+            #[allow(clippy::arc_with_non_send_sync)]
             titlebar: Arc::new(RwLock::new(None)),
+            #[allow(clippy::arc_with_non_send_sync)]
             sidebar: Arc::new(RwLock::new(None)),
+            #[allow(clippy::arc_with_non_send_sync)]
             content: Arc::new(RwLock::new(None)),
             layout: Arc::new(RwLock::new(layout)),
             initial_width: width,
@@ -161,7 +170,7 @@ impl ApplicationWindow {
         self.layout.read().unwrap().clone()
     }
 
-    /// Create titlebar subsurface (called on first configure)    
+    /// Create titlebar subsurface (called on first configure)
     fn create_titlebar(&self) -> Result<(), SurfaceError> {
         let layout = self.layout.read().unwrap().clone();
         let width = self.initial_width;

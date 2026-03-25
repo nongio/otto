@@ -14,13 +14,14 @@ pub use crate::protocols::otto_surface_style_v1;
 ///
 /// The layer can be augmented with custom drawing functions at any time.
 /// The layer surface can also be augmented on configure with sc_layer properties.
-#[allow(clippy::type_complexity)]
 pub struct Layer {
     x: i32,
     y: i32,
     width: i32,
     height: i32,
+    #[allow(clippy::type_complexity)]
     draw_fn: Option<Box<dyn FnMut(&Canvas)>>,
+    #[allow(clippy::type_complexity)]
     augment_fn: Option<Box<dyn Fn(&otto_surface_style_v1::OttoSurfaceStyleV1)>>,
 }
 

@@ -28,7 +28,8 @@ impl ToolbarGroup {
     }
 
     /// Add an item to the group
-    pub fn add_item<T: Renderable + 'static>(mut self, item: T) -> Self {
+    #[allow(clippy::should_implement_trait)]
+    pub fn add<T: Renderable + 'static>(mut self, item: T) -> Self {
         self.items.push(ToolbarItem::Renderable(Box::new(item)));
         self
     }

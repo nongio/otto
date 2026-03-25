@@ -1,4 +1,4 @@
-#[allow(clippy::module_inception)]
+#![allow(clippy::module_inception)]
 mod label;
 
 pub use label::{Label, LabelBuilder, TextAlign};

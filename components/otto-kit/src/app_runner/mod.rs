@@ -40,7 +40,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 };
 
 // Re-export context items
-use context::*;
+use context::AppContextData;
 
 /// The App trait - implement this to create a runnable application
 ///
@@ -54,54 +54,77 @@ pub trait App {
     }
     /// Called when the app is ready to run
     /// This is where you create your window and setup your UI
-    fn on_app_ready(&mut self) -> Result<(), Box<dyn std::error::Error>>;
+    fn on_app_ready(&mut self, ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>>;
 
     /// Called when a window configure event occurs
     /// Override this to handle window configuration
-    fn on_configure(&mut self, _configure: WindowConfigure, _serial: u32) {
+    fn on_configure(&mut self, _ctx: &AppContext, _configure: WindowConfigure, _serial: u32) {
         // Default: do nothing
     }
 
     /// Called when a layer shell surface configure event occurs
     /// Override this to handle layer surface configuration
-    /// This is called after the Skia surface is created and ready to draw
-    fn on_configure_layer(&mut self, _width: i32, _height: i32, _serial: u32) {
+    fn on_configure_layer(&mut self, _ctx: &AppContext, _width: i32, _height: i32, _serial: u32) {
         // Default: do nothing
     }
 
     /// Called when the user requests to close the app
     /// Return `true` to allow closing, `false` to prevent it
-    fn on_close(&mut self) -> bool;
+    fn on_close(&mut self) -> bool {
+        true
+    }
 
     /// Called when a keyboard event occurs
     /// Override this to handle keyboard input
     /// `serial` is the input serial from the Wayland compositor - save this to use for popup grabs!
-    fn on_keyboard_event(&mut self, _key: u32, _state: wl_keyboard::KeyState, _serial: u32) {
+    fn on_keyboard_event(
+        &mut self,
+        _ctx: &AppContext,
+        _key: u32,
+        _state: wl_keyboard::KeyState,
+        _serial: u32,
+    ) {
         // Default: do nothing
     }
 
     /// Called when keyboard focus is lost from a surface
     /// Override this to handle focus loss (e.g., close menus)
-    /// The surface parameter indicates which surface lost focus
-    fn on_keyboard_leave(&mut self, _surface: &wl_surface::WlSurface) {
+    fn on_keyboard_leave(&mut self, _ctx: &AppContext, _surface: &wl_surface::WlSurface) {
         // Default: do nothing
     }
-    fn on_pointer_event(&mut self, _events: &[PointerEvent]) {
+
+    /// Called when a pointer event occurs
+    fn on_pointer_event(&mut self, _ctx: &AppContext, _events: &[PointerEvent]) {
         // Default: do nothing
     }
+
     /// Called when the compositor requests to show a dock menu at coordinates (x, y)
-    /// Override this to show your context menu
-    fn on_dock_menu_requested(&mut self, _x: i32, _y: i32) {
+    fn on_dock_menu_requested(&mut self, _ctx: &AppContext, _x: i32, _y: i32) {
         // Default: do nothing
+    }
+
+    /// Called once per event loop iteration, after dispatching Wayland events.
+    /// Use for periodic checks (timers, polling state changes) without frame callbacks.
+    fn on_update(&mut self, _ctx: &AppContext) {
+        // Default: do nothing
+    }
+
+    /// Maximum time to sleep between `on_update` calls.
+    ///
+    /// Return `Some(duration)` to ensure `on_update` fires at least every `duration`
+    /// (e.g., for clock ticks). Return `None` to block indefinitely until a Wayland
+    /// event or `AppContext::request_wakeup()` wakes the loop.
+    fn idle_timeout(&self) -> Option<std::time::Duration> {
+        None
     }
 }
 
 /// DefaultApp - Wrapper for using App trait objects with AppRunner
 ///
-/// This type allows AppRunnerDefault to work without generics by wrapping
-/// any App implementation in a concrete type.
+/// This type allows AppRunner to work without generics by wrapping
+/// any App implementation in a concrete type via `Box<dyn App>`.
 pub struct DefaultApp {
-    inner: Box<dyn AppTrait>,
+    inner: Box<dyn App>,
 }
 
 impl DefaultApp {
@@ -118,35 +141,47 @@ impl App for DefaultApp {
     fn on_start(&mut self) {
         self.inner.on_start();
     }
-    fn on_app_ready(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.inner.on_app_ready()
+    fn on_app_ready(&mut self, ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
+        self.inner.on_app_ready(ctx)
     }
 
-    fn on_configure(&mut self, configure: WindowConfigure, serial: u32) {
-        self.inner.on_configure(configure, serial)
+    fn on_configure(&mut self, ctx: &AppContext, configure: WindowConfigure, serial: u32) {
+        self.inner.on_configure(ctx, configure, serial)
     }
 
-    fn on_configure_layer(&mut self, width: i32, height: i32, serial: u32) {
-        self.inner.on_configure_layer(width, height, serial)
+    fn on_configure_layer(&mut self, ctx: &AppContext, width: i32, height: i32, serial: u32) {
+        self.inner.on_configure_layer(ctx, width, height, serial)
     }
 
     fn on_close(&mut self) -> bool {
         self.inner.on_close()
     }
 
-    fn on_keyboard_event(&mut self, key: u32, state: wl_keyboard::KeyState, serial: u32) {
-        self.inner.on_keyboard_event(key, state, serial)
+    fn on_keyboard_event(
+        &mut self,
+        ctx: &AppContext,
+        key: u32,
+        state: wl_keyboard::KeyState,
+        serial: u32,
+    ) {
+        self.inner.on_keyboard_event(ctx, key, state, serial)
     }
 
-    fn on_keyboard_leave(&mut self, surface: &wl_surface::WlSurface) {
-        self.inner.on_keyboard_leave(surface)
+    fn on_keyboard_leave(&mut self, ctx: &AppContext, surface: &wl_surface::WlSurface) {
+        self.inner.on_keyboard_leave(ctx, surface)
     }
 
-    fn on_dock_menu_requested(&mut self, x: i32, y: i32) {
-        self.inner.on_dock_menu_requested(x, y)
+    fn on_dock_menu_requested(&mut self, ctx: &AppContext, x: i32, y: i32) {
+        self.inner.on_dock_menu_requested(ctx, x, y)
     }
-    fn on_pointer_event(&mut self, _events: &[PointerEvent]) {
-        self.inner.on_pointer_event(_events)
+    fn on_pointer_event(&mut self, ctx: &AppContext, events: &[PointerEvent]) {
+        self.inner.on_pointer_event(ctx, events)
+    }
+    fn on_update(&mut self, ctx: &AppContext) {
+        self.inner.on_update(ctx)
+    }
+    fn idle_timeout(&self) -> Option<std::time::Duration> {
+        self.inner.idle_timeout()
     }
 }
 
@@ -273,8 +308,17 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         // Box ensures context_data won't move even when app_data is moved
         AppContext::init::<A>(&app_data.context_data, &qh);
 
+        // Start background watchers if a tokio runtime is available
+        if tokio::runtime::Handle::try_current().is_ok() {
+            crate::color_scheme::spawn_color_scheme_watcher();
+            crate::icon_theme::spawn_icon_theme_watcher();
+        } else {
+            tracing::debug!("no tokio runtime found, skipping portal watchers");
+        }
+
         // Call the app's ready callback
-        app_data.app.on_app_ready()?;
+        let ctx = AppContext::new(&app_data.context_data);
+        app_data.app.on_app_ready(&ctx)?;
 
         Ok(AppRunnerInitialized {
             conn,
@@ -302,77 +346,89 @@ pub struct AppRunnerInitialized<A: App + 'static> {
 impl<A: App + 'static> AppRunnerInitialized<A> {
     /// Run the event loop until the app exits
     ///
-    /// Note: The renderer thread is spawned when AppContext::enable_layer_engine() is called.
+    /// Uses `prepare_read` + `poll` so the loop can be woken by:
+    /// - Wayland events (compositor, input, frame callbacks)
+    /// - `AppContext::request_wakeup()` from background threads / tokio tasks
+    /// - `App::idle_timeout()` expiry (e.g., clock ticks)
     pub fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // Main thread: blocking Wayland event loop
-        while !self.app_data.exit {
-            // Block until at least one Wayland event is available, then dispatch all pending
-            self.event_queue.blocking_dispatch(&mut self.app_data)?;
+        use std::os::fd::AsRawFd;
 
-            // Flush outgoing requests to the compositor
+        // Ensure wakeup pipe exists before entering the loop.
+        let wake_fd = AppContext::wakeup_read_fd();
+
+        while !self.app_data.exit {
+            // 1. Drain any events already queued (no I/O).
+            self.event_queue.dispatch_pending(&mut self.app_data)?;
             self.conn.flush()?;
 
-            // AppContext::
-            // Update windows
             AppContext::update_windows();
-            std::thread::sleep(std::time::Duration::from_millis(5));
+
+            let ctx = AppContext::new(&self.app_data.context_data);
+            self.app_data.app.on_update(&ctx);
+
+            if self.app_data.exit {
+                break;
+            }
+
+            // 2. Prepare to block for the next batch of events.
+            let guard = loop {
+                match self.event_queue.prepare_read() {
+                    Some(guard) => break guard,
+                    None => {
+                        // Internal queue still has pending events — drain first.
+                        self.event_queue.dispatch_pending(&mut self.app_data)?;
+                    }
+                }
+            };
+
+            let wl_fd = guard.connection_fd().as_raw_fd();
+            let timeout_ms = self
+                .app_data
+                .app
+                .idle_timeout()
+                .map(|d| d.as_millis().min(i32::MAX as u128) as i32)
+                .unwrap_or(-1); // -1 = block forever
+
+            let mut fds = [
+                libc::pollfd {
+                    fd: wl_fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                },
+                libc::pollfd {
+                    fd: wake_fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                },
+            ];
+
+            let n = unsafe { libc::poll(fds.as_mut_ptr(), 2, timeout_ms) };
+
+            if n < 0 {
+                let err = std::io::Error::last_os_error();
+                if err.raw_os_error() == Some(libc::EINTR) {
+                    continue;
+                }
+                tracing::error!("poll error: {err}");
+                break;
+            }
+
+            if n > 0 && fds[1].revents & libc::POLLIN != 0 {
+                AppContext::drain_wakeup();
+            }
+
+            if n > 0 && fds[0].revents & libc::POLLIN != 0 {
+                // Data arrived on the Wayland fd — read & enqueue.
+                if let Err(e) = guard.read() {
+                    tracing::error!("wayland read error: {e}");
+                    break;
+                }
+            }
+            // Otherwise (timeout or only wakeup), guard drops and cancels the read.
         }
 
-        // Clean up global context (this will also stop the renderer thread)
         AppContext::clear();
-
         Ok(())
-    }
-}
-
-/// Internal trait version of App to allow trait object storage
-trait AppTrait {
-    fn on_start(&mut self);
-    fn on_app_ready(&mut self) -> Result<(), Box<dyn std::error::Error>>;
-    fn on_configure(&mut self, configure: WindowConfigure, serial: u32);
-    fn on_configure_layer(&mut self, width: i32, height: i32, serial: u32);
-    fn on_close(&mut self) -> bool;
-    fn on_keyboard_event(&mut self, key: u32, state: wl_keyboard::KeyState, serial: u32);
-    fn on_keyboard_leave(&mut self, surface: &wl_surface::WlSurface);
-    fn on_dock_menu_requested(&mut self, x: i32, y: i32);
-    fn on_pointer_event(&mut self, events: &[PointerEvent]);
-}
-
-// Blanket implementation for all App types
-impl<T: App> AppTrait for T {
-    fn on_start(&mut self) {
-        App::on_start(self)
-    }
-
-    fn on_app_ready(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        App::on_app_ready(self)
-    }
-
-    fn on_configure(&mut self, configure: WindowConfigure, serial: u32) {
-        App::on_configure(self, configure, serial)
-    }
-
-    fn on_configure_layer(&mut self, width: i32, height: i32, serial: u32) {
-        App::on_configure_layer(self, width, height, serial)
-    }
-
-    fn on_close(&mut self) -> bool {
-        App::on_close(self)
-    }
-
-    fn on_keyboard_event(&mut self, key: u32, state: wl_keyboard::KeyState, serial: u32) {
-        App::on_keyboard_event(self, key, state, serial)
-    }
-
-    fn on_keyboard_leave(&mut self, surface: &wl_surface::WlSurface) {
-        App::on_keyboard_leave(self, surface)
-    }
-
-    fn on_dock_menu_requested(&mut self, x: i32, y: i32) {
-        App::on_dock_menu_requested(self, x, y)
-    }
-    fn on_pointer_event(&mut self, events: &[PointerEvent]) {
-        App::on_pointer_event(self, events)
     }
 }
 
@@ -401,15 +457,15 @@ impl<A: App + 'static> CompositorHandler for AppData<A> {
         surface: &wl_surface::WlSurface,
         _time: u32,
     ) {
-        println!("frame!");
         use wayland_client::Proxy;
 
-        // Call registered frame callback for this surface
-        FRAME_CALLBACKS.with(|callbacks| {
-            if let Some(callback) = callbacks.borrow_mut().get_mut(&surface.id()) {
-                callback();
-            }
-        });
+        let has_callback = AppContext::has_frame_callback(&surface.id());
+
+        if has_callback {
+            AppContext::request_frame(surface);
+        }
+
+        AppContext::dispatch_frame_callback(&surface.id());
     }
 
     fn transform_changed(
@@ -486,29 +542,13 @@ impl<A: App + 'static> WindowHandler for AppData<A> {
         configure: WindowConfigure,
         serial: u32,
     ) {
-        // println!("📋 WindowHandler::configure called with serial {}", serial);
+        AppContext::set_current_configure(ObjectId::null(), configure.clone(), serial);
+        AppContext::dispatch_configure_handlers();
 
-        // Store the configure event so surface components can access it
-        // Note: We don't store surface ID since we can't reliably get it from StkWindow
-        CURRENT_CONFIGURE.with(|cfg| {
-            // Use a dummy ObjectId - components will match on other criteria
-            *cfg.borrow_mut() = Some((ObjectId::null(), configure.clone(), serial));
-        });
+        let ctx = AppContext::new(&self.context_data);
+        self.app.on_configure(&ctx, configure, serial);
 
-        // Let configure handlers react
-        CONFIGURE_HANDLERS.with(|handlers| {
-            for handler in handlers.borrow_mut().iter_mut() {
-                handler();
-            }
-        });
-
-        // Call the app's configure callback
-        self.app.on_configure(configure.clone(), serial);
-
-        // Clear the current configure
-        CURRENT_CONFIGURE.with(|cfg| {
-            *cfg.borrow_mut() = None;
-        });
+        AppContext::clear_current_configure();
     }
 }
 
@@ -583,8 +623,8 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
         surface: &wl_surface::WlSurface,
         _serial: u32,
     ) {
-        // Forward to app
-        self.app.on_keyboard_leave(surface);
+        let ctx = AppContext::new(&self.context_data);
+        self.app.on_keyboard_leave(&ctx, surface);
     }
 
     fn press_key(
@@ -595,9 +635,9 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
         serial: u32,
         event: smithay_client_toolkit::seat::keyboard::KeyEvent,
     ) {
-        // Forward keyboard event to the app
+        let ctx = AppContext::new(&self.context_data);
         self.app
-            .on_keyboard_event(event.raw_code, wl_keyboard::KeyState::Pressed, serial);
+            .on_keyboard_event(&ctx, event.raw_code, wl_keyboard::KeyState::Pressed, serial);
     }
 
     fn release_key(
@@ -608,9 +648,13 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
         serial: u32,
         event: smithay_client_toolkit::seat::keyboard::KeyEvent,
     ) {
-        // Forward keyboard release event to the app
-        self.app
-            .on_keyboard_event(event.raw_code, wl_keyboard::KeyState::Released, serial);
+        let ctx = AppContext::new(&self.context_data);
+        self.app.on_keyboard_event(
+            &ctx,
+            event.raw_code,
+            wl_keyboard::KeyState::Released,
+            serial,
+        );
     }
 
     fn update_modifiers(
@@ -633,13 +677,9 @@ impl<A: App + 'static> PointerHandler for AppData<A> {
         _pointer: &wl_pointer::WlPointer,
         events: &[PointerEvent],
     ) {
-        // Call each registered callback with the events
-        POINTER_CALLBACKS.with(|callbacks| {
-            for callback in callbacks.borrow_mut().iter_mut() {
-                callback(events);
-            }
-        });
-        self.app.on_pointer_event(events);
+        AppContext::dispatch_pointer_callbacks(events);
+        let ctx = AppContext::new(&self.context_data);
+        self.app.on_pointer_event(&ctx, events);
     }
 }
 
@@ -652,26 +692,12 @@ impl<A: App + 'static> PopupHandler for AppData<A> {
         config: PopupConfigure,
     ) {
         use wayland_client::Proxy;
-        let surface_id = popup.wl_surface().id();
-
-        // Call registered configure callback
-        POPUP_CONFIGURE_CALLBACKS.with(|callbacks| {
-            if let Some(callback) = callbacks.borrow_mut().remove(&surface_id) {
-                callback(config.serial);
-            }
-        });
+        AppContext::dispatch_popup_configure(&popup.wl_surface().id(), config.serial);
     }
 
     fn done(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, popup: &Popup) {
         use wayland_client::Proxy;
-        let surface_id = popup.wl_surface().id();
-
-        // Call registered done callback
-        POPUP_DONE_CALLBACKS.with(|callbacks| {
-            if let Some(callback) = callbacks.borrow_mut().remove(&surface_id) {
-                callback();
-            }
-        });
+        AppContext::dispatch_popup_done(&popup.wl_surface().id());
     }
 }
 
@@ -697,8 +723,8 @@ impl<A: App + 'static> wayland_client::Dispatch<wl_keyboard::WlKeyboard, ()> for
             ..
         } = event
         {
-            // Forward keyboard event (serial not available in wl_keyboard events)
-            state.app.on_keyboard_event(key, state_val, 0);
+            let ctx = AppContext::new(&state.context_data);
+            state.app.on_keyboard_event(&ctx, key, state_val, 0);
         }
     }
 }
@@ -721,21 +747,21 @@ impl<A: App + 'static> wayland_client::Dispatch<ZwlrLayerSurfaceV1, ()> for AppD
                 width,
                 height,
             } => {
-                println!("✓ Layer surface configure: {}x{}", width, height);
+                tracing::debug!("Layer surface configure: {}x{}", width, height);
+                AppContext::dispatch_layer_configure(
+                    &proxy.id(),
+                    width as i32,
+                    height as i32,
+                    serial,
+                );
 
-                LAYER_SHELL_CONFIGURE_CALLBACKS.with(|callbacks| {
-                    if let Some(callback) = callbacks.borrow_mut().get_mut(&proxy.id()) {
-                        callback(width as i32, height as i32, serial);
-                    }
-                });
-
-                // Call the app's on_configure_layer callback
+                let ctx = AppContext::new(&state.context_data);
                 state
                     .app
-                    .on_configure_layer(width as i32, height as i32, serial);
+                    .on_configure_layer(&ctx, width as i32, height as i32, serial);
             }
             Event::Closed => {
-                println!("Layer surface closed");
+                tracing::debug!("Layer surface closed");
             }
             _ => {}
         }
@@ -799,17 +825,8 @@ impl<A: App + 'static> Dispatch<otto_style_transaction_v1::OttoStyleTransactionV
 
         match event {
             otto_style_transaction_v1::Event::Completed => {
-                println!("Transaction completed event received!");
-                // Call registered completion callback
-                let transaction_id = proxy.id();
-                TRANSACTION_COMPLETION_CALLBACKS.with(|callbacks| {
-                    if let Some(callback) = callbacks.borrow_mut().remove(&transaction_id) {
-                        println!("Calling completion callback for transaction");
-                        callback();
-                    } else {
-                        println!("No callback registered for this transaction");
-                    }
-                });
+                tracing::debug!("Transaction completed event received");
+                AppContext::dispatch_transaction_completed(&proxy.id());
             }
         }
     }

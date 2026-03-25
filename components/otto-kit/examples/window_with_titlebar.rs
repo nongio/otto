@@ -8,7 +8,7 @@ struct WindowWithTitlebarApp {
 }
 
 impl App for WindowWithTitlebarApp {
-    fn on_app_ready(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
         let theme = Theme::light();
         let mut window = Window::new("Window with Titlebar", 800, 600)?;
         window.set_background(Color::WHITE);
@@ -43,8 +43,8 @@ impl App for WindowWithTitlebarApp {
             let window_width = 800.0;
             // Create window controls group
             let controls = TitlebarGroup::new()
-                .add_item(Button::icon("square-x").ghost().with_corner_radius(0.0)) // Close
-                .add_item(Button::icon("minus").ghost()) // Minimize
+                .add(Button::icon("square-x").ghost().with_corner_radius(0.0)) // Close
+                .add(Button::icon("minus").ghost()) // Minimize
                 // .add(Button::icon("maximize-2").ghost().with_corner_radius(0.0)) // Maximize
                 .build();
 
@@ -91,7 +91,8 @@ impl App for WindowWithTitlebarApp {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = WindowWithTitlebarApp { window: None };
     AppRunner::new(app).run()?;
     Ok(())

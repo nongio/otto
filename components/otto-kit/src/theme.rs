@@ -1,5 +1,25 @@
 use skia_safe::Color;
 
+/// System color scheme preference, matching XDG `org.freedesktop.appearance color-scheme`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ColorScheme {
+    #[default]
+    NoPreference,
+    Dark,
+    Light,
+}
+
+impl ColorScheme {
+    /// Construct from the XDG portal integer value.
+    pub fn from_portal_value(v: u32) -> Self {
+        match v {
+            1 => Self::Dark,
+            2 => Self::Light,
+            _ => Self::NoPreference,
+        }
+    }
+}
+
 /// Application color theme based on Otto's design system
 #[derive(Debug, Clone)]
 pub struct Theme {
@@ -21,6 +41,8 @@ pub struct Theme {
     // Material colors (surfaces)
     pub material_titlebar: Color,
     pub material_sidebar: Color,
+    pub material_medium: Color,
+    pub material_highlight: Color,
     pub material_selection_focused: Color,
 
     // Shadow
@@ -28,38 +50,65 @@ pub struct Theme {
 }
 
 impl Theme {
-    /// Light theme (based on Otto's light theme)
+    /// Light theme
     pub fn light() -> Self {
         Self {
-            // Accents
-            accent_blue: Color::from_argb(0xFF, 0x0A, 0x84, 0xFF), // #0A84FF
-            accent_gray: Color::from_argb(0xFF, 0x8E, 0x8E, 0x93), // #8E8E93
+            accent_blue: Color::from_argb(0xFF, 0x0A, 0x84, 0xFF),
+            accent_gray: Color::from_argb(0xFF, 0x8E, 0x8E, 0x93),
 
-            // Fills (semi-transparent blacks for layering)
-            fill_primary: Color::from_argb(0x35, 0x00, 0x00, 0x00), // #00000035
-            fill_secondary: Color::from_argb(0x14, 0x00, 0x00, 0x00), // #00000014
-            fill_tertiary: Color::from_argb(0x0D, 0x00, 0x00, 0x00), // #0000000D
-            fill_quaternary: Color::from_argb(0x08, 0x00, 0x00, 0x00), // #00000008
+            fill_primary: Color::from_argb(0x35, 0x00, 0x00, 0x00),
+            fill_secondary: Color::from_argb(0x14, 0x00, 0x00, 0x00),
+            fill_tertiary: Color::from_argb(0x0D, 0x00, 0x00, 0x00),
+            fill_quaternary: Color::from_argb(0x08, 0x00, 0x00, 0x00),
 
-            // Text
-            text_primary: Color::from_argb(0xD9, 0x00, 0x00, 0x00), // #000000D9
-            text_secondary: Color::from_argb(0x80, 0x00, 0x00, 0x00), // #00000080
-            text_tertiary: Color::from_argb(0x40, 0x00, 0x00, 0x00), // #00000040
+            text_primary: Color::from_argb(0xD9, 0x00, 0x00, 0x00),
+            text_secondary: Color::from_argb(0x80, 0x00, 0x00, 0x00),
+            text_tertiary: Color::from_argb(0x40, 0x00, 0x00, 0x00),
 
-            // Materials
-            material_titlebar: Color::from_argb(0xCC, 0xEA, 0xEA, 0xEA), // #EAEAEACC
-            material_sidebar: Color::from_argb(0xAF, 0xEA, 0xEA, 0xEA),  // #eaeaeaaf
-            material_selection_focused: Color::from_argb(0xBF, 0x0A, 0x82, 0xFF), // #0A82FFBF
+            material_titlebar: Color::from_argb(0xCC, 0xEA, 0xEA, 0xEA),
+            material_sidebar: Color::from_argb(0xAF, 0xEA, 0xEA, 0xEA),
+            material_medium: Color::from_argb(0x7A, 0xF6, 0xF6, 0xF6),
+            material_highlight: Color::from_argb(0x9E, 0xF7, 0xF7, 0xF7),
+            material_selection_focused: Color::from_argb(0xBF, 0x0A, 0x82, 0xFF),
 
-            // Shadow
-            shadow: Color::from_argb(0x66, 0x1B, 0x1B, 0x1B), // #1b1b1b66
+            shadow: Color::from_argb(0x66, 0x1B, 0x1B, 0x1B),
         }
     }
 
-    /// Dark theme (based on Otto's dark theme)
+    /// Dark theme
     pub fn dark() -> Self {
-        // For now, return light theme - can be expanded later
-        Self::light()
+        Self {
+            accent_blue: Color::from_argb(0xFF, 0x0A, 0x84, 0xFF),
+            accent_gray: Color::from_argb(0xFF, 0x8E, 0x8E, 0x93),
+
+            // Semi-transparent whites for layering on dark backgrounds
+            fill_primary: Color::from_argb(0x40, 0xFF, 0xFF, 0xFF),
+            fill_secondary: Color::from_argb(0x1A, 0xFF, 0xFF, 0xFF),
+            fill_tertiary: Color::from_argb(0x0F, 0xFF, 0xFF, 0xFF),
+            fill_quaternary: Color::from_argb(0x08, 0xFF, 0xFF, 0xFF),
+
+            text_primary: Color::from_argb(0xF2, 0xFF, 0xFF, 0xFF),
+            text_secondary: Color::from_argb(0x80, 0xFF, 0xFF, 0xFF),
+            text_tertiary: Color::from_argb(0x40, 0xFF, 0xFF, 0xFF),
+
+            // Dark translucent surfaces
+            material_titlebar: Color::from_argb(0xBF, 0x28, 0x28, 0x28),
+            material_sidebar: Color::from_argb(0xA8, 0x1E, 0x1E, 0x1E),
+            material_medium: Color::from_argb(0x83, 0x28, 0x28, 0x28),
+            material_highlight: Color::from_argb(0xA2, 0x69, 0x67, 0x67),
+            material_selection_focused: Color::from_argb(0xBF, 0x0A, 0x82, 0xFF),
+
+            shadow: Color::from_argb(0x99, 0x00, 0x00, 0x00),
+        }
+    }
+
+    /// Return the appropriate theme for the given color scheme.
+    /// Falls back to light for `NoPreference`.
+    pub fn for_scheme(scheme: ColorScheme) -> Self {
+        match scheme {
+            ColorScheme::Dark => Self::dark(),
+            _ => Self::light(),
+        }
     }
 }
 

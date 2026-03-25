@@ -246,12 +246,9 @@ impl PopupSurface {
         // Assign popup to layer surface via get_popup
         layer_surface.get_popup(popup.xdg_popup());
 
-        // Request an implicit grab for keyboard and pointer focus
-        // This allows menus to receive keyboard events (arrows, Enter, Escape)
-        let seat_state = super::super::app_runner::AppContext::seat_state();
-        if let Some(seat) = seat_state.seats().next() {
-            popup.xdg_popup().grab(&seat, 0);
-        }
+        // NOTE: Skipping grab for now — layer shell popups with serial 0
+        // can cause the compositor to reject the popup immediately.
+        // Keyboard navigation can be added later with a valid serial.
 
         // Use 2x buffer for HiDPI rendering
         let buffer_scale = 2;

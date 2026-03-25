@@ -151,6 +151,14 @@ impl ContextMenuState {
         self.open_submenu_by_depth.get(depth).and_then(|idx| *idx) == Some(item_idx)
     }
 
+    /// Check if any submenu is open at the given depth
+    pub fn has_open_submenu_at(&self, depth: usize) -> bool {
+        self.open_submenu_by_depth
+            .get(depth)
+            .and_then(|idx| *idx)
+            .is_some()
+    }
+
     /// Get selected index at a specific depth
     /// - depth 0: returns root selection (selected_index)
     /// - depth > 0: returns selection from selections_by_depth
@@ -328,13 +336,13 @@ mod tests {
             MenuItem::new(MenuItemKind::Action {
                 label: "Item 1".to_string(),
                 shortcut: None,
-                action_id: Some("action_1".to_string()),
+                action_id: None,
             }),
             MenuItem::new(MenuItemKind::Separator),
             MenuItem::new(MenuItemKind::Action {
                 label: "Item 2".to_string(),
                 shortcut: None,
-                action_id: Some("action_2".to_string()),
+                action_id: None,
             }),
         ]
     }
