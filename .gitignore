@@ -22,4 +22,4 @@ pkg/
 *.pkg.tar.xz
 *.tar.gz
 *.tar.xz
-*.tar.zst
+*.tar.zstspecs/tmp/
