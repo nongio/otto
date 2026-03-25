@@ -103,6 +103,7 @@ impl PopupSurface {
     /// * `compositor` - Compositor state
     /// * `xdg_shell` - XDG shell state
     /// * `qh` - Queue handle for creating objects
+    #[allow(clippy::too_many_arguments)]
     pub fn new_typed<D>(
         parent_surface: &xdg_surface::XdgSurface,
         positioner: &XdgPositioner,

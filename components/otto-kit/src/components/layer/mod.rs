@@ -19,7 +19,9 @@ pub struct Layer {
     y: i32,
     width: i32,
     height: i32,
+    #[allow(clippy::type_complexity)]
     draw_fn: Option<Box<dyn FnMut(&Canvas)>>,
+    #[allow(clippy::type_complexity)]
     augment_fn: Option<Box<dyn Fn(&otto_surface_style_v1::OttoSurfaceStyleV1)>>,
 }
 
@@ -71,6 +73,7 @@ impl Layer {
     }
 
     /// Get the augmentation function
+    #[allow(clippy::type_complexity)]
     pub(crate) fn augment_fn(
         &self,
     ) -> Option<&Box<dyn Fn(&otto_surface_style_v1::OttoSurfaceStyleV1)>> {

@@ -336,11 +336,13 @@ mod tests {
             MenuItem::new(MenuItemKind::Action {
                 label: "Item 1".to_string(),
                 shortcut: None,
+                action_id: None,
             }),
             MenuItem::new(MenuItemKind::Separator),
             MenuItem::new(MenuItemKind::Action {
                 label: "Item 2".to_string(),
                 shortcut: None,
+                action_id: None,
             }),
         ]
     }

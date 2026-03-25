@@ -1,5 +1,7 @@
 use skia_safe::{Canvas, Color, Contains, Paint, Rect};
 
+type DrawFn = Option<Box<dyn FnMut(&Canvas, Rect) + Send>>;
+
 /// Core trait for all container components
 ///
 /// Containers provide a way to draw content either directly on a canvas
@@ -50,7 +52,7 @@ pub trait ContainerBackend: Send + 'static {
 /// Drawing-based backend - renders directly on parent canvas
 pub struct DrawingBackend {
     /// Custom drawing function
-    pub draw_fn: Option<Box<dyn FnMut(&Canvas, Rect) + Send>>,
+    pub draw_fn: DrawFn,
 }
 
 impl DrawingBackend {
@@ -127,7 +129,7 @@ pub struct SurfaceBackend {
     /// Whether the surface needs to be redrawn
     needs_redraw: bool,
     /// Custom drawing function
-    draw_fn: Option<Box<dyn FnMut(&Canvas, Rect) + Send>>,
+    draw_fn: DrawFn,
 }
 
 impl SurfaceBackend {

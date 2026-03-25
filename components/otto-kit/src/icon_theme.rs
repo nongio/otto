@@ -63,12 +63,8 @@ async fn run_watcher() -> Result<(), zbus::Error> {
     trait Settings {
         fn read(&self, namespace: &str, key: &str) -> zbus::Result<OwnedValue>;
         #[zbus(signal)]
-        fn setting_changed(
-            &self,
-            namespace: &str,
-            key: &str,
-            value: Value<'_>,
-        ) -> zbus::Result<()>;
+        fn setting_changed(&self, namespace: &str, key: &str, value: Value<'_>)
+            -> zbus::Result<()>;
     }
 
     let conn = Connection::session().await?;
@@ -90,7 +86,9 @@ async fn run_watcher() -> Result<(), zbus::Error> {
     let mut stream = proxy.receive_setting_changed().await?;
     loop {
         use futures_util::StreamExt as _;
-        let Some(signal) = stream.next().await else { break };
+        let Some(signal) = stream.next().await else {
+            break;
+        };
         let args = signal.args()?;
         if args.namespace == "org.freedesktop.appearance" && args.key == "icon-theme" {
             if let Some(theme) = extract_string(args.value) {

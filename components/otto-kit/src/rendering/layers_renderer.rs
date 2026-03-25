@@ -15,7 +15,7 @@ impl LayersRenderer {
         let root = engine.new_layer();
         root.set_key("root");
         root.set_size(layers::types::Size::points(width, height), None);
-        engine.add_layer(&root);
+        let _ = engine.add_layer(&root);
         engine.scene_set_root(root);
         engine.scene_set_size(width, height);
 
@@ -39,9 +39,8 @@ impl LayersRenderer {
         // println!("LayersRenderer update called");
 
         // Update engine (layout + animations)
-        let ret = self.engine.update(0.016);
         // println!("Engine update returned: {}", ret);
-        ret
+        self.engine.update(0.016)
     }
 
     /// Resize the renderer

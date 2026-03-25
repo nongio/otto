@@ -198,7 +198,13 @@ impl App for DockApp {
         }
     }
 
-    fn on_keyboard_event(&mut self, _ctx: &AppContext, key: u32, key_state: wl_keyboard::KeyState, serial: u32) {
+    fn on_keyboard_event(
+        &mut self,
+        _ctx: &AppContext,
+        key: u32,
+        key_state: wl_keyboard::KeyState,
+        serial: u32,
+    ) {
         // Save the serial for popup grabs
         self.last_input_serial = serial;
 

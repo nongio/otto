@@ -60,7 +60,13 @@ impl App for MyApp {
 
         Ok(())
     }
-    fn on_keyboard_event(&mut self, _ctx: &AppContext, key: u32, key_state: wl_keyboard::KeyState, _serial: u32) {
+    fn on_keyboard_event(
+        &mut self,
+        _ctx: &AppContext,
+        key: u32,
+        key_state: wl_keyboard::KeyState,
+        _serial: u32,
+    ) {
         // Only handle key press events
         if key_state != wl_keyboard::KeyState::Pressed {
             return;

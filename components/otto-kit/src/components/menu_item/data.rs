@@ -6,7 +6,11 @@ pub enum MenuItemIcon {
     /// Named icon from the XDG icon theme
     Named(String),
     /// Raw ARGB32 pixel data (network byte order / big-endian)
-    Pixmap { data: Vec<u8>, width: i32, height: i32 },
+    Pixmap {
+        data: Vec<u8>,
+        width: i32,
+        height: i32,
+    },
 }
 
 /// Type of menu item
