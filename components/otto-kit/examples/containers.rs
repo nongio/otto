@@ -161,7 +161,7 @@ impl ContainerDemo {
 }
 
 impl App for ContainerDemo {
-    fn on_app_ready(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
         let mut window = Window::new("Container Demo", 600, 550)?;
         window.set_background(Color::from_rgb(250, 250, 250));
 
@@ -194,8 +194,9 @@ impl App for ContainerDemo {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = ContainerDemo::new();
-    AppRunnerWithType::new(app).run()?;
+    AppRunner::new(app).run()?;
     Ok(())
 }

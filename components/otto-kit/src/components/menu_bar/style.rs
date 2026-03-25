@@ -1,5 +1,7 @@
 use skia_safe::Color;
 
+use super::state::MenuBarItem;
+
 /// Visual styling for MenuBar component
 #[derive(Clone, Debug)]
 pub struct MenuBarStyle {
@@ -9,11 +11,20 @@ pub struct MenuBarStyle {
     pub bar_padding_horizontal: f32,
     pub item_spacing: f32,
 
+    // Icon
+    pub icon_size: f32,
+    pub icon_text_gap: f32,
+
     // Colors
     pub background_color: Color,
     pub text_color: Color,
+    pub text_active_color: Color,
     pub hover_color: Color,
     pub active_color: Color,
+    /// Tint color for icons in normal state
+    pub icon_tint: Color,
+    /// Tint color for icons when the item is active
+    pub icon_active_tint: Color,
 
     // Typography
     pub font_size: f32,
@@ -32,11 +43,18 @@ impl Default for MenuBarStyle {
             bar_padding_horizontal: 8.0,
             item_spacing: 0.0,
 
+            // Icon
+            icon_size: 16.0,
+            icon_text_gap: 6.0,
+
             // Colors
             background_color: Color::from_rgb(240, 240, 240),
             text_color: Color::from_rgb(40, 40, 40),
+            text_active_color: Color::WHITE,
             hover_color: Color::from_argb(20, 0, 0, 0),
-            active_color: Color::from_argb(50, 0, 0, 0),
+            active_color: Color::from_argb(255, 0, 90, 220),
+            icon_tint: Color::from_rgb(40, 40, 40),
+            icon_active_tint: Color::WHITE,
 
             // Typography
             font_size: 13.0,
@@ -55,21 +73,41 @@ impl MenuBarStyle {
         bounds.width()
     }
 
+    /// Calculate the content width for an item (icon + gap + text)
+    pub fn item_content_width(&self, item: &MenuBarItem, font: &skia_safe::Font) -> f32 {
+        let icon_w = if item.icon.is_some() {
+            self.icon_size
+        } else {
+            0.0
+        };
+        let gap = if item.icon.is_some() && item.label.is_some() {
+            self.icon_text_gap
+        } else {
+            0.0
+        };
+        let text_w = item
+            .label
+            .as_deref()
+            .map(|l| self.text_width(l, font))
+            .unwrap_or(0.0);
+        icon_w + gap + text_w
+    }
+
     /// Calculate the total width for an item including padding
-    pub fn item_width(&self, text_width: f32) -> f32 {
-        text_width + self.item_padding_horizontal * 2.0
+    pub fn item_width(&self, content_width: f32) -> f32 {
+        content_width + self.item_padding_horizontal * 2.0
     }
 
     /// Calculate the total width needed for all items
-    pub fn total_width(&self, items: &[String], font: &skia_safe::Font) -> f32 {
+    pub fn total_width(&self, items: &[MenuBarItem], font: &skia_safe::Font) -> f32 {
         let mut width = self.bar_padding_horizontal * 2.0;
 
         for (i, item) in items.iter().enumerate() {
             if i > 0 {
                 width += self.item_spacing;
             }
-            let text_w = self.text_width(item, font);
-            width += self.item_width(text_w);
+            let content_w = self.item_content_width(item, font);
+            width += self.item_width(content_w);
         }
 
         width

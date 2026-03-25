@@ -1,5 +1,14 @@
 use std::hash::Hash;
 
+/// Icon associated with a menu item
+#[derive(Clone, Debug)]
+pub enum MenuItemIcon {
+    /// Named icon from the XDG icon theme
+    Named(String),
+    /// Raw ARGB32 pixel data (network byte order / big-endian)
+    Pixmap { data: Vec<u8>, width: i32, height: i32 },
+}
+
 /// Type of menu item
 #[derive(Clone)]
 pub enum MenuItemKind {
@@ -59,6 +68,9 @@ pub struct MenuItem {
 
     /// Height in logical pixels (computed based on kind)
     pub height: f32,
+
+    /// Optional icon shown before the label
+    pub icon: Option<MenuItemIcon>,
 }
 impl Hash for MenuItem {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -102,6 +114,7 @@ impl MenuItem {
             visual_state: VisualState::Normal,
             enabled: true,
             height,
+            icon: None,
         }
     }
 
@@ -205,6 +218,11 @@ impl MenuItem {
                 shortcut,
             };
         }
+        self
+    }
+
+    pub fn with_icon(mut self, icon: MenuItemIcon) -> Self {
+        self.icon = Some(icon);
         self
     }
 

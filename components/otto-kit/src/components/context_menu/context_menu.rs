@@ -17,7 +17,6 @@ use wayland_protocols::xdg::shell::client::xdg_surface;
 /// Can be used in two modes:
 /// 1. As a rendered component (no surface) - call `render_to(canvas)`
 /// 2. As a surface-owning component - call `show()` with parent/positioner
-#[allow(clippy::type_complexity)]
 #[derive(Clone)]
 pub struct ContextMenu {
     state: Rc<RefCell<ContextMenuState>>,
@@ -135,10 +134,11 @@ impl ContextMenu {
         positioner: &smithay_client_toolkit::shell::xdg::XdgPositioner,
         _grab_serial: Option<u32>,
     ) {
-        println!("Showing layer shell context menu at depth {}...", depth);
         // Check if popup at this depth already exists and is Some
-        if self.popups.borrow().len() > depth && self.popups.borrow()[depth].borrow().is_some() {
-            return;
+        if self.popups.borrow().len() > depth {
+            if self.popups.borrow()[depth].borrow().is_some() {
+                return;
+            }
         }
 
         // Get items for this depth and calculate dimensions
@@ -147,18 +147,16 @@ impl ContextMenu {
             let items = state.items_at_depth(depth);
             ContextMenuRenderer::measure_items(items, &self.style.borrow())
         };
-        println!("Measured menu size: {}x{}", width, height);
         // Create popup surface for layer shell parent
         if let Ok(popup) =
             PopupSurface::new_for_layer(layer_surface, positioner, width as i32, height as i32)
         {
             let surface_id = popup.wl_surface().id();
             popup.wl_surface().commit();
-            // Set initial opacity for fade-in animation
+            // Apply visual effects immediately
+            ContextMenu::apply_surface_effects(&self.style.borrow(), &popup);
             if let Some(surface_style) = popup.base_surface().surface_style() {
-                surface_style.set_opacity(0.0); // Start fully transparent
-                surface_style.set_blend_mode(BlendMode::BackgroundBlur);
-                surface_style.set_corner_radius(10.0);
+                surface_style.set_opacity(1.0);
             }
 
             // Register surface with depth
@@ -184,32 +182,13 @@ impl ContextMenu {
             // Register done callback to close menu when clicked outside
             let menu_self = Rc::new(self.clone());
             AppContext::register_popup_done_callback(surface_id.clone(), move || {
-                menu_self.hide();
+                menu_self.hide_animated();
             });
 
             AppContext::register_popup_configure_callback(surface_id, move |_serial| {
                 // NOTE: SCTK's Popup already calls ack_configure internally
                 if let Some(popup) = popup_ref.borrow_mut().as_mut() {
                     popup.mark_configured();
-
-                    // Apply visual effects and fade-in animation
-                    if let Some(scene_surface) = popup.base_surface().surface_style() {
-                        if let Some(scene) = AppContext::surface_style_manager() {
-                            let qh = AppContext::queue_handle();
-
-                            let timing = scene.create_timing_function(qh, ());
-                            timing.set_spring(0.1, 0.1);
-                            let animation = scene.begin_transaction(qh, ());
-                            animation.set_duration(0.5);
-                            animation.set_delay(0.0);
-                            animation.set_timing_function(&timing);
-
-                            scene_surface.set_blend_mode(BlendMode::BackgroundBlur);
-                            scene_surface.set_opacity(1.0);
-
-                            animation.commit();
-                        }
-                    }
                 }
                 // Render immediately
                 Self::render_menu_at_depth(&state, &style, &popup_ref, depth);
@@ -228,8 +207,10 @@ impl ContextMenu {
         // if already open at this depth, ignore
 
         // Check if popup at this depth already exists and is Some
-        if self.popups.borrow().len() > depth && self.popups.borrow()[depth].borrow().is_some() {
-            return;
+        if self.popups.borrow().len() > depth {
+            if self.popups.borrow()[depth].borrow().is_some() {
+                return;
+            }
         }
 
         // Get items for this depth and calculate dimensions
@@ -282,14 +263,14 @@ impl ContextMenu {
             // Register done callback to close menu when clicked outside
             let menu_self = Rc::new(self.clone());
             AppContext::register_popup_done_callback(surface_id.clone(), move || {
-                menu_self.hide();
+                menu_self.hide_animated();
             });
 
             AppContext::register_popup_configure_callback(surface_id, move |_serial| {
                 // NOTE: SCTK's Popup already calls ack_configure internally, so we must NOT call it again!
 
                 if let Some(popup) = popup_ref.borrow_mut().as_mut() {
-                    ContextMenu::apply_surface_effects(&style, popup);
+                    ContextMenu::apply_surface_effects(&style, &popup);
 
                     popup.mark_configured();
 
@@ -357,7 +338,7 @@ impl ContextMenu {
 
             AppContext::register_popup_configure_callback(surface_id, move |_serial| {
                 if let Some(popup) = popup_ref.borrow_mut().as_mut() {
-                    ContextMenu::apply_surface_effects(&style, popup);
+                    ContextMenu::apply_surface_effects(&style, &popup);
                     popup.mark_configured();
 
                     Self::render_menu_at_depth(&state, &style, &popup_ref, depth);
@@ -366,30 +347,58 @@ impl ContextMenu {
         }
     }
 
-    /// Hide the menu (closes all popups)
+    /// Hide the menu immediately (closes all popups)
     pub fn hide(&self) {
-        // TODO: Add fade-out animation with close_delay from style
-        // For now, immediate close
         for popup in self.popups.borrow().iter() {
             *popup.borrow_mut() = None;
         }
         self.state.borrow_mut().reset();
     }
 
-    /// Hide the menu with animation delay
+    /// Hide the menu with fade-out animation
     pub fn hide_animated(&self) {
-        // let close_delay = self.style.borrow().close_delay;
+        let close_delay = self.style.borrow().close_delay as f64;
 
-        // TODO: Implement actual fade-out animation
-        // For now, just sleep for the delay then close
+        if let Some(scene) = AppContext::surface_style_manager() {
+            let qh = AppContext::queue_handle();
 
-        self.hide();
+            let animation = scene.begin_transaction(qh, ());
+            animation.set_duration(close_delay);
+            animation.enable_completion_event();
+
+            // Fade out all popups
+            for popup in self.popups.borrow().iter() {
+                if let Some(popup_ref) = popup.borrow().as_ref() {
+                    if let Some(scene_surface) = popup_ref.base_surface().surface_style() {
+                        scene_surface.set_opacity(0.0);
+                    }
+                }
+            }
+
+            // Register callback to destroy popups after animation completes
+            let popups = self.popups.clone();
+            let state = self.state.clone();
+            let transaction_id = animation.id();
+            AppContext::register_transaction_completion_callback(
+                transaction_id,
+                Box::new(move || {
+                    for popup in popups.borrow().iter() {
+                        *popup.borrow_mut() = None;
+                    }
+                    state.borrow_mut().reset();
+                }),
+            );
+
+            animation.commit();
+        } else {
+            // No style protocol available, close immediately
+            self.hide();
+        }
     }
 
     // === Submenu Management ===
 
     /// Show submenu for item at given depth (static helper for callbacks)
-    #[allow(clippy::type_complexity, clippy::too_many_arguments)]
     fn show_submenu_static(
         state: &Rc<RefCell<ContextMenuState>>,
         popups: &Rc<RefCell<Vec<Rc<RefCell<Option<PopupSurface>>>>>>,
@@ -404,10 +413,12 @@ impl ContextMenu {
         // This ensures we don't violate XDG protocol (new popup must be on topmost popup)
         {
             let popups_borrowed = popups.borrow();
-            if popups_borrowed.len() > depth + 1 && popups_borrowed[depth + 1].borrow().is_some() {
-                drop(popups_borrowed);
-                Self::hide_submenus_from_static(state, popups, depth + 1);
-                state.borrow_mut().close_submenus_from(depth + 1);
+            if popups_borrowed.len() > depth + 1 {
+                if popups_borrowed[depth + 1].borrow().is_some() {
+                    drop(popups_borrowed);
+                    Self::hide_submenus_from_static(state, popups, depth + 1);
+                    state.borrow_mut().close_submenus_from(depth + 1);
+                }
             }
         }
 
@@ -426,6 +437,7 @@ impl ContextMenu {
         if !state.borrow().is_submenu_open(depth, item_idx) {
             // For hover/pointer events, update state here
             state.borrow_mut().open_submenu(depth, item_idx);
+        } else {
         }
 
         // XDG popups MUST be chained to the topmost popup:
@@ -439,7 +451,7 @@ impl ContextMenu {
                     .borrow()
                     .as_ref()
                     .and_then(|surf| surf.xdg_surface())
-                    .cloned()
+                    .map(|x| x.clone())
             } else {
                 // Fallback to window surface (shouldn't happen after root menu is created)
                 parent_xdg.borrow().clone()
@@ -503,7 +515,7 @@ impl ContextMenu {
                     parent_width as i32 - 5, // x: at right edge of parent
                     anchor_y as i32,         // y: top of selected item
                     1,                       // width: thin vertical line
-                    1_i32,                   // height: selected item height
+                    1 as i32,                // height: selected item height
                 );
 
                 // Anchor to top-left of this line (which is at parent's right edge)
@@ -581,7 +593,6 @@ impl ContextMenu {
     }
 
     /// Hide submenus from depth onwards (static helper)
-    #[allow(clippy::type_complexity)]
     fn hide_submenus_from_static(
         _state: &Rc<RefCell<ContextMenuState>>,
         popups: &Rc<RefCell<Vec<Rc<RefCell<Option<PopupSurface>>>>>>,
@@ -647,7 +658,6 @@ impl ContextMenu {
     }
 
     /// Handle pointer motion at specific depth
-    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     fn handle_motion_static(
         state: &Rc<RefCell<ContextMenuState>>,
         popups: &Rc<RefCell<Vec<Rc<RefCell<Option<PopupSurface>>>>>>,
@@ -716,15 +726,19 @@ impl ContextMenu {
                     Self::hide_submenus_from_static(state, popups, depth + 1);
                 }
             } else {
-                // Mouse left the menu area - close submenus and update state
-                state.borrow_mut().close_submenus_from(depth);
-                Self::hide_submenus_from_static(state, popups, depth + 1);
+                // Mouse left the menu area — only close submenus if there isn't
+                // an open submenu at this depth (the pointer may have moved into
+                // the child submenu surface, which fires its own motion events).
+                let has_open_submenu = state.borrow().has_open_submenu_at(depth);
+                if !has_open_submenu {
+                    state.borrow_mut().close_submenus_from(depth);
+                    Self::hide_submenus_from_static(state, popups, depth + 1);
+                }
             }
         }
     }
 
     /// Handle click with animation at specific depth
-    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     fn handle_click_static(
         state: &Rc<RefCell<ContextMenuState>>,
         popups: &Rc<RefCell<Vec<Rc<RefCell<Option<PopupSurface>>>>>>,
@@ -746,8 +760,13 @@ impl ContextMenu {
         drop(style_borrowed);
 
         if let Some(idx) = item_index {
-            if let Some(label) = items.get(idx).and_then(|item| item.label()) {
-                let label = label.to_string();
+            let action_id = items
+                .get(idx)
+                .and_then(|item| item.action_id().map(|s| s.to_string()));
+            if action_id.is_some() || items.get(idx).and_then(|item| item.label()).is_some() {
+                let callback_id = action_id
+                    .or_else(|| items.get(idx).and_then(|item| item.label().map(|s| s.to_string())))
+                    .unwrap_or_default();
 
                 // Clone popup ref to avoid holding borrow during sleep/callback
                 let popup_ref = if depth < popups.borrow().len() {
@@ -771,9 +790,9 @@ impl ContextMenu {
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100)); // Slowed: was 100ms
 
-                // Fire callback
+                // Fire callback with action_id (falls back to label)
                 if let Some(callback) = on_item_click.borrow().as_ref() {
-                    callback(&label);
+                    callback(&callback_id);
                 }
 
                 // Close all popups and reset state
@@ -797,7 +816,7 @@ impl ContextMenu {
             let state_borrow = state.borrow();
             let items = state_borrow.items_at_depth(depth);
             let selected = state_borrow.selected_at_depth(depth);
-            let (w, h) = ContextMenuRenderer::measure_items(items, style);
+            let (w, h) = ContextMenuRenderer::measure_items(items, &style);
             (items.to_vec(), selected, w, h)
         };
 
@@ -805,7 +824,7 @@ impl ContextMenu {
         if let Some(popup_surface) = popup.borrow().as_ref() {
             popup_surface.draw(|canvas| {
                 ContextMenuRenderer::render_depth(
-                    canvas, &items_vec, selected, style, width, height,
+                    canvas, &items_vec, selected, &style, width, height,
                 );
             });
         }
@@ -820,7 +839,6 @@ impl ContextMenu {
 
         match key {
             keycodes::DOWN => {
-                println!("Key DOWN at depth {}", self.state.borrow().depth());
                 self.state.borrow_mut().select_next_at_depth(None); // Use state's depth
                 let current_depth = self.state.borrow().depth();
                 // Render at current depth
@@ -945,9 +963,15 @@ impl ContextMenu {
 
     fn apply_surface_effects(style: &ContextMenuStyle, popup: &PopupSurface) {
         if let Some(scene_surface) = popup.base_surface().surface_style() {
+            let bg = style.background_color();
+            scene_surface.set_background_color(
+                bg.r() as f64 / 255.0,
+                bg.g() as f64 / 255.0,
+                bg.b() as f64 / 255.0,
+                bg.a() as f64 / 255.0,
+            );
             scene_surface.set_corner_radius(style.corner_radius as f64);
             scene_surface.set_masks_to_bounds(ClipMode::Enabled);
-            // scene_surface.set_background_color(1.0, 0.2, 0.2, 1.0);
             scene_surface.set_shadow(0.2, 2.0, 0.0, 7.0, 0.3, 0.3, 0.3);
             scene_surface.set_blend_mode(BlendMode::BackgroundBlur);
         }

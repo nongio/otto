@@ -38,14 +38,15 @@ impl BaseWaylandSurface {
         height: i32,
         buffer_scale: i32,
     ) -> Self {
-        let layer_node = AppContext::layers_engine().map(|engine| {
+        let layer_node = AppContext::layers_engine().and_then(|engine| {
             let l = engine.new_layer();
             l.set_size(Size::points(width as f32, height as f32), None);
-            let _ = engine.add_layer(&l);
-            l
+            engine.add_layer(&l);
+            Some(l)
         });
-        let surface_style = AppContext::surface_style_manager()
-            .map(|manager| manager.get_surface_style(&wl_surface, AppContext::queue_handle(), ()));
+        let surface_style = AppContext::surface_style_manager().and_then(|manager| {
+            Some(manager.get_surface_style(&wl_surface, AppContext::queue_handle(), ()))
+        });
         Self {
             wl_surface,
             skia_surface: None,
@@ -97,17 +98,14 @@ impl BaseWaylandSurface {
         Ok(())
     }
 
-    /// Resize the surface and recreate Skia surface
+    /// Resize the surface and update the Skia surface dimensions
     pub fn resize(&mut self, width: i32, height: i32) {
         self.width = width;
         self.height = height;
 
-        // Only recreate Skia surface if one already exists
-        if self.skia_surface.is_some() {
-            let res = self.create_skia_surface();
-            if let Err(e) = res {
-                eprintln!("Error resizing surface {}: {}", self.wl_surface.id(), e);
-            }
+        // Resize existing Skia surface in-place (resizes EGL window, invalidates cache)
+        if let Some(skia) = &self.skia_surface {
+            skia.resize(width * self.buffer_scale, height * self.buffer_scale);
         }
 
         // Update layer node size if using layers engine

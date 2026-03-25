@@ -10,7 +10,7 @@ struct NotificationDemoApp {
 }
 
 impl App for NotificationDemoApp {
-    fn on_app_ready(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
         let theme = Theme::light();
         let mut window = Window::new("Notification", 380, 100)?;
 
@@ -113,7 +113,6 @@ impl App for NotificationDemoApp {
 }
 
 impl NotificationDemoApp {
-    #[allow(clippy::too_many_arguments)]
     fn draw_notification(
         canvas: &skia_safe::Canvas,
         icon_name: &str,
@@ -180,7 +179,8 @@ impl NotificationDemoApp {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = NotificationDemoApp {
         window: None,
         notification_type: Arc::new(RwLock::new(0)),

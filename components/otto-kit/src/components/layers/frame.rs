@@ -14,7 +14,7 @@ impl LayerFrame {
             .expect("Layers engine not initialized. Make sure to call this after app starts.");
 
         let layer = engine.new_layer();
-        let _ = engine.add_layer(&layer.id());
+        engine.add_layer(&layer.id());
 
         LayerFrame { layer }
     }
@@ -56,7 +56,7 @@ impl LayerFrame {
     }
 
     pub fn add_child(&self, child: &LayerFrame) {
-        let _ = self.layer.add_sublayer(&child.id());
+        self.layer.add_sublayer(&child.id());
     }
 
     pub fn set_draw(&self, draw_fn: impl Into<ContentDrawFunction>) {

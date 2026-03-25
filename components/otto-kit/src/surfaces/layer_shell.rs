@@ -58,6 +58,20 @@ impl LayerShellSurface {
         width: u32,
         height: u32,
     ) -> Result<Self, SurfaceError> {
+        Self::with_anchor(layer, namespace, width, height, None, None)
+    }
+
+    /// Create a new layer shell surface with anchor and exclusive zone set
+    /// before the initial commit. Required when using width=0 or height=0
+    /// (fill mode), since the compositor needs anchors before the first commit.
+    pub fn with_anchor(
+        layer: Layer,
+        namespace: &str,
+        width: u32,
+        height: u32,
+        anchor: Option<Anchor>,
+        exclusive_zone: Option<i32>,
+    ) -> Result<Self, SurfaceError> {
         use crate::app_runner::AppContext;
 
         let compositor = AppContext::compositor_state();
@@ -71,6 +85,8 @@ impl LayerShellSurface {
             namespace,
             width,
             height,
+            anchor,
+            exclusive_zone,
             compositor,
             layer_shell,
             sc_layer_shell,
@@ -92,12 +108,13 @@ impl LayerShellSurface {
     /// * `layer_shell` - wlr-layer-shell protocol object
     /// * `sc_layer_shell` - Optional SC layer shell for augmentation
     /// * `qh` - Queue handle for creating objects
-    #[allow(clippy::too_many_arguments)]
     pub fn new_typed<D>(
         layer: Layer,
         namespace: &str,
         width: u32,
         height: u32,
+        anchor: Option<Anchor>,
+        exclusive_zone: Option<i32>,
         compositor: &CompositorState,
         layer_shell: &ZwlrLayerShellV1,
         surface_style: Option<&otto_surface_style_manager_v1::OttoSurfaceStyleManagerV1>,
@@ -130,6 +147,14 @@ impl LayerShellSurface {
         // Create sc_layer immediately if sc_layer_shell is available
         let surface_style = surface_style.map(|shell| shell.get_surface_style(&wl_surface, qh, ()));
 
+        // Set anchor and exclusive zone before commit (required for width/height = 0)
+        if let Some(anchor) = anchor {
+            layer_surface.set_anchor(anchor);
+        }
+        if let Some(zone) = exclusive_zone {
+            layer_surface.set_exclusive_zone(zone);
+        }
+
         // Set initial size on the layer surface
         layer_surface.set_size(width, height);
 
@@ -161,12 +186,7 @@ impl LayerShellSurface {
         AppContext::register_layer_configure_callback(
             layer_surface_id,
             move |width, height, serial| {
-                tracing::debug!(
-                    "Layer configure callback: {}x{}, serial: {}",
-                    width,
-                    height,
-                    serial
-                );
+                tracing::debug!("Layer configure callback: {}x{}, serial: {}", width, height, serial);
 
                 // Extract callback before borrowing to avoid double borrow
                 let callback_to_call = {
@@ -262,7 +282,18 @@ impl LayerShellSurface {
     /// Width or height of 0 means the surface will be sized to fill available space
     /// in that dimension (constrained by anchors).
     pub fn set_size(&self, width: u32, height: u32) {
-        self.inner.borrow().layer_surface.set_size(width, height);
+        let mut inner = self.inner.borrow_mut();
+        inner.layer_surface.set_size(width, height);
+        // Also resize the Skia buffer immediately so the next draw uses the
+        // new dimensions — avoids a frame where the old buffer is stretched
+        // into the new layer shell geometry.
+        if inner.configured {
+            let w = width as i32;
+            let h = height as i32;
+            if w != inner.base_surface.width || h != inner.base_surface.height {
+                inner.base_surface.resize(w, h);
+            }
+        }
     }
 
     /// Set margins from the anchor edges

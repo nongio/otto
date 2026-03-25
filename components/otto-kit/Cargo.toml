@@ -17,17 +17,20 @@ khronos-egl = { version = "6", features = ["dynamic"] }
 calloop = "0.13"
 tracing = "0.1"
 tokio = { version = "1", features = ["full"] }
+zbus = { version = "4", default-features = false, features = ["tokio"] }
+futures-util = "0.3"
+xdgkit = "3.2.5"
+resvg = "0.44.0"
+usvg = "0.44.0"
 lazy_static = "1.4"
+libc = "0.2"
 pipewire = "0.9"
+freedesktop-desktop-entry = "0.7.5"
 
 [dependencies.laye-rs]
-# path = "../../../layers"
 git = "https://github.com/nongio/layers"
 tag = "v1.7.0"
-features = ["export-taffy"]
-
-[features]
-debugger = ["laye-rs/debugger"]
+features = ["export-taffy", "debugger"]
 
 [dependencies.skia-safe]
 version = "=0.88"
@@ -38,9 +41,24 @@ name = "simple_app"
 path = "examples/simple_app.rs"
 
 [[example]]
+name = "simple_menu"
+path = "examples/simple_menu.rs"
+
+[[example]]
+name = "titlebar_with_popup"
+path = "examples/titlebar_with_popup.rs"
+[[example]]
 name = "dock_application_simple"
 path = "examples/dock_application_simple.rs"
 
 [[example]]
 name = "dock_application_layer"
 path = "examples/dock_application_layer.rs"
+
+[[example]]
+name = "topbar_layer_shell"
+path = "examples/topbar_layer_shell.rs"
+
+[[example]]
+name = "topbar_app_runner"
+path = "examples/topbar_app_runner.rs"
