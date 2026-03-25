@@ -79,8 +79,7 @@ impl LayerSurface {
         let skia_surface = AppContext::skia_context(|ctx| {
             ctx.create_surface(&wl_surface, width * buffer_scale, height * buffer_scale)
         })
-        .ok_or("SkiaContext not initialized")?
-        .map_err(|e| e)?;
+        .ok_or("SkiaContext not initialized")??;
 
         let mut layer_surface = Self {
             wl_surface: wl_surface.clone(),

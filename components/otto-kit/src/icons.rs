@@ -39,7 +39,9 @@ pub fn named_icon(icon_name: &str) -> Option<skia::Image> {
     let icon_path = find_icon(icon_name, 512, 1)?;
     let icon = image_from_path(&icon_path, (512, 512))?;
 
-    ic.write().unwrap().insert(icon_name.to_string(), icon.clone());
+    ic.write()
+        .unwrap()
+        .insert(icon_name.to_string(), icon.clone());
     Some(icon)
 }
 
@@ -146,10 +148,7 @@ pub fn find_icon_in_theme(
 /// Load an image from a file path, supporting both SVG and raster formats.
 ///
 /// SVGs are rasterized at the given size using resvg. Raster images are loaded as-is.
-pub fn image_from_path(
-    path: &str,
-    size: impl Into<skia::ISize>,
-) -> Option<skia::Image> {
+pub fn image_from_path(path: &str, size: impl Into<skia::ISize>) -> Option<skia::Image> {
     let image_path = std::path::Path::new(path);
 
     if image_path.extension().and_then(std::ffi::OsStr::to_str) == Some("svg") {
@@ -164,16 +163,12 @@ pub fn image_from_path(
 fn load_svg_image(path: &str, size: skia::ISize) -> Option<skia::Image> {
     let svg_data = std::fs::read(path).ok()?;
 
-    let pixmap_size =
-        resvg::tiny_skia::IntSize::from_wh(size.width as u32, size.height as u32)?;
+    let pixmap_size = resvg::tiny_skia::IntSize::from_wh(size.width as u32, size.height as u32)?;
 
     let options = usvg::Options {
         languages: vec!["en".to_string()],
         dpi: 1.0,
-        default_size: usvg::Size::from_wh(
-            pixmap_size.width() as f32,
-            pixmap_size.height() as f32,
-        )?,
+        default_size: usvg::Size::from_wh(pixmap_size.width() as f32, pixmap_size.height() as f32)?,
         ..Default::default()
     };
     let rtree = usvg::Tree::from_data(&svg_data, &options).ok()?;

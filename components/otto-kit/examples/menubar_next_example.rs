@@ -11,9 +11,9 @@ use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 
 use otto_kit::components::context_menu::ContextMenu;
+use otto_kit::components::label::Label;
 use otto_kit::components::menu_bar::{MenuBarIcon, MenuBarRenderer, MenuBarState, MenuBarStyle};
 use otto_kit::components::menu_item::MenuItem;
-use otto_kit::components::label::Label;
 use otto_kit::prelude::*;
 use otto_kit::typography::styles;
 use skia_safe::Color;
@@ -38,10 +38,7 @@ fn build_menu_bar() -> MenuBarState {
     bar.add_item("Window");
     bar.add_item("Help");
     // Icon + label item
-    bar.add_icon_label_item(
-        MenuBarIcon::Named("audio-volume-medium".into()),
-        "Sound",
-    );
+    bar.add_icon_label_item(MenuBarIcon::Named("audio-volume-medium".into()), "Sound");
     bar
 }
 
@@ -219,9 +216,7 @@ impl App for MenuBarExample {
 
                         // Hide any previously open menu
                         if let Some(prev) = state.active_index() {
-                            if let Some(prev_mi) =
-                                MENU_INDICES.iter().position(|&mi| mi == prev)
-                            {
+                            if let Some(prev_mi) = MENU_INDICES.iter().position(|&mi| mi == prev) {
                                 menus[prev_mi].hide();
                             }
                         }
@@ -240,8 +235,7 @@ impl App for MenuBarExample {
                                 if let Ok(positioner) =
                                     XdgPositioner::new(AppContext::xdg_shell_state())
                                 {
-                                    let (menu_w, menu_h) =
-                                        menus[mi].get_size_at_depth(0);
+                                    let (menu_w, menu_h) = menus[mi].get_size_at_depth(0);
 
                                     positioner.set_size(menu_w as i32, menu_h as i32);
                                     positioner.set_anchor_rect(
@@ -250,15 +244,10 @@ impl App for MenuBarExample {
                                         1,
                                         1,
                                     );
-                                    positioner.set_anchor(
-                                        xdg_positioner::Anchor::BottomLeft,
-                                    );
-                                    positioner.set_gravity(
-                                        xdg_positioner::Gravity::BottomRight,
-                                    );
+                                    positioner.set_anchor(xdg_positioner::Anchor::BottomLeft);
+                                    positioner.set_gravity(xdg_positioner::Gravity::BottomRight);
 
-                                    menus[mi]
-                                        .show(xdg_surface, &positioner, serial);
+                                    menus[mi].show(xdg_surface, &positioner, serial);
                                 }
                             }
                         }

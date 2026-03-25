@@ -94,11 +94,7 @@ pub trait App {
     }
 
     /// Called when a pointer event occurs
-    fn on_pointer_event(
-        &mut self,
-        _ctx: &AppContext,
-        _events: &[PointerEvent],
-    ) {
+    fn on_pointer_event(&mut self, _ctx: &AppContext, _events: &[PointerEvent]) {
         // Default: do nothing
     }
 
@@ -653,8 +649,12 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
         event: smithay_client_toolkit::seat::keyboard::KeyEvent,
     ) {
         let ctx = AppContext::new(&self.context_data);
-        self.app
-            .on_keyboard_event(&ctx, event.raw_code, wl_keyboard::KeyState::Released, serial);
+        self.app.on_keyboard_event(
+            &ctx,
+            event.raw_code,
+            wl_keyboard::KeyState::Released,
+            serial,
+        );
     }
 
     fn update_modifiers(
@@ -719,14 +719,12 @@ impl<A: App + 'static> wayland_client::Dispatch<wl_keyboard::WlKeyboard, ()> for
     ) {
         if let wl_keyboard::Event::Key {
             key,
-            state: key_state,
+            state: wayland_client::WEnum::Value(state_val),
             ..
         } = event
         {
-            if let wayland_client::WEnum::Value(state_val) = key_state {
-                let ctx = AppContext::new(&state.context_data);
-                state.app.on_keyboard_event(&ctx, key, state_val, 0);
-            }
+            let ctx = AppContext::new(&state.context_data);
+            state.app.on_keyboard_event(&ctx, key, state_val, 0);
         }
     }
 }

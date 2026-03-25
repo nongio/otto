@@ -34,7 +34,6 @@ impl Drop for EglSurfaceResources {
 
 /// Individual renderable surface with its own EGL surface
 /// Can be used for main windows, subsurfaces, or any other surface type
-
 pub struct SkiaSurface {
     surface_id: ObjectId,
     // Cached Skia surface for zero-overhead drawing (hot path)

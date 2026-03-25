@@ -185,7 +185,13 @@ impl App for DockApp {
         // Not used for layer shell
     }
 
-    fn on_keyboard_event(&mut self, ctx: &AppContext, key: u32, key_state: wl_keyboard::KeyState, serial: u32) {
+    fn on_keyboard_event(
+        &mut self,
+        ctx: &AppContext,
+        key: u32,
+        key_state: wl_keyboard::KeyState,
+        serial: u32,
+    ) {
         println!(
             "Keyboard event: key={}, state={:?}, serial={}",
             key, key_state, serial
@@ -230,7 +236,11 @@ impl App for DockApp {
         }
     }
 
-    fn on_keyboard_leave(&mut self, _ctx: &AppContext, _surface: &wayland_client::protocol::wl_surface::WlSurface) {
+    fn on_keyboard_leave(
+        &mut self,
+        _ctx: &AppContext,
+        _surface: &wayland_client::protocol::wl_surface::WlSurface,
+    ) {
         // No-op
     }
 }

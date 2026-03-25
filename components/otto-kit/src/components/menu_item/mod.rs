@@ -1,3 +1,4 @@
+#![allow(clippy::module_inception)]
 mod data;
 mod group;
 mod menu_item;

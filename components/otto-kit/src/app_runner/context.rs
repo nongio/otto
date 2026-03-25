@@ -24,21 +24,25 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::ZwlrLay
 // -- Core state --
 
 thread_local! {
-    static APP_CONTEXT_PTR: RefCell<Option<*const AppContextData>> = RefCell::new(None);
-    static TYPED_QUEUE_HANDLE: RefCell<Option<Box<dyn std::any::Any>>> = RefCell::new(None);
-    static FRAME_REQUEST_FN: RefCell<Option<Box<dyn Fn(&wl_surface::WlSurface)>>> = RefCell::new(None);
-    static CURRENT_CONFIGURE: RefCell<Option<(ObjectId, WindowConfigure, u32)>> = RefCell::new(None);
-    static WINDOWS: RefCell<Vec<crate::components::window::Window>> = RefCell::new(Vec::new());
+    static APP_CONTEXT_PTR: RefCell<Option<*const AppContextData>> = const { RefCell::new(None) };
+    static TYPED_QUEUE_HANDLE: RefCell<Option<Box<dyn std::any::Any>>> = const { RefCell::new(None) };
+    #[allow(clippy::type_complexity)]
+    static FRAME_REQUEST_FN: RefCell<Option<Box<dyn Fn(&wl_surface::WlSurface)>>> = const { RefCell::new(None) };
+    static CURRENT_CONFIGURE: RefCell<Option<(ObjectId, WindowConfigure, u32)>> = const { RefCell::new(None) };
+    static WINDOWS: RefCell<Vec<crate::components::window::Window>> = const { RefCell::new(Vec::new()) };
 }
 
 // -- Callback registries --
 
 thread_local! {
-    static CONFIGURE_HANDLERS: RefCell<Vec<Box<dyn FnMut()>>> = RefCell::new(Vec::new());
-    static POINTER_CALLBACKS: RefCell<Vec<Box<dyn FnMut(&[smithay_client_toolkit::seat::pointer::PointerEvent])>>> = RefCell::new(Vec::new());
+    static CONFIGURE_HANDLERS: RefCell<Vec<Box<dyn FnMut()>>> = const { RefCell::new(Vec::new()) };
+    #[allow(clippy::type_complexity)]
+    static POINTER_CALLBACKS: RefCell<Vec<Box<dyn FnMut(&[smithay_client_toolkit::seat::pointer::PointerEvent])>>> = const { RefCell::new(Vec::new()) };
     static FRAME_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnMut()>>> = RefCell::new(HashMap::new());
+    #[allow(clippy::type_complexity)]
     static POPUP_CONFIGURE_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnOnce(u32)>>> = RefCell::new(HashMap::new());
     static POPUP_DONE_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnOnce()>>> = RefCell::new(HashMap::new());
+    #[allow(clippy::type_complexity)]
     static LAYER_SHELL_CONFIGURE_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnMut(i32, i32, u32)>>> = RefCell::new(HashMap::new());
     static TRANSACTION_COMPLETION_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnOnce()>>> = RefCell::new(HashMap::new());
 }
@@ -46,9 +50,9 @@ thread_local! {
 // -- Rendering state --
 
 thread_local! {
-    static SHARED_SKIA_CONTEXT: RefCell<Option<crate::rendering::SkiaContext>> = RefCell::new(None);
+    static SHARED_SKIA_CONTEXT: RefCell<Option<crate::rendering::SkiaContext>> = const { RefCell::new(None) };
     // pub(crate) because rendering/surface.rs Drop accesses it directly via try_with
-    pub(crate) static EGL_DISPLAY: RefCell<Option<khronos_egl::Display>> = RefCell::new(None);
+    pub(crate) static EGL_DISPLAY: RefCell<Option<khronos_egl::Display>> = const { RefCell::new(None) };
     static EGL_RESOURCES: RefCell<HashMap<ObjectId, crate::rendering::EglSurfaceResources>> = RefCell::new(HashMap::new());
 }
 
@@ -77,7 +81,12 @@ fn init_wakeup_pipe() -> &'static (std::os::fd::OwnedFd, std::os::fd::OwnedFd) {
             let err = std::io::Error::last_os_error();
             tracing::error!("failed to create wakeup pipe: {err}");
         }
-        unsafe { (std::os::fd::OwnedFd::from_raw_fd(fds[0]), std::os::fd::OwnedFd::from_raw_fd(fds[1])) }
+        unsafe {
+            (
+                std::os::fd::OwnedFd::from_raw_fd(fds[0]),
+                std::os::fd::OwnedFd::from_raw_fd(fds[1]),
+            )
+        }
     })
 }
 
@@ -136,9 +145,7 @@ impl<'a> AppContext<'a> {
     }
 
     pub fn compositor_state() -> &'static CompositorState {
-        Self::with_global(|ctx| unsafe {
-            &*(ctx.compositor_state_ref() as *const CompositorState)
-        })
+        Self::with_global(|ctx| unsafe { &*(ctx.compositor_state_ref() as *const CompositorState) })
     }
 
     pub fn xdg_shell_state() -> &'static XdgShell {
@@ -506,8 +513,11 @@ impl<'a> AppContext<'a> {
         let (read_fd, _) = init_wakeup_pipe();
         let mut buf = [0u8; 64];
         loop {
-            let n = unsafe { libc::read(read_fd.as_raw_fd(), buf.as_mut_ptr() as *mut _, buf.len()) };
-            if n <= 0 { break; }
+            let n =
+                unsafe { libc::read(read_fd.as_raw_fd(), buf.as_mut_ptr() as *mut _, buf.len()) };
+            if n <= 0 {
+                break;
+            }
         }
     }
 
@@ -527,11 +537,7 @@ impl<'a> AppContext<'a> {
         });
     }
 
-    pub(crate) fn set_current_configure(
-        id: ObjectId,
-        configure: WindowConfigure,
-        serial: u32,
-    ) {
+    pub(crate) fn set_current_configure(id: ObjectId, configure: WindowConfigure, serial: u32) {
         CURRENT_CONFIGURE.with(|cfg| {
             *cfg.borrow_mut() = Some((id, configure, serial));
         });

@@ -38,6 +38,7 @@ impl MenuItemGroup {
         self
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn add(mut self, item: MenuItem) -> Self {
         self.items.push(item);
         self
@@ -70,7 +71,7 @@ impl MenuItemGroup {
         let mut current_y = self.y;
 
         for item in &self.items {
-            MenuItemRenderer::render(canvas, &item, &self.style, self.x, current_y, self.width);
+            MenuItemRenderer::render(canvas, item, &self.style, self.x, current_y, self.width);
             current_y += item.height;
         }
     }

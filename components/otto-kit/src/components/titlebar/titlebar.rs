@@ -22,6 +22,7 @@ impl TitlebarGroup {
     }
 
     /// Add an item to the group
+    #[allow(clippy::should_implement_trait)]
     pub fn add<T: Renderable + 'static>(mut self, item: T) -> Self {
         self.items.push(Box::new(item));
         self

@@ -66,8 +66,7 @@ impl MenuBarState {
 
     /// Get the label of the active item (if it has one)
     pub fn active_label(&self) -> Option<&str> {
-        self.active_item()
-            .and_then(|item| item.label.as_deref())
+        self.active_item().and_then(|item| item.label.as_deref())
     }
 
     // === State Mutations ===

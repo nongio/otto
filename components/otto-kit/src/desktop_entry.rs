@@ -47,7 +47,10 @@ pub fn lookup_app(app_id: &str) -> Option<AppInfo> {
     let result = load_app_info(app_id);
 
     // Cache the result (including None for negative caching)
-    CACHE.write().unwrap().insert(app_id.to_string(), result.clone());
+    CACHE
+        .write()
+        .unwrap()
+        .insert(app_id.to_string(), result.clone());
 
     result
 }

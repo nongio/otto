@@ -162,7 +162,7 @@ impl MenuBarRenderer {
         );
         let row_bytes = width as usize * 4;
         let skia_data = Data::new_copy(data);
-        Image::from_raster_data(&info, skia_data, row_bytes)
+        skia_safe::images::raster_from_data(&info, skia_data, row_bytes)
     }
 
     /// Draw text for an item

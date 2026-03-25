@@ -12,6 +12,10 @@ use smithay_client_toolkit::seat::pointer::PointerEventKind;
 use wayland_client::{backend::ObjectId, protocol::wl_keyboard, Proxy};
 use wayland_protocols::xdg::shell::client::xdg_surface;
 
+type PopupStack = Rc<RefCell<Vec<Rc<RefCell<Option<PopupSurface>>>>>>;
+type ItemClickCallback = Rc<RefCell<Option<Rc<dyn Fn(&str)>>>>;
+type CloseCallback = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
+
 /// High-level ContextMenuNext component
 ///
 /// Can be used in two modes:
@@ -23,7 +27,7 @@ pub struct ContextMenu {
     style: Rc<RefCell<ContextMenuStyle>>,
 
     // Popup surfaces - one per depth level (0=root, 1=first submenu, etc.)
-    popups: Rc<RefCell<Vec<Rc<RefCell<Option<PopupSurface>>>>>>,
+    popups: PopupStack,
 
     // Parent XDG surface for all popups (window surface)
     parent_xdg: Rc<RefCell<Option<xdg_surface::XdgSurface>>>,
@@ -32,8 +36,8 @@ pub struct ContextMenu {
     registered_surfaces: Rc<RefCell<HashMap<ObjectId, usize>>>,
 
     // Callbacks - wrapped in Rc<RefCell<>> so they can be set after construction
-    on_item_click: Rc<RefCell<Option<Rc<dyn Fn(&str)>>>>,
-    on_close: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
+    on_item_click: ItemClickCallback,
+    on_close: CloseCallback,
 }
 
 impl ContextMenu {
@@ -135,10 +139,8 @@ impl ContextMenu {
         _grab_serial: Option<u32>,
     ) {
         // Check if popup at this depth already exists and is Some
-        if self.popups.borrow().len() > depth {
-            if self.popups.borrow()[depth].borrow().is_some() {
-                return;
-            }
+        if self.popups.borrow().len() > depth && self.popups.borrow()[depth].borrow().is_some() {
+            return;
         }
 
         // Get items for this depth and calculate dimensions
@@ -207,10 +209,8 @@ impl ContextMenu {
         // if already open at this depth, ignore
 
         // Check if popup at this depth already exists and is Some
-        if self.popups.borrow().len() > depth {
-            if self.popups.borrow()[depth].borrow().is_some() {
-                return;
-            }
+        if self.popups.borrow().len() > depth && self.popups.borrow()[depth].borrow().is_some() {
+            return;
         }
 
         // Get items for this depth and calculate dimensions
@@ -270,7 +270,7 @@ impl ContextMenu {
                 // NOTE: SCTK's Popup already calls ack_configure internally, so we must NOT call it again!
 
                 if let Some(popup) = popup_ref.borrow_mut().as_mut() {
-                    ContextMenu::apply_surface_effects(&style, &popup);
+                    ContextMenu::apply_surface_effects(&style, popup);
 
                     popup.mark_configured();
 
@@ -338,7 +338,7 @@ impl ContextMenu {
 
             AppContext::register_popup_configure_callback(surface_id, move |_serial| {
                 if let Some(popup) = popup_ref.borrow_mut().as_mut() {
-                    ContextMenu::apply_surface_effects(&style, &popup);
+                    ContextMenu::apply_surface_effects(&style, popup);
                     popup.mark_configured();
 
                     Self::render_menu_at_depth(&state, &style, &popup_ref, depth);
@@ -399,9 +399,10 @@ impl ContextMenu {
     // === Submenu Management ===
 
     /// Show submenu for item at given depth (static helper for callbacks)
+    #[allow(clippy::too_many_arguments)]
     fn show_submenu_static(
         state: &Rc<RefCell<ContextMenuState>>,
-        popups: &Rc<RefCell<Vec<Rc<RefCell<Option<PopupSurface>>>>>>,
+        popups: &PopupStack,
         style_rc: &Rc<RefCell<ContextMenuStyle>>,
         registered_surfaces: &Rc<RefCell<HashMap<ObjectId, usize>>>,
         parent_xdg: &Rc<RefCell<Option<xdg_surface::XdgSurface>>>,
@@ -413,12 +414,10 @@ impl ContextMenu {
         // This ensures we don't violate XDG protocol (new popup must be on topmost popup)
         {
             let popups_borrowed = popups.borrow();
-            if popups_borrowed.len() > depth + 1 {
-                if popups_borrowed[depth + 1].borrow().is_some() {
-                    drop(popups_borrowed);
-                    Self::hide_submenus_from_static(state, popups, depth + 1);
-                    state.borrow_mut().close_submenus_from(depth + 1);
-                }
+            if popups_borrowed.len() > depth + 1 && popups_borrowed[depth + 1].borrow().is_some() {
+                drop(popups_borrowed);
+                Self::hide_submenus_from_static(state, popups, depth + 1);
+                state.borrow_mut().close_submenus_from(depth + 1);
             }
         }
 
@@ -437,7 +436,6 @@ impl ContextMenu {
         if !state.borrow().is_submenu_open(depth, item_idx) {
             // For hover/pointer events, update state here
             state.borrow_mut().open_submenu(depth, item_idx);
-        } else {
         }
 
         // XDG popups MUST be chained to the topmost popup:
@@ -451,7 +449,7 @@ impl ContextMenu {
                     .borrow()
                     .as_ref()
                     .and_then(|surf| surf.xdg_surface())
-                    .map(|x| x.clone())
+                    .cloned()
             } else {
                 // Fallback to window surface (shouldn't happen after root menu is created)
                 parent_xdg.borrow().clone()
@@ -515,7 +513,7 @@ impl ContextMenu {
                     parent_width as i32 - 5, // x: at right edge of parent
                     anchor_y as i32,         // y: top of selected item
                     1,                       // width: thin vertical line
-                    1 as i32,                // height: selected item height
+                    1_i32,                   // height: selected item height
                 );
 
                 // Anchor to top-left of this line (which is at parent's right edge)
@@ -595,7 +593,7 @@ impl ContextMenu {
     /// Hide submenus from depth onwards (static helper)
     fn hide_submenus_from_static(
         _state: &Rc<RefCell<ContextMenuState>>,
-        popups: &Rc<RefCell<Vec<Rc<RefCell<Option<PopupSurface>>>>>>,
+        popups: &PopupStack,
         from_depth: usize,
     ) {
         let popups_borrowed = popups.borrow();
@@ -658,9 +656,10 @@ impl ContextMenu {
     }
 
     /// Handle pointer motion at specific depth
+    #[allow(clippy::too_many_arguments)]
     fn handle_motion_static(
         state: &Rc<RefCell<ContextMenuState>>,
-        popups: &Rc<RefCell<Vec<Rc<RefCell<Option<PopupSurface>>>>>>,
+        popups: &PopupStack,
         style: &Rc<RefCell<ContextMenuStyle>>,
         registered_surfaces: &Rc<RefCell<HashMap<ObjectId, usize>>>,
         parent_xdg: &Rc<RefCell<Option<xdg_surface::XdgSurface>>>,
@@ -741,9 +740,9 @@ impl ContextMenu {
     /// Handle click with animation at specific depth
     fn handle_click_static(
         state: &Rc<RefCell<ContextMenuState>>,
-        popups: &Rc<RefCell<Vec<Rc<RefCell<Option<PopupSurface>>>>>>,
+        popups: &PopupStack,
         style: &Rc<RefCell<ContextMenuStyle>>,
-        on_item_click: &Rc<RefCell<Option<Rc<dyn Fn(&str)>>>>,
+        on_item_click: &ItemClickCallback,
         depth: usize,
         x: f32,
         y: f32,
@@ -765,11 +764,15 @@ impl ContextMenu {
                 .and_then(|item| item.action_id().map(|s| s.to_string()));
             if action_id.is_some() || items.get(idx).and_then(|item| item.label()).is_some() {
                 let callback_id = action_id
-                    .or_else(|| items.get(idx).and_then(|item| item.label().map(|s| s.to_string())))
+                    .or_else(|| {
+                        items
+                            .get(idx)
+                            .and_then(|item| item.label().map(|s| s.to_string()))
+                    })
                     .unwrap_or_default();
 
                 // Clone popup ref to avoid holding borrow during sleep/callback
-                let popup_ref = if depth < popups.borrow().len() {
+                let _popup_ref = if depth < popups.borrow().len() {
                     Some(popups.borrow()[depth].clone())
                 } else {
                     None
@@ -801,7 +804,7 @@ impl ContextMenu {
             let state_borrow = state.borrow();
             let items = state_borrow.items_at_depth(depth);
             let selected = state_borrow.selected_at_depth(depth);
-            let (w, h) = ContextMenuRenderer::measure_items(items, &style);
+            let (w, h) = ContextMenuRenderer::measure_items(items, style);
             (items.to_vec(), selected, w, h)
         };
 
@@ -809,7 +812,7 @@ impl ContextMenu {
         if let Some(popup_surface) = popup.borrow().as_ref() {
             popup_surface.draw(|canvas| {
                 ContextMenuRenderer::render_depth(
-                    canvas, &items_vec, selected, &style, width, height,
+                    canvas, &items_vec, selected, style, width, height,
                 );
             });
         }

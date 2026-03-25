@@ -61,19 +61,18 @@ async fn run_watcher() -> Result<(), zbus::Error> {
     trait Settings {
         fn read(&self, namespace: &str, key: &str) -> zbus::Result<OwnedValue>;
         #[zbus(signal)]
-        fn setting_changed(
-            &self,
-            namespace: &str,
-            key: &str,
-            value: Value<'_>,
-        ) -> zbus::Result<()>;
+        fn setting_changed(&self, namespace: &str, key: &str, value: Value<'_>)
+            -> zbus::Result<()>;
     }
 
     let conn = Connection::session().await?;
     let proxy = SettingsProxy::new(&conn).await?;
 
     // Read initial value. The portal returns the value wrapped in a variant.
-    match proxy.read("org.freedesktop.appearance", "color-scheme").await {
+    match proxy
+        .read("org.freedesktop.appearance", "color-scheme")
+        .await
+    {
         Ok(owned) => {
             // OwnedValue is Value<'static>; convert into Value then extract.
             let val: Value<'_> = owned.into();
@@ -89,7 +88,9 @@ async fn run_watcher() -> Result<(), zbus::Error> {
     let mut stream = proxy.receive_setting_changed().await?;
     loop {
         use futures_util::StreamExt as _;
-        let Some(signal) = stream.next().await else { break };
+        let Some(signal) = stream.next().await else {
+            break;
+        };
         let args = signal.args()?;
         if args.namespace == "org.freedesktop.appearance" && args.key == "color-scheme" {
             if let Some(v) = extract_u32(args.value) {

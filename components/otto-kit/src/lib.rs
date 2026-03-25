@@ -36,6 +36,7 @@ pub use app_runner::{App, AppContext, AppRunner, AppRunnerWithType};
 /// Convenience prelude for application development
 pub mod prelude {
     pub use crate::app_runner::{App, AppContext, AppRunner, AppRunnerWithType};
+    pub use crate::color_scheme::current_color_scheme;
     pub use crate::common::Renderable;
     pub use crate::components::container::stack::StackAlignment;
     pub use crate::components::container::{
@@ -44,13 +45,14 @@ pub mod prelude {
     };
     pub use crate::components::context_menu::ContextMenuStyle;
     pub use crate::components::label::{Label, LabelBuilder, TextAlign};
-    pub use crate::components::menu_item::{MenuItem, MenuItemGroup, MenuItemIcon, MenuItemKind, MenuItemState};
+    pub use crate::components::menu_item::{
+        MenuItem, MenuItemGroup, MenuItemIcon, MenuItemKind, MenuItemState,
+    };
     pub use crate::components::window::Window;
-    pub use crate::theme::Theme;
-    pub use crate::theme::ColorScheme;
-    pub use crate::color_scheme::current_color_scheme;
     pub use crate::icon_theme::current_icon_theme;
     pub use crate::icons::{named_icon, named_icon_sized};
+    pub use crate::theme::ColorScheme;
+    pub use crate::theme::Theme;
     pub use crate::typography::{get_font, get_font_with_fallback, styles, TextStyle};
     pub use skia_safe::{Canvas, Color, Font, Paint, Rect};
     // Add more common types as needed

@@ -38,11 +38,21 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 const BAR_COUNT: usize = 8;
 
 fn font(size: f32) -> Font {
-    TextStyle { family: "Inter", weight: 400, size }.font()
+    TextStyle {
+        family: "Inter",
+        weight: 400,
+        size,
+    }
+    .font()
 }
 
 fn font_bold(size: f32) -> Font {
-    TextStyle { family: "Inter", weight: 600, size }.font()
+    TextStyle {
+        family: "Inter",
+        weight: 600,
+        size,
+    }
+    .font()
 }
 
 /// Layer shell anchor — max possible island size, transparent container
@@ -98,7 +108,11 @@ struct Island {
 
 impl Island {
     fn new() -> Self {
-        Self { mode: ViewMode::Reduced, primary: None, notification: None }
+        Self {
+            mode: ViewMode::Reduced,
+            primary: None,
+            notification: None,
+        }
     }
 
     /// Total island size: primary + notification stacked vertically
@@ -121,7 +135,15 @@ impl Island {
 
     /// Draw the island centered in a canvas of size `canvas_w × canvas_h`,
     /// with the pill clipped to `pill_w × pill_h` at vertical offset `pill_y`.
-    fn draw(&self, canvas: &skia_safe::Canvas, canvas_w: f32, canvas_h: f32, pill_w: f32, pill_h: f32, pill_y: f32) {
+    fn draw(
+        &self,
+        canvas: &skia_safe::Canvas,
+        canvas_w: f32,
+        canvas_h: f32,
+        pill_w: f32,
+        pill_h: f32,
+        pill_y: f32,
+    ) {
         canvas.clear(Color::TRANSPARENT);
 
         let ox = (canvas_w - pill_w) / 2.0;
@@ -148,7 +170,11 @@ impl Island {
         border.set_style(skia_safe::paint::Style::Stroke);
         border.set_stroke_width(1.0);
         canvas.draw_rrect(
-            RRect::new_rect_xy(Rect::from_xywh(ox + 0.5, oy + 0.5, pill_w - 1.0, pill_h - 1.0), r, r),
+            RRect::new_rect_xy(
+                Rect::from_xywh(ox + 0.5, oy + 0.5, pill_w - 1.0, pill_h - 1.0),
+                r,
+                r,
+            ),
             &border,
         );
 
@@ -213,7 +239,11 @@ impl MusicFeature {
         let dst = Rect::from_xywh(x, y, size, size);
         if let Some(art) = &self.album_art {
             canvas.save();
-            canvas.clip_rrect(RRect::new_rect_xy(dst, r, r), skia_safe::ClipOp::Intersect, true);
+            canvas.clip_rrect(
+                RRect::new_rect_xy(dst, r, r),
+                skia_safe::ClipOp::Intersect,
+                true,
+            );
             let src = Rect::from_xywh(0.0, 0.0, art.width() as f32, art.height() as f32);
             canvas.draw_image_rect(
                 art,
@@ -374,12 +404,18 @@ impl MusicFeature {
 }
 
 impl IslandFeature for MusicFeature {
-    fn reduced_size(&self) -> (f32, f32) { (280.0, 32.0) }
-    fn hover_size(&self) -> (f32, f32) { (360.0, 56.0) }
-    fn open_size(&self) -> (f32, f32) { (460.0, 100.0) }
+    fn reduced_size(&self) -> (f32, f32) {
+        (280.0, 32.0)
+    }
+    fn hover_size(&self) -> (f32, f32) {
+        (360.0, 56.0)
+    }
+    fn open_size(&self) -> (f32, f32) {
+        (460.0, 100.0)
+    }
 
     fn draw_reduced(&self, canvas: &skia_safe::Canvas, w: f32, h: f32) {
-        let v_pad = 7.0;  // more air around the art
+        let v_pad = 7.0; // more air around the art
         let h_pad = 10.0;
         let art_size = h - v_pad * 2.0;
         let art_x = h_pad;
@@ -400,7 +436,15 @@ impl IslandFeature for MusicFeature {
         let text_max_w = eq_x - text_x - h_pad;
 
         let mid = h / 2.0;
-        Self::draw_text(canvas, &self.title, text_x, mid - 1.0, 11.0, 220, text_max_w);
+        Self::draw_text(
+            canvas,
+            &self.title,
+            text_x,
+            mid - 1.0,
+            11.0,
+            220,
+            text_max_w,
+        );
 
         let af = font(9.5);
         let mut ap = Paint::default();
@@ -411,7 +455,7 @@ impl IslandFeature for MusicFeature {
     }
 
     fn draw_hover(&self, canvas: &skia_safe::Canvas, w: f32, h: f32) {
-        let h_pad = 12.0;  // +2px right
+        let h_pad = 12.0; // +2px right
         let v_pad = 7.0;
         let prog_h = 3.0;
         let art_size = h - v_pad * 2.0 - prog_h;
@@ -434,7 +478,15 @@ impl IslandFeature for MusicFeature {
         let text_max_w = eq_x - text_x - h_pad;
 
         let mid = content_h / 2.0;
-        Self::draw_text(canvas, &self.title, text_x, mid - 4.0, 14.0, 255, text_max_w);
+        Self::draw_text(
+            canvas,
+            &self.title,
+            text_x,
+            mid - 4.0,
+            14.0,
+            255,
+            text_max_w,
+        );
 
         let af = font(11.5);
         let mut ap = Paint::default();
@@ -462,7 +514,15 @@ impl IslandFeature for MusicFeature {
         // Title + artist
         let text_x = art_x + art_size + pad;
         let text_max_w = w - text_x - pad;
-        Self::draw_text(canvas, &self.title, text_x, text_top + 14.0, 14.0, 255, text_max_w);
+        Self::draw_text(
+            canvas,
+            &self.title,
+            text_x,
+            text_top + 14.0,
+            14.0,
+            255,
+            text_max_w,
+        );
 
         let af = font(11.0);
         let mut ap = Paint::default();
@@ -483,7 +543,12 @@ impl IslandFeature for MusicFeature {
 
         // Progress bar
         let prog_y = h - prog_h - 4.0;
-        self.draw_progress(canvas, pad + art_size + pad, prog_y, w - (art_size + pad * 3.0));
+        self.draw_progress(
+            canvas,
+            pad + art_size + pad,
+            prog_y,
+            w - (art_size + pad * 3.0),
+        );
     }
 }
 
@@ -498,9 +563,15 @@ struct NotificationFeature {
 }
 
 impl IslandFeature for NotificationFeature {
-    fn reduced_size(&self) -> (f32, f32) { (280.0, 46.0) }
-    fn hover_size(&self) -> (f32, f32) { (360.0, 60.0) }
-    fn open_size(&self) -> (f32, f32) { (400.0, 90.0) }
+    fn reduced_size(&self) -> (f32, f32) {
+        (280.0, 46.0)
+    }
+    fn hover_size(&self) -> (f32, f32) {
+        (360.0, 60.0)
+    }
+    fn open_size(&self) -> (f32, f32) {
+        (400.0, 90.0)
+    }
 
     fn draw_reduced(&self, canvas: &skia_safe::Canvas, w: f32, h: f32) {
         let pad = 14.0;
@@ -693,8 +764,8 @@ impl MusicNotchApp {
         // Y position: reduced stays near top; hover drops down a bit
         let y = match island.mode {
             ViewMode::Reduced => 2.0,
-            ViewMode::Hover   => 5.0,
-            ViewMode::Open    => 4.0,
+            ViewMode::Hover => 5.0,
+            ViewMode::Open => 4.0,
         };
         *self.target_y.borrow_mut() = y;
     }
@@ -789,7 +860,12 @@ impl VisualizerState {
         }
 
         self.phase += if self.is_playing { 0.72 } else { 0.18 };
-        let base_level = self.audio_level.lock().map(|v| *v).unwrap_or(0.0).clamp(0.0, 1.0);
+        let base_level = self
+            .audio_level
+            .lock()
+            .map(|v| *v)
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0);
         let playing_gain = if self.is_playing { 1.4 } else { 0.35 };
         let envelope = (base_level * playing_gain).clamp(0.0, 1.0);
 
@@ -800,7 +876,8 @@ impl VisualizerState {
             let audio_animated = (envelope * (0.75 + wave * 0.45)).clamp(0.0, 1.0);
             let target = (idle + audio_animated * 0.85).clamp(0.0, 1.0);
             let current = self.levels[i];
-            self.levels[i] = current + (target - current) * if target > current { 0.25 } else { 0.08 };
+            self.levels[i] =
+                current + (target - current) * if target > current { 0.25 } else { 0.08 };
         }
     }
 }
@@ -862,7 +939,11 @@ fn start_playerctl_monitor() -> Arc<Mutex<PlaybackInfo>> {
                 .output()
                 .ok()
                 .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().eq_ignore_ascii_case("playing"))
+                .map(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .trim()
+                        .eq_ignore_ascii_case("playing")
+                })
                 .unwrap_or(false);
 
             let track_title = Command::new("playerctl")
@@ -896,7 +977,12 @@ fn start_playerctl_monitor() -> Arc<Mutex<PlaybackInfo>> {
                 .output()
                 .ok()
                 .filter(|o| o.status.success())
-                .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<f64>().ok())
+                .and_then(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .trim()
+                        .parse::<f64>()
+                        .ok()
+                })
                 .unwrap_or(0.0);
 
             let length = Command::new("playerctl")
@@ -904,10 +990,19 @@ fn start_playerctl_monitor() -> Arc<Mutex<PlaybackInfo>> {
                 .output()
                 .ok()
                 .filter(|o| o.status.success())
-                .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<f64>().ok())
+                .and_then(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .trim()
+                        .parse::<f64>()
+                        .ok()
+                })
                 .unwrap_or(1.0);
 
-            let progress = if length > 0.0 { (position / length).clamp(0.0, 1.0) as f32 } else { 0.0 };
+            let progress = if length > 0.0 {
+                (position / length).clamp(0.0, 1.0) as f32
+            } else {
+                0.0
+            };
 
             if let Ok(mut info) = shared_for_thread.lock() {
                 info.track_title = track_title;
@@ -949,7 +1044,10 @@ fn run_pipewire_level_loop(shared_level: Arc<Mutex<f32>>) -> Result<(), pw::Erro
     let context = pw::context::ContextRc::new(&mainloop, None)?;
     let core = context.connect_rc(None)?;
 
-    let user_data = PipeWireUserData { channels: 2, level: shared_level };
+    let user_data = PipeWireUserData {
+        channels: 2,
+        level: shared_level,
+    };
 
     let stream = pw::stream::StreamBox::new(
         &core,
@@ -966,18 +1064,28 @@ fn run_pipewire_level_loop(shared_level: Arc<Mutex<f32>>) -> Result<(), pw::Erro
         .add_local_listener_with_user_data(user_data)
         .param_changed(|_, user_data, id, param| {
             let Some(param) = param else { return };
-            if id != pw::spa::param::ParamType::Format.as_raw() { return; }
-            let Ok((media_type, media_subtype)) = format_utils::parse_format(param) else { return; };
-            if media_type != MediaType::Audio || media_subtype != MediaSubtype::Raw { return; }
+            if id != pw::spa::param::ParamType::Format.as_raw() {
+                return;
+            }
+            let Ok((media_type, media_subtype)) = format_utils::parse_format(param) else {
+                return;
+            };
+            if media_type != MediaType::Audio || media_subtype != MediaSubtype::Raw {
+                return;
+            }
             let mut audio_info = spa::param::audio::AudioInfoRaw::default();
             if audio_info.parse(param).is_ok() {
                 user_data.channels = audio_info.channels().max(1);
             }
         })
         .process(|stream, user_data| {
-            let Some(mut buffer) = stream.dequeue_buffer() else { return };
+            let Some(mut buffer) = stream.dequeue_buffer() else {
+                return;
+            };
             let datas = buffer.datas_mut();
-            if datas.is_empty() { return }
+            if datas.is_empty() {
+                return;
+            }
             let data = &mut datas[0];
             let n_channels = user_data.channels.max(1) as usize;
             let chunk = data.chunk();
@@ -986,23 +1094,32 @@ fn run_pipewire_level_loop(shared_level: Arc<Mutex<f32>>) -> Result<(), pw::Erro
             let Some(samples) = data.data() else { return };
             let start = chunk_offset;
             let end = start.saturating_add(chunk_size).min(samples.len());
-            if end <= start { return }
+            if end <= start {
+                return;
+            }
             let bytes = &samples[start..end];
             let sample_count = bytes.len() / std::mem::size_of::<f32>();
-            if sample_count == 0 { return }
+            if sample_count == 0 {
+                return;
+            }
             let mut peak = 0.0f32;
             let mut sum_sq = 0.0f32;
             let mut seen = 0usize;
             for n in (0..sample_count).step_by(n_channels) {
                 let s = n * std::mem::size_of::<f32>();
                 let e = s + std::mem::size_of::<f32>();
-                if e > bytes.len() { break }
-                let val = f32::from_le_bytes([bytes[s], bytes[s+1], bytes[s+2], bytes[s+3]]).abs();
+                if e > bytes.len() {
+                    break;
+                }
+                let val =
+                    f32::from_le_bytes([bytes[s], bytes[s + 1], bytes[s + 2], bytes[s + 3]]).abs();
                 peak = peak.max(val);
                 sum_sq += val * val;
                 seen += 1;
             }
-            if seen == 0 { return }
+            if seen == 0 {
+                return;
+            }
             let rms = (sum_sq / seen as f32).sqrt();
             let normalized = (peak * 1.35 + rms * 0.65).clamp(0.0, 1.0);
             if let Ok(mut level) = user_data.level.lock() {
@@ -1050,10 +1167,16 @@ fn detect_default_sink_node_id() -> Option<u32> {
         .args(["inspect", "@DEFAULT_AUDIO_SINK@"])
         .output()
         .ok()?;
-    if !output.status.success() { return None; }
+    if !output.status.success() {
+        return None;
+    }
     let text = String::from_utf8_lossy(&output.stdout);
     let first_line = text.lines().next()?.trim();
-    let id_token = first_line.strip_prefix("id ")?.split(',').next().map(str::trim)?;
+    let id_token = first_line
+        .strip_prefix("id ")?
+        .split(',')
+        .next()
+        .map(str::trim)?;
     id_token.parse::<u32>().ok()
 }
 
@@ -1063,7 +1186,8 @@ fn detect_default_sink_node_id() -> Option<u32> {
 
 impl App for MusicNotchApp {
     fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
-        let layer_surface = LayerShellSurface::new(Layer::Overlay, "music-notch", LAYER_W, LAYER_H)?;
+        let layer_surface =
+            LayerShellSurface::new(Layer::Overlay, "music-notch", LAYER_W, LAYER_H)?;
         layer_surface.set_anchor(Anchor::Top);
         layer_surface.set_margin(2, 0, 0, 0);
         layer_surface.set_exclusive_zone(1);
@@ -1083,7 +1207,9 @@ impl App for MusicNotchApp {
             return;
         }
 
-        let Some(layer) = &self.layer_surface else { return };
+        let Some(layer) = &self.layer_surface else {
+            return;
+        };
 
         // Transparent buffer for the parent so compositor has rendering data
         layer.draw(|canvas| {
@@ -1101,7 +1227,10 @@ impl App for MusicNotchApp {
         // Subsurface at (0,0) — full canvas; pill is drawn centered by Island::draw
         let sub = match SubsurfaceSurface::new(&wl, 0, 0, LAYER_W as i32, LAYER_H as i32) {
             Ok(s) => s,
-            Err(e) => { eprintln!("Failed to create subsurface: {e}"); return; }
+            Err(e) => {
+                eprintln!("Failed to create subsurface: {e}");
+                return;
+            }
         };
 
         // Initialise animated size to the current target size
@@ -1152,8 +1281,8 @@ impl App for MusicNotchApp {
                 *target_h.borrow_mut() = th;
                 let ty = match mode {
                     ViewMode::Reduced => 2.0,
-                    ViewMode::Hover   => 5.0,
-                    ViewMode::Open    => 4.0,
+                    ViewMode::Hover => 5.0,
+                    ViewMode::Open => 4.0,
                 };
                 *target_y.borrow_mut() = ty;
             }
@@ -1176,10 +1305,16 @@ impl App for MusicNotchApp {
 
             // Resize layer surface and subsurface to match pill height
             let layer_h = (ay + ah).ceil() as u32 + 4;
-            layer_for_frame.base_surface_mut().resize(LAYER_W as i32, layer_h as i32);
-            layer_for_frame.draw(|canvas| { canvas.clear(skia_safe::Color::TRANSPARENT); });
+            layer_for_frame
+                .base_surface_mut()
+                .resize(LAYER_W as i32, layer_h as i32);
+            layer_for_frame.draw(|canvas| {
+                canvas.clear(skia_safe::Color::TRANSPARENT);
+            });
             layer_for_frame.set_size(LAYER_W, layer_h);
-            sub_for_frame.borrow_mut().resize(LAYER_W as i32, layer_h as i32);
+            sub_for_frame
+                .borrow_mut()
+                .resize(LAYER_W as i32, layer_h as i32);
 
             let island = island_for_frame.borrow();
             sub_for_frame.borrow().draw(|canvas| {
@@ -1202,9 +1337,19 @@ impl App for MusicNotchApp {
     }
 
     fn on_configure(&mut self, _ctx: &AppContext, _configure: WindowConfigure, _serial: u32) {}
-    fn on_keyboard_event(&mut self, _ctx: &AppContext, key: u32, state: wl_keyboard::KeyState, _serial: u32) {
-        if state != wl_keyboard::KeyState::Pressed { return; }
-        if key == keycodes::Q { std::process::exit(0); }
+    fn on_keyboard_event(
+        &mut self,
+        _ctx: &AppContext,
+        key: u32,
+        state: wl_keyboard::KeyState,
+        _serial: u32,
+    ) {
+        if state != wl_keyboard::KeyState::Pressed {
+            return;
+        }
+        if key == keycodes::Q {
+            std::process::exit(0);
+        }
 
         // T: toggle Open / Reduced
         if key == 20 {
@@ -1215,16 +1360,23 @@ impl App for MusicNotchApp {
 
         // N: test notification (5s)
         if key == 49 {
-            self.visualizer.borrow_mut().notifications.push(NotificationInfo {
-                title: "Test Notification".to_string(),
-                body: "Something happened just now in your system".to_string(),
-                expires_at: Instant::now() + Duration::from_secs(5),
-            });
+            self.visualizer
+                .borrow_mut()
+                .notifications
+                .push(NotificationInfo {
+                    title: "Test Notification".to_string(),
+                    body: "Something happened just now in your system".to_string(),
+                    expires_at: Instant::now() + Duration::from_secs(5),
+                });
             self.update();
         }
     }
 
-    fn on_pointer_event(&mut self, _ctx: &AppContext, events: &[smithay_client_toolkit::seat::pointer::PointerEvent]) {
+    fn on_pointer_event(
+        &mut self,
+        _ctx: &AppContext,
+        events: &[smithay_client_toolkit::seat::pointer::PointerEvent],
+    ) {
         let mut needs_update = false;
         for event in events {
             match event.kind {
@@ -1273,7 +1425,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         layer_surface: None,
         island_surface: None,
         island: Rc::new(RefCell::new(Island::new())),
-        visualizer: Rc::new(RefCell::new(VisualizerState::new(audio_level, playback_info))),
+        visualizer: Rc::new(RefCell::new(VisualizerState::new(
+            audio_level,
+            playback_info,
+        ))),
         anim_w: Rc::new(RefCell::new(28.0)),
         anim_h: Rc::new(RefCell::new(28.0)),
         anim_y: Rc::new(RefCell::new(2.0)),

@@ -8,7 +8,7 @@
 //!    `brightness_weight` peaks at ~0.55, penalising near-black and near-white.
 //! 5. Return the bucket-centre colour with the highest score.
 
-use skia_safe::{AlphaType, Color, ColorType, Image, ImageInfo, Surface};
+use skia_safe::{AlphaType, Color, ColorType, Image, ImageInfo};
 
 const GRID: usize = 32;
 const LEVELS: usize = 8;
@@ -52,7 +52,7 @@ pub fn extract_accent_color(image: &Image) -> Color {
         let (sat, brightness) = rgb_to_sb(rf, gf, bf);
 
         // Hard-reject near-black (invisible on dark bg), near-white, and near-grey
-        if brightness < 0.35 || brightness > 0.93 || sat < 0.2 {
+        if !(0.35..=0.93).contains(&brightness) || sat < 0.2 {
             continue;
         }
 
@@ -99,7 +99,7 @@ fn sample_pixels(image: &Image) -> Vec<(u8, u8, u8)> {
         AlphaType::Premul,
         None,
     );
-    let mut surface = match Surface::new_raster(&info, None, None) {
+    let mut surface = match skia_safe::surfaces::raster(&info, None, None) {
         Some(s) => s,
         None => return Vec::new(),
     };

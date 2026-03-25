@@ -73,11 +73,30 @@ impl MenuItemRenderer {
         } else {
             0.0
         };
-        Self::draw_label(canvas, label, &font, text_color, x, y, data.height, style, label_x_offset);
+        Self::draw_label(
+            canvas,
+            label,
+            &font,
+            text_color,
+            x,
+            y,
+            data.height,
+            style,
+            label_x_offset,
+        );
 
         // Draw icon before label
         if let Some(icon) = &data.icon {
-            Self::draw_icon(canvas, icon, text_color, x, y, data.height, style, icon_size);
+            Self::draw_icon(
+                canvas,
+                icon,
+                text_color,
+                x,
+                y,
+                data.height,
+                style,
+                icon_size,
+            );
         }
 
         // Draw submenu indicator or shortcut
@@ -116,10 +135,11 @@ impl MenuItemRenderer {
             style.border_radius,
             style.border_radius,
         );
-        canvas.draw_rrect(&bg_rect, &bg_paint);
+        canvas.draw_rrect(bg_rect, &bg_paint);
     }
 
     /// Draw item label
+    #[allow(clippy::too_many_arguments)]
     fn draw_label(
         canvas: &Canvas,
         label: &str,
@@ -149,6 +169,7 @@ impl MenuItemRenderer {
     }
 
     /// Draw icon before label
+    #[allow(clippy::too_many_arguments)]
     fn draw_icon(
         canvas: &Canvas,
         icon: &MenuItemIcon,
@@ -164,7 +185,12 @@ impl MenuItemRenderer {
 
         match icon {
             MenuItemIcon::Named(name) => {
-                tracing::trace!("menu_item render: named icon {:?} at ({}, {})", name, icon_x, icon_y);
+                tracing::trace!(
+                    "menu_item render: named icon {:?} at ({}, {})",
+                    name,
+                    icon_x,
+                    icon_y
+                );
                 // Use XDG theme lookup (same as tray icons), fall back to SVG set
                 if let Some(img) = crate::icons::named_icon_sized(name, icon_size as i32) {
                     let dst = Rect::from_xywh(icon_x, icon_y, icon_size, icon_size);
@@ -186,8 +212,14 @@ impl MenuItemRenderer {
                     canvas.restore();
                 }
             }
-            MenuItemIcon::Pixmap { data, width, height: h } => {
-                if *width <= 0 || *h <= 0 { return; }
+            MenuItemIcon::Pixmap {
+                data,
+                width,
+                height: h,
+            } => {
+                if *width <= 0 || *h <= 0 {
+                    return;
+                }
                 // Convert ARGB32 big-endian network order → native BGRA8888
                 let mut native = data.clone();
                 for chunk in native.chunks_exact_mut(4) {
@@ -209,7 +241,11 @@ impl MenuItemRenderer {
                 let row_bytes = (*width as usize) * 4;
                 tracing::debug!(
                     "menu_item render: pixmap icon {}x{} ({} bytes) at ({}, {})",
-                    width, h, data.len(), icon_x, icon_y
+                    width,
+                    h,
+                    data.len(),
+                    icon_x,
+                    icon_y
                 );
                 if let Some(img) = skia_safe::images::raster_from_data(
                     &info,
@@ -223,7 +259,8 @@ impl MenuItemRenderer {
                 } else {
                     tracing::warn!(
                         "menu_item render: failed to create skia image from pixmap {}x{}",
-                        width, h
+                        width,
+                        h
                     );
                 }
             }
@@ -254,6 +291,7 @@ impl MenuItemRenderer {
     }
 
     /// Draw shortcut text
+    #[allow(clippy::too_many_arguments)]
     fn draw_shortcut(
         canvas: &Canvas,
         shortcut: &str,

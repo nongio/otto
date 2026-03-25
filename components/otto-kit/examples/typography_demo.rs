@@ -81,7 +81,6 @@ impl App for TypographyDemo {
 
         Ok(())
     }
-
 }
 
 #[tokio::main]
