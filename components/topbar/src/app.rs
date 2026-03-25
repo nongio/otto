@@ -512,9 +512,7 @@ impl App for TopBarApp {
             open.menu.handle_key(key, state);
             tracing::debug!("after handle_key: tray menu visible={}", open.menu.is_visible());
             if !open.menu.is_visible() {
-                self.open_menu = None;
-                self.right.tray_menu_state.set_active(None);
-                self.redraw_right();
+                self.close_menu();
             }
             return;
         }
@@ -523,9 +521,7 @@ impl App for TopBarApp {
         if let Some(ref mut open) = self.open_app_menu {
             open.menu.handle_key(key, state);
             if !open.menu.is_visible() {
-                self.open_app_menu = None;
-                self.left.menu_state.set_active(None);
-                self.redraw_left();
+                self.close_app_menu();
             }
         }
     }
