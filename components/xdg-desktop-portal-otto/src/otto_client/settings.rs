@@ -19,4 +19,9 @@ trait OttoSettings {
     /// - 1: Prefer dark appearance
     /// - 2: Prefer light appearance
     async fn get_color_scheme(&self) -> Result<u32>;
+
+    /// Get the icon theme name from the compositor.
+    ///
+    /// Returns an empty string if no theme is configured.
+    async fn get_icon_theme(&self) -> Result<String>;
 }
