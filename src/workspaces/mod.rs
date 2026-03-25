@@ -954,6 +954,13 @@ impl Workspaces {
     pub fn expose_set_visible(&self, show: bool) {
         use layers::prelude::*;
 
+        // Already in the target state — nothing to animate.
+        // Avoids scheduling a no-op animation whose on_finish callback would
+        // reset layer shell opacity, conflicting with fullscreen fade-outs.
+        if show == self.get_show_all() {
+            return;
+        }
+
         // If show desktop is active, exit it first
         if self.get_show_desktop() && show {
             self.expose_show_desktop(-1.0, true);
@@ -1345,9 +1352,16 @@ impl Workspaces {
             let workspace_selector_y = (-400.0).interpolate(&0.0, delta);
             let workspace_selector_y = workspace_selector_y.clamp(-400.0, 0.0);
 
-            // Layer shell overlay fades out when entering expose (inverse of workspace opacity)
-            let layer_shell_overlay_opacity = 1.0.interpolate(&0.0, delta);
-            let layer_shell_overlay_opacity = layer_shell_overlay_opacity.clamp(0.0, 1.0);
+            // Layer shell overlay and top fade out when entering expose.
+            // When closing expose on a fullscreen workspace the resting opacity
+            // must stay at 0.0 (fullscreen hides the top bar / overlay).
+            let current_ws_fullscreen = self
+                .get_workspace_at(current_workspace_index)
+                .map(|ws| ws.get_fullscreen_mode())
+                .unwrap_or(false);
+            let layer_shell_resting_opacity = if current_ws_fullscreen { 0.0 } else { 1.0 };
+            let layer_shell_fade_opacity = layer_shell_resting_opacity.interpolate(&0.0, delta);
+            let layer_shell_fade_opacity = layer_shell_fade_opacity.clamp(0.0, 1.0);
 
             // Set overlay opacity to match the workspace selector opacity (fade in as we enter expose)
 
@@ -1355,10 +1369,12 @@ impl Workspaces {
             let expose_layer = self.expose_layer.clone();
             let workspace_selector_view_layer = self.workspace_selector_view.layer.clone();
             let layer_shell_overlay_ref = self.layer_shell_overlay.clone();
+            let layer_shell_top_ref = self.layer_shell_top.clone();
             let show_all_ref = self.show_all.clone();
             let show_all_gesture_ref = self.show_all_gesture.clone();
             let expose_gesture_active_ref = self.expose_gesture_active.clone();
             let expose_dragged_window_ref = self.expose_dragged_window.clone();
+            let model_ref = self.model.clone();
 
             // Collect secondary output expose layers to sync with primary
             let secondary_expose_layers: Vec<Layer> = self
@@ -1449,8 +1465,26 @@ impl Workspaces {
                         for wl in &all_workspaces_layers {
                             wl.set_hidden(show_all);
                         }
-                        // Restore layer shell overlay when exiting expose mode
-                        layer_shell_overlay_ref.set_opacity(if show_all { 0.0 } else { 1.0 }, None);
+                        // Restore layer shell overlay and top when exiting expose mode,
+                        // but only if the current workspace isn't fullscreen (which has
+                        // its own opacity management via set_fullscreen_overlay_visibility).
+                        let is_fullscreen = model_ref
+                            .read()
+                            .ok()
+                            .and_then(|m| {
+                                m.workspaces
+                                    .get(m.current_workspace)
+                                    .map(|ws| ws.get_fullscreen_mode())
+                            })
+                            .unwrap_or(false);
+                        if !is_fullscreen {
+                            layer_shell_overlay_ref.set_opacity(if show_all { 0.0 } else { 1.0 }, None);
+                            layer_shell_top_ref.set_opacity(if show_all { 0.0 } else { 1.0 }, None);
+                            layer_shell_top_ref.set_hidden(show_all);
+                        } else {
+                            // Fullscreen: keep layers hidden and transparent
+                            layer_shell_top_ref.set_hidden(true);
+                        }
 
                         show_all_ref.store(show_all, std::sync::atomic::Ordering::Relaxed);
                     },
@@ -1459,9 +1493,18 @@ impl Workspaces {
             }
             let _tr = self.workspace_selector_view.layer.set_opacity(1.0, None);
 
-            // Animate layer shell overlay opacity (fade out when entering expose)
+            // Animate layer shell overlay and top opacity (fade out when entering expose)
+            if layer_shell_fade_opacity > 0.0 {
+                self.layer_shell_top.set_hidden(false);
+            }
             self.layer_shell_overlay
-                .set_opacity(layer_shell_overlay_opacity, transition);
+                .set_opacity(layer_shell_fade_opacity, transition);
+            self.layer_shell_top
+                .set_opacity(layer_shell_fade_opacity, transition);
+            // When fully faded out without an ongoing animation, hide immediately
+            if layer_shell_fade_opacity == 0.0 && transition.is_none() {
+                self.layer_shell_top.set_hidden(true);
+            }
         }
         // Animate dock position
         if let Some(current_workspace) = current_workspace {
@@ -1499,15 +1542,31 @@ impl Workspaces {
         }
     }
 
-    /// Set layer_shell_overlay visibility when entering/exiting fullscreen
-    /// When entering fullscreen (is_fullscreen=true), fades out the overlay
-    /// When exiting fullscreen (is_fullscreen=false), fades in the overlay
+    /// Set layer_shell_overlay and layer_shell_top visibility when entering/exiting fullscreen
+    /// When entering fullscreen (is_fullscreen=true), fades out both layers and hides them
+    /// When exiting fullscreen (is_fullscreen=false), shows and fades in both layers
     pub fn set_fullscreen_overlay_visibility(&self, is_fullscreen: bool) {
         let target_opacity = if is_fullscreen { 0.0 } else { 1.0 };
         let transition = Some(Transition::ease_in_out_quad(1.4));
 
+        if !is_fullscreen {
+            // Unhide before fading in so the animation is visible
+            self.layer_shell_overlay.set_hidden(false);
+            self.layer_shell_top.set_hidden(false);
+        }
         self.layer_shell_overlay
             .set_opacity(target_opacity, transition);
+        let layer_shell_top_ref = self.layer_shell_top.clone();
+        self.layer_shell_top
+            .set_opacity(target_opacity, transition)
+            .on_finish(
+                move |_: &Layer, _| {
+                    if is_fullscreen {
+                        layer_shell_top_ref.set_hidden(true);
+                    }
+                },
+                true,
+            );
     }
 
     /// Set the mode to show desktop mode using a delta for gestures
@@ -3333,6 +3392,28 @@ impl Workspaces {
             }
         }
 
+        // Animate layer_shell_top opacity based on target workspace fullscreen state
+        if let Some(workspace) = self.get_workspace_at(i) {
+            let is_fullscreen = workspace.get_fullscreen_mode();
+            let target_opacity = if is_fullscreen { 0.0 } else { 1.0 };
+            if !is_fullscreen {
+                self.layer_shell_top.set_hidden(false);
+            }
+            self.layer_shell_overlay
+                .set_opacity(target_opacity, Some(resolved_transition));
+            let layer_shell_top_ref = self.layer_shell_top.clone();
+            self.layer_shell_top
+                .set_opacity(target_opacity, Some(resolved_transition))
+                .on_finish(
+                    move |_: &Layer, _| {
+                        if is_fullscreen {
+                            layer_shell_top_ref.set_hidden(true);
+                        }
+                    },
+                    true,
+                );
+        }
+
         // Scroll only this output's layer
         let workspace_gap_px = WORKSPACE_SPACING * scale;
         let offset = i as f32 * (workspace_width + workspace_gap_px);
@@ -3393,14 +3474,25 @@ impl Workspaces {
                 }
             }
 
-            // Animate layer_shell_overlay based on target workspace fullscreen state
-            let target_opacity = if workspace.get_fullscreen_mode() {
-                0.0
-            } else {
-                1.0
-            };
+            // Animate layer_shell_overlay and layer_shell_top based on target workspace fullscreen state
+            let is_fullscreen = workspace.get_fullscreen_mode();
+            let target_opacity = if is_fullscreen { 0.0 } else { 1.0 };
+            if !is_fullscreen {
+                self.layer_shell_top.set_hidden(false);
+            }
             self.layer_shell_overlay
                 .set_opacity(target_opacity, Some(transition));
+            let layer_shell_top_ref = self.layer_shell_top.clone();
+            self.layer_shell_top
+                .set_opacity(target_opacity, Some(transition))
+                .on_finish(
+                    move |_: &Layer, _| {
+                        if is_fullscreen {
+                            layer_shell_top_ref.set_hidden(true);
+                        }
+                    },
+                    true,
+                );
 
             if self.get_show_all() {
                 // In expose mode, ensure the target workspace has its layout calculated
@@ -3502,6 +3594,35 @@ impl Workspaces {
         // Apply only to this output's layers (workspaces + expose in sync)
         ows.workspaces_layer.set_position((-new_offset, 0.0), None);
         ows.expose_layer.set_position((-new_offset, 0.0), None);
+
+        // Interpolate layer_shell_top opacity during swipe based on fullscreen state
+        // of the two workspaces we're swiping between.
+        let step = workspace_width + workspace_gap_px;
+        if step > 0.0 {
+            let progress = new_offset / step;
+            let left_index = (progress.floor() as usize).min(num_workspaces.saturating_sub(1));
+            let right_index = (left_index + 1).min(num_workspaces.saturating_sub(1));
+            let t = (progress - left_index as f32).clamp(0.0, 1.0);
+
+            let left_fs = ows
+                .workspace_views
+                .get(left_index)
+                .map(|ws| ws.get_fullscreen_mode())
+                .unwrap_or(false);
+            let right_fs = ows
+                .workspace_views
+                .get(right_index)
+                .map(|ws| ws.get_fullscreen_mode())
+                .unwrap_or(false);
+
+            let left_opacity: f32 = if left_fs { 0.0 } else { 1.0 };
+            let right_opacity: f32 = if right_fs { 0.0 } else { 1.0 };
+            let opacity = left_opacity.interpolate(&right_opacity, t);
+
+            self.layer_shell_top.set_opacity(opacity, None);
+            self.layer_shell_top.set_hidden(opacity == 0.0);
+            self.layer_shell_overlay.set_opacity(opacity, None);
+        }
     }
 
     /// End workspace swipe gesture and snap to nearest workspace.
@@ -3774,7 +3895,15 @@ impl Workspaces {
                 }
             }
             WlrLayer::Top => {
-                self.layer_shell_top.set_hidden(false);
+                // Only unhide if current workspace is not fullscreen
+                let is_fullscreen = self
+                    .get_current_workspace()
+                    .map(|ws| ws.get_fullscreen_mode())
+                    .unwrap_or(false);
+                if !is_fullscreen {
+                    self.layer_shell_top.set_hidden(false);
+                    self.layer_shell_top.set_opacity(1.0, None);
+                }
                 if let Err(e) = self.layer_shell_top.add_sublayer(&layer) {
                     tracing::warn!("layer_shell: failed to add top layer: {e}");
                 }

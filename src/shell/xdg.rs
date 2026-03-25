@@ -181,6 +181,9 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
         let keyboard = self.seat.get_keyboard().unwrap();
         keyboard.set_focus(self, Some(window_element.into()), Serial::from(0));
+
+        // Notify foreign toplevel watchers that the new window is activated
+        self.send_foreign_toplevel_state(&surface_id, true);
     }
 
     fn toplevel_destroyed(&mut self, toplevel: ToplevelSurface) {
@@ -258,13 +261,30 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         let popup_surface = popup_kind.wl_surface();
         let popup_id = popup_surface.id();
 
-        // Cache the root surface mapping for fast lookup during commit/destroy
-        if let Ok(root) = find_popup_root_surface(&popup_kind) {
+        // Cache the root surface mapping for fast lookup during commit/destroy.
+        // For layer shell popups the parent is still NULL here — it gets set later
+        // when zwlr_layer_surface_v1.get_popup fires (handled in WlrLayerShellHandler::new_popup).
+        let has_parent = if let Ok(root) = find_popup_root_surface(&popup_kind) {
+            tracing::debug!("new_popup: {:?} root={:?} (xdg parent)", popup_id, root.id());
             self.popup_root_cache.insert(popup_id.clone(), root.id());
-        }
+            true
+        } else {
+            tracing::debug!(
+                "new_popup: {:?} has no parent yet (layer shell popup — deferred to WlrLayerShellHandler)",
+                popup_id
+            );
+            false
+        };
 
-        if let Err(err) = self.popups.track_popup(popup_kind) {
-            warn!("Failed to track popup: {}", err);
+        // Only track popups that already have a parent. Layer shell popups with
+        // NULL parent would go into PopupManager::unmapped_popups, and then
+        // PopupManager::commit would re-insert them — creating a duplicate entry
+        // that breaks popup iteration order (parent checked before child).
+        // WlrLayerShellHandler::new_popup handles tracking for those.
+        if has_parent {
+            if let Err(err) = self.popups.track_popup(popup_kind) {
+                tracing::debug!("new_popup: tracking failed for {:?}: {}", popup_id, err);
+            }
         }
     }
 
@@ -1247,40 +1267,60 @@ impl<BackendData: Backend> Otto<BackendData> {
         pointer.set_grab(self, grab, serial, Focus::Clear);
     }
 
-    fn unconstrain_popup(&self, popup: &PopupSurface) {
+    pub(crate) fn unconstrain_popup(&self, popup: &PopupSurface) {
         let Ok(root) = find_popup_root_surface(&PopupKind::Xdg(popup.clone())) else {
             return;
         };
-        let id = root.id();
-        let Some(window) = self.workspaces.get_window_for_surface(&id) else {
-            return;
-        };
+        let root_id = root.id();
 
-        let mut outputs_for_window = self.workspaces.outputs_for_element(window);
-        if outputs_for_window.is_empty() {
-            return;
+        // Try window path first, then layer shell path
+        if let Some(window) = self.workspaces.get_window_for_surface(&root_id) {
+            let mut outputs_for_window = self.workspaces.outputs_for_element(window);
+            if outputs_for_window.is_empty() {
+                return;
+            }
+
+            let mut outputs_geo = self
+                .workspaces
+                .output_geometry(&outputs_for_window.pop().unwrap())
+                .unwrap();
+            for output in outputs_for_window {
+                outputs_geo = outputs_geo.merge(self.workspaces.output_geometry(&output).unwrap());
+            }
+
+            let window_geo = self.workspaces.element_geometry(window).unwrap();
+
+            let mut target = outputs_geo;
+            target.loc -= get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));
+            target.loc -= window_geo.loc;
+
+            popup.with_pending_state(|state| {
+                state.geometry = state.positioner.get_unconstrained_geometry(target);
+                clamp_popup_to_target(&mut state.geometry, target);
+            });
+        } else if let Some(layer_shell_surf) = self.layer_surfaces.get(&root_id) {
+            // Layer shell popup: constrain within the output bounds
+            let output = layer_shell_surf.output().clone();
+            let Some(output_geo) = self.workspaces.output_geometry(&output) else {
+                return;
+            };
+            let layer_geo = layer_shell_surf.compute_geometry(output_geo);
+
+            // Target is relative to the layer surface position
+            let mut target = output_geo;
+            target.loc -= get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));
+            target.loc -= layer_geo.loc;
+
+            popup.with_pending_state(|state| {
+                state.geometry = state.positioner.get_unconstrained_geometry(target);
+                tracing::debug!(
+                    "unconstrain layer popup: geo={:?} target={:?}",
+                    state.geometry, target
+                );
+                clamp_popup_to_target(&mut state.geometry, target);
+                tracing::debug!("  after clamp: geo={:?}", state.geometry);
+            });
         }
-
-        // Get a union of all outputs' geometries.
-        let mut outputs_geo = self
-            .workspaces
-            .output_geometry(&outputs_for_window.pop().unwrap())
-            .unwrap();
-        for output in outputs_for_window {
-            outputs_geo = outputs_geo.merge(self.workspaces.output_geometry(&output).unwrap());
-        }
-
-        let window_geo = self.workspaces.element_geometry(window).unwrap();
-
-        // The target geometry for the positioner should be relative to its parent's geometry, so
-        // we will compute that here.
-        let mut target = outputs_geo;
-        target.loc -= get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));
-        target.loc -= window_geo.loc;
-
-        popup.with_pending_state(|state| {
-            state.geometry = state.positioner.get_unconstrained_geometry(target);
-        });
     }
 
     /// Get or create a layer for a surface
@@ -1298,6 +1338,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         let key = format!("surface_{:?}", surface_id);
         let layer = self.layers_engine.new_layer();
         layer.set_key(&key);
+        layer.set_picture_cached(true);
 
         self.surface_layers
             .insert(surface_id.clone(), layer.clone());
@@ -1330,5 +1371,31 @@ impl<BackendData: Backend> Otto<BackendData> {
         if let Some(layer) = self.surface_layers.remove(surface_id) {
             self.layers_engine.mark_for_delete(layer.id);
         }
+    }
+}
+
+/// Slide popup geometry so it stays within the target rectangle.
+/// This is the compositor's final safety net — applied regardless of the
+/// client's constraint_adjustment flags.
+fn clamp_popup_to_target(
+    geo: &mut Rectangle<i32, smithay::utils::Logical>,
+    target: Rectangle<i32, smithay::utils::Logical>,
+) {
+    // Slide horizontally
+    let right_overshoot = (geo.loc.x + geo.size.w) - (target.loc.x + target.size.w);
+    if right_overshoot > 0 {
+        geo.loc.x -= right_overshoot;
+    }
+    if geo.loc.x < target.loc.x {
+        geo.loc.x = target.loc.x;
+    }
+
+    // Slide vertically
+    let bottom_overshoot = (geo.loc.y + geo.size.h) - (target.loc.y + target.size.h);
+    if bottom_overshoot > 0 {
+        geo.loc.y -= bottom_overshoot;
+    }
+    if geo.loc.y < target.loc.y {
+        geo.loc.y = target.loc.y;
     }
 }

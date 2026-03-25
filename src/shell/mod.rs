@@ -30,7 +30,7 @@ use smithay::{
                 Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler,
                 WlrLayerShellState,
             },
-            xdg::{XdgPopupSurfaceData, XdgToplevelSurfaceData},
+            xdg::{PopupSurface, XdgPopupSurfaceData, XdgToplevelSurfaceData},
         },
     },
 };
@@ -353,6 +353,23 @@ impl<BackendData: Backend> Otto<BackendData> {
             );
 
             self.surface_layers.extend(popup_layers);
+
+            // Show the popup only after the initial configure has been sent and
+            // the client has committed at the correct position. Until then the
+            // layer stays hidden (as initialised in get_or_create_popup_layer).
+            let initial_configure_sent =
+                smithay::wayland::compositor::with_states(popup_surface, |states| {
+                    states
+                        .data_map
+                        .get::<XdgPopupSurfaceData>()
+                        .map(|d: &std::sync::Mutex<_>| d.lock().unwrap().initial_configure_sent)
+                        .unwrap_or(false)
+                });
+            if initial_configure_sent {
+                if let Some(popup_layer) = self.workspaces.popup_overlay.get_popup(&popup_id) {
+                    popup_layer.layer.set_hidden(false);
+                }
+            }
         });
 
         // Ensure all surfaces in the tree have rendering layers
@@ -474,9 +491,10 @@ impl<BackendData: Backend> Otto<BackendData> {
             }
         }
 
-        // Update the container layer with size and position.
-        // Skip size/position if a surface style with non-Resize gravity is registered
-        // (the style owns the layer bounds in that case).
+        // Update the container layer's Taffy layout style from anchors/margins/size.
+        // This lets the layout engine position the layer automatically — including
+        // during surface-style size animations (the animated size feeds back into
+        // Taffy and the position adjusts every frame).
         let layer = {
             let Some(layer_shell_surf) = self.layer_surfaces.get(surface_id) else {
                 return;
@@ -490,19 +508,23 @@ impl<BackendData: Backend> Otto<BackendData> {
             .and_then(|v: &Vec<_>| v.first());
         let container_owns_size = container_style.map(|s| s.client_owns_size).unwrap_or(false);
 
+        // Always refresh the Taffy style so position tracks anchor+margin changes.
+        // When the client owns the size (surface style animation), Taffy still
+        // controls the inset positioning — the animated size on the layer feeds
+        // back into layout automatically.
+        {
+            let Some(layer_shell_surf) = self.layer_surfaces.get(surface_id) else {
+                return;
+            };
+            let style = layer_shell_surf.taffy_style(scale_factor);
+            layer.set_layout_style(style);
+        }
+
         if !container_owns_size {
+            let container_w = (geometry.size.w as f64 * scale_factor) as f32;
+            let container_h = (geometry.size.h as f64 * scale_factor) as f32;
             layer.set_size(
-                layers::types::Size::points(
-                    (geometry.size.w as f64 * scale_factor) as f32,
-                    (geometry.size.h as f64 * scale_factor) as f32,
-                ),
-                None,
-            );
-            layer.set_position(
-                (
-                    (geometry.loc.x as f64 * scale_factor) as f32,
-                    (geometry.loc.y as f64 * scale_factor) as f32,
-                ),
+                layers::types::Size::points(container_w, container_h),
                 None,
             );
         }
@@ -565,6 +587,32 @@ impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
 
         // Arrange the layer map which will handle the exclusive zone
         map.arrange();
+    }
+
+    fn new_popup(&mut self, _parent: WlrLayerSurface, popup: PopupSurface) {
+        // At this point Smithay has already set the popup's XdgPopupSurfaceData.parent
+        // to the layer surface's wl_surface (in zwlr_layer_surface_v1.get_popup handler).
+        // The earlier XdgShellHandler::new_popup fired before the parent was set, so
+        // track_popup failed there. Re-track now that the parent chain is valid.
+        let popup_kind = PopupKind::from(popup.clone());
+        let popup_id = popup.wl_surface().id();
+
+        if let Ok(root) = find_popup_root_surface(&popup_kind) {
+            let root_id = root.id();
+            self.popup_root_cache.insert(popup_id.clone(), root_id);
+            tracing::debug!(
+                "layer new_popup: {:?} root={:?}",
+                popup_id,
+                root.id()
+            );
+        }
+
+        if let Err(err) = self.popups.track_popup(popup_kind) {
+            tracing::warn!("layer new_popup: failed to track popup: {}", err);
+        }
+
+        // Unconstrain now that the parent chain is established
+        self.unconstrain_popup(&popup);
     }
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {

@@ -37,14 +37,14 @@ impl<BackendData: Backend> Dispatch<OttoStyleTransactionV1, ()> for Otto<Backend
                     if let Some(timing_data) =
                         timing.data::<super::timing_function::ScTimingFunctionData>()
                     {
-                        // Store the timing function for later use when creating the transition
+                        let snap = timing_data.read();
                         txn.timing_function = Some(layers::prelude::Transition {
-                            timing: timing_data.timing,
-                            delay: 0.0, // Will be set from txn.delay
+                            timing: snap.timing,
+                            delay: 0.0,
                         });
-                        txn.spring_uses_duration = timing_data.spring_uses_duration;
-                        txn.spring_bounce = timing_data.spring_bounce;
-                        txn.spring_initial_velocity = timing_data.spring_initial_velocity;
+                        txn.spring_uses_duration = snap.spring_uses_duration;
+                        txn.spring_bounce = snap.spring_bounce;
+                        txn.spring_initial_velocity = snap.spring_initial_velocity;
                     }
                 }
             }

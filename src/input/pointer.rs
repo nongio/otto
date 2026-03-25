@@ -5,7 +5,7 @@ use smithay::{
         self, Axis, AxisSource, ButtonState, Event, InputBackend, PointerAxisEvent,
         PointerButtonEvent,
     },
-    desktop::{layer_map_for_output, space::SpaceElement, WindowSurfaceType},
+    desktop::{space::SpaceElement, utils::under_from_surface_tree, WindowSurfaceType},
     input::pointer::{AxisFrame, ButtonEvent, MotionEvent},
     reexports::wayland_server::{protocol::wl_pointer, Resource},
     utils::{IsAlive, Logical, Point, Serial, SERIAL_COUNTER as SCOUNTER},
@@ -105,41 +105,33 @@ impl<BackendData: Backend> Otto<BackendData> {
                             self.xwm.as_mut().unwrap().raise_window(surf).unwrap();
                         }
 
-                        // Deactivate old focus if it was a different window
-                        if let Some(crate::focus::KeyboardFocusTarget::Window(old_window)) =
-                            old_focus.as_ref()
-                        {
-                            if old_window.wl_surface() != window.wl_surface() {
-                                old_window.set_activate(false);
-                                old_window.toplevel().map(|t| t.send_configure());
-                            }
-                        }
-
-                        // Activate new window and set focus
-                        window.set_activate(true);
-                        window.toplevel().map(|t| t.send_configure());
-                        keyboard.set_focus(self, Some(window.into()), serial);
+                        self.set_keyboard_focus_on_window(&window);
                         return;
                     }
                 }
 
-                // Check if an overlay/top layer surface should receive keyboard focus
-                let layers = layer_map_for_output(output);
-                if let Some(layer) = layers
-                    .layer_under(WlrLayer::Overlay, self.pointer.current_location())
-                    .or_else(|| layers.layer_under(WlrLayer::Top, self.pointer.current_location()))
-                {
-                    if layer.can_receive_keyboard_focus() {
-                        if let Some((_, _)) = layer.surface_under(
-                            self.pointer.current_location()
-                                - output_geo.loc.to_f64()
-                                - layers.layer_geometry(layer).unwrap().loc.to_f64(),
-                            WindowSurfaceType::ALL,
-                        ) {
-                            keyboard.set_focus(self, Some(layer.clone().into()), serial);
-                            return;
+                // Check if a Top/Overlay layer shell surface should receive keyboard focus
+                // using lay-rs hit testing (matches visual position from Taffy layout)
+                let scale = output.current_scale().fractional_scale();
+                let phys = self.pointer.current_location().to_physical(scale);
+                let mut found_layer_focus = false;
+                for layer_shell_surf in self.layer_surfaces.values() {
+                    let wlr = layer_shell_surf.wlr_layer();
+                    if !matches!(wlr, WlrLayer::Overlay | WlrLayer::Top) {
+                        continue;
+                    }
+                    let lay_layer = &layer_shell_surf.layer;
+                    if lay_layer.cointains_point((phys.x as f32, phys.y as f32)) {
+                        let ls = layer_shell_surf.layer_surface();
+                        if ls.can_receive_keyboard_focus() {
+                            keyboard.set_focus(self, Some(ls.clone().into()), serial);
+                            found_layer_focus = true;
+                            break;
                         }
                     }
+                }
+                if found_layer_focus {
+                    return;
                 }
             }
             let scale = output
@@ -168,34 +160,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                             }
                             self.workspaces.focus_app_with_window(&id);
 
-                            // Deactivate old focus if it was a different window
-                            if let Some(crate::focus::KeyboardFocusTarget::Window(old_window)) =
-                                old_focus.as_ref()
-                            {
-                                if old_window.wl_surface() != window.wl_surface() {
-                                    old_window.set_activate(false);
-                                    // Update shadow for deactivated window
-                                    if let Some(view) =
-                                        self.workspaces.get_window_view(&old_window.id())
-                                    {
-                                        view.set_active(false);
-                                    }
-                                    if let Some(toplevel) = old_window.toplevel() {
-                                        toplevel.send_configure();
-                                    }
-                                }
-                            }
-
-                            // Activate new window and set focus
-                            window.set_activate(true);
-                            // Update shadow for activated window
-                            if let Some(view) = self.workspaces.get_window_view(&id) {
-                                view.set_active(true);
-                            }
-                            if let Some(toplevel) = window.toplevel() {
-                                toplevel.send_configure();
-                            }
-                            keyboard.set_focus(self, Some(window.clone().into()), serial);
+                            self.set_keyboard_focus_on_window(&window);
                             self.workspaces.update_workspace_model();
                         }
                     }
@@ -208,25 +173,22 @@ impl<BackendData: Backend> Otto<BackendData> {
                 }
             }
 
-            // Check if a bottom/background layer surface should receive keyboard focus
+            // Check if a Bottom/Background layer shell surface should receive keyboard focus
             if let Some(output) = output.as_ref() {
-                let output_geo = self.workspaces.output_geometry(output).unwrap();
-                let layers = layer_map_for_output(output);
-                if let Some(layer) = layers
-                    .layer_under(WlrLayer::Bottom, self.pointer.current_location())
-                    .or_else(|| {
-                        layers.layer_under(WlrLayer::Background, self.pointer.current_location())
-                    })
-                {
-                    if layer.can_receive_keyboard_focus() {
-                        if let Some((_, _)) = layer.surface_under(
-                            self.pointer.current_location()
-                                - output_geo.loc.to_f64()
-                                - layers.layer_geometry(layer).unwrap().loc.to_f64(),
-                            WindowSurfaceType::ALL,
-                        ) {
-                            keyboard.set_focus(self, Some(layer.clone().into()), serial);
+                let scale = output.current_scale().fractional_scale();
+                let phys = self.pointer.current_location().to_physical(scale);
+                for layer_shell_surf in self.layer_surfaces.values() {
+                    let wlr = layer_shell_surf.wlr_layer();
+                    if !matches!(wlr, WlrLayer::Bottom | WlrLayer::Background) {
+                        continue;
+                    }
+                    let lay_layer = &layer_shell_surf.layer;
+                    if lay_layer.cointains_point((phys.x as f32, phys.y as f32)) {
+                        let ls = layer_shell_surf.layer_surface();
+                        if ls.can_receive_keyboard_focus() {
+                            keyboard.set_focus(self, Some(ls.clone().into()), serial);
                         }
+                        break;
                     }
                 }
             }
@@ -241,8 +203,6 @@ impl<BackendData: Backend> Otto<BackendData> {
             let geometry = self.workspaces.output_geometry(o).unwrap();
             geometry.contains(pos.to_i32_round())
         })?;
-        let output_geo = self.workspaces.output_geometry(output).unwrap();
-        let layers = layer_map_for_output(output);
         let scale = output.current_scale().fractional_scale();
         let physical_pos = pos.to_physical(scale);
         let mut under = None;
@@ -286,75 +246,144 @@ impl<BackendData: Backend> Otto<BackendData> {
             return Some((focus, (position.x as f64, position.y as f64).into()));
         }
 
-        if let Some(layer) = layers
-            .layer_under(WlrLayer::Overlay, pos)
-            .or_else(|| layers.layer_under(WlrLayer::Top, pos))
-        {
-            let layer_loc = layers.layer_geometry(layer).unwrap().loc;
-            let layer_abs_pos = output_geo.loc + layer_loc;
+        // Check popup surfaces (layer shell popups) — they sit above everything
+        if under.is_none() {
+            use smithay::desktop::PopupManager;
 
-            // Check for surfaces under this layer (including popups)
-            // Pass position relative to layer surface
-            if let Some((surface, surface_loc)) =
-                layer.surface_under(pos - layer_abs_pos.to_f64(), WindowSurfaceType::ALL)
-            {
-                // surface_loc is relative to layer surface, convert to absolute
-                under = Some((
-                    PointerFocusTarget::WlSurface(surface),
-                    layer_abs_pos + surface_loc,
-                ));
-            } else {
-                // No popup, use the layer surface itself
-                under = Some((layer.clone().into(), layer_abs_pos));
-            }
-        }
-        // Check dock
-        else if self
-            .workspaces
-            .is_cursor_over_dock(physical_pos.x as f32, physical_pos.y as f32)
-        {
-            // Dock
-            under = Some((self.workspaces.dock.as_ref().clone().into(), (0, 0).into()));
-        } else if let Some((focus, location)) =
-            self.workspaces
-                .element_under(pos)
-                .and_then(|(window, loc)| {
-                    if let Some(id) = window.wl_surface().as_ref().map(|s| s.id()) {
-                        if let Some(w) = self.workspaces.get_window_for_surface(&id) {
-                            if w.is_minimised() {
-                                return None;
-                            }
+            for layer_shell_surf in self.layer_surfaces.values() {
+                let layer_wl = layer_shell_surf.layer_surface().wl_surface();
+                let popups: Vec<_> = PopupManager::popups_for_surface(layer_wl).collect();
+                if !popups.is_empty() {
+                    let lay_layer = &layer_shell_surf.layer;
+                    let render_pos = lay_layer.render_position();
+                    let layer_abs_pos: Point<f64, Logical> = Point::from((
+                        render_pos.x as f64 / scale,
+                        render_pos.y as f64 / scale,
+                    ));
+                    let cursor_rel_layer = pos - layer_abs_pos;
+                    // Match Smithay's LayerSurface::surface_under approach:
+                    // offset = popup_location - popup.geometry().loc
+                    for (popup, popup_location) in popups.into_iter() {
+                        let offset = popup_location - popup.geometry().loc;
+                        let popup_surface = popup.wl_surface();
+                        if let Some((surface, surface_loc)) = under_from_surface_tree(
+                            popup_surface,
+                            cursor_rel_layer,
+                            offset,
+                            WindowSurfaceType::ALL,
+                        ) {
+                            under = Some((
+                                PointerFocusTarget::WlSurface(surface),
+                                layer_abs_pos + surface_loc.to_f64(),
+                            ));
+                            break;
                         }
                     }
-                    window
-                        .surface_under(pos - loc.to_f64(), WindowSurfaceType::ALL)
-                        .map(|(surface, surf_loc)| (surface, surf_loc + loc))
-                })
-        {
-            under = Some((focus, location));
-        } else if let Some(layer) = layers
-            .layer_under(WlrLayer::Bottom, pos)
-            .or_else(|| layers.layer_under(WlrLayer::Background, pos))
-        {
-            let layer_loc = layers.layer_geometry(layer).unwrap().loc;
-            let layer_abs_pos = output_geo.loc + layer_loc;
-
-            // Check for surfaces under this layer (including popups)
-            // Pass position relative to layer surface
-            if let Some((surface, surface_loc)) =
-                layer.surface_under(pos - layer_abs_pos.to_f64(), WindowSurfaceType::ALL)
-            {
-                // surface_loc is relative to layer surface, convert to absolute
-                under = Some((
-                    PointerFocusTarget::WlSurface(surface),
-                    layer_abs_pos + surface_loc,
-                ));
-            } else {
-                // No popup, use the layer surface itself
-                under = Some((layer.clone().into(), layer_abs_pos));
+                }
+                if under.is_some() {
+                    break;
+                }
             }
-        };
-        under.map(|(s, l)| (s, l.to_f64()))
+        }
+
+        // Check Top/Overlay layer shell surfaces using lay-rs hit testing
+        // (Smithay's layer_map geometry doesn't reflect Taffy/animated positions)
+        if under.is_none() {
+        for layer_shell_surf in self.layer_surfaces.values() {
+            let wlr = layer_shell_surf.wlr_layer();
+            if !matches!(wlr, WlrLayer::Overlay | WlrLayer::Top) {
+                continue;
+            }
+            let lay_layer = &layer_shell_surf.layer;
+            if lay_layer.cointains_point((physical_pos.x as f32, physical_pos.y as f32)) {
+                let render_pos = lay_layer.render_position();
+                let layer_abs_pos: Point<f64, Logical> = Point::from((
+                    render_pos.x as f64 / scale,
+                    render_pos.y as f64 / scale,
+                ));
+                let ls = layer_shell_surf.layer_surface().clone();
+                let relative_pos = pos - layer_abs_pos;
+                if let Some((surface, surface_loc)) =
+                    ls.surface_under(relative_pos, WindowSurfaceType::ALL)
+                {
+                    under = Some((
+                        PointerFocusTarget::WlSurface(surface),
+                        layer_abs_pos + surface_loc.to_f64(),
+                    ));
+                } else {
+                    under = Some((ls.into(), layer_abs_pos));
+                }
+                break;
+            }
+        }
+        }
+
+        // Check dock
+        if under.is_none()
+            && self
+                .workspaces
+                .is_cursor_over_dock(physical_pos.x as f32, physical_pos.y as f32)
+        {
+            under = Some((
+                self.workspaces.dock.as_ref().clone().into(),
+                (0.0, 0.0).into(),
+            ));
+        }
+
+        // Check windows
+        if under.is_none() {
+            if let Some((focus, location)) =
+                self.workspaces
+                    .element_under(pos)
+                    .and_then(|(window, loc)| {
+                        if let Some(id) = window.wl_surface().as_ref().map(|s| s.id()) {
+                            if let Some(w) = self.workspaces.get_window_for_surface(&id) {
+                                if w.is_minimised() {
+                                    return None;
+                                }
+                            }
+                        }
+                        window
+                            .surface_under(pos - loc.to_f64(), WindowSurfaceType::ALL)
+                            .map(|(surface, surf_loc)| (surface, (surf_loc + loc).to_f64()))
+                    })
+            {
+                under = Some((focus, location));
+            }
+        }
+
+        // Check Bottom/Background layer shell surfaces using lay-rs hit testing
+        if under.is_none() {
+            for layer_shell_surf in self.layer_surfaces.values() {
+                let wlr = layer_shell_surf.wlr_layer();
+                if !matches!(wlr, WlrLayer::Bottom | WlrLayer::Background) {
+                    continue;
+                }
+                let lay_layer = &layer_shell_surf.layer;
+                if lay_layer.cointains_point((physical_pos.x as f32, physical_pos.y as f32)) {
+                    let render_pos = lay_layer.render_position();
+                    let layer_abs_pos: Point<f64, Logical> = Point::from((
+                        render_pos.x as f64 / scale,
+                        render_pos.y as f64 / scale,
+                    ));
+                    let ls = layer_shell_surf.layer_surface().clone();
+                    let relative_pos = pos - layer_abs_pos;
+                    if let Some((surface, surface_loc)) =
+                        ls.surface_under(relative_pos, WindowSurfaceType::ALL)
+                    {
+                        under = Some((
+                            PointerFocusTarget::WlSurface(surface),
+                            layer_abs_pos + surface_loc.to_f64(),
+                        ));
+                    } else {
+                        under = Some((ls.into(), layer_abs_pos));
+                    }
+                    break;
+                }
+            }
+        }
+
+        under
     }
 
     pub(crate) fn on_pointer_axis<B: InputBackend>(&mut self, evt: B::PointerAxisEvent) {

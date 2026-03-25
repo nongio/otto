@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use wayland_backend::server::ClientId;
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle};
 
@@ -5,15 +7,42 @@ use super::super::protocol::gen::otto_timing_function_v1::{self, OttoTimingFunct
 use crate::{state::Backend, Otto};
 use layers::prelude::{Easing, Spring, TimingFunction};
 
-/// User data for sc_timing_function
+/// Interior-mutable state for timing function parameters.
+/// Uses `Mutex` to satisfy wayland-server's `Send + Sync` requirement.
+/// Never contended — Wayland dispatch is single-threaded.
 pub struct ScTimingFunctionData {
+    inner: Mutex<ScTimingFunctionInner>,
+}
+
+pub struct ScTimingFunctionInner {
     pub timing: TimingFunction,
-    /// If true, this spring should use the transaction's duration
     pub spring_uses_duration: bool,
-    /// Bounce parameter for duration-based springs
     pub spring_bounce: Option<f32>,
-    /// Initial velocity for springs
     pub spring_initial_velocity: f32,
+}
+
+impl ScTimingFunctionData {
+    pub fn new() -> Self {
+        Self {
+            inner: Mutex::new(ScTimingFunctionInner {
+                timing: TimingFunction::linear(0.0),
+                spring_uses_duration: false,
+                spring_bounce: None,
+                spring_initial_velocity: 0.0,
+            }),
+        }
+    }
+
+    /// Read a snapshot of the current state.
+    pub fn read(&self) -> ScTimingFunctionInner {
+        let guard = self.inner.lock().unwrap();
+        ScTimingFunctionInner {
+            timing: guard.timing,
+            spring_uses_duration: guard.spring_uses_duration,
+            spring_bounce: guard.spring_bounce,
+            spring_initial_velocity: guard.spring_initial_velocity,
+        }
+    }
 }
 
 impl<BackendData: Backend> Dispatch<OttoTimingFunctionV1, ScTimingFunctionData>
@@ -60,14 +89,7 @@ impl<BackendData: Backend> Dispatch<OttoTimingFunctionV1, ScTimingFunctionData>
                         TimingFunction::linear(0.0)
                     }
                 };
-
-                // Update the timing function data
-                // Note: We can't mutate data here directly, so we'll need a different approach
-                // Store it in a way that can be retrieved when the timing function is used
-                unsafe {
-                    let data_ptr = data as *const ScTimingFunctionData as *mut ScTimingFunctionData;
-                    (*data_ptr).timing = timing;
-                }
+                data.inner.lock().unwrap().timing = timing;
             }
 
             otto_timing_function_v1::Request::SetBezier { c1x, c1y, c2x, c2y } => {
@@ -77,32 +99,25 @@ impl<BackendData: Backend> Dispatch<OttoTimingFunctionV1, ScTimingFunctionData>
                     x2: c2x as f32,
                     y2: c2y as f32,
                 };
-                let timing = TimingFunction::Easing(easing, 0.0);
-
-                unsafe {
-                    let data_ptr = data as *const ScTimingFunctionData as *mut ScTimingFunctionData;
-                    (*data_ptr).timing = timing;
-                }
+                data.inner.lock().unwrap().timing = TimingFunction::Easing(easing, 0.0);
             }
 
             otto_timing_function_v1::Request::SetSpring {
                 bounce,
                 initial_velocity,
             } => {
-                // Store bounce and velocity - will be used with transaction duration on commit
-                // Using a placeholder spring that will be recreated with actual duration
                 tracing::debug!(
                     "Setting duration-based spring parameters: bounce={}, initial_velocity={}",
                     bounce,
                     initial_velocity
                 );
-
-                unsafe {
-                    let data_ptr = data as *const ScTimingFunctionData as *mut ScTimingFunctionData;
-                    (*data_ptr).spring_bounce = Some(bounce as f32);
-                    (*data_ptr).spring_initial_velocity = initial_velocity as f32;
-                    (*data_ptr).spring_uses_duration = true;
-                }
+                let mut inner = data.inner.lock().unwrap();
+                inner.timing = TimingFunction::Spring(
+                    Spring::with_duration_and_bounce(0.0, bounce as f32),
+                );
+                inner.spring_bounce = Some(bounce as f32);
+                inner.spring_initial_velocity = initial_velocity as f32;
+                inner.spring_uses_duration = true;
             }
 
             otto_timing_function_v1::Request::SetSpringStiffnessDamping {
@@ -112,20 +127,15 @@ impl<BackendData: Backend> Dispatch<OttoTimingFunctionV1, ScTimingFunctionData>
             } => {
                 let mut spring = Spring::new(1.0, stiffness as f32, damping as f32);
                 spring.initial_velocity = initial_velocity as f32;
-                let timing = TimingFunction::Spring(spring);
-
                 tracing::debug!(
                     "Creating physics-based spring (ignores duration): stiffness={}, damping={}, initial_velocity={}",
                     stiffness,
                     damping,
                     initial_velocity
                 );
-
-                unsafe {
-                    let data_ptr = data as *const ScTimingFunctionData as *mut ScTimingFunctionData;
-                    (*data_ptr).timing = timing;
-                    (*data_ptr).spring_uses_duration = false;
-                }
+                let mut inner = data.inner.lock().unwrap();
+                inner.timing = TimingFunction::Spring(spring);
+                inner.spring_uses_duration = false;
             }
 
             otto_timing_function_v1::Request::Destroy => {
