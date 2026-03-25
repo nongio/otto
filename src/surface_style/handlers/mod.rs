@@ -79,13 +79,16 @@ fn commit_transaction<BackendData: Backend>(
         if let Some(duration) = txn.duration {
             // Recreate the timing function with the correct duration
             trans.timing = match trans.timing {
-                TimingFunction::Easing(easing, _) => TimingFunction::Easing(easing, duration),
+                TimingFunction::Easing(easing, _) => {
+                    tracing::debug!("Transaction commit: Easing timing, duration={}s", duration);
+                    TimingFunction::Easing(easing, duration)
+                }
                 TimingFunction::Spring(_) => {
                     if txn.spring_uses_duration {
                         // Duration-based spring - use stored bounce and velocity
                         if let Some(bounce) = txn.spring_bounce {
                             tracing::debug!(
-                                "Creating duration-based spring: duration={}s, bounce={}, initial_velocity={}",
+                                "Transaction commit: duration-based spring: duration={}s, bounce={}, initial_velocity={}",
                                 duration,
                                 bounce,
                                 txn.spring_initial_velocity
@@ -96,18 +99,31 @@ fn commit_transaction<BackendData: Backend>(
                                 txn.spring_initial_velocity,
                             ))
                         } else {
+                            tracing::debug!(
+                                "Transaction commit: spring fallback (no bounce), duration={}s",
+                                duration
+                            );
                             // Fallback if bounce not set
                             TimingFunction::Spring(Spring::with_duration_and_bounce(duration, 0.0))
                         }
                     } else {
+                        tracing::debug!(
+                            "Transaction commit: physics-based spring (ignoring duration)"
+                        );
                         // Physics-based spring from timing function - keep as is
                         trans.timing
                     }
                 }
             };
+        } else {
+            tracing::debug!("Transaction commit: timing function present but no duration");
         }
         Some(trans)
     } else {
+        tracing::debug!(
+            "Transaction commit: no timing function, using default ease_out_quad, duration={:?}",
+            txn.duration
+        );
         txn.duration.map(Transition::ease_out_quad)
     };
 
@@ -290,13 +306,7 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleManagerV1, ()> for Otto<Back
             otto_surface_style_manager_v1::Request::CreateTimingFunction { id } => {
                 use timing_function::ScTimingFunctionData;
 
-                // Create default timing function (linear)
-                let timing_data = ScTimingFunctionData {
-                    timing: layers::prelude::TimingFunction::linear(0.0),
-                    spring_uses_duration: false,
-                    spring_bounce: None,
-                    spring_initial_velocity: 0.0,
-                };
+                let timing_data = ScTimingFunctionData::new();
 
                 data_init.init(id, timing_data);
             }

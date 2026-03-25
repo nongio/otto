@@ -41,6 +41,8 @@ pub enum ContentsGravity {
     Center,
     /// Natural buffer size, pinned to top-left.
     TopLeft,
+    /// Natural buffer size, pinned to top-right.
+    TopRight,
 }
 
 /// Compositor-side layer state (pure augmentation, no wl_surface)
