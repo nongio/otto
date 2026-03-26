@@ -216,9 +216,14 @@ impl RightPanel {
 
     /// Rebuild the tray MenuBarState from current tray items.
     pub fn sync_tray_items(&mut self) {
+        let old_count = self.tray_menu_state.items().len();
         let active = self.tray_menu_state.active_index();
         self.tray_menu_state = build_tray_menu_state();
-        self.tray_menu_state.set_active(active);
+        // Only preserve active highlight if item count is unchanged —
+        // if an item was added or removed the index is no longer valid.
+        if self.tray_menu_state.items().len() == old_count {
+            self.tray_menu_state.set_active(active);
+        }
     }
 
     pub fn draw(&self, canvas: &Canvas) {
