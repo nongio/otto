@@ -27,10 +27,6 @@ struct OpenMenu {
     menu: ContextMenu,
     /// Tray item index that owns this menu.
     tray_index: usize,
-    /// D-Bus service name of the tray item.
-    service: String,
-    /// D-Bus menu path for activating items.
-    menu_path: String,
 }
 
 /// Tracks an open app menu popup from the left panel.
@@ -38,10 +34,6 @@ struct OpenAppMenu {
     menu: ContextMenu,
     /// Left panel menu item index (0 = app name, 1+ = menu items).
     item_index: usize,
-    /// D-Bus service name.
-    service: String,
-    /// D-Bus menu path.
-    menu_path: String,
 }
 
 pub struct TopBarApp {
@@ -86,7 +78,9 @@ impl TopBarApp {
     }
 
     fn redraw_left(&self) {
-        let Some(ref surface) = self.left_surface else { return };
+        let Some(ref surface) = self.left_surface else {
+            return;
+        };
         let left = &self.left;
         surface.draw(|canvas| {
             canvas.clear(skia_safe::Color::TRANSPARENT);
@@ -96,7 +90,9 @@ impl TopBarApp {
     }
 
     fn redraw_right(&self) {
-        let Some(ref surface) = self.right_surface else { return };
+        let Some(ref surface) = self.right_surface else {
+            return;
+        };
         let right = &self.right;
         surface.draw(|canvas| {
             canvas.clear(skia_safe::Color::TRANSPARENT);
@@ -107,7 +103,6 @@ impl TopBarApp {
 
     fn apply_surface_style(surface: &LayerShellSurface, gravity: ContentsGravity) {
         let Some(style) = surface.base_surface().surface_style() else {
-            tracing::debug!("surface style protocol not available");
             return;
         };
 
@@ -122,8 +117,12 @@ impl TopBarApp {
     }
 
     fn animate_right_size(surface: &LayerShellSurface, width: f32, height: f32) {
-        let Some(style) = surface.base_surface().surface_style() else { return };
-        let Some(scene) = AppContext::surface_style_manager() else { return };
+        let Some(style) = surface.base_surface().surface_style() else {
+            return;
+        };
+        let Some(scene) = AppContext::surface_style_manager() else {
+            return;
+        };
         let qh = AppContext::queue_handle();
 
         let timing = scene.create_timing_function(qh, ());
@@ -139,7 +138,9 @@ impl TopBarApp {
     }
 
     fn update_left_panel(&mut self, animate: bool) {
-        let Some(ref surface) = self.left_surface else { return };
+        let Some(ref surface) = self.left_surface else {
+            return;
+        };
 
         let target = self.left.target_width();
         if (target - self.last_left_width).abs() >= 1.0 {
@@ -154,7 +155,9 @@ impl TopBarApp {
     }
 
     fn update_right_panel(&mut self, animate: bool) {
-        let Some(ref surface) = self.right_surface else { return };
+        let Some(ref surface) = self.right_surface else {
+            return;
+        };
 
         let target = self.right.target_width();
         if (target - self.last_right_width).abs() >= 1.0 {
@@ -172,7 +175,6 @@ impl TopBarApp {
     fn close_menu(&mut self) {
         if let Some(open) = self.open_menu.take() {
             open.menu.hide_animated();
-            tracing::debug!("closed context menu for tray index={}", open.tray_index);
         }
         self.pending_menu_index = None;
         self.right.tray_menu_state.set_active(None);
@@ -187,7 +189,6 @@ impl TopBarApp {
     fn close_app_menu(&mut self) {
         if let Some(open) = self.open_app_menu.take() {
             open.menu.hide_animated();
-            tracing::debug!("closed app menu for index={}", open.item_index);
         }
         self.pending_app_menu_index = None;
         self.left.menu_state.set_active(None);
@@ -200,32 +201,29 @@ impl TopBarApp {
 
     /// Show a context menu from a pending dbusmenu fetch.
     fn show_pending_menu(&mut self, pending: crate::tray::PendingMenu, tray_index: usize) {
-        let Some(ref surface) = self.right_surface else { return };
+        let Some(ref surface) = self.right_surface else {
+            return;
+        };
 
         // Convert dbusmenu items to otto-kit MenuItems
         let kit_items = convert_dbusmenu_items(&pending.layout.items);
         if kit_items.is_empty() {
-            tracing::debug!("no visible menu items, skipping popup");
             return;
         }
 
         // Create the ContextMenu
-        let service = pending.service.clone();
-        let menu_path = pending.menu_path.clone();
-        let svc = service.clone();
-        let mp = menu_path.clone();
+        let svc = pending.service.clone();
+        let mp = pending.menu_path.clone();
 
         // Build id→label map for resolving stale IDs at activation time
         let id_labels = build_id_label_map(&pending.layout.items);
 
-        let menu = ContextMenu::new(kit_items)
-            .on_item_click(move |action_id| {
-                if let Ok(id) = action_id.parse::<i32>() {
-                    let label = id_labels.get(&id).cloned().unwrap_or_default();
-                    tracing::info!("menu item clicked: id={id} label={label:?} service={svc}");
-                    crate::tray::activate_menu_item(&svc, &mp, id, &label);
-                }
-            });
+        let menu = ContextMenu::new(kit_items).on_item_click(move |action_id| {
+            if let Ok(id) = action_id.parse::<i32>() {
+                let label = id_labels.get(&id).cloned().unwrap_or_default();
+                crate::tray::activate_menu_item(&svc, &mp, id, &label);
+            }
+        });
 
         // Create positioner: anchor below the tray icon, right-aligned
         if let Ok(positioner) = XdgPositioner::new(AppContext::xdg_shell_state()) {
@@ -233,7 +231,10 @@ impl TopBarApp {
             let style = otto_kit::components::context_menu::ContextMenuStyle::default();
             let state = menu.state();
             let items = state.borrow().items_at_depth(0).to_vec();
-            let (menu_w, menu_h) = otto_kit::components::context_menu::ContextMenuRenderer::measure_items(&items, &style);
+            let (menu_w, menu_h) =
+                otto_kit::components::context_menu::ContextMenuRenderer::measure_items(
+                    &items, &style,
+                );
 
             positioner.set_size(menu_w as i32, menu_h as i32);
 
@@ -242,12 +243,7 @@ impl TopBarApp {
                 positioner.set_anchor_rect(ix as i32, iy as i32, iw as i32, ih as i32);
             } else {
                 // Fallback: thin rect at pointer X, full bar height
-                positioner.set_anchor_rect(
-                    pending.anchor_x,
-                    0,
-                    1,
-                    self.right.height as i32,
-                );
+                positioner.set_anchor_rect(pending.anchor_x, 0, 1, self.right.height as i32);
             }
             // Popup top-right corner aligns to icon bottom-right corner
             positioner.set_anchor(xdg_positioner::Anchor::BottomRight);
@@ -265,20 +261,15 @@ impl TopBarApp {
             // Grab keyboard focus on the layer surface for arrow-key navigation
             surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
 
-            self.open_menu = Some(OpenMenu {
-                menu,
-                tray_index,
-                service,
-                menu_path,
-            });
-
-            tracing::info!("context menu shown for tray index={tray_index}");
+            self.open_menu = Some(OpenMenu { menu, tray_index });
         }
     }
 
     /// Show a submenu popup from the left panel for an app menu item.
     fn show_app_submenu(&mut self, pending: crate::appmenu::PendingSubmenu) {
-        let Some(ref surface) = self.left_surface else { return };
+        let Some(ref surface) = self.left_surface else {
+            return;
+        };
 
         // The item_index in pending is relative to the visible menu items
         // (0-based among non-empty visible items). We need to find the
@@ -291,27 +282,19 @@ impl TopBarApp {
             .collect();
 
         let Some(top_item) = visible_items.get(pending.item_index) else {
-            tracing::debug!("appmenu: item_index {} out of range", pending.item_index);
             return;
         };
 
         let kit_items = convert_dbusmenu_items(&top_item.children);
         if kit_items.is_empty() {
-            tracing::debug!("appmenu: no children for item {}", top_item.label);
             return;
         }
 
-        let service = pending.service.clone();
-        let menu_path = pending.menu_path.clone();
         let id_labels = build_id_label_map(&top_item.children);
-
-        let svc = service.clone();
-        let mp = menu_path.clone();
 
         let menu = ContextMenu::new(kit_items).on_item_click(move |action_id| {
             if let Ok(id) = action_id.parse::<i32>() {
                 let label = id_labels.get(&id).cloned().unwrap_or_default();
-                tracing::info!("app menu item clicked: id={id} label={label:?}");
                 crate::appmenu::activate_menu_item(id, &label);
             }
         });
@@ -343,14 +326,7 @@ impl TopBarApp {
             // Grab keyboard focus on the layer surface for arrow-key navigation
             surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
 
-            self.open_app_menu = Some(OpenAppMenu {
-                menu,
-                item_index,
-                service,
-                menu_path,
-            });
-
-            tracing::info!("app menu popup shown for item index={item_index}");
+            self.open_app_menu = Some(OpenAppMenu { menu, item_index });
         }
     }
 
@@ -358,12 +334,6 @@ impl TopBarApp {
     fn handle_right_click(&mut self, event: &PointerEvent) {
         let x = event.position.0 as f32;
         let hit = self.right.tray_item_at(x);
-        let items = crate::tray::current_items();
-        let item_name = hit.and_then(|i| items.get(i).map(|t| t.service.clone()));
-        tracing::debug!(
-            "tray hit-test: x={x:.0} hit={hit:?} item={item_name:?} (total={})",
-            items.len()
-        );
 
         if let Some(index) = hit {
             let already_open = self
@@ -373,14 +343,12 @@ impl TopBarApp {
                 .unwrap_or(false);
 
             if already_open {
-                tracing::debug!("closing menu for tray index={index}");
                 self.close_menu();
             } else {
                 self.close_menu();
                 self.right.tray_menu_state.set_active(Some(index));
                 self.pending_menu_index = Some(index);
                 self.redraw_right();
-                tracing::debug!("requesting context menu: index={index} service={item_name:?}");
                 crate::tray::context_menu_item(index, x as i32, event.position.1 as i32);
             }
         } else {
@@ -392,8 +360,6 @@ impl TopBarApp {
     fn handle_left_click(&mut self, event: &PointerEvent) {
         let x = event.position.0 as f32;
         let hit = self.left.menu_item_at(x);
-        tracing::debug!("left panel hit-test: x={x:.0} hit={hit:?}");
-
         let Some(index) = hit else {
             self.close_app_menu();
             return;
@@ -416,7 +382,6 @@ impl TopBarApp {
             .unwrap_or(false);
 
         if already_open {
-            tracing::debug!("closing app menu for index={menu_index}");
             self.close_app_menu();
         } else {
             self.close_app_menu();
@@ -426,7 +391,6 @@ impl TopBarApp {
 
             // Compute anchor_x for the popup position
             let anchor_x = self.left.item_anchor_x(index);
-            tracing::debug!("requesting app submenu: menu_index={menu_index} anchor_x={anchor_x}");
             crate::appmenu::fetch_submenu_for_item(menu_index, anchor_x as i32);
         }
     }
@@ -434,8 +398,6 @@ impl TopBarApp {
 
 impl App for TopBarApp {
     fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
-        tracing::debug!("creating topbar surfaces");
-
         // Invisible spacer spanning the full top edge — its only job is to
         // reserve exclusive space so maximized windows are pushed down.
         // We cannot use the left or right panel for this because they are
@@ -485,7 +447,6 @@ impl App for TopBarApp {
         crate::focus::spawn_focus_watcher();
         crate::appmenu::spawn_appmenu_registrar();
 
-        tracing::info!("topbar ready, waiting for configure");
         Ok(())
     }
 
@@ -504,13 +465,11 @@ impl App for TopBarApp {
         _ctx: &AppContext,
         key: u32,
         state: wl_keyboard::KeyState,
-        serial: u32,
+        _serial: u32,
     ) {
-        tracing::debug!("keyboard_event key={key} state={state:?} serial={serial}");
         // Forward to open tray context menu
         if let Some(ref mut open) = self.open_menu {
             open.menu.handle_key(key, state);
-            tracing::debug!("after handle_key: tray menu visible={}", open.menu.is_visible());
             if !open.menu.is_visible() {
                 self.close_menu();
             }
@@ -543,11 +502,8 @@ impl App for TopBarApp {
                 .unwrap_or(false);
 
         if !is_our_layer {
-            tracing::debug!("keyboard_leave from non-layer surface, ignoring");
             return;
         }
-
-        tracing::debug!("keyboard_leave from layer surface — closing menus");
 
         if self.open_menu.is_some() {
             self.close_menu();
@@ -621,11 +577,14 @@ impl App for TopBarApp {
                 self.close_app_menu();
                 // item_index is 0-based among visible menu items;
                 // in the left panel, index 0 = app name, so menu item N is at N+1
-                self.left.menu_state.set_active(Some(pending.item_index + 1));
+                self.left
+                    .menu_state
+                    .set_active(Some(pending.item_index + 1));
                 self.show_app_submenu(pending);
             } else {
                 // Menu layout itself changed — update left panel items
-                self.left.set_app_menu(crate::appmenu::current_menu().as_ref());
+                self.left
+                    .set_app_menu(crate::appmenu::current_menu().as_ref());
                 self.update_left_panel(true);
             }
         }
@@ -659,18 +618,21 @@ impl App for TopBarApp {
         let left_wl = self.left_surface.as_ref().map(|s| s.wl_surface().clone());
 
         for event in events {
-            let on_right = right_wl.as_ref().map(|w| event.surface == *w).unwrap_or(false);
-            let on_left = left_wl.as_ref().map(|w| event.surface == *w).unwrap_or(false);
+            let on_right = right_wl
+                .as_ref()
+                .map(|w| event.surface == *w)
+                .unwrap_or(false);
+            let on_left = left_wl
+                .as_ref()
+                .map(|w| event.surface == *w)
+                .unwrap_or(false);
 
-            match event.kind {
-                PointerEventKind::Press { .. } => {
-                    if on_right {
-                        self.handle_right_click(event);
-                    } else if on_left {
-                        self.handle_left_click(event);
-                    }
+            if let PointerEventKind::Press { .. } = event.kind {
+                if on_right {
+                    self.handle_right_click(event);
+                } else if on_left {
+                    self.handle_left_click(event);
                 }
-                _ => {}
             }
         }
     }
@@ -708,22 +670,15 @@ fn convert_dbusmenu_items(items: &[crate::dbusmenu::MenuItem]) -> Vec<KitMenuIte
                 .icon_name
                 .as_deref()
                 .filter(|n| !n.is_empty())
-                .map(|n| {
-                    tracing::debug!("dbusmenu icon-name: label={:?} icon={:?}", label, n);
-                    MenuItemIcon::Named(n.to_string())
-                })
+                .map(|n| MenuItemIcon::Named(n.to_string()))
                 .or_else(|| {
-                    item.icon_data.as_ref().map(|(w, h, data)| {
-                        tracing::debug!(
-                            "dbusmenu icon-data: label={:?} size={}x{} bytes={}",
-                            label, w, h, data.len()
-                        );
-                        MenuItemIcon::Pixmap {
+                    item.icon_data
+                        .as_ref()
+                        .map(|(w, h, data)| MenuItemIcon::Pixmap {
                             data: data.clone(),
                             width: *w,
                             height: *h,
-                        }
-                    })
+                        })
                 });
 
             if !item.children.is_empty() {
@@ -737,8 +692,7 @@ fn convert_dbusmenu_items(items: &[crate::dbusmenu::MenuItem]) -> Vec<KitMenuIte
                 }
                 kit
             } else {
-                let mut kit = KitMenuItem::action(&label)
-                    .with_action_id(item.id.to_string());
+                let mut kit = KitMenuItem::action(&label).with_action_id(item.id.to_string());
                 if let Some(icon) = icon {
                     kit = kit.with_icon(icon);
                 }

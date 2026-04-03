@@ -113,6 +113,7 @@ impl LeftPanel {
         }
     }
 
+    #[allow(dead_code)]
     pub fn update_style(&mut self) {
         self.style = left_menu_style();
     }
@@ -210,6 +211,7 @@ impl RightPanel {
         }
     }
 
+    #[allow(dead_code)]
     pub fn update_style(&mut self) {
         self.tray_style = tray_menu_style();
     }
@@ -234,17 +236,16 @@ impl RightPanel {
 
         // Tray icons to the left of the clock, with a gap
         let tray_width = MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
-        let gap = if tray_width > 0.0 { TRAY_CLOCK_GAP } else { 0.0 };
+        let gap = if tray_width > 0.0 {
+            TRAY_CLOCK_GAP
+        } else {
+            0.0
+        };
         let tray_x = self.width - clock_width - gap - tray_width;
 
         canvas.save();
         canvas.translate((tray_x, 0.0));
-        MenuBarRenderer::render(
-            canvas,
-            &self.tray_menu_state,
-            &self.tray_style,
-            tray_width,
-        );
+        MenuBarRenderer::render(canvas, &self.tray_menu_state, &self.tray_style, tray_width);
         canvas.restore();
     }
 
@@ -272,7 +273,11 @@ impl RightPanel {
         let font = typography::styles::BODY_MEDIUM.font();
         let clock_text_width = font.measure_str(&self.clock.text, None).0;
         let tray_width = MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
-        let gap = if tray_width > 0.0 { TRAY_CLOCK_GAP } else { 0.0 };
+        let gap = if tray_width > 0.0 {
+            TRAY_CLOCK_GAP
+        } else {
+            0.0
+        };
         let content = clock_text_width + BAR_PADDING_H * 2.0 + gap + tray_width;
         content.max(MIN_RIGHT_WIDTH as f32)
     }
@@ -285,8 +290,7 @@ impl RightPanel {
 
         let font = typography::styles::BODY.font();
         let clock_width = font.measure_str(&self.clock.text, None).0 + BAR_PADDING_H;
-        let tray_width =
-            MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
+        let tray_width = MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
         let tray_x = self.width - clock_width - tray_width;
 
         let local_x = x - tray_x;
@@ -329,7 +333,11 @@ impl RightPanel {
             cfont.measure_str(&self.clock.text, None).0 + BAR_PADDING_H
         };
         let tray_width = MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
-        let gap = if tray_width > 0.0 { TRAY_CLOCK_GAP } else { 0.0 };
+        let gap = if tray_width > 0.0 {
+            TRAY_CLOCK_GAP
+        } else {
+            0.0
+        };
         let tray_x = self.width - clock_width - gap - tray_width;
 
         let mut offset = self.tray_style.bar_padding_horizontal;

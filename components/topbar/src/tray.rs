@@ -5,8 +5,8 @@
 //! thread via `TrayState`.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, LazyLock};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use otto_kit::AppContext;
 
@@ -21,15 +21,14 @@ static TRAY_STATE: LazyLock<TrayState> = LazyLock::new(|| Arc::new(Mutex::new(Ve
 static TRAY_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// Global D-Bus connection for calling methods on tray items.
-static TRAY_CONNECTION: LazyLock<Mutex<Option<Connection>>> =
-    LazyLock::new(|| Mutex::new(None));
+static TRAY_CONNECTION: LazyLock<Mutex<Option<Connection>>> = LazyLock::new(|| Mutex::new(None));
 
 /// Pending context menu waiting to be rendered by the UI.
-static PENDING_MENU: LazyLock<Mutex<Option<PendingMenu>>> =
-    LazyLock::new(|| Mutex::new(None));
+static PENDING_MENU: LazyLock<Mutex<Option<PendingMenu>>> = LazyLock::new(|| Mutex::new(None));
 
 /// A context menu fetched from dbusmenu, ready for the UI to display.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct PendingMenu {
     pub service: String,
     pub menu_path: String,
@@ -43,6 +42,7 @@ pub type TrayState = Arc<Mutex<Vec<TrayItem>>>;
 
 /// A single tray icon's cached state.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct TrayItem {
     /// D-Bus service name (e.g. `:1.42` or `org.kde.StatusNotifierItem-1234-1`)
     pub service: String,
@@ -93,16 +93,13 @@ pub fn activate_menu_item(service: &str, menu_path: &str, item_id: i32, item_lab
 
     let handle = tokio::runtime::Handle::current();
     handle.spawn(async move {
-        match crate::dbusmenu::activate_menu_item(&conn, &service, &menu_path, item_id, &label).await {
-            Ok(_) => tracing::info!("dbusmenu item activated: id={item_id} label={label:?}"),
+        match crate::dbusmenu::activate_menu_item(&conn, &service, &menu_path, item_id, &label)
+            .await
+        {
+            Ok(_) => {}
             Err(e) => tracing::warn!("dbusmenu activate failed: {e}"),
         }
     });
-}
-
-/// Activate a tray item by index (left click).
-pub fn activate_item(index: usize, x: i32, y: i32) {
-    call_item_method(index, x, y, "activate");
 }
 
 /// Open context menu for a tray item by index (right click).
@@ -122,17 +119,13 @@ pub fn context_menu_item(index: usize, x: i32, y: i32) {
         return;
     };
 
-    tracing::debug!("context_menu: {service}{path} at ({x},{y})");
-
     let handle = tokio::runtime::Handle::current();
     handle.spawn(async move {
         // Prefer our own dbusmenu-based menu when a menu path is available
         if let Some(ref mpath) = menu_path {
             let layout = if let Some(cached) = cached {
-                tracing::debug!("using cached dbusmenu layout for {service}");
                 cached
             } else {
-                tracing::debug!("fetching dbusmenu: {service} {mpath}");
                 match crate::dbusmenu::fetch_menu(&conn, &service, mpath).await {
                     Ok(l) => l,
                     Err(e) => {
@@ -142,11 +135,6 @@ pub fn context_menu_item(index: usize, x: i32, y: i32) {
                 }
             };
 
-            tracing::debug!(
-                "dbusmenu: {} items, revision {}",
-                layout.items.len(),
-                layout.revision
-            );
             *PENDING_MENU.lock().unwrap() = Some(PendingMenu {
                 service: service.clone(),
                 menu_path: mpath.clone(),
@@ -168,54 +156,8 @@ pub fn context_menu_item(index: usize, x: i32, y: i32) {
             .build()
             .await;
 
-        match proxy {
-            Ok(p) if p.activate(x, y).await.is_ok() => {
-                tracing::info!("SNI activate success: {service}");
-            }
-            _ => {
-                tracing::warn!("no context menu or activate available for {service}");
-            }
-        }
-    });
-}
-
-fn call_item_method(index: usize, x: i32, y: i32, method: &str) {
-    let items = TRAY_STATE.lock().unwrap();
-    let Some(item) = items.get(index) else { return };
-    let service = item.service.clone();
-    let path = item.path.clone();
-    drop(items);
-
-    let conn = TRAY_CONNECTION.lock().unwrap().clone();
-    let Some(conn) = conn else {
-        tracing::warn!("no D-Bus connection for {method}");
-        return;
-    };
-
-    tracing::info!("SNI {method}: {service}{path} at ({x},{y})");
-
-    let method = method.to_string();
-    let handle = tokio::runtime::Handle::current();
-    handle.spawn(async move {
-        let proxy = StatusNotifierItemProxy::builder(&conn)
-            .destination(service.as_str())
-            .unwrap()
-            .path(path.as_str())
-            .unwrap()
-            .build()
-            .await;
-        match proxy {
-            Ok(p) => {
-                let result = match method.as_str() {
-                    "context_menu" => p.context_menu(x, y).await,
-                    _ => p.activate(x, y).await,
-                };
-                match result {
-                    Ok(_) => tracing::info!("SNI {method} success: {service}"),
-                    Err(e) => tracing::warn!("SNI {method} failed: {service}: {e}"),
-                }
-            }
-            Err(e) => tracing::warn!("SNI proxy build failed: {e}"),
+        if let Ok(p) = proxy {
+            let _ = p.activate(x, y).await;
         }
     });
 }
@@ -266,7 +208,6 @@ impl WatcherService {
         };
 
         let key = format!("{bus_name}{path}");
-        tracing::info!("SNI registered: {key}");
 
         self.items
             .lock()
@@ -294,7 +235,6 @@ impl WatcherService {
         service: &str,
         #[zbus(signal_context)] ctxt: SignalContext<'_>,
     ) -> zbus::fdo::Result<()> {
-        tracing::info!("SNI host registered: {service}");
         self.hosts.push(service.to_string());
         Self::status_notifier_host_registered(&ctxt).await?;
         Ok(())
@@ -328,9 +268,7 @@ impl WatcherService {
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
-    async fn status_notifier_host_registered(
-        ctxt: &SignalContext<'_>,
-    ) -> zbus::Result<()>;
+    async fn status_notifier_host_registered(ctxt: &SignalContext<'_>) -> zbus::Result<()>;
 }
 
 // ---------------------------------------------------------------------------
@@ -402,10 +340,7 @@ async fn run_watcher() -> Result<(), zbus::Error> {
         .await?;
 
     // Request the well-known name
-    conn.request_name("org.kde.StatusNotifierWatcher")
-        .await?;
-
-    tracing::info!("SNI watcher service running on org.kde.StatusNotifierWatcher");
+    conn.request_name("org.kde.StatusNotifierWatcher").await?;
 
     // Also register ourselves as a host
     // (we are both the watcher and the host in this compositor)
@@ -483,7 +418,6 @@ async fn monitor_disconnects(
                 let key = format!("{}{}", item.service, item.path);
                 !removed.contains(&key)
             });
-            tracing::info!("SNI items removed (owner vanished: {vanished}): {removed:?}");
             TRAY_GENERATION.fetch_add(1, Ordering::Relaxed);
             AppContext::request_wakeup();
         }
@@ -544,15 +478,11 @@ async fn fetch_item(
             let find = |n: &str| {
                 let result = otto_kit::icons::find_icon(n, icon_load_size, scale);
                 if result.is_some() {
-                    tracing::debug!("icon found: {n} scale={scale} -> {:?}", result);
                     return result;
                 }
                 if scale > 1 {
-                    let result = otto_kit::icons::find_icon(n, icon_load_size, 1);
-                    tracing::debug!("icon fallback: {n} scale=1 -> {:?}", result);
-                    return result;
+                    return otto_kit::icons::find_icon(n, icon_load_size, 1);
                 }
-                tracing::debug!("icon not found: {n}");
                 None
             };
             // Prefer symbolic variant — single-color SVGs that can be recolored
@@ -586,10 +516,6 @@ async fn fetch_item(
         cached_layout: None,
     };
 
-    tracing::debug!(
-        "SNI item fetched: {bus_name}{path} icon_name={:?} icon_file={:?} has_pixmap={} menu={:?}",
-        item.icon_name, item.icon_file, item.icon_data.is_some(), item.menu_path
-    );
     state.lock().unwrap().push(item);
     TRAY_GENERATION.fetch_add(1, Ordering::Relaxed);
     AppContext::request_wakeup();
@@ -620,31 +546,17 @@ async fn fetch_item(
 
 /// Pre-fetch a dbusmenu layout in the background and cache it on the TrayItem.
 /// Also pre-loads menu item icons so the first open is instant.
-async fn prefetch_menu_layout(
-    conn: &Connection,
-    service: &str,
-    menu_path: &str,
-    state: TrayState,
-) {
-    match crate::dbusmenu::fetch_menu(conn, service, menu_path).await {
-        Ok(layout) => {
-            tracing::debug!(
-                "prefetched dbusmenu for {service}: {} items",
-                layout.items.len()
-            );
-            // Pre-cache icons referenced in the menu
-            let scale = otto_kit::app_runner::context::AppContext::scale_factor().max(1);
-            let load_size = 16 * scale;
-            precache_menu_icons(&layout.items, load_size);
+async fn prefetch_menu_layout(conn: &Connection, service: &str, menu_path: &str, state: TrayState) {
+    if let Ok(layout) = crate::dbusmenu::fetch_menu(conn, service, menu_path).await {
+        // Pre-cache icons referenced in the menu
+        let scale = otto_kit::app_runner::context::AppContext::scale_factor().max(1);
+        let load_size = 16 * scale;
+        precache_menu_icons(&layout.items, load_size);
 
-            // Store the cached layout on the matching TrayItem
-            let mut items = state.lock().unwrap();
-            if let Some(item) = items.iter_mut().find(|i| i.service == service) {
-                item.cached_layout = Some(layout);
-            }
-        }
-        Err(e) => {
-            tracing::debug!("prefetch dbusmenu failed for {service}: {e}");
+        // Store the cached layout on the matching TrayItem
+        let mut items = state.lock().unwrap();
+        if let Some(item) = items.iter_mut().find(|i| i.service == service) {
+            item.cached_layout = Some(layout);
         }
     }
 }
@@ -702,10 +614,7 @@ async fn watch_item_signals(conn: &Connection, bus_name: &str, path: &str, state
         let icon_name = proxy.icon_name().await.ok();
 
         let mut items = state.lock().unwrap();
-        if let Some(item) = items
-            .iter_mut()
-            .find(|i| i.service == bus && i.path == p)
-        {
+        if let Some(item) = items.iter_mut().find(|i| i.service == bus && i.path == p) {
             item.icon_data = icon_data;
             item.icon_width = icon_w;
             item.icon_height = icon_h;
@@ -713,7 +622,6 @@ async fn watch_item_signals(conn: &Connection, bus_name: &str, path: &str, state
         }
         TRAY_GENERATION.fetch_add(1, Ordering::Relaxed);
         AppContext::request_wakeup();
-        tracing::debug!("SNI icon updated: {bus}{p}");
     }
 }
 

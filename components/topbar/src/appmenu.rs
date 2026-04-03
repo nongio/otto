@@ -23,15 +23,13 @@ static REGISTRATIONS: LazyLock<Mutex<HashMap<u32, Registration>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// The current app menu ready for the UI.
-static CURRENT_MENU: LazyLock<Mutex<Option<AppMenu>>> =
-    LazyLock::new(|| Mutex::new(None));
+static CURRENT_MENU: LazyLock<Mutex<Option<AppMenu>>> = LazyLock::new(|| Mutex::new(None));
 
 /// Generation counter — bumped whenever CURRENT_MENU changes.
 static MENU_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// D-Bus connection shared for fetching menus.
-static APPMENU_CONNECTION: LazyLock<Mutex<Option<Connection>>> =
-    LazyLock::new(|| Mutex::new(None));
+static APPMENU_CONNECTION: LazyLock<Mutex<Option<Connection>>> = LazyLock::new(|| Mutex::new(None));
 
 /// Registration entry for one window.
 #[derive(Clone, Debug)]
@@ -71,7 +69,6 @@ pub fn current_menu() -> Option<AppMenu> {
 pub fn request_menu_for_app(app_id: &str, window_id: u32) {
     let conn = APPMENU_CONNECTION.lock().unwrap().clone();
     let Some(conn) = conn else {
-        tracing::debug!("appmenu: no D-Bus connection yet");
         return;
     };
 
@@ -83,14 +80,11 @@ pub fn request_menu_for_app(app_id: &str, window_id: u32) {
         } else {
             // For Wayland-native apps, try to find a registration whose service
             // name contains the app_id (heuristic).
-            regs.values()
-                .find(|r| r.service.contains(app_id))
-                .cloned()
+            regs.values().find(|r| r.service.contains(app_id)).cloned()
         }
     };
 
     let Some(reg) = reg else {
-        tracing::debug!("appmenu: no registration for app_id={app_id} wid={window_id}");
         // Clear the current menu since focused app has no registered menu
         let mut current = CURRENT_MENU.lock().unwrap();
         if current.is_some() {
@@ -104,17 +98,8 @@ pub fn request_menu_for_app(app_id: &str, window_id: u32) {
     let app_id = app_id.to_string();
     let handle = tokio::runtime::Handle::current();
     handle.spawn(async move {
-        tracing::debug!(
-            "appmenu: fetching menu for {app_id} from {} {}",
-            reg.service,
-            reg.menu_path
-        );
         match crate::dbusmenu::fetch_menu(&conn, &reg.service, &reg.menu_path).await {
             Ok(layout) => {
-                tracing::info!(
-                    "appmenu: fetched {} top-level items for {app_id}",
-                    layout.items.len()
-                );
                 *CURRENT_MENU.lock().unwrap() = Some(AppMenu {
                     app_id,
                     service: reg.service,
@@ -127,7 +112,11 @@ pub fn request_menu_for_app(app_id: &str, window_id: u32) {
             Err(e) => {
                 tracing::warn!("appmenu: fetch failed for {app_id}: {e}");
                 let mut current = CURRENT_MENU.lock().unwrap();
-                if current.as_ref().map(|m| m.app_id == app_id).unwrap_or(false) {
+                if current
+                    .as_ref()
+                    .map(|m| m.app_id == app_id)
+                    .unwrap_or(false)
+                {
                     *current = None;
                     MENU_GENERATION.fetch_add(1, Ordering::Relaxed);
                     AppContext::request_wakeup();
@@ -154,7 +143,7 @@ pub fn activate_menu_item(item_id: i32, item_label: &str) {
         match crate::dbusmenu::activate_menu_item(&conn, &service, &menu_path, item_id, &label)
             .await
         {
-            Ok(_) => tracing::info!("appmenu item activated: id={item_id} label={label:?}"),
+            Ok(_) => {}
             Err(e) => tracing::warn!("appmenu activate failed: {e}"),
         }
     });
@@ -188,10 +177,6 @@ pub fn fetch_submenu_for_item(item_index: usize, anchor_x: i32) {
         // Re-fetch the full layout so we get fresh children
         match crate::dbusmenu::fetch_menu(&conn, &service, &menu_path).await {
             Ok(layout) => {
-                tracing::info!(
-                    "appmenu: refreshed menu for {app_id}, {} items",
-                    layout.items.len()
-                );
                 *PENDING_SUBMENU.lock().unwrap() = Some(PendingSubmenu {
                     app_id,
                     service,
@@ -212,6 +197,7 @@ pub fn fetch_submenu_for_item(item_index: usize, anchor_x: i32) {
 
 /// A pending submenu ready for the UI to display as a popup.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct PendingSubmenu {
     pub app_id: String,
     pub service: String,
@@ -244,14 +230,7 @@ impl AppMenuRegistrar {
         window_id: u32,
         menu_object_path: &str,
     ) {
-        let sender = header
-            .sender()
-            .map(|s| s.to_string())
-            .unwrap_or_default();
-
-        tracing::info!(
-            "AppMenu: RegisterWindow wid={window_id} path={menu_object_path} sender={sender}"
-        );
+        let sender = header.sender().map(|s| s.to_string()).unwrap_or_default();
 
         REGISTRATIONS.lock().unwrap().insert(
             window_id,
@@ -264,7 +243,6 @@ impl AppMenuRegistrar {
 
     /// Called by apps to unregister their window's menu.
     fn unregister_window(&mut self, window_id: u32) {
-        tracing::info!("AppMenu: UnregisterWindow wid={window_id}");
         REGISTRATIONS.lock().unwrap().remove(&window_id);
     }
 
@@ -277,10 +255,9 @@ impl AppMenuRegistrar {
         if let Some(reg) = regs.get(&window_id) {
             Ok((
                 reg.service.clone(),
-                zbus::zvariant::OwnedObjectPath::try_from(reg.menu_path.clone())
-                    .unwrap_or_else(|_| {
-                        zbus::zvariant::OwnedObjectPath::try_from("/MenuBar").unwrap()
-                    }),
+                zbus::zvariant::OwnedObjectPath::try_from(reg.menu_path.clone()).unwrap_or_else(
+                    |_| zbus::zvariant::OwnedObjectPath::try_from("/MenuBar").unwrap(),
+                ),
             ))
         } else {
             Err(zbus::fdo::Error::Failed(format!(
@@ -321,10 +298,7 @@ async fn run_registrar() -> Result<(), Box<dyn std::error::Error + Send + Sync>>
         .await?;
 
     // Request the well-known name
-    conn.request_name("com.canonical.AppMenu.Registrar")
-        .await?;
-
-    tracing::info!("AppMenu registrar running on com.canonical.AppMenu.Registrar");
+    conn.request_name("com.canonical.AppMenu.Registrar").await?;
 
     // Keep alive — the connection event loop runs inside zbus
     std::future::pending::<()>().await;

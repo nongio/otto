@@ -22,7 +22,8 @@ pub struct FocusedApp {
 }
 
 /// Global state: the currently focused app.
-static FOCUSED_APP: LazyLock<Mutex<FocusedApp>> = LazyLock::new(|| Mutex::new(FocusedApp::default()));
+static FOCUSED_APP: LazyLock<Mutex<FocusedApp>> =
+    LazyLock::new(|| Mutex::new(FocusedApp::default()));
 
 /// Generation counter — bumped on every focus change.
 static FOCUS_GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -71,10 +72,7 @@ impl FocusState {
     /// Called after a `done` event — check if activated state changed globally.
     fn update_focused(&self) {
         // Find the activated toplevel
-        let focused = self
-            .toplevels
-            .values()
-            .find(|t| t.activated);
+        let focused = self.toplevels.values().find(|t| t.activated);
 
         let app = match focused {
             Some(t) => FocusedApp {
@@ -86,7 +84,6 @@ impl FocusState {
 
         let mut current = FOCUSED_APP.lock().unwrap();
         if current.app_id != app.app_id || current.title != app.title {
-            tracing::debug!("focus changed: app_id={:?} title={:?}", app.app_id, app.title);
             *current = app;
             FOCUS_GENERATION.fetch_add(1, Ordering::Relaxed);
             otto_kit::AppContext::request_wakeup();
@@ -112,13 +109,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for FocusState {
         } = event
         {
             if interface == "zwlr_foreign_toplevel_manager_v1" {
-                tracing::info!("found zwlr_foreign_toplevel_manager_v1 v{version}");
-                registry.bind::<ZwlrForeignToplevelManagerV1, _, _>(
-                    name,
-                    version.min(3),
-                    qh,
-                    (),
-                );
+                registry.bind::<ZwlrForeignToplevelManagerV1, _, _>(name, version.min(3), qh, ());
             }
         }
     }
@@ -138,8 +129,6 @@ impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for FocusState {
         match event {
             zwlr_foreign_toplevel_manager_v1::Event::Toplevel { toplevel } => {
                 let id = toplevel.id().protocol_id();
-                tracing::debug!("new toplevel #{id}");
-                // Info populated via handle events
                 _state.toplevels.insert(
                     id,
                     ToplevelInfo {
@@ -149,9 +138,7 @@ impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for FocusState {
                     },
                 );
             }
-            zwlr_foreign_toplevel_manager_v1::Event::Finished => {
-                tracing::debug!("foreign toplevel manager finished");
-            }
+            zwlr_foreign_toplevel_manager_v1::Event::Finished => {}
             _ => {}
         }
     }
@@ -186,12 +173,10 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for FocusState {
             }
             zwlr_foreign_toplevel_handle_v1::Event::State { state: raw_state } => {
                 if let Some(info) = state.toplevels.get_mut(&id) {
-                    let activated = raw_state
-                        .chunks_exact(4)
-                        .any(|chunk| {
-                            let val = u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                            val == zwlr_foreign_toplevel_handle_v1::State::Activated as u32
-                        });
+                    let activated = raw_state.chunks_exact(4).any(|chunk| {
+                        let val = u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                        val == zwlr_foreign_toplevel_handle_v1::State::Activated as u32
+                    });
                     info.activated = activated;
 
                     // Deactivate all other toplevels when one becomes activated
@@ -208,8 +193,7 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for FocusState {
                 state.update_focused();
             }
             zwlr_foreign_toplevel_handle_v1::Event::Closed => {
-                if let Some(_info) = state.toplevels.remove(&id) {
-                    tracing::debug!("toplevel #{id} closed");
+                if state.toplevels.remove(&id).is_some() {
                     state.update_focused();
                 }
             }
@@ -225,8 +209,6 @@ fn run_watcher() -> Result<(), Box<dyn std::error::Error>> {
     let qh = event_queue.handle();
     let _registry = display.get_registry(&qh, ());
     let mut state = FocusState::new();
-
-    tracing::info!("focus watcher started");
 
     loop {
         event_queue.blocking_dispatch(&mut state)?;

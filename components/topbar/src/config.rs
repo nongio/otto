@@ -1,4 +1,4 @@
-/// Topbar layout/style constants (not user-configurable).
+// Topbar layout/style constants (not user-configurable).
 
 /// Bar height in logical points.
 pub const BAR_HEIGHT: u32 = 30;
@@ -19,6 +19,7 @@ pub const BAR_MARGIN_SIDE: i32 = 2;
 pub const BAR_PADDING_H: f32 = 14.0;
 
 /// Spacing between tray icons.
+#[allow(dead_code)]
 pub const TRAY_ICON_SPACING: f32 = 8.0;
 
 /// Tray icon size in logical points.
@@ -60,6 +61,7 @@ impl Default for TopbarConfig {
 static CONFIG: LazyLock<TopbarConfig> = LazyLock::new(load_config);
 
 /// Access the current topbar configuration.
+#[allow(dead_code)]
 pub fn config() -> &'static TopbarConfig {
     &CONFIG
 }
@@ -77,8 +79,7 @@ fn load_config() -> TopbarConfig {
         if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME")
             .map(std::path::PathBuf::from)
             .or_else(|| {
-                std::env::var_os("HOME")
-                    .map(|h| std::path::PathBuf::from(h).join(".config"))
+                std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
             })
         {
             v.push(xdg.join("otto").join("topbar.toml"));
@@ -93,13 +94,9 @@ fn load_config() -> TopbarConfig {
         if let Ok(content) = std::fs::read_to_string(path) {
             match content.parse::<toml::Value>() {
                 Ok(table) => {
-                    if let Some(fmt) = table
-                        .get("clock_format")
-                        .and_then(|v| v.as_str())
-                    {
+                    if let Some(fmt) = table.get("clock_format").and_then(|v| v.as_str()) {
                         cfg.clock_format = fmt.to_string();
                     }
-                    tracing::info!("Loaded topbar config from {}", path.display());
                     break;
                 }
                 Err(e) => {

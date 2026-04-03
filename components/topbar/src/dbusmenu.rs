@@ -14,21 +14,17 @@ use zbus::{proxy, Connection};
 // ---------------------------------------------------------------------------
 
 #[proxy(interface = "com.canonical.dbusmenu")]
+#[allow(clippy::type_complexity)]
 trait DBusMenu {
     /// Check if a menu item is about to show (allows app to update it).
     fn about_to_show(&self, id: i32) -> zbus::Result<bool>;
 
     /// Send an event to a menu item (e.g. "clicked").
-    fn event(
-        &self,
-        id: i32,
-        event_id: &str,
-        data: &Value<'_>,
-        timestamp: u32,
-    ) -> zbus::Result<()>;
+    fn event(&self, id: i32, event_id: &str, data: &Value<'_>, timestamp: u32) -> zbus::Result<()>;
 
     /// Get the menu layout tree.
     /// Returns (revision, layout) where layout is (id, properties, children).
+    #[allow(clippy::type_complexity)]
     fn get_layout(
         &self,
         parent_id: i32,
@@ -53,6 +49,7 @@ trait DBusMenu {
 
 /// A single menu item parsed from the dbusmenu layout.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct MenuItem {
     pub id: i32,
     pub label: String,
@@ -82,6 +79,7 @@ pub enum ToggleType {
 
 /// The full menu tree fetched from a dbusmenu service.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct MenuLayout {
     pub revision: u32,
     pub items: Vec<MenuItem>,
@@ -106,9 +104,7 @@ pub async fn fetch_menu(
     // Notify the app the root menu is about to show
     let _ = proxy.about_to_show(0).await;
 
-    let (revision, layout) = proxy
-        .get_layout(0, -1, &[])
-        .await?;
+    let (revision, layout) = proxy.get_layout(0, -1, &[]).await?;
 
     let items = parse_children(&layout.2);
 
@@ -143,7 +139,6 @@ pub async fn activate_menu_item(
     let fresh_id = find_item_id(&fresh_items, item_id, item_label);
 
     let target_id = fresh_id.unwrap_or(item_id);
-    tracing::debug!("dbusmenu activate: original_id={item_id} fresh_id={target_id} label={item_label:?}");
 
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -241,7 +236,7 @@ fn parse_menu_item(value: &OwnedValue) -> Option<MenuItem> {
         Value::Array(arr) => {
             let mut items = Vec::new();
             for v in arr.iter() {
-                let owned = OwnedValue::try_from(v.clone()).ok();
+                let owned = OwnedValue::try_from(v).ok();
                 if let Some(owned) = owned {
                     if let Some(item) = parse_menu_item(&owned) {
                         items.push(item);
@@ -259,18 +254,6 @@ fn parse_menu_item(value: &OwnedValue) -> Option<MenuItem> {
     let icon_name = prop_string(&props, "icon-name");
     let icon_data = prop_icon_data(&props, "icon-data");
 
-    // Log when any icon info is present so we can verify parsing
-    if icon_name.is_some() || icon_data.is_some() {
-        tracing::debug!(
-            "dbusmenu parse_menu_item: label={:?} icon_name={:?} icon_data={}",
-            label,
-            icon_name,
-            icon_data
-                .as_ref()
-                .map(|(w, h, d)| format!("{}x{} ({} bytes)", w, h, d.len()))
-                .unwrap_or_else(|| "none".into())
-        );
-    }
     let type_str = prop_string(&props, "type").unwrap_or_default();
     let toggle_type_str = prop_string(&props, "toggle-type").unwrap_or_default();
     let toggle_state = prop_i32(&props, "toggle-state").unwrap_or(-1);
@@ -355,10 +338,7 @@ fn prop_i32(props: &HashMap<String, OwnedValue>, key: &str) -> Option<i32> {
 
 /// Parse `icon-data` property: `a(iiay)` — array of (width, height, ARGB32 bytes).
 /// Returns the first (and usually only) entry if present.
-fn prop_icon_data(
-    props: &HashMap<String, OwnedValue>,
-    key: &str,
-) -> Option<(i32, i32, Vec<u8>)> {
+fn prop_icon_data(props: &HashMap<String, OwnedValue>, key: &str) -> Option<(i32, i32, Vec<u8>)> {
     let val = props.get(key)?;
     let v: Value<'_> = Value::try_from(val).ok()?;
 
