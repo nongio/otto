@@ -2,9 +2,17 @@
 
 Otto supports three complementary approaches for launching applications automatically at startup. Choose the one that best fits your workflow — or combine them.
 
+## Config Reference
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `exec_once` | array of commands | `[]` | Commands to run once at startup |
+| `xdg_autostart` | bool | `false` | Scan XDG autostart directories for `.desktop` entries |
+| `systemd_notify` | bool | `false` | Send `sd_notify(READY=1)` and activate `graphical-session.target` |
+
 ---
 
-## 1. Otto Config: `exec_once`
+## 1. `exec_once` — Run Commands at Startup
 
 The simplest option. Define a list of commands in your Otto config file and they will be spawned once, in order, when the compositor is ready.
 
@@ -24,7 +32,25 @@ cmd = "wlsunset"
 args = ["-l", "48.8", "-L", "2.3"]
 ```
 
-Each entry is spawned non-blocking (fire-and-forget) in the listed order — meaning `spawn()` calls are made in sequence, but Otto does not wait for any process to be ready before launching the next. There is no startup ordering or readiness guarantee between entries.
+Each entry takes:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `cmd` | string | yes | Executable name (must be on `$PATH`) or absolute path |
+| `args` | array of strings | no | Command-line arguments (defaults to `[]`) |
+
+Entries are spawned non-blocking (fire-and-forget) in listed order. Otto calls `spawn()` sequentially but does not wait for any process to become ready before launching the next — there is no startup ordering or readiness guarantee between entries.
+
+### Environment
+
+Each spawned process inherits the compositor's environment with the following additions:
+
+| Variable | Value | When |
+|----------|-------|------|
+| `WAYLAND_DISPLAY` | Socket name (e.g., `wayland-1`) | Always |
+| `DISPLAY` | X11 display (e.g., `:0`) | When XWayland is active |
+| `XDG_SESSION_TYPE` | `wayland` | Always |
+| `XDG_CURRENT_DESKTOP` | `otto` | Always |
 
 **Best for:** personal dotfiles, simple setups, or apps you always want running.
 
@@ -34,26 +60,46 @@ Each entry is spawned non-blocking (fire-and-forget) in the listed order — mea
 
 ## 2. XDG Autostart Entries
 
-Otto can respect the [XDG Autostart specification](https://specifications.freedesktop.org/autostart-spec/latest/), reading `.desktop` files from the standard autostart directories.
+Otto can respect the [XDG Autostart specification](https://specifications.freedesktop.org/autostart-spec/latest/), reading `.desktop` files from standard autostart directories.
 
 Enable it in your config:
 
 ```toml
-# ~/.config/otto/config.toml
 xdg_autostart = true
 ```
 
-Otto will scan:
-- `~/.config/autostart/*.desktop` — per-user entries (override system entries of the same name)
-- `/etc/xdg/autostart/*.desktop` — system-wide entries
+### Directory Scan Order
 
-**Filtering rules** (full XDG spec compliance):
-- `Hidden=true` — entry is skipped
-- `OnlyShowIn=Otto` — only launched when running under Otto
-- `NotShowIn=Otto` — skipped when running under Otto
-- Entries with no `OnlyShowIn` / `NotShowIn` are always launched
+Otto scans directories in this order — later entries override earlier ones by filename:
 
-**Example** `~/.config/autostart/mako.desktop`:
+1. **System dirs** — each directory in `$XDG_CONFIG_DIRS` (defaults to `/etc/xdg`), with `/autostart` appended
+   ```
+   /etc/xdg/autostart/*.desktop
+   ```
+2. **User dir** — `$XDG_CONFIG_HOME/autostart` (defaults to `~/.config/autostart`)
+   ```
+   ~/.config/autostart/*.desktop
+   ```
+
+If a user entry has the same filename as a system entry, the user entry takes precedence.
+
+### Filtering Rules
+
+Otto implements the full XDG autostart filtering spec:
+
+| Field | Effect |
+|-------|--------|
+| `Hidden=true` | Entry is skipped |
+| `OnlyShowIn=Otto` | Only launched when running under Otto |
+| `NotShowIn=Otto` | Skipped when running under Otto |
+| _(neither set)_ | Always launched |
+
+The desktop environment name matched is `Otto` (case-insensitive).
+
+### Example
+
+`~/.config/autostart/mako.desktop`:
+
 ```ini
 [Desktop Entry]
 Type=Application
@@ -62,34 +108,42 @@ Exec=mako
 Hidden=false
 ```
 
-**Best for:** distro-managed or shared configurations, apps that ship with their own `.desktop` autostart file.
+**Best for:** distro-managed or shared configurations, apps that ship their own `.desktop` autostart file.
 
 ---
 
 ## 3. Systemd User Services
 
-The most robust approach for production setups. Otto can integrate with `systemd --user` to signal readiness and activate the `graphical-session.target`, allowing other services to start in the correct order.
+The most robust approach for production setups. Otto integrates with `systemd --user` to signal readiness and activate the `graphical-session.target`, allowing dependent services to start in the correct order.
 
-### Enable systemd notify
+### Enabling systemd Integration
 
-Either add to your config:
+Any of these three methods will enable systemd notify:
 
 ```toml
-# ~/.config/otto/config.toml
+# Option A: config file
 systemd_notify = true
 ```
 
-Or pass a CLI flag (useful in the unit file itself):
-
 ```sh
+# Option B: CLI flag
 otto --tty-udev --systemd-notify
 ```
 
-When enabled, Otto will:
-1. Send `READY=1` via `sd_notify` after the Wayland socket is listening
-2. Run `systemctl --user start graphical-session.target`
+```sh
+# Option C: environment variable
+OTTO_SYSTEMD_NOTIFY=1 otto --tty-udev
+```
 
-### Example unit file
+### What Happens at Startup
+
+When systemd notify is enabled, Otto performs these steps after the Wayland socket is listening:
+
+1. Exports `WAYLAND_DISPLAY` to the systemd user session (`systemctl --user set-environment`)
+2. Sends `READY=1` via `sd_notify`
+3. Runs `systemctl --user start graphical-session.target`
+
+### Example: Otto as a Systemd Service
 
 Create `~/.config/systemd/user/otto.service`:
 
@@ -107,16 +161,16 @@ Restart=on-failure
 WantedBy=default.target
 ```
 
-Enable and start it:
+Enable and start:
 
 ```sh
 systemctl --user enable otto.service
 systemctl --user start otto.service
 ```
 
-### Depending on Otto from other services
+### Depending on Otto from Other Services
 
-Once Otto declares readiness via `graphical-session.target`, other user services can wait for it:
+Once Otto activates `graphical-session.target`, other user services can depend on it:
 
 ```ini
 # ~/.config/systemd/user/waybar.service
@@ -140,6 +194,17 @@ WantedBy=graphical-session.target
 
 The three methods are not mutually exclusive. A common setup:
 
-- **systemd** manages Otto itself + critical services (portals, pipewire)
-- **`exec_once`** handles personal lightweight utilities (clipboard manager, notification daemon)
-- **`xdg_autostart`** picks up any desktop-environment apps that ship their own autostart entries
+| Method | Use for |
+|--------|---------|
+| **systemd** | Otto itself + critical infrastructure (portals, PipeWire) |
+| **`exec_once`** | Personal lightweight utilities (clipboard manager, notification daemon) |
+| **`xdg_autostart`** | Desktop apps that ship their own autostart `.desktop` file |
+
+### Execution Order
+
+1. Wayland socket becomes ready
+2. `WAYLAND_DISPLAY` is exported to systemd
+3. `sd_notify(READY=1)` is sent (if enabled)
+4. `graphical-session.target` is activated (if enabled)
+5. `exec_once` entries are spawned in order
+6. XDG autostart entries are launched (if enabled)

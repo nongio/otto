@@ -447,8 +447,10 @@ impl<A: App + 'static> CompositorHandler for AppData<A> {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
         _surface: &wl_surface::WlSurface,
-        _new_factor: i32,
+        new_factor: i32,
     ) {
+        tracing::debug!("scale_factor_changed: {new_factor}");
+        AppContext::set_scale_factor(new_factor);
     }
     fn frame(
         &mut self,

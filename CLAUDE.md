@@ -1,8 +1,8 @@
 # CLAUDE.md
 
-This file provides guidance to agents when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Build & Run Commands for Otto
+## Build & Run Commands
 
 ```sh
 # Development build (lean default, add dev features on demand)
@@ -36,42 +36,38 @@ RUST_LOG=debug cargo run -- --winit
 RUST_LOG=debug cargo run -- --winit 2> winit.log
 ```
 
-## Build apps and tools
-when working with the apps/tools in `components/apps-manager` and `components/xdg-desktop-portal-otto`, use these commands:
+## Building Components
+
+The workspace includes standalone components built with `-p`:
 ```sh
+cargo build -p otto-kit
+cargo build -p topbar
 cargo build -p apps-manager
-
-cargo run -p apps-manager
-
 cargo build -p xdg-desktop-portal-otto
-cargo run -p xdg-desktop-portal-otto
 ```
 
-sometimes we need to test a component together with Otto, in that case use:
+To test a component together with the compositor:
 ```sh
 # First, run Otto in one terminal
 cargo run -- --winit &
-# Then, in another terminal, run the app/tool
+# Then, in another terminal, run the component
 WAYLAND_DISPLAY=wayland-1 cargo run -p apps-manager
 ```
 
-**Note:** No test suite exists yet. The project uses Rust 1.83.0 minimum.
+**Note:** No test suite exists yet. Minimum supported Rust version is 1.85.0.
 
 ## Architecture Overview
 
-Otto is a Wayland compositor built on Smithay with a Skia-based rendering pipeline and the `lay-rs` engine for scene graph/layout management.
+Otto is a Wayland compositor built on Smithay with a Skia-based rendering pipeline and the `lay-rs` engine (from `github.com/nongio/layers`) for scene graph/layout management.
 
 ### Backend System
 
-Three interchangeable backends implement the same compositor logic:
+Interchangeable backends implement the same compositor logic:
 - `src/udev.rs` — Production backend using DRM/GBM/libinput for bare-metal display
 - `src/winit.rs` — Development backend running as a window inside another compositor
+- `src/x11.rs` — X11 client backend (basic, not actively maintained)
 
-Each backend:
-1. Sets up its display/input subsystem
-2. Creates `Otto<BackendData>` state
-3. Runs the event loop with calloop
-4. Calls the shared rendering pipeline
+Each backend sets up its display/input subsystem, creates `Otto<BackendData>` state, runs the event loop with calloop, and calls the shared rendering pipeline.
 
 ### Core State (`src/state/mod.rs`)
 
@@ -87,7 +83,11 @@ The state module also contains protocol handler implementations (`*_handler.rs` 
 
 1. **Scene Graph**: `lay-rs` engine manages the scene tree and Taffy-based layout
 2. **Element Building**: `src/render.rs` produces `OutputRenderElements` per output
-3. **Skia Renderer**: `src/skia_renderer.rs` wraps Smithay's GlesRenderer with Skia for drawing
+3. **Skia Renderer**: `src/skia_renderer.rs` with sub-components:
+   - `src/renderer/skia_surface.rs` — Skia surface creation and management
+   - `src/renderer/textures.rs` — Texture types combining OpenGL and Skia
+   - `src/renderer/sync.rs` — GPU synchronization using EGL fences
+   - `src/renderer/egl_context.rs` — EGL surface wrappers
 4. **Damage Tracking**: `OutputDamageTracker` from Smithay renders only damaged regions
 5. **Frame Submission**: Backend submits the composed buffer (dmabuf on DRM, presented on winit/x11)
 
@@ -97,18 +97,28 @@ The state module also contains protocol handler implementations (`*_handler.rs` 
 - `src/workspaces/` — Workspace logic, window views, dock, app switcher, expose mode
 - `src/workspaces/window_view/` — Individual window rendering and effects (genie minimize)
 
+### Components
+
+- `components/otto-kit/` — UI toolkit for building Otto apps (menu bars, context menus, popups)
+- `components/topbar/` — Top menu bar component
+- `components/apps-manager/` — Application launcher/manager
+- `components/xdg-desktop-portal-otto/` — Portal backend bridging xdg-desktop-portal to compositor
+
 ### Screenshare System
 
-Located in `src/screenshare/`:
-- `mod.rs` — Session state management and command handlers
-- `dbus_service.rs` — D-Bus API (`org.otto.ScreenCast`)
-- `frame_tap.rs` — Frame capture hooks with damage tracking
-- `pipewire_stream.rs` — PipeWire stream with SHM buffer handling
-- `session_tap.rs` — Per-session frame filtering
+Located in `src/screenshare/`. See [docs/developer/screenshare.md](./docs/developer/screenshare.md) for detailed architecture.
 
-Portal backend: `components/xdg-desktop-portal-otto/` — separate binary that bridges xdg-desktop-portal to compositor
+## Coordinate Systems & Naming Conventions
 
-See [docs/screenshare.md](./docs/screenshare.md) for detailed architecture documentation.
+Otto has two coordinate spaces — mixing them causes subtle scale-dependent bugs.
+
+- **Physical pixels** — raw hardware pixels. Used for layer positions (`set_position`, `change_position`) and `output.current_mode().size`.
+- **Logical pixels (points)** — physical ÷ scale. `output_geometry(output).size` returns logical pixels — **do not use this for layer positions**.
+
+Always use the **per-output scale**: `output.current_scale().fractional_scale() as f32`.
+`WorkspacesModel.scale` is a global fallback only — avoid it in geometry code.
+
+**Naming convention:** suffix physical-pixel variables with `_px` (e.g. `width_px`, `offset_px`) to make the space explicit.
 
 ## Configuration
 
@@ -118,19 +128,35 @@ TOML-based config at runtime:
 
 See `otto_config.example.toml` for all options.
 
+## Git Commit Messages
+
+Commits are parsed by [git-cliff](https://git-cliff.org) to generate `CHANGELOG.md`, so follow [Conventional Commits](https://www.conventionalcommits.org):
+
+```
+<type>[optional scope]: <short description>
+```
+
+Common types: `feat`, `fix`, `refactor`, `doc`, `perf`, `style`, `test`, `chore`, `ci`.
+Keep the subject line short (50 chars or fewer). Omit a body unless the change genuinely needs explanation.
+
+## Spec Sync
+
+After implementing a behavior change, check if a spec exists in `specs/` for the affected feature. If so, update it to match. If none exists and the feature is non-trivial, create one from `specs/SPEC-TEMPLATE.md`. See `.github/instructions/spec-sync.instructions.md` for details.
+
 ## Key Dependencies
 
 - **smithay** — Wayland compositor library (pinned to specific git rev)
-- **lay-rs** — Scene graph and layout engine (from `github.com/nongio/layers`)
+- **lay-rs** — Scene graph and layout engine (`github.com/nongio/layers`)
 - **zbus** — D-Bus implementation for screenshare
 - **pipewire** — Video streaming for screenshare
 - **tokio** — Async runtime for D-Bus service
 
 ## Documentation
 
-Detailed design docs in `docs/`:
-- `rendering.md`, `render_loop.md` — Rendering pipeline
-- `wayland.md` — Protocol implementation details
-- `screenshare.md` — Screen sharing architecture and D-Bus API
-- `xdg-desktop-portal.md` — Portal backend integration
-- `expose.md`, `dock-design.md` — UI component design
+Two tiers:
+- `docs/user/` — End-user configuration and usage guides
+- `docs/developer/` — Architecture, design docs, and implementation details
+
+Key developer docs: `rendering.md`, `render_loop.md`, `wayland.md`, `screenshare.md`, `expose.md`, `dock-design.md`, `sc-layer-protocol-design.md`.
+
+Review and documentation guidelines: `.github/instructions/review.instructions.md`, `.github/instructions/documentation.instructions.md`.
