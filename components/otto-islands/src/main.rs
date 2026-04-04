@@ -1,5 +1,6 @@
 mod activity;
 mod dbus_service;
+mod music;
 mod notifications;
 mod renderer;
 mod state;
@@ -16,8 +17,9 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::Layer, zwlr_layer_surface_v1::Anchor,
 };
 
-use crate::activity::Activity;
+use crate::activity::{Activity, ActivitySource, PresentationMode};
 use crate::dbus_service::{IslandService, DBUS_NAME};
+use crate::music::MusicMonitor;
 use crate::renderer::{
     animate_to, apply_island_style, draw_centered, set_size_and_position, COMPACT_H, MINI_H, MINI_W,
 };
@@ -48,6 +50,7 @@ enum IslandMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IslandKind {
     Notification,
+    Music,
 }
 
 /// An island represents one group (notification app_id or music).
@@ -98,10 +101,14 @@ struct IslandApp {
     pending_destroy: Vec<(SubsurfaceSurface, std::time::Instant)>,
     /// Last time the user interacted (pointer event). Used for focus timeout.
     last_interaction: std::time::Instant,
+    /// Music monitor — tracks MPRIS playback and PipeWire audio levels.
+    music_monitor: MusicMonitor,
+    /// Currently pressed music control (for visual feedback).
+    music_pressed: Option<(music::MusicAction, std::time::Instant)>,
 }
 
 impl IslandApp {
-    fn new(state: SharedState) -> Self {
+    fn new(state: SharedState, music_monitor: MusicMonitor) -> Self {
         Self {
             state,
             layer_surface: None,
@@ -111,6 +118,8 @@ impl IslandApp {
             hovered_app: None,
             pending_destroy: Vec::new(),
             last_interaction: std::time::Instant::now(),
+            music_monitor,
+            music_pressed: None,
         }
     }
 
@@ -180,7 +189,13 @@ impl IslandApp {
         // Build the set of app_ids that should exist as islands.
         let mut desired: Vec<(String, IslandKind, String)> = Vec::new(); // (app_id, kind, icon)
         for (activity, _count) in &grouped {
-            let kind = IslandKind::Notification;
+            let kind = if activity.app_id == "org.otto.music"
+                && activity.source == ActivitySource::Internal
+            {
+                IslandKind::Music
+            } else {
+                IslandKind::Notification
+            };
             if !desired.iter().any(|(id, _, _)| id == &activity.app_id) {
                 desired.push((activity.app_id.clone(), kind, activity.icon.clone()));
             }
@@ -317,6 +332,56 @@ impl IslandApp {
 
         // Compute element sizes for layout.
         let island_size = |island: &Island, mode: IslandMode| -> (f32, f32) {
+            if island.kind == IslandKind::Music {
+                // Use MusicActivityRenderer sizes via the ActivityRenderer trait.
+                return match mode {
+                    IslandMode::Mini => {
+                        use crate::activity::ActivityRenderer;
+                        let dummy = music::MusicActivityRenderer {
+                            title: String::new(),
+                            artist: String::new(),
+                            album_art: None,
+                            is_playing: false,
+                            progress: 0.0,
+                            duration_secs: 0.0,
+                            accent: skia_safe::Color::TRANSPARENT,
+                            levels: [0.0; 8],
+                            pressed: None,
+                        };
+                        dummy.size(PresentationMode::Minimal)
+                    }
+                    IslandMode::Compact => {
+                        use crate::activity::ActivityRenderer;
+                        let dummy = music::MusicActivityRenderer {
+                            title: String::new(),
+                            artist: String::new(),
+                            album_art: None,
+                            is_playing: false,
+                            progress: 0.0,
+                            duration_secs: 0.0,
+                            accent: skia_safe::Color::TRANSPARENT,
+                            levels: [0.0; 8],
+                            pressed: None,
+                        };
+                        dummy.size(PresentationMode::Compact)
+                    }
+                    IslandMode::Expanded => {
+                        use crate::activity::ActivityRenderer;
+                        let dummy = music::MusicActivityRenderer {
+                            title: String::new(),
+                            artist: String::new(),
+                            album_art: None,
+                            is_playing: false,
+                            progress: 0.0,
+                            duration_secs: 0.0,
+                            accent: skia_safe::Color::TRANSPARENT,
+                            levels: [0.0; 8],
+                            pressed: None,
+                        };
+                        dummy.size(PresentationMode::Expanded)
+                    }
+                };
+            }
             let entry = grouped.iter().find(|(a, _)| a.app_id == island.app_id);
             let count = entry.map(|(_, c)| *c).unwrap_or(1);
             let title = entry.map(|(a, _)| a.title.as_str()).unwrap_or("");
@@ -398,45 +463,67 @@ impl IslandApp {
                 );
             }
 
-            match island.mode {
-                IslandMode::Mini => {
-                    draw_centered(&island.surface, w, h, |canvas| {
-                        renderer::draw_mini(canvas, icon, count, w, h);
-                    });
-                    if should_pulse {
-                        pulse_targets.push((idx, w, h, cx, cy));
-                    } else {
-                        layout_targets.push((idx, w, h, cx, cy));
+            if island.kind == IslandKind::Music {
+                // Music islands use MusicActivityRenderer for all modes.
+                let pmode = match island.mode {
+                    IslandMode::Mini => PresentationMode::Minimal,
+                    IslandMode::Compact => PresentationMode::Compact,
+                    IslandMode::Expanded => PresentationMode::Expanded,
+                };
+                if let Some(mut mr) = self.music_monitor.renderer() {
+                    // Apply pressed state for visual feedback.
+                    if let Some((action, instant)) = &self.music_pressed {
+                        if instant.elapsed().as_millis() < 300 {
+                            mr.pressed = Some(*action);
+                        }
                     }
+                    draw_centered(&island.surface, w, h, |canvas| {
+                        use crate::activity::ActivityRenderer;
+                        mr.draw(canvas, pmode, w, h);
+                    });
                 }
-                IslandMode::Compact | IslandMode::Expanded => {
-                    let title = grouped
-                        .iter()
-                        .find(|(a, _)| a.app_id == island.app_id)
-                        .map(|(a, _)| a.title.as_str())
-                        .unwrap_or("");
-                    let expanded = island.mode == IslandMode::Expanded;
-                    draw_centered(&island.surface, w, h, |canvas| {
-                        renderer::draw_pill(
-                            canvas,
-                            &island.app_id,
-                            icon,
-                            title,
-                            count,
-                            expanded,
-                            w,
-                            h,
-                        );
-                    });
-                    if should_pulse {
-                        pulse_targets.push((idx, w, h, cx, cy));
-                    } else {
-                        layout_targets.push((idx, w, h, cx, cy));
+                layout_targets.push((idx, w, h, cx, cy));
+            } else {
+                match island.mode {
+                    IslandMode::Mini => {
+                        draw_centered(&island.surface, w, h, |canvas| {
+                            renderer::draw_mini(canvas, icon, count, w, h);
+                        });
+                        if should_pulse {
+                            pulse_targets.push((idx, w, h, cx, cy));
+                        } else {
+                            layout_targets.push((idx, w, h, cx, cy));
+                        }
                     }
+                    IslandMode::Compact | IslandMode::Expanded => {
+                        let title = grouped
+                            .iter()
+                            .find(|(a, _)| a.app_id == island.app_id)
+                            .map(|(a, _)| a.title.as_str())
+                            .unwrap_or("");
+                        let expanded = island.mode == IslandMode::Expanded;
+                        draw_centered(&island.surface, w, h, |canvas| {
+                            renderer::draw_pill(
+                                canvas,
+                                &island.app_id,
+                                icon,
+                                title,
+                                count,
+                                expanded,
+                                w,
+                                h,
+                            );
+                        });
+                        if should_pulse {
+                            pulse_targets.push((idx, w, h, cx, cy));
+                        } else {
+                            layout_targets.push((idx, w, h, cx, cy));
+                        }
 
-                    if island.mode == IslandMode::Expanded {
-                        // Store top-left x for card positioning.
-                        expanded_layouts.push((idx, x, cx, cy, w));
+                        if island.mode == IslandMode::Expanded {
+                            // Store top-left x for card positioning.
+                            expanded_layouts.push((idx, x, cx, cy, w));
+                        }
                     }
                 }
             }
@@ -869,6 +956,71 @@ impl IslandApp {
             }
         } else {
             // Clicked a pill/circle.
+            // Check if this is a music island — handle music controls.
+            let is_music = self
+                .islands
+                .iter()
+                .find(|i| i.app_id == app_id)
+                .is_some_and(|i| i.kind == IslandKind::Music);
+
+            if is_music {
+                let island = self.islands.iter().find(|i| i.app_id == app_id);
+                if let Some(island) = island {
+                    if island.mode == IslandMode::Expanded {
+                        // Hit test music controls in expanded mode.
+                        let (w, h, cx, _cy) = island.last_layout;
+                        let pill_h = h;
+                        let pill_x = cx - w / 2.0;
+                        let pill_y = (BAR_HEIGHT - pill_h) / 2.0;
+                        let lx = px - pill_x;
+                        let ly = py - pill_y;
+                        if let Some(mr) = self.music_monitor.renderer() {
+                            if let Some(action) = mr.hit_test_expanded(lx, ly, w, h) {
+                                tracing::info!(?action, "music control hit");
+                                self.music_pressed = Some((action, std::time::Instant::now()));
+                                music::execute_action(action);
+                                let mut state = self.state.lock().unwrap();
+                                state.dirty = true;
+                                return;
+                            }
+                        }
+                    }
+
+                    // For Mini → Compact, or Compact → Expanded transitions.
+                    let island = self
+                        .islands
+                        .iter_mut()
+                        .find(|i| i.app_id == app_id)
+                        .unwrap();
+                    match island.mode {
+                        IslandMode::Mini => {
+                            tracing::info!(%app_id, "music click: Mini → Compact");
+                            self.focused_app = Some(app_id.clone());
+                            self.last_interaction = std::time::Instant::now();
+                            island.mode = IslandMode::Compact;
+                            island.peek_until = None;
+                        }
+                        IslandMode::Compact => {
+                            tracing::info!(%app_id, "music click: Compact → Expanded");
+                            self.focused_app = Some(app_id.clone());
+                            self.last_interaction = std::time::Instant::now();
+                            island.mode = IslandMode::Expanded;
+                            island.peek_until = None;
+                        }
+                        IslandMode::Expanded => {
+                            tracing::info!(%app_id, "music click: Expanded → Compact");
+                            island.mode = IslandMode::Compact;
+                            island.last_layout = (0.0, 0.0, 0.0, 0.0);
+                            self.focused_app = Some(app_id.clone());
+                            self.last_interaction = std::time::Instant::now();
+                        }
+                    }
+                }
+                let mut state = self.state.lock().unwrap();
+                state.dirty = true;
+                return;
+            }
+
             // Close any other expanded island first — only one can be expanded at a time.
             for island in self.islands.iter_mut().filter(|i| i.app_id != app_id) {
                 if island.mode == IslandMode::Expanded {
@@ -997,6 +1149,42 @@ impl App for IslandApp {
             }
         }
 
+        // Sync music monitor — creates/updates/dismisses the music activity.
+        self.music_monitor.sync_to_island(&self.state);
+
+        // If music is playing, redraw music island surfaces each tick.
+        let music_playing = self
+            .music_monitor
+            .playback
+            .lock()
+            .ok()
+            .is_some_and(|info| info.is_playing);
+        if music_playing {
+            for island in &self.islands {
+                if island.kind == IslandKind::Music {
+                    let pmode = match island.mode {
+                        IslandMode::Mini => PresentationMode::Minimal,
+                        IslandMode::Compact => PresentationMode::Compact,
+                        IslandMode::Expanded => PresentationMode::Expanded,
+                    };
+                    if let Some(mut mr) = self.music_monitor.renderer() {
+                        if let Some((action, instant)) = &self.music_pressed {
+                            if instant.elapsed().as_millis() < 300 {
+                                mr.pressed = Some(*action);
+                            }
+                        }
+                        let (w, h, _, _) = island.last_layout;
+                        if w > 0.0 && h > 0.0 {
+                            draw_centered(&island.surface, w, h, |canvas| {
+                                use crate::activity::ActivityRenderer;
+                                mr.draw(canvas, pmode, w, h);
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
         let mut state = self.state.lock().unwrap();
         state.check_expired_refocus();
 
@@ -1012,7 +1200,18 @@ impl App for IslandApp {
     }
 
     fn idle_timeout(&self) -> Option<Duration> {
-        Some(Duration::from_millis(200))
+        // Faster tick rate when music is playing for ~30fps equalizer animation.
+        let music_playing = self
+            .music_monitor
+            .playback
+            .lock()
+            .ok()
+            .is_some_and(|info| info.is_playing);
+        if music_playing {
+            Some(Duration::from_millis(33))
+        } else {
+            Some(Duration::from_millis(200))
+        }
     }
 
     fn on_keyboard_leave(
@@ -1229,7 +1428,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::future::pending::<()>().await;
     });
 
-    let app = IslandApp::new(state);
+    let playback = music::start_playerctl_monitor();
+    let audio_level = music::start_pipewire_level_monitor();
+    let music_monitor = MusicMonitor::new(playback, audio_level);
+
+    let app = IslandApp::new(state, music_monitor);
     AppRunner::new(app).run()?;
 
     Ok(())
