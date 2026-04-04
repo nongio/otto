@@ -441,7 +441,13 @@ impl IslandApp {
             let h = base_h + grow;
             // Center coordinates for anchor_point(0.5, 0.5).
             let cx = x + w / 2.0;
-            let cy = BAR_HEIGHT / 2.0;
+            // Music expanded: top-aligned (grow downward from pill top edge).
+            let cy = if island.kind == IslandKind::Music && island.mode == IslandMode::Expanded {
+                let pill_top = (BAR_HEIGHT - COMPACT_H) / 2.0;
+                pill_top + h / 2.0
+            } else {
+                BAR_HEIGHT / 2.0
+            };
 
             // Detect new notification: count increased or representative activity changed.
             let current_activity_id = grouped
@@ -542,7 +548,13 @@ impl IslandApp {
         for (idx, w, h, x, y) in layout_targets {
             let target = (w, h, x, y);
             if self.islands[idx].last_layout != target {
-                let radius = h as f64 / 2.0;
+                let radius = if self.islands[idx].kind == IslandKind::Music
+                    && self.islands[idx].mode == IslandMode::Expanded
+                {
+                    16.0
+                } else {
+                    h as f64 / 2.0
+                };
                 animate_to(&self.islands[idx].surface, w, h, x, y, radius, layout_delay);
                 self.islands[idx].last_layout = target;
             }
