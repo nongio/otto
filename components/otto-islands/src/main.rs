@@ -105,8 +105,10 @@ struct IslandApp {
     music_monitor: MusicMonitor,
     /// Currently pressed music control (for visual feedback).
     music_pressed: Option<(music::MusicAction, std::time::Instant)>,
-    /// Last time the music EQ was redrawn (throttle to 1fps).
+    /// Last time the music EQ bars were redrawn (hot path, ~24fps).
     music_last_redraw: std::time::Instant,
+    /// Last time the full music surface was redrawn (progress, controls, ~1fps).
+    music_last_full_redraw: std::time::Instant,
 }
 
 impl IslandApp {
@@ -123,6 +125,7 @@ impl IslandApp {
             music_monitor,
             music_pressed: None,
             music_last_redraw: std::time::Instant::now(),
+            music_last_full_redraw: std::time::Instant::now(),
         }
     }
 
@@ -1217,9 +1220,15 @@ impl App for IslandApp {
             .lock()
             .ok()
             .is_some_and(|info| info.is_playing);
-        let music_redraw_due = self.music_last_redraw.elapsed().as_millis() >= 42;
-        if music_playing && music_redraw_due {
-            self.music_last_redraw = std::time::Instant::now();
+        let eq_redraw_due = self.music_last_redraw.elapsed().as_millis() >= 42;
+        let full_redraw_due = self.music_last_full_redraw.elapsed().as_millis() >= 1000;
+        if music_playing && (eq_redraw_due || full_redraw_due) {
+            if eq_redraw_due {
+                self.music_last_redraw = std::time::Instant::now();
+            }
+            if full_redraw_due {
+                self.music_last_full_redraw = std::time::Instant::now();
+            }
             for island in &self.islands {
                 if island.kind == IslandKind::Music {
                     let pmode = match island.mode {
@@ -1236,17 +1245,25 @@ impl App for IslandApp {
                         let (w, h, _, _) = island.last_layout;
                         if w > 0.0 && h > 0.0 {
                             use crate::activity::ActivityRenderer;
-                            let eq_rect = mr.eq_region(pmode, w, h);
-                            renderer::draw_centered_region(
-                                &island.surface,
-                                w,
-                                h,
-                                eq_rect,
-                                |canvas| {
-                                    // Redraw only the EQ region — clip handles the rest.
+                            if full_redraw_due {
+                                // Full redraw: clear everything, draw all content.
+                                draw_centered(&island.surface, w, h, |canvas| {
                                     mr.draw(canvas, pmode, w, h);
-                                },
-                            );
+                                });
+                            } else {
+                                // Hot path: clear only EQ rect, draw EQ bars
+                                // over the existing buffer content.
+                                let eq_rect = mr.eq_region(pmode, w, h);
+                                renderer::draw_centered_region(
+                                    &island.surface,
+                                    w,
+                                    h,
+                                    eq_rect,
+                                    |canvas| {
+                                        mr.draw(canvas, pmode, w, h);
+                                    },
+                                );
+                            }
                         }
                     }
                 }

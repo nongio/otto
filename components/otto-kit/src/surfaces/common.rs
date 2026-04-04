@@ -210,14 +210,8 @@ impl BaseWaylandSurface {
             });
 
             surface.swap_buffers(ctx);
-            // Damage only the region (in physical pixels, 2x scale).
-            let phys = skia_safe::IRect::from_ltrb(
-                (region.left * 2.0) as i32,
-                (region.top * 2.0) as i32,
-                (region.right * 2.0).ceil() as i32,
-                (region.bottom * 2.0).ceil() as i32,
-            );
-            surface.commit_region(phys);
+            // Commit full buffer — surface is small enough that partial damage isn't worth it.
+            surface.commit();
         });
     }
 
