@@ -2,6 +2,7 @@ pub mod button;
 pub mod container;
 pub mod context_menu;
 pub mod icon;
+pub mod input_field;
 pub mod label;
 pub mod layer;
 pub mod layers;

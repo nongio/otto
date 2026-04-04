@@ -7,6 +7,7 @@ pub mod context;
 mod handlers;
 
 pub use context::AppContext;
+pub use smithay_client_toolkit::seat::keyboard::KeyEvent;
 use wayland_client::backend::ObjectId;
 
 use crate::protocols::{
@@ -19,7 +20,7 @@ use smithay_client_toolkit::{
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{
-        keyboard::{KeyboardHandler, Keysym, Modifiers},
+        keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers},
         pointer::{PointerEvent, PointerHandler},
         Capability, SeatHandler, SeatState,
     },
@@ -85,6 +86,21 @@ pub trait App {
         _serial: u32,
     ) {
         // Default: do nothing
+    }
+
+    /// Called when a keyboard event occurs, with full key event data
+    ///
+    /// This provides the keysym and UTF-8 text in addition to the raw keycode.
+    /// Override this instead of `on_keyboard_event` when you need character input
+    /// (e.g., for text fields). The default implementation delegates to `on_keyboard_event`.
+    fn on_key_event(
+        &mut self,
+        ctx: &AppContext,
+        event: &KeyEvent,
+        state: wl_keyboard::KeyState,
+        serial: u32,
+    ) {
+        self.on_keyboard_event(ctx, event.raw_code, state, serial);
     }
 
     /// Called when keyboard focus is lost from a surface
@@ -165,6 +181,16 @@ impl App for DefaultApp {
         serial: u32,
     ) {
         self.inner.on_keyboard_event(ctx, key, state, serial)
+    }
+
+    fn on_key_event(
+        &mut self,
+        ctx: &AppContext,
+        event: &KeyEvent,
+        state: wl_keyboard::KeyState,
+        serial: u32,
+    ) {
+        self.inner.on_key_event(ctx, event, state, serial)
     }
 
     fn on_keyboard_leave(&mut self, ctx: &AppContext, surface: &wl_surface::WlSurface) {
@@ -637,7 +663,7 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
     ) {
         let ctx = AppContext::new(&self.context_data);
         self.app
-            .on_keyboard_event(&ctx, event.raw_code, wl_keyboard::KeyState::Pressed, serial);
+            .on_key_event(&ctx, &event, wl_keyboard::KeyState::Pressed, serial);
     }
 
     fn release_key(
@@ -649,12 +675,8 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
         event: smithay_client_toolkit::seat::keyboard::KeyEvent,
     ) {
         let ctx = AppContext::new(&self.context_data);
-        self.app.on_keyboard_event(
-            &ctx,
-            event.raw_code,
-            wl_keyboard::KeyState::Released,
-            serial,
-        );
+        self.app
+            .on_key_event(&ctx, &event, wl_keyboard::KeyState::Released, serial);
     }
 
     fn update_modifiers(

@@ -20,6 +20,7 @@ pub use components::container::{
     stack::{Stack, StackDirection},
     traits::{Border, BoxShadow, Container, CornerRadius, EdgeInsets, LayoutConstraints},
 };
+pub use components::input_field::{InputField, InputFieldState};
 pub use components::label::{Label, LabelBuilder, TextAlign};
 pub use components::layer::{surface::LayerSurface, Layer};
 // pub use components::menu_bar::{surface::MenuBarSurface, MenuBar, MenuBarItem};
@@ -31,7 +32,7 @@ pub use surfaces::{
 };
 
 // Re-export app framework
-pub use app_runner::{App, AppContext, AppRunner, AppRunnerWithType};
+pub use app_runner::{App, AppContext, AppRunner, AppRunnerWithType, KeyEvent};
 
 /// Convenience prelude for application development
 pub mod prelude {
@@ -44,6 +45,7 @@ pub mod prelude {
         LayoutConstraints, Stack, StackDirection,
     };
     pub use crate::components::context_menu::ContextMenuStyle;
+    pub use crate::components::input_field::{InputField, InputFieldState};
     pub use crate::components::label::{Label, LabelBuilder, TextAlign};
     pub use crate::components::menu_item::{
         MenuItem, MenuItemGroup, MenuItemIcon, MenuItemKind, MenuItemState,
