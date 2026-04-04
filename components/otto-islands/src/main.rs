@@ -1008,8 +1008,7 @@ impl App for IslandApp {
         for island in &mut self.islands {
             if island.mode == IslandMode::Expanded {
                 Self::close_cards_for(island);
-                island.closing_at =
-                    Some(std::time::Instant::now() + Duration::from_secs_f64(0.4));
+                island.closing_at = Some(std::time::Instant::now() + Duration::from_secs_f64(0.4));
                 changed = true;
             }
         }
