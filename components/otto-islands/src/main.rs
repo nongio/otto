@@ -105,6 +105,8 @@ struct IslandApp {
     music_monitor: MusicMonitor,
     /// Currently pressed music control (for visual feedback).
     music_pressed: Option<(music::MusicAction, std::time::Instant)>,
+    /// Last time the music EQ was redrawn (throttle to 1fps).
+    music_last_redraw: std::time::Instant,
 }
 
 impl IslandApp {
@@ -120,6 +122,7 @@ impl IslandApp {
             last_interaction: std::time::Instant::now(),
             music_monitor,
             music_pressed: None,
+            music_last_redraw: std::time::Instant::now(),
         }
     }
 
@@ -1207,14 +1210,16 @@ impl App for IslandApp {
         // Sync music monitor — creates/updates/dismisses the music activity.
         self.music_monitor.sync_to_island(&self.state);
 
-        // If music is playing, redraw music island surfaces each tick.
+        // If music is playing, redraw music island surfaces (throttled to 1fps).
         let music_playing = self
             .music_monitor
             .playback
             .lock()
             .ok()
             .is_some_and(|info| info.is_playing);
-        if music_playing {
+        let music_redraw_due = self.music_last_redraw.elapsed().as_millis() >= 42;
+        if music_playing && music_redraw_due {
+            self.music_last_redraw = std::time::Instant::now();
             for island in &self.islands {
                 if island.kind == IslandKind::Music {
                     let pmode = match island.mode {
@@ -1263,7 +1268,7 @@ impl App for IslandApp {
             .ok()
             .is_some_and(|info| info.is_playing);
         if music_playing {
-            Some(Duration::from_millis(1000))
+            Some(Duration::from_millis(42))
         } else {
             Some(Duration::from_millis(200))
         }
