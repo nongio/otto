@@ -808,20 +808,27 @@ impl IslandApp {
         if !self.islands.is_empty() {
             // One rect per island, derived from last_layout (center coords).
             for island in &self.islands {
-                let (w, _h, cx, _cy) = island.last_layout;
-                let pill_h = match island.mode {
-                    IslandMode::Mini => MINI_H,
-                    IslandMode::Compact | IslandMode::Expanded => COMPACT_H,
-                };
-                let pill_w = match island.mode {
-                    IslandMode::Expanded => w.max(renderer::CARD_W),
-                    _ => w.max(MINI_H),
-                };
+                let (w, h, cx, cy) = island.last_layout;
+                let (pill_w, pill_h) =
+                    if island.kind == IslandKind::Music && island.mode == IslandMode::Expanded {
+                        // Music expanded: full surface size, top-aligned.
+                        (w.max(MINI_H), h)
+                    } else {
+                        let ph = match island.mode {
+                            IslandMode::Mini => MINI_H,
+                            IslandMode::Compact | IslandMode::Expanded => COMPACT_H,
+                        };
+                        let pw = match island.mode {
+                            IslandMode::Expanded => w.max(renderer::CARD_W),
+                            _ => w.max(MINI_H),
+                        };
+                        (pw, ph)
+                    };
                 let x = cx - pill_w / 2.0;
-                let y = (BAR_HEIGHT - pill_h) / 2.0;
+                let y = cy - pill_h / 2.0;
                 region.add(
                     x.max(0.0) as i32,
-                    y as i32,
+                    y.max(0.0) as i32,
                     pill_w.ceil() as i32,
                     pill_h.ceil() as i32,
                 );
@@ -866,17 +873,23 @@ impl IslandApp {
     /// activity_id is Some when a card is hit.
     fn hit_test(&self, px: f32, py: f32) -> Option<(String, Option<u64>)> {
         for island in &self.islands {
-            let (w, _h, cx, _cy) = island.last_layout;
-            let pill_h = match island.mode {
-                IslandMode::Mini => MINI_H,
-                IslandMode::Compact | IslandMode::Expanded => COMPACT_H,
-            };
-            let pill_w = match island.mode {
-                IslandMode::Expanded => w.max(renderer::CARD_W),
-                _ => w.max(MINI_H),
-            };
+            let (w, h, cx, cy) = island.last_layout;
+            let (pill_w, pill_h) =
+                if island.kind == IslandKind::Music && island.mode == IslandMode::Expanded {
+                    (w.max(MINI_H), h)
+                } else {
+                    let ph = match island.mode {
+                        IslandMode::Mini => MINI_H,
+                        IslandMode::Compact | IslandMode::Expanded => COMPACT_H,
+                    };
+                    let pw = match island.mode {
+                        IslandMode::Expanded => w.max(renderer::CARD_W),
+                        _ => w.max(MINI_H),
+                    };
+                    (pw, ph)
+                };
             let x = cx - pill_w / 2.0;
-            let y = (BAR_HEIGHT - pill_h) / 2.0;
+            let y = cy - pill_h / 2.0;
 
             // Hit test cards first (they sit below the pill).
             if island.mode == IslandMode::Expanded {
