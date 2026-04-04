@@ -72,19 +72,19 @@ pub fn clock_format() -> &'static str {
 }
 
 fn load_config() -> TopbarConfig {
-    // Search order: /etc/otto/topbar.toml → ~/.config/otto/topbar.toml → ./otto_topbar.toml
+    // Search order: /etc/otto/otto-bar.toml → ~/.config/otto/otto-bar.toml → ./otto-bar.toml
     let candidates: Vec<std::path::PathBuf> = {
         let mut v = Vec::new();
-        v.push(std::path::PathBuf::from("/etc/otto/topbar.toml"));
+        v.push(std::path::PathBuf::from("/etc/otto/otto-bar.toml"));
         if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME")
             .map(std::path::PathBuf::from)
             .or_else(|| {
                 std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
             })
         {
-            v.push(xdg.join("otto").join("topbar.toml"));
+            v.push(xdg.join("otto").join("otto-bar.toml"));
         }
-        v.push(std::path::PathBuf::from("otto_topbar.toml"));
+        v.push(std::path::PathBuf::from("otto-bar.toml"));
         v
     };
 

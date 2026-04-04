@@ -100,7 +100,7 @@ The state module also contains protocol handler implementations (`*_handler.rs` 
 ### Components
 
 - `components/otto-kit/` — UI toolkit for building Otto apps (menu bars, context menus, popups)
-- `components/topbar/` — Top menu bar component
+- `components/otto-bar/` — Top menu bar component
 - `components/apps-manager/` — Application launcher/manager
 - `components/xdg-desktop-portal-otto/` — Portal backend bridging xdg-desktop-portal to compositor
 
