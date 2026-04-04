@@ -72,27 +72,43 @@ impl ActivityRenderer for MusicActivityRenderer {
 }
 
 impl MusicActivityRenderer {
-    /// Return the bounding rect of the EQ bars region for partial redraws.
-    /// Coordinates are relative to the content origin (0,0).
-    pub fn eq_region(&self, mode: PresentationMode, w: f32, h: f32) -> Rect {
+    /// Return the EQ subsurface size and offset (relative to pill top-left) for each mode.
+    /// Returns (eq_w, eq_h, offset_x, offset_y).
+    pub fn eq_layout(&self, mode: PresentationMode, w: f32, h: f32) -> (f32, f32, f32, f32) {
         match mode {
             PresentationMode::Minimal | PresentationMode::Idle => {
-                // Mini: entire surface is the EQ
-                Rect::from_xywh(0.0, 0.0, w, h)
+                // Mini: EQ fills the whole pill
+                (w, h, 0.0, 0.0)
             }
             PresentationMode::Compact | PresentationMode::Banner => {
-                // Compact: EQ is on the right side
-                let pad = 8.0;
-                let icon_size = h - pad * 2.0;
-                let eq_x = w - pad - 80.0; // approximate EQ area on right
-                Rect::from_xywh(eq_x.max(0.0), 0.0, w - eq_x.max(0.0), h)
+                // Compact: EQ on the right side
+                let eq_w = 80.0;
+                let eq_h = h;
+                let eq_x = w - eq_w;
+                (eq_w, eq_h, eq_x, 0.0)
             }
             PresentationMode::Expanded => {
-                // Expanded: EQ is in the bottom-right area
+                // Expanded: EQ below title/artist, right column
                 let pad = 12.0;
                 let art_size = h - pad * 2.0;
                 let rx = pad + art_size + pad;
-                Rect::from_xywh(rx, h * 0.4, w - rx, h * 0.6)
+                let eq_y = pad + 34.0;
+                let eq_h = 22.0;
+                let eq_w = w - rx - pad;
+                (eq_w, eq_h, rx, eq_y)
+            }
+        }
+    }
+
+    /// Draw only the EQ bars into a standalone surface.
+    /// Canvas origin (0,0) is the top-left of the EQ area.
+    pub fn draw_eq_only(&self, canvas: &Canvas, mode: PresentationMode, w: f32, h: f32) {
+        match mode {
+            PresentationMode::Minimal | PresentationMode::Idle => {
+                self.draw_minimal(canvas, w, h);
+            }
+            PresentationMode::Compact | PresentationMode::Banner | PresentationMode::Expanded => {
+                self.draw_equalizer_large(canvas, 0.0, 0.0, w, h);
             }
         }
     }

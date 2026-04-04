@@ -63,6 +63,8 @@ struct Island {
     icon: String,
     /// The pill/circle subsurface.
     surface: SubsurfaceSurface,
+    /// EQ overlay subsurface (child of pill, music islands only).
+    eq_surface: Option<SubsurfaceSurface>,
     /// Lazily-created card subsurfaces (only when Expanded, notifications only).
     cards: Vec<CardSurface>,
     /// Current mode.
@@ -246,11 +248,26 @@ impl IslandApp {
             if !self.islands.iter().any(|i| i.app_id == *app_id) {
                 if let Some(surface) = self.create_pill_subsurface() {
                     tracing::info!(%app_id, ?kind, %icon, "island created");
+                    // Create EQ child subsurface for music islands.
+                    let eq_surface = if *kind == IslandKind::Music {
+                        let eq = SubsurfaceSurface::new(surface.wl_surface(), 0, 0, 80, 28).ok();
+                        if let Some(ref eq) = eq {
+                            if let Some(ss) = eq.base_surface().surface_style() {
+                                ss.set_contents_gravity(ContentsGravity::Center);
+                                ss.set_anchor_point(0.5, 0.5);
+                            }
+                            eq.place_above(surface.wl_surface());
+                        }
+                        eq
+                    } else {
+                        None
+                    };
                     self.islands.push(Island {
                         app_id: app_id.clone(),
                         kind: *kind,
                         icon: icon.clone(),
                         surface,
+                        eq_surface,
                         cards: Vec::new(),
                         mode: IslandMode::Mini,
                         created_at: std::time::Instant::now(),
@@ -501,6 +518,16 @@ impl IslandApp {
                         use crate::activity::ActivityRenderer;
                         mr.draw(canvas, pmode, w, h);
                     });
+                    // Position and resize the EQ child subsurface.
+                    if let Some(eq_surf) = &island.eq_surface {
+                        let (eq_w, eq_h, eq_ox, eq_oy) = mr.eq_layout(pmode, w, h);
+                        // EQ position: pill top-left + offset, converted to center coords.
+                        let pill_left = cx - w / 2.0;
+                        let pill_top = cy - h / 2.0;
+                        let eq_cx = pill_left + eq_ox + eq_w / 2.0;
+                        let eq_cy = pill_top + eq_oy + eq_h / 2.0;
+                        renderer::set_size_and_position(eq_surf, eq_w, eq_h, eq_cx, eq_cy);
+                    }
                     self.music_last_redraw = std::time::Instant::now();
                 }
                 layout_targets.push((idx, w, h, cx, cy));
@@ -1223,22 +1250,17 @@ impl App for IslandApp {
             self.music_last_redraw = std::time::Instant::now();
             for island in &self.islands {
                 if island.kind == IslandKind::Music {
-                    let pmode = match island.mode {
-                        IslandMode::Mini => PresentationMode::Minimal,
-                        IslandMode::Compact => PresentationMode::Compact,
-                        IslandMode::Expanded => PresentationMode::Expanded,
-                    };
-                    if let Some(mut mr) = self.music_monitor.renderer() {
-                        if let Some((action, instant)) = &self.music_pressed {
-                            if instant.elapsed().as_millis() < 300 {
-                                mr.pressed = Some(*action);
-                            }
-                        }
-                        let (w, h, _, _) = island.last_layout;
-                        if w > 0.0 && h > 0.0 {
-                            use crate::activity::ActivityRenderer;
-                            draw_centered(&island.surface, w, h, |canvas| {
-                                mr.draw(canvas, pmode, w, h);
+                    if let Some(eq_surf) = &island.eq_surface {
+                        let pmode = match island.mode {
+                            IslandMode::Mini => PresentationMode::Minimal,
+                            IslandMode::Compact => PresentationMode::Compact,
+                            IslandMode::Expanded => PresentationMode::Expanded,
+                        };
+                        if let Some(mr) = self.music_monitor.renderer() {
+                            let (w, h, _, _) = island.last_layout;
+                            let (eq_w, eq_h, _, _) = mr.eq_layout(pmode, w, h);
+                            eq_surf.draw(|canvas| {
+                                mr.draw_eq_only(canvas, pmode, eq_w, eq_h);
                             });
                         }
                     }
