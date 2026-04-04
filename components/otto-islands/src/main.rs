@@ -911,6 +911,10 @@ impl App for IslandApp {
         self.flush_pending_destroy();
 
         // Focus timeout: shrink Compact → Mini after inactivity.
+        // Pause the timer while the pointer is hovering over any island.
+        if self.hovered_app.is_some() {
+            self.last_interaction = std::time::Instant::now();
+        }
         let elapsed = self.last_interaction.elapsed().as_secs_f64();
         if elapsed >= FOCUS_TIMEOUT_SECS && self.focused_app.is_some() {
             let any_expanded = self.islands.iter().any(|i| i.mode == IslandMode::Expanded);
@@ -988,18 +992,18 @@ impl App for IslandApp {
         _ctx: &AppContext,
         _surface: &wayland_client::protocol::wl_surface::WlSurface,
     ) {
-        // Close expanded stack on focus loss.
+        // Close expanded stack on focus loss — animate cards out first.
         let mut changed = false;
         for island in &mut self.islands {
             if island.mode == IslandMode::Expanded {
                 Self::close_cards_for(island);
-                island.mode = IslandMode::Compact;
+                island.closing_at =
+                    Some(std::time::Instant::now() + Duration::from_secs_f64(0.4));
                 changed = true;
             }
         }
-        // Shorten the focus timeout — go to Mini after 2s instead of full timeout.
-        let fast_timeout = Duration::from_secs_f64(FOCUS_TIMEOUT_SECS - 2.0);
-        self.last_interaction = std::time::Instant::now() - fast_timeout;
+        // Restart the focus timeout from now.
+        self.last_interaction = std::time::Instant::now();
         if changed {
             let mut state = self.state.lock().unwrap();
             state.dirty = true;
