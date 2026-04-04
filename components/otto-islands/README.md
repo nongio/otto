@@ -2,6 +2,8 @@
 
 An experimental notification manager for Otto, inspired by the iOS dynamic island. It renders notification groups as morphing pill-shaped surfaces anchored to the top-center of the screen.
 
+![Otto Islands demo](https://private-user-images.githubusercontent.com/31436893/573857630-9fec43ac-3b17-49c5-8a3b-f0f52cc395a2.gif)
+
 Otto Islands is a standalone Wayland app that takes advantage of Otto's **experimental surface style protocol** (`otto-surface-style-v1`). This protocol gives clients direct access to the compositor's animated scene graph — similar to Core Animation on iOS/macOS. The app draws flat content once with Skia, and the compositor handles all animation, clipping, shadows, and blur at display refresh rate.
 
 ## Surface Style Protocol
