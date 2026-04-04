@@ -1263,7 +1263,7 @@ impl App for IslandApp {
             .ok()
             .is_some_and(|info| info.is_playing);
         if music_playing {
-            Some(Duration::from_millis(200))
+            Some(Duration::from_millis(1000))
         } else {
             Some(Duration::from_millis(200))
         }
