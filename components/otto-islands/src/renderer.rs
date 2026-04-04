@@ -132,6 +132,15 @@ pub fn draw_pill(
 // Drawing: group circle (Mini mode)
 // ---------------------------------------------------------------------------
 
+/// Width for a mini pill: smaller when just one notification.
+pub fn mini_width(count: usize) -> f32 {
+    if count > 1 {
+        MINI_W
+    } else {
+        MINI_H // square pill (icon only)
+    }
+}
+
 pub fn draw_mini(canvas: &Canvas, icon: &str, count: usize, _w: f32, h: f32) {
     let pad = 6.0;
     let icon_size = h - pad * 2.0;
@@ -139,23 +148,24 @@ pub fn draw_mini(canvas: &Canvas, icon: &str, count: usize, _w: f32, h: f32) {
     let icon_y = (h - icon_size) / 2.0;
     draw_app_icon(canvas, icon, icon_x, icon_y, icon_size);
 
-    // Count text to the right of the icon
-    let count_text = format!("{count}");
-    let font = TextStyle {
-        family: "Inter",
-        weight: 600,
-        size: 11.0,
+    if count > 1 {
+        let count_text = format!("{count}");
+        let font = TextStyle {
+            family: "Inter",
+            weight: 600,
+            size: 11.0,
+        }
+        .font();
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(Color::WHITE);
+        canvas.draw_str(
+            &count_text,
+            (icon_x + icon_size + 4.0, h / 2.0 + 4.0),
+            &font,
+            &paint,
+        );
     }
-    .font();
-    let mut paint = Paint::default();
-    paint.set_anti_alias(true);
-    paint.set_color(Color::WHITE);
-    canvas.draw_str(
-        &count_text,
-        (icon_x + icon_size + 4.0, h / 2.0 + 4.0),
-        &font,
-        &paint,
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -198,8 +208,9 @@ pub fn draw_card(canvas: &Canvas, activity: &Activity, group_icon: &str, w: f32,
     let mut title_paint = Paint::default();
     title_paint.set_anti_alias(true);
     title_paint.set_color(theme.text_primary);
+    let close_zone = 40.0;
     let text_x = icon_x + icon_size + 8.0;
-    let max_w = w - text_x - pad;
+    let max_w = w - text_x - close_zone;
     let title = truncate_text(&activity.title, &title_font, max_w);
     canvas.draw_str(&title, (text_x, pad + 13.0), &title_font, &title_paint);
 
@@ -239,9 +250,35 @@ pub fn draw_card(canvas: &Canvas, activity: &Activity, group_icon: &str, w: f32,
     let (tw, _) = hint_font.measure_str(&time_str, None);
     canvas.draw_str(
         &time_str,
-        (w - pad - tw, h - pad + 2.0),
+        (w - close_zone - tw - 8.0, h - pad + 2.0),
         &hint_font,
         &hint_paint,
+    );
+
+    // Separator line before close zone
+    let mut sep_paint = Paint::default();
+    sep_paint.set_anti_alias(true);
+    sep_paint.set_color(Color::from_argb(20, 0, 0, 0));
+    sep_paint.set_stroke_width(1.0);
+    let sep_x = w - close_zone;
+    canvas.draw_line((sep_x, 0.0), (sep_x, h), &sep_paint);
+
+    // Close button — right zone
+    let close_font = TextStyle {
+        family: "Inter",
+        weight: 500,
+        size: 9.0,
+    }
+    .font();
+    let mut close_paint = Paint::default();
+    close_paint.set_anti_alias(true);
+    close_paint.set_color(theme.text_secondary);
+    let (cw, _) = close_font.measure_str("Close", None);
+    canvas.draw_str(
+        "Close",
+        (w - close_zone / 2.0 - cw / 2.0, h / 2.0 + 3.0),
+        &close_font,
+        &close_paint,
     );
 }
 
@@ -424,10 +461,10 @@ pub fn animate_to_with_opacity(
             let qh = AppContext::queue_handle();
 
             let timing = scene.create_timing_function(qh, ());
-            timing.set_spring(0.25, 0.0);
+            timing.set_spring(0.15, 0.0);
 
             let anim = scene.begin_transaction(qh, ());
-            anim.set_duration(0.6);
+            anim.set_duration(0.8);
             if delay > 0.0 {
                 anim.set_delay(delay);
             }
@@ -455,6 +492,31 @@ pub fn animate_position_opacity(
     opacity: f64,
     delay: f64,
 ) {
+    animate_position_opacity_duration(surface, w, h, x, y, opacity, delay, 0.3);
+}
+
+pub fn animate_position_opacity_slow(
+    surface: &otto_kit::SubsurfaceSurface,
+    w: f32,
+    h: f32,
+    x: f32,
+    y: f32,
+    opacity: f64,
+    delay: f64,
+) {
+    animate_position_opacity_duration(surface, w, h, x, y, opacity, delay, 0.8);
+}
+
+fn animate_position_opacity_duration(
+    surface: &otto_kit::SubsurfaceSurface,
+    w: f32,
+    h: f32,
+    x: f32,
+    y: f32,
+    opacity: f64,
+    delay: f64,
+    duration: f64,
+) {
     if let Some(scene_surface) = surface.base_surface().surface_style() {
         // Set size immediately (outside any transaction).
         scene_surface.set_size(w as f64 * BUFFER_SCALE, h as f64 * BUFFER_SCALE);
@@ -463,10 +525,10 @@ pub fn animate_position_opacity(
             let qh = AppContext::queue_handle();
 
             let timing = scene.create_timing_function(qh, ());
-            timing.set_spring(0.25, 0.0);
+            timing.set_spring(0.0, 0.0);
 
             let anim = scene.begin_transaction(qh, ());
-            anim.set_duration(0.6);
+            anim.set_duration(duration);
             if delay > 0.0 {
                 anim.set_delay(delay);
             }

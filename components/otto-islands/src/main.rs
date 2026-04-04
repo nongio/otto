@@ -64,8 +64,6 @@ struct Island {
     cards: Vec<CardSurface>,
     /// Current mode.
     mode: IslandMode,
-    /// When set, the island is closing its stack and will switch to Compact at this instant.
-    closing_at: Option<std::time::Instant>,
     /// When this group first appeared.
     created_at: std::time::Instant,
     /// Last known notification count (for pulse detection).
@@ -178,6 +176,7 @@ impl IslandApp {
         }
 
         // Remove islands whose app_id is no longer present.
+        let mut removed_island = false;
         let mut i = 0;
         while i < self.islands.len() {
             if desired
@@ -209,6 +208,7 @@ impl IslandApp {
                     self.defer_destroy(card.surface);
                 }
                 self.defer_destroy(island.surface);
+                removed_island = true;
             }
         }
 
@@ -224,15 +224,17 @@ impl IslandApp {
                         surface,
                         cards: Vec::new(),
                         mode: IslandMode::Mini,
-                        closing_at: None,
                         created_at: std::time::Instant::now(),
                         last_count: 0,
                         last_activity_id: 0,
                         peek_until: None,
                         last_layout: (0.0, 0.0, 0.0, 0.0),
                     });
-                    // Auto-focus newly arrived island + reset interaction timer.
-                    self.focused_app = Some(app_id.clone());
+                    // Auto-focus only if no island is currently Expanded.
+                    let any_expanded = self.islands.iter().any(|i| i.mode == IslandMode::Expanded);
+                    if !any_expanded {
+                        self.focused_app = Some(app_id.clone());
+                    }
                     self.last_interaction = std::time::Instant::now();
                 }
             }
@@ -249,20 +251,19 @@ impl IslandApp {
         }
 
         // Assign modes: focused gets Compact/Expanded, peeking stays Compact, rest → Mini.
+        // Expanded islands are preserved — they coexist with Compact (peeking) islands.
         for island in &mut self.islands {
-            if Some(&island.app_id) == self.focused_app.as_ref() {
+            if island.mode == IslandMode::Expanded {
+                // Expanded stays Expanded — only user interaction (click/focus loss) closes it.
+            } else if Some(&island.app_id) == self.focused_app.as_ref() {
                 if island.mode == IslandMode::Mini {
                     island.mode = IslandMode::Compact;
                     tracing::debug!(app_id = %island.app_id, "Mini → Compact (focused)");
                 }
             } else if island.peek_until.is_some() {
                 // Peeking — stay Compact until peek expires.
-            } else if island.mode == IslandMode::Expanded {
-                // Non-focused expanded → close and shrink.
-                Self::close_cards_for(island);
-                island.mode = IslandMode::Mini;
             } else {
-                // Non-focused, non-peeking → Mini.
+                // Non-focused, non-peeking, non-expanded → Mini.
                 if island.mode != IslandMode::Mini {
                     tracing::debug!(app_id = %island.app_id, from = ?island.mode, "→ Mini");
                 }
@@ -270,7 +271,7 @@ impl IslandApp {
             }
         }
 
-        self.layout(&grouped);
+        self.layout(&grouped, removed_island);
     }
 
     /// Close the card stack — animate out but keep surfaces alive for reuse.
@@ -296,7 +297,7 @@ impl IslandApp {
     // Layout: position all islands and their cards
     // -----------------------------------------------------------------------
 
-    fn layout(&mut self, grouped: &[(Activity, usize)]) {
+    fn layout(&mut self, grouped: &[(Activity, usize)], reposition_delay: bool) {
         if self.islands.is_empty() {
             self.update_layer_size();
             self.update_input_region();
@@ -309,7 +310,7 @@ impl IslandApp {
             let count = entry.map(|(_, c)| *c).unwrap_or(1);
             let title = entry.map(|(a, _)| a.title.as_str()).unwrap_or("");
             match mode {
-                IslandMode::Mini => (MINI_W, MINI_H),
+                IslandMode::Mini => (renderer::mini_width(count), MINI_H),
                 IslandMode::Compact => {
                     let w = renderer::pill_width(&island.app_id, title, count);
                     (w, COMPACT_H)
@@ -422,7 +423,7 @@ impl IslandApp {
                         layout_targets.push((idx, w, h, cx, cy));
                     }
 
-                    if island.mode == IslandMode::Expanded && island.closing_at.is_none() {
+                    if island.mode == IslandMode::Expanded {
                         // Store top-left x for card positioning.
                         expanded_layouts.push((idx, x, cx, cy, w));
                     }
@@ -433,11 +434,12 @@ impl IslandApp {
         }
 
         // Apply layout animations only when target changed.
+        let layout_delay = if reposition_delay { 0.4 } else { 0.0 };
         for (idx, w, h, x, y) in layout_targets {
             let target = (w, h, x, y);
             if self.islands[idx].last_layout != target {
                 let radius = h as f64 / 2.0;
-                animate_to(&self.islands[idx].surface, w, h, x, y, radius, 0.0);
+                animate_to(&self.islands[idx].surface, w, h, x, y, radius, layout_delay);
                 self.islands[idx].last_layout = target;
             }
         }
@@ -592,7 +594,7 @@ impl IslandApp {
                     if let Some(ss) = island.cards[cidx].surface.base_surface().surface_style() {
                         ss.set_opacity(0.0);
                     }
-                    renderer::animate_position_opacity(
+                    renderer::animate_position_opacity_slow(
                         &island.cards[cidx].surface,
                         card_w,
                         card_h,
@@ -603,7 +605,7 @@ impl IslandApp {
                     );
                 } else {
                     // Existing card: animate to position + ensure visible.
-                    renderer::animate_position_opacity(
+                    renderer::animate_position_opacity_slow(
                         &island.cards[cidx].surface,
                         card_w,
                         card_h,
@@ -683,9 +685,12 @@ impl IslandApp {
             // One rect per island, positioned to match layout exactly.
             let island_size_for_input = |island: &Island| -> (f32, f32) {
                 match island.mode {
-                    IslandMode::Mini => (MINI_W, MINI_H),
+                    IslandMode::Mini => {
+                        let w = island.last_layout.0.max(MINI_H);
+                        (w, MINI_H)
+                    }
                     IslandMode::Compact => {
-                        let w = island.last_layout.0.max(MINI_W);
+                        let w = island.last_layout.0.max(MINI_H);
                         (w, COMPACT_H)
                     }
                     IslandMode::Expanded => {
@@ -746,9 +751,12 @@ impl IslandApp {
     fn hit_test(&self, px: f32, py: f32) -> Option<(String, Option<u64>)> {
         let get_size = |island: &Island| -> (f32, f32) {
             match island.mode {
-                IslandMode::Mini => (MINI_W, MINI_H),
+                IslandMode::Mini => {
+                    let w = island.last_layout.0.max(MINI_H);
+                    (w, MINI_H)
+                }
                 IslandMode::Compact => {
-                    let w = island.last_layout.0.max(MINI_W);
+                    let w = island.last_layout.0.max(MINI_H);
                     (w, COMPACT_H)
                 }
                 IslandMode::Expanded => {
@@ -807,6 +815,22 @@ impl IslandApp {
         };
 
         if let Some(activity_id) = card_id {
+            // Determine if the click is in the close zone (right 40px of card).
+            let close_zone = 40.0_f32;
+            let is_close = self
+                .islands
+                .iter()
+                .find(|i| i.app_id == app_id)
+                .map(|island| {
+                    let pill_w = island.last_layout.0;
+                    let pill_cx = island.last_layout.2;
+                    let card_w = renderer::CARD_W;
+                    let pill_x = pill_cx - pill_w / 2.0;
+                    let card_x = pill_x + (pill_w - card_w) / 2.0;
+                    px - card_x > card_w - close_zone
+                })
+                .unwrap_or(false);
+
             // Clicked a card — animate dismiss (scale up + fade out), then remove.
             if let Some(island) = self.islands.iter().find(|i| i.app_id == app_id) {
                 if let Some(card) = island.cards.iter().find(|c| c.activity_id == activity_id) {
@@ -829,24 +853,34 @@ impl IslandApp {
                 tracing::info!(
                     activity_id,
                     %app_id,
+                    close = is_close,
                     action = ?activity.default_action,
-                    "notification action invoked"
+                    "card clicked"
                 );
             }
 
             state.dismiss_activity(activity_id);
             drop(state);
 
-            // Focus the app that sent the notification.
-            request_focus_app(app_id.clone());
+            if !is_close {
+                // Action click — focus the app and emit ActionInvoked.
+                request_focus_app(app_id.clone());
 
-            // Emit ActionInvoked D-Bus signal for the notification spec.
-            if let Some(nid) = notification_id {
-                let action_key = default_action.as_deref().unwrap_or("default").to_string();
-                emit_action_invoked(nid, action_key);
+                if let Some(nid) = notification_id {
+                    let action_key = default_action.as_deref().unwrap_or("default").to_string();
+                    emit_action_invoked(nid, action_key);
+                }
             }
         } else {
             // Clicked a pill/circle.
+            // Close any other expanded island first — only one can be expanded at a time.
+            for island in self.islands.iter_mut().filter(|i| i.app_id != app_id) {
+                if island.mode == IslandMode::Expanded {
+                    Self::close_cards_for(island);
+                    island.mode = IslandMode::Compact;
+                    island.last_layout = (0.0, 0.0, 0.0, 0.0);
+                }
+            }
             let island = self.islands.iter_mut().find(|i| i.app_id == app_id);
             if let Some(island) = island {
                 match island.mode {
@@ -860,8 +894,8 @@ impl IslandApp {
                     IslandMode::Expanded => {
                         tracing::info!(%app_id, "click: Expanded → Compact");
                         Self::close_cards_for(island);
-                        island.closing_at =
-                            Some(std::time::Instant::now() + Duration::from_secs_f64(0.4));
+                        island.mode = IslandMode::Compact;
+                        island.last_layout = (0.0, 0.0, 0.0, 0.0);
                         // Keep focus so timeout governs Mini transition.
                         self.focused_app = Some(app_id.clone());
                         self.last_interaction = std::time::Instant::now();
@@ -942,20 +976,7 @@ impl App for IslandApp {
             }
         }
 
-        // Closing timeout: cards faded out, now shrink pill to Compact.
         let now = std::time::Instant::now();
-        for island in &mut self.islands {
-            if let Some(at) = island.closing_at {
-                if now >= at {
-                    island.closing_at = None;
-                    island.mode = IslandMode::Compact;
-                    island.last_layout = (0.0, 0.0, 0.0, 0.0);
-                    let mut state = self.state.lock().unwrap();
-                    state.dirty = true;
-                    drop(state);
-                }
-            }
-        }
 
         // Peek timeout: revert Compact peek back to Mini.
         for island in &mut self.islands {
@@ -1008,7 +1029,8 @@ impl App for IslandApp {
         for island in &mut self.islands {
             if island.mode == IslandMode::Expanded {
                 Self::close_cards_for(island);
-                island.closing_at = Some(std::time::Instant::now() + Duration::from_secs_f64(0.4));
+                island.mode = IslandMode::Compact;
+                island.last_layout = (0.0, 0.0, 0.0, 0.0);
                 changed = true;
             }
         }
