@@ -12,9 +12,11 @@ use skia_safe as skia;
 // Icon cache
 // ---------------------------------------------------------------------------
 
-static ICON_CACHE: OnceLock<Arc<RwLock<HashMap<String, Option<skia::Image>>>>> = OnceLock::new();
+type IconCache = Arc<RwLock<HashMap<String, Option<skia::Image>>>>;
 
-fn icon_cache() -> Arc<RwLock<HashMap<String, Option<skia::Image>>>> {
+static ICON_CACHE: OnceLock<IconCache> = OnceLock::new();
+
+fn icon_cache() -> IconCache {
     ICON_CACHE
         .get_or_init(|| Arc::new(RwLock::new(HashMap::new())))
         .clone()

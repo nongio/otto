@@ -255,6 +255,7 @@ impl PopupSurface {
     }
 
     /// Create a new popup surface for a layer shell parent with optional keyboard grab.
+    #[allow(clippy::too_many_arguments)]
     pub fn new_for_layer_typed_with_grab<D>(
         layer_surface: &ZwlrLayerSurfaceV1,
         positioner: &XdgPositioner,
