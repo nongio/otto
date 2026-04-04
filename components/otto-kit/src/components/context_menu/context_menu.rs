@@ -533,9 +533,13 @@ impl ContextMenu {
 
                 // Create submenu surface without grab — the root popup already
                 // holds the keyboard grab, so submenus must not steal focus.
-                if let Ok(popup) =
-                    PopupSurface::new_with_grab(&parent_xdg, &positioner, width as i32, height as i32, None)
-                {
+                if let Ok(popup) = PopupSurface::new_with_grab(
+                    &parent_xdg,
+                    &positioner,
+                    width as i32,
+                    height as i32,
+                    None,
+                ) {
                     let surface_id = popup.wl_surface().id();
                     ContextMenu::apply_surface_effects(&style, &popup);
 
@@ -602,7 +606,10 @@ impl ContextMenu {
         from_depth: usize,
     ) {
         let popups_borrowed = popups.borrow();
-        tracing::debug!("hide_submenus_from depth={from_depth}, total_popups={}", popups_borrowed.len());
+        tracing::debug!(
+            "hide_submenus_from depth={from_depth}, total_popups={}",
+            popups_borrowed.len()
+        );
         for i in from_depth..popups_borrowed.len() {
             let had_popup = popups_borrowed[i].borrow().is_some();
             *popups_borrowed[i].borrow_mut() = None;
@@ -805,25 +812,66 @@ impl ContextMenu {
                     })
                     .unwrap_or_default();
 
-                // Clone popup ref to avoid holding borrow during sleep/callback
-                let _popup_ref = if depth < popups.borrow().len() {
-                    Some(popups.borrow()[depth].clone())
-                } else {
-                    None
-                };
-
-                // Fire callback with action_id (falls back to label)
-                if let Some(callback) = on_item_click.borrow().as_ref() {
-                    callback(&callback_id);
-                }
-
-                // Close all popups and reset state
-                for popup in popups.borrow().iter() {
-                    *popup.borrow_mut() = None;
-                }
-                state.borrow_mut().reset();
+                Self::flash_and_activate(
+                    state,
+                    popups,
+                    style,
+                    on_item_click,
+                    depth,
+                    idx,
+                    &callback_id,
+                );
             }
         }
+    }
+
+    /// Flash the highlight on the selected item, fire the callback, then close.
+    ///
+    /// Deselects → redraws → brief pause → reselects → redraws → pause → fires
+    /// callback → closes all popups.  Used by both mouse-click and keyboard-enter paths.
+    #[allow(clippy::too_many_arguments)]
+    fn flash_and_activate(
+        state: &Rc<RefCell<ContextMenuState>>,
+        popups: &PopupStack,
+        style: &Rc<RefCell<ContextMenuStyle>>,
+        on_item_click: &ItemClickCallback,
+        depth: usize,
+        idx: usize,
+        callback_id: &str,
+    ) {
+        let popup_ref = if depth < popups.borrow().len() {
+            Some(popups.borrow()[depth].clone())
+        } else {
+            None
+        };
+
+        let style_borrowed = style.borrow();
+
+        // Flash: deselect → redraw → pause → reselect → redraw → pause
+        state.borrow_mut().select_at_depth(depth, None);
+        if let Some(ref popup_ref) = popup_ref {
+            Self::render_menu_at_depth(state, &style_borrowed, popup_ref, depth);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        state.borrow_mut().select_at_depth(depth, Some(idx));
+        if let Some(ref popup_ref) = popup_ref {
+            Self::render_menu_at_depth(state, &style_borrowed, popup_ref, depth);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        drop(style_borrowed);
+
+        // Fire callback
+        if let Some(callback) = on_item_click.borrow().as_ref() {
+            callback(callback_id);
+        }
+
+        // Close all popups and reset state
+        for popup in popups.borrow().iter() {
+            *popup.borrow_mut() = None;
+        }
+        state.borrow_mut().reset();
     }
 
     /// Render at a specific depth (static helper for callbacks)
@@ -904,44 +952,21 @@ impl ContextMenu {
                 let current_depth = self.state.borrow().depth();
                 let state = self.state.borrow();
                 let selected_idx = state.selected_at_depth(current_depth);
-                let label = state.selected_label(None); // Use state's depth
+                let label = state.selected_label(None);
 
                 if let (Some(idx), Some(label)) = (selected_idx, label) {
                     let label_owned = label.to_string();
                     drop(state);
 
-                    // Get popup ref for animation
-                    let popup_ref = if current_depth < self.popups.borrow().len() {
-                        Some(self.popups.borrow()[current_depth].clone())
-                    } else {
-                        None
-                    };
-
-                    // Click animation (same as mouse click)
-                    self.state.borrow_mut().select_at_depth(current_depth, None);
-                    if let Some(ref popup_ref) = popup_ref {
-                        Self::render_menu_at_depth(&self.state, &style, popup_ref, current_depth);
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-
-                    self.state
-                        .borrow_mut()
-                        .select_at_depth(current_depth, Some(idx));
-                    if let Some(ref popup_ref) = popup_ref {
-                        Self::render_menu_at_depth(&self.state, &style, popup_ref, current_depth);
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-
-                    // Fire callback
-                    if let Some(callback) = self.on_item_click.borrow().as_ref() {
-                        callback(&label_owned);
-                    }
-
-                    // Close all popups and reset state
-                    for popup in self.popups.borrow().iter() {
-                        *popup.borrow_mut() = None;
-                    }
-                    self.state.borrow_mut().reset();
+                    Self::flash_and_activate(
+                        &self.state,
+                        &self.popups,
+                        &self.style,
+                        &self.on_item_click,
+                        current_depth,
+                        idx,
+                        &label_owned,
+                    );
                 }
             }
             keycodes::ESC => {
@@ -1003,10 +1028,7 @@ impl ContextMenu {
 
                     // Remember which parent item had the open submenu so we
                     // can restore selection on it after closing.
-                    let parent_item_idx = self
-                        .state
-                        .borrow()
-                        .open_submenu_at(target_depth);
+                    let parent_item_idx = self.state.borrow().open_submenu_at(target_depth);
 
                     // Hide submenu surfaces from current depth onwards
                     Self::hide_submenus_from_static(&self.state, &self.popups, current_depth);
@@ -1016,7 +1038,9 @@ impl ContextMenu {
 
                     // Restore selection on the parent item that had the submenu
                     if let Some(idx) = parent_item_idx {
-                        self.state.borrow_mut().select_at_depth(target_depth, Some(idx));
+                        self.state
+                            .borrow_mut()
+                            .select_at_depth(target_depth, Some(idx));
                     }
 
                     tracing::debug!("context_menu: after LEFT, is_visible={}", self.is_visible());

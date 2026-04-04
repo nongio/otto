@@ -672,8 +672,8 @@ impl App for TopBarApp {
             if let PointerEventKind::Press { button, .. } = event.kind {
                 if on_right {
                     match button {
-                        0x110 => self.handle_right_left_click(event),   // BTN_LEFT
-                        0x111 => self.handle_right_click(event),        // BTN_RIGHT → context menu
+                        0x110 => self.handle_right_click(event), // BTN_LEFT → context menu
+                        0x111 => self.handle_right_left_click(event), // BTN_RIGHT → SNI Activate
                         0x112 => self.handle_right_middle_click(event), // BTN_MIDDLE
                         _ => {}
                     }

@@ -76,7 +76,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 20. Each registered SNI item is rendered as an icon in the right zone. Icons are ordered by registration time, newest leftmost.
 21. Tray icon images are fetched via the SNI `IconPixmap` or `IconThemePath`/`IconName` properties. A fallback generic icon is shown if none is available.
 22. On hover, a tooltip is shown below the tray icon, sourced from the SNI `ToolTip` property.
-23. Left-click on a tray icon calls the SNI `Activate(x, y)` method. Right-click calls `ContextMenu(x, y)` and renders the resulting dbusmenu popup using the context menu system. Context menu behavior (selection, submenus, keyboard/mouse navigation) follows context-menus.md.
+23. Left-click on a tray icon opens the dbusmenu context menu via `ContextMenu(x, y)` and renders it using the context menu system. Context menu behavior (selection, submenus, keyboard/mouse navigation) follows context-menus.md. Right-click calls the SNI `Activate(x, y)` method (typically raises the application window).
 24. Middle-click calls the SNI `SecondaryActivate(x, y)` method.
 25. The bar listens for `NewIcon`, `NewStatus`, and `NewToolTip` signals to update icons without polling.
 26. Icons with `Status = Passive` may be hidden by user configuration (hidden icons tray, revealed on click of a chevron button).
