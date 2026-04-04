@@ -249,8 +249,9 @@ impl IslandApp {
                 if let Some(surface) = self.create_pill_subsurface() {
                     tracing::info!(%app_id, ?kind, %icon, "island created");
                     // Create EQ child subsurface for music islands.
+                    // Buffer sized for the largest EQ mode (expanded ~210×22).
                     let eq_surface = if *kind == IslandKind::Music {
-                        let eq = SubsurfaceSurface::new(surface.wl_surface(), 0, 0, 80, 28).ok();
+                        let eq = SubsurfaceSurface::new(surface.wl_surface(), 0, 0, 220, 32).ok();
                         if let Some(ref eq) = eq {
                             if let Some(ss) = eq.base_surface().surface_style() {
                                 ss.set_contents_gravity(ContentsGravity::Center);
@@ -1259,8 +1260,16 @@ impl App for IslandApp {
                         if let Some(mr) = self.music_monitor.renderer() {
                             let (w, h, _, _) = island.last_layout;
                             let (eq_w, eq_h, _, _) = mr.eq_layout(pmode, w, h);
+                            // EQ buffer is 220×32 logical. Center the EQ content in it.
+                            let buf_w = 220.0_f32;
+                            let buf_h = 32.0_f32;
                             eq_surf.draw(|canvas| {
+                                let tx = (buf_w - eq_w) / 2.0;
+                                let ty = (buf_h - eq_h) / 2.0;
+                                canvas.save();
+                                canvas.translate((tx, ty));
                                 mr.draw_eq_only(canvas, pmode, eq_w, eq_h);
+                                canvas.restore();
                             });
                         }
                     }
