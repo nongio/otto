@@ -1,167 +1,136 @@
 # Otto Islands
 
-A standalone otto-kit application that renders notification groups and live activities (music, timers) as a morphing pill-shaped UI anchored to the top-center of the screen.
+An experimental notification manager for Otto, inspired by the iOS dynamic island. It renders notification groups as morphing pill-shaped surfaces anchored to the top-center of the screen.
+
+Otto Islands is a standalone Wayland app that takes advantage of Otto's **experimental surface style protocol** (`otto-surface-style-v1`). This protocol gives clients direct access to the compositor's animated scene graph — similar to Core Animation on iOS/macOS. The app draws flat content once with Skia, and the compositor handles all animation, clipping, shadows, and blur at display refresh rate.
+
+## Surface Style Protocol
+
+The surface style protocol provides:
+
+- **Animated properties** — position, size, corner radius, opacity, with spring and easing curves, batched in transactions
+- **Graphical properties** — background color, shadow, background blur (frosted glass), masks-to-bounds (clipping)
+- **Content gravity** — how the client's buffer maps to the surface bounds on screen: resize, aspect fit, aspect fill, center (like `contentsGravity` in Core Animation)
+- **Transactions** — group multiple property changes into a single animated transition with shared timing
+
+Because animation runs compositor-side, the app has no render loop. It redraws a buffer only when notification content changes (new text, icon, count). All interpolation between states — spring physics, opacity fades, size morphing — is computed by the compositor every frame.
+
+```rust
+// Declare animation target — compositor interpolates
+let timing = scene.create_timing_function(qh, ());
+timing.set_spring(bounce, initial_velocity);
+let anim = scene.begin_transaction(qh, ());
+anim.set_duration(0.8);
+anim.set_timing_function(&timing);
+surface_style.set_size(w, h);
+surface_style.set_position(x, y);
+surface_style.set_corner_radius(radius);
+surface_style.set_opacity(1.0);
+anim.commit();  // compositor animates from current → target
+```
+
+> **Note:** The surface style protocol is Otto-specific and experimental. Otto Islands only works with the Otto compositor.
 
 ## Architecture
 
-### Subsurface Model (CALayer-style)
+### Subsurface Model
 
 Every visual element is its own **Wayland subsurface**, composed like Core Animation layers. The parent layer shell surface is a transparent container — all rendering happens in child subsurfaces.
 
 ```
-Layer shell surface (480x400, transparent, Overlay layer)
-  |
-  +-- pill subsurface (group tab: icon + app name + count + chevron)
-  +-- pill subsurface (another group)
-  +-- card subsurface (notification 1)
-  +-- card subsurface (notification 2)
-  +-- ...
+Layer shell surface (480×400, transparent, Overlay layer)
+  ├── pill subsurface (group: icon + app name + count)
+  ├── pill subsurface (another group)
+  ├── card subsurface (notification 1)
+  ├── card subsurface (notification 2)
+  └── ...
 ```
 
-Each subsurface is a `SubsurfaceSurface` from otto-kit with:
-- Its own Skia buffer for content rendering (460x100 logical pixels, 2x HiDPI)
-- Independent size, position, corner radius, opacity via `otto-surface-style-v1`
+Each subsurface has:
+- A Skia buffer for content (460×100 logical, 2× HiDPI)
+- Compositor-managed size, position, corner radius, opacity via surface style
 - Spring-animated transitions on all properties
-- Center anchor point (`set_anchor_point(0.5, 0.5)`) so all coordinates are center-based
+- Center anchor point — all coordinates are center-based
+
+### Surface Style Setup
+
+```rust
+// Island pill
+ss.set_background_color(0.03, 0.03, 0.03, 1.0);  // near-black
+ss.set_corner_radius(radius);
+ss.set_masks_to_bounds(ClipMode::Enabled);         // clip to rounded rect
+ss.set_shadow(0.2, 2.0, 0.0, 8.0, 0.0, 0.0, 0.0);
+ss.set_blend_mode(BlendMode::BackgroundBlur);      // frosted glass
+ss.set_contents_gravity(ContentsGravity::Center);  // buffer centered in bounds
+ss.set_anchor_point(0.5, 0.5);                     // transform origin at center
+```
+
+The app draws flat content. The compositor adds shape, blur, shadow, and animates between states.
+
+### Content Gravity
+
+The buffer is larger than the visible content (460×100 vs the actual pill/card size). `ContentsGravity::Center` tells the compositor to center the buffer within the animated bounds. As the compositor spring-animates the size, more or less of the pre-drawn buffer is revealed — no client-side redraw needed.
 
 ### Surface Lifecycle
 
 **Pill surfaces** are created when a notification group first appears and destroyed (deferred) when the group is dismissed.
 
-**Card surfaces** are created lazily when the stack opens and **reused across open/close cycles**:
-- On close: cards animate out (fade + slide up) but surfaces stay alive
-- On reopen: same surfaces are repositioned and faded back in
-- On notification dismiss: that card surface is deferred-destroyed (0.8s delay for animation)
-
-### Surface Style Protocol
-
-All visual chrome is handled by the compositor via `otto-surface-style-v1`:
-
-```rust
-// Island pill style
-ss.set_background_color(0.03, 0.03, 0.03, 1.0);  // near-black
-ss.set_corner_radius(radius * BUFFER_SCALE);
-ss.set_masks_to_bounds(ClipMode::Enabled);
-ss.set_shadow(0.2, 2.0, 0.0, 8.0, 0.0, 0.0, 0.0);
-ss.set_blend_mode(BlendMode::BackgroundBlur);      // frosted glass
-ss.set_contents_gravity(ContentsGravity::Center);
-ss.set_anchor_point(0.5, 0.5);                     // center anchor
-
-// Card style uses theme material colors
-ss.set_background_color(r, g, b, a);  // from theme.material_medium
-```
-
-The app draws flat content with Skia. The compositor handles shape, blur, shadow, and spring animations.
-
-### Animations
-
-All animations use spring-animated transactions:
-
-```rust
-// Example: animate to new position + size
-let timing = scene.create_timing_function(qh, ());
-timing.set_spring(0.25, 0.0);  // damping, stiffness
-let anim = scene.begin_transaction(qh, ());
-anim.set_duration(0.6);
-anim.set_delay(delay);
-anim.set_timing_function(&timing);
-scene_surface.set_size(w, h);
-scene_surface.set_position(x, y);  // center coords with anchor 0.5,0.5
-anim.commit();
-```
-
-Key animation helpers in `renderer.rs`:
-- `animate_to()` — spring position + size + corner radius
-- `animate_position_opacity()` — spring position + opacity only (size set instantly)
-- `animate_pulse()` — instantly grow, spring back to target (bump effect)
-- `animate_dismiss()` — scale up 1.2x + fade out (card dismiss)
-
-### Content Rendering
-
-Content is drawn with Skia into the subsurface buffer using `draw_centered()`:
-
-```rust
-draw_centered(&surface, content_w, content_h, |canvas| {
-    // Draw at (0,0). draw_centered translates to center in the buffer.
-    renderer::draw_pill(canvas, app_id, icon, count, expanded, w, h);
-});
-```
-
-The buffer is larger than the content (460x100) so content can be pre-drawn at full size. The compositor reveals it via spring-animated bounds.
+**Card surfaces** are created lazily when the stack opens and reused across open/close cycles. On dismiss, the card surface is deferred-destroyed (0.8s delay for animation completion).
 
 ### Input Region
 
-The Wayland input region controls which areas receive pointer events. It must be updated on every layout change:
+The Wayland input region controls pointer events. Updated on every layout change:
 
 ```rust
 // Per-island rect (exact size/position per mode)
-region.add(x, y, w, h);  // top-left coords, not center
+region.add(x, y, w, h);
 
-// Card stack: one continuous rect covering all cards + gaps
+// Expanded card stack: one continuous rect
 region.add(card_x, stack_top, card_w, stack_h);
 ```
 
-The region uses **top-left coordinates** (standard Wayland), not center coords. The layer surface is fixed at 480x400 so the region is never clipped by surface bounds.
-
-### Z-Order
-
-Subsurface stacking is controlled by `place_above`/`place_below`:
-
-```rust
-card.surface.place_below(pill.surface.wl_surface());
-```
-
-Cards are placed below the pill so the pill always renders on top of the stack.
-
-### Hit Testing
-
-`hit_test(px, py)` mirrors the layout math to determine what's under the pointer:
-- Returns `(app_id, None)` for pill/circle hits
-- Returns `(app_id, Some(activity_id))` for card hits
-- `island.cards` vec is kept sorted to match layout order
-
-The hit test uses **top-left coordinates** (Wayland pointer position), while layout uses center coords for animations. The hit test computes top-left bounds from the centered layout.
-
 ## Island Modes
 
-Each island cycles through three modes:
+Each island cycles through three display modes:
 
 | Mode | Visual | Size |
 |------|--------|------|
-| **Mini** | Small pill with icon + count | 44x28 (MINI_W x MINI_H) |
-| **Compact** | Full pill with icon + name + count + chevron | dynamic width x 36 |
-| **Expanded** | Compact pill + card stack below | max(pill_width, 300) x 36 |
+| **Mini** | Small pill with icon (+ count if > 1) | 28×28 or 44×28 |
+| **Compact** | Full pill with icon, app name, title | dynamic width × 36 |
+| **Expanded** | Compact pill + notification card stack | max(pill, 300) × 36 + cards |
 
-Click cycle: **Mini -> Expanded -> Compact -> Expanded -> ...**
+Click cycle: **Mini → Expanded → Compact → Expanded → ...**
 
-### Focus Rules
+### Focus & Timing
 
-- Only 1 island can be Compact/Expanded at a time
-- New notifications auto-focus their island
-- After 2s of no interaction, focused island shrinks to Mini
-- Focus loss (keyboard leave) closes expanded stack with 0.5s delay to Mini
+- Only one island can be Expanded at a time
+- Compact and Expanded islands coexist (e.g. a peeking notification alongside an open stack)
+- After 4s of inactivity, focused island shrinks to Mini
+- Pointer hover pauses the focus timer; it restarts on leave
+- Focus loss closes expanded cards (0.3s slide-up), then Compact → Mini after 2s
 
 ### Peek Animation
 
 When a new notification arrives in a Mini group:
 1. Pulse (bump +6px, spring back)
-2. Animate to Compact size (show content)
+2. Animate to Compact (show title preview)
 3. After 3s, spring back to Mini
+
+New notifications arriving while an island is Expanded or Compact refresh the content without changing mode.
 
 ## File Structure
 
 - `main.rs` — IslandApp, Island/CardSurface structs, layout, hit testing, pointer events
 - `renderer.rs` — Skia drawing (pills, cards, badges), animation helpers, surface style setup
-- `activity.rs` — Activity data model, PresentationMode enum
+- `activity.rs` — Activity data model
 - `state.rs` — SharedState with notification grouping, CRUD operations
 - `notifications.rs` — org.freedesktop.Notifications D-Bus daemon
 - `dbus_service.rs` — org.otto.Island1 custom D-Bus API
-- `music.rs` — MPRIS/PipeWire music integration
 
 ## Running
 
 ```sh
-# Run otto compositor first
+# Run Otto compositor first
 cargo run -- --winit &
 
 # Then run islands
