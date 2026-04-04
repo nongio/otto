@@ -36,25 +36,34 @@ fn app_display_name(app_id: &str) -> String {
 }
 
 /// Compute the width needed for a notification pill based on its content.
+/// Measures both rows (app name + title) and uses the wider one.
 pub fn pill_width(app_id: &str, title: &str, count: usize) -> f32 {
     let pad = 8.0;
     let icon_size = COMPACT_H - pad * 2.0;
     let text_x = pad + icon_size + 6.0;
     let badge_w = if count > 1 { 8.0 + 18.0 } else { 0.0 };
 
-    let label = if title.is_empty() {
-        app_display_name(app_id)
-    } else {
-        title.to_string()
-    };
-    let font = TextStyle {
+    // Top row: app name (9px)
+    let name = app_display_name(app_id);
+    let app_font = TextStyle {
         family: "Inter",
         weight: 600,
-        size: 12.0,
+        size: 9.0,
     }
     .font();
-    let (text_w, _) = font.measure_str(&label, None);
+    let (name_w, _) = app_font.measure_str(&name, None);
 
+    // Bottom row: notification title (11px)
+    let display_title = if title.is_empty() { &name } else { title };
+    let title_font = TextStyle {
+        family: "Inter",
+        weight: 600,
+        size: 11.0,
+    }
+    .font();
+    let (title_w, _) = title_font.measure_str(display_title, None);
+
+    let text_w = name_w.max(title_w);
     (text_x + text_w + badge_w + pad).clamp(MINI_W, 340.0)
 }
 
