@@ -1037,6 +1037,19 @@ impl IslandApp {
                     match island.mode {
                         IslandMode::Mini => {
                             tracing::info!(%app_id, "music click: Mini → Compact");
+                            // Close any expanded island so music can stay Compact.
+                            for other in self.islands.iter_mut().filter(|i| i.app_id != app_id) {
+                                if other.mode == IslandMode::Expanded {
+                                    Self::close_cards_for(other);
+                                    other.mode = IslandMode::Compact;
+                                    other.last_layout = (0.0, 0.0, 0.0, 0.0);
+                                }
+                            }
+                            let island = self
+                                .islands
+                                .iter_mut()
+                                .find(|i| i.app_id == app_id)
+                                .unwrap();
                             self.focused_app = Some(app_id.clone());
                             self.last_interaction = std::time::Instant::now();
                             island.mode = IslandMode::Compact;
