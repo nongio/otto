@@ -184,13 +184,23 @@ impl PopupSurface {
         width: i32,
         height: i32,
     ) -> Result<Self, SurfaceError> {
+        Self::new_for_layer_with_grab(layer_surface, positioner, width, height, None)
+    }
+
+    /// Create a new popup surface for a layer shell parent with optional keyboard grab.
+    pub fn new_for_layer_with_grab(
+        layer_surface: &ZwlrLayerSurfaceV1,
+        positioner: &XdgPositioner,
+        width: i32,
+        height: i32,
+        grab_serial: Option<u32>,
+    ) -> Result<Self, SurfaceError> {
         use crate::app_runner::AppContext;
-        println!("Creating popup surface for layer shell parent...");
         let compositor = AppContext::compositor_state();
         let xdg_shell = AppContext::xdg_shell_state();
         let qh = AppContext::queue_handle();
 
-        Self::new_for_layer_typed(
+        Self::new_for_layer_typed_with_grab(
             layer_surface,
             positioner,
             width,
@@ -198,6 +208,7 @@ impl PopupSurface {
             compositor,
             xdg_shell,
             qh,
+            grab_serial,
         )
     }
 
@@ -231,6 +242,38 @@ impl PopupSurface {
             + Dispatch<otto_surface_style_manager_v1::OttoSurfaceStyleManagerV1, ()>
             + 'static,
     {
+        Self::new_for_layer_typed_with_grab(
+            layer_surface,
+            positioner,
+            width,
+            height,
+            compositor,
+            xdg_shell,
+            qh,
+            None,
+        )
+    }
+
+    /// Create a new popup surface for a layer shell parent with optional keyboard grab.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_for_layer_typed_with_grab<D>(
+        layer_surface: &ZwlrLayerSurfaceV1,
+        positioner: &XdgPositioner,
+        width: i32,
+        height: i32,
+        compositor: &CompositorState,
+        xdg_shell: &XdgShell,
+        qh: &QueueHandle<D>,
+        grab_serial: Option<u32>,
+    ) -> Result<Self, SurfaceError>
+    where
+        D: Dispatch<wl_surface::WlSurface, SurfaceData>
+            + Dispatch<xdg_surface::XdgSurface, PopupData>
+            + Dispatch<xdg_popup::XdgPopup, PopupData>
+            + Dispatch<otto_surface_style_v1::OttoSurfaceStyleV1, ()>
+            + Dispatch<otto_surface_style_manager_v1::OttoSurfaceStyleManagerV1, ()>
+            + 'static,
+    {
         let wl_surface = compositor.create_surface(qh);
 
         // Create popup with NULL parent (required for layer shells)
@@ -246,9 +289,13 @@ impl PopupSurface {
         // Assign popup to layer surface via get_popup
         layer_surface.get_popup(popup.xdg_popup());
 
-        // NOTE: Skipping grab for now — layer shell popups with serial 0
-        // can cause the compositor to reject the popup immediately.
-        // Keyboard navigation can be added later with a valid serial.
+        // Request keyboard grab if we have a valid input serial
+        if let Some(serial) = grab_serial {
+            let seat_state = super::super::app_runner::AppContext::seat_state();
+            if let Some(seat) = seat_state.seats().next() {
+                popup.xdg_popup().grab(&seat, serial);
+            }
+        }
 
         // Use 2x buffer for HiDPI rendering
         let buffer_scale = 2;

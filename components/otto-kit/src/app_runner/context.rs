@@ -65,6 +65,10 @@ static RENDERER_THREAD: LazyLock<std::sync::Mutex<Option<std::thread::JoinHandle
 static RENDERER_EXIT_FLAG: LazyLock<std::sync::atomic::AtomicBool> =
     LazyLock::new(|| std::sync::atomic::AtomicBool::new(false));
 
+// -- Display scale factor (updated by compositor, default 1) --
+
+static DISPLAY_SCALE_FACTOR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(2);
+
 // -- Wakeup pipe (cross-thread) --
 
 use std::sync::OnceLock;
@@ -146,6 +150,17 @@ impl<'a> AppContext<'a> {
 
     pub fn compositor_state() -> &'static CompositorState {
         Self::with_global(|ctx| unsafe { &*(ctx.compositor_state_ref() as *const CompositorState) })
+    }
+
+    /// Returns the current display scale factor (updated by the compositor).
+    /// Defaults to 1 if no scale_factor_changed event has been received yet.
+    pub fn scale_factor() -> i32 {
+        DISPLAY_SCALE_FACTOR.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Update the stored display scale factor (called from CompositorHandler).
+    pub(crate) fn set_scale_factor(factor: i32) {
+        DISPLAY_SCALE_FACTOR.store(factor, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn xdg_shell_state() -> &'static XdgShell {

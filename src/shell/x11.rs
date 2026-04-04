@@ -291,13 +291,19 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
 
         self.workspaces
             .move_window_to_workspace(&elem, prev_workspace, restore_loc);
-        self.workspaces
+        let scroll_transaction = self
+            .workspaces
             .set_current_workspace_index(prev_workspace, Some(transition.clone()));
 
-        // Remove workspace BEFORE calling expose_set_visible so that its on_finish
-        // callback doesn't capture freed layer nodes from the fullscreen workspace.
-        self.workspaces
-            .remove_workspace_at(fullscreen_workspace_index);
+        // Defer fullscreen workspace removal until the scroll animation completes,
+        // so the workspace remains visible while scrolling away from it.
+        if let Some(tr) = &scroll_transaction {
+            self.workspaces
+                .defer_remove_workspace_at(fullscreen_workspace_index, tr);
+        } else {
+            self.workspaces
+                .remove_workspace_at(fullscreen_workspace_index);
+        }
 
         self.workspaces.expose_set_visible(false);
         self.workspaces.set_fullscreen_overlay_visibility(false);

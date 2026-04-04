@@ -8,7 +8,7 @@ use layers::prelude::*;
 use smithay::{
     backend::input::ButtonState,
     input::pointer::{CursorIcon, CursorImageStatus},
-    reexports::calloop::channel::{channel, Sender as CalloopSender},
+    reexports::calloop::channel::Sender as CalloopSender,
     utils::Coordinate,
 };
 
@@ -103,7 +103,8 @@ impl WorkspaceSelectorView {
     pub fn new(
         _layers_engine: Arc<Engine>,
         layer: Layer,
-    ) -> (Self, smithay::reexports::calloop::channel::Channel<usize>) {
+        remove_sender: CalloopSender<usize>,
+    ) -> Self {
         let state = WorkspaceSelectorViewState {
             workspaces: Vec::new(),
             current: 0,
@@ -122,7 +123,6 @@ impl WorkspaceSelectorView {
         let drop_targets = Arc::new(RwLock::new(Vec::new()));
         let drop_hover_index = Arc::new(RwLock::new(None));
         let pressed_action = Arc::new(RwLock::new(None));
-        let (remove_sender, remove_receiver) = channel::<usize>();
 
         // Setup post-render hook to update drop targets and animate new workspaces
         let drop_targets_clone = drop_targets.clone();
@@ -185,20 +185,17 @@ impl WorkspaceSelectorView {
             known.retain(|idx| state.workspaces.iter().any(|w| w.index == *idx));
         });
 
-        (
-            Self {
-                // engine: layers_engine,
-                layer,
-                view,
-                cursor_location: Arc::new(RwLock::new(Point::default())),
-                drop_targets,
-                drop_hover_index,
-                known_indices,
-                pressed_action,
-                remove_sender,
-            },
-            remove_receiver,
-        )
+        Self {
+            // engine: layers_engine,
+            layer,
+            view,
+            cursor_location: Arc::new(RwLock::new(Point::default())),
+            drop_targets,
+            drop_hover_index,
+            known_indices,
+            pressed_action,
+            remove_sender,
+        }
     }
 
     /// Get current drop targets (updated after each render)

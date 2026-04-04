@@ -300,7 +300,7 @@ impl Renderable for Icon {
                 match cache.get(icon_name) {
                     Some((data, size)) => (data, *size),
                     None => {
-                        eprintln!("Icon '{}' not found in Lucide set", icon_name);
+                        tracing::debug!("Icon '{}' not found in Lucide set", icon_name);
                         return;
                     }
                 }

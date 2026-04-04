@@ -1,558 +1,84 @@
-## Configuration
+# Configuration
 
-Otto uses a TOML configuration file to customize your experience. The configuration file allows you to control display settings, theming, input behavior, keyboard shortcuts, and more.
+Otto uses TOML configuration files to customize your experience. This page explains how config files are loaded and merged; the individual settings are documented in their own pages.
 
-### Configuration Files
+## Configuration Files
 
-Otto follows standard Linux configuration paths and searches for configuration files in the following order (later files override earlier ones):
+Otto searches for configuration files in the following order (later files override earlier ones):
 
 1. **System config**: `/etc/otto/config.toml`
-   - System-wide configuration managed by administrators
+   - System-wide defaults managed by administrators
    - Lowest priority
 
 2. **User config**: `$XDG_CONFIG_HOME/otto/config.toml`
    - Per-user configuration (defaults to `~/.config/otto/config.toml`)
    - Follows XDG Base Directory specification
-   - Recommended location for user customization
+   - **Recommended location** for user customization
 
 3. **Local override**: `./otto_config.toml`
-   - Config file in current working directory
+   - Config file in the current working directory
    - Useful for development and testing
-   - Overrides system and user configs
 
 4. **Backend-specific**: `./otto_config.{backend}.toml`
    - Backend-specific overrides (e.g., `otto_config.winit.toml`, `otto_config.udev.toml`)
    - Highest priority
    - Useful for maintaining different settings per backend during development
 
-**Getting Started:**
+Values from higher-priority files are merged recursively into lower-priority ones, so you only need to specify the options you want to override.
+
+## Getting Started
 
 ```bash
 # Create user config directory
 mkdir -p ~/.config/otto
 
-# Copy example config
+# Copy the example config (contains all options with documentation)
 cp otto_config.example.toml ~/.config/otto/config.toml
 
 # Edit as needed
 $EDITOR ~/.config/otto/config.toml
 ```
 
-A complete reference configuration with all available options is provided in `otto_config.example.toml`.
-
----
-
-### Display
-
-```toml
-# Overall scaling factor for all displays
-screen_scale = 2.0
-
-# Compositor backend mode: "drm" for bare metal, auto-detected otherwise
-compositor_mode = "drm"
-```
-
-**Named Displays**
-
-Configure specific displays by name (useful for development backends like winit):
-
-```toml
-[displays.named."winit"]
-resolution = { width = 1280, height = 1000 }
-refresh_hz = 60.0
-position = { x = 0, y = 0 }
-```
-
-**Generic Display Matching**
-
-Configure displays based on connector type:
-
-```toml
-[[displays.generic]]
-match = { connector_prefix = "HDMI" }
-resolution = { width = 1920, height = 1080 }
-refresh_hz = 60.0
-position = { x = 1920, y = 0 }
-```
-
----
-
-### Theme Configuration
-
-```toml
-# UI theme scheme
-theme_scheme = "Light"  # or "Dark"
-
-# Font configuration
-font_family = "Inter"
-
-# Background image (path relative to config file or absolute)
-background_image = "./resources/background.jpg"
-
-# Accent color for workspace and window selector borders
-accent_color = "blue"
-```
-
-**Accent Color**
-
-The `accent_color` option sets the highlight color used for workspace and window selection borders. Available colors:
-
-`red`, `orange`, `yellow`, `green`, `mint`, `teal`, `cyan`, `blue`, `indigo`, `purple`, `pink`, `gray`, `brown`
-
-The actual shade adapts to the current `theme_scheme` (Light or Dark). If an invalid name is provided, Otto falls back to `blue`.
-
-### Cursor Settings
-
-```toml
-# Cursor size in pixels
-cursor_size = 24
-
-# Cursor theme name (must be installed in standard icon directories)
-cursor_theme = "Notwaita-Black"
-```
-
-Available cursor themes can be found in:
-- `/usr/share/icons/`
-- `~/.local/share/icons/`
-- `~/.icons/`
-
-### Icon Theme
-
-```toml
-# Icon theme (auto-detected if not specified)
-icon_theme = "GNUstep"
-```
-
-Popular icon themes include:
-- **Notwaita** - Dark cursor theme
-- **Papirus** - Modern, colorful icon set
-- **Adwaita** - GNOME default icons
-- **Breeze** - KDE default icons
-- **WhiteSur** - macOS-inspired icons
-- **Yaru** - Ubuntu default icons
-- **Fluent** - Windows-inspired icons
-
-Icon themes are searched in the same directories as cursor themes.
-
----
-
-### Input Configuration
-
-**Keyboard Settings**
-
-```toml
-# Key repeat delay in milliseconds (time before repeat starts)
-keyboard_repeat_delay = 300
-
-# Key repeat rate (keys per second)
-keyboard_repeat_rate = 30
-```
-
-**Touchpad Settings**
-
-```toml
-[input]
-# Tap-to-click (1-finger = left, 2-finger = right, 3-finger = middle)
-tap_enabled = true
-
-# Tap-and-drag (tap, hold, and drag)
-tap_drag_enabled = true
-
-# Tap drag lock (lift finger during drag without releasing)
-tap_drag_lock_enabled = false
-
-# Click method:
-#   "clickfinger" = 1-finger=left, 2-finger=right, 3-finger=middle
-#   "buttonareas" = traditional (top-right corner = right click)
-touchpad_click_method = "clickfinger"
-
-# Disable touchpad while typing
-touchpad_dwt_enabled = true
-
-# Natural (reverse) scrolling
-touchpad_natural_scroll_enabled = true
-
-# Left-handed mode (swap left/right buttons)
-touchpad_left_handed = false
-
-# Middle mouse button emulation (left+right click simultaneously)
-touchpad_middle_emulation_enabled = false
-```
-
----
-
-### Layer Shell Configuration
-
-Control the maximum space that panels, bars, and docks can occupy:
-
-```toml
-[layer_shell]
-# Maximum exclusive zone per edge in logical points (0 = unlimited)
-# These values are multiplied by screen_scale to get physical pixels
-max_top = 100       # Top panels/bars
-max_bottom = 100    # Bottom panels/docks
-max_left = 50       # Left side panels
-max_right = 50      # Right side panels
-```
-
----
-
-### Power Management
-
-Configure how Otto handles laptop lid events:
-
-```toml
-[power_management]
-# Enable Otto's lid switch handling (default: true)
-# When false, all lid handling is delegated to systemd-logind
-manage_lid_switch = true
-
-# What to do when laptop lid closes (default: "auto")
-# Options:
-#   "auto" - Disable internal screen; allow suspend if no external monitor
-#   "disable_internal_screen" - Always disable screen but stay running
-on_lid_close = "auto"
-```
-
-When `manage_lid_switch` is enabled, Otto coordinates with systemd-logind to manage display state on lid close and open. In `"auto"` mode the internal display is disabled and the system may suspend if no external monitor is connected. Use `"disable_internal_screen"` for setups like docking stations where the laptop should keep running with the lid closed.
-
----
-
-### Audio & Sound Feedback
-
-Otto can play sound effects for UI events using the XDG Sound Theme specification.
-
-```toml
-[audio]
-# Enable sound effects for UI events like volume changes (default: true)
-sound_enabled = true
-
-# XDG Sound Theme name (optional, auto-detect if omitted)
-# Uses freedesktop.org Sound Theme specification for sound lookup
-# Common themes: "freedesktop", "Pop", "ocean", "Yaru"
-sound_theme = "freedesktop"  # Uncomment to override auto-detection
-```
-
-**Sound Events:**
-
-Currently supported events:
-- **`audio-volume-change`** - Plays when volume is adjusted with keyboard shortcuts
-
-**How Sound Lookup Works:**
-
-Otto searches for sounds in this order:
-
-1. **Custom sounds in resources/**
-   ```
-   resources/audio-volume-change.oga
-   resources/audio-volume-change.ogg
-   resources/audio-volume-change.wav
-   ```
-
-2. **Configured theme** (if `sound_theme` is set)
-   ```
-   /usr/share/sounds/{theme}/stereo/{event}.oga
-   ```
-
-3. **Auto-detected system theme** (from desktop environment or gsettings)
-
-4. **Freedesktop fallback theme**
-   ```
-   /usr/share/sounds/freedesktop/stereo/audio-volume-change.oga
-   ```
-
-**Common Sound Themes:**
-
-- **freedesktop** - Standard freedesktop.org sounds (minimal, universally available)
-- **Pop** - Pop!_OS sound theme (modern, pleasant clicks)
-- **ocean** - KDE Plasma's Ocean theme
-- **Yaru** - Ubuntu's default theme
-
-**Disabling Sound Effects:**
-
-```toml
-[audio]
-sound_enabled = false
-```
-
-**Custom Sounds:**
-
-Place your own sound files in the `resources/` directory with the event name:
-
-```bash
-# Create resources directory if it doesn't exist
-mkdir -p resources
-
-# Add custom volume change sound
-cp ~/my-click-sound.oga resources/audio-volume-change.oga
-```
-
-Supported formats: `.oga` (Ogg Vorbis), `.ogg`, `.wav`, `.flac`
-
----
-
-### Application Defaults
-
----
-
-### Keyboard Shortcuts
-
-Remap individual keys:
-
-```toml
-[key_remap]
-"BackSpace" = "Delete"
-```
-
-**Modifier Remapping**
-
-Remap modifier keys (currently commented out in example):
-
-```toml
-# [modifier_remap]
-# logo = "ctrl"  # Remap Logo/Super key to Control
-```
-
-Define custom keyboard shortcuts:
-
-```toml
-[keyboard_shortcuts]
-# System controls
-"Ctrl+Alt+BackSpace" = "Quit"
-"Logo+Q" = "Quit"
-
-# Launch applications
-"Logo+Return" = { run = { cmd = "terminator", args = [] } }
-"Logo+Space" = { run = { cmd = "dolphin", args = [] } }
-"Logo+Shift+B" = { open_default = "browser" }
-
-# Workspace/screen switching
-"Logo+1" = { builtin = "Screen", index = 0 }
-"Logo+2" = { builtin = "Screen", index = 1 }
-# ... (up to Logo+9)
-
-# Display controls
-"Logo+Shift+M" = "ScaleDown"
-"Logo+Shift+P" = "ScaleUp"
-"Logo+Shift+R" = "RotateOutput"
-
-# Window management
-"Logo+ArrowUp" = "ToggleMaximizeWindow"
-"Alt+W" = "CloseWindow"
-"Alt+Shift+W" = "CloseWindow"
-
-# Application switcher
-"Alt+Tab" = "ApplicationSwitchNext"
-"Alt+Shift+Tab" = "ApplicationSwitchPrev"
-"Alt+`" = "ApplicationSwitchNextWindow"
-"Alt+Q" = "ApplicationSwitchQuit"
-
-# Expose mode
-"Alt+D" = "ExposeShowDesktop"
-"Alt+F" = "ExposeShowAll"
-
-# Debug
-"Logo+Shift+I" = { run = { cmd = "layers_debug", args = [] } }
-"Alt+J" = "SceneSnapshot"
-```
-
-### **Available Shortcut Actions**
-
-- `"Quit"` - Exit Otto
-
-**Window Management:**
-- `"ToggleMaximizeWindow"` - Maximize/restore focused window
-- `"CloseWindow"` - Close focused window
-
-**Application Switching:**
-- `"ApplicationSwitchNext"` - Switch to next application
-- `"ApplicationSwitchPrev"` - Switch to previous application
-- `"ApplicationSwitchNextWindow"` - Switch to next window of current app
-- `"ApplicationSwitchQuit"` - Close application switcher
-
-**Expose Mode:**
-- `"ExposeShowDesktop"` - Show desktop (minimize all)
-- `"ExposeShowAll"` - Show all windows (expose mode)
-
-**Display Controls:**
-- `"ScaleDown"` - Decrease display scale
-- `"ScaleUp"` - Increase display scale
-- `"RotateOutput"` - Rotate display
-- `"BrightnessUp"` - Increase screen brightness (requires sysfs access)
-- `"BrightnessDown"` - Decrease screen brightness (requires sysfs access)
-- `{ builtin = "Screen", index = N }` - Switch to screen N
-
-**Launch Application:**
-```toml
-{ run = { cmd = "app-name", args = ["arg1", "arg2"] } }
-```
-
-**Open Default Application:**
-```toml
-{ open_default = "browser" }  # or "terminal", "file_manager"
-```
-
----
-
-### Dock Configuration
-
-Customize the dock appearance and bookmarked applications:
-
-```toml
-[dock]
-# Dock size multiplier (0.5 - 2.0, default: 1.0)
-size = 1.0
-
-# Genie effect parameters for minimize animation
-genie_scale = 0.5
-genie_span = 10.0
-
-# Auto-hide the dock when the pointer leaves (default: false)
-# The dock reappears when the pointer enters the dock hot-zone.
-autohide = false
-
-# Icon magnification on hover (default: true)
-# Icons scale up as the pointer approaches, similar to macOS Dock.
-# The effect intensity is controlled by genie_scale and genie_span.
-magnification = true
-
-# Optional icon colorization
-# When enabled, dock app icons are tinted to this color (hex RGB).
-colorize_icons = false
-colorize_color = "#ffffff"
-colorize_intensity = 1.0
-
-# Bookmarked applications
-bookmarks = [
-  { desktop_id = "org.kde.dolphin.desktop" },
-  { desktop_id = "org.mozilla.firefox.desktop", label = "Web", exec_args = ["--private-window"] },
-  { desktop_id = "code.desktop" }
-]
-```
-
-**Autohide**
-
-When `autohide` is enabled the dock slides off-screen when the pointer leaves and reappears when the pointer enters the dock hot-zone. The animation uses a spring curve (0.5 s duration). Autohide can also be toggled at runtime from the dock right-click context menu.
-
-**Magnification**
-
-When `magnification` is enabled (the default), dock icons scale up as the pointer approaches them, similar to macOS. The maximum magnification is controlled by `genie_scale` (default 0.5, meaning icons grow up to 150 % of their base size) and the falloff curve is controlled by `genie_span` (default 10.0 — higher values make the effect more localised).
-
-**Dock Bookmark Options**
-
-Each bookmark entry can have:
-- `desktop_id` - Desktop file ID (required)
-- `label` - Custom display name (optional)
-- `exec_args` - Additional command-line arguments (optional)
-
-Desktop files are typically found in:
-- `/usr/share/applications/`
-- `~/.local/share/applications/`
-
----
-
-### Night Shift / Color Temperature
-
-Otto supports color temperature adjustment (night shift/blue light reduction) through the `wlr-gamma-control-v1` Wayland protocol. This uses **hardware DRM gamma tables** for efficient, battery-friendly color adjustment with smooth 500ms animated transitions.
-
-**Recommended Tools:**
-
-- **[wlsunset](https://sr.ht/~kennylevinsen/wlsunset/)** - Automatic day/night color temperature adjustment based on time and location
-- **[gammastep](https://gitlab.com/chinstrap/gammastep)** - Fork of Redshift with Wayland support
-- **[wl-gammactl](https://github.com/mischw/wl-gammactl)** - Manual gamma control tool
-
-**Example: Using wlsunset**
-
-```bash
-# Auto-adjust based on location (Oslo, Norway)
-wlsunset -l 59.9 -L 10.8
-
-# Manual temperature (warm, 3000K)
-wlsunset -T 3000
-
-# Different day/night temperatures
-wlsunset -t 3400 -T 6500 -l 59.9 -L 10.8
-```
-
-Color changes animate smoothly over 500ms. When the client disconnects, the display smoothly fades back to neutral (6500K).
-
-**Brightness Control:**
-
-Otto also supports screen brightness control via keyboard shortcuts (see example configuration). Brightness is adjusted through system interfaces and works independently of color temperature.
-
-Example shortcuts:
-```toml
-[keyboard_shortcuts]
-"XF86MonBrightnessUp" = "BrightnessUp"
-"XF86MonBrightnessDown" = "BrightnessDown"
-```
-
-**Battery Efficiency:**
-
-Unlike GPU shader-based implementations, Otto's gamma control uses hardware lookup tables at the display controller level, resulting in negligible power consumption (~0.5-1% vs 3-8% for shader-based approaches).
-
----
-
-### Autostart (exec-once)
-
-Define commands to run automatically when Otto starts. Entries are executed in order; each process is spawned non-blocking (fire-and-forget). Otto does not restart crashed processes — use systemd or another supervisor for process management.
-
-```toml
-[[exec_once]]
-cmd = "waybar"
-args = []
-
-[[exec_once]]
-cmd = "dunst"
-args = []
-
-[[exec_once]]
-cmd = "wlsunset"
-args = ["-l", "48.8", "-L", "2.3"]
-```
-
-Each entry takes:
-- `cmd` — the executable to run (must be on `$PATH` or an absolute path)
-- `args` — optional list of command-line arguments (defaults to empty)
-
-Commands are spawned after the Wayland socket is ready, so `WAYLAND_DISPLAY` is already set in the child environment. When XWayland is active, `DISPLAY` will be set once XWayland is ready, but it may not be available immediately for very early autostart commands.
-
----
+## Configuration Topics
+
+| Topic | Description |
+|-------|-------------|
+| [Display](display.md) | Scaling, display profiles, layer shell zones |
+| [Theming](theming.md) | Theme scheme, accent color, fonts, background, cursors, icons |
+| [Input](input.md) | Keyboard repeat, touchpad, pointer acceleration |
+| [Keyboard Shortcuts](keyboard-shortcuts.md) | Key remapping, shortcut bindings, available actions |
+| [Dock](dock.md) | Dock appearance, bookmarks, autohide, magnification |
+| [Audio](audio.md) | Sound effects and sound themes |
+| [Power Management](power-management.md) | Lid switch behavior |
+| [Night Shift](night-shift.md) | Color temperature and brightness control |
+| [Autostart](autostart.md) | exec_once, XDG autostart, systemd integration |
+| [Clipboard](clipboard.md) | Clipboard persistence and managers |
 
 ## Tips
 
-1. **Start with the example**: Copy `otto_config.example.toml` to `~/.config/otto/config.toml` and modify as needed
-2. **Use XDG paths**: Store your user config in `~/.config/otto/config.toml` for persistence across updates
-3. **System-wide defaults**: Administrators can set defaults in `/etc/otto/config.toml`
-4. **Backend-specific settings**: Use `otto_config.winit.toml` in current directory for development/testing
-5. **Icon/cursor themes**: List available themes with `ls /usr/share/icons` and `ls ~/.local/share/icons`
-6. **Test shortcuts**: Use simple shortcuts first to verify your configuration is loading correctly
-7. **Scaling**: Adjust `screen_scale` based on your display DPI (1.0 for 96 DPI, 2.0 for 192 DPI/HiDPI)
-
----
+1. **Start with the example** — copy `otto_config.example.toml` to `~/.config/otto/config.toml` and modify as needed.
+2. **Use XDG paths** — `~/.config/otto/config.toml` persists across updates.
+3. **System-wide defaults** — administrators can set defaults in `/etc/otto/config.toml`.
+4. **Backend-specific settings** — use `otto_config.winit.toml` in the current directory for development/testing.
+5. **Scaling** — adjust `screen_scale` based on your display DPI (1.0 for 96 DPI, 2.0 for HiDPI).
 
 ## Troubleshooting
 
 **Configuration not loading:**
-- Verify the TOML syntax is correct (matching brackets, quotes, commas)
-- Check Otto's log output for parsing errors and which config files were loaded
-- Ensure the config file is in one of the searched locations:
-  - `/etc/otto/config.toml` (system)
-  - `~/.config/otto/config.toml` (user)
-  - `./otto_config.toml` (local)
-  - `./otto_config.{backend}.toml` (backend-specific)
+- Verify the TOML syntax (matching brackets, quotes, commas).
+- Check Otto's log output for parsing errors and which config files were loaded.
+- Ensure the config file is in one of the searched locations listed above.
 
 **Icon/cursor theme not found:**
 - Verify the theme is installed: `ls /usr/share/icons/ ~/.local/share/icons/`
-- Theme names are case-sensitive
-- Some themes may require additional packages
+- Theme names are case-sensitive.
+- Some themes may require additional packages.
 
 **Keyboard shortcuts not working:**
-- Ensure modifier keys use correct names: `Logo`, `Ctrl`, `Alt`, `Shift`
-- Key names are case-sensitive
-- Some shortcuts may conflict with system bindings
+- Modifier names are `Logo`, `Ctrl`, `Alt`, `Shift` (case-sensitive).
+- Some shortcuts may conflict with system bindings.
 
 **Touchpad settings ignored:**
-- Settings only apply to touchpad devices, not mice
-- Some hardware may not support all features
-- Check `libinput` capabilities for your device
+- Settings only apply to touchpad devices, not mice.
+- Some hardware may not support all features.
+- Check `libinput` capabilities for your device.

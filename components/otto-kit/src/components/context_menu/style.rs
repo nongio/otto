@@ -72,11 +72,11 @@ impl Default for ContextMenuStyle {
             min_width: 220.0,
             horizontal_padding: 5.0,
             vertical_padding: 5.0,
-            corner_radius: 6.0,
+            corner_radius: 8.0,
             border_width: 1.0,
             show_delay_mouse: 0.2,
             show_delay_keyboard: 0.0, // Instant on keyboard
-            close_delay: 0.4,
+            close_delay: 0.15,
             draw_scale: 1.0,
             theme: Theme::light(),
         }
@@ -152,11 +152,11 @@ impl ContextMenuStyle {
 
     /// Get the background color from theme
     pub fn background_color(&self) -> skia_safe::Color {
-        self.theme.material_titlebar
+        self.theme.material_medium
     }
 
-    /// Get the border color from theme
+    /// Get the border color from theme — lighter than the background for definition
     pub fn border_color(&self) -> skia_safe::Color {
-        self.theme.fill_secondary
+        self.theme.fill_primary
     }
 }

@@ -25,10 +25,57 @@ impl ContextMenuRenderer {
         let height: f32 = items.iter().map(|item| item.height).sum();
         let height = (height + style.vertical_padding * 2.0) * s;
 
-        // Use provided width or minimum, then scale
-        let width = style.width.unwrap_or(style.min_width) * s;
+        // Use provided width or compute from content, then scale
+        let width = style
+            .width
+            .unwrap_or_else(|| Self::compute_optimal_width(items, style).max(style.min_width))
+            * s;
 
         (width, height)
+    }
+
+    /// Compute the optimal menu width based on item label text measurements.
+    ///
+    /// Measures every label (and shortcut) with the actual font, adds padding
+    /// for icons and submenu arrows, and returns the widest row in logical pixels.
+    pub fn compute_optimal_width(items: &[MenuItem], style: &ContextMenuStyle) -> f32 {
+        use crate::components::menu_item::{MenuItemKind, MenuItemStyle};
+
+        let font = crate::typography::styles::BODY_MEDIUM.font();
+        let item_style = MenuItemStyle::default();
+        let icon_size: f32 = 16.0;
+        let icon_gap: f32 = 6.0;
+        let submenu_arrow_space: f32 = 20.0;
+
+        let mut max_width: f32 = 0.0;
+        for item in items {
+            let (label, shortcut, is_submenu) = match &item.kind {
+                MenuItemKind::Action {
+                    label, shortcut, ..
+                } => (label.as_str(), shortcut.as_deref(), false),
+                MenuItemKind::Submenu { label, .. } => (label.as_str(), None, true),
+                MenuItemKind::Separator => continue,
+            };
+
+            let (label_w, _) = font.measure_str(label, None);
+            let mut row_w = item_style.horizontal_padding * 2.0 + label_w;
+
+            if item.icon.is_some() {
+                row_w += icon_size + icon_gap;
+            }
+            if let Some(sc) = shortcut {
+                let (sc_w, _) = font.measure_str(sc, None);
+                row_w += sc_w + 20.0; // gap between label and shortcut
+            }
+            if is_submenu {
+                row_w += submenu_arrow_space;
+            }
+
+            max_width = max_width.max(row_w);
+        }
+
+        // Add context menu horizontal padding (both sides)
+        max_width + style.horizontal_padding * 2.0
     }
 
     /// Render items at a specific depth with specific selection
@@ -138,31 +185,28 @@ impl ContextMenuRenderer {
         x: f32,
         y: f32,
     ) -> Option<usize> {
-        // Check if inside horizontal bounds (with padding)
-        let scale = 1.0;
-        let total_width = (style.width.unwrap_or(style.min_width)) * scale;
-        if x < style.horizontal_padding * scale
-            || x > total_width - style.horizontal_padding * scale
-        {
+        // Use the same width logic as measure_items
+        let total_width = style
+            .width
+            .unwrap_or_else(|| Self::compute_optimal_width(items, style).max(style.min_width));
+        if x < style.horizontal_padding || x > total_width - style.horizontal_padding {
             return None;
         }
 
         // Check if inside vertical bounds (with padding)
         let total_height =
-            (style.vertical_padding + items.iter().map(|item| item.height).sum::<f32>()) * scale;
-        if y < style.vertical_padding * scale || y > total_height {
+            style.vertical_padding + items.iter().map(|item| item.height).sum::<f32>();
+        if y < style.vertical_padding || y > total_height {
             return None;
         }
 
         // Calculate position relative to first item
-        let mut current_y = style.vertical_padding * scale;
+        let mut current_y = style.vertical_padding;
 
         for (i, item) in items.iter().enumerate() {
-            let item_bottom = current_y + item.height * scale;
+            let item_bottom = current_y + item.height;
 
             if y >= current_y && y < item_bottom {
-                // Found the item at this position
-                // Return None for separators (not selectable)
                 return if item.is_separator() { None } else { Some(i) };
             }
 
