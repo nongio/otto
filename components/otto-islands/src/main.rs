@@ -107,8 +107,10 @@ struct IslandApp {
     music_monitor: MusicMonitor,
     /// Currently pressed music control (for visual feedback).
     music_pressed: Option<(music::MusicAction, std::time::Instant)>,
-    /// Last time the music surface was redrawn (throttle to ~24fps).
+    /// Last time the music EQ was redrawn (throttle to ~24fps).
     music_last_redraw: std::time::Instant,
+    /// Last time the full music pill was redrawn (progress bar, ~1fps).
+    music_last_full_redraw: std::time::Instant,
 }
 
 impl IslandApp {
@@ -125,6 +127,7 @@ impl IslandApp {
             music_monitor,
             music_pressed: None,
             music_last_redraw: std::time::Instant::now(),
+            music_last_full_redraw: std::time::Instant::now(),
         }
     }
 
@@ -1267,6 +1270,28 @@ impl App for IslandApp {
                                 canvas.translate((tx, ty));
                                 mr.draw_eq_only(canvas, pmode, eq_w, eq_h);
                                 canvas.restore();
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Full pill redraw every 1s when expanded (progress bar + time counter).
+        if music_playing && self.music_last_full_redraw.elapsed().as_millis() >= 1000 {
+            self.music_last_full_redraw = std::time::Instant::now();
+            for island in &self.islands {
+                if island.kind == IslandKind::Music && island.mode == IslandMode::Expanded {
+                    if let Some(mut mr) = self.music_monitor.renderer() {
+                        if let Some((action, instant)) = &self.music_pressed {
+                            if instant.elapsed().as_millis() < 300 {
+                                mr.pressed = Some(*action);
+                            }
+                        }
+                        let (w, h, _, _) = island.last_layout;
+                        if w > 0.0 && h > 0.0 {
+                            draw_centered(&island.surface, w, h, |canvas| {
+                                mr.draw_without_eq(canvas, PresentationMode::Expanded, w, h);
                             });
                         }
                     }
