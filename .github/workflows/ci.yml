@@ -77,7 +77,7 @@ jobs:
       - name: Install cargo-deb
         run: cargo install cargo-deb
       - name: Build workspace binaries
-        run: cargo build --release -p otto -p xdg-desktop-portal-otto
+        run: cargo build --release -p otto -p otto-topbar -p xdg-desktop-portal-otto
       - name: Build Debian package
         run: cargo deb --no-strip
       - name: Upload Debian package
@@ -108,7 +108,7 @@ jobs:
       - name: Install cargo-generate-rpm
         run: cargo install cargo-generate-rpm
       - name: Build workspace binaries
-        run: cargo build --release -p otto -p xdg-desktop-portal-otto
+        run: cargo build --release -p otto -p otto-topbar -p xdg-desktop-portal-otto
       - name: Build RPM package
         run: cargo generate-rpm
       - name: Upload RPM package
@@ -137,7 +137,7 @@ jobs:
       - name: System dependencies
         run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev hicolor-icon-theme
       - name: Build workspace binaries
-        run: cargo build --release -p otto -p xdg-desktop-portal-otto
+        run: cargo build --release -p otto -p otto-topbar -p xdg-desktop-portal-otto
       - name: Build Arch tarball
         run: |
           PKGVER=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
@@ -145,6 +145,7 @@ jobs:
           tmpdir=$(mktemp -d)
           PKGDIR="otto-${PKGVER}"
           install -Dm755 target/release/otto "$tmpdir/$PKGDIR/target/release/otto"
+          install -Dm755 target/release/otto-bar "$tmpdir/$PKGDIR/target/release/otto-bar"
           install -Dm755 target/release/xdg-desktop-portal-otto "$tmpdir/$PKGDIR/target/release/xdg-desktop-portal-otto"
           install -m644 LICENSE "$tmpdir/$PKGDIR/LICENSE"
           install -m644 README.md "$tmpdir/$PKGDIR/README.md"

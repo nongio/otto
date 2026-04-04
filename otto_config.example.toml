@@ -29,6 +29,10 @@ keyboard_repeat_rate = 30
 # restart crashed processes; use systemd or another supervisor for that.
 #
 # [[exec_once]]
+# cmd = "otto-bar"
+# args = []
+#
+# [[exec_once]]
 # cmd = "waybar"
 # args = []
 #

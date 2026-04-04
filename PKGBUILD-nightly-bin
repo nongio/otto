@@ -31,7 +31,7 @@ package() {
 
     # Install binaries
     install -Dm755 target/release/otto "$pkgdir/usr/bin/otto"
-    install -Dm755 target/release/otto-topbar "$pkgdir/usr/bin/otto-topbar"
+    install -Dm755 target/release/otto-bar "$pkgdir/usr/bin/otto-bar"
     install -Dm755 target/release/xdg-desktop-portal-otto "$pkgdir/usr/libexec/xdg-desktop-portal-otto"
 
     # Install documentation

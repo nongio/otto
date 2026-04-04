@@ -164,6 +164,7 @@ section = "x11"
 priority = "optional"
 assets = [
     ["target/release/otto", "usr/bin/", "755"],
+    ["target/release/otto-bar", "usr/bin/", "755"],
     ["target/release/xdg-desktop-portal-otto", "usr/libexec/", "755"],
     ["README.md", "usr/share/doc/otto/", "644"],
     ["LICENSE", "usr/share/doc/otto/", "644"],
@@ -177,6 +178,7 @@ assets = [
 [package.metadata.generate-rpm]
 assets = [
     { source = "target/release/otto", dest = "/usr/bin/otto", mode = "755" },
+    { source = "target/release/otto-bar", dest = "/usr/bin/otto-bar", mode = "755" },
     { source = "target/release/xdg-desktop-portal-otto", dest = "/usr/libexec/xdg-desktop-portal-otto", mode = "755" },
     { source = "README.md", dest = "/usr/share/doc/otto/README.md", mode = "644", doc = true },
     { source = "LICENSE", dest = "/usr/share/doc/otto/LICENSE", mode = "644", doc = true },
@@ -225,6 +227,7 @@ optdepends = [
 ]
 files = [
     ["target/release/otto", "/usr/bin/otto", "755"],
+    ["target/release/otto-bar", "/usr/bin/otto-bar", "755"],
     ["target/release/xdg-desktop-portal-otto", "/usr/libexec/xdg-desktop-portal-otto", "755"],
     ["README.md", "/usr/share/doc/otto/README.md", "644"],
     ["LICENSE", "/usr/share/licenses/otto/LICENSE", "644"],
