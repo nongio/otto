@@ -415,6 +415,7 @@ pub fn apply_card_style(surface: &otto_kit::SubsurfaceSurface) {
         );
         ss.set_corner_radius(CARD_RADIUS as f64 * BUFFER_SCALE);
         ss.set_masks_to_bounds(ClipMode::Enabled);
+        ss.set_shadow(0.25, 16.0, 0.0, 1.0, 0.0, 0.0, 0.0);
         ss.set_blend_mode(BlendMode::BackgroundBlur);
         ss.set_contents_gravity(ContentsGravity::Center);
         ss.set_anchor_point(0.5, 0.5);
