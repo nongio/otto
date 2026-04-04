@@ -293,7 +293,7 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
             .move_window_to_workspace(&elem, prev_workspace, restore_loc);
         let scroll_transaction = self
             .workspaces
-            .set_current_workspace_index(prev_workspace, Some(transition));
+            .set_current_workspace_index(prev_workspace, Some(transition.clone()));
 
         // Defer fullscreen workspace removal until the scroll animation completes,
         // so the workspace remains visible while scrolling away from it.

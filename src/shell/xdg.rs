@@ -754,7 +754,7 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                     );
                     let scroll_transaction = self
                         .workspaces
-                        .set_current_workspace_index(we.get_workspace(), Some(transition));
+                        .set_current_workspace_index(we.get_workspace(), Some(transition.clone()));
 
                     // Defer fullscreen workspace removal until the scroll animation completes,
                     // so the workspace remains visible while scrolling away from it.
