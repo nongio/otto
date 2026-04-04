@@ -278,9 +278,15 @@ impl IslandApp {
 
         // Assign modes: focused gets Compact/Expanded, peeking stays Compact, rest → Mini.
         // Expanded islands are preserved — they coexist with Compact (peeking) islands.
+        // Music islands stay Compact by default (persistent live activity).
         for island in &mut self.islands {
             if island.mode == IslandMode::Expanded {
                 // Expanded stays Expanded — only user interaction (click/focus loss) closes it.
+            } else if island.kind == IslandKind::Music {
+                // Music stays Compact — it's a persistent live activity.
+                if island.mode == IslandMode::Mini {
+                    island.mode = IslandMode::Compact;
+                }
             } else if Some(&island.app_id) == self.focused_app.as_ref() {
                 if island.mode == IslandMode::Mini {
                     island.mode = IslandMode::Compact;
