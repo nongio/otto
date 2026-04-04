@@ -72,6 +72,31 @@ impl ActivityRenderer for MusicActivityRenderer {
 }
 
 impl MusicActivityRenderer {
+    /// Return the bounding rect of the EQ bars region for partial redraws.
+    /// Coordinates are relative to the content origin (0,0).
+    pub fn eq_region(&self, mode: PresentationMode, w: f32, h: f32) -> Rect {
+        match mode {
+            PresentationMode::Minimal | PresentationMode::Idle => {
+                // Mini: entire surface is the EQ
+                Rect::from_xywh(0.0, 0.0, w, h)
+            }
+            PresentationMode::Compact | PresentationMode::Banner => {
+                // Compact: EQ is on the right side
+                let pad = 8.0;
+                let icon_size = h - pad * 2.0;
+                let eq_x = w - pad - 80.0; // approximate EQ area on right
+                Rect::from_xywh(eq_x.max(0.0), 0.0, w - eq_x.max(0.0), h)
+            }
+            PresentationMode::Expanded => {
+                // Expanded: EQ is in the bottom-right area
+                let pad = 12.0;
+                let art_size = h - pad * 2.0;
+                let rx = pad + art_size + pad;
+                Rect::from_xywh(rx, h * 0.4, w - rx, h * 0.6)
+            }
+        }
+    }
+
     /// Hit test within the expanded player. `lx`, `ly` are local coords
     /// relative to the top-left of the expanded island content.
     pub fn hit_test_expanded(&self, lx: f32, ly: f32, w: f32, h: f32) -> Option<MusicAction> {

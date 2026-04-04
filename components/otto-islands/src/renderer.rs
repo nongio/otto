@@ -598,3 +598,28 @@ pub fn draw_centered(
         canvas.restore();
     });
 }
+
+/// Draw into a specific region of the centered content area.
+/// `region` is relative to the content origin (0,0 = top-left of content).
+/// Only the region is cleared, drawn, and damaged — the rest of the buffer is untouched.
+pub fn draw_centered_region(
+    surface: &otto_kit::SubsurfaceSurface,
+    content_w: f32,
+    content_h: f32,
+    region: skia_safe::Rect,
+    draw_fn: impl FnOnce(&skia_safe::Canvas),
+) {
+    let tx = (SLOT_BUF_W as f32 - content_w) / 2.0;
+    let ty = (SLOT_BUF_H as f32 - content_h) / 2.0;
+    // Translate region to buffer coordinates.
+    let buf_region = skia_safe::Rect::from_xywh(
+        tx + region.left,
+        ty + region.top,
+        region.width(),
+        region.height(),
+    );
+    surface.draw_region(buf_region, |canvas| {
+        canvas.translate((tx, ty));
+        draw_fn(canvas);
+    });
+}

@@ -1235,10 +1235,18 @@ impl App for IslandApp {
                         }
                         let (w, h, _, _) = island.last_layout;
                         if w > 0.0 && h > 0.0 {
-                            draw_centered(&island.surface, w, h, |canvas| {
-                                use crate::activity::ActivityRenderer;
-                                mr.draw(canvas, pmode, w, h);
-                            });
+                            use crate::activity::ActivityRenderer;
+                            let eq_rect = mr.eq_region(pmode, w, h);
+                            renderer::draw_centered_region(
+                                &island.surface,
+                                w,
+                                h,
+                                eq_rect,
+                                |canvas| {
+                                    // Redraw only the EQ region — clip handles the rest.
+                                    mr.draw(canvas, pmode, w, h);
+                                },
+                            );
                         }
                     }
                 }

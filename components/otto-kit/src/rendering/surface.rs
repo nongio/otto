@@ -121,6 +121,52 @@ impl SkiaSurface {
         }
     }
 
+    /// Draw into a specific region of the surface without clearing the rest.
+    /// `region` is in logical coordinates (pre-scale). Only the region is cleared, drawn, and damaged.
+    pub fn draw_region<F>(&self, ctx: &mut super::SkiaContext, region: skia_safe::Rect, draw_fn: F)
+    where
+        F: FnOnce(&Canvas),
+    {
+        if self.cached_surface.borrow().is_none() {
+            self.initialize_skia_surface(ctx);
+        }
+
+        AppContext::with_egl_resources(&self.surface_id, |res| unsafe {
+            let egl = khronos_egl::DynamicInstance::<khronos_egl::EGL1_4>::load_required().unwrap();
+            egl.make_current(
+                ctx.egl_display(),
+                Some(res.egl_surface),
+                Some(res.egl_surface),
+                Some(ctx.egl_context()),
+            )
+            .ok();
+        });
+
+        if let Some(ref mut skia_surface) = *self.cached_surface.borrow_mut() {
+            let canvas = skia_surface.canvas();
+            canvas.save();
+            canvas.scale((2.0, 2.0));
+
+            // Clip to region, clear only that area, draw, restore.
+            canvas.save();
+            canvas.clip_rect(region, skia_safe::ClipOp::Intersect, false);
+            canvas.clear(skia_safe::Color::TRANSPARENT);
+            draw_fn(canvas);
+            canvas.restore();
+
+            canvas.restore();
+        }
+    }
+
+    /// Commit only a specific damaged region (in physical pixels, 2x scaled).
+    pub fn commit_region(&self, region: skia_safe::IRect) {
+        AppContext::with_egl_resources(&self.surface_id, |res| {
+            res.wl_surface
+                .damage_buffer(region.x(), region.y(), region.width(), region.height());
+            res.wl_surface.commit();
+        });
+    }
+
     /// Initialize the Skia surface (cold path - called once)
     fn initialize_skia_surface(&self, ctx: &mut super::SkiaContext) {
         AppContext::with_egl_resources(&self.surface_id, |res| {
