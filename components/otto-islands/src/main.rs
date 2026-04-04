@@ -32,7 +32,7 @@ const LAYER_H: u32 = 400; // Tall enough for pill + MAX_VISIBLE_CARDS cards.
 const BAR_HEIGHT: f32 = 36.0;
 const GAP: f32 = 6.0;
 /// Seconds of inactivity before the focused island shrinks to Mini.
-const FOCUS_TIMEOUT_SECS: f64 = 2.0;
+const FOCUS_TIMEOUT_SECS: f64 = 4.0;
 
 // ---------------------------------------------------------------------------
 // Island — one notification group or music activity
@@ -997,7 +997,7 @@ impl App for IslandApp {
                 changed = true;
             }
         }
-        // Shorten the focus timeout — go to Mini after 0.5s instead of full 2s.
+        // Shorten the focus timeout — go to Mini after 0.5s instead of full timeout.
         let fast_timeout = Duration::from_secs_f64(FOCUS_TIMEOUT_SECS - 0.5);
         self.last_interaction = std::time::Instant::now() - fast_timeout;
         if changed {

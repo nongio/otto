@@ -55,7 +55,7 @@ pub fn pill_width(app_id: &str, title: &str, count: usize) -> f32 {
     .font();
     let (text_w, _) = font.measure_str(&label, None);
 
-    (text_x + text_w + badge_w + pad).clamp(MINI_W, 300.0)
+    (text_x + text_w + badge_w + pad).clamp(MINI_W, 340.0)
 }
 
 pub fn draw_pill(
