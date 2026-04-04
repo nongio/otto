@@ -997,8 +997,8 @@ impl App for IslandApp {
                 changed = true;
             }
         }
-        // Shorten the focus timeout — go to Mini after 0.5s instead of full timeout.
-        let fast_timeout = Duration::from_secs_f64(FOCUS_TIMEOUT_SECS - 0.5);
+        // Shorten the focus timeout — go to Mini after 2s instead of full timeout.
+        let fast_timeout = Duration::from_secs_f64(FOCUS_TIMEOUT_SECS - 2.0);
         self.last_interaction = std::time::Instant::now() - fast_timeout;
         if changed {
             let mut state = self.state.lock().unwrap();
