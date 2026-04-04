@@ -444,23 +444,34 @@ impl IslandApp {
 
         // Apply pulse and peek as Compact for new notifications.
         for (idx, w, h, cx, cy) in pulse_targets {
-            tracing::info!(
-                app_id = %self.islands[idx].app_id,
-                from = ?self.islands[idx].mode,
-                "pulse → peek Compact for 3s"
-            );
-            renderer::animate_pulse(
-                &self.islands[idx].surface,
-                w,
-                h,
-                cx,
-                cy,
-                h as f64 / 2.0,
-                6.0,
-            );
-            self.islands[idx].last_layout = (w, h, cx, cy);
-            self.islands[idx].peek_until = Some(std::time::Instant::now() + Duration::from_secs(3));
-            self.islands[idx].mode = IslandMode::Compact;
+            let current_mode = self.islands[idx].mode;
+            // If already Compact or Expanded, don't downgrade — just refresh content.
+            if current_mode == IslandMode::Expanded || current_mode == IslandMode::Compact {
+                tracing::info!(
+                    app_id = %self.islands[idx].app_id,
+                    mode = ?current_mode,
+                    "new notification while open — refresh only"
+                );
+            } else {
+                tracing::info!(
+                    app_id = %self.islands[idx].app_id,
+                    from = ?current_mode,
+                    "pulse → peek Compact for 3s"
+                );
+                renderer::animate_pulse(
+                    &self.islands[idx].surface,
+                    w,
+                    h,
+                    cx,
+                    cy,
+                    h as f64 / 2.0,
+                    6.0,
+                );
+                self.islands[idx].last_layout = (w, h, cx, cy);
+                self.islands[idx].peek_until =
+                    Some(std::time::Instant::now() + Duration::from_secs(3));
+                self.islands[idx].mode = IslandMode::Compact;
+            }
             self.islands[idx].last_layout = (0.0, 0.0, 0.0, 0.0);
             // Update tracking now so the next sync doesn't re-trigger.
             let app_id = &self.islands[idx].app_id;
