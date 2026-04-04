@@ -72,6 +72,20 @@ impl ActivityRenderer for MusicActivityRenderer {
 }
 
 impl MusicActivityRenderer {
+    /// Draw everything except the EQ bars (for the main pill surface).
+    /// The EQ is rendered on a separate child subsurface.
+    pub fn draw_without_eq(&self, canvas: &Canvas, mode: PresentationMode, w: f32, h: f32) {
+        match mode {
+            PresentationMode::Compact | PresentationMode::Banner => {
+                self.draw_compact_without_eq(canvas, w, h)
+            }
+            PresentationMode::Expanded => self.draw_open_without_eq(canvas, w, h),
+            PresentationMode::Minimal | PresentationMode::Idle => {
+                // Mini: EQ IS the content, nothing else to draw.
+            }
+        }
+    }
+
     /// Return the EQ subsurface size and offset (relative to pill top-left) for each mode.
     /// Returns (eq_w, eq_h, offset_x, offset_y).
     pub fn eq_layout(&self, mode: PresentationMode, w: f32, h: f32) -> (f32, f32, f32, f32) {
@@ -107,7 +121,10 @@ impl MusicActivityRenderer {
             PresentationMode::Minimal | PresentationMode::Idle => {
                 self.draw_minimal(canvas, w, h);
             }
-            PresentationMode::Compact | PresentationMode::Banner | PresentationMode::Expanded => {
+            PresentationMode::Compact | PresentationMode::Banner => {
+                self.draw_equalizer_n(canvas, 0.0, 0.0, w, h, 4);
+            }
+            PresentationMode::Expanded => {
                 self.draw_equalizer_large(canvas, 0.0, 0.0, w, h);
             }
         }
@@ -249,6 +266,90 @@ impl MusicActivityRenderer {
 
         self.draw_skip_prev_a(canvas, ctrl_cx - icon_gap, ctrl_y, icon_size, prev_alpha);
         self.draw_play_pause_a(canvas, ctrl_cx, ctrl_y, icon_size + 4.0, pp_alpha);
+        self.draw_skip_next_a(canvas, ctrl_cx + icon_gap, ctrl_y, icon_size, next_alpha);
+    }
+
+    fn draw_compact_without_eq(&self, canvas: &Canvas, w: f32, h: f32) {
+        let v_pad = 7.0;
+        let h_pad = 10.0;
+        let art_size = h - v_pad * 2.0;
+        let art_x = h_pad;
+        let art_y = v_pad;
+
+        self.draw_art(canvas, art_x, art_y, art_size);
+
+        let compact_bars = 4;
+        let eq_area_w = compact_bars as f32 * 3.0 + (compact_bars as f32 - 1.0) * 2.0;
+        let eq_x = w - h_pad - eq_area_w;
+
+        let text_x = art_x + art_size + h_pad;
+        let text_max_w = eq_x - text_x - h_pad;
+
+        let mid = h / 2.0;
+        Self::draw_text(
+            canvas,
+            &self.title,
+            text_x,
+            mid - 1.0,
+            11.0,
+            220,
+            text_max_w,
+        );
+
+        let af = font(9.5);
+        let mut ap = Paint::default();
+        ap.set_anti_alias(true);
+        ap.set_color(Color::from_argb(140, 170, 170, 170));
+        let artist = trim_to_width(&self.artist, &af, text_max_w.max(20.0));
+        canvas.draw_str(artist, (text_x, mid + 10.0), &af, &ap);
+    }
+
+    fn draw_open_without_eq(&self, canvas: &Canvas, w: f32, h: f32) {
+        let pad = 12.0;
+        let art_size = h - pad * 2.0;
+
+        self.draw_art(canvas, pad, pad, art_size);
+
+        let rx = pad + art_size + pad;
+        let rw = w - rx - pad;
+
+        Self::draw_text(canvas, &self.title, rx, pad + 13.0, 13.0, 255, rw);
+        let af = font(10.0);
+        let mut ap = Paint::default();
+        ap.set_anti_alias(true);
+        ap.set_color(Color::from_argb(150, 180, 180, 180));
+        let artist = trim_to_width(&self.artist, &af, rw.max(20.0));
+        canvas.draw_str(artist, (rx, pad + 27.0), &af, &ap);
+
+        // Progress bar
+        let prog_y = h - pad - 26.0;
+        self.draw_progress_large(canvas, rx, prog_y, rw);
+
+        // Controls
+        let ctrl_y = h - pad - 6.0;
+        let ctrl_cx = rx + rw / 2.0;
+        let icon_gap = 36.0;
+        let icon_size = 12.0;
+
+        let prev_alpha = if self.pressed == Some(MusicAction::SkipPrev) {
+            120
+        } else {
+            200
+        };
+        self.draw_skip_prev_a(canvas, ctrl_cx - icon_gap, ctrl_y, icon_size, prev_alpha);
+
+        let pp_alpha = if self.pressed == Some(MusicAction::PlayPause) {
+            120
+        } else {
+            255
+        };
+        self.draw_play_pause_a(canvas, ctrl_cx, ctrl_y, icon_size + 2.0, pp_alpha);
+
+        let next_alpha = if self.pressed == Some(MusicAction::SkipNext) {
+            120
+        } else {
+            200
+        };
         self.draw_skip_next_a(canvas, ctrl_cx + icon_gap, ctrl_y, icon_size, next_alpha);
     }
 

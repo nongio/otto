@@ -516,8 +516,7 @@ impl IslandApp {
                         }
                     }
                     draw_centered(&island.surface, w, h, |canvas| {
-                        use crate::activity::ActivityRenderer;
-                        mr.draw(canvas, pmode, w, h);
+                        mr.draw_without_eq(canvas, pmode, w, h);
                     });
                     // Position and resize the EQ child subsurface.
                     // EQ is a child of the pill — position is relative to pill origin.
