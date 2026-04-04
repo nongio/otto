@@ -47,6 +47,13 @@ thread_local! {
     static TRANSACTION_COMPLETION_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnOnce()>>> = RefCell::new(HashMap::new());
 }
 
+// -- Cursor shape state --
+
+thread_local! {
+    static CURSOR_SHAPE_DEVICE: RefCell<Option<wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>> = const { RefCell::new(None) };
+    static LAST_POINTER_ENTER_SERIAL: RefCell<u32> = const { RefCell::new(0) };
+}
+
 // -- Rendering state --
 
 thread_local! {
@@ -110,6 +117,7 @@ pub struct AppContextData {
     pub wlr_layer_shell: Option<ZwlrLayerShellV1>,
     pub subcompositor: Option<wayland_client::protocol::wl_subcompositor::WlSubcompositor>,
     pub otto_dock_manager: Option<crate::protocols::otto_dock_manager_v1::OttoDockManagerV1>,
+    pub cursor_shape_manager: Option<wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
     pub display_ptr: *mut std::ffi::c_void,
 }
 
@@ -397,6 +405,45 @@ impl<'a> AppContext<'a> {
     pub fn current_theme() -> crate::theme::Theme {
         use crate::theme::Theme;
         Theme::for_scheme(crate::color_scheme::current_color_scheme())
+    }
+
+    // ========================================================================
+    // Cursor shape (wp_cursor_shape_v1)
+    // ========================================================================
+
+    pub(crate) fn set_last_pointer_enter_serial(serial: u32) {
+        LAST_POINTER_ENTER_SERIAL.with(|s| *s.borrow_mut() = serial);
+    }
+
+    pub(crate) fn ensure_cursor_shape_device<A: super::App + 'static>(
+        context_data: &AppContextData,
+        pointer: &wayland_client::protocol::wl_pointer::WlPointer,
+        qh: &QueueHandle<super::AppData<A>>,
+    ) {
+        CURSOR_SHAPE_DEVICE.with(|d| {
+            if d.borrow().is_some() {
+                return;
+            }
+            if let Some(ref manager) = context_data.cursor_shape_manager {
+                let device = manager.get_pointer(pointer, qh, ());
+                *d.borrow_mut() = Some(device);
+            }
+        });
+    }
+
+    /// Set the cursor shape for the current pointer.
+    ///
+    /// Uses `wp_cursor_shape_v1` — no bitmap loading needed.
+    /// Call this from `on_pointer_event` on Enter/Motion events.
+    pub fn set_cursor_shape(
+        shape: wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape,
+    ) {
+        let serial = LAST_POINTER_ENTER_SERIAL.with(|s| *s.borrow());
+        CURSOR_SHAPE_DEVICE.with(|d| {
+            if let Some(ref device) = *d.borrow() {
+                device.set_shape(serial, shape);
+            }
+        });
     }
 
     // ========================================================================

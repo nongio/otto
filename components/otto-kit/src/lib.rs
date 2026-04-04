@@ -34,6 +34,9 @@ pub use surfaces::{
 // Re-export app framework
 pub use app_runner::{App, AppContext, AppRunner, AppRunnerWithType};
 
+// Re-export cursor shape type for apps
+pub use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape as CursorShape;
+
 /// Convenience prelude for application development
 pub mod prelude {
     pub use crate::app_runner::{App, AppContext, AppRunner, AppRunnerWithType};

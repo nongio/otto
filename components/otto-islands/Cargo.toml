@@ -1,0 +1,17 @@
+[package]
+name = "otto-islands"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+otto-kit = { path = "../otto-kit" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+zbus = "4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+skia-safe = "=0.93"
+smithay-client-toolkit = { version = "0.19", default-features = false }
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+libc = "0.2"

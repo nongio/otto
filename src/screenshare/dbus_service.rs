@@ -515,19 +515,39 @@ impl StreamInterface {
     }
 }
 
-/// Compositor health monitoring interface.
-///
-/// Provides a simple ping/pong mechanism for watchdog health checks.
-pub struct CompositorHealthInterface;
+/// Compositor D-Bus interface for health checks and app management.
+pub struct CompositorInterface {
+    compositor_tx: Sender<CompositorCommand>,
+}
+
+impl CompositorInterface {
+    fn new(compositor_tx: Sender<CompositorCommand>) -> Self {
+        Self { compositor_tx }
+    }
+}
 
 #[interface(name = "org.otto.Compositor")]
-impl CompositorHealthInterface {
+impl CompositorInterface {
     /// Ping method for watchdog health checks.
     ///
     /// Returns "pong" if the compositor is responsive.
     async fn ping(&self) -> zbus::fdo::Result<String> {
         debug!("Ping received from watchdog");
         Ok("pong".to_string())
+    }
+
+    /// Focus an application window by app_id.
+    ///
+    /// Raises the most recent window belonging to the given app_id and
+    /// gives it keyboard focus. Returns true if a matching window was found.
+    async fn focus_app(&self, app_id: &str) -> zbus::fdo::Result<bool> {
+        info!(app_id, "focus_app requested via D-Bus");
+        self.compositor_tx
+            .send(CompositorCommand::FocusApp {
+                app_id: app_id.to_string(),
+            })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("channel send failed: {e}")))?;
+        Ok(true)
     }
 }
 
@@ -544,11 +564,11 @@ pub async fn run_dbus_service(compositor_tx: Sender<CompositorCommand>) -> zbus:
 
     connection.request_name("org.otto.ScreenCast").await?;
 
-    // Register the health interface for watchdog
-    let health = CompositorHealthInterface;
+    // Register the compositor interface (health + app management)
+    let compositor = CompositorInterface::new(compositor_tx);
     connection
         .object_server()
-        .at("/org/otto/Compositor", health)
+        .at("/org/otto/Compositor", compositor)
         .await?;
 
     connection.request_name("org.otto.Compositor").await?;

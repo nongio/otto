@@ -12,6 +12,30 @@ use smithay::{
     wayland::{input_method::InputMethodSeat, shell::wlr_layer::Layer as WlrLayer},
 };
 
+/// Check if a point (in surface-local logical coordinates) falls within the
+/// parent surface's input region.  Returns `true` when the region allows input
+/// at that point (or when no explicit region is set, which means "accept all").
+///
+/// This is used as an additional gate for layer-shell hit testing: Wayland
+/// subsurfaces have their own input regions and are not clipped by the parent's
+/// region, but for compositor UI (layer shells with subsurfaces) we want the
+/// parent's input region to act as the authoritative clickable area.
+fn point_in_surface_input_region(
+    surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    point: Point<f64, Logical>,
+) -> bool {
+    smithay::wayland::compositor::with_states(surface, |states| {
+        let mut attrs = states
+            .cached_state
+            .get::<smithay::wayland::compositor::SurfaceAttributes>();
+        let attrs = attrs.current();
+        match &attrs.input_region {
+            Some(region) => region.contains(point.to_i32_round()),
+            None => true, // no region set = accept all
+        }
+    })
+}
+
 #[cfg(any(feature = "winit", feature = "x11", feature = "udev"))]
 use smithay::backend::input::AbsolutePositionEvent;
 
@@ -129,6 +153,21 @@ impl<BackendData: Backend> Otto<BackendData> {
                     let lay_layer = &layer_shell_surf.layer;
                     if lay_layer.cointains_point((phys.x as f32, phys.y as f32)) {
                         let ls = layer_shell_surf.layer_surface();
+                        let render_pos = lay_layer.render_position();
+                        let layer_abs_pos: Point<f64, Logical> =
+                            Point::from((render_pos.x as f64 / scale, render_pos.y as f64 / scale));
+                        let relative_pos = self.pointer.current_location() - layer_abs_pos;
+                        // Gate on the parent surface's input region so that
+                        // subsurfaces outside it don't intercept events.
+                        if !point_in_surface_input_region(ls.wl_surface(), relative_pos) {
+                            continue;
+                        }
+                        if ls
+                            .surface_under(relative_pos, WindowSurfaceType::ALL)
+                            .is_none()
+                        {
+                            continue;
+                        }
                         if ls.can_receive_keyboard_focus() {
                             keyboard.set_focus(self, Some(ls.clone().into()), serial);
                             found_layer_focus = true;
@@ -191,6 +230,19 @@ impl<BackendData: Backend> Otto<BackendData> {
                     let lay_layer = &layer_shell_surf.layer;
                     if lay_layer.cointains_point((phys.x as f32, phys.y as f32)) {
                         let ls = layer_shell_surf.layer_surface();
+                        let render_pos = lay_layer.render_position();
+                        let layer_abs_pos: Point<f64, Logical> =
+                            Point::from((render_pos.x as f64 / scale, render_pos.y as f64 / scale));
+                        let relative_pos = self.pointer.current_location() - layer_abs_pos;
+                        if !point_in_surface_input_region(ls.wl_surface(), relative_pos) {
+                            continue;
+                        }
+                        if ls
+                            .surface_under(relative_pos, WindowSurfaceType::ALL)
+                            .is_none()
+                        {
+                            continue;
+                        }
                         if ls.can_receive_keyboard_focus() {
                             keyboard.set_focus(self, Some(ls.clone().into()), serial);
                         }
@@ -321,6 +373,11 @@ impl<BackendData: Backend> Otto<BackendData> {
                         Point::from((render_pos.x as f64 / scale, render_pos.y as f64 / scale));
                     let ls = layer_shell_surf.layer_surface().clone();
                     let relative_pos = pos - layer_abs_pos;
+                    // Gate on the parent surface's input region so that
+                    // subsurfaces outside it don't intercept events.
+                    if !point_in_surface_input_region(ls.wl_surface(), relative_pos) {
+                        continue;
+                    }
                     if let Some((surface, surface_loc)) =
                         ls.surface_under(relative_pos, WindowSurfaceType::ALL)
                     {
@@ -328,10 +385,10 @@ impl<BackendData: Backend> Otto<BackendData> {
                             PointerFocusTarget::WlSurface(surface),
                             layer_abs_pos + surface_loc.to_f64(),
                         ));
-                    } else {
-                        under = Some((ls.into(), layer_abs_pos));
+                        break;
                     }
-                    break;
+                    // surface_under returned None — the point is outside the
+                    // input region. Continue checking other layers / windows.
                 }
             }
         }
@@ -384,6 +441,9 @@ impl<BackendData: Backend> Otto<BackendData> {
                         Point::from((render_pos.x as f64 / scale, render_pos.y as f64 / scale));
                     let ls = layer_shell_surf.layer_surface().clone();
                     let relative_pos = pos - layer_abs_pos;
+                    if !point_in_surface_input_region(ls.wl_surface(), relative_pos) {
+                        continue;
+                    }
                     if let Some((surface, surface_loc)) =
                         ls.surface_under(relative_pos, WindowSurfaceType::ALL)
                     {
@@ -747,5 +807,106 @@ impl crate::Otto<crate::udev::UdevData> {
         } else {
             (clamped_x, pos_y).into()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use smithay::utils::{Logical, Point, Rectangle};
+    use smithay::wayland::compositor::RegionAttributes;
+
+    /// Simulates the input-region gate used in layer-shell hit testing.
+    /// When a region is set, only points inside it should pass.
+    /// When no region is set (None), all points pass.
+    fn region_contains(region: &Option<RegionAttributes>, point: Point<i32, Logical>) -> bool {
+        match region {
+            Some(r) => r.contains(point),
+            None => true,
+        }
+    }
+
+    #[test]
+    fn no_region_accepts_all_points() {
+        let region: Option<RegionAttributes> = None;
+        assert!(region_contains(&region, (0, 0).into()));
+        assert!(region_contains(&region, (500, 500).into()));
+        assert!(region_contains(&region, (-10, -10).into()));
+    }
+
+    #[test]
+    fn empty_region_rejects_all_points() {
+        let region = Some(RegionAttributes { rects: vec![] });
+        assert!(!region_contains(&region, (0, 0).into()));
+        assert!(!region_contains(&region, (100, 15).into()));
+    }
+
+    #[test]
+    fn single_rect_region_clips_subsurface_area() {
+        // Simulates a compact music pill: 220x30 centered in a 480px-wide layer
+        // that has subsurfaces extending to 460x140.  Without the input-region
+        // gate the subsurface area (y > 30) would still intercept pointer events.
+        let x = 130; // (480 - 220) / 2
+        let region = Some(RegionAttributes {
+            rects: vec![(
+                smithay::wayland::compositor::RectangleKind::Add,
+                Rectangle::new((x, 0).into(), (220, 30).into()),
+            )],
+        });
+
+        // Inside the pill — should pass
+        assert!(region_contains(&region, (200, 15).into()));
+        assert!(region_contains(&region, (130, 0).into()));
+        assert!(region_contains(&region, (349, 29).into()));
+
+        // Outside the pill — should be rejected so subsurfaces don't intercept
+        assert!(!region_contains(&region, (0, 15).into())); // left of pill
+        assert!(!region_contains(&region, (400, 15).into())); // right of pill
+        assert!(!region_contains(&region, (200, 50).into())); // below pill
+        assert!(!region_contains(&region, (200, 200).into())); // far below (subsurface buffer)
+    }
+
+    #[test]
+    fn expanded_region_covers_pill_and_cards() {
+        // Simulates expanded notification island: pill + card stack
+        let pill = (
+            smithay::wayland::compositor::RectangleKind::Add,
+            Rectangle::new((130, 0).into(), (220, 30).into()),
+        );
+        let cards = (
+            smithay::wayland::compositor::RectangleKind::Add,
+            Rectangle::new((90, 34).into(), (300, 200).into()),
+        );
+        let region = Some(RegionAttributes {
+            rects: vec![pill, cards],
+        });
+
+        // In pill
+        assert!(region_contains(&region, (200, 15).into()));
+        // In cards
+        assert!(region_contains(&region, (200, 100).into()));
+        // Gap between pill and cards
+        assert!(!region_contains(&region, (200, 32).into()));
+        // Outside both
+        assert!(!region_contains(&region, (50, 15).into()));
+    }
+
+    #[test]
+    fn region_with_subtract_creates_hole() {
+        let region = Some(RegionAttributes {
+            rects: vec![
+                (
+                    smithay::wayland::compositor::RectangleKind::Add,
+                    Rectangle::new((0, 0).into(), (480, 400).into()),
+                ),
+                (
+                    smithay::wayland::compositor::RectangleKind::Subtract,
+                    Rectangle::new((100, 100).into(), (100, 100).into()),
+                ),
+            ],
+        });
+
+        assert!(region_contains(&region, (50, 50).into()));
+        assert!(!region_contains(&region, (150, 150).into())); // in the hole
+        assert!(region_contains(&region, (250, 250).into()));
     }
 }

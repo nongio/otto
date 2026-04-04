@@ -103,6 +103,8 @@ pub enum CompositorCommand {
     },
     /// Destroy a session.
     DestroySession { session_id: String },
+    /// Focus an application by app_id (e.g. from notification click).
+    FocusApp { app_id: String },
 }
 
 /// Information about an available output.
@@ -406,6 +408,10 @@ fn handle_screenshare_command<B: crate::state::Backend + 'static>(
             } else {
                 tracing::warn!("Session not found for destruction: {}", session_id);
             }
+        }
+        CompositorCommand::FocusApp { app_id } => {
+            tracing::info!("FocusApp: {}", app_id);
+            state.focus_app(&app_id);
         }
     }
 }

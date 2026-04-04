@@ -392,6 +392,14 @@ impl<BackendData: Backend> Otto<BackendData> {
             ),
         > = std::collections::HashMap::new();
 
+        // Track per-parent child ordering as Smithay delivers it
+        // (respects wl_subsurface.place_above / place_below reordering)
+        #[allow(clippy::mutable_key_type)]
+        let mut children_order: std::collections::HashMap<
+            smithay::reexports::wayland_server::backend::ObjectId,
+            Vec<smithay::reexports::wayland_server::backend::ObjectId>,
+        > = std::collections::HashMap::new();
+
         smithay::wayland::compositor::with_surface_tree_downward(
             &wl_surface,
             initial_context,
@@ -439,10 +447,13 @@ impl<BackendData: Backend> Otto<BackendData> {
                     parent_id.clone(),
                 ) {
                     render_elements.push_front(wvs.clone());
-                    surface_info.insert(
-                        surface.id(),
-                        (surface.clone(), *location, parent_id.clone()),
-                    );
+                    let sid = surface.id();
+                    surface_info
+                        .insert(sid.clone(), (surface.clone(), *location, parent_id.clone()));
+                    // Record child ordering per parent for subsurface reordering
+                    if let Some(pid) = parent_id {
+                        children_order.entry(pid.clone()).or_default().push(sid);
+                    }
                 } else {
                     // Null buffer — hide the layer so unmapped subsurfaces don't linger
                     if let Some(layer) = self.surface_layers.get(&surface.id()) {
@@ -488,6 +499,19 @@ impl<BackendData: Backend> Otto<BackendData> {
                                 .layers_engine
                                 .append_layer(&surface_layer, parent_layer.id());
                         }
+                    }
+                }
+            }
+        }
+
+        // Re-append children in Smithay's subsurface order so that
+        // place_above / place_below reordering is reflected in lay-rs.
+        for (parent_id, child_ids) in children_order.iter() {
+            if let Some(parent_layer) = self.surface_layers.get(parent_id) {
+                let parent_node = parent_layer.id();
+                for child_id in child_ids {
+                    if let Some(child_layer) = self.surface_layers.get(child_id) {
+                        let _ = self.layers_engine.append_layer(child_layer, parent_node);
                     }
                 }
             }
