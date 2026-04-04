@@ -945,7 +945,11 @@ impl Workspaces {
         let num_workspaces = self.with_model(|m| m.workspaces.len());
         for i in 0..num_workspaces {
             let animated = i == current_workspace;
-            let workspace_transition = if animated { Some(transition) } else { None };
+            let workspace_transition = if animated {
+                Some(transition.clone())
+            } else {
+                None
+            };
             self.expose_show_all_end(i, current_delta, target_show_all, workspace_transition);
         }
     }
@@ -1414,7 +1418,7 @@ impl Workspaces {
                     x: 0.0,
                     y: workspace_selector_y,
                 },
-                transition,
+                transition.clone(),
             );
             if transition.is_some() {
                 window_selector_view_ref.set_position((0.0, 0.0), None);
@@ -1498,9 +1502,9 @@ impl Workspaces {
                 self.layer_shell_top.set_hidden(false);
             }
             self.layer_shell_overlay
-                .set_opacity(layer_shell_fade_opacity, transition);
+                .set_opacity(layer_shell_fade_opacity, transition.clone());
             self.layer_shell_top
-                .set_opacity(layer_shell_fade_opacity, transition);
+                .set_opacity(layer_shell_fade_opacity, transition.clone());
             // When fully faded out without an ongoing animation, hide immediately
             if layer_shell_fade_opacity == 0.0 && transition.is_none() {
                 self.layer_shell_top.set_hidden(true);
@@ -1555,7 +1559,7 @@ impl Workspaces {
             self.layer_shell_top.set_hidden(false);
         }
         self.layer_shell_overlay
-            .set_opacity(target_opacity, transition);
+            .set_opacity(target_opacity, transition.clone());
         let layer_shell_top_ref = self.layer_shell_top.clone();
         let layer_shell_overlay_ref = self.layer_shell_overlay.clone();
         self.layer_shell_top
@@ -1727,7 +1731,7 @@ impl Workspaces {
             // Animate the mirror layer, not the actual window
             window
                 .mirror_layer()
-                .set_position(layers::types::Point { x, y }, transition);
+                .set_position(layers::types::Point { x, y }, transition.clone());
         }
 
         // If there's a transition, set up a callback to finalize visibility after animation
@@ -3408,16 +3412,16 @@ impl Workspaces {
         self.update_workspace_model();
 
         // Control dock visibility based on target workspace fullscreen state.
-        let resolved_transition = transition.unwrap_or(Transition {
+        let resolved_transition = transition.clone().unwrap_or(Transition {
             delay: 0.0,
             timing: TimingFunction::Spring(Spring::with_duration_and_bounce(1.0, 0.1)),
         });
         if !self.get_show_all() {
             if let Some(workspace) = self.get_workspace_at(i) {
                 if workspace.get_fullscreen_mode() {
-                    self.dock.hide(Some(resolved_transition));
+                    self.dock.hide(Some(resolved_transition.clone()));
                 } else if !self.dock.is_autohide_enabled() {
-                    self.dock.show(Some(resolved_transition));
+                    self.dock.show(Some(resolved_transition.clone()));
                 }
             }
         }
@@ -3430,7 +3434,7 @@ impl Workspaces {
                 self.layer_shell_top.set_hidden(false);
             }
             self.layer_shell_overlay
-                .set_opacity(target_opacity, Some(resolved_transition));
+                .set_opacity(target_opacity, Some(resolved_transition.clone()));
             let layer_shell_top_ref = self.layer_shell_top.clone();
             self.layer_shell_top
                 .set_opacity(target_opacity, Some(resolved_transition))
@@ -3496,11 +3500,11 @@ impl Workspaces {
             // - fullscreen animations (let fullscreen transition complete smoothly)
             if !self.get_show_all() {
                 if workspace.get_fullscreen_mode() {
-                    self.dock.hide(Some(transition));
+                    self.dock.hide(Some(transition.clone()));
                 } else if !self.dock.is_autohide_enabled() {
                     // With autohide on, dock visibility is managed by the hot zone /
                     // show_autohide(); calling show() would hide it (see DockView::show).
-                    self.dock.show(Some(transition));
+                    self.dock.show(Some(transition.clone()));
                 }
             }
 
@@ -3511,10 +3515,10 @@ impl Workspaces {
                 self.layer_shell_top.set_hidden(false);
             }
             self.layer_shell_overlay
-                .set_opacity(target_opacity, Some(transition));
+                .set_opacity(target_opacity, Some(transition.clone()));
             let layer_shell_top_ref = self.layer_shell_top.clone();
             self.layer_shell_top
-                .set_opacity(target_opacity, Some(transition))
+                .set_opacity(target_opacity, Some(transition.clone()))
                 .on_finish(
                     move |_: &Layer, _| {
                         if is_fullscreen {

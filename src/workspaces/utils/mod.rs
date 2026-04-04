@@ -150,7 +150,7 @@ pub fn draw_balloon_rect(
     arrow_position: f32, // Position of the arrow along the bottom edge (0.0 to 1.0)
     arrow_corner_radius: f32,
 ) -> layers::skia::Path {
-    let mut path = layers::skia::Path::new();
+    let mut builder = layers::skia::PathBuilder::new();
 
     // Calculate the arrow tip position
     let arrow_tip_x = x + arrow_position * width;
@@ -158,60 +158,60 @@ pub fn draw_balloon_rect(
     let arrow_base_right_x = arrow_tip_x + arrow_width / 2.0;
 
     // Move to the starting point (top-left corner)
-    path.move_to((x + corner_radius, y));
+    builder.move_to((x + corner_radius, y));
 
     // Top edge
-    path.line_to((x + width - corner_radius, y));
-    path.arc_to_tangent(
+    builder.line_to((x + width - corner_radius, y));
+    builder.arc_to_tangent(
         (x + width, y),
         (x + width, y + corner_radius),
         corner_radius,
     );
 
     // Right edge
-    path.line_to((x + width, y + height - corner_radius - arrow_height));
-    path.arc_to_tangent(
+    builder.line_to((x + width, y + height - corner_radius - arrow_height));
+    builder.arc_to_tangent(
         (x + width, y + height - arrow_height),
         (x + width - corner_radius, y + height - arrow_height),
         corner_radius,
     );
 
     // Arrow with rounded corners
-    path.line_to((
+    builder.line_to((
         arrow_base_right_x, //- arrow_corner_radius,
         y + height - arrow_height,
     ));
-    path.arc_to_tangent(
+    builder.arc_to_tangent(
         (arrow_base_right_x, y + height - arrow_height),
         (arrow_tip_x, y + height),
         arrow_corner_radius,
     );
-    path.arc_to_tangent(
+    builder.arc_to_tangent(
         (arrow_tip_x, y + height),
         (arrow_base_left_x, y + height - arrow_height),
         arrow_corner_radius,
     );
-    path.arc_to_tangent(
+    builder.arc_to_tangent(
         (arrow_base_left_x, y + height - arrow_height),
         (x + corner_radius, y + height - arrow_height),
         arrow_corner_radius,
     );
 
     // Bottom edge
-    path.line_to((x + corner_radius, y + height - arrow_height));
-    path.arc_to_tangent(
+    builder.line_to((x + corner_radius, y + height - arrow_height));
+    builder.arc_to_tangent(
         (x, y + height - arrow_height),
         (x, y + height - corner_radius - arrow_height),
         corner_radius,
     );
 
     // Left edge
-    path.line_to((x, y + corner_radius));
-    path.arc_to_tangent((x, y), (x + corner_radius, y), corner_radius);
+    builder.line_to((x, y + corner_radius));
+    builder.arc_to_tangent((x, y), (x + corner_radius, y), corner_radius);
 
     // Close the path
-    path.close();
-    path
+    builder.close();
+    builder.detach()
 }
 
 pub fn configure_surface_layer(
@@ -219,6 +219,7 @@ pub fn configure_surface_layer(
     wvs: &WindowViewSurface,
     gravity: crate::surface_style::ContentsGravity,
     client_owns_size: bool,
+    shared_gravity: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
 ) {
     use crate::surface_style::ContentsGravity;
 
@@ -261,7 +262,14 @@ pub fn configure_surface_layer(
     layer.set_content_opaque(true);
 
     let draw_wvs = wvs.clone();
+    let draw_shared_gravity = shared_gravity.clone();
     layer.set_draw_content(move |canvas: &layers::skia::Canvas, w: f32, h: f32| {
+        // Read gravity live from shared atomic (updated when client calls set_contents_gravity)
+        let shared_val = draw_shared_gravity
+            .as_ref()
+            .map(|g| g.load(std::sync::atomic::Ordering::Relaxed));
+        let gravity = shared_val.map(ContentsGravity::from_u8).unwrap_or(gravity);
+
         if w == 0.0 || h == 0.0 {
             return layers::skia::Rect::default();
         }

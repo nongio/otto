@@ -1,4 +1,4 @@
-use skia_safe::{Canvas, Color, Paint, Path, Rect};
+use skia_safe::{Canvas, Color, Paint, Path, PathBuilder, Rect};
 
 use crate::common::Renderable;
 
@@ -88,23 +88,27 @@ impl Icon {
 
     /// Create the path for the icon shape
     fn create_path(&self) -> Path {
-        let mut path = Path::new();
+        let mut b = PathBuilder::new();
         let center_x = self.x + self.size / 2.0;
         let center_y = self.y + self.size / 2.0;
         let radius = self.size / 2.0;
 
         match self.shape {
             IconShape::Circle => {
-                path.add_circle((center_x, center_y), radius, None);
+                b.add_circle((center_x, center_y), radius, None);
             }
             IconShape::Square => {
-                path.add_rect(Rect::from_xywh(self.x, self.y, self.size, self.size), None);
+                b.add_rect(
+                    Rect::from_xywh(self.x, self.y, self.size, self.size),
+                    None,
+                    0,
+                );
             }
             IconShape::Triangle => {
-                path.move_to((center_x, self.y));
-                path.line_to((self.x + self.size, self.y + self.size));
-                path.line_to((self.x, self.y + self.size));
-                path.close();
+                b.move_to((center_x, self.y));
+                b.line_to((self.x + self.size, self.y + self.size));
+                b.line_to((self.x, self.y + self.size));
+                b.close();
             }
             IconShape::Star => {
                 // 5-pointed star
@@ -121,89 +125,89 @@ impl Icon {
                     let x = center_x + r * angle.cos();
                     let y = center_y + r * angle.sin();
                     if i == 0 {
-                        path.move_to((x, y));
+                        b.move_to((x, y));
                     } else {
-                        path.line_to((x, y));
+                        b.line_to((x, y));
                     }
                 }
-                path.close();
+                b.close();
             }
             IconShape::Heart => {
                 let w = self.size;
                 let h = self.size;
-                path.move_to((center_x, self.y + h * 0.3));
-                path.cubic_to(
+                b.move_to((center_x, self.y + h * 0.3));
+                b.cubic_to(
                     (center_x, self.y + h * 0.15),
                     (self.x + w * 0.25, self.y),
                     (center_x, self.y + h * 0.15),
                 );
-                path.cubic_to(
+                b.cubic_to(
                     (self.x + w * 0.75, self.y),
                     (self.x + w, self.y + h * 0.15),
                     (center_x, self.y + h * 0.3),
                 );
-                path.line_to((center_x, self.y + h));
-                path.line_to((center_x, self.y + h * 0.3));
-                path.close();
+                b.line_to((center_x, self.y + h));
+                b.line_to((center_x, self.y + h * 0.3));
+                b.close();
             }
             IconShape::Check => {
-                path.move_to((self.x + self.size * 0.2, center_y));
-                path.line_to((self.x + self.size * 0.4, self.y + self.size * 0.7));
-                path.line_to((self.x + self.size * 0.8, self.y + self.size * 0.3));
+                b.move_to((self.x + self.size * 0.2, center_y));
+                b.line_to((self.x + self.size * 0.4, self.y + self.size * 0.7));
+                b.line_to((self.x + self.size * 0.8, self.y + self.size * 0.3));
                 // For check, we'll use stroke mode even if filled
-                return path;
+                return b.detach();
             }
             IconShape::Cross => {
                 let inset = self.size * 0.2;
-                path.move_to((self.x + inset, self.y + inset));
-                path.line_to((self.x + self.size - inset, self.y + self.size - inset));
-                path.move_to((self.x + self.size - inset, self.y + inset));
-                path.line_to((self.x + inset, self.y + self.size - inset));
+                b.move_to((self.x + inset, self.y + inset));
+                b.line_to((self.x + self.size - inset, self.y + self.size - inset));
+                b.move_to((self.x + self.size - inset, self.y + inset));
+                b.line_to((self.x + inset, self.y + self.size - inset));
             }
             IconShape::Plus => {
                 let thickness = self.size * 0.15;
-                path.move_to((center_x - thickness / 2.0, self.y));
-                path.line_to((center_x + thickness / 2.0, self.y));
-                path.line_to((center_x + thickness / 2.0, self.y + self.size));
-                path.line_to((center_x - thickness / 2.0, self.y + self.size));
-                path.close();
-                path.move_to((self.x, center_y - thickness / 2.0));
-                path.line_to((self.x + self.size, center_y - thickness / 2.0));
-                path.line_to((self.x + self.size, center_y + thickness / 2.0));
-                path.line_to((self.x, center_y + thickness / 2.0));
-                path.close();
+                b.move_to((center_x - thickness / 2.0, self.y));
+                b.line_to((center_x + thickness / 2.0, self.y));
+                b.line_to((center_x + thickness / 2.0, self.y + self.size));
+                b.line_to((center_x - thickness / 2.0, self.y + self.size));
+                b.close();
+                b.move_to((self.x, center_y - thickness / 2.0));
+                b.line_to((self.x + self.size, center_y - thickness / 2.0));
+                b.line_to((self.x + self.size, center_y + thickness / 2.0));
+                b.line_to((self.x, center_y + thickness / 2.0));
+                b.close();
             }
             IconShape::Minus => {
                 let thickness = self.size * 0.15;
-                path.move_to((self.x, center_y - thickness / 2.0));
-                path.line_to((self.x + self.size, center_y - thickness / 2.0));
-                path.line_to((self.x + self.size, center_y + thickness / 2.0));
-                path.line_to((self.x, center_y + thickness / 2.0));
-                path.close();
+                b.move_to((self.x, center_y - thickness / 2.0));
+                b.line_to((self.x + self.size, center_y - thickness / 2.0));
+                b.line_to((self.x + self.size, center_y + thickness / 2.0));
+                b.line_to((self.x, center_y + thickness / 2.0));
+                b.close();
             }
             IconShape::ChevronUp => {
-                path.move_to((self.x + self.size * 0.2, self.y + self.size * 0.7));
-                path.line_to((center_x, self.y + self.size * 0.3));
-                path.line_to((self.x + self.size * 0.8, self.y + self.size * 0.7));
+                b.move_to((self.x + self.size * 0.2, self.y + self.size * 0.7));
+                b.line_to((center_x, self.y + self.size * 0.3));
+                b.line_to((self.x + self.size * 0.8, self.y + self.size * 0.7));
             }
             IconShape::ChevronDown => {
-                path.move_to((self.x + self.size * 0.2, self.y + self.size * 0.3));
-                path.line_to((center_x, self.y + self.size * 0.7));
-                path.line_to((self.x + self.size * 0.8, self.y + self.size * 0.3));
+                b.move_to((self.x + self.size * 0.2, self.y + self.size * 0.3));
+                b.line_to((center_x, self.y + self.size * 0.7));
+                b.line_to((self.x + self.size * 0.8, self.y + self.size * 0.3));
             }
             IconShape::ChevronLeft => {
-                path.move_to((self.x + self.size * 0.7, self.y + self.size * 0.2));
-                path.line_to((self.x + self.size * 0.3, center_y));
-                path.line_to((self.x + self.size * 0.7, self.y + self.size * 0.8));
+                b.move_to((self.x + self.size * 0.7, self.y + self.size * 0.2));
+                b.line_to((self.x + self.size * 0.3, center_y));
+                b.line_to((self.x + self.size * 0.7, self.y + self.size * 0.8));
             }
             IconShape::ChevronRight => {
-                path.move_to((self.x + self.size * 0.3, self.y + self.size * 0.2));
-                path.line_to((self.x + self.size * 0.7, center_y));
-                path.line_to((self.x + self.size * 0.3, self.y + self.size * 0.8));
+                b.move_to((self.x + self.size * 0.3, self.y + self.size * 0.2));
+                b.line_to((self.x + self.size * 0.7, center_y));
+                b.line_to((self.x + self.size * 0.3, self.y + self.size * 0.8));
             }
         }
 
-        path
+        b.detach()
     }
 }
 

@@ -43,7 +43,7 @@ impl ScTimingFunctionData {
     pub fn read(&self) -> ScTimingFunctionInner {
         let guard = self.inner.lock().unwrap();
         ScTimingFunctionInner {
-            timing: guard.timing,
+            timing: guard.timing.clone(),
             spring_uses_duration: guard.spring_uses_duration,
             spring_bounce: guard.spring_bounce,
             spring_initial_velocity: guard.spring_initial_velocity,

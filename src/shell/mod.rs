@@ -470,11 +470,13 @@ impl<BackendData: Backend> Otto<BackendData> {
                     .and_then(|v: &Vec<_>| v.first());
                 let gravity = style.map(|s| s.contents_gravity).unwrap_or_default();
                 let client_owns_size = style.map(|s| s.client_owns_size).unwrap_or(false);
+                let shared_gravity = style.map(|s| s.shared_gravity.clone());
                 crate::workspaces::utils::configure_surface_layer(
                     &surface_layer,
                     wvs,
                     gravity,
                     client_owns_size,
+                    shared_gravity,
                 );
 
                 // Set up parent-child relationship

@@ -74,7 +74,7 @@ fn commit_transaction<BackendData: Backend>(
     txn.committed = true;
 
     // Use client-configured timing function, or create default from duration
-    let mut transition = if let Some(mut trans) = txn.timing_function {
+    let mut transition = if let Some(mut trans) = txn.timing_function.take() {
         // Update timing function duration (timing functions are created with 0.0 duration)
         if let Some(duration) = txn.duration {
             // Recreate the timing function with the correct duration
@@ -83,7 +83,7 @@ fn commit_transaction<BackendData: Backend>(
                     tracing::debug!("Transaction commit: Easing timing, duration={}s", duration);
                     TimingFunction::Easing(easing, duration)
                 }
-                TimingFunction::Spring(_) => {
+                TimingFunction::Spring(s) => {
                     if txn.spring_uses_duration {
                         // Duration-based spring - use stored bounce and velocity
                         if let Some(bounce) = txn.spring_bounce {
@@ -111,9 +111,10 @@ fn commit_transaction<BackendData: Backend>(
                             "Transaction commit: physics-based spring (ignoring duration)"
                         );
                         // Physics-based spring from timing function - keep as is
-                        trans.timing
+                        TimingFunction::Spring(s)
                     }
                 }
+                other => other,
             };
         } else {
             tracing::debug!("Transaction commit: timing function present but no duration");
@@ -274,6 +275,7 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleManagerV1, ()> for Otto<Back
                     surface: surface.clone(),
                     z_order: crate::surface_style::OttoSurfaceStyleZOrder::default(),
                     contents_gravity: crate::surface_style::ContentsGravity::default(),
+                    shared_gravity: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
                     client_owns_size: false,
                 };
 

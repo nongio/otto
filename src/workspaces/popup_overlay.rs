@@ -143,6 +143,7 @@ impl PopupOverlayView {
                 wvs,
                 crate::surface_style::ContentsGravity::TopLeft,
                 false,
+                None,
             );
 
             // Set up parent-child relationship

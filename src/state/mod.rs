@@ -1061,11 +1061,13 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     let style = self.surfaces_style.get(surface_id).and_then(|v| v.first());
                     let gravity = style.map(|s| s.contents_gravity).unwrap_or_default();
                     let client_owns_size = style.map(|s| s.client_owns_size).unwrap_or(false);
+                    let shared_gravity = style.map(|s| s.shared_gravity.clone());
                     crate::workspaces::utils::configure_surface_layer(
                         &layer,
                         wvs,
                         gravity,
                         client_owns_size,
+                        shared_gravity,
                     );
 
                     // Build parent-child hierarchy
@@ -1333,11 +1335,13 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     let style = self.surfaces_style.get(surface_id).and_then(|v| v.first());
                     let gravity = style.map(|s| s.contents_gravity).unwrap_or_default();
                     let client_owns_size = style.map(|s| s.client_owns_size).unwrap_or(false);
+                    let shared_gravity = style.map(|s| s.shared_gravity.clone());
                     crate::workspaces::utils::configure_surface_layer(
                         &layer,
                         wvs,
                         gravity,
                         client_owns_size,
+                        shared_gravity,
                     );
 
                     // Set up parent-child relationship using layers_engine
