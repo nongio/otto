@@ -19,6 +19,7 @@ use super::common::{
 /// to be part of a window but managed separately.
 pub struct SubsurfaceSurface {
     base_surface: BaseWaylandSurface,
+    subsurface: Option<wl_subsurface::WlSubsurface>,
 }
 
 impl SubsurfaceSurface {
@@ -124,7 +125,10 @@ impl SubsurfaceSurface {
         core.surface_style = sc_layer;
         core.create_skia_surface()?;
 
-        Ok(Self { base_surface: core })
+        Ok(Self {
+            base_surface: core,
+            subsurface: Some(subsurface),
+        })
     }
 
     /// Resize the subsurface
@@ -134,8 +138,21 @@ impl SubsurfaceSurface {
 
     /// Set position relative to parent surface
     pub fn set_position(&self, _x: i32, _y: i32) {
-        // Note: subsurface handle is not stored, position must be set during creation
-        // This method is kept for API compatibility but does nothing
+        // Note: position is managed via surface style, not wl_subsurface.
+    }
+
+    /// Place this subsurface above a sibling surface in the stacking order.
+    pub fn place_above(&self, sibling: &wayland_client::protocol::wl_surface::WlSurface) {
+        if let Some(ref sub) = self.subsurface {
+            sub.place_above(sibling);
+        }
+    }
+
+    /// Place this subsurface below a sibling surface in the stacking order.
+    pub fn place_below(&self, sibling: &wayland_client::protocol::wl_surface::WlSurface) {
+        if let Some(ref sub) = self.subsurface {
+            sub.place_below(sibling);
+        }
     }
 
     /// Commit changes to the subsurface
@@ -160,6 +177,14 @@ impl SubsurfaceSurface {
 }
 
 impl SubsurfaceSurface {
+    /// Destroy the subsurface and its underlying wl_surface.
+    pub fn destroy(&mut self) {
+        if let Some(subsurface) = self.subsurface.take() {
+            subsurface.destroy();
+        }
+        self.base_surface.wl_surface().destroy();
+    }
+
     /// Get reference to the base surface
     pub fn base_surface(&self) -> &BaseWaylandSurface {
         &self.base_surface

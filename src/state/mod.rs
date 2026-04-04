@@ -1004,6 +1004,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 (WlSurface, Option<ObjectId>),
             > = std::collections::HashMap::new();
 
+            // Track per-parent child ordering for subsurface reordering
+            #[allow(clippy::mutable_key_type)]
+            let mut children_order: std::collections::HashMap<ObjectId, Vec<ObjectId>> =
+                std::collections::HashMap::new();
+
             let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> =
                 (0.0, 0.0).into();
             let initial_context = (initial_location, initial_location, None);
@@ -1046,7 +1051,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                         parent_id.clone(),
                     ) {
                         render_elements.push_front(wvs);
-                        surface_info.insert(surface.id(), (surface.clone(), parent_id.clone()));
+                        let sid = surface.id();
+                        surface_info.insert(sid.clone(), (surface.clone(), parent_id.clone()));
+                        if let Some(pid) = parent_id {
+                            children_order.entry(pid.clone()).or_default().push(sid);
+                        }
                     }
                 },
                 |_, _, _| true,
@@ -1080,6 +1089,18 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                         let _ = self
                             .layers_engine
                             .append_layer(&layer, self.workspaces.dnd_view.content_layer.id());
+                    }
+                }
+            }
+
+            // Re-append children in Smithay's subsurface order
+            for (parent_id, child_ids) in children_order.iter() {
+                if let Some(parent_layer) = self.surface_layers.get(parent_id) {
+                    let parent_node = parent_layer.id();
+                    for child_id in child_ids {
+                        if let Some(child_layer) = self.surface_layers.get(child_id) {
+                            let _ = self.layers_engine.append_layer(child_layer, parent_node);
+                        }
                     }
                 }
             }
@@ -1271,6 +1292,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 ),
             > = std::collections::HashMap::new();
 
+            // Track per-parent child ordering as Smithay delivers it
+            // (respects wl_subsurface.place_above / place_below reordering)
+            #[allow(clippy::mutable_key_type)]
+            let mut children_order: std::collections::HashMap<ObjectId, Vec<ObjectId>> =
+                std::collections::HashMap::new();
+
             smithay::wayland::compositor::with_surface_tree_downward(
                 &window_surface,
                 initial_context,
@@ -1311,10 +1338,13 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                         parent_id.clone(),
                     ) {
                         render_elements.push_front(window_view.clone());
-                        surface_info.insert(
-                            surface.id(),
-                            (surface.clone(), *location, parent_id.clone()),
-                        );
+                        let sid = surface.id();
+                        surface_info
+                            .insert(sid.clone(), (surface.clone(), *location, parent_id.clone()));
+                        // Record child ordering per parent for subsurface reordering
+                        if let Some(pid) = parent_id {
+                            children_order.entry(pid.clone()).or_default().push(sid);
+                        }
                     } else {
                         // Surface committed a null buffer (unmapped subsurface) — hide its layer
                         if let Some(layer) = self.surface_layers.get(&surface.id()) {
@@ -1348,6 +1378,21 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     if let Some(parent_id) = parent_id {
                         if let Some(parent_layer) = self.surface_layers.get(parent_id) {
                             let _ = self.layers_engine.append_layer(&layer, parent_layer.id());
+                        }
+                    }
+                }
+            }
+
+            // Re-append children in Smithay's subsurface order so that
+            // place_above / place_below reordering is reflected in lay-rs.
+            // append_layer detaches and re-appends as the last child, so
+            // iterating in order produces the correct sibling sequence.
+            for (parent_id, child_ids) in children_order.iter() {
+                if let Some(parent_layer) = self.surface_layers.get(parent_id) {
+                    let parent_node = parent_layer.id();
+                    for child_id in child_ids {
+                        if let Some(child_layer) = self.surface_layers.get(child_id) {
+                            let _ = self.layers_engine.append_layer(child_layer, parent_node);
                         }
                     }
                 }

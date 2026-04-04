@@ -276,6 +276,8 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         let wlr_layer_shell: Option<ZwlrLayerShellV1> = globals.bind(&qh, 1..=4, ()).ok();
         let otto_dock_manager = globals.bind(&qh, 1..=1, ()).ok();
         let subcompositor = globals.bind(&qh, 1..=1, ()).ok();
+        let cursor_shape_manager: Option<wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1> =
+            globals.bind(&qh, 1..=2, ()).ok();
 
         // Get display pointer for creating surfaces
         let display_ptr = conn.backend().display_ptr() as *mut std::ffi::c_void;
@@ -293,6 +295,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
             wlr_layer_shell,
             subcompositor,
             otto_dock_manager,
+            cursor_shape_manager,
             display_ptr,
         });
 
@@ -675,10 +678,22 @@ impl<A: App + 'static> PointerHandler for AppData<A> {
     fn pointer_frame(
         &mut self,
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-        _pointer: &wl_pointer::WlPointer,
+        qh: &QueueHandle<Self>,
+        pointer: &wl_pointer::WlPointer,
         events: &[PointerEvent],
     ) {
+        use smithay_client_toolkit::seat::pointer::PointerEventKind;
+
+        // Track enter serial and lazily create cursor shape device.
+        for event in events {
+            if let PointerEventKind::Enter { serial, .. } = event.kind {
+                AppContext::set_last_pointer_enter_serial(serial);
+
+                // Create cursor shape device if we have the manager but no device yet.
+                AppContext::ensure_cursor_shape_device(&self.context_data, pointer, qh);
+            }
+        }
+
         AppContext::dispatch_pointer_callbacks(events);
         let ctx = AppContext::new(&self.context_data);
         self.app.on_pointer_event(&ctx, events);
@@ -874,3 +889,5 @@ impl<A: App + 'static> Dispatch<otto_dock_item_v1::OttoDockItemV1, ()> for AppDa
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_client::protocol::wl_subcompositor::WlSubcompositor);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_client::protocol::wl_subsurface::WlSubsurface);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore ZwlrLayerShellV1);
+wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1);
+wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::WpCursorShapeDeviceV1);
