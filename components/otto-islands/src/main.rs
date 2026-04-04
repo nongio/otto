@@ -520,13 +520,11 @@ impl IslandApp {
                         mr.draw(canvas, pmode, w, h);
                     });
                     // Position and resize the EQ child subsurface.
+                    // EQ is a child of the pill — position is relative to pill origin.
                     if let Some(eq_surf) = &island.eq_surface {
                         let (eq_w, eq_h, eq_ox, eq_oy) = mr.eq_layout(pmode, w, h);
-                        // EQ position: pill top-left + offset, converted to center coords.
-                        let pill_left = cx - w / 2.0;
-                        let pill_top = cy - h / 2.0;
-                        let eq_cx = pill_left + eq_ox + eq_w / 2.0;
-                        let eq_cy = pill_top + eq_oy + eq_h / 2.0;
+                        let eq_cx = eq_ox + eq_w / 2.0;
+                        let eq_cy = eq_oy + eq_h / 2.0;
                         renderer::set_size_and_position(eq_surf, eq_w, eq_h, eq_cx, eq_cy);
                     }
                     self.music_last_redraw = std::time::Instant::now();
