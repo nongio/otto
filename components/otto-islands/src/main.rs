@@ -1006,10 +1006,9 @@ impl IslandApp {
                 if let Some(island) = island {
                     if island.mode == IslandMode::Expanded {
                         // Hit test music controls in expanded mode.
-                        let (w, h, cx, _cy) = island.last_layout;
-                        let pill_h = h;
+                        let (w, h, cx, cy) = island.last_layout;
                         let pill_x = cx - w / 2.0;
-                        let pill_y = (BAR_HEIGHT - pill_h) / 2.0;
+                        let pill_y = cy - h / 2.0;
                         let lx = px - pill_x;
                         let ly = py - pill_y;
                         if let Some(mr) = self.music_monitor.renderer() {
