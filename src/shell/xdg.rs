@@ -752,7 +752,8 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                         we.get_workspace(),
                         view.unmaximised_rect.loc,
                     );
-                    let scroll_transaction = self.workspaces
+                    let scroll_transaction = self
+                        .workspaces
                         .set_current_workspace_index(we.get_workspace(), Some(transition));
 
                     // Defer fullscreen workspace removal until the scroll animation completes,

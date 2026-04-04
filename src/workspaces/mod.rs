@@ -314,8 +314,11 @@ impl Workspaces {
         // attached to output_layer in map_output_with_primary
 
         let (remove_workspace_sender, remove_receiver) = channel::<usize>();
-        let workspace_selector_view =
-            WorkspaceSelectorView::new(layers_engine.clone(), workspace_selector_layer.clone(), remove_workspace_sender.clone());
+        let workspace_selector_view = WorkspaceSelectorView::new(
+            layers_engine.clone(),
+            workspace_selector_layer.clone(),
+            remove_workspace_sender.clone(),
+        );
         let workspace_selector_view = Arc::new(workspace_selector_view);
 
         // Create OSD view; attach it to overlay_layer in map_output_with_primary

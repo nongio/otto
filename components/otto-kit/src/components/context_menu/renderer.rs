@@ -26,9 +26,10 @@ impl ContextMenuRenderer {
         let height = (height + style.vertical_padding * 2.0) * s;
 
         // Use provided width or compute from content, then scale
-        let width = style.width.unwrap_or_else(|| {
-            Self::compute_optimal_width(items, style).max(style.min_width)
-        }) * s;
+        let width = style
+            .width
+            .unwrap_or_else(|| Self::compute_optimal_width(items, style).max(style.min_width))
+            * s;
 
         (width, height)
     }
@@ -185,9 +186,9 @@ impl ContextMenuRenderer {
         y: f32,
     ) -> Option<usize> {
         // Use the same width logic as measure_items
-        let total_width = style.width.unwrap_or_else(|| {
-            Self::compute_optimal_width(items, style).max(style.min_width)
-        });
+        let total_width = style
+            .width
+            .unwrap_or_else(|| Self::compute_optimal_width(items, style).max(style.min_width));
         if x < style.horizontal_padding || x > total_width - style.horizontal_padding {
             return None;
         }

@@ -243,7 +243,14 @@ impl PopupSurface {
             + 'static,
     {
         Self::new_for_layer_typed_with_grab(
-            layer_surface, positioner, width, height, compositor, xdg_shell, qh, None,
+            layer_surface,
+            positioner,
+            width,
+            height,
+            compositor,
+            xdg_shell,
+            qh,
+            None,
         )
     }
 

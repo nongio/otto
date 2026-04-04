@@ -186,16 +186,16 @@ impl WorkspaceSelectorView {
         });
 
         Self {
-                // engine: layers_engine,
-                layer,
-                view,
-                cursor_location: Arc::new(RwLock::new(Point::default())),
-                drop_targets,
-                drop_hover_index,
-                known_indices,
-                pressed_action,
-                remove_sender,
-            }
+            // engine: layers_engine,
+            layer,
+            view,
+            cursor_location: Arc::new(RwLock::new(Point::default())),
+            drop_targets,
+            drop_hover_index,
+            known_indices,
+            pressed_action,
+            remove_sender,
+        }
     }
 
     /// Get current drop targets (updated after each render)
