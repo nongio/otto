@@ -10,10 +10,10 @@ pub const LEFT_WIDTH: u32 = 80;
 pub const RIGHT_WIDTH: u32 = 80;
 
 /// Top margin from screen edge.
-pub const BAR_MARGIN_TOP: i32 = 3;
+pub const BAR_MARGIN_TOP: i32 = 0;
 
 /// Side margin from screen edge.
-pub const BAR_MARGIN_SIDE: i32 = 2;
+pub const BAR_MARGIN_SIDE: i32 = 0;
 
 /// Horizontal padding inside a panel.
 pub const BAR_PADDING_H: f32 = 14.0;
@@ -23,7 +23,7 @@ pub const BAR_PADDING_H: f32 = 14.0;
 pub const TRAY_ICON_SPACING: f32 = 8.0;
 
 /// Tray icon size in logical points.
-pub const TRAY_ICON_SIZE: f32 = 24.0;
+pub const TRAY_ICON_SIZE: f32 = 22.0;
 
 /// Gap between tray icons and the clock.
 pub const TRAY_CLOCK_GAP: f32 = 12.0;
