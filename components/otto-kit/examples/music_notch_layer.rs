@@ -324,14 +324,14 @@ impl MusicFeature {
         } else {
             // Triangle pointing right
             let path = {
-                let mut p = skia_safe::Path::new();
+                let mut b = skia_safe::PathBuilder::new();
                 let h = size * 0.85;
                 let w = h * 0.866; // equilateral
-                p.move_to((cx - w / 2.0, cy - h / 2.0));
-                p.line_to((cx + w / 2.0, cy));
-                p.line_to((cx - w / 2.0, cy + h / 2.0));
-                p.close();
-                p
+                b.move_to((cx - w / 2.0, cy - h / 2.0));
+                b.line_to((cx + w / 2.0, cy));
+                b.line_to((cx - w / 2.0, cy + h / 2.0));
+                b.close();
+                b.detach()
             };
             canvas.draw_path(&path, &paint);
         }
@@ -347,12 +347,12 @@ impl MusicFeature {
         let w = h * 0.866;
         let bar_w = size * 0.18;
         let tx = cx + bar_w / 2.0;
-        let mut path = skia_safe::Path::new();
-        path.move_to((tx, cy - h / 2.0));
-        path.line_to((tx - w, cy));
-        path.line_to((tx, cy + h / 2.0));
-        path.close();
-        canvas.draw_path(&path, &paint);
+        let mut builder = skia_safe::PathBuilder::new();
+        builder.move_to((tx, cy - h / 2.0));
+        builder.line_to((tx - w, cy));
+        builder.line_to((tx, cy + h / 2.0));
+        builder.close();
+        canvas.draw_path(&builder.detach(), &paint);
         canvas.draw_rect(
             Rect::from_xywh(cx - w - bar_w / 2.0, cy - h / 2.0, bar_w, h),
             &paint,
@@ -369,12 +369,12 @@ impl MusicFeature {
         let w = h * 0.866;
         let bar_w = size * 0.18;
         let tx = cx - bar_w / 2.0;
-        let mut path = skia_safe::Path::new();
-        path.move_to((tx, cy - h / 2.0));
-        path.line_to((tx + w, cy));
-        path.line_to((tx, cy + h / 2.0));
-        path.close();
-        canvas.draw_path(&path, &paint);
+        let mut builder = skia_safe::PathBuilder::new();
+        builder.move_to((tx, cy - h / 2.0));
+        builder.line_to((tx + w, cy));
+        builder.line_to((tx, cy + h / 2.0));
+        builder.close();
+        canvas.draw_path(&builder.detach(), &paint);
         canvas.draw_rect(
             Rect::from_xywh(cx + w - bar_w / 2.0, cy - h / 2.0, bar_w, h),
             &paint,

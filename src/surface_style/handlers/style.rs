@@ -281,6 +281,8 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleV1, OttoLayerUserData> for O
                 if let Some(style_list) = state.surfaces_style.get_mut(&surface_id) {
                     if let Some(s) = style_list.iter_mut().find(|l| l.wl_style.id() == layer_id) {
                         s.contents_gravity = new_gravity;
+                        s.shared_gravity
+                            .store(new_gravity as u8, std::sync::atomic::Ordering::Relaxed);
                     }
                 }
             }

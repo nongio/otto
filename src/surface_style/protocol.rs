@@ -29,20 +29,35 @@ pub enum OttoSurfaceStyleZOrder {
 /// How the surface buffer texture is rendered within the layer bounds.
 /// Mirrors Core Animation's contentsGravity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
 pub enum ContentsGravity {
     /// Stretch to fill layer bounds (default — backward compatible).
     #[default]
-    Resize,
+    Resize = 0,
     /// Scale uniformly to fit within bounds, preserving aspect ratio (letterbox).
-    ResizeAspect,
+    ResizeAspect = 1,
     /// Scale uniformly to fill bounds, preserving aspect ratio (crop).
-    ResizeAspectFill,
+    ResizeAspectFill = 2,
     /// Natural buffer size, centred in bounds.
-    Center,
+    Center = 3,
     /// Natural buffer size, pinned to top-left.
-    TopLeft,
+    TopLeft = 4,
     /// Natural buffer size, pinned to top-right.
-    TopRight,
+    TopRight = 5,
+}
+
+impl ContentsGravity {
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::Resize,
+            1 => Self::ResizeAspect,
+            2 => Self::ResizeAspectFill,
+            3 => Self::Center,
+            4 => Self::TopLeft,
+            5 => Self::TopRight,
+            _ => Self::Resize,
+        }
+    }
 }
 
 /// Compositor-side layer state (pure augmentation, no wl_surface)
@@ -62,6 +77,10 @@ pub struct SurfaceStyle {
 
     /// How the buffer texture is rendered within the layer bounds
     pub contents_gravity: ContentsGravity,
+
+    /// Shared gravity for live reading in draw closures.
+    /// Updated atomically when `set_contents_gravity` is called.
+    pub shared_gravity: std::sync::Arc<std::sync::atomic::AtomicU8>,
 
     /// When true, the client has called set_size at least once and now owns the layer bounds.
     /// The compositor will no longer override size/position from the buffer.
@@ -115,7 +134,7 @@ impl Clone for StyleTransaction {
             wl_style_transaction: self.wl_style_transaction.clone(),
             duration: self.duration,
             delay: self.delay,
-            timing_function: self.timing_function,
+            timing_function: self.timing_function.clone(),
             spring_uses_duration: self.spring_uses_duration,
             spring_bounce: self.spring_bounce,
             spring_initial_velocity: self.spring_initial_velocity,

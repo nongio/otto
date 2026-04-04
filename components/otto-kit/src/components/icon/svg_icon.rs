@@ -308,7 +308,7 @@ impl Renderable for Icon {
         };
 
         // Parse SVG path data using Skia's built-in parser
-        let mut path = match Path::from_svg(path_data) {
+        let path = match Path::from_svg(path_data) {
             Some(p) => p,
             None => {
                 eprintln!("Failed to parse SVG path for icon '{}'", self.icon_name);
@@ -321,7 +321,7 @@ impl Renderable for Icon {
         let mut matrix = Matrix::new_identity();
         matrix.pre_translate((self.x, self.y));
         matrix.pre_scale((scale, scale), None);
-        path.transform(&matrix);
+        let path = path.make_transform(&matrix);
 
         // Draw the path
         let mut paint = Paint::default();

@@ -6,6 +6,7 @@ pub mod desktop_entry;
 pub mod icon_theme;
 pub mod icons;
 pub mod input;
+pub mod lottie;
 pub mod protocols;
 pub mod rendering;
 pub mod surfaces;

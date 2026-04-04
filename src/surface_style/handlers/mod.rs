@@ -74,7 +74,7 @@ fn commit_transaction<BackendData: Backend>(
     txn.committed = true;
 
     // Use client-configured timing function, or create default from duration
-    let mut transition = if let Some(mut trans) = txn.timing_function {
+    let mut transition = if let Some(mut trans) = txn.timing_function.take() {
         // Update timing function duration (timing functions are created with 0.0 duration)
         if let Some(duration) = txn.duration {
             // Recreate the timing function with the correct duration
@@ -114,6 +114,7 @@ fn commit_transaction<BackendData: Backend>(
                         trans.timing
                     }
                 }
+                _ => trans.timing,
             };
         } else {
             tracing::debug!("Transaction commit: timing function present but no duration");
@@ -274,6 +275,7 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleManagerV1, ()> for Otto<Back
                     surface: surface.clone(),
                     z_order: crate::surface_style::OttoSurfaceStyleZOrder::default(),
                     contents_gravity: crate::surface_style::ContentsGravity::default(),
+                    shared_gravity: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
                     client_owns_size: false,
                 };
 

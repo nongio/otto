@@ -292,7 +292,7 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
         self.workspaces
             .move_window_to_workspace(&elem, prev_workspace, restore_loc);
         self.workspaces
-            .set_current_workspace_index(prev_workspace, Some(transition));
+            .set_current_workspace_index(prev_workspace, Some(transition.clone()));
 
         // Remove workspace BEFORE calling expose_set_visible so that its on_finish
         // callback doesn't capture freed layer nodes from the fullscreen workspace.

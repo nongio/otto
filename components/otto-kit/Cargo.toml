@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
 wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client"] }
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 wayland-egl = "0.32"
 wayland-cursor = "0.31"
@@ -33,12 +33,12 @@ debugger = ["laye-rs/debugger"]
 
 [dependencies.laye-rs]
 git = "https://github.com/nongio/layers"
-tag = "v1.7.0"
+tag = "v1.8.0"
 features = ["export-taffy"]
 
 [dependencies.skia-safe]
-version = "=0.88"
-features = ["gl", "textlayout", "svg"]
+version = "=0.93"
+features = ["gl", "textlayout", "svg", "skottie"]
 
 [[example]]
 name = "simple_app"
@@ -51,3 +51,11 @@ path = "examples/dock_application_simple.rs"
 [[example]]
 name = "dock_application_layer"
 path = "examples/dock_application_layer.rs"
+
+[[example]]
+name = "center_gravity_test"
+path = "examples/center_gravity_test.rs"
+
+[[example]]
+name = "lottie_demo"
+path = "examples/lottie_demo.rs"
