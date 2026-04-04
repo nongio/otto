@@ -504,6 +504,9 @@ impl IslandApp {
                         use crate::activity::ActivityRenderer;
                         mr.draw(canvas, pmode, w, h);
                     });
+                    // Layout pass did a full draw — reset both timers.
+                    self.music_last_full_redraw = std::time::Instant::now();
+                    self.music_last_redraw = std::time::Instant::now();
                 }
                 layout_targets.push((idx, w, h, cx, cy));
             } else {
