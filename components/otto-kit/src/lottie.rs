@@ -130,7 +130,7 @@ fn replace_stroke_color(json: &str, color: [f32; 4]) -> String {
         if result.as_bytes().get(start) == Some(&b'[') {
             if let Some(bracket) = result[start..].find(']') {
                 let end = start + bracket + 1; // include the ]
-                result = format!("{}{}{}", &result[..start], color_str, &result[end..]);
+                result.replace_range(start..end, &color_str);
                 search_from = start + color_str.len();
             } else {
                 break;

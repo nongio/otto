@@ -83,7 +83,7 @@ fn commit_transaction<BackendData: Backend>(
                     tracing::debug!("Transaction commit: Easing timing, duration={}s", duration);
                     TimingFunction::Easing(easing, duration)
                 }
-                TimingFunction::Spring(_) => {
+                TimingFunction::Spring(s) => {
                     if txn.spring_uses_duration {
                         // Duration-based spring - use stored bounce and velocity
                         if let Some(bounce) = txn.spring_bounce {
@@ -111,10 +111,10 @@ fn commit_transaction<BackendData: Backend>(
                             "Transaction commit: physics-based spring (ignoring duration)"
                         );
                         // Physics-based spring from timing function - keep as is
-                        trans.timing
+                        TimingFunction::Spring(s)
                     }
                 }
-                _ => trans.timing,
+                other => other,
             };
         } else {
             tracing::debug!("Transaction commit: timing function present but no duration");

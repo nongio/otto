@@ -56,6 +56,3 @@ path = "examples/dock_application_layer.rs"
 name = "center_gravity_test"
 path = "examples/center_gravity_test.rs"
 
-[[example]]
-name = "lottie_demo"
-path = "examples/lottie_demo.rs"
