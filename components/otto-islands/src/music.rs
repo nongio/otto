@@ -95,11 +95,14 @@ impl MusicActivityRenderer {
                 (w, h, 0.0, 0.0)
             }
             PresentationMode::Compact | PresentationMode::Banner => {
-                // Compact: EQ on the right side
-                let eq_w = 80.0;
-                let eq_h = h;
-                let eq_x = w - eq_w;
-                (eq_w, eq_h, eq_x, 0.0)
+                // Compact: EQ on the right side, padded vertically
+                let v_pad = 7.0;
+                let compact_bars = 4;
+                let eq_w = compact_bars as f32 * 3.0 + (compact_bars as f32 - 1.0) * 2.0;
+                let h_pad = 8.0;
+                let eq_h = h - v_pad * 2.0;
+                let eq_x = w - h_pad - eq_w;
+                (eq_w, eq_h, eq_x, v_pad)
             }
             PresentationMode::Expanded => {
                 // Expanded: EQ below title/artist, right column
