@@ -27,7 +27,7 @@ use crate::state::{IslandState, SharedState};
 // Constants
 // ---------------------------------------------------------------------------
 
-const LAYER_W: u32 = 480;
+const LAYER_W: u32 = 800;
 const LAYER_H: u32 = 400; // Tall enough for pill + MAX_VISIBLE_CARDS cards.
 const BAR_HEIGHT: f32 = 36.0;
 const GAP: f32 = 6.0;
@@ -114,6 +114,17 @@ impl IslandApp {
         }
     }
 
+    /// Compute the current effective layer width based on island layout.
+    fn layer_width(&self) -> f32 {
+        let total_w: f32 = self
+            .islands
+            .iter()
+            .map(|i| i.last_layout.0.max(MINI_H))
+            .sum::<f32>()
+            + (self.islands.len().saturating_sub(1)) as f32 * GAP;
+        (total_w + 40.0).max(LAYER_W as f32)
+    }
+
     /// Get the parent wl_surface for creating subsurfaces.
     fn wl_surface(&self) -> Option<wayland_client::protocol::wl_surface::WlSurface> {
         self.layer_surface
@@ -129,7 +140,7 @@ impl IslandApp {
             SubsurfaceSurface::new(&wl, 0, 0, renderer::SLOT_BUF_W, renderer::SLOT_BUF_H).ok()?;
         apply_island_style(&surface, MINI_H as f64 / 2.0, ContentsGravity::Center);
         // Center coordinates (anchor point is 0.5, 0.5).
-        let cx = LAYER_W as f32 / 2.0;
+        let cx = self.layer_width() / 2.0;
         let cy = BAR_HEIGHT / 2.0;
         set_size_and_position(&surface, MINI_W, MINI_H, cx, cy);
         surface.draw(|canvas| {
@@ -187,7 +198,7 @@ impl IslandApp {
             } else {
                 let mut island = self.islands.remove(i);
                 tracing::info!(app_id = %island.app_id, "island removed");
-                let cx = LAYER_W as f32 / 2.0;
+                let cx = self.layer_width() / 2.0;
                 let cy = BAR_HEIGHT / 2.0;
                 let h = COMPACT_H;
                 renderer::animate_to_with_opacity(
@@ -331,7 +342,7 @@ impl IslandApp {
             .sum::<f32>()
             + (self.islands.len() - 1) as f32 * GAP;
 
-        let mut x = ((LAYER_W as f32 - total_w) / 2.0).max(0.0);
+        let mut x = ((self.layer_width() - total_w) / 2.0).max(0.0);
 
         // Collect positions for expanded islands, pulse targets, and layout targets.
         let mut expanded_layouts: Vec<(usize, f32, f32, f32, f32)> = Vec::new();
@@ -474,7 +485,6 @@ impl IslandApp {
                     Some(std::time::Instant::now() + Duration::from_secs(3));
                 self.islands[idx].mode = IslandMode::Compact;
             }
-            self.islands[idx].last_layout = (0.0, 0.0, 0.0, 0.0);
             // Update tracking now so the next sync doesn't re-trigger.
             let app_id = &self.islands[idx].app_id;
             if let Some((a, c)) = grouped.iter().find(|(a, _)| &a.app_id == app_id) {
@@ -669,7 +679,16 @@ impl IslandApp {
             }
         }
 
-        layer.set_size(LAYER_W, max_h.ceil() as u32);
+        // Compute the minimum width needed for all islands.
+        let total_w: f32 = self
+            .islands
+            .iter()
+            .map(|i| i.last_layout.0.max(MINI_H))
+            .sum::<f32>()
+            + (self.islands.len().saturating_sub(1)) as f32 * GAP;
+        let needed_w = (total_w + 40.0).max(LAYER_W as f32); // padding + minimum
+
+        layer.set_size(needed_w.ceil() as u32, max_h.ceil() as u32);
     }
 
     fn update_input_region(&self) {
@@ -682,43 +701,35 @@ impl IslandApp {
         // Add input rects when there are visible islands.
         // Empty region = zero input area (clicks pass through).
         if !self.islands.is_empty() {
-            // One rect per island, positioned to match layout exactly.
-            let island_size_for_input = |island: &Island| -> (f32, f32) {
-                match island.mode {
-                    IslandMode::Mini => {
-                        let w = island.last_layout.0.max(MINI_H);
-                        (w, MINI_H)
-                    }
-                    IslandMode::Compact => {
-                        let w = island.last_layout.0.max(MINI_H);
-                        (w, COMPACT_H)
-                    }
-                    IslandMode::Expanded => {
-                        let w = island.last_layout.0.max(renderer::CARD_W);
-                        (w, COMPACT_H)
-                    }
-                }
-            };
-            let total_w: f32 = self
-                .islands
-                .iter()
-                .map(|i| island_size_for_input(i).0)
-                .sum::<f32>()
-                + (self.islands.len() - 1) as f32 * GAP;
-
-            let mut x = ((LAYER_W as f32 - total_w) / 2.0).max(0.0);
+            // One rect per island, derived from last_layout (center coords).
             for island in &self.islands {
-                let (w, h) = island_size_for_input(island);
-                let y = (BAR_HEIGHT - h) / 2.0;
-                region.add(x as i32, y as i32, w.ceil() as i32, h.ceil() as i32);
-                x += w + GAP;
+                let (w, _h, cx, _cy) = island.last_layout;
+                let pill_h = match island.mode {
+                    IslandMode::Mini => MINI_H,
+                    IslandMode::Compact | IslandMode::Expanded => COMPACT_H,
+                };
+                let pill_w = match island.mode {
+                    IslandMode::Expanded => w.max(renderer::CARD_W),
+                    _ => w.max(MINI_H),
+                };
+                let x = cx - pill_w / 2.0;
+                let y = (BAR_HEIGHT - pill_h) / 2.0;
+                region.add(
+                    x.max(0.0) as i32,
+                    y as i32,
+                    pill_w.ceil() as i32,
+                    pill_h.ceil() as i32,
+                );
             }
 
-            // Card stack region — one continuous rect covering all cards + gaps.
+            // Card stack region — one rect per expanded island, positioned under its pill.
             for island in &self.islands {
                 if island.mode != IslandMode::Expanded || island.cards.is_empty() {
                     continue;
                 }
+                let pill_w = island.last_layout.0;
+                let pill_cx = island.last_layout.2;
+                let pill_left = pill_cx - pill_w / 2.0;
                 let pill_h = COMPACT_H;
                 let pill_bottom = (BAR_HEIGHT - pill_h) / 2.0 + pill_h;
                 let card_w = renderer::CARD_W;
@@ -727,9 +738,9 @@ impl IslandApp {
                 let card_count = island.cards.len() as f32;
                 let stack_top = pill_bottom + card_gap;
                 let stack_h = card_count * card_h + (card_count - 1.0) * card_gap;
-                let card_region_x = ((LAYER_W as f32 - card_w) / 2.0).max(0.0);
+                let card_region_x = pill_left + (pill_w - card_w) / 2.0;
                 region.add(
-                    card_region_x as i32,
+                    card_region_x.max(0.0) as i32,
                     stack_top as i32,
                     card_w.ceil() as i32,
                     stack_h.ceil() as i32,
@@ -749,41 +760,28 @@ impl IslandApp {
     /// Returns (app_id, Option<activity_id>) for what's at (px, py).
     /// activity_id is Some when a card is hit.
     fn hit_test(&self, px: f32, py: f32) -> Option<(String, Option<u64>)> {
-        let get_size = |island: &Island| -> (f32, f32) {
-            match island.mode {
-                IslandMode::Mini => {
-                    let w = island.last_layout.0.max(MINI_H);
-                    (w, MINI_H)
-                }
-                IslandMode::Compact => {
-                    let w = island.last_layout.0.max(MINI_H);
-                    (w, COMPACT_H)
-                }
-                IslandMode::Expanded => {
-                    let w = island.last_layout.0.max(renderer::CARD_W);
-                    (w, COMPACT_H)
-                }
-            }
-        };
-
-        let total_w: f32 = self.islands.iter().map(|i| get_size(i).0).sum::<f32>()
-            + (self.islands.len().saturating_sub(1)) as f32 * GAP;
-
-        let mut x = ((LAYER_W as f32 - total_w) / 2.0).max(0.0);
-
         for island in &self.islands {
-            let (w, h) = get_size(island);
-            let y = (BAR_HEIGHT - h) / 2.0;
+            let (w, _h, cx, _cy) = island.last_layout;
+            let pill_h = match island.mode {
+                IslandMode::Mini => MINI_H,
+                IslandMode::Compact | IslandMode::Expanded => COMPACT_H,
+            };
+            let pill_w = match island.mode {
+                IslandMode::Expanded => w.max(renderer::CARD_W),
+                _ => w.max(MINI_H),
+            };
+            let x = cx - pill_w / 2.0;
+            let y = (BAR_HEIGHT - pill_h) / 2.0;
 
             // Hit test cards first (they sit below the pill).
             if island.mode == IslandMode::Expanded {
                 let card_w = renderer::CARD_W;
                 let card_h = renderer::CARD_H;
                 let card_gap = renderer::CARD_GAP;
-                let card_x = x + (w - card_w) / 2.0;
+                let card_x = x + (pill_w - card_w) / 2.0;
 
                 for (i, card) in island.cards.iter().enumerate() {
-                    let card_y = y + h + card_gap + (i as f32) * (card_h + card_gap);
+                    let card_y = y + pill_h + card_gap + (i as f32) * (card_h + card_gap);
                     if px >= card_x
                         && px <= card_x + card_w
                         && py >= card_y
@@ -795,11 +793,9 @@ impl IslandApp {
             }
 
             // Hit test pill/circle.
-            if px >= x && px <= x + w && py >= y && py <= y + h {
+            if px >= x && px <= x + pill_w && py >= y && py <= y + pill_h {
                 return Some((island.app_id.clone(), None));
             }
-
-            x += w + GAP;
         }
 
         None
