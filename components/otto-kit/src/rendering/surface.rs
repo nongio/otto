@@ -158,15 +158,6 @@ impl SkiaSurface {
         }
     }
 
-    /// Commit only a specific damaged region (in physical pixels, 2x scaled).
-    pub fn commit_region(&self, region: skia_safe::IRect) {
-        AppContext::with_egl_resources(&self.surface_id, |res| {
-            res.wl_surface
-                .damage_buffer(region.x(), region.y(), region.width(), region.height());
-            res.wl_surface.commit();
-        });
-    }
-
     /// Initialize the Skia surface (cold path - called once)
     fn initialize_skia_surface(&self, ctx: &mut super::SkiaContext) {
         AppContext::with_egl_resources(&self.surface_id, |res| {
