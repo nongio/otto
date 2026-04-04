@@ -1237,7 +1237,7 @@ impl App for IslandApp {
     }
 
     fn idle_timeout(&self) -> Option<Duration> {
-        // Faster tick rate when music is playing for ~30fps equalizer animation.
+        // Faster tick rate when music is playing for ~15fps equalizer animation.
         let music_playing = self
             .music_monitor
             .playback
@@ -1245,7 +1245,7 @@ impl App for IslandApp {
             .ok()
             .is_some_and(|info| info.is_playing);
         if music_playing {
-            Some(Duration::from_millis(33))
+            Some(Duration::from_millis(66))
         } else {
             Some(Duration::from_millis(200))
         }

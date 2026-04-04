@@ -795,11 +795,13 @@ fn run_pipewire_level_loop(shared_level: Arc<Mutex<f32>>) -> Result<(), pipewire
     struct UserData {
         channels: u32,
         level: Arc<Mutex<f32>>,
+        skip_count: u32,
     }
 
     let user_data = UserData {
         channels: 2,
         level: shared_level,
+        skip_count: 0,
     };
 
     let stream = pw::stream::StreamBox::new(
@@ -875,8 +877,13 @@ fn run_pipewire_level_loop(shared_level: Arc<Mutex<f32>>) -> Result<(), pipewire
             }
             let rms = (sum_sq / seen as f32).sqrt();
             let normalized = (peak * 1.35 + rms * 0.65).clamp(0.0, 1.0);
-            if let Ok(mut level) = user_data.level.lock() {
-                *level = normalized;
+            // Throttle: only update shared level every ~6 buffers (~15fps).
+            user_data.skip_count += 1;
+            if user_data.skip_count >= 6 {
+                user_data.skip_count = 0;
+                if let Ok(mut level) = user_data.level.lock() {
+                    *level = normalized;
+                }
             }
         })
         .register()?;
