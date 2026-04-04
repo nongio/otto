@@ -288,10 +288,15 @@ impl RightPanel {
             return None;
         }
 
-        let font = typography::styles::BODY.font();
+        let font = typography::styles::BODY_MEDIUM.font();
         let clock_width = font.measure_str(&self.clock.text, None).0 + BAR_PADDING_H;
         let tray_width = MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
-        let tray_x = self.width - clock_width - tray_width;
+        let gap = if tray_width > 0.0 {
+            TRAY_CLOCK_GAP
+        } else {
+            0.0
+        };
+        let tray_x = self.width - clock_width - gap - tray_width;
 
         let local_x = x - tray_x;
         if local_x < 0.0 || local_x > tray_width {

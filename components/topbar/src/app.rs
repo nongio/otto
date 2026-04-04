@@ -131,7 +131,7 @@ impl TopBarApp {
         txn.set_duration(0.5);
         txn.set_timing_function(&timing);
 
-        let scale = 2.0_f64;
+        let scale = AppContext::scale_factor().max(1) as f64;
         style.set_size(width as f64 * scale, height as f64 * scale);
 
         txn.commit();
@@ -356,6 +356,23 @@ impl TopBarApp {
         }
     }
 
+    /// Handle left-click on the right panel: call SNI Activate.
+    fn handle_right_left_click(&mut self, event: &PointerEvent) {
+        let x = event.position.0 as f32;
+        if let Some(index) = self.right.tray_item_at(x) {
+            crate::tray::activate_item(index, x as i32, event.position.1 as i32);
+        }
+        self.close_menu();
+    }
+
+    /// Handle middle-click on the right panel: call SNI SecondaryActivate.
+    fn handle_right_middle_click(&mut self, event: &PointerEvent) {
+        let x = event.position.0 as f32;
+        if let Some(index) = self.right.tray_item_at(x) {
+            crate::tray::secondary_activate_item(index, x as i32, event.position.1 as i32);
+        }
+    }
+
     /// Handle a click on the left panel (app menu items).
     fn handle_left_click(&mut self, event: &PointerEvent) {
         let x = event.position.0 as f32;
@@ -516,6 +533,24 @@ impl App for TopBarApp {
     fn on_update(&mut self, _ctx: &AppContext) {
         let mut dirty = false;
 
+        // Detect menus closed externally (e.g. popup_done from click-outside)
+        let menu_gone = self
+            .open_menu
+            .as_ref()
+            .is_some_and(|m| !m.menu.is_visible());
+        if menu_gone {
+            self.close_menu();
+            dirty = true;
+        }
+        let app_menu_gone = self
+            .open_app_menu
+            .as_ref()
+            .is_some_and(|m| !m.menu.is_visible());
+        if app_menu_gone {
+            self.close_app_menu();
+            dirty = true;
+        }
+
         // Check if clock text changed
         if self.right.clock.tick() {
             dirty = true;
@@ -530,20 +565,27 @@ impl App for TopBarApp {
 
             // Check for a pending context menu to display
             if let Some(pending) = crate::tray::take_pending_menu() {
-                // Find which tray index this menu belongs to
+                // Find which tray index this menu belongs to using service + object path
                 let items = crate::tray::current_items();
                 let tray_index = items
                     .iter()
-                    .position(|t| t.service == pending.service)
-                    .unwrap_or(0);
+                    .position(|t| t.service == pending.service && t.path == pending.item_path);
 
-                self.pending_menu_index = None;
-                // Close any existing menu first
-                self.close_menu();
-                // Keep active highlight for the menu owner
-                self.right.tray_menu_state.set_active(Some(tray_index));
-                // Use stored input serial for popup keyboard grab
-                self.show_pending_menu(pending, tray_index);
+                if let Some(tray_index) = tray_index {
+                    self.pending_menu_index = None;
+                    // Close any existing menu first
+                    self.close_menu();
+                    // Keep active highlight for the menu owner
+                    self.right.tray_menu_state.set_active(Some(tray_index));
+                    // Use stored input serial for popup keyboard grab
+                    self.show_pending_menu(pending, tray_index);
+                } else {
+                    tracing::warn!(
+                        "pending tray menu for unknown item (service: {}, path: {})",
+                        pending.service,
+                        pending.item_path,
+                    );
+                }
             }
         }
 
@@ -627,9 +669,14 @@ impl App for TopBarApp {
                 .map(|w| event.surface == *w)
                 .unwrap_or(false);
 
-            if let PointerEventKind::Press { .. } = event.kind {
+            if let PointerEventKind::Press { button, .. } = event.kind {
                 if on_right {
-                    self.handle_right_click(event);
+                    match button {
+                        0x110 => self.handle_right_left_click(event),   // BTN_LEFT
+                        0x111 => self.handle_right_click(event),        // BTN_RIGHT → context menu
+                        0x112 => self.handle_right_middle_click(event), // BTN_MIDDLE
+                        _ => {}
+                    }
                 } else if on_left {
                     self.handle_left_click(event);
                 }

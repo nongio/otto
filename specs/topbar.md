@@ -5,7 +5,7 @@
 
 ## Summary
 
-The Top Bar is a persistent, full-width panel anchored to the top edge of the primary output. It provides three functional zones: a left zone showing the active application name and its global menu, a center zone intentionally kept minimal to leave visual space for the Dynamic Island, and a right zone hosting system tray icons and a clock. The bar is a standalone Wayland client application built with otto-kit, using standard compositor protocols for placement and window tracking.
+The Top Bar is a persistent, full-width panel anchored to the top edge of the primary output. It provides three functional zones: a left zone showing the active application name and its global menu, a center zone intentionally kept minimal to leave visual space for the Dynamic Island, and a right zone hosting system tray icons and a clock. The bar is a standalone Wayland client application using standard compositor protocols for placement and window tracking.
 
 ## Goals
 
@@ -28,7 +28,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 
 ### Placement & Sizing
 
-1. The bar is anchored to the top edge of the screen, full-width, with a fixed height (default 28 logical points, configurable).
+1. The bar is anchored to the top edge of the screen, full-width, with a fixed height (default 30 logical points, configurable).
 2. The bar declares an exclusive zone equal to its height so that maximized windows and layer-shell clients do not overlap it.
 3. On multi-output setups, the bar appears on the primary output only (where the Dynamic Island is also shown). A separate, minimal bar (clock + tray only) may optionally appear on secondary outputs.
 4. The bar surface uses the `otto-surface-style-unstable-v1` protocol to apply compositor-composited visual properties:
@@ -37,7 +37,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
    - **Drop shadow**: `set_shadow` with a soft downward offset to lift the bar off the desktop.
    - **Border**: `set_border` with a subtle 1 logical-point separator at the bottom edge using a theme-adaptive color.
 5. The bar's background fill color (drawn by Skia onto the surface before compositing) uses a semi-transparent material color from otto-kit's `Theme`, chosen based on the active color scheme.
-6. The bar adapts to system light/dark mode by reading `org.freedesktop.appearance color-scheme` from the XDG Settings portal (`org.freedesktop.portal.Settings`). It listens for `SettingChanged` signals and re-applies theme colors within one second. Color scheme values: `1` = prefer dark, `2` = prefer light.
+6. The bar adapts to system light/dark mode by reading `org.freedesktop.appearance color-scheme` from the XDG Settings portal (`org.freedesktop.portal.Settings`). It listens for `SettingChanged` signals and re-applies theme colors within one second. Color scheme values: `0` = no preference (follow otto-kit `Theme` default), `1` = prefer dark, `2` = prefer light.
 
 ### Layout: Three Zones
 
@@ -55,7 +55,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 
 ### Active Window Tracking
 
-8. The bar tracks the currently focused window using the `ext-foreign-toplevel-list-v1` Wayland protocol. When focus changes, the bar updates the left zone within one frame.
+8. The bar tracks the currently focused window using the `zwlr-foreign-toplevel-management-unstable-v1` Wayland protocol. When focus changes, the bar updates the left zone within one frame.
 9. If no window is focused, the left zone shows the desktop/compositor name without any menu entries.
 10. The application name shown is derived from the `app_id` of the focused toplevel (mapped to a human-readable name via the desktop entry database).
 
@@ -101,7 +101,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 - **SNI watcher absent:** Tray section is hidden. The bar must not crash — re-probe every 30 seconds.
 - **Menu root changes while open:** Close the current open menu and re-fetch before re-opening.
 - **HiDPI / fractional scaling:** The bar must render at the output's native scale. All sizes are in logical points; the bar converts to physical pixels using the output's scale factor.
-- **Theme change:** Re-apply colors within one second without restarting. Use the color-scheme D-Bus portal (`org.freedesktop.impl.portal.Settings`) to track system theme.
+- **Theme change:** Re-apply colors within one second without restarting. Use the color-scheme D-Bus portal (`org.freedesktop.portal.Settings`) to track system theme.
 - **Multiple monitors:** Primary-output bar shows all three zones. Secondary-output bars (if enabled) show only tray + clock.
 - **Right-to-left locales:** Zone order reverses (right zone on left, left zone on right). Menu popup alignment mirrors accordingly.
 
@@ -109,7 +109,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 
 - **External Wayland client (not embedded in compositor):** Makes the bar replaceable, testable in isolation, and free of compositor coupling. Standard protocols (layer-shell, foreign-toplevel, dbusmenu, SNI) provide all necessary integration surface.
 - **dbusmenu over a custom Wayland protocol:** dbusmenu is already implemented by GTK, Qt, and Electron apps on Linux. A custom Wayland menu protocol would require patching all toolkits.
-- **Compositor-side focus tracking via ext-foreign-toplevel-list:** This protocol provides reliable, race-free focus events and app_id without requiring any cooperation from the client app.
+- **Compositor-side focus tracking via zwlr-foreign-toplevel-management:** This protocol provides reliable, race-free focus events and app_id without requiring any cooperation from the client app.
 - **Center zone reserved for Dynamic Island:** The Dynamic Island spec places a pill in the top-center. Keeping the bar center empty avoids visual clutter and text-behind-pill rendering artifacts.
 - **SNI over Wayland tray protocols:** No stable Wayland tray protocol exists. SNI (via D-Bus) is the de-facto standard supported by virtually all Linux desktop apps.
 - **Context menu system:** Both global menus (left zone) and tray icon context menus (right zone) use the shared context menu component, which ensures consistent keyboard and mouse behavior, submenu handling, and focus management across the topbar.

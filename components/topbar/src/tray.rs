@@ -31,6 +31,8 @@ static PENDING_MENU: LazyLock<Mutex<Option<PendingMenu>>> = LazyLock::new(|| Mut
 #[allow(dead_code)]
 pub struct PendingMenu {
     pub service: String,
+    /// SNI object path — used to match back to the owning TrayItem.
+    pub item_path: String,
     pub menu_path: String,
     pub layout: crate::dbusmenu::MenuLayout,
     pub anchor_x: i32,
@@ -137,6 +139,7 @@ pub fn context_menu_item(index: usize, x: i32, y: i32) {
 
             *PENDING_MENU.lock().unwrap() = Some(PendingMenu {
                 service: service.clone(),
+                item_path: path.clone(),
                 menu_path: mpath.clone(),
                 layout,
                 anchor_x: x,
@@ -158,6 +161,58 @@ pub fn context_menu_item(index: usize, x: i32, y: i32) {
 
         if let Ok(p) = proxy {
             let _ = p.activate(x, y).await;
+        }
+    });
+}
+
+/// Left-click: call SNI Activate on the tray item at `index`.
+pub fn activate_item(index: usize, x: i32, y: i32) {
+    let items = TRAY_STATE.lock().unwrap();
+    let Some(item) = items.get(index) else { return };
+    let service = item.service.clone();
+    let path = item.path.clone();
+    drop(items);
+
+    let conn = TRAY_CONNECTION.lock().unwrap().clone();
+    let Some(conn) = conn else { return };
+
+    let handle = tokio::runtime::Handle::current();
+    handle.spawn(async move {
+        let proxy = StatusNotifierItemProxy::builder(&conn)
+            .destination(service.as_str())
+            .unwrap()
+            .path(path.as_str())
+            .unwrap()
+            .build()
+            .await;
+        if let Ok(p) = proxy {
+            let _ = p.activate(x, y).await;
+        }
+    });
+}
+
+/// Middle-click: call SNI SecondaryActivate on the tray item at `index`.
+pub fn secondary_activate_item(index: usize, x: i32, y: i32) {
+    let items = TRAY_STATE.lock().unwrap();
+    let Some(item) = items.get(index) else { return };
+    let service = item.service.clone();
+    let path = item.path.clone();
+    drop(items);
+
+    let conn = TRAY_CONNECTION.lock().unwrap().clone();
+    let Some(conn) = conn else { return };
+
+    let handle = tokio::runtime::Handle::current();
+    handle.spawn(async move {
+        let proxy = StatusNotifierItemProxy::builder(&conn)
+            .destination(service.as_str())
+            .unwrap()
+            .path(path.as_str())
+            .unwrap()
+            .build()
+            .await;
+        if let Ok(p) = proxy {
+            let _ = p.secondary_activate(x, y).await;
         }
     });
 }
@@ -449,10 +504,19 @@ async fn fetch_item(
     let pixmap_target = 24 * otto_kit::app_runner::context::AppContext::scale_factor().max(1);
     let (icon_data, icon_w, icon_h) = match proxy.icon_pixmap().await {
         Ok(pixmaps) if !pixmaps.is_empty() => {
-            // Pick the best size (closest to target, prefer larger)
+            // Pick the best size (closest to target, prefer >= target when tied)
             let best = pixmaps
                 .iter()
-                .min_by_key(|(w, _, _)| (w - pixmap_target).abs())
+                .min_by(|(w1, h1, _), (w2, h2, _)| {
+                    let d1 = (w1 - pixmap_target).abs() + (h1 - pixmap_target).abs();
+                    let d2 = (w2 - pixmap_target).abs() + (h2 - pixmap_target).abs();
+                    d1.cmp(&d2).then_with(|| {
+                        // When equal distance, prefer the larger one
+                        let s2 = w2 * h2;
+                        let s1 = w1 * h1;
+                        s2.cmp(&s1)
+                    })
+                })
                 .unwrap();
             // SNI pixmaps are ARGB32 in network byte order (big-endian)
             let data = argb_network_to_native(&best.2);
@@ -516,7 +580,8 @@ async fn fetch_item(
         cached_layout: None,
     };
 
-    state.lock().unwrap().push(item);
+    // Insert at front so newest items appear leftmost (per spec).
+    state.lock().unwrap().insert(0, item);
     TRAY_GENERATION.fetch_add(1, Ordering::Relaxed);
     AppContext::request_wakeup();
 
@@ -592,36 +657,79 @@ async fn watch_item_signals(conn: &Connection, bus_name: &str, path: &str, state
         Ok(s) => s,
         Err(_) => return,
     };
+    let mut status_stream = proxy.receive_new_status().await.ok();
+    let mut tooltip_stream = proxy.receive_new_tool_tip().await.ok();
 
     let bus = bus_name.to_string();
     let p = path.to_string();
 
-    while icon_stream.next().await.is_some() {
-        // Re-fetch icon
-        let (icon_data, icon_w, icon_h) = match proxy.icon_pixmap().await {
-            Ok(pixmaps) if !pixmaps.is_empty() => {
-                let target = 24 * otto_kit::app_runner::context::AppContext::scale_factor().max(1);
-                let best = pixmaps
-                    .iter()
-                    .min_by_key(|(w, _, _)| (w - target).abs())
-                    .unwrap();
-                let data = argb_network_to_native(&best.2);
-                (Some(data), best.0, best.1)
+    loop {
+        tokio::select! {
+            icon_ev = icon_stream.next() => {
+                if icon_ev.is_none() { break; }
+
+                // Re-fetch icon
+                let (icon_data, icon_w, icon_h) = match proxy.icon_pixmap().await {
+                    Ok(pixmaps) if !pixmaps.is_empty() => {
+                        let target = 24 * otto_kit::app_runner::context::AppContext::scale_factor().max(1);
+                        let best = pixmaps
+                            .iter()
+                            .min_by(|(w1, h1, _), (w2, h2, _)| {
+                                let d1 = (w1 - target).abs() + (h1 - target).abs();
+                                let d2 = (w2 - target).abs() + (h2 - target).abs();
+                                d1.cmp(&d2).then_with(|| (w2 * h2).cmp(&(w1 * h1)))
+                            })
+                            .unwrap();
+                        let data = argb_network_to_native(&best.2);
+                        (Some(data), best.0, best.1)
+                    }
+                    _ => (None, 0, 0),
+                };
+                let icon_name = proxy.icon_name().await.ok();
+
+                let mut items = state.lock().unwrap();
+                if let Some(item) = items.iter_mut().find(|i| i.service == bus && i.path == p) {
+                    item.icon_data = icon_data;
+                    item.icon_width = icon_w;
+                    item.icon_height = icon_h;
+                    item.icon_name = icon_name;
+                }
+                TRAY_GENERATION.fetch_add(1, Ordering::Relaxed);
+                AppContext::request_wakeup();
             }
-            _ => (None, 0, 0),
-        };
+            status_ev = async {
+                match status_stream.as_mut() {
+                    Some(s) => s.next().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if status_ev.is_none() { break; }
 
-        let icon_name = proxy.icon_name().await.ok();
+                let new_status = proxy.status().await.unwrap_or_default();
+                let mut items = state.lock().unwrap();
+                if let Some(item) = items.iter_mut().find(|i| i.service == bus && i.path == p) {
+                    item.status = new_status;
+                }
+                TRAY_GENERATION.fetch_add(1, Ordering::Relaxed);
+                AppContext::request_wakeup();
+            }
+            tooltip_ev = async {
+                match tooltip_stream.as_mut() {
+                    Some(s) => s.next().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if tooltip_ev.is_none() { break; }
 
-        let mut items = state.lock().unwrap();
-        if let Some(item) = items.iter_mut().find(|i| i.service == bus && i.path == p) {
-            item.icon_data = icon_data;
-            item.icon_width = icon_w;
-            item.icon_height = icon_h;
-            item.icon_name = icon_name;
+                let tooltip = proxy.tool_tip().await.ok().and_then(extract_tooltip_text);
+                let mut items = state.lock().unwrap();
+                if let Some(item) = items.iter_mut().find(|i| i.service == bus && i.path == p) {
+                    item.tooltip = tooltip;
+                }
+                TRAY_GENERATION.fetch_add(1, Ordering::Relaxed);
+                AppContext::request_wakeup();
+            }
         }
-        TRAY_GENERATION.fetch_add(1, Ordering::Relaxed);
-        AppContext::request_wakeup();
     }
 }
 
