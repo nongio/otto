@@ -27,6 +27,7 @@ build() {
     unset CFLAGS CXXFLAGS LDFLAGS CPPFLAGS
     cargo build --release
     cargo build --release -p otto-bar
+    cargo build --release -p otto-islands
     cargo build --release -p xdg-desktop-portal-otto
 }
 
@@ -36,6 +37,7 @@ package() {
     # Install binaries
     install -Dm755 target/release/otto "$pkgdir/usr/bin/otto"
     install -Dm755 target/release/otto-bar "$pkgdir/usr/bin/otto-bar"
+    install -Dm755 target/release/otto-islands "$pkgdir/usr/bin/otto-islands"
     install -Dm755 target/release/xdg-desktop-portal-otto "$pkgdir/usr/libexec/xdg-desktop-portal-otto"
 
     # Install documentation
