@@ -773,14 +773,21 @@ impl IslandApp {
 
         for island in &self.islands {
             if island.mode == IslandMode::Expanded {
-                let card_count = island.cards.len().min(5) as f32;
-                let pill_h = COMPACT_H;
-                let pill_bottom = (BAR_HEIGHT - pill_h) / 2.0 + pill_h;
-                let stack_h = pill_bottom
-                    + renderer::CARD_GAP
-                    + card_count * renderer::CARD_H
-                    + (card_count - 1.0).max(0.0) * renderer::CARD_GAP;
-                max_h = max_h.max(stack_h + 4.0);
+                if island.kind == IslandKind::Music {
+                    // Music expanded: top-aligned, full height from last_layout.
+                    let pill_top = (BAR_HEIGHT - COMPACT_H) / 2.0;
+                    let h = island.last_layout.1;
+                    max_h = max_h.max(pill_top + h + 4.0);
+                } else {
+                    let card_count = island.cards.len().min(5) as f32;
+                    let pill_h = COMPACT_H;
+                    let pill_bottom = (BAR_HEIGHT - pill_h) / 2.0 + pill_h;
+                    let stack_h = pill_bottom
+                        + renderer::CARD_GAP
+                        + card_count * renderer::CARD_H
+                        + (card_count - 1.0).max(0.0) * renderer::CARD_GAP;
+                    max_h = max_h.max(stack_h + 4.0);
+                }
             }
         }
 
