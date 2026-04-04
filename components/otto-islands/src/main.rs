@@ -330,7 +330,7 @@ impl IslandApp {
             .sum::<f32>()
             + (self.islands.len() - 1) as f32 * GAP;
 
-        let mut x = (LAYER_W as f32 - total_w) / 2.0;
+        let mut x = ((LAYER_W as f32 - total_w) / 2.0).max(0.0);
 
         // Collect positions for expanded islands, pulse targets, and layout targets.
         let mut expanded_layouts: Vec<(usize, f32, f32, f32, f32)> = Vec::new();
@@ -750,7 +750,7 @@ impl IslandApp {
         let total_w: f32 = self.islands.iter().map(|i| get_size(i).0).sum::<f32>()
             + (self.islands.len().saturating_sub(1)) as f32 * GAP;
 
-        let mut x = (LAYER_W as f32 - total_w) / 2.0;
+        let mut x = ((LAYER_W as f32 - total_w) / 2.0).max(0.0);
 
         for island in &self.islands {
             let (w, h) = get_size(island);

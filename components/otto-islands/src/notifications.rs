@@ -89,7 +89,7 @@ impl NotificationDaemon {
         while let Some(id) = iter.next() {
             if let Some(label) = iter.next() {
                 if id == "default" {
-                    default_action = Some(label.clone());
+                    default_action = Some(id.clone());
                 } else {
                     parsed_actions.push(NotificationAction {
                         id: id.clone(),

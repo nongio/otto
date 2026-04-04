@@ -538,8 +538,8 @@ impl CompositorInterface {
 
     /// Focus an application window by app_id.
     ///
-    /// Raises the most recent window belonging to the given app_id and
-    /// gives it keyboard focus. Returns true if a matching window was found.
+    /// Sends a focus command to the compositor for the given app_id.
+    /// Returns true if the command was dispatched (not whether a window was found).
     async fn focus_app(&self, app_id: &str) -> zbus::fdo::Result<bool> {
         info!(app_id, "focus_app requested via D-Bus");
         self.compositor_tx
