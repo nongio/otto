@@ -50,9 +50,9 @@ mpris = "2.0"
 otto-kit = { path = "components/otto-kit" }
 
 [dependencies.laye-rs]
-# path = "../layers"
-git = "https://github.com/nongio/layers"
-tag = "v1.8.0"
+path = "../layers"
+# git = "https://github.com/nongio/layers"
+# tag = "v1.8.0"
 features = ["export-taffy"]
 
 [dependencies.smithay-drm-extras]

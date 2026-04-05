@@ -824,85 +824,56 @@ pub fn start_playerctl_monitor() -> SharedPlayback {
     let shared_for_thread = shared.clone();
 
     thread::spawn(move || loop {
-        let is_playing = Command::new("playerctl")
-            .arg("status")
+        // Single playerctl call for all metadata + status.
+        let output = Command::new("playerctl")
+            .args([
+                "metadata",
+                "--format",
+                "{{status}}\n{{title}}\n{{artist}}\n{{mpris:artUrl}}\n{{position}}\n{{mpris:length}}",
+            ])
             .output()
             .ok()
             .filter(|o| o.status.success())
-            .map(|o| {
-                String::from_utf8_lossy(&o.stdout)
-                    .trim()
-                    .eq_ignore_ascii_case("playing")
-            })
-            .unwrap_or(false);
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string());
 
-        let track_title = Command::new("playerctl")
-            .args(["metadata", "--format", "{{title}}"])
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "No media".to_string());
+        if let Some(output) = output {
+            let lines: Vec<&str> = output.trim().split('\n').collect();
+            let is_playing = lines
+                .first()
+                .is_some_and(|s| s.eq_ignore_ascii_case("playing"));
+            let track_title = lines
+                .get(1)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(&"No media")
+                .to_string();
+            let track_artist = lines.get(2).unwrap_or(&"").to_string();
+            let art_url = lines.get(3).unwrap_or(&"").to_string();
+            let position = lines
+                .get(4)
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0);
+            let length = lines
+                .get(5)
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(1.0);
 
-        let track_artist = Command::new("playerctl")
-            .args(["metadata", "--format", "{{artist}}"])
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .unwrap_or_default();
+            let progress = if length > 0.0 {
+                (position / length).clamp(0.0, 1.0) as f32
+            } else {
+                0.0
+            };
+            let duration_secs = (length / 1_000_000.0) as f32;
 
-        let art_url = Command::new("playerctl")
-            .args(["metadata", "mpris:artUrl"])
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .unwrap_or_default();
-
-        let position = Command::new("playerctl")
-            .args(["metadata", "--format", "{{position}}"])
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .and_then(|o| {
-                String::from_utf8_lossy(&o.stdout)
-                    .trim()
-                    .parse::<f64>()
-                    .ok()
-            })
-            .unwrap_or(0.0);
-
-        let length = Command::new("playerctl")
-            .args(["metadata", "mpris:length"])
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .and_then(|o| {
-                String::from_utf8_lossy(&o.stdout)
-                    .trim()
-                    .parse::<f64>()
-                    .ok()
-            })
-            .unwrap_or(1.0);
-
-        let progress = if length > 0.0 {
-            (position / length).clamp(0.0, 1.0) as f32
-        } else {
-            0.0
-        };
-
-        // length is in microseconds from MPRIS
-        let duration_secs = (length / 1_000_000.0) as f32;
-
-        if let Ok(mut info) = shared_for_thread.lock() {
-            info.track_title = track_title;
-            info.track_artist = track_artist;
-            info.art_url = art_url;
-            info.is_playing = is_playing;
-            info.progress = progress;
-            info.duration_secs = duration_secs;
+            if let Ok(mut info) = shared_for_thread.lock() {
+                info.track_title = track_title;
+                info.track_artist = track_artist;
+                info.art_url = art_url;
+                info.is_playing = is_playing;
+                info.progress = progress;
+                info.duration_secs = duration_secs;
+            }
+        } else if let Ok(mut info) = shared_for_thread.lock() {
+            info.is_playing = false;
         }
         thread::sleep(Duration::from_millis(1500));
     });
@@ -982,6 +953,13 @@ fn run_pipewire_level_loop(shared_level: Arc<Mutex<f32>>) -> Result<(), pipewire
             let Some(mut buffer) = stream.dequeue_buffer() else {
                 return;
             };
+            // Skip computation on throttled frames — only process every 6th buffer.
+            user_data.skip_count += 1;
+            if user_data.skip_count < 6 {
+                return;
+            }
+            user_data.skip_count = 0;
+
             let datas = buffer.datas_mut();
             if datas.is_empty() {
                 return;
@@ -1022,13 +1000,8 @@ fn run_pipewire_level_loop(shared_level: Arc<Mutex<f32>>) -> Result<(), pipewire
             }
             let rms = (sum_sq / seen as f32).sqrt();
             let normalized = (peak * 1.35 + rms * 0.65).clamp(0.0, 1.0);
-            // Throttle: only update shared level every ~6 buffers (~15fps).
-            user_data.skip_count += 1;
-            if user_data.skip_count >= 6 {
-                user_data.skip_count = 0;
-                if let Ok(mut level) = user_data.level.lock() {
-                    *level = normalized;
-                }
+            if let Ok(mut level) = user_data.level.lock() {
+                *level = normalized;
             }
         })
         .register()?;

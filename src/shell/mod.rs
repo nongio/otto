@@ -189,7 +189,6 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
                     .unwrap_or(false);
 
                 if is_layer_shell {
-                    // Popup belongs to a layer shell - update the layer shell to render the popup
                     let layer_id = root_id.as_ref().unwrap_or(&surface_id);
                     self.update_layer_shell_surface(layer_id);
                 } else {
@@ -518,9 +517,6 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
 
         // Update the container layer's Taffy layout style from anchors/margins/size.
-        // This lets the layout engine position the layer automatically — including
-        // during surface-style size animations (the animated size feeds back into
-        // Taffy and the position adjusts every frame).
         let layer = {
             let Some(layer_shell_surf) = self.layer_surfaces.get(surface_id) else {
                 return;
@@ -534,10 +530,6 @@ impl<BackendData: Backend> Otto<BackendData> {
             .and_then(|v: &Vec<_>| v.first());
         let container_owns_size = container_style.map(|s| s.client_owns_size).unwrap_or(false);
 
-        // Always refresh the Taffy style so position tracks anchor+margin changes.
-        // When the client owns the size (surface style animation), Taffy still
-        // controls the inset positioning — the animated size on the layer feeds
-        // back into layout automatically.
         {
             let Some(layer_shell_surf) = self.layer_surfaces.get(surface_id) else {
                 return;
@@ -552,10 +544,6 @@ impl<BackendData: Backend> Otto<BackendData> {
             layer.set_size(layers::types::Size::points(container_w, container_h), None);
         }
         layer.set_hidden(false);
-
-        // For layer shells, the workspace layer IS the surface layer
-        // Don't try to append it to itself - it's already added in create_layer_shell_layer
-        // (Regular windows would need to append surface layers to window container layer here)
     }
 }
 

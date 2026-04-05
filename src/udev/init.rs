@@ -627,15 +627,12 @@ pub fn run_udev() {
         // Use tight timing when animations are active or the idle countdown
         // is still running (recent input/damage keeps us at frame rate).
         let has_animations = state.scene_element.has_pending_animations();
-        let has_active_countdown = state
-            .backend_data
-            .backends
-            .values()
-            .flat_map(|d| d.surfaces.values())
-            .any(|s| s.idle_countdown > 0);
-        let dispatch_timeout = if has_animations || has_active_countdown {
+        let dispatch_timeout = if has_animations {
+            // Tight loop only for running animations (spring, easing, etc.)
             Some(Duration::from_millis(1))
         } else {
+            // Idle: sleep up to 1s. Surface commits wake us via
+            // render_requested → render() → frame_finish reschedule.
             Some(Duration::from_secs(1))
         };
 
