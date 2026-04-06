@@ -669,9 +669,14 @@ impl IslandApp {
                 let delay = (distance as f64 / 100.0) * 0.06; // ~60ms per 100px
                 let is_new = old == (0.0, 0.0, 0.0, 0.0);
                 if is_new {
-                    // New island: place at final position instantly, then fade in.
-                    set_size_and_position(&self.islands[idx].surface, w, h, x, y);
-                    renderer::animate_fade_in(&self.islands[idx].surface, delay);
+                    // New island: start at Mini size, fade in, then animate to target.
+                    let mini_r = MINI_H as f64 / 2.0;
+                    set_size_and_position(&self.islands[idx].surface, MINI_H, MINI_H, x, y);
+                    if let Some(ss) = self.islands[idx].surface.base_surface().surface_style() {
+                        ss.set_corner_radius(mini_r * renderer::BUFFER_SCALE);
+                        ss.set_opacity(1.0);
+                    }
+                    animate_to_bouncy(&self.islands[idx].surface, w, h, x, y, radius, delay);
                 } else if self.islands[idx].kind == IslandKind::Notification {
                     animate_to_bouncy(&self.islands[idx].surface, w, h, x, y, radius, delay);
                 } else {
