@@ -29,7 +29,7 @@ use crate::state::{IslandState, SharedState};
 // Constants
 // ---------------------------------------------------------------------------
 
-const LAYER_W: u32 = 1; // Starts minimal; grows to fit content.
+const LAYER_W: u32 = 900; // Fixed width; items centered manually.
 const LAYER_H: u32 = 400; // Tall enough for pill + MAX_VISIBLE_CARDS cards.
 /// otto-bar is 32px; islands sit 2px smaller so there's 1px margin top & bottom.
 const BAR_HEIGHT: f32 = 30.0;
@@ -124,6 +124,9 @@ struct IslandApp {
     max_visible_notifications: usize,
     /// Current Wayland layer shell width (for detecting re-centering shifts).
     current_layer_w: f32,
+    /// Horizontal bias toward the focused pill (pixels). Nudges all content
+    /// so the focused island sits closer to the screen center.
+    focus_bias: f32,
 }
 
 impl IslandApp {
@@ -142,6 +145,7 @@ impl IslandApp {
             music_last_redraw: std::time::Instant::now(),
             music_last_full_redraw: std::time::Instant::now(),
             current_layer_w: 0.0,
+            focus_bias: 0.0,
             max_visible_notifications: DEFAULT_MAX_VISIBLE_NOTIFICATIONS,
         }
     }
@@ -370,7 +374,7 @@ impl IslandApp {
 
     fn layout(&mut self, grouped: &[(Activity, usize)], _reposition_delay: bool) {
         if self.islands.is_empty() {
-            self.update_layer_size(0.0);
+            self.update_layer_height();
 
             return;
         }
@@ -465,7 +469,6 @@ impl IslandApp {
         let mut show_targets: Vec<(usize, usize)> = Vec::new(); // (island_idx, position)
 
         // Compute content width from current island sizes.
-        // content_w IS the layer width — compositor centers it via Anchor::Top.
         let content_w = {
             let mut rw = 0.0_f32;
             let mut rc = 0_usize;
@@ -490,8 +493,13 @@ impl IslandApp {
             RIGHT_MARGIN + lw + lg + zg + rw + rg + RIGHT_MARGIN
         };
 
+        // Center offset: shift all positions so content is centered in the fixed-width layer.
+        // focus_bias nudges everything toward the focused pill.
+        let layer_w = LAYER_W as f32;
+        let center_offset = (layer_w - content_w) / 2.0 + self.focus_bias;
+
         // --- Right zone: priority islands, right-aligned ---
-        let mut right_x = content_w - RIGHT_MARGIN;
+        let mut right_x = content_w - RIGHT_MARGIN + center_offset;
         for &idx in &right_zone {
             let island = &self.islands[idx];
             let count = grouped
@@ -543,7 +551,7 @@ impl IslandApp {
 
         // --- Left zone: notifications, newest first (rightmost) ---
         let left_zone_right = if right_zone.is_empty() {
-            content_w - RIGHT_MARGIN
+            content_w - RIGHT_MARGIN + center_offset
         } else {
             right_zone_left - ZONE_GAP
         };
@@ -908,7 +916,7 @@ impl IslandApp {
             self.defer_destroy(s);
         }
 
-        self.update_layer_size(content_w);
+        self.update_layer_height();
         self.current_layer_w = content_w;
     }
 
@@ -916,7 +924,7 @@ impl IslandApp {
     // Layer size & input region
     // -----------------------------------------------------------------------
 
-    fn update_layer_size(&self, content_w: f32) {
+    fn update_layer_height(&self) {
         let Some(layer) = &self.layer_surface else {
             return;
         };
@@ -927,7 +935,6 @@ impl IslandApp {
         for island in &self.islands {
             if island.mode == IslandMode::Expanded {
                 if island.kind == IslandKind::Music {
-                    // Music expanded: top-aligned, full height from last_layout.
                     let pill_top = (BAR_HEIGHT - COMPACT_H) / 2.0;
                     let h = island.last_layout.1;
                     max_h = max_h.max(pill_top + h + 4.0);
@@ -944,36 +951,14 @@ impl IslandApp {
             }
         }
 
-        // Set Wayland layer shell size for compositor positioning.
-        tracing::debug!(content_w, max_h, "update_layer_size");
-        layer.set_size((content_w.ceil() as u32).max(1), max_h.ceil() as u32);
-
-        // Animate the visual size via the style protocol.
-        // Skip animation on first layout (from 1px initial) to avoid visible grow-in.
+        // Width is fixed; only update height.
+        layer.set_size(LAYER_W, max_h.ceil() as u32);
         if let Some(style) = layer.base_surface().surface_style() {
-            // First layout: set size instantly (no animation from 1px).
-            if self.current_layer_w == 0.0 {
-                tracing::info!(content_w, "layer size: instant (first)");
-                style.set_size(
-                    content_w as f64 * renderer::BUFFER_SCALE,
-                    max_h as f64 * renderer::BUFFER_SCALE,
-                );
-            } else if let Some(scene) = AppContext::surface_style_manager() {
-                tracing::info!(content_w, old_w = self.current_layer_w, "layer size: animate");
-                let qh = AppContext::queue_handle();
-                let timing = scene.create_timing_function(qh, ());
-                timing.set_spring(0.15, 0.0);
-                let txn = scene.begin_transaction(qh, ());
-                txn.set_duration(0.8);
-                txn.set_timing_function(&timing);
-                style.set_size(
-                    content_w as f64 * renderer::BUFFER_SCALE,
-                    max_h as f64 * renderer::BUFFER_SCALE,
-                );
-                txn.commit();
-            }
+            style.set_size(
+                LAYER_W as f64 * renderer::BUFFER_SCALE,
+                max_h as f64 * renderer::BUFFER_SCALE,
+            );
         }
-        // Commit so the compositor processes the new size for pointer containment.
         layer.base_surface().wl_surface().commit();
     }
 
@@ -1039,8 +1024,20 @@ impl IslandApp {
 
     fn handle_click(&mut self, px: f32, py: f32) {
         let Some((app_id, card_id)) = self.hit_test(px, py) else {
+            // Clicked empty space — reset bias.
+            self.focus_bias = 0.0;
             return;
         };
+
+        // Compute focus bias: nudge content toward the clicked pill.
+        // Bias = fraction of the pill's offset from layer center.
+        if let Some(island) = self.islands.iter().find(|i| i.app_id == app_id) {
+            let layer_center = LAYER_W as f32 / 2.0;
+            let pill_cx = island.last_layout.2;
+            let offset_from_center = pill_cx - layer_center;
+            // Pull ~15% toward the clicked pill.
+            self.focus_bias = -offset_from_center * 0.15;
+        }
 
         if let Some(activity_id) = card_id {
             let close_zone = 40.0_f32;
@@ -1165,7 +1162,6 @@ impl IslandApp {
                         IslandMode::Expanded => {
                             tracing::info!(%app_id, "music click: Expanded → Compact");
                             island.mode = IslandMode::Compact;
-                            island.last_layout = (0.0, 0.0, 0.0, 0.0);
                             self.focused_app = Some(app_id.clone());
                             self.last_interaction = std::time::Instant::now();
                         }
@@ -1198,7 +1194,6 @@ impl IslandApp {
                         tracing::info!(%app_id, "click: Expanded → Compact");
                         Self::close_cards_for(island);
                         island.mode = IslandMode::Compact;
-                        island.last_layout = (0.0, 0.0, 0.0, 0.0);
                         // Keep focus so timeout governs Mini transition.
                         self.focused_app = Some(app_id.clone());
                         self.last_interaction = std::time::Instant::now();
@@ -1277,6 +1272,7 @@ impl App for IslandApp {
                     "focus timeout → all Mini"
                 );
                 self.focused_app = None;
+                self.focus_bias = 0.0;
                 let mut state = self.state.lock().unwrap();
                 state.dirty = true;
                 drop(state);
@@ -1292,7 +1288,6 @@ impl App for IslandApp {
                     tracing::info!(app_id = %island.app_id, "peek expired → Mini");
                     island.peek_until = None;
                     island.mode = IslandMode::Mini;
-                    island.last_layout = (0.0, 0.0, 0.0, 0.0);
                     // Snapshot current state so the next sync doesn't re-trigger peek.
                     let state = self.state.lock().unwrap();
                     let grouped = state.grouped_activities();
@@ -1436,7 +1431,11 @@ impl App for IslandApp {
                         if let Some(old_id) = &self.hovered_app {
                             if let Some(island) = self.islands.iter().find(|i| &i.app_id == old_id) {
                                 let (w, h, cx, cy) = island.last_layout;
-                                let r = h as f64 / 2.0;
+                                let r = if island.kind == IslandKind::Music && island.mode == IslandMode::Expanded {
+                                    16.0
+                                } else {
+                                    h as f64 / 2.0
+                                };
                                 renderer::animate_to(&island.surface, w, h, cx, cy, r, 0.0);
                             }
                         }
@@ -1445,7 +1444,11 @@ impl App for IslandApp {
                             if let Some(island) = self.islands.iter().find(|i| &i.app_id == new_id) {
                                 let (w, h, cx, cy) = island.last_layout;
                                 let grow = renderer::HOVER_GROW;
-                                let r = (h + grow) as f64 / 2.0;
+                                let r = if island.kind == IslandKind::Music && island.mode == IslandMode::Expanded {
+                                    16.0
+                                } else {
+                                    (h + grow) as f64 / 2.0
+                                };
                                 renderer::animate_to(&island.surface, w + grow, h + grow, cx, cy, r, 0.0);
                             }
                         }
