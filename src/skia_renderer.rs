@@ -389,11 +389,7 @@ impl SkiaRenderer {
                 Ok(texture)
             });
         texture.map(|mut tex| {
-            tex.image = self
-                .import_skia_image_from_texture(&tex.texture, false)
-                .unwrap();
             tex.damage = damage.clone();
-            // println!("SkiaRenderer: import_dmabuf_internal END");
             tex
         })
     }

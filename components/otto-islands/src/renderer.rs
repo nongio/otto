@@ -455,7 +455,7 @@ pub fn animate_to_bouncy(
     radius: f64,
     delay: f64,
 ) {
-    animate_to_inner(surface, w, h, x, y, radius, None, 0.3, delay);
+    animate_to_inner(surface, w, h, x, y, radius, None, 0.45, delay);
 }
 
 pub fn animate_to_with_opacity(
@@ -563,6 +563,26 @@ fn animate_position_opacity_duration(
             scene_surface.set_position(x as f64 * BUFFER_SCALE, y as f64 * BUFFER_SCALE);
             scene_surface.set_opacity(opacity);
 
+            anim.commit();
+        }
+    }
+}
+
+
+/// Fade in from opacity 0 → 1 after an optional delay.
+pub fn animate_fade_in(surface: &otto_kit::SubsurfaceSurface, delay: f64) {
+    if let Some(scene_surface) = surface.base_surface().surface_style() {
+        if let Some(scene) = AppContext::surface_style_manager() {
+            let qh = AppContext::queue_handle();
+            let timing = scene.create_timing_function(qh, ());
+            timing.set_spring(0.0, 0.0);
+            let anim = scene.begin_transaction(qh, ());
+            anim.set_duration(0.3);
+            if delay > 0.0 {
+                anim.set_delay(delay);
+            }
+            anim.set_timing_function(&timing);
+            scene_surface.set_opacity(1.0);
             anim.commit();
         }
     }

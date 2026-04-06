@@ -11,7 +11,6 @@ use std::time::Duration;
 use otto_kit::protocols::otto_surface_style_v1::ContentsGravity;
 use otto_kit::surfaces::{LayerShellSurface, SubsurfaceSurface};
 use otto_kit::{App, AppContext, AppRunner};
-use smithay_client_toolkit::compositor::Region;
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::Layer, zwlr_layer_surface_v1::Anchor,
@@ -30,7 +29,7 @@ use crate::state::{IslandState, SharedState};
 // Constants
 // ---------------------------------------------------------------------------
 
-const LAYER_W: u32 = 800;
+const LAYER_W: u32 = 1; // Starts minimal; grows to fit content.
 const LAYER_H: u32 = 400; // Tall enough for pill + MAX_VISIBLE_CARDS cards.
 /// otto-bar is 32px; islands sit 2px smaller so there's 1px margin top & bottom.
 const BAR_HEIGHT: f32 = 30.0;
@@ -40,7 +39,7 @@ const RIGHT_MARGIN: f32 = 8.0;
 /// Minimum gap between the notification and priority zones.
 const ZONE_GAP: f32 = 16.0;
 /// Default maximum number of visible notification islands in the left zone.
-const DEFAULT_MAX_VISIBLE_NOTIFICATIONS: usize = 6;
+const DEFAULT_MAX_VISIBLE_NOTIFICATIONS: usize = 10;
 /// Seconds of inactivity before the focused island shrinks to Mini.
 const FOCUS_TIMEOUT_SECS: f64 = 4.0;
 
@@ -123,8 +122,8 @@ struct IslandApp {
     music_last_full_redraw: std::time::Instant,
     /// Maximum number of visible notification groups.
     max_visible_notifications: usize,
-    /// Cached content width from last layout pass (avoids instability between passes).
-    last_content_width: f32,
+    /// Current Wayland layer shell width (for detecting re-centering shifts).
+    current_layer_w: f32,
 }
 
 impl IslandApp {
@@ -142,13 +141,9 @@ impl IslandApp {
             music_pressed: None,
             music_last_redraw: std::time::Instant::now(),
             music_last_full_redraw: std::time::Instant::now(),
+            current_layer_w: 0.0,
             max_visible_notifications: DEFAULT_MAX_VISIBLE_NOTIFICATIONS,
-            last_content_width: 0.0,
         }
-    }
-
-    fn layer_width(&self) -> f32 {
-        self.last_content_width.max(LAYER_W as f32)
     }
 
     /// Get the parent wl_surface for creating subsurfaces.
@@ -165,10 +160,10 @@ impl IslandApp {
         let surface =
             SubsurfaceSurface::new(&wl, 0, 0, renderer::SLOT_BUF_W, renderer::SLOT_BUF_H).ok()?;
         apply_island_style(&surface, MINI_H as f64 / 2.0, ContentsGravity::Center);
-        // Center coordinates (anchor point is 0.5, 0.5).
-        let cx = self.layer_width() / 2.0;
-        let cy = BAR_HEIGHT / 2.0;
-        set_size_and_position(&surface, MINI_W, MINI_H, cx, cy);
+        // Start invisible — layout will place it at the correct position and fade in.
+        if let Some(ss) = surface.base_surface().surface_style() {
+            ss.set_opacity(0.0);
+        }
         surface.draw(|canvas| {
             canvas.clear(skia_safe::Color::TRANSPARENT);
         });
@@ -373,10 +368,10 @@ impl IslandApp {
     // Layout: position all islands and their cards
     // -----------------------------------------------------------------------
 
-    fn layout(&mut self, grouped: &[(Activity, usize)], reposition_delay: bool) {
+    fn layout(&mut self, grouped: &[(Activity, usize)], _reposition_delay: bool) {
         if self.islands.is_empty() {
-            self.update_layer_size();
-            self.update_input_region();
+            self.update_layer_size(0.0);
+
             return;
         }
 
@@ -462,8 +457,6 @@ impl IslandApp {
         // Left zone: newest first (rightmost position).
         left_zone.sort_by(|&a, &b| self.islands[b].created_at.cmp(&self.islands[a].created_at));
 
-        let layer_w = self.layer_width();
-
         // Collect positions for expanded islands, pulse targets, and layout targets.
         let mut expanded_layouts: Vec<(usize, f32, f32, f32, f32)> = Vec::new();
         let mut pulse_targets: Vec<(usize, f32, f32, f32, f32)> = Vec::new();
@@ -471,7 +464,8 @@ impl IslandApp {
         let mut hide_targets: Vec<(usize, usize, f32, f32)> = Vec::new(); // (island_idx, position, cx, cy)
         let mut show_targets: Vec<(usize, usize)> = Vec::new(); // (island_idx, position)
 
-        // Compute content width from current island sizes (not last_layout).
+        // Compute content width from current island sizes.
+        // content_w IS the layer width — compositor centers it via Anchor::Top.
         let content_w = {
             let mut rw = 0.0_f32;
             let mut rc = 0_usize;
@@ -495,11 +489,9 @@ impl IslandApp {
             let zg = if lc > 0 && rc > 0 { ZONE_GAP } else { 0.0 };
             RIGHT_MARGIN + lw + lg + zg + rw + rg + RIGHT_MARGIN
         };
-        self.last_content_width = content_w;
-        let center_offset = (layer_w - content_w) / 2.0;
 
         // --- Right zone: priority islands, right-aligned ---
-        let mut right_x = layer_w - RIGHT_MARGIN - center_offset;
+        let mut right_x = content_w - RIGHT_MARGIN;
         for &idx in &right_zone {
             let island = &self.islands[idx];
             let count = grouped
@@ -508,17 +500,7 @@ impl IslandApp {
                 .map(|(_, c)| *c)
                 .unwrap_or(0);
 
-            let (base_w, base_h) = island_size(island, island.mode);
-            let is_hovered = self.hovered_app.as_ref() == Some(&island.app_id);
-            let grow = if is_hovered
-                && (island.mode == IslandMode::Mini || island.mode == IslandMode::Compact)
-            {
-                renderer::HOVER_GROW
-            } else {
-                0.0
-            };
-            let w = base_w + grow;
-            let h = base_h + grow;
+            let (w, h) = island_size(island, island.mode);
             right_x -= w;
             let cx = right_x + w / 2.0;
             let cy = if island.kind == IslandKind::Music && island.mode == IslandMode::Expanded {
@@ -561,7 +543,7 @@ impl IslandApp {
 
         // --- Left zone: notifications, newest first (rightmost) ---
         let left_zone_right = if right_zone.is_empty() {
-            layer_w - RIGHT_MARGIN
+            content_w - RIGHT_MARGIN
         } else {
             right_zone_left - ZONE_GAP
         };
@@ -576,17 +558,7 @@ impl IslandApp {
                 .unwrap_or(0);
             let icon = island.icon.as_str();
 
-            let (base_w, base_h) = island_size(island, island.mode);
-            let is_hovered = self.hovered_app.as_ref() == Some(&island.app_id);
-            let grow = if is_hovered
-                && (island.mode == IslandMode::Mini || island.mode == IslandMode::Compact)
-            {
-                renderer::HOVER_GROW
-            } else {
-                0.0
-            };
-            let w = base_w + grow;
-            let h = base_h + grow;
+            let (w, h) = island_size(island, island.mode);
             left_x -= w;
             let cx = left_x + w / 2.0;
             let cy = BAR_HEIGHT / 2.0;
@@ -607,9 +579,6 @@ impl IslandApp {
             let count_increased = count > island.last_count;
             let should_pulse = count_increased;
 
-            // Cascade delay: rightmost slides first, leftmost slides last.
-            let cascade_delay = if reposition_delay { i as f64 * 0.08 } else { 0.0 };
-
             match island.mode {
                 IslandMode::Mini => {
                     draw_centered(&island.surface, w, h, |canvas| {
@@ -618,7 +587,7 @@ impl IslandApp {
                     if should_pulse {
                         pulse_targets.push((idx, w, h, cx, cy));
                     } else {
-                        layout_targets.push((idx, w, h, cx, cy, cascade_delay));
+                        layout_targets.push((idx, w, h, cx, cy, 0.0));
                     }
                 }
                 IslandMode::Compact | IslandMode::Expanded => {
@@ -643,7 +612,7 @@ impl IslandApp {
                     if should_pulse {
                         pulse_targets.push((idx, w, h, cx, cy));
                     } else {
-                        layout_targets.push((idx, w, h, cx, cy, cascade_delay));
+                        layout_targets.push((idx, w, h, cx, cy, 0.0));
                     }
 
                     if island.mode == IslandMode::Expanded {
@@ -656,11 +625,31 @@ impl IslandApp {
             left_x -= GAP;
         }
 
-        // Apply layout animations only when target changed.
-        let base_delay = if reposition_delay { 0.1 } else { 0.0 };
-        for (idx, w, h, x, y, cascade) in layout_targets {
+        // Find the epicenter: the island whose size changed the most, or a new island.
+        // Delays radiate outward from this point.
+        let mut epicenter_x: Option<f32> = None;
+        let mut max_size_delta = 0.0_f32;
+        for &(idx, w, h, x, _y, _) in &layout_targets {
+            let old = self.islands[idx].last_layout;
+            let is_new = old == (0.0, 0.0, 0.0, 0.0);
+            if is_new {
+                epicenter_x = Some(x);
+                break;
+            }
+            let size_delta = (w - old.0).abs() + (h - old.1).abs();
+            if size_delta > max_size_delta {
+                max_size_delta = size_delta;
+                epicenter_x = Some(x);
+            }
+        }
+        // Fallback: rightmost island.
+        let epicenter_x = epicenter_x.unwrap_or(content_w);
+
+        // Apply layout animations — delay based on distance from epicenter.
+        for (idx, w, h, x, y, _) in layout_targets {
             let target = (w, h, x, y);
             if self.islands[idx].last_layout != target {
+                let old = self.islands[idx].last_layout;
                 let radius = if self.islands[idx].kind == IslandKind::Music
                     && self.islands[idx].mode == IslandMode::Expanded
                 {
@@ -668,8 +657,14 @@ impl IslandApp {
                 } else {
                     h as f64 / 2.0
                 };
-                let delay = base_delay + cascade;
-                if self.islands[idx].kind == IslandKind::Notification {
+                let distance = (x - epicenter_x).abs();
+                let delay = (distance as f64 / 100.0) * 0.06; // ~60ms per 100px
+                let is_new = old == (0.0, 0.0, 0.0, 0.0);
+                if is_new {
+                    // New island: place at final position instantly, then fade in.
+                    set_size_and_position(&self.islands[idx].surface, w, h, x, y);
+                    renderer::animate_fade_in(&self.islands[idx].surface, delay);
+                } else if self.islands[idx].kind == IslandKind::Notification {
                     animate_to_bouncy(&self.islands[idx].surface, w, h, x, y, radius, delay);
                 } else {
                     animate_to(&self.islands[idx].surface, w, h, x, y, radius, delay);
@@ -727,6 +722,13 @@ impl IslandApp {
                     from = ?current_mode,
                     "pulse → peek Compact for 3s"
                 );
+                // If brand-new (opacity 0), place at target and make visible first.
+                if self.islands[idx].last_layout == (0.0, 0.0, 0.0, 0.0) {
+                    set_size_and_position(&self.islands[idx].surface, w, h, cx, cy);
+                    if let Some(ss) = self.islands[idx].surface.base_surface().surface_style() {
+                        ss.set_opacity(1.0);
+                    }
+                }
                 renderer::animate_pulse(
                     &self.islands[idx].surface,
                     w,
@@ -906,15 +908,15 @@ impl IslandApp {
             self.defer_destroy(s);
         }
 
-        self.update_layer_size();
-        self.update_input_region();
+        self.update_layer_size(content_w);
+        self.current_layer_w = content_w;
     }
 
     // -----------------------------------------------------------------------
     // Layer size & input region
     // -----------------------------------------------------------------------
 
-    fn update_layer_size(&self) {
+    fn update_layer_size(&self, content_w: f32) {
         let Some(layer) = &self.layer_surface else {
             return;
         };
@@ -942,90 +944,51 @@ impl IslandApp {
             }
         }
 
-        // Compute the minimum width needed for all islands.
-        let needed_w = self.layer_width();
+        // Set Wayland layer shell size for compositor positioning.
+        tracing::debug!(content_w, max_h, "update_layer_size");
+        layer.set_size((content_w.ceil() as u32).max(1), max_h.ceil() as u32);
 
-        layer.set_size(needed_w.ceil() as u32, max_h.ceil() as u32);
-    }
-
-    fn update_input_region(&self) {
-        let Some(layer) = &self.layer_surface else {
-            return;
-        };
-        let cs = AppContext::compositor_state();
-        let Ok(region) = Region::new(cs) else { return };
-
-        // Add input rects when there are visible islands.
-        // Empty region = zero input area (clicks pass through).
-        if !self.islands.is_empty() {
-            // One rect per island, derived from last_layout (center coords).
-            for island in self.islands.iter().filter(|i| !i.hidden) {
-                let (w, h, cx, cy) = island.last_layout;
-                let (pill_w, pill_h) =
-                    if island.kind == IslandKind::Music && island.mode == IslandMode::Expanded {
-                        // Music expanded: full surface size, top-aligned.
-                        (w.max(MINI_H), h)
-                    } else {
-                        let ph = match island.mode {
-                            IslandMode::Mini => MINI_H,
-                            IslandMode::Compact | IslandMode::Expanded => COMPACT_H,
-                        };
-                        let pw = match island.mode {
-                            IslandMode::Expanded => w.max(renderer::CARD_W),
-                            _ => w.max(MINI_H),
-                        };
-                        (pw, ph)
-                    };
-                let x = cx - pill_w / 2.0;
-                let y = cy - pill_h / 2.0;
-                region.add(
-                    x.max(0.0) as i32,
-                    y.max(0.0) as i32,
-                    pill_w.ceil() as i32,
-                    pill_h.ceil() as i32,
+        // Animate the visual size via the style protocol.
+        // Skip animation on first layout (from 1px initial) to avoid visible grow-in.
+        if let Some(style) = layer.base_surface().surface_style() {
+            // First layout: set size instantly (no animation from 1px).
+            if self.current_layer_w == 0.0 {
+                tracing::info!(content_w, "layer size: instant (first)");
+                style.set_size(
+                    content_w as f64 * renderer::BUFFER_SCALE,
+                    max_h as f64 * renderer::BUFFER_SCALE,
                 );
-            }
-
-            // Card stack region — one rect per expanded island, positioned under its pill.
-            for island in &self.islands {
-                if island.mode != IslandMode::Expanded || island.cards.is_empty() {
-                    continue;
-                }
-                let pill_w = island.last_layout.0;
-                let pill_cx = island.last_layout.2;
-                let pill_left = pill_cx - pill_w / 2.0;
-                let pill_h = COMPACT_H;
-                let pill_bottom = (BAR_HEIGHT - pill_h) / 2.0 + pill_h;
-                let card_w = renderer::CARD_W;
-                let card_h = renderer::CARD_H;
-                let card_gap = renderer::CARD_GAP;
-                let card_count = island.cards.len() as f32;
-                let stack_top = pill_bottom + card_gap;
-                let stack_h = card_count * card_h + (card_count - 1.0) * card_gap;
-                let card_region_x = pill_left + (pill_w - card_w) / 2.0;
-                region.add(
-                    card_region_x.max(0.0) as i32,
-                    stack_top as i32,
-                    card_w.ceil() as i32,
-                    stack_h.ceil() as i32,
+            } else if let Some(scene) = AppContext::surface_style_manager() {
+                tracing::info!(content_w, old_w = self.current_layer_w, "layer size: animate");
+                let qh = AppContext::queue_handle();
+                let timing = scene.create_timing_function(qh, ());
+                timing.set_spring(0.15, 0.0);
+                let txn = scene.begin_transaction(qh, ());
+                txn.set_duration(0.8);
+                txn.set_timing_function(&timing);
+                style.set_size(
+                    content_w as f64 * renderer::BUFFER_SCALE,
+                    max_h as f64 * renderer::BUFFER_SCALE,
                 );
+                txn.commit();
             }
         }
-
-        let wl_surface = layer.base_surface().wl_surface();
-        wl_surface.set_input_region(Some(region.wl_region()));
-        wl_surface.commit();
+        // Commit so the compositor processes the new size for pointer containment.
+        layer.base_surface().wl_surface().commit();
     }
+
 
     // -----------------------------------------------------------------------
     // Hit testing
     // -----------------------------------------------------------------------
 
-    /// Returns (app_id, Option<activity_id>) for what's at (px, py).
-    /// activity_id is Some when a card is hit.
+    /// Returns (app_id, Option<activity_id>) for what's at (px, py) in layer-local coords.
     fn hit_test(&self, px: f32, py: f32) -> Option<(String, Option<u64>)> {
         for island in self.islands.iter().filter(|i| !i.hidden) {
             let (w, h, cx, cy) = island.last_layout;
+            if w == 0.0 {
+                continue;
+            }
             let (pill_w, pill_h) =
                 if island.kind == IslandKind::Music && island.mode == IslandMode::Expanded {
                     (w.max(MINI_H), h)
@@ -1067,7 +1030,6 @@ impl IslandApp {
                 return Some((island.app_id.clone(), None));
             }
         }
-
         None
     }
 
@@ -1081,7 +1043,6 @@ impl IslandApp {
         };
 
         if let Some(activity_id) = card_id {
-            // Determine if the click is in the close zone (right 40px of card).
             let close_zone = 40.0_f32;
             let is_close = self
                 .islands
@@ -1150,7 +1111,6 @@ impl IslandApp {
                 let island = self.islands.iter().find(|i| i.app_id == app_id);
                 if let Some(island) = island {
                     if island.mode == IslandMode::Expanded {
-                        // Hit test music controls in expanded mode.
                         let (w, h, cx, cy) = island.last_layout;
                         let pill_x = cx - w / 2.0;
                         let pill_y = cy - h / 2.0;
@@ -1270,6 +1230,11 @@ impl App for IslandApp {
         // Don't clip the layer surface — pills have shadows and bouncy
         // animations that extend beyond the layer bounds.
 
+        // DEBUG: red background to visualize layer bounds.
+        if let Some(style) = layer_surface.base_surface().surface_style() {
+            style.set_background_color(1.0, 0.0, 0.0, 0.3);
+        }
+
         self.layer_surface = Some(layer_surface);
         Ok(())
     }
@@ -1285,7 +1250,7 @@ impl App for IslandApp {
             }
             self.surfaces_ready = true;
             // Set empty input region so clicks pass through until islands appear.
-            self.update_input_region();
+
         }
     }
 
@@ -1467,21 +1432,24 @@ impl App for IslandApp {
                     let hit = self.hit_test(px as f32, py as f32);
                     let new_hovered = hit.as_ref().map(|(app_id, _)| app_id.clone());
                     if new_hovered != self.hovered_app {
-                        let old = &self.hovered_app;
-                        // Relayout when a Mini or Compact island gains/loses hover (for grow effect).
-                        let has_hover_grow = |app: &Option<String>| -> bool {
-                            app.as_ref()
-                                .and_then(|a| self.islands.iter().find(|i| i.app_id == *a))
-                                .is_some_and(|i| {
-                                    i.mode == IslandMode::Mini || i.mode == IslandMode::Compact
-                                })
-                        };
-                        let needs_relayout = has_hover_grow(old) || has_hover_grow(&new_hovered);
-                        self.hovered_app = new_hovered;
-                        if needs_relayout {
-                            let mut state = self.state.lock().unwrap();
-                            state.dirty = true;
+                        // Shrink the previously hovered island back.
+                        if let Some(old_id) = &self.hovered_app {
+                            if let Some(island) = self.islands.iter().find(|i| &i.app_id == old_id) {
+                                let (w, h, cx, cy) = island.last_layout;
+                                let r = h as f64 / 2.0;
+                                renderer::animate_to(&island.surface, w, h, cx, cy, r, 0.0);
+                            }
                         }
+                        // Grow the newly hovered island.
+                        if let Some(new_id) = &new_hovered {
+                            if let Some(island) = self.islands.iter().find(|i| &i.app_id == new_id) {
+                                let (w, h, cx, cy) = island.last_layout;
+                                let grow = renderer::HOVER_GROW;
+                                let r = (h + grow) as f64 / 2.0;
+                                renderer::animate_to(&island.surface, w + grow, h + grow, cx, cy, r, 0.0);
+                            }
+                        }
+                        self.hovered_app = new_hovered;
                     }
                     if hit.is_some() {
                         AppContext::set_cursor_shape(otto_kit::CursorShape::Pointer);
@@ -1492,8 +1460,6 @@ impl App for IslandApp {
                 PointerEventKind::Leave { .. } => {
                     if self.hovered_app.is_some() {
                         self.hovered_app = None;
-                        let mut state = self.state.lock().unwrap();
-                        state.dirty = true;
                     }
                     AppContext::set_cursor_shape(otto_kit::CursorShape::Default);
                 }

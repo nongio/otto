@@ -538,7 +538,11 @@ impl<BackendData: Backend> Otto<BackendData> {
             layer.set_layout_style(style);
         }
 
-        if !container_owns_size {
+        if container_owns_size {
+            // Client owns the size via surface style protocol — the style
+            // protocol handles animations on the lay-rs layer directly.
+            // Don't override here or we'd snap over in-progress animations.
+        } else {
             let container_w = (geometry.size.w as f64 * scale_factor) as f32;
             let container_h = (geometry.size.h as f64 * scale_factor) as f32;
             layer.set_size(layers::types::Size::points(container_w, container_h), None);

@@ -38,5 +38,5 @@ while true; do
   IFS='|' read -r app_id title body <<< "${notifications[$idx]}"
   notify-send -a "$app_id" -i "$app_id" "$title" "$body"
   echo "[$app_id] $title: $body"
-  sleep $((5 + RANDOM % 11))
+  sleep $((2 + RANDOM % 2))
 done

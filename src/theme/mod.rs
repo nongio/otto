@@ -4,7 +4,7 @@ use layers::skia::{
     FontStyle,
 };
 use layers::types::Color;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
@@ -13,10 +13,10 @@ use crate::config::Config;
 macro_rules! define_colors {
     ($init_name:ident, { $($name:ident => $hex:expr),* $(,)? }) => {
         use layers::types::Color;
-        use once_cell::sync::Lazy;
+        use std::sync::LazyLock;
         use crate::theme::ThemeColors;
         // Lazy static initialization of the group
-        pub static $init_name: Lazy<ThemeColors> = Lazy::new(|| ThemeColors {
+        pub static $init_name: LazyLock<ThemeColors> = LazyLock::new(|| ThemeColors {
             $($name: Color::new_hex($hex)),*
         });
     };
@@ -124,7 +124,7 @@ pub enum ThemeScheme {
     Dark,
 }
 
-pub fn theme_colors() -> &'static Lazy<ThemeColors> {
+pub fn theme_colors() -> &'static LazyLock<ThemeColors> {
     Config::with(|c| match c.theme_scheme {
         ThemeScheme::Light => &colors_light::COLORS,
         ThemeScheme::Dark => &colors_dark::COLORS,

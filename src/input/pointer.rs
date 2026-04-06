@@ -367,6 +367,14 @@ impl<BackendData: Backend> Otto<BackendData> {
             });
             for layer_shell_surf in layer_surfs {
                 let lay_layer = &layer_shell_surf.layer;
+                let bounds = lay_layer.render_bounds_transformed();
+                tracing::trace!(
+                    ns = layer_shell_surf.namespace(),
+                    bx = bounds.x(), by = bounds.y(),
+                    bw = bounds.width(), bh = bounds.height(),
+                    px = physical_pos.x, py = physical_pos.y,
+                    "layer_shell contains_point check"
+                );
                 if lay_layer.cointains_point((physical_pos.x as f32, physical_pos.y as f32)) {
                     let render_pos = lay_layer.render_position();
                     let layer_abs_pos: Point<f64, Logical> =
@@ -378,17 +386,19 @@ impl<BackendData: Backend> Otto<BackendData> {
                     if !point_in_surface_input_region(ls.wl_surface(), relative_pos) {
                         continue;
                     }
-                    if let Some((surface, surface_loc)) =
-                        ls.surface_under(relative_pos, WindowSurfaceType::ALL)
-                    {
-                        under = Some((
-                            PointerFocusTarget::WlSurface(surface),
-                            layer_abs_pos + surface_loc.to_f64(),
-                        ));
-                        break;
-                    }
-                    // surface_under returned None — the point is outside the
-                    // input region. Continue checking other layers / windows.
+
+                    // Always send pointer events to the parent surface.
+                    // The client does its own coordinate-based hit testing.
+                    tracing::debug!(
+                        ns = layer_shell_surf.namespace(),
+                        ?layer_abs_pos,
+                        "layer_shell pointer → parent"
+                    );
+                    under = Some((
+                        PointerFocusTarget::WlSurface(ls.wl_surface().clone()),
+                        layer_abs_pos,
+                    ));
+                    break;
                 }
             }
         }

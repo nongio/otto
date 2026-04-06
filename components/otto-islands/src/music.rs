@@ -873,14 +873,20 @@ pub fn start_playerctl_monitor() -> SharedPlayback {
 
         if let Some(output) = output {
             let lines: Vec<&str> = output.trim().split('\n').collect();
-            let is_playing = lines
-                .first()
-                .is_some_and(|s| s.eq_ignore_ascii_case("playing"));
-            let track_title = lines
-                .get(1)
-                .filter(|s| !s.is_empty())
-                .unwrap_or(&"No media")
-                .to_string();
+            let status = lines.first().unwrap_or(&"");
+            let is_playing = status.eq_ignore_ascii_case("playing");
+            let is_stopped = status.eq_ignore_ascii_case("stopped");
+            // When status is "Stopped", report "No media" so the island is
+            // dismissed after the grace period. Paused tracks keep their title.
+            let track_title = if is_stopped {
+                "No media".to_string()
+            } else {
+                lines
+                    .get(1)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(&"No media")
+                    .to_string()
+            };
             let track_artist = lines.get(2).unwrap_or(&"").to_string();
             let art_url = lines.get(3).unwrap_or(&"").to_string();
             let position = lines
@@ -910,7 +916,12 @@ pub fn start_playerctl_monitor() -> SharedPlayback {
                 info.player_name = player_name;
             }
         } else if let Ok(mut info) = shared_for_thread.lock() {
+            // playerctl failed — no player running. Clear track info so the
+            // island is dismissed after the grace period.
             info.is_playing = false;
+            info.track_title = "No media".to_string();
+            info.track_artist.clear();
+            info.player_name.clear();
         }
         thread::sleep(Duration::from_millis(1500));
     });

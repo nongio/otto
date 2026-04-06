@@ -1,6 +1,5 @@
-use std::{fs, process::Command, sync::atomic::Ordering};
+use std::{fs, os::unix::process::CommandExt, process::Command, sync::atomic::Ordering};
 
-use brightness::blocking::Brightness;
 use freedesktop_desktop_entry::DesktopEntry;
 use smithay::{
     reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1,
@@ -62,7 +61,10 @@ impl<BackendData: Backend> Otto<BackendData> {
     pub fn launch_program(&mut self, cmd: String, args: Vec<String>) {
         info!(program = %cmd, args = ?args, "Starting program");
 
-        if let Err(e) = Command::new(&cmd)
+        // SAFETY: pre_exec runs after fork, before exec. prctl(PR_SET_PDEATHSIG)
+        // is async-signal-safe and ensures the child gets SIGTERM when Otto exits.
+        let mut command = Command::new(&cmd);
+        command
             .args(&args)
             .envs(
                 self.socket_name
@@ -75,8 +77,14 @@ impl<BackendData: Backend> Otto<BackendData> {
                         #[cfg(not(feature = "xwayland"))]
                         None,
                     ),
-            )
-            .spawn()
+            );
+        unsafe {
+            command.pre_exec(|| {
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                Ok(())
+            });
+        }
+        if let Err(e) = command.spawn()
         {
             error!(program = %cmd, err = %e, "Failed to start program");
         }
@@ -393,35 +401,38 @@ impl<BackendData: Backend> Otto<BackendData> {
 }
 
 fn adjust_brightness(delta: i32) -> Option<u8> {
+    use std::fs;
+    use std::path::Path;
+
+    let backlight = Path::new("/sys/class/backlight");
+    let entries = fs::read_dir(backlight).ok()?;
     let mut result_level = None;
 
-    for device in brightness::blocking::brightness_devices() {
-        match device {
-            Ok(device) => {
-                if let Ok(device_name) = device.device_name() {
-                    if let Ok(current) = device.get() {
-                        let new_value = (current as i32 + delta).clamp(0, 100) as u32;
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        let max_str = fs::read_to_string(dir.join("max_brightness")).ok()?;
+        let cur_str = fs::read_to_string(dir.join("brightness")).ok()?;
+        let max: u32 = max_str.trim().parse().ok()?;
+        let current: u32 = cur_str.trim().parse().ok()?;
 
-                        tracing::trace!(
-                            device = %device_name,
-                            current = current,
-                            delta = delta,
-                            new = new_value,
-                            "Adjusting brightness"
-                        );
+        // Work in percentage (0-100)
+        let pct = (current * 100 / max) as i32;
+        let new_pct = (pct + delta).clamp(0, 100) as u32;
+        let new_raw = new_pct * max / 100;
 
-                        if let Err(e) = device.set(new_value) {
-                            error!(device = %device_name, error = %e, "Failed to set brightness");
-                        }
-                        // Store result (scaled to 0-20)
-                        result_level = Some((new_value.min(100) * 20 / 100) as u8);
-                    }
-                }
-            }
-            Err(e) => {
-                error!(error = %e, "Failed to get brightness device");
-            }
+        let device_name = entry.file_name();
+        tracing::trace!(
+            device = ?device_name,
+            current = pct,
+            delta = delta,
+            new = new_pct,
+            "Adjusting brightness"
+        );
+
+        if let Err(e) = fs::write(dir.join("brightness"), new_raw.to_string()) {
+            error!(device = ?device_name, error = %e, "Failed to set brightness");
         }
+        result_level = Some((new_pct.min(100) * 20 / 100) as u8);
     }
 
     result_level

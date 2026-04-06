@@ -4,7 +4,7 @@ use std::{
 };
 
 #[cfg(feature = "perf-counters")]
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 #[cfg(feature = "perf-counters")]
 use std::sync::atomic::AtomicU64;
 #[cfg(feature = "perf-counters")]
@@ -77,7 +77,7 @@ static FRAME_RENDERED: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "perf-counters")]
 static FRAME_SUBMITTED: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "perf-counters")]
-static FRAME_LOG_STATE: Lazy<Mutex<FrameLogState>> = Lazy::new(|| Mutex::new(FrameLogState::new()));
+static FRAME_LOG_STATE: LazyLock<Mutex<FrameLogState>> = LazyLock::new(|| Mutex::new(FrameLogState::new()));
 
 #[cfg(feature = "perf-counters")]
 struct FrameLogState {
