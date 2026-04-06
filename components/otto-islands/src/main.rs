@@ -1024,8 +1024,20 @@ impl IslandApp {
 
     fn handle_click(&mut self, px: f32, py: f32) {
         let Some((app_id, card_id)) = self.hit_test(px, py) else {
-            // Clicked empty space — reset bias.
+            // Clicked empty space — dismiss expanded islands.
+            let mut changed = false;
+            for island in &mut self.islands {
+                if island.mode == IslandMode::Expanded {
+                    Self::close_cards_for(island);
+                    island.mode = IslandMode::Compact;
+                    changed = true;
+                }
+            }
             self.focus_bias = 0.0;
+            if changed {
+                let mut state = self.state.lock().unwrap();
+                state.dirty = true;
+            }
             return;
         };
 
