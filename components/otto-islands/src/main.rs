@@ -322,7 +322,7 @@ impl IslandApp {
             if island.mode == IslandMode::Expanded {
                 // Expanded stays Expanded — only user interaction (click/focus loss) closes it.
             } else if island.kind == IslandKind::Music {
-                // Music stays Compact unless another island is Expanded.
+                // Music defaults to Compact, shrinks to Mini when another island is Expanded.
                 if any_expanded {
                     if island.mode != IslandMode::Mini {
                         island.mode = IslandMode::Mini;
@@ -1132,28 +1132,16 @@ impl IslandApp {
                         .find(|i| i.app_id == app_id)
                         .unwrap();
                     match island.mode {
-                        IslandMode::Mini => {
-                            tracing::info!(%app_id, "music click: Mini → Compact");
-                            // Close any expanded island so music can stay Compact.
+                        IslandMode::Mini | IslandMode::Compact => {
+                            tracing::info!(%app_id, from = ?island.mode, "music click: → Expanded");
+                            // Close any other expanded island first.
                             for other in self.islands.iter_mut().filter(|i| i.app_id != app_id) {
                                 if other.mode == IslandMode::Expanded {
                                     Self::close_cards_for(other);
                                     other.mode = IslandMode::Compact;
-                                    other.last_layout = (0.0, 0.0, 0.0, 0.0);
                                 }
                             }
-                            let island = self
-                                .islands
-                                .iter_mut()
-                                .find(|i| i.app_id == app_id)
-                                .unwrap();
-                            self.focused_app = Some(app_id.clone());
-                            self.last_interaction = std::time::Instant::now();
-                            island.mode = IslandMode::Compact;
-                            island.peek_until = None;
-                        }
-                        IslandMode::Compact => {
-                            tracing::info!(%app_id, "music click: Compact → Expanded");
+                            let island = self.islands.iter_mut().find(|i| i.app_id == app_id).unwrap();
                             self.focused_app = Some(app_id.clone());
                             self.last_interaction = std::time::Instant::now();
                             island.mode = IslandMode::Expanded;
@@ -1177,7 +1165,6 @@ impl IslandApp {
                 if island.mode == IslandMode::Expanded {
                     Self::close_cards_for(island);
                     island.mode = IslandMode::Compact;
-                    island.last_layout = (0.0, 0.0, 0.0, 0.0);
                 }
             }
             let island = self.islands.iter_mut().find(|i| i.app_id == app_id);
@@ -1225,10 +1212,6 @@ impl App for IslandApp {
         // Don't clip the layer surface — pills have shadows and bouncy
         // animations that extend beyond the layer bounds.
 
-        // DEBUG: red background to visualize layer bounds.
-        if let Some(style) = layer_surface.base_surface().surface_style() {
-            style.set_background_color(1.0, 0.0, 0.0, 0.3);
-        }
 
         self.layer_surface = Some(layer_surface);
         Ok(())
@@ -1264,19 +1247,23 @@ impl App for IslandApp {
         }
         let elapsed = self.last_interaction.elapsed().as_secs_f64();
         if elapsed >= FOCUS_TIMEOUT_SECS && self.focused_app.is_some() {
-            let any_expanded = self.islands.iter().any(|i| i.mode == IslandMode::Expanded);
-            if !any_expanded {
-                tracing::info!(
-                    focused = ?self.focused_app,
-                    elapsed_secs = format!("{:.1}", elapsed),
-                    "focus timeout → all Mini"
-                );
-                self.focused_app = None;
-                self.focus_bias = 0.0;
-                let mut state = self.state.lock().unwrap();
-                state.dirty = true;
-                drop(state);
+            tracing::info!(
+                focused = ?self.focused_app,
+                elapsed_secs = format!("{:.1}", elapsed),
+                "focus timeout → all Mini"
+            );
+            // Close expanded islands first so they animate down.
+            for island in &mut self.islands {
+                if island.mode == IslandMode::Expanded {
+                    Self::close_cards_for(island);
+                    island.mode = IslandMode::Compact;
+                }
             }
+            self.focused_app = None;
+            self.focus_bias = 0.0;
+            let mut state = self.state.lock().unwrap();
+            state.dirty = true;
+            drop(state);
         }
 
         let now = std::time::Instant::now();
@@ -1406,7 +1393,6 @@ impl App for IslandApp {
             if island.mode == IslandMode::Expanded {
                 Self::close_cards_for(island);
                 island.mode = IslandMode::Compact;
-                island.last_layout = (0.0, 0.0, 0.0, 0.0);
                 changed = true;
             }
         }
