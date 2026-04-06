@@ -621,6 +621,8 @@ pub struct PlaybackInfo {
     pub is_playing: bool,
     pub progress: f32,
     pub duration_secs: f32,
+    /// MPRIS player name (e.g. "spotify", "firefox") — typically matches Wayland app_id.
+    pub player_name: String,
 }
 
 pub type SharedPlayback = Arc<Mutex<PlaybackInfo>>;
@@ -734,15 +736,40 @@ impl MusicMonitor {
         }
     }
 
+    /// Check whether the music player app is currently focused.
+    fn is_music_app_focused(&self) -> bool {
+        let focused = otto_kit::utils::focus_watcher::current_focused_app();
+        if focused.app_id.is_empty() {
+            return false;
+        }
+        if let Ok(info) = self.playback.lock() {
+            if info.player_name.is_empty() {
+                return false;
+            }
+            // MPRIS player names and Wayland app_ids typically match
+            // (e.g. "spotify", "firefox"). Compare case-insensitively.
+            focused.app_id.eq_ignore_ascii_case(&info.player_name)
+        } else {
+            false
+        }
+    }
+
     /// Sync with the island state: create/update/dismiss the music activity.
-    /// Uses a 3-second grace period before dismissing to survive track changes.
+    /// The island is shown when the music player loses focus and hidden when
+    /// it gains focus. Uses a 3-second grace period before dismissing to
+    /// survive track changes.
     pub fn sync_to_island(&mut self, state: &SharedState) {
         let renderer = self.tick();
+        let music_app_focused = self.is_music_app_focused();
 
         let mut island = state.lock().unwrap();
         match (&renderer, self.activity_id) {
             (Some(_renderer), None) => {
-                // Music started — create activity
+                if music_app_focused {
+                    // Music app is focused — don't show the island yet.
+                    return;
+                }
+                // Music playing and app not focused — create activity
                 let id = island.create_activity(
                     "org.otto.music".to_string(),
                     "Now Playing".to_string(),
@@ -760,7 +787,14 @@ impl MusicMonitor {
                 self.gone_since = None;
             }
             (Some(_renderer), Some(id)) => {
-                // Music still playing — update title
+                if music_app_focused {
+                    // Music app gained focus — dismiss the island.
+                    island.dismiss_activity(id);
+                    self.activity_id = None;
+                    self.gone_since = None;
+                    return;
+                }
+                // Music still playing, app not focused — update title
                 self.gone_since = None;
                 if let Some(info) = self.playback.lock().ok() {
                     island.update_activity(id, &info.track_title, -1.0);
@@ -820,6 +854,7 @@ pub fn start_playerctl_monitor() -> SharedPlayback {
         is_playing: false,
         progress: 0.0,
         duration_secs: 0.0,
+        player_name: String::new(),
     }));
     let shared_for_thread = shared.clone();
 
@@ -829,7 +864,7 @@ pub fn start_playerctl_monitor() -> SharedPlayback {
             .args([
                 "metadata",
                 "--format",
-                "{{status}}\n{{title}}\n{{artist}}\n{{mpris:artUrl}}\n{{position}}\n{{mpris:length}}",
+                "{{status}}\n{{title}}\n{{artist}}\n{{mpris:artUrl}}\n{{position}}\n{{mpris:length}}\n{{playerName}}",
             ])
             .output()
             .ok()
@@ -856,6 +891,7 @@ pub fn start_playerctl_monitor() -> SharedPlayback {
                 .get(5)
                 .and_then(|s| s.parse::<f64>().ok())
                 .unwrap_or(1.0);
+            let player_name = lines.get(6).unwrap_or(&"").to_string();
 
             let progress = if length > 0.0 {
                 (position / length).clamp(0.0, 1.0) as f32
@@ -871,6 +907,7 @@ pub fn start_playerctl_monitor() -> SharedPlayback {
                 info.is_playing = is_playing;
                 info.progress = progress;
                 info.duration_secs = duration_secs;
+                info.player_name = player_name;
             }
         } else if let Ok(mut info) = shared_for_thread.lock() {
             info.is_playing = false;

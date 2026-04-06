@@ -1542,6 +1542,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::future::pending::<()>().await;
     });
 
+    otto_kit::utils::focus_watcher::spawn_focus_watcher();
+
     let playback = music::start_playerctl_monitor();
     let audio_level = music::start_pipewire_level_monitor();
     let music_monitor = MusicMonitor::new(playback, audio_level);
