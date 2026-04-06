@@ -258,6 +258,7 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleV1, OttoLayerUserData> for O
                 };
 
                 sstyle.layer.set_clip_content(masks_to_bounds, None);
+                sstyle.layer.set_clip_children(masks_to_bounds, None);
             }
 
             otto_surface_style_v1::Request::SetContentsGravity { gravity } => {

@@ -394,7 +394,6 @@ pub fn apply_island_style(
     if let Some(ss) = surface.base_surface().surface_style() {
         ss.set_background_color(0.03, 0.03, 0.03, 1.0);
         ss.set_corner_radius(radius * BUFFER_SCALE);
-        ss.set_masks_to_bounds(ClipMode::Enabled);
         ss.set_shadow(0.2, 2.0, 0.0, 8.0, 0.0, 0.0, 0.0);
         ss.set_blend_mode(BlendMode::BackgroundBlur);
         ss.set_contents_gravity(gravity);
@@ -444,7 +443,19 @@ pub fn animate_to(
     radius: f64,
     delay: f64,
 ) {
-    animate_to_with_opacity(surface, w, h, x, y, radius, None, delay);
+    animate_to_inner(surface, w, h, x, y, radius, None, 0.15, delay);
+}
+
+pub fn animate_to_bouncy(
+    surface: &otto_kit::SubsurfaceSurface,
+    w: f32,
+    h: f32,
+    x: f32,
+    y: f32,
+    radius: f64,
+    delay: f64,
+) {
+    animate_to_inner(surface, w, h, x, y, radius, None, 0.3, delay);
 }
 
 pub fn animate_to_with_opacity(
@@ -457,12 +468,26 @@ pub fn animate_to_with_opacity(
     opacity: Option<f64>,
     delay: f64,
 ) {
+    animate_to_inner(surface, w, h, x, y, radius, opacity, 0.15, delay);
+}
+
+fn animate_to_inner(
+    surface: &otto_kit::SubsurfaceSurface,
+    w: f32,
+    h: f32,
+    x: f32,
+    y: f32,
+    radius: f64,
+    opacity: Option<f64>,
+    bounce: f64,
+    delay: f64,
+) {
     if let Some(scene_surface) = surface.base_surface().surface_style() {
         if let Some(scene) = AppContext::surface_style_manager() {
             let qh = AppContext::queue_handle();
 
             let timing = scene.create_timing_function(qh, ());
-            timing.set_spring(0.15, 0.0);
+            timing.set_spring(bounce, 0.0);
 
             let anim = scene.begin_transaction(qh, ());
             anim.set_duration(0.8);

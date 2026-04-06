@@ -1,7 +1,7 @@
 // Topbar layout/style constants (not user-configurable).
 
 /// Bar height in logical points.
-pub const BAR_HEIGHT: u32 = 30;
+pub const BAR_HEIGHT: u32 = 32;
 
 /// Left panel initial width (will animate to content size).
 pub const LEFT_WIDTH: u32 = 80;
