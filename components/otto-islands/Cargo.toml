@@ -16,3 +16,4 @@ wayland-client = "0.31"
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 libc = "0.2"
 pipewire = "0.9"
+ureq = "3"

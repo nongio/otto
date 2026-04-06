@@ -1159,8 +1159,24 @@ fn font_bold(size: f32) -> skia_safe::Font {
 }
 
 fn load_album_art(url: &str) -> Option<Image> {
-    let path = url.strip_prefix("file://")?;
-    let bytes = fs::read(path).ok()?;
+    if url.is_empty() {
+        return None;
+    }
+
+    let bytes = if let Some(path) = url.strip_prefix("file://") {
+        fs::read(path).ok()?
+    } else if url.starts_with("http://") || url.starts_with("https://") {
+        match ureq::get(url).call() {
+            Ok(resp) => resp.into_body().read_to_vec().ok()?,
+            Err(e) => {
+                tracing::warn!(url, error = %e, "failed to fetch album art");
+                return None;
+            }
+        }
+    } else {
+        return None;
+    };
+
     let data = Data::new_copy(&bytes);
     Image::from_encoded(data)
 }
