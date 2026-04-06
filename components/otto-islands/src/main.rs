@@ -262,6 +262,11 @@ impl IslandApp {
                     // Create EQ child subsurface for music islands.
                     // Buffer sized for the largest EQ mode (expanded ~210×22).
                     let eq_surface = if *kind == IslandKind::Music {
+                        // Clip music pill so the EQ child doesn't render outside the pill shape.
+                        if let Some(ss) = surface.base_surface().surface_style() {
+                            use otto_kit::protocols::otto_surface_style_v1::ClipMode;
+                            ss.set_masks_to_bounds(ClipMode::Enabled);
+                        }
                         let eq = SubsurfaceSurface::new(surface.wl_surface(), 0, 0, 220, 32).ok();
                         if let Some(ref eq) = eq {
                             if let Some(ss) = eq.base_surface().surface_style() {
