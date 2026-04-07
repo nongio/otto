@@ -21,7 +21,7 @@ use crate::dbus_service::{IslandService, DBUS_NAME};
 use crate::music::MusicMonitor;
 use crate::renderer::{
     animate_to, animate_to_bouncy, apply_island_style, draw_centered, set_size_and_position,
-    COMPACT_H, MINI_H, MINI_W,
+    COMPACT_H, MINI_H,
 };
 use crate::state::{IslandState, SharedState};
 
@@ -52,6 +52,16 @@ enum IslandMode {
     Mini,
     Compact,
     Expanded,
+}
+
+impl IslandMode {
+    fn to_presentation_mode(self) -> PresentationMode {
+        match self {
+            IslandMode::Mini => PresentationMode::Minimal,
+            IslandMode::Compact => PresentationMode::Compact,
+            IslandMode::Expanded => PresentationMode::Expanded,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,6 +160,11 @@ impl IslandApp {
         }
     }
 
+    /// Mark the shared state as dirty so the next `on_update` runs `sync()`.
+    fn mark_dirty(&self) {
+        self.state.lock().unwrap().dirty = true;
+    }
+
     /// Get the parent wl_surface for creating subsurfaces.
     fn wl_surface(&self) -> Option<wayland_client::protocol::wl_surface::WlSurface> {
         self.layer_surface
@@ -191,6 +206,67 @@ impl IslandApp {
                 true
             }
         });
+    }
+
+    // -----------------------------------------------------------------------
+    // Focus & mode management
+    // -----------------------------------------------------------------------
+
+    /// Collapse all expanded islands back to Compact (animates cards out).
+    /// Returns true if any island was collapsed.
+    fn collapse_expanded(&mut self) -> bool {
+        let mut changed = false;
+        for island in &mut self.islands {
+            if island.mode == IslandMode::Expanded {
+                Self::close_cards_for(island);
+                island.mode = IslandMode::Compact;
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Set focus to `app_id`, expanding it and collapsing any other expanded island.
+    /// Use `mode` to specify the target mode (Expanded or Compact).
+    fn set_focus(&mut self, app_id: &str, mode: IslandMode) {
+        // Collapse others first — only one island can be Expanded at a time.
+        for island in self.islands.iter_mut().filter(|i| i.app_id != app_id) {
+            if island.mode == IslandMode::Expanded {
+                Self::close_cards_for(island);
+                island.mode = IslandMode::Compact;
+            }
+        }
+
+        if let Some(island) = self.islands.iter_mut().find(|i| i.app_id == app_id) {
+            tracing::info!(%app_id, from = ?island.mode, to = ?mode, "mode transition");
+            // Close cards when leaving Expanded.
+            if island.mode == IslandMode::Expanded && mode != IslandMode::Expanded {
+                Self::close_cards_for(island);
+            }
+            island.mode = mode;
+            if mode != IslandMode::Mini {
+                island.peek_until = None;
+            }
+        }
+
+        // Compute focus bias: nudge layout toward the focused pill.
+        if let Some(island) = self.islands.iter().find(|i| i.app_id == app_id) {
+            let layer_center = LAYER_W as f32 / 2.0;
+            let offset = island.last_layout.2 - layer_center;
+            self.focus_bias = -offset * 0.15;
+        }
+
+        self.focused_app = Some(app_id.to_string());
+        self.last_interaction = std::time::Instant::now();
+        self.mark_dirty();
+    }
+
+    /// Clear focus — collapse expanded islands, reset bias, mark dirty.
+    fn clear_focus(&mut self) {
+        self.collapse_expanded();
+        self.focused_app = None;
+        self.focus_bias = 0.0;
+        self.mark_dirty();
     }
 
     // -----------------------------------------------------------------------
@@ -382,54 +458,7 @@ impl IslandApp {
         // Compute element sizes for layout.
         let island_size = |island: &Island, mode: IslandMode| -> (f32, f32) {
             if island.kind == IslandKind::Music {
-                // Use MusicActivityRenderer sizes via the ActivityRenderer trait.
-                return match mode {
-                    IslandMode::Mini => {
-                        use crate::activity::ActivityRenderer;
-                        let dummy = music::MusicActivityRenderer {
-                            title: String::new(),
-                            artist: String::new(),
-                            album_art: None,
-                            is_playing: false,
-                            progress: 0.0,
-                            duration_secs: 0.0,
-                            accent: skia_safe::Color::TRANSPARENT,
-                            levels: [0.0; 8],
-                            pressed: None,
-                        };
-                        dummy.size(PresentationMode::Minimal)
-                    }
-                    IslandMode::Compact => {
-                        use crate::activity::ActivityRenderer;
-                        let dummy = music::MusicActivityRenderer {
-                            title: String::new(),
-                            artist: String::new(),
-                            album_art: None,
-                            is_playing: false,
-                            progress: 0.0,
-                            duration_secs: 0.0,
-                            accent: skia_safe::Color::TRANSPARENT,
-                            levels: [0.0; 8],
-                            pressed: None,
-                        };
-                        dummy.size(PresentationMode::Compact)
-                    }
-                    IslandMode::Expanded => {
-                        use crate::activity::ActivityRenderer;
-                        let dummy = music::MusicActivityRenderer {
-                            title: String::new(),
-                            artist: String::new(),
-                            album_art: None,
-                            is_playing: false,
-                            progress: 0.0,
-                            duration_secs: 0.0,
-                            accent: skia_safe::Color::TRANSPARENT,
-                            levels: [0.0; 8],
-                            pressed: None,
-                        };
-                        dummy.size(PresentationMode::Expanded)
-                    }
-                };
+                return music::MusicActivityRenderer::mode_size(mode.to_presentation_mode());
             }
             let entry = grouped.iter().find(|(a, _)| a.app_id == island.app_id);
             let count = entry.map(|(_, c)| *c).unwrap_or(1);
@@ -518,12 +547,7 @@ impl IslandApp {
                 BAR_HEIGHT / 2.0
             };
 
-            // Music islands use MusicActivityRenderer for all modes.
-            let pmode = match island.mode {
-                IslandMode::Mini => PresentationMode::Minimal,
-                IslandMode::Compact => PresentationMode::Compact,
-                IslandMode::Expanded => PresentationMode::Expanded,
-            };
+            let pmode = island.mode.to_presentation_mode();
             if let Some(mut mr) = self.music_monitor.renderer() {
                 if let Some((action, instant)) = &self.music_pressed {
                     if instant.elapsed().as_millis() < 300 {
@@ -764,8 +788,7 @@ impl IslandApp {
             }
             // Mark dirty so the next tick re-layouts at Compact size.
             // Safe from loops because last_count/last_activity_id are now current.
-            let mut st = self.state.lock().unwrap();
-            st.dirty = true;
+            self.mark_dirty();
         }
         for island in &mut self.islands {
             let entry = grouped.iter().find(|(a, _)| a.app_id == island.app_id);
@@ -1029,184 +1052,104 @@ impl IslandApp {
 
     fn handle_click(&mut self, px: f32, py: f32) {
         let Some((app_id, card_id)) = self.hit_test(px, py) else {
-            // Clicked empty space — dismiss expanded islands.
-            let mut changed = false;
-            for island in &mut self.islands {
-                if island.mode == IslandMode::Expanded {
-                    Self::close_cards_for(island);
-                    island.mode = IslandMode::Compact;
-                    changed = true;
-                }
-            }
-            self.focus_bias = 0.0;
-            if changed {
-                let mut state = self.state.lock().unwrap();
-                state.dirty = true;
-            }
+            // Clicked empty space — collapse expanded islands.
+            self.clear_focus();
             return;
         };
 
-        // Compute focus bias: nudge content toward the clicked pill.
-        // Bias = fraction of the pill's offset from layer center.
+        if let Some(activity_id) = card_id {
+            self.handle_card_click(&app_id, activity_id, px);
+        } else {
+            self.handle_pill_click(&app_id, px, py);
+        }
+    }
+
+    fn handle_card_click(&mut self, app_id: &str, activity_id: u64, px: f32) {
+        let close_zone = 40.0_f32;
+        let is_close = self
+            .islands
+            .iter()
+            .find(|i| i.app_id == app_id)
+            .map(|island| {
+                let pill_w = island.last_layout.0;
+                let pill_cx = island.last_layout.2;
+                let card_w = renderer::CARD_W;
+                let pill_x = pill_cx - pill_w / 2.0;
+                let card_x = pill_x + (pill_w - card_w) / 2.0;
+                px - card_x > card_w - close_zone
+            })
+            .unwrap_or(false);
+
+        // Animate dismiss (scale up + fade out).
         if let Some(island) = self.islands.iter().find(|i| i.app_id == app_id) {
-            let layer_center = LAYER_W as f32 / 2.0;
-            let pill_cx = island.last_layout.2;
-            let offset_from_center = pill_cx - layer_center;
-            // Pull ~15% toward the clicked pill.
-            self.focus_bias = -offset_from_center * 0.15;
+            if let Some(card) = island.cards.iter().find(|c| c.activity_id == activity_id) {
+                renderer::animate_dismiss(&card.surface, 1.2);
+            }
         }
 
-        if let Some(activity_id) = card_id {
-            let close_zone = 40.0_f32;
-            let is_close = self
-                .islands
-                .iter()
-                .find(|i| i.app_id == app_id)
-                .map(|island| {
-                    let pill_w = island.last_layout.0;
-                    let pill_cx = island.last_layout.2;
-                    let card_w = renderer::CARD_W;
-                    let pill_x = pill_cx - pill_w / 2.0;
-                    let card_x = pill_x + (pill_w - card_w) / 2.0;
-                    px - card_x > card_w - close_zone
-                })
-                .unwrap_or(false);
+        let mut state = self.state.lock().unwrap();
+        let notification_id = state
+            .activities
+            .iter()
+            .find(|a| a.id == activity_id)
+            .and_then(|a| a.notification_id);
+        let default_action = state
+            .activities
+            .iter()
+            .find(|a| a.id == activity_id)
+            .and_then(|a| a.default_action.clone());
+        tracing::info!(
+            activity_id,
+            %app_id,
+            close = is_close,
+            "card clicked"
+        );
+        state.dismiss_activity(activity_id);
+        drop(state);
 
-            // Clicked a card — animate dismiss (scale up + fade out), then remove.
-            if let Some(island) = self.islands.iter().find(|i| i.app_id == app_id) {
-                if let Some(card) = island.cards.iter().find(|c| c.activity_id == activity_id) {
-                    renderer::animate_dismiss(&card.surface, 1.2);
-                }
+        if !is_close {
+            // Action click — focus the app and emit ActionInvoked.
+            request_focus_app(app_id.to_string());
+            if let Some(nid) = notification_id {
+                let action_key = default_action.as_deref().unwrap_or("default").to_string();
+                emit_action_invoked(nid, action_key);
             }
+        }
+    }
 
-            let mut state = self.state.lock().unwrap();
-            let notification_id = state
-                .activities
-                .iter()
-                .find(|a| a.id == activity_id)
-                .and_then(|a| a.notification_id);
-            let default_action = state
-                .activities
-                .iter()
-                .find(|a| a.id == activity_id)
-                .and_then(|a| a.default_action.clone());
-            if let Some(activity) = state.activities.iter().find(|a| a.id == activity_id) {
-                tracing::info!(
-                    activity_id,
-                    %app_id,
-                    close = is_close,
-                    action = ?activity.default_action,
-                    "card clicked"
-                );
-            }
-
-            state.dismiss_activity(activity_id);
-            drop(state);
-
-            if !is_close {
-                // Action click — focus the app and emit ActionInvoked.
-                request_focus_app(app_id.clone());
-
-                if let Some(nid) = notification_id {
-                    let action_key = default_action.as_deref().unwrap_or("default").to_string();
-                    emit_action_invoked(nid, action_key);
-                }
-            }
-        } else {
-            // Clicked a pill/circle.
-            // Check if this is a music island — handle music controls.
-            let is_music = self
-                .islands
-                .iter()
-                .find(|i| i.app_id == app_id)
-                .is_some_and(|i| i.kind == IslandKind::Music);
-
-            if is_music {
-                let island = self.islands.iter().find(|i| i.app_id == app_id);
-                if let Some(island) = island {
-                    if island.mode == IslandMode::Expanded {
-                        let (w, h, cx, cy) = island.last_layout;
-                        let pill_x = cx - w / 2.0;
-                        let pill_y = cy - h / 2.0;
-                        let lx = px - pill_x;
-                        let ly = py - pill_y;
-                        if let Some(mr) = self.music_monitor.renderer() {
-                            if let Some(action) = mr.hit_test_expanded(lx, ly, w, h) {
-                                tracing::info!(?action, "music control hit");
-                                self.music_pressed = Some((action, std::time::Instant::now()));
-                                music::execute_action(action);
-                                let mut state = self.state.lock().unwrap();
-                                state.dirty = true;
-                                return;
-                            }
-                        }
-                    }
-
-                    // For Mini → Compact, or Compact → Expanded transitions.
-                    let island = self
-                        .islands
-                        .iter_mut()
-                        .find(|i| i.app_id == app_id)
-                        .unwrap();
-                    match island.mode {
-                        IslandMode::Mini | IslandMode::Compact => {
-                            tracing::info!(%app_id, from = ?island.mode, "music click: → Expanded");
-                            // Close any other expanded island first.
-                            for other in self.islands.iter_mut().filter(|i| i.app_id != app_id) {
-                                if other.mode == IslandMode::Expanded {
-                                    Self::close_cards_for(other);
-                                    other.mode = IslandMode::Compact;
-                                }
-                            }
-                            let island = self.islands.iter_mut().find(|i| i.app_id == app_id).unwrap();
-                            self.focused_app = Some(app_id.clone());
-                            self.last_interaction = std::time::Instant::now();
-                            island.mode = IslandMode::Expanded;
-                            island.peek_until = None;
-                        }
-                        IslandMode::Expanded => {
-                            tracing::info!(%app_id, "music click: Expanded → Compact");
-                            island.mode = IslandMode::Compact;
-                            self.focused_app = Some(app_id.clone());
-                            self.last_interaction = std::time::Instant::now();
-                        }
-                    }
-                }
-                let mut state = self.state.lock().unwrap();
-                state.dirty = true;
-                return;
-            }
-
-            // Close any other expanded island first — only one can be expanded at a time.
-            for island in self.islands.iter_mut().filter(|i| i.app_id != app_id) {
-                if island.mode == IslandMode::Expanded {
-                    Self::close_cards_for(island);
-                    island.mode = IslandMode::Compact;
-                }
-            }
-            let island = self.islands.iter_mut().find(|i| i.app_id == app_id);
-            if let Some(island) = island {
-                match island.mode {
-                    IslandMode::Mini | IslandMode::Compact => {
-                        tracing::info!(%app_id, from = ?island.mode, "click: → Expanded");
-                        self.focused_app = Some(app_id.clone());
-                        self.last_interaction = std::time::Instant::now();
-                        island.mode = IslandMode::Expanded;
-                        island.peek_until = None;
-                    }
-                    IslandMode::Expanded => {
-                        tracing::info!(%app_id, "click: Expanded → Compact");
-                        Self::close_cards_for(island);
-                        island.mode = IslandMode::Compact;
-                        // Keep focus so timeout governs Mini transition.
-                        self.focused_app = Some(app_id.clone());
-                        self.last_interaction = std::time::Instant::now();
+    fn handle_pill_click(&mut self, app_id: &str, px: f32, py: f32) {
+        // If an expanded music island was clicked, check for control hits first.
+        if let Some(island) = self.islands.iter().find(|i| i.app_id == app_id) {
+            if island.kind == IslandKind::Music && island.mode == IslandMode::Expanded {
+                let (w, h, cx, cy) = island.last_layout;
+                let lx = px - (cx - w / 2.0);
+                let ly = py - (cy - h / 2.0);
+                if let Some(mr) = self.music_monitor.renderer() {
+                    if let Some(action) = mr.hit_test_expanded(lx, ly, w, h) {
+                        tracing::info!(?action, "music control hit");
+                        self.music_pressed = Some((action, std::time::Instant::now()));
+                        music::execute_action(action);
+                        self.mark_dirty();
+                        return;
                     }
                 }
             }
-            // Mark dirty so sync() runs.
-            let mut state = self.state.lock().unwrap();
-            state.dirty = true;
+        }
+
+        // Toggle: Mini/Compact → Expanded, Expanded → Compact.
+        let current_mode = self
+            .islands
+            .iter()
+            .find(|i| i.app_id == app_id)
+            .map(|i| i.mode);
+        match current_mode {
+            Some(IslandMode::Mini | IslandMode::Compact) => {
+                self.set_focus(app_id, IslandMode::Expanded);
+            }
+            Some(IslandMode::Expanded) => {
+                self.set_focus(app_id, IslandMode::Compact);
+            }
+            None => {}
         }
     }
 }
@@ -1269,18 +1212,7 @@ impl App for IslandApp {
                 elapsed_secs = format!("{:.1}", elapsed),
                 "focus timeout → all Mini"
             );
-            // Close expanded islands first so they animate down.
-            for island in &mut self.islands {
-                if island.mode == IslandMode::Expanded {
-                    Self::close_cards_for(island);
-                    island.mode = IslandMode::Compact;
-                }
-            }
-            self.focused_app = None;
-            self.focus_bias = 0.0;
-            let mut state = self.state.lock().unwrap();
-            state.dirty = true;
-            drop(state);
+            self.clear_focus();
         }
 
         let now = std::time::Instant::now();
@@ -1300,9 +1232,7 @@ impl App for IslandApp {
                         island.last_count = *c;
                         island.last_activity_id = a.id;
                     }
-                    let mut state = self.state.lock().unwrap();
-                    state.dirty = true;
-                    drop(state);
+                    self.state.lock().unwrap().dirty = true;
                 }
             }
         }
@@ -1323,11 +1253,7 @@ impl App for IslandApp {
             for island in &self.islands {
                 if island.kind == IslandKind::Music {
                     if let Some(eq_surf) = &island.eq_surface {
-                        let pmode = match island.mode {
-                            IslandMode::Mini => PresentationMode::Minimal,
-                            IslandMode::Compact => PresentationMode::Compact,
-                            IslandMode::Expanded => PresentationMode::Expanded,
-                        };
+                        let pmode = island.mode.to_presentation_mode();
                         if let Some(mr) = self.music_monitor.renderer() {
                             let (w, h, _, _) = island.last_layout;
                             let (eq_w, eq_h, _, _) = mr.eq_layout(pmode, w, h);
@@ -1404,20 +1330,11 @@ impl App for IslandApp {
         _ctx: &AppContext,
         _surface: &wayland_client::protocol::wl_surface::WlSurface,
     ) {
-        // Close expanded stack on focus loss — animate cards out first.
-        let mut changed = false;
-        for island in &mut self.islands {
-            if island.mode == IslandMode::Expanded {
-                Self::close_cards_for(island);
-                island.mode = IslandMode::Compact;
-                changed = true;
-            }
-        }
-        // Restart the focus timeout from now.
+        // Close expanded stack on focus loss, restart focus timeout.
+        let changed = self.collapse_expanded();
         self.last_interaction = std::time::Instant::now();
         if changed {
-            let mut state = self.state.lock().unwrap();
-            state.dirty = true;
+            self.mark_dirty();
         }
     }
 
@@ -1631,4 +1548,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     AppRunner::new(app).run()?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn island_mode_to_presentation_mode() {
+        assert_eq!(
+            IslandMode::Mini.to_presentation_mode(),
+            PresentationMode::Minimal
+        );
+        assert_eq!(
+            IslandMode::Compact.to_presentation_mode(),
+            PresentationMode::Compact
+        );
+        assert_eq!(
+            IslandMode::Expanded.to_presentation_mode(),
+            PresentationMode::Expanded
+        );
+    }
+
+    #[test]
+    fn music_mode_sizes_are_consistent() {
+        use crate::music::MusicActivityRenderer;
+        // Mini is square
+        let (w, h) = MusicActivityRenderer::mode_size(PresentationMode::Minimal);
+        assert_eq!(w, h);
+
+        // Compact is wider than tall
+        let (w, h) = MusicActivityRenderer::mode_size(PresentationMode::Compact);
+        assert!(w > h);
+
+        // Expanded is the largest
+        let (ew, eh) = MusicActivityRenderer::mode_size(PresentationMode::Expanded);
+        assert!(ew > w);
+        assert!(eh > h);
+    }
 }

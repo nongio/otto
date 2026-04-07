@@ -49,15 +49,21 @@ pub struct MusicActivityRenderer {
     pub pressed: Option<MusicAction>,
 }
 
-impl ActivityRenderer for MusicActivityRenderer {
-    fn size(&self, mode: PresentationMode) -> (f32, f32) {
+impl MusicActivityRenderer {
+    /// Size for a given presentation mode — no instance needed.
+    pub fn mode_size(mode: PresentationMode) -> (f32, f32) {
         match mode {
             PresentationMode::Compact => (220.0, 30.0),
-            PresentationMode::Banner => (298.0, 36.0), // Zoom: slightly larger compact
-            PresentationMode::Expanded => (340.0, 120.0), // Extended player
-            PresentationMode::Minimal => (28.0, 28.0),
-            PresentationMode::Idle => (28.0, 28.0),
+            PresentationMode::Banner => (298.0, 36.0),
+            PresentationMode::Expanded => (340.0, 120.0),
+            PresentationMode::Minimal | PresentationMode::Idle => (28.0, 28.0),
         }
+    }
+}
+
+impl ActivityRenderer for MusicActivityRenderer {
+    fn size(&self, mode: PresentationMode) -> (f32, f32) {
+        Self::mode_size(mode)
     }
 
     fn draw(&self, canvas: &Canvas, mode: PresentationMode, w: f32, h: f32) {

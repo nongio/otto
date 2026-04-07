@@ -280,3 +280,257 @@ impl IslandState {
             .max_by_key(|a| (a.priority.rank(), a.created_at))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn new_state() -> IslandState {
+        IslandState::new()
+    }
+
+    #[test]
+    fn create_activity_sets_dirty() {
+        let mut s = new_state();
+        assert!(!s.dirty);
+        let id = s.create_activity(
+            "com.test".into(),
+            "Hello".into(),
+            "icon".into(),
+            None,
+            0,
+            Priority::Normal,
+            false,
+        );
+        assert!(s.dirty);
+        assert_eq!(id, 1);
+        assert_eq!(s.activities.len(), 1);
+    }
+
+    #[test]
+    fn dismiss_activity_removes_and_marks_dirty() {
+        let mut s = new_state();
+        let id = s.create_activity(
+            "com.test".into(),
+            "Hello".into(),
+            "icon".into(),
+            None,
+            0,
+            Priority::Normal,
+            false,
+        );
+        s.dirty = false;
+        assert!(s.dismiss_activity(id));
+        assert!(s.dirty);
+        assert!(s.activities.is_empty());
+    }
+
+    #[test]
+    fn dismiss_nonexistent_returns_false() {
+        let mut s = new_state();
+        assert!(!s.dismiss_activity(999));
+        assert!(!s.dirty);
+    }
+
+    #[test]
+    fn update_activity_changes_title_and_progress() {
+        let mut s = new_state();
+        let id = s.create_activity(
+            "com.test".into(),
+            "Old".into(),
+            "icon".into(),
+            None,
+            0,
+            Priority::Normal,
+            false,
+        );
+        s.dirty = false;
+
+        assert!(s.update_activity(id, "New", 0.5));
+        assert!(s.dirty);
+        let a = &s.activities[0];
+        assert_eq!(a.title, "New");
+        assert_eq!(a.progress, Some(0.5));
+    }
+
+    #[test]
+    fn update_activity_negative_progress_clears() {
+        let mut s = new_state();
+        let id = s.create_activity(
+            "com.test".into(),
+            "T".into(),
+            "i".into(),
+            Some(0.5),
+            0,
+            Priority::Normal,
+            false,
+        );
+        s.dirty = false;
+        s.update_activity(id, "", -1.0);
+        assert!(s.dirty);
+        assert_eq!(s.activities[0].progress, None);
+    }
+
+    #[test]
+    fn notification_grouping() {
+        let mut s = new_state();
+        // Two notifications from same app
+        s.create_notification(
+            "firefox".into(),
+            0,
+            "ff".into(),
+            "Tab 1".into(),
+            "body1".into(),
+            vec![],
+            Priority::Normal,
+            0,
+            None,
+            None,
+            false,
+            false,
+            None,
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        s.create_notification(
+            "firefox".into(),
+            0,
+            "ff".into(),
+            "Tab 2".into(),
+            "body2".into(),
+            vec![],
+            Priority::Normal,
+            0,
+            None,
+            None,
+            false,
+            false,
+            None,
+        );
+        // One from a different app
+        s.create_notification(
+            "slack".into(),
+            0,
+            "sl".into(),
+            "Message".into(),
+            "".into(),
+            vec![],
+            Priority::Normal,
+            0,
+            None,
+            None,
+            false,
+            false,
+            None,
+        );
+
+        let grouped = s.grouped_activities();
+        assert_eq!(grouped.len(), 2); // firefox grouped, slack separate
+
+        // Firefox group should show most recent (Tab 2) with count 2
+        let ff = grouped.iter().find(|(a, _)| a.app_id == "firefox").unwrap();
+        assert_eq!(ff.0.title, "Tab 2");
+        assert_eq!(ff.1, 2);
+
+        let sl = grouped.iter().find(|(a, _)| a.app_id == "slack").unwrap();
+        assert_eq!(sl.0.title, "Message");
+        assert_eq!(sl.1, 1);
+    }
+
+    #[test]
+    fn notifications_for_app_newest_first() {
+        let mut s = new_state();
+        s.create_notification(
+            "app".into(), 0, "i".into(), "First".into(), "".into(),
+            vec![], Priority::Normal, 0, None, None, false, false, None,
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        s.create_notification(
+            "app".into(), 0, "i".into(), "Second".into(), "".into(),
+            vec![], Priority::Normal, 0, None, None, false, false, None,
+        );
+
+        let notifs = s.notifications_for_app("app");
+        assert_eq!(notifs.len(), 2);
+        assert_eq!(notifs[0].title, "Second"); // newest first
+        assert_eq!(notifs[1].title, "First");
+    }
+
+    #[test]
+    fn replaces_id_updates_existing_notification() {
+        let mut s = new_state();
+        let (_, nid) = s.create_notification(
+            "app".into(), 0, "i".into(), "Original".into(), "".into(),
+            vec![], Priority::Normal, 0, None, None, false, false, None,
+        );
+        assert_eq!(s.activities.len(), 1);
+
+        // Replace with same notification_id
+        let (_, nid2) = s.create_notification(
+            "app".into(), nid, "i".into(), "Updated".into(), "new body".into(),
+            vec![], Priority::Normal, 0, None, None, false, false, None,
+        );
+        assert_eq!(nid, nid2);
+        assert_eq!(s.activities.len(), 1);
+        assert_eq!(s.activities[0].title, "Updated");
+        assert_eq!(s.activities[0].body, "new body");
+    }
+
+    #[test]
+    fn dismiss_notification_by_notification_id() {
+        let mut s = new_state();
+        let (_, nid) = s.create_notification(
+            "app".into(), 0, "i".into(), "T".into(), "".into(),
+            vec![], Priority::Normal, 0, None, None, false, false, None,
+        );
+        s.dirty = false;
+        assert!(s.dismiss_notification(nid));
+        assert!(s.dirty);
+        assert!(s.activities.is_empty());
+    }
+
+    #[test]
+    fn check_expired_refocus_marks_timed_out() {
+        let mut s = new_state();
+        s.create_activity(
+            "app".into(),
+            "T".into(),
+            "i".into(),
+            None,
+            1, // 1ms timeout
+            Priority::Normal,
+            false,
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        s.dirty = false;
+        s.check_expired_refocus();
+        assert!(s.dirty);
+        assert!(s.activities[0].expired);
+    }
+
+    #[test]
+    fn non_notification_activities_not_grouped() {
+        let mut s = new_state();
+        // Two D-Bus activities from same app_id are NOT grouped
+        s.create_activity(
+            "app".into(), "A".into(), "i".into(), None, 0, Priority::Normal, false,
+        );
+        s.create_activity(
+            "app".into(), "B".into(), "i".into(), None, 0, Priority::Normal, false,
+        );
+        let grouped = s.grouped_activities();
+        assert_eq!(grouped.len(), 2); // Not grouped — only notifications group
+    }
+
+    #[test]
+    fn top_activity_picks_highest_priority() {
+        let mut s = new_state();
+        s.create_activity(
+            "low".into(), "L".into(), "i".into(), None, 0, Priority::Low, false,
+        );
+        s.create_activity(
+            "crit".into(), "C".into(), "i".into(), None, 0, Priority::Critical, false,
+        );
+        let top = s.top_activity().unwrap();
+        assert_eq!(top.app_id, "crit");
+    }
+}
