@@ -227,7 +227,26 @@ impl InputField {
 
     /// Handle a key press. `utf8` is the character text produced by XKB (if any).
     /// Returns `true` if the text content changed.
+    ///
+    /// This variant ignores modifiers — selection and shortcuts won't work.
+    /// Prefer [`handle_key_mod`] when modifier state is available.
     pub fn handle_key(&mut self, keycode: u32, utf8: Option<&str>) -> bool {
+        self.handle_key_mod(keycode, utf8, false, false)
+    }
+
+    /// Handle a key press with modifier state.
+    ///
+    /// - `shift`: extend/create selection on cursor-movement keys
+    /// - `ctrl`: word-level movement (Left/Right), select-all (A), cut/copy placeholders
+    ///
+    /// Returns `true` if the text content changed.
+    pub fn handle_key_mod(
+        &mut self,
+        keycode: u32,
+        utf8: Option<&str>,
+        shift: bool,
+        ctrl: bool,
+    ) -> bool {
         if self.state != InputFieldState::Focused {
             return false;
         }
@@ -237,30 +256,52 @@ impl InputField {
         self.blink_counter = 0;
 
         let changed = match keycode {
-            keycodes::BACKSPACE => self.delete_backward(),
-            keycodes::DELETE => self.delete_forward(),
+            keycodes::BACKSPACE => {
+                if ctrl {
+                    self.delete_word_backward()
+                } else {
+                    self.delete_backward()
+                }
+            }
+            keycodes::DELETE => {
+                if ctrl {
+                    self.delete_word_forward()
+                } else {
+                    self.delete_forward()
+                }
+            }
             keycodes::LEFT => {
-                self.move_cursor_left();
+                if ctrl {
+                    self.move_cursor_word_left(shift);
+                } else {
+                    self.move_cursor_left(shift);
+                }
                 false
             }
             keycodes::RIGHT => {
-                self.move_cursor_right();
+                if ctrl {
+                    self.move_cursor_word_right(shift);
+                } else {
+                    self.move_cursor_right(shift);
+                }
                 false
             }
             keycodes::HOME => {
-                self.cursor_pos = 0;
-                self.clear_selection();
-                self.ensure_cursor_visible();
+                self.move_to(0, shift);
                 false
             }
             keycodes::END => {
-                self.cursor_pos = self.text.len();
-                self.clear_selection();
-                self.ensure_cursor_visible();
+                self.move_to(self.text.len(), shift);
                 false
             }
             _ => {
-                // Insert printable characters
+                // Ctrl+A → select all
+                if ctrl && keycode == keycodes::A {
+                    self.select_all();
+                    return false;
+                }
+
+                // Insert printable characters (replaces selection if any)
                 if let Some(ch) = utf8 {
                     if !ch.is_empty() && !ch.chars().all(|c| c.is_control()) {
                         self.insert_text(ch);
@@ -373,20 +414,72 @@ impl InputField {
         false
     }
 
-    fn move_cursor_left(&mut self) {
-        if self.cursor_pos > 0 {
-            self.cursor_pos = self.prev_char_boundary(self.cursor_pos);
+    /// Move the cursor to `target`, optionally extending the selection.
+    fn move_to(&mut self, target: usize, extend_selection: bool) {
+        if extend_selection {
+            if self.selection_start.is_none() {
+                self.selection_start = Some(self.cursor_pos);
+            }
+        } else {
+            self.clear_selection();
         }
-        self.clear_selection();
+        self.cursor_pos = target;
         self.ensure_cursor_visible();
     }
 
-    fn move_cursor_right(&mut self) {
-        if self.cursor_pos < self.text.len() {
-            self.cursor_pos = self.next_char_boundary(self.cursor_pos);
+    fn move_cursor_left(&mut self, extend_selection: bool) {
+        if self.cursor_pos > 0 {
+            let target = self.prev_char_boundary(self.cursor_pos);
+            self.move_to(target, extend_selection);
+        } else if !extend_selection {
+            self.clear_selection();
         }
-        self.clear_selection();
+    }
+
+    fn move_cursor_right(&mut self, extend_selection: bool) {
+        if self.cursor_pos < self.text.len() {
+            let target = self.next_char_boundary(self.cursor_pos);
+            self.move_to(target, extend_selection);
+        } else if !extend_selection {
+            self.clear_selection();
+        }
+    }
+
+    fn move_cursor_word_left(&mut self, extend_selection: bool) {
+        let target = self.word_boundary_left(self.cursor_pos);
+        self.move_to(target, extend_selection);
+    }
+
+    fn move_cursor_word_right(&mut self, extend_selection: bool) {
+        let target = self.word_boundary_right(self.cursor_pos);
+        self.move_to(target, extend_selection);
+    }
+
+    fn delete_word_backward(&mut self) -> bool {
+        if self.delete_selection() {
+            return true;
+        }
+        if self.cursor_pos == 0 {
+            return false;
+        }
+        let target = self.word_boundary_left(self.cursor_pos);
+        self.text.drain(target..self.cursor_pos);
+        self.cursor_pos = target;
         self.ensure_cursor_visible();
+        true
+    }
+
+    fn delete_word_forward(&mut self) -> bool {
+        if self.delete_selection() {
+            return true;
+        }
+        if self.cursor_pos >= self.text.len() {
+            return false;
+        }
+        let target = self.word_boundary_right(self.cursor_pos);
+        self.text.drain(self.cursor_pos..target);
+        self.ensure_cursor_visible();
+        true
     }
 
     fn clear_selection(&mut self) {
@@ -406,6 +499,37 @@ impl InputField {
     fn next_char_boundary(&self, pos: usize) -> usize {
         let mut p = pos + 1;
         while p < self.text.len() && !self.text.is_char_boundary(p) {
+            p += 1;
+        }
+        p
+    }
+
+    /// Find the start of the word to the left of `pos`
+    fn word_boundary_left(&self, pos: usize) -> usize {
+        let bytes = self.text.as_bytes();
+        let mut p = pos;
+        // Skip whitespace
+        while p > 0 && bytes[p - 1].is_ascii_whitespace() {
+            p -= 1;
+        }
+        // Skip word characters
+        while p > 0 && !bytes[p - 1].is_ascii_whitespace() {
+            p -= 1;
+        }
+        p
+    }
+
+    /// Find the end of the word to the right of `pos`
+    fn word_boundary_right(&self, pos: usize) -> usize {
+        let bytes = self.text.as_bytes();
+        let len = bytes.len();
+        let mut p = pos;
+        // Skip word characters
+        while p < len && !bytes[p].is_ascii_whitespace() {
+            p += 1;
+        }
+        // Skip whitespace
+        while p < len && bytes[p].is_ascii_whitespace() {
             p += 1;
         }
         p

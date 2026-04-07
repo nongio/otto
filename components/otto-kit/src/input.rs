@@ -70,6 +70,9 @@ pub mod keycodes {
     pub const RIGHT: u32 = 106;
 
     // Common letter keys (QWERTY)
+    /// A key (scancode 30)
+    pub const A: u32 = 30;
+
     /// M key (scancode 50)
     pub const M: u32 = 50;
 

@@ -32,6 +32,13 @@ thread_local! {
     static WINDOWS: RefCell<Vec<crate::components::window::Window>> = const { RefCell::new(Vec::new()) };
 }
 
+// -- Input state --
+
+thread_local! {
+    static CURRENT_MODIFIERS: RefCell<smithay_client_toolkit::seat::keyboard::Modifiers> =
+        RefCell::new(smithay_client_toolkit::seat::keyboard::Modifiers::default());
+}
+
 // -- Callback registries --
 
 thread_local! {
@@ -519,6 +526,20 @@ impl<'a> AppContext<'a> {
                 break;
             }
         }
+    }
+
+    // ========================================================================
+    // Keyboard modifier state
+    // ========================================================================
+
+    /// Update the stored modifier state (called by the keyboard handler).
+    pub(crate) fn set_modifiers(modifiers: smithay_client_toolkit::seat::keyboard::Modifiers) {
+        CURRENT_MODIFIERS.with(|m| *m.borrow_mut() = modifiers);
+    }
+
+    /// Get the current keyboard modifier state.
+    pub fn modifiers() -> smithay_client_toolkit::seat::keyboard::Modifiers {
+        CURRENT_MODIFIERS.with(|m| *m.borrow())
     }
 
     // ========================================================================
