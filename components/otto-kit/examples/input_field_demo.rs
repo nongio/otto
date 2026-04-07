@@ -6,21 +6,22 @@ use wayland_client::protocol::wl_keyboard;
 
 struct InputFieldDemoApp {
     window: Option<Window>,
-    input1: Arc<Mutex<InputField>>,
-    input2: Arc<Mutex<InputField>>,
-    input3: Arc<Mutex<InputField>>,
+    /// All interactive input fields (indices 0..N-1 are focusable)
+    fields: Vec<Arc<Mutex<InputField>>>,
+    /// Display-only disabled field (not in the tab cycle)
+    disabled_field: Arc<Mutex<InputField>>,
 }
 
 impl InputFieldDemoApp {
     fn new() -> Self {
-        let mut input1 = InputField::new()
+        let mut text_input = InputField::new()
             .at(50.0, 120.0)
             .with_width(300.0)
             .with_placeholder("Type something here...")
             .build();
-        input1.focus();
+        text_input.focus();
 
-        let input2 = InputField::new()
+        let styled_input = InputField::new()
             .at(50.0, 220.0)
             .with_width(300.0)
             .with_placeholder("Another field...")
@@ -28,8 +29,15 @@ impl InputFieldDemoApp {
             .with_focused_border_color(Color::from_rgb(52, 199, 89))
             .build();
 
-        let input3 = InputField::new()
+        let password_input = InputField::new()
             .at(50.0, 320.0)
+            .with_width(300.0)
+            .with_placeholder("Enter password...")
+            .with_mask()
+            .build();
+
+        let disabled_input = InputField::new()
+            .at(50.0, 420.0)
             .with_width(300.0)
             .with_text("Pre-filled text")
             .with_state(InputFieldState::Disabled)
@@ -37,68 +45,77 @@ impl InputFieldDemoApp {
 
         Self {
             window: None,
-            input1: Arc::new(Mutex::new(input1)),
-            input2: Arc::new(Mutex::new(input2)),
-            input3: Arc::new(Mutex::new(input3)),
+            fields: vec![
+                Arc::new(Mutex::new(text_input)),
+                Arc::new(Mutex::new(styled_input)),
+                Arc::new(Mutex::new(password_input)),
+            ],
+            disabled_field: Arc::new(Mutex::new(disabled_input)),
+        }
+    }
+
+    fn focused_index(&self) -> Option<usize> {
+        for (i, f) in self.fields.iter().enumerate() {
+            if f.lock().unwrap().is_focused() {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    fn blur_all(&self) {
+        for f in &self.fields {
+            f.lock().unwrap().blur();
         }
     }
 
     fn redraw(&mut self) {
-        let i1 = self.input1.clone();
-        let i2 = self.input2.clone();
-        let i3 = self.input3.clone();
+        let fields: Vec<_> = self.fields.iter().map(Arc::clone).collect();
+        let disabled = Arc::clone(&self.disabled_field);
 
         if let Some(window) = &mut self.window {
             window.on_draw(move |canvas| {
-                let input1 = i1.lock().unwrap();
-                let input2 = i2.lock().unwrap();
-                let input3 = i3.lock().unwrap();
-
-                // Title
                 Label::new("Input Field Demo")
                     .at(50.0, 40.0)
                     .with_style(styles::LARGE_TITLE_EMPHASIZED)
                     .with_color(Color::from_rgb(30, 30, 30))
                     .render(canvas);
 
-                // ── Field 1 ──
-                Label::new("Default input (Tab to switch focus):")
-                    .at(50.0, 100.0)
-                    .with_style(styles::HEADLINE)
-                    .with_color(Color::from_rgb(60, 60, 60))
-                    .render(canvas);
+                let sections: &[(&str, usize, bool)] = &[
+                    ("Default input (Tab to switch focus):", 0, true),
+                    ("Custom styled (green focus, rounded):", 1, true),
+                    ("Password (masked):", 2, true),
+                ];
 
-                input1.render(canvas);
+                for &(label_text, idx, show_value) in sections {
+                    let field = fields[idx].lock().unwrap();
+                    let y = field.y;
 
-                Label::new(&format!("Value: \"{}\"", input1.text()))
-                    .at(50.0, 170.0)
-                    .with_style(styles::CAPTION_1)
-                    .with_color(Color::from_rgb(120, 120, 120))
-                    .render(canvas);
+                    Label::new(label_text)
+                        .at(50.0, y - 20.0)
+                        .with_style(styles::HEADLINE)
+                        .with_color(Color::from_rgb(60, 60, 60))
+                        .render(canvas);
 
-                // ── Field 2 ──
-                Label::new("Custom styled (green focus, rounded):")
-                    .at(50.0, 200.0)
-                    .with_style(styles::HEADLINE)
-                    .with_color(Color::from_rgb(60, 60, 60))
-                    .render(canvas);
+                    field.render(canvas);
 
-                input2.render(canvas);
+                    if show_value {
+                        Label::new(&format!("Value: \"{}\"", field.text()))
+                            .at(50.0, y + 50.0)
+                            .with_style(styles::CAPTION_1)
+                            .with_color(Color::from_rgb(120, 120, 120))
+                            .render(canvas);
+                    }
+                }
 
-                Label::new(&format!("Value: \"{}\"", input2.text()))
-                    .at(50.0, 270.0)
-                    .with_style(styles::CAPTION_1)
-                    .with_color(Color::from_rgb(120, 120, 120))
-                    .render(canvas);
-
-                // ── Field 3 ──
+                // Disabled field
+                let dis = disabled.lock().unwrap();
                 Label::new("Disabled:")
-                    .at(50.0, 300.0)
+                    .at(50.0, dis.y - 20.0)
                     .with_style(styles::HEADLINE)
                     .with_color(Color::from_rgb(60, 60, 60))
                     .render(canvas);
-
-                input3.render(canvas);
+                dis.render(canvas);
             });
             window.request_frame();
         }
@@ -107,7 +124,7 @@ impl InputFieldDemoApp {
 
 impl App for InputFieldDemoApp {
     fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
-        let mut window = Window::new("Input Field Demo", 500, 500)?;
+        let mut window = Window::new("Input Field Demo", 500, 550)?;
         window.set_background(Color::from_rgb(245, 245, 247));
         self.window = Some(window);
         self.redraw();
@@ -125,33 +142,25 @@ impl App for InputFieldDemoApp {
             return;
         }
 
-        // Tab to switch focus between input1 and input2
+        // Tab to cycle focus
         if event.raw_code == otto_kit::input::keycodes::TAB {
-            let mut i1 = self.input1.lock().unwrap();
-            let mut i2 = self.input2.lock().unwrap();
-            if i1.is_focused() {
-                i1.blur();
-                i2.focus();
-            } else {
-                i2.blur();
-                i1.focus();
-            }
-            drop(i1);
-            drop(i2);
+            let current = self.focused_index().unwrap_or(0);
+            self.blur_all();
+            let next = (current + 1) % self.fields.len();
+            self.fields[next].lock().unwrap().focus();
             self.redraw();
             return;
         }
 
-        // Forward key to the focused input (always redraw for cursor movement)
+        // Forward key to the focused input
         let mods = AppContext::modifiers();
-        {
-            let mut i1 = self.input1.lock().unwrap();
-            let mut i2 = self.input2.lock().unwrap();
-            if i1.is_focused() {
-                i1.handle_key_mod(event.raw_code, event.utf8.as_deref(), mods.shift, mods.ctrl);
-            } else if i2.is_focused() {
-                i2.handle_key_mod(event.raw_code, event.utf8.as_deref(), mods.shift, mods.ctrl);
-            }
+        if let Some(idx) = self.focused_index() {
+            self.fields[idx].lock().unwrap().handle_key_mod(
+                event.raw_code,
+                event.utf8.as_deref(),
+                mods.shift,
+                mods.ctrl,
+            );
         }
         self.redraw();
     }
@@ -166,25 +175,15 @@ impl App for InputFieldDemoApp {
             if let PointerEventKind::Press { .. } = ev.kind {
                 let (x, y) = (ev.position.0 as f32, ev.position.1 as f32);
 
-                let mut i1 = self.input1.lock().unwrap();
-                let mut i2 = self.input2.lock().unwrap();
-
-                let hit1 = i1.hit_test(x, y);
-                let hit2 = i2.hit_test(x, y);
-
-                i1.blur();
-                i2.blur();
-
-                if hit1 {
-                    i1.focus();
-                    i1.place_cursor_at_x(x);
-                } else if hit2 {
-                    i2.focus();
-                    i2.place_cursor_at_x(x);
+                self.blur_all();
+                for f in &self.fields {
+                    let mut field = f.lock().unwrap();
+                    if field.hit_test(x, y) {
+                        field.focus();
+                        field.place_cursor_at_x(x);
+                        break;
+                    }
                 }
-
-                drop(i1);
-                drop(i2);
                 self.redraw();
             }
         }
@@ -195,9 +194,11 @@ impl App for InputFieldDemoApp {
     }
 
     fn on_update(&mut self, _ctx: &AppContext) {
-        let b1 = self.input1.lock().unwrap().tick_cursor_blink();
-        let b2 = self.input2.lock().unwrap().tick_cursor_blink();
-        if b1 || b2 {
+        let mut needs_redraw = false;
+        for f in &self.fields {
+            needs_redraw |= f.lock().unwrap().tick_cursor_blink();
+        }
+        if needs_redraw {
             self.redraw();
         }
     }

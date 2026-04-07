@@ -43,6 +43,10 @@ pub struct InputField {
     padding_horizontal: f32,
     padding_vertical: f32,
 
+    // Password masking
+    masked: bool,
+    mask_char: char,
+
     // Cursor blink state — toggled externally via `tick_cursor_blink`
     cursor_visible: bool,
     blink_counter: u32,
@@ -75,6 +79,9 @@ impl InputField {
             corner_radius: 6.0,
             padding_horizontal: 10.0,
             padding_vertical: 8.0,
+
+            masked: false,
+            mask_char: '•',
 
             cursor_visible: true,
             blink_counter: 0,
@@ -152,6 +159,19 @@ impl InputField {
         self
     }
 
+    /// Enable password masking — text is displayed as bullet characters.
+    pub fn with_mask(mut self) -> Self {
+        self.masked = true;
+        self
+    }
+
+    /// Enable password masking with a custom mask character.
+    pub fn with_mask_char(mut self, ch: char) -> Self {
+        self.masked = true;
+        self.mask_char = ch;
+        self
+    }
+
     pub fn build(self) -> Self {
         self
     }
@@ -184,6 +204,31 @@ impl InputField {
     /// Whether the field currently has focus
     pub fn is_focused(&self) -> bool {
         self.state == InputFieldState::Focused
+    }
+
+    /// Whether password masking is enabled
+    pub fn is_masked(&self) -> bool {
+        self.masked
+    }
+
+    /// Returns the display string — masked bullets or the real text.
+    fn display_text(&self) -> String {
+        if self.masked {
+            self.mask_char.to_string().repeat(self.text.chars().count())
+        } else {
+            self.text.clone()
+        }
+    }
+
+    /// Returns the display prefix up to the given byte position.
+    /// For masked mode, maps the byte position to the equivalent masked char count.
+    fn display_prefix(&self, byte_pos: usize) -> String {
+        if self.masked {
+            let char_count = self.text[..byte_pos].chars().count();
+            self.mask_char.to_string().repeat(char_count)
+        } else {
+            self.text[..byte_pos].to_string()
+        }
     }
 
     // ── Focus management ─────────────────────────────────────────────
@@ -335,6 +380,7 @@ impl InputField {
     /// Move the cursor to the position nearest to the given x coordinate.
     pub fn place_cursor_at_x(&mut self, px: f32) {
         let font = self.text_style.font();
+        let display = self.display_text();
         let content_x = self.x + self.padding_horizontal;
         let relative_x = px - content_x + self.scroll_offset;
 
@@ -344,15 +390,15 @@ impl InputField {
             // Walk character boundaries to find the nearest position
             let mut best_pos = 0;
             for (i, _) in self.text.char_indices() {
-                let prefix = &self.text[..i];
-                let (w, _) = font.measure_str(prefix, None);
+                let prefix = self.display_prefix(i);
+                let (w, _) = font.measure_str(&prefix, None);
                 if w > relative_x {
                     break;
                 }
                 best_pos = i;
             }
             // Check end
-            let (full_w, _) = font.measure_str(&self.text, None);
+            let (full_w, _) = font.measure_str(&display, None);
             if relative_x >= full_w {
                 best_pos = self.text.len();
             }
@@ -540,8 +586,8 @@ impl InputField {
         let font = self.text_style.font();
         let text_area_width = self.width - self.padding_horizontal * 2.0;
 
-        let cursor_text = &self.text[..self.cursor_pos];
-        let (cursor_x, _) = font.measure_str(cursor_text, None);
+        let cursor_prefix = self.display_prefix(self.cursor_pos);
+        let (cursor_x, _) = font.measure_str(&cursor_prefix, None);
 
         // Scroll right if cursor is past the visible area
         if cursor_x - self.scroll_offset > text_area_width {
@@ -614,6 +660,8 @@ impl Renderable for InputField {
         let text_x = self.x + self.padding_horizontal - self.scroll_offset;
         let text_y = self.y + (height + font.size()) / 2.0 - font.size() * 0.15;
 
+        let display = self.display_text();
+
         // Selection highlight
         if let Some(sel_start) = self.selection_start {
             let (start, end) = if sel_start < self.cursor_pos {
@@ -622,8 +670,10 @@ impl Renderable for InputField {
                 (self.cursor_pos, sel_start)
             };
 
-            let (start_x, _) = font.measure_str(&self.text[..start], None);
-            let (end_x, _) = font.measure_str(&self.text[..end], None);
+            let start_display = self.display_prefix(start);
+            let end_display = self.display_prefix(end);
+            let (start_x, _) = font.measure_str(&start_display, None);
+            let (end_x, _) = font.measure_str(&end_display, None);
 
             let sel_rect = Rect::from_xywh(
                 text_x + start_x,
@@ -651,13 +701,13 @@ impl Renderable for InputField {
             } else {
                 self.text_color
             });
-            canvas.draw_str(&self.text, (text_x, text_y), &font, &text_paint);
+            canvas.draw_str(&display, (text_x, text_y), &font, &text_paint);
         }
 
         // Cursor
         if self.state == InputFieldState::Focused && self.cursor_visible {
-            let cursor_text = &self.text[..self.cursor_pos];
-            let (cursor_x_offset, _) = font.measure_str(cursor_text, None);
+            let cursor_display = self.display_prefix(self.cursor_pos);
+            let (cursor_x_offset, _) = font.measure_str(&cursor_display, None);
 
             let cursor_x = text_x + cursor_x_offset;
             let cursor_top = self.y + self.padding_vertical * 0.5;
