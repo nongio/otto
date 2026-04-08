@@ -14,13 +14,16 @@ pub struct ForeignToplevelHandles {
     pub ext: Option<ExtHandle>,
     /// wlr-foreign-toplevel-management handle (older wlroots protocol)
     pub wlr: Option<WlrForeignToplevelHandle>,
+    /// The output this toplevel is on (for late-joining managers)
+    pub output: Option<Output>,
 }
 
 impl ForeignToplevelHandles {
-    pub fn new(ext: ExtHandle, wlr: WlrForeignToplevelHandle) -> Self {
+    pub fn new(ext: ExtHandle, wlr: WlrForeignToplevelHandle, output: Option<Output>) -> Self {
         Self {
             ext: Some(ext),
             wlr: Some(wlr),
+            output,
         }
     }
 

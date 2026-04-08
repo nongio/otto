@@ -42,6 +42,7 @@ impl WlrForeignToplevelManagerState {
         app_id: &str,
         title: &str,
         window_id: ObjectId,
+        output: Option<&Output>,
     ) -> WlrForeignToplevelHandle
     where
         D: Dispatch<ZwlrForeignToplevelHandleV1, Arc<Mutex<WlrToplevelData>>> + 'static,
@@ -68,9 +69,14 @@ impl WlrForeignToplevelManagerState {
                 if let Some(handle) = handle {
                     manager.toplevel(&handle);
 
-                    // Send initial state
+                    // Send initial properties + output in one batch before done
                     handle.app_id(app_id.to_string());
                     handle.title(title.to_string());
+                    if let Some(output) = output {
+                        for wl_output in output.client_outputs(&client) {
+                            handle.output_enter(&wl_output);
+                        }
+                    }
                     handle.done();
 
                     handle_data.lock().unwrap().resources.push(handle);
@@ -238,8 +244,7 @@ impl<BackendData: Backend> GlobalDispatch<ZwlrForeignToplevelManagerV1, (), Otto
                         handle.app_id(data.app_id.clone());
                         handle.title(data.title.clone());
                         handle.state(data.current_state.clone());
-                        // Send output_enter for all outputs so taskbars display the toplevel
-                        for output in state.workspaces.outputs() {
+                        if let Some(output) = &handles.output {
                             for wl_output in output.client_outputs(&client) {
                                 handle.output_enter(&wl_output);
                             }
