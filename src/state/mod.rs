@@ -9,7 +9,6 @@ use std::{
 };
 
 use layers::{engine::Engine, prelude::taffy};
-use sd_notify::NotifyState;
 use tracing::{info, warn};
 
 use smithay::{
@@ -488,10 +487,16 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             let systemd_notify_enabled =
                 Config::with(|c| c.systemd_notify) || std::env::var("OTTO_SYSTEMD_NOTIFY").is_ok();
             if systemd_notify_enabled {
-                if let Err(e) = sd_notify::notify(false, &[NotifyState::Ready]) {
-                    warn!(error = ?e, "Failed to send sd_notify READY=1");
-                } else {
-                    info!("Sent sd_notify READY=1 to systemd");
+                match std::env::var_os("NOTIFY_SOCKET") {
+                    Some(path) => {
+                        use std::os::unix::net::UnixDatagram;
+                        let sock = UnixDatagram::unbound().ok();
+                        match sock.and_then(|s| s.send_to(b"READY=1", &path).ok()) {
+                            Some(_) => info!("Sent sd_notify READY=1 to systemd"),
+                            None => warn!("Failed to send sd_notify READY=1"),
+                        }
+                    }
+                    None => warn!("systemd notify enabled but NOTIFY_SOCKET not set"),
                 }
                 // Activate graphical-session.target so dependent user services can start
                 if let Err(e) = std::process::Command::new("systemctl")

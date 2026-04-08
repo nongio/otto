@@ -29,7 +29,7 @@ impl Application {
     }
     pub fn command(&self, extra_args: &[String]) -> Option<(String, Vec<String>)> {
         let exec = self.app_info.as_ref()?.exec.as_ref()?;
-        let mut parts = shell_words::split(exec).ok()?;
+        let mut parts = crate::utils::shell_split(exec);
         if parts.is_empty() {
             return None;
         }

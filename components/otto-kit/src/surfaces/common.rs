@@ -188,6 +188,33 @@ impl BaseWaylandSurface {
         });
     }
 
+    /// Draw into a specific region without clearing the rest of the buffer.
+    /// `region` is in logical coordinates (pre-HiDPI scale).
+    pub fn draw_region<F>(&self, region: skia_safe::Rect, draw_fn: F)
+    where
+        F: FnOnce(&skia_safe::Canvas),
+    {
+        use crate::app_runner::AppContext;
+
+        if !self.can_draw() {
+            return;
+        }
+
+        let Some(surface) = self.skia_surface.as_ref() else {
+            return;
+        };
+
+        AppContext::skia_context(|ctx| {
+            surface.draw_region(ctx, region, |canvas| {
+                draw_fn(canvas);
+            });
+
+            surface.swap_buffers(ctx);
+            // Commit full buffer — surface is small enough that partial damage isn't worth it.
+            surface.commit();
+        });
+    }
+
     /// Render the layer node if one is assigned
     ///
     /// This can be called to render layers content onto the surface canvas.

@@ -6,11 +6,11 @@ use std::{
 };
 
 use freedesktop_desktop_entry::{self as desktop_entry, DesktopEntry, ExecError};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
 use super::Config;
 
-static MIMEAPPS_CACHE: Lazy<MimeAppsCache> = Lazy::new(MimeAppsCache::load);
+static MIMEAPPS_CACHE: LazyLock<MimeAppsCache> = LazyLock::new(MimeAppsCache::load);
 
 pub fn resolve(
     role: &str,

@@ -213,6 +213,15 @@ impl SubsurfaceSurface {
         self.base_surface.draw(draw_fn);
     }
 
+    /// Draw into a specific region without clearing the rest of the buffer.
+    /// `region` is in logical coordinates (pre-HiDPI scale).
+    pub fn draw_region<F>(&self, region: skia_safe::Rect, draw_fn: F)
+    where
+        F: FnOnce(&skia_safe::Canvas),
+    {
+        self.base_surface.draw_region(region, draw_fn);
+    }
+
     /// Register a callback to be called on every compositor frame
     pub fn on_frame<F>(&self, callback: F)
     where

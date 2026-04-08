@@ -25,7 +25,6 @@ notifications=(
   "gnome-terminal|Terminal|Segfault. But hey, it compiled."
   "chromium|Chromium|A tab crashed. Honestly, it lived a good life."
   "libreoffice|LibreOffice|Document recovered. The formatting did not survive."
-  "obs-studio|OBS Studio|Recording stopped. You forgot to unmute. Classic."
   "code|VS Code|Extension wants to reload. Again. For the 5th time today."
   "evolution|Calendar|Meeting in 5 minutes. You are not prepared."
   "blender|Blender|Render complete: 4 hours for a donut. Worth it."
@@ -38,5 +37,5 @@ while true; do
   IFS='|' read -r app_id title body <<< "${notifications[$idx]}"
   notify-send -a "$app_id" -i "$app_id" "$title" "$body"
   echo "[$app_id] $title: $body"
-  sleep $((5 + RANDOM % 11))
+  sleep $((2 + RANDOM % 4))
 done

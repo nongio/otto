@@ -394,7 +394,6 @@ pub fn apply_island_style(
     if let Some(ss) = surface.base_surface().surface_style() {
         ss.set_background_color(0.03, 0.03, 0.03, 1.0);
         ss.set_corner_radius(radius * BUFFER_SCALE);
-        ss.set_masks_to_bounds(ClipMode::Enabled);
         ss.set_shadow(0.2, 2.0, 0.0, 8.0, 0.0, 0.0, 0.0);
         ss.set_blend_mode(BlendMode::BackgroundBlur);
         ss.set_contents_gravity(gravity);
@@ -444,7 +443,19 @@ pub fn animate_to(
     radius: f64,
     delay: f64,
 ) {
-    animate_to_with_opacity(surface, w, h, x, y, radius, None, delay);
+    animate_to_inner(surface, w, h, x, y, radius, None, 0.15, delay);
+}
+
+pub fn animate_to_bouncy(
+    surface: &otto_kit::SubsurfaceSurface,
+    w: f32,
+    h: f32,
+    x: f32,
+    y: f32,
+    radius: f64,
+    delay: f64,
+) {
+    animate_to_inner(surface, w, h, x, y, radius, None, 0.45, delay);
 }
 
 pub fn animate_to_with_opacity(
@@ -457,12 +468,26 @@ pub fn animate_to_with_opacity(
     opacity: Option<f64>,
     delay: f64,
 ) {
+    animate_to_inner(surface, w, h, x, y, radius, opacity, 0.15, delay);
+}
+
+fn animate_to_inner(
+    surface: &otto_kit::SubsurfaceSurface,
+    w: f32,
+    h: f32,
+    x: f32,
+    y: f32,
+    radius: f64,
+    opacity: Option<f64>,
+    bounce: f64,
+    delay: f64,
+) {
     if let Some(scene_surface) = surface.base_surface().surface_style() {
         if let Some(scene) = AppContext::surface_style_manager() {
             let qh = AppContext::queue_handle();
 
             let timing = scene.create_timing_function(qh, ());
-            timing.set_spring(0.15, 0.0);
+            timing.set_spring(bounce, 0.0);
 
             let anim = scene.begin_transaction(qh, ());
             anim.set_duration(0.8);
@@ -543,6 +568,26 @@ fn animate_position_opacity_duration(
     }
 }
 
+
+/// Fade in from opacity 0 → 1 after an optional delay.
+pub fn animate_fade_in(surface: &otto_kit::SubsurfaceSurface, delay: f64) {
+    if let Some(scene_surface) = surface.base_surface().surface_style() {
+        if let Some(scene) = AppContext::surface_style_manager() {
+            let qh = AppContext::queue_handle();
+            let timing = scene.create_timing_function(qh, ());
+            timing.set_spring(0.0, 0.0);
+            let anim = scene.begin_transaction(qh, ());
+            anim.set_duration(0.3);
+            if delay > 0.0 {
+                anim.set_delay(delay);
+            }
+            anim.set_timing_function(&timing);
+            scene_surface.set_opacity(1.0);
+            anim.commit();
+        }
+    }
+}
+
 /// Dismiss animation: scale up to `scale` while fading out to opacity 0.
 pub fn animate_dismiss(surface: &otto_kit::SubsurfaceSurface, scale: f64) {
     if let Some(scene_surface) = surface.base_surface().surface_style() {
@@ -596,5 +641,30 @@ pub fn draw_centered(
         canvas.translate((tx, ty));
         draw_fn(canvas);
         canvas.restore();
+    });
+}
+
+/// Draw into a specific region of the centered content area.
+/// `region` is relative to the content origin (0,0 = top-left of content).
+/// Only the region is cleared, drawn, and damaged — the rest of the buffer is untouched.
+pub fn draw_centered_region(
+    surface: &otto_kit::SubsurfaceSurface,
+    content_w: f32,
+    content_h: f32,
+    region: skia_safe::Rect,
+    draw_fn: impl FnOnce(&skia_safe::Canvas),
+) {
+    let tx = (SLOT_BUF_W as f32 - content_w) / 2.0;
+    let ty = (SLOT_BUF_H as f32 - content_h) / 2.0;
+    // Translate region to buffer coordinates.
+    let buf_region = skia_safe::Rect::from_xywh(
+        tx + region.left,
+        ty + region.top,
+        region.width(),
+        region.height(),
+    );
+    surface.draw_region(buf_region, |canvas| {
+        canvas.translate((tx, ty));
+        draw_fn(canvas);
     });
 }

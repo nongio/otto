@@ -213,6 +213,39 @@ pub fn button_release_scale() -> PointerHandlerFunction {
 /// - eDP (embedded DisplayPort) - most modern laptops
 /// - LVDS (Low-Voltage Differential Signaling) - older laptops
 /// - DSI (Display Serial Interface) - some ARM-based devices
+/// Split a string into shell words, handling double and single quotes.
+/// Simplified replacement for the `shell-words` crate — covers the quoting
+/// found in .desktop Exec= fields.
+pub fn shell_split(s: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut chars = s.chars();
+    let mut in_single = false;
+    let mut in_double = false;
+
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
+            '\\' if in_double => {
+                if let Some(next) = chars.next() {
+                    current.push(next);
+                }
+            }
+            c if c.is_ascii_whitespace() && !in_single && !in_double => {
+                if !current.is_empty() {
+                    words.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(c),
+        }
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
+}
+
 pub fn is_laptop_panel(connector_name: &str) -> bool {
     connector_name.starts_with("eDP-")
         || connector_name.starts_with("LVDS-")
