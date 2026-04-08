@@ -4,6 +4,7 @@
 /// Used by rofi, waybar, and other wlroots-based tools.
 use std::sync::{Arc, Mutex};
 
+use smithay::output::Output;
 use wayland_server::{
     backend::ObjectId, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
@@ -41,6 +42,7 @@ impl WlrForeignToplevelManagerState {
         app_id: &str,
         title: &str,
         window_id: ObjectId,
+        output: Option<&Output>,
     ) -> WlrForeignToplevelHandle
     where
         D: Dispatch<ZwlrForeignToplevelHandleV1, Arc<Mutex<WlrToplevelData>>> + 'static,
@@ -67,9 +69,14 @@ impl WlrForeignToplevelManagerState {
                 if let Some(handle) = handle {
                     manager.toplevel(&handle);
 
-                    // Send initial state
+                    // Send initial properties + output in one batch before done
                     handle.app_id(app_id.to_string());
                     handle.title(title.to_string());
+                    if let Some(output) = output {
+                        for wl_output in output.client_outputs(&client) {
+                            handle.output_enter(&wl_output);
+                        }
+                    }
                     handle.done();
 
                     handle_data.lock().unwrap().resources.push(handle);
@@ -125,6 +132,30 @@ impl WlrForeignToplevelHandle {
             data.app_id = app_id.clone();
             for resource in &data.resources {
                 resource.app_id(app_id.clone());
+                resource.done();
+            }
+        }
+    }
+
+    pub fn send_output_enter(&self, output: &Output) {
+        let data = self.data.lock().unwrap();
+        for resource in &data.resources {
+            if let Some(client) = resource.client() {
+                for wl_output in output.client_outputs(&client) {
+                    resource.output_enter(&wl_output);
+                }
+                resource.done();
+            }
+        }
+    }
+
+    pub fn send_output_leave(&self, output: &Output) {
+        let data = self.data.lock().unwrap();
+        for resource in &data.resources {
+            if let Some(client) = resource.client() {
+                for wl_output in output.client_outputs(&client) {
+                    resource.output_leave(&wl_output);
+                }
                 resource.done();
             }
         }
@@ -213,6 +244,11 @@ impl<BackendData: Backend> GlobalDispatch<ZwlrForeignToplevelManagerV1, (), Otto
                         handle.app_id(data.app_id.clone());
                         handle.title(data.title.clone());
                         handle.state(data.current_state.clone());
+                        if let Some(output) = &handles.output {
+                            for wl_output in output.client_outputs(&client) {
+                                handle.output_enter(&wl_output);
+                            }
+                        }
                         handle.done();
 
                         // Store handle reference

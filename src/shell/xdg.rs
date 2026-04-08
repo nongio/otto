@@ -147,9 +147,9 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 .map(|o| o.name()),
             target_output.as_ref().map(|o| o.name()),
         );
-        if let Some(output) = target_output {
+        if let Some(ref output) = target_output {
             self.workspaces
-                .map_window_for_output(&output, &window_element, location, true, None);
+                .map_window_for_output(output, &window_element, location, true, None);
         } else {
             self.workspaces
                 .map_window(&window_element, location, true, None);
@@ -168,10 +168,13 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             &app_id,
             &title,
             surface_id.clone(),
+            target_output.as_ref(),
         );
 
         let handles = crate::state::foreign_toplevel_shared::ForeignToplevelHandles::new(
-            ext_handle, wlr_handle,
+            ext_handle,
+            wlr_handle,
+            target_output,
         );
         self.foreign_toplevels.insert(surface_id.clone(), handles);
 
