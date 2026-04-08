@@ -173,6 +173,18 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         let handles = crate::state::foreign_toplevel_shared::ForeignToplevelHandles::new(
             ext_handle, wlr_handle,
         );
+
+        // Tell taskbars (e.g. Waybar) which output this toplevel is on
+        if let Some(output) = self
+            .workspaces
+            .output_under(pointer_location)
+            .next()
+            .cloned()
+            .or_else(|| self.workspaces.primary_output().cloned())
+        {
+            handles.send_output_enter(&output);
+        }
+
         self.foreign_toplevels.insert(surface_id.clone(), handles);
 
         // Create the rendering layer for sc_layers to find

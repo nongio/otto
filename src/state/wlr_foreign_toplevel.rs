@@ -4,6 +4,7 @@
 /// Used by rofi, waybar, and other wlroots-based tools.
 use std::sync::{Arc, Mutex};
 
+use smithay::output::Output;
 use wayland_server::{
     backend::ObjectId, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
@@ -130,6 +131,30 @@ impl WlrForeignToplevelHandle {
         }
     }
 
+    pub fn send_output_enter(&self, output: &Output) {
+        let data = self.data.lock().unwrap();
+        for resource in &data.resources {
+            if let Some(client) = resource.client() {
+                for wl_output in output.client_outputs(&client) {
+                    resource.output_enter(&wl_output);
+                }
+                resource.done();
+            }
+        }
+    }
+
+    pub fn send_output_leave(&self, output: &Output) {
+        let data = self.data.lock().unwrap();
+        for resource in &data.resources {
+            if let Some(client) = resource.client() {
+                for wl_output in output.client_outputs(&client) {
+                    resource.output_leave(&wl_output);
+                }
+                resource.done();
+            }
+        }
+    }
+
     pub fn send_closed(&self) {
         let data = self.data.lock().unwrap();
         for resource in &data.resources {
@@ -213,6 +238,12 @@ impl<BackendData: Backend> GlobalDispatch<ZwlrForeignToplevelManagerV1, (), Otto
                         handle.app_id(data.app_id.clone());
                         handle.title(data.title.clone());
                         handle.state(data.current_state.clone());
+                        // Send output_enter for all outputs so taskbars display the toplevel
+                        for output in state.workspaces.outputs() {
+                            for wl_output in output.client_outputs(&client) {
+                                handle.output_enter(&wl_output);
+                            }
+                        }
                         handle.done();
 
                         // Store handle reference

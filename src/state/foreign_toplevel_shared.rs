@@ -3,6 +3,7 @@
 /// This module provides a unified interface for both:
 /// - ext-foreign-toplevel-list-v1 (newer, Smithay built-in)
 /// - wlr-foreign-toplevel-management-unstable-v1 (older, wlroots protocol)
+use smithay::output::Output;
 use smithay::wayland::foreign_toplevel_list::ForeignToplevelHandle as ExtHandle;
 
 use super::wlr_foreign_toplevel::WlrForeignToplevelHandle;
@@ -54,6 +55,20 @@ impl ForeignToplevelHandles {
         }
         if let Some(wlr) = &self.wlr {
             wlr.send_closed();
+        }
+    }
+
+    /// Notify that this toplevel is visible on the given output.
+    pub fn send_output_enter(&self, output: &Output) {
+        if let Some(wlr) = &self.wlr {
+            wlr.send_output_enter(output);
+        }
+    }
+
+    /// Notify that this toplevel is no longer visible on the given output.
+    pub fn send_output_leave(&self, output: &Output) {
+        if let Some(wlr) = &self.wlr {
+            wlr.send_output_leave(output);
         }
     }
 
