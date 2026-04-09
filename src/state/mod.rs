@@ -254,6 +254,9 @@ pub struct Otto<BackendData: Backend + 'static> {
     #[cfg(feature = "debug")]
     pub renderdoc: Option<renderdoc::RenderDoc<renderdoc::V141>>,
 
+    /// GPU information collected at renderer init, used for performance reports.
+    pub gpu_info: crate::gpu_report::GpuInfo,
+
     pub scene_element: SceneElement,
 
     // layers
@@ -718,6 +721,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             xdisplay: None,
             #[cfg(feature = "debug")]
             renderdoc: renderdoc::RenderDoc::new().ok(),
+
+            gpu_info: crate::gpu_report::GpuInfo::default(),
 
             workspaces,
             layers_engine,

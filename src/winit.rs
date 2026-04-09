@@ -353,6 +353,10 @@ pub fn run_winit() {
     };
     let mut state = Otto::init(display, event_loop.handle(), data, true);
 
+    // Collect GPU info for performance reports
+    state.gpu_info =
+        unsafe { crate::gpu_report::GpuInfo::from_gl(&state.backend_data.backend.renderer().gl) };
+
     let root = state.scene_element.root_layer().unwrap();
     let scene_size = size;
     state

@@ -54,6 +54,7 @@ pub enum KeyAction {
     MediaNext,
     MediaPrev,
     MediaStop,
+    GpuReport,
     /// Do nothing more
     None,
 }
@@ -234,6 +235,10 @@ impl<BackendData: Backend> Otto<BackendData> {
                 }
             }
 
+            KeyAction::GpuReport => {
+                self.handle_gpu_report();
+            }
+
             _ => unreachable!(
                 "Common key action handler encountered backend specific action {:?}",
                 action
@@ -390,6 +395,25 @@ impl<BackendData: Backend> Otto<BackendData> {
             error!("Failed to stop media playback: {}", e);
         }
     }
+
+    pub(crate) fn handle_gpu_report(&mut self) {
+        let backend_name = self.backend_data.backend_name();
+        let gpu_info = self.gpu_info.clone();
+
+        let outputs: Vec<crate::gpu_report::OutputInfo> = self
+            .workspaces
+            .outputs()
+            .map(crate::gpu_report::OutputInfo::from_output)
+            .collect();
+
+        crate::gpu_report::generate_and_save(
+            backend_name,
+            &gpu_info,
+            &outputs,
+            #[cfg(feature = "metrics")]
+            Some(&self.render_metrics),
+        );
+    }
 }
 
 fn adjust_brightness(delta: i32) -> Option<u8> {
@@ -457,6 +481,7 @@ pub fn resolve_shortcut_action(config: &Config, action: &ShortcutAction) -> Opti
             BuiltinAction::MediaNext => Some(KeyAction::MediaNext),
             BuiltinAction::MediaPrev => Some(KeyAction::MediaPrev),
             BuiltinAction::MediaStop => Some(KeyAction::MediaStop),
+            BuiltinAction::GpuReport => Some(KeyAction::GpuReport),
         },
         ShortcutAction::RunCommand(run) => {
             Some(KeyAction::Run((run.cmd.clone(), run.args.clone())))

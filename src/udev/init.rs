@@ -386,6 +386,9 @@ pub fn run_udev() {
         .single_renderer(&primary_gpu)
         .unwrap();
 
+    // Collect GPU info for performance reports
+    state.gpu_info = unsafe { crate::gpu_report::GpuInfo::from_gl(&renderer.as_ref().gl) };
+
     #[cfg(feature = "fps_ticker")]
     {
         use crate::drawing::{FpsElement, FPS_NUMBERS_PNG};

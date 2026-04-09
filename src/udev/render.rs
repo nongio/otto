@@ -11,6 +11,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "metrics")]
+use std::sync::Arc;
+
 use crate::{
     config::Config,
     cursor::{CursorManager, CursorTextureCache},

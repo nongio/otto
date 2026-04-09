@@ -10,6 +10,7 @@ pub mod audio;
 pub mod cursor;
 pub mod drawing;
 pub mod focus;
+pub mod gpu_report;
 pub mod input;
 pub mod input_handler;
 pub mod interactive_view;

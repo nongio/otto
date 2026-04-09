@@ -192,6 +192,9 @@ sound_theme = "freedesktop"  # Uncomment to override auto-detection
 "XF86AudioPrev" = "MediaPrev"              # Media previous track
 "XF86AudioStop" = "MediaStop"              # Media stop
 
+# Diagnostics
+"Ctrl+Shift+F12" = "GpuReport"            # Save GPU performance report to ~/.local/state/otto/
+
 [dock]
 size = 1.0  # Dock size multiplier (0.5 - 2.0, default: 1.0)
 genie_scale = 0.5
