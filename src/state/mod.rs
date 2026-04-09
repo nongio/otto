@@ -77,10 +77,7 @@ use smithay::{
         },
         shell::{
             wlr_layer::WlrLayerShellState,
-            xdg::{
-                decoration::XdgDecorationState, SurfaceCachedState, XdgPopupSurfaceData,
-                XdgShellState,
-            },
+            xdg::{decoration::XdgDecorationState, SurfaceCachedState, XdgShellState},
         },
         shm::{ShmHandler, ShmState},
         socket::ListeningSocketSource,
@@ -285,6 +282,9 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub style_transactions: HashMap<ObjectId, crate::surface_style::StyleTransaction>,
     // Map from surface ID to its rendering layer in the scene graph
     pub surface_layers: HashMap<ObjectId, layers::prelude::Layer>,
+    /// Tracks which parent ObjectId each surface layer was last appended to,
+    /// so we can skip redundant append_layer calls that cause flicker.
+    pub surface_layer_parents: HashMap<ObjectId, ObjectId>,
     // Pre-warmed View caches: surface_id -> (layer_key -> NodeRef)
     // Built during surface creation, moved into Views when they're created
     pub view_warm_cache:
@@ -744,6 +744,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             // Surface style protocol
             surfaces_style: HashMap::new(),
             style_transactions: HashMap::new(),
+            surface_layer_parents: HashMap::new(),
             surface_layers: HashMap::new(),
             view_warm_cache: HashMap::new(),
 
@@ -1256,23 +1257,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 );
 
                 self.surface_layers.extend(popup_layers);
-
-                // Show the popup only after the initial configure has been sent and
-                // the client has committed at the correct position. Until then the
-                // layer stays hidden (as initialised in get_or_create_popup_layer).
-                let initial_configure_sent =
-                    smithay::wayland::compositor::with_states(popup_surface, |states| {
-                        states
-                            .data_map
-                            .get::<XdgPopupSurfaceData>()
-                            .map(|d: &std::sync::Mutex<_>| d.lock().unwrap().initial_configure_sent)
-                            .unwrap_or(false)
-                    });
-                if initial_configure_sent {
-                    if let Some(popup_layer) = self.workspaces.popup_overlay.get_popup(&popup_id) {
-                        popup_layer.layer.set_hidden(false);
-                    }
-                }
             });
 
             let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> =
@@ -1291,12 +1275,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     Option<ObjectId>,
                 ),
             > = std::collections::HashMap::new();
-
-            // Track per-parent child ordering as Smithay delivers it
-            // (respects wl_subsurface.place_above / place_below reordering)
-            #[allow(clippy::mutable_key_type)]
-            let mut children_order: std::collections::HashMap<ObjectId, Vec<ObjectId>> =
-                std::collections::HashMap::new();
 
             smithay::wayland::compositor::with_surface_tree_downward(
                 &window_surface,
@@ -1338,13 +1316,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                         parent_id.clone(),
                     ) {
                         render_elements.push_front(window_view.clone());
-                        let sid = surface.id();
-                        surface_info
-                            .insert(sid.clone(), (surface.clone(), *location, parent_id.clone()));
-                        // Record child ordering per parent for subsurface reordering
-                        if let Some(pid) = parent_id {
-                            children_order.entry(pid.clone()).or_default().push(sid);
-                        }
+                        surface_info.insert(
+                            surface.id(),
+                            (surface.clone(), *location, parent_id.clone()),
+                        );
                     } else {
                         // Surface committed a null buffer (unmapped subsurface) — hide its layer
                         if let Some(layer) = self.surface_layers.get(&surface.id()) {
@@ -1374,25 +1349,19 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                         shared_gravity,
                     );
 
-                    // Set up parent-child relationship using layers_engine
+                    // Set up parent-child relationship using layers_engine.
+                    // Only re-parent if the parent changed — re-appending on
+                    // every commit detaches and re-attaches the node, which
+                    // causes flicker.
                     if let Some(parent_id) = parent_id {
-                        if let Some(parent_layer) = self.surface_layers.get(parent_id) {
-                            let _ = self.layers_engine.append_layer(&layer, parent_layer.id());
-                        }
-                    }
-                }
-            }
-
-            // Re-append children in Smithay's subsurface order so that
-            // place_above / place_below reordering is reflected in lay-rs.
-            // append_layer detaches and re-appends as the last child, so
-            // iterating in order produces the correct sibling sequence.
-            for (parent_id, child_ids) in children_order.iter() {
-                if let Some(parent_layer) = self.surface_layers.get(parent_id) {
-                    let parent_node = parent_layer.id();
-                    for child_id in child_ids {
-                        if let Some(child_layer) = self.surface_layers.get(child_id) {
-                            let _ = self.layers_engine.append_layer(child_layer, parent_node);
+                        let needs_reparent =
+                            self.surface_layer_parents.get(surface_id) != Some(parent_id);
+                        if needs_reparent {
+                            if let Some(parent_layer) = self.surface_layers.get(parent_id) {
+                                let _ = self.layers_engine.append_layer(&layer, parent_layer.id());
+                                self.surface_layer_parents
+                                    .insert(surface_id.clone(), parent_id.clone());
+                            }
                         }
                     }
                 }
