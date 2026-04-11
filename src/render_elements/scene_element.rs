@@ -168,7 +168,7 @@ impl ScenePerfStats {
         let delta_no_change = delta_updates.saturating_sub(delta_changes);
 
         tracing::info!(
-            target: "screen_composer::perf.scene",
+            target: "otto::perf.scene",
             total_updates = self.total_updates,
             updates_per_sec = delta_updates,
             updates_with_scene_changes = delta_changes,
