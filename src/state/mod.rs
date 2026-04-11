@@ -195,6 +195,7 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub wlr_foreign_toplevel_state: wlr_foreign_toplevel::WlrForeignToplevelManagerState,
     pub cursor_shape_manager_state: CursorShapeManagerState,
     pub virtual_keyboard_manager_state: VirtualKeyboardManagerState,
+    pub virtual_pointer_manager_state: virtual_pointer::VirtualPointerManagerState,
 
     #[cfg(feature = "xwayland")]
     pub xwayland_shell_state: xwayland_shell::XWaylandShellState,
@@ -310,6 +311,7 @@ pub mod seat_handler;
 pub mod security_context_handler;
 pub mod selection_handler;
 pub mod virtual_keyboard_handler;
+pub mod virtual_pointer;
 pub mod window_throttle;
 pub mod wlr_foreign_toplevel;
 pub mod xdg_activation_handler;
@@ -407,6 +409,25 @@ delegate_cursor_shape!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_text_input_manager!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_keyboard_shortcuts_inhibit!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_virtual_keyboard_manager!(@<BackendData: Backend + 'static> Otto<BackendData>);
+
+// wlr-virtual-pointer-unstable-v1 delegates. Hand-rolled because Smithay
+// doesn't ship a virtual-pointer module; the impls live in
+// `state::virtual_pointer` and we dispatch to them here.
+smithay::reexports::wayland_server::delegate_global_dispatch!(
+    @<BackendData: Backend + 'static> Otto<BackendData>:
+    [smithay::reexports::wayland_protocols_wlr::virtual_pointer::v1::server::zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1: ()]
+    => virtual_pointer::VirtualPointerManagerState
+);
+smithay::reexports::wayland_server::delegate_dispatch!(
+    @<BackendData: Backend + 'static> Otto<BackendData>:
+    [smithay::reexports::wayland_protocols_wlr::virtual_pointer::v1::server::zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1: ()]
+    => virtual_pointer::VirtualPointerManagerState
+);
+smithay::reexports::wayland_server::delegate_dispatch!(
+    @<BackendData: Backend + 'static> Otto<BackendData>:
+    [smithay::reexports::wayland_protocols_wlr::virtual_pointer::v1::server::zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1: virtual_pointer::VirtualPointerUserData]
+    => virtual_pointer::VirtualPointerManagerState
+);
 delegate_pointer_gestures!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_relative_pointer!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_viewporter!(@<BackendData: Backend + 'static> Otto<BackendData>);
@@ -554,6 +575,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         InputMethodManagerState::new::<Self, _>(&dh, |_client| true);
         let virtual_keyboard_manager_state =
             VirtualKeyboardManagerState::new::<Self, _>(&dh, |_client| true);
+        let virtual_pointer_manager_state =
+            virtual_pointer::VirtualPointerManagerState::new::<BackendData>(&dh);
         // Expose global only if backend supports relative motion events
         if BackendData::HAS_RELATIVE_MOTION {
             RelativePointerManagerState::new::<Self>(&dh);
@@ -693,6 +716,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             wlr_foreign_toplevel_state,
             cursor_shape_manager_state,
             virtual_keyboard_manager_state,
+            virtual_pointer_manager_state,
             dnd_icon: None,
             suppressed_keys: Vec::new(),
             current_modifiers: ModifiersState::default(),
