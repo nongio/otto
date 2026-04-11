@@ -200,7 +200,19 @@ impl<BackendData: Backend> Otto<BackendData> {
                             if w.is_minimised() {
                                 return;
                             }
-                            if w.is_fullscreen() {
+                            // Skip the focus/raise dance only when this click
+                            // landed on the window that is *actively*
+                            // fullscreen on the currently-displayed workspace
+                            // — it already has focus and must not be
+                            // re-raised. Using `w.is_fullscreen()` alone
+                            // would be wrong: that flag is persistent
+                            // window state and stays `true` on a window
+                            // whose workspace is not the current one, which
+                            // used to swallow clicks on non-fullscreen
+                            // windows after a workspace switch.
+                            let active_fullscreen_id =
+                                self.workspaces.get_fullscreen_window().map(|f| f.id());
+                            if active_fullscreen_id.as_ref() == Some(&w.id()) {
                                 return;
                             }
                             self.workspaces.focus_app_with_window(&id);
