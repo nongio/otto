@@ -310,6 +310,7 @@ pub mod seat_handler;
 pub mod security_context_handler;
 pub mod selection_handler;
 pub mod virtual_keyboard_handler;
+pub mod window_throttle;
 pub mod wlr_foreign_toplevel;
 pub mod xdg_activation_handler;
 pub mod xdg_decoration_handler;
@@ -1817,15 +1818,21 @@ pub struct SurfaceDmabufFeedback<'a> {
 }
 
 #[profiling::function]
+#[allow(clippy::mutable_key_type)] // ObjectId as HashMap key — see window_throttle.rs
 pub fn post_repaint<'a>(
     output: &Output,
     render_element_states: &RenderElementStates,
     window_elements: &[&WindowElement],
     dmabuf_feedback: Option<SurfaceDmabufFeedback<'_>>,
     time: impl Into<Duration>,
+    window_throttle_states: &std::collections::HashMap<
+        smithay::reexports::wayland_server::backend::ObjectId,
+        window_throttle::WindowThrottleState,
+    >,
 ) {
     let time = time.into();
-    let throttle = Some(Duration::ZERO);
+    let default_throttle = Duration::ZERO;
+    let layer_throttle = Some(Duration::ZERO);
 
     window_elements.iter().for_each(|window| {
         window.with_surfaces(|surface, states| {
@@ -1843,9 +1850,15 @@ pub fn post_repaint<'a>(
                 });
             }
         });
-        window.send_frame(output, time, Some(Duration::ZERO), |_, _| {
-            Some(output.clone())
-        });
+
+        // Per-window throttle based on user-visibility classification. Missing
+        // entries (should be rare) fall through to full-rate, matching the
+        // previous behaviour.
+        let throttle = window_throttle_states
+            .get(&window.id())
+            .map(|s| s.throttle())
+            .unwrap_or(default_throttle);
+        window.send_frame(output, time, Some(throttle), |_, _| Some(output.clone()));
         // Send frame to all windows since we're processing all workspaces
         if let Some(dmabuf_feedback) = dmabuf_feedback {
             window.send_dmabuf_feedback(output, surface_primary_scanout_output, |surface, _| {
@@ -1876,7 +1889,7 @@ pub fn post_repaint<'a>(
             }
         });
 
-        layer_surface.send_frame(output, time, throttle, surface_primary_scanout_output);
+        layer_surface.send_frame(output, time, layer_throttle, surface_primary_scanout_output);
         if let Some(dmabuf_feedback) = dmabuf_feedback {
             layer_surface.send_dmabuf_feedback(
                 output,

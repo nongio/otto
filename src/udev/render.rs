@@ -257,6 +257,7 @@ impl Otto<UdevData> {
         }
     }
 
+    #[allow(clippy::mutable_key_type)] // ObjectId as HashMap key — see window_throttle.rs
     pub(super) fn render_surface(&mut self, node: DrmNode, crtc: crtc::Handle) {
         profiling::scope!("render_surface", &format!("{crtc:?}"));
 
@@ -381,6 +382,19 @@ impl Otto<UdevData> {
             .map(|ows| self.scene_element.for_output_layer(&ows.output_layer))
             .unwrap_or_else(|| self.scene_element.clone());
 
+        // Classify every window into its visibility state so post_repaint can
+        // pick a per-window frame-callback throttle. `occluded_ids` is empty
+        // for v1 — we rely on the fullscreen detection inside the classifier
+        // for the main "background app behind a maximized window" case.
+        let expose_active =
+            self.workspaces.is_expose_transitioning() || self.workspaces.get_show_all();
+        let window_throttle_states = crate::state::window_throttle::classify_windows(
+            &self.workspaces,
+            &all_window_elements,
+            &std::collections::HashSet::new(),
+            expose_active,
+        );
+
         let result = render_surface(
             surface,
             &mut renderer,
@@ -394,6 +408,7 @@ impl Otto<UdevData> {
             output_scene_element,
             scene_has_damage,
             fullscreen_window.as_ref(),
+            &window_throttle_states,
         );
 
         let reschedule = match &result {
@@ -931,6 +946,7 @@ impl Otto<UdevData> {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::mutable_key_type)] // ObjectId as HashMap key — see window_throttle.rs
 pub(super) fn render_surface<'a>(
     surface: &'a mut SurfaceData,
     renderer: &mut UdevRenderer<'a>,
@@ -944,6 +960,10 @@ pub(super) fn render_surface<'a>(
     scene_element: SceneElement,
     scene_has_damage: bool,
     fullscreen_window: Option<&WindowElement>,
+    window_throttle_states: &std::collections::HashMap<
+        smithay::reexports::wayland_server::backend::ObjectId,
+        crate::state::window_throttle::WindowThrottleState,
+    >,
 ) -> Result<RenderOutcome, SwapBuffersError> {
     // Start frame timing
     #[cfg(feature = "metrics")]
@@ -1171,6 +1191,7 @@ pub(super) fn render_surface<'a>(
                 scanout_feedback: &feedback.scanout_feedback,
             }),
         clock.now(),
+        window_throttle_states,
     );
 
     if rendered {
