@@ -33,7 +33,7 @@ debugger = ["laye-rs/debugger"]
 
 [dependencies.laye-rs]
 git = "https://github.com/nongio/layers"
-tag = "v1.9.0"
+tag = "v1.10.0"
 features = ["export-taffy"]
 
 [dependencies.skia-safe]
