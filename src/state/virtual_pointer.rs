@@ -310,6 +310,15 @@ where
 
                 for (time, button, btn_state) in buttons {
                     let serial = SERIAL_COUNTER.next_serial();
+                    // Mirror the click-to-focus / raise behavior that
+                    // `on_pointer_button` does for real libinput events, so
+                    // virtual-pointer clicks also focus the window under the
+                    // cursor. Without this, clicks would dispatch to whatever
+                    // surface already held pointer focus instead of the one
+                    // the test harness intended to click on.
+                    if btn_state == ButtonState::Pressed && !state.workspaces.get_show_all() {
+                        state.focus_window_under_cursor(serial);
+                    }
                     pointer.button(
                         state,
                         &ButtonEvent {
@@ -319,6 +328,10 @@ where
                             time,
                         },
                     );
+                    match btn_state {
+                        ButtonState::Pressed => state.layers_engine.pointer_button_down(),
+                        ButtonState::Released => state.layers_engine.pointer_button_up(),
+                    }
                 }
 
                 if let Some(axis_frame) = axis {
