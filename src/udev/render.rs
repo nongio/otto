@@ -618,8 +618,9 @@ impl Otto<UdevData> {
                     surface.avg_render_time_us * 0.9 + render_time_us * 0.1;
                 // Reset countdown on any activity: animations, actual frame
                 // submitted, or a render triggered by input/client commit.
+                // Short tail — see commentary in init.rs dispatch loop.
                 if has_animations || was_rendered {
-                    surface.idle_countdown = 30; // ~0.5s at 60Hz
+                    surface.idle_countdown = 3;
                 }
             }
         }
