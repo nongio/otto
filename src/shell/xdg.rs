@@ -298,11 +298,14 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         // Use cached root lookup - O(1) instead of traversing popup tree
         let popup_id = popup_surface.wl_surface().id();
 
-        // Remove from popup overlay layer
-        self.workspaces.popup_overlay.remove_popup(&popup_id);
+        // Remove from popup overlay layer and get subsurface IDs for cleanup
+        let popup_surface_ids = self.workspaces.popup_overlay.remove_popup(&popup_id);
 
-        // Clean up layers for this popup surface
+        // Clean up layers for this popup surface and all its subsurfaces
         self.destroy_layer_for_surface(&popup_id);
+        for surface_id in &popup_surface_ids {
+            self.destroy_layer_for_surface(surface_id);
+        }
         // Also clean up any sc-layers attached to these surfaces
         self.surfaces_style.remove(&popup_id);
 
@@ -1384,6 +1387,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         if let Some(layer) = self.surface_layers.remove(surface_id) {
             self.layers_engine.mark_for_delete(layer.id);
         }
+        self.surface_layer_parents.remove(surface_id);
     }
 }
 

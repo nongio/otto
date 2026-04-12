@@ -14,6 +14,9 @@ pub struct PopupLayer {
     pub root_window_id: ObjectId,
     pub layer: Layer,
     pub content_layer: Layer,
+    /// Surface IDs whose layers live under this popup's content_layer.
+    /// Used to clean up `surface_layers` when the popup is destroyed.
+    surface_ids: Vec<ObjectId>,
 }
 
 /// View for rendering popups on top of all windows
@@ -75,10 +78,6 @@ impl PopupOverlayView {
                 content_layer.set_pointer_events(false);
                 content_layer.set_picture_cached(true);
 
-                // Start hidden — only show after the initial configure has been
-                // acknowledged and the popup has committed at its correct position.
-                layer.set_hidden(true);
-
                 let _ = self.layers_engine.append_layer(&layer, self.layer.id());
                 let _ = self.layers_engine.append_layer(&content_layer, layer.id());
 
@@ -87,6 +86,7 @@ impl PopupOverlayView {
                     root_window_id,
                     layer,
                     content_layer,
+                    surface_ids: Vec::new(),
                 }
             })
     }
@@ -107,10 +107,6 @@ impl PopupOverlayView {
         let popup =
             self.get_or_create_popup_layer(popup_id.clone(), root_window_id.clone(), warm_cache);
 
-        // Account for the layer's size and anchor point when positioning
-        // The position parameter represents where we want the top-left corner to be,
-        // but set_position places the layer's anchor point at that position.
-        // So we need to offset by (size * anchor_point) to get the correct visual position.
         let anchor_point = popup.layer.anchor_point();
         let size = popup.layer.render_size();
         let adjusted_position = Point {
@@ -119,17 +115,24 @@ impl PopupOverlayView {
         };
         popup.layer.set_position(adjusted_position, None);
 
-        // Map surface IDs to their layers
         let mut surface_layers: HashMap<ObjectId, Layer> = HashMap::new();
+        let mut new_surface_ids: Vec<ObjectId> = Vec::new();
 
         for wvs in surfaces.iter() {
             if wvs.phy_dst_w <= 0.0 || wvs.phy_dst_h <= 0.0 {
                 continue;
             }
 
-            // Reuse layer from cache if it exists, otherwise create new one
+            // Reuse layer from cache if it exists and alive, otherwise create new one
             let layer = if let Some(cached_layer) = existing_surface_layers.get(&wvs.id) {
-                cached_layer.clone()
+                if layers_engine.is_layer_alive(&cached_layer.id()) {
+                    cached_layer.clone()
+                } else {
+                    let new_layer = layers_engine.new_layer();
+                    let key = format!("surface_{:?}", wvs.id);
+                    new_layer.set_key(&key);
+                    new_layer
+                }
             } else {
                 let new_layer = layers_engine.new_layer();
                 let key = format!("surface_{:?}", wvs.id);
@@ -137,42 +140,45 @@ impl PopupOverlayView {
                 new_layer
             };
 
-            // Configure layer with all properties and draw callback
             crate::workspaces::utils::configure_surface_layer(
                 &layer,
                 wvs,
-                crate::surface_style::ContentsGravity::TopLeft,
+                crate::surface_style::ContentsGravity::Resize,
                 false,
                 None,
             );
 
-            // Set up parent-child relationship
             if let Some(ref parent_id) = wvs.parent_id {
                 if let Some(parent_layer) = surface_layers.get(parent_id) {
                     let _ = layers_engine.append_layer(&layer, parent_layer.id());
                 } else {
-                    // Parent not yet created, append to content layer
                     let _ = layers_engine.append_layer(&layer, popup.content_layer.id());
                 }
             } else {
-                // Root surface, append to content layer
                 let _ = layers_engine.append_layer(&layer, popup.content_layer.id());
             }
 
+            new_surface_ids.push(wvs.id.clone());
             surface_layers.insert(wvs.id.clone(), layer);
         }
+
+        popup.surface_ids = new_surface_ids;
 
         surface_layers
     }
 
-    /// Remove a popup layer
-    pub fn remove_popup(&mut self, popup_id: &ObjectId) {
+    /// Remove a popup layer, returning surface IDs that need cleanup from surface_layers
+    pub fn remove_popup(&mut self, popup_id: &ObjectId) -> Vec<ObjectId> {
         if let Some(popup) = self.popup_layers.remove(popup_id) {
             popup.layer.remove();
+            popup.surface_ids
+        } else {
+            Vec::new()
         }
     }
 
     /// Remove all popups belonging to a specific root window
+    /// Returns all surface IDs (popup + subsurface) that need cleanup
     pub fn remove_popups_for_window(&mut self, root_window_id: &ObjectId) -> Vec<ObjectId> {
         let to_remove: Vec<ObjectId> = self
             .popup_layers
@@ -181,11 +187,13 @@ impl PopupOverlayView {
             .map(|(id, _)| id.clone())
             .collect();
 
+        let mut all_surface_ids = Vec::new();
         for id in to_remove.iter() {
-            self.remove_popup(id);
+            let surface_ids = self.remove_popup(id);
+            all_surface_ids.extend(surface_ids);
         }
 
-        to_remove
+        all_surface_ids
     }
 
     /// Clear all popup layers

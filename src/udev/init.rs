@@ -661,7 +661,11 @@ pub fn run_udev() {
                     .all(|s| s.idle_countdown == 0);
                 for device in state.backend_data.backends.values_mut() {
                     for surface in device.surfaces.values_mut() {
-                        surface.idle_countdown = 30;
+                        // Short tail after the last input/commit — enough to absorb
+                        // one missed event gap without flapping fast/slow dispatch.
+                        // (Was 30 ≈ 500 ms which kept the 1 kHz poll loop hot
+                        // through entire animations with no benefit.)
+                        surface.idle_countdown = 3;
                     }
                 }
                 if was_idle {

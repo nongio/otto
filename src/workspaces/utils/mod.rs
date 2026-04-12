@@ -252,13 +252,12 @@ pub fn configure_surface_layer(
     }
 
     layer.set_pointer_events(false);
-    // Picture caching is enabled so opacity/transform animations on the layer
-    // (e.g. popup fade-in) can composite the cached bitmap without re-rasterizing.
-    // The draw closure still reads live state from textures_storage, but lay-rs
-    // invalidates the cache when set_draw_content marks the layer dirty on commit.
+    // Picture caching keeps opacity/transform animations cheap — the cached
+    // bitmap is composited without re-rasterising the draw closure.
+    // Re-installing set_draw_content below on every commit does NOT clear
+    // the cache (lay-rs only swaps the closure); the closure's returned
+    // damage rect is the source of truth for partial repaint.
     layer.set_picture_cached(true);
-    // The draw_content callback fills the entire bounds with the surface texture,
-    // so this layer can act as an occluder in occlusion culling.
     layer.set_content_opaque(true);
 
     let draw_wvs = wvs.clone();
