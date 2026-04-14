@@ -71,9 +71,7 @@ fn find_output_for_wl<BackendData: Backend>(
     state: &Otto<BackendData>,
     wl_output: &WlOutput,
 ) -> Option<Output> {
-    let Some(client) = wl_output.client() else {
-        return None;
-    };
+    let client = wl_output.client()?;
     state
         .workspaces
         .outputs()
