@@ -367,9 +367,10 @@ impl TouchHandle {
     unsafe extern "C" fn touch_down(ptr: *mut WlcsTouch, x: wl_fixed_t, y: wl_fixed_t) {
         match std::panic::catch_unwind(|| {
             let me = &mut *container_of!(ptr, TouchHandle, wlcs_touch);
+            // WLCS passes raw integers despite the wl_fixed_t signature (WLCS bug)
             let _ = me.sender.send(WlcsEvent::TouchDown {
                 device_id: me.device_id,
-                location: (wl_fixed_to_double(x), wl_fixed_to_double(y)).into(),
+                location: (x as f64, y as f64).into(),
             });
         }) {
             Ok(_) => {}
@@ -386,9 +387,10 @@ impl TouchHandle {
     unsafe extern "C" fn touch_move(ptr: *mut WlcsTouch, x: wl_fixed_t, y: wl_fixed_t) {
         match std::panic::catch_unwind(|| {
             let me = &mut *container_of!(ptr, TouchHandle, wlcs_touch);
+            // WLCS passes raw integers despite the wl_fixed_t signature (WLCS bug)
             let _ = me.sender.send(WlcsEvent::TouchMove {
                 device_id: me.device_id,
-                location: (wl_fixed_to_double(x), wl_fixed_to_double(y)).into(),
+                location: (x as f64, y as f64).into(),
             });
         }) {
             Ok(_) => {}

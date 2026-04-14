@@ -5,8 +5,11 @@ use std::{
 };
 
 use smithay::{
-    backend::input::ButtonState,
-    input::pointer::{ButtonEvent, CursorImageStatus, MotionEvent, RelativeMotionEvent},
+    backend::input::{ButtonState, TouchSlot},
+    input::{
+        pointer::{ButtonEvent, CursorImageStatus, MotionEvent, RelativeMotionEvent},
+        touch::{DownEvent as TouchDownEvent, MotionEvent as TouchMotionEvent, UpEvent as TouchUpEvent},
+    },
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
         calloop::{
@@ -71,6 +74,9 @@ fn run_inner(channel: Channel<WlcsEvent>) {
     };
 
     let mut state = Otto::init(display, event_loop.handle(), test_state, false);
+
+    // Add touch capability to the seat so WLCS clients can bind wl_touch
+    state.seat.add_touch();
 
     event_loop
         .handle()
@@ -264,10 +270,61 @@ fn handle_event(event: WlcsEvent, state: &mut Otto<TestState>) {
             ptr.frame(state);
         }
         WlcsEvent::PointerRemoved { .. } => {}
-        WlcsEvent::NewTouch { .. } => {}
-        WlcsEvent::TouchDown { .. } => {}
-        WlcsEvent::TouchMove { .. } => {}
-        WlcsEvent::TouchUp { .. } => {}
+        WlcsEvent::NewTouch { .. } => {
+            // Ensure the seat has touch capability
+            if state.seat.get_touch().is_none() {
+                state.seat.add_touch();
+            }
+        }
+        WlcsEvent::TouchDown {
+            device_id: _,
+            location,
+        } => {
+            let serial = SCOUNTER.next_serial();
+            let under = state.surface_under(location);
+            let Some(touch) = state.seat.get_touch() else { return };
+            touch.down(
+                state,
+                under,
+                &TouchDownEvent {
+                    slot: TouchSlot::from(Some(0u32)),
+                    location,
+                    serial,
+                    time: 0,
+                },
+            );
+            touch.frame(state);
+        }
+        WlcsEvent::TouchMove {
+            device_id: _,
+            location,
+        } => {
+            let under = state.surface_under(location);
+            let Some(touch) = state.seat.get_touch() else { return };
+            touch.motion(
+                state,
+                under,
+                &TouchMotionEvent {
+                    slot: TouchSlot::from(Some(0u32)),
+                    location,
+                    time: 0,
+                },
+            );
+            touch.frame(state);
+        }
+        WlcsEvent::TouchUp { device_id: _ } => {
+            let serial = SCOUNTER.next_serial();
+            let Some(touch) = state.seat.get_touch() else { return };
+            touch.up(
+                state,
+                &TouchUpEvent {
+                    slot: TouchSlot::from(Some(0u32)),
+                    serial,
+                    time: 0,
+                },
+            );
+            touch.frame(state);
+        }
         WlcsEvent::TouchRemoved { .. } => {}
     }
 }
