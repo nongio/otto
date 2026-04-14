@@ -633,13 +633,27 @@ pub fn run_winit() {
                         let time = state.clock.now();
                         let all_window_elements: Vec<&WindowElement> =
                             state.workspaces.spaces_elements().collect();
-                        post_repaint(
-                            &output,
-                            &render_output_result.states,
-                            &all_window_elements,
-                            None,
-                            time,
-                        );
+                        #[allow(clippy::mutable_key_type)]
+                        // ObjectId as key — see window_throttle.rs
+                        {
+                            let expose_active = state.workspaces.is_expose_transitioning()
+                                || state.workspaces.get_show_all();
+                            let window_throttle_states =
+                                crate::state::window_throttle::classify_windows(
+                                    &state.workspaces,
+                                    &all_window_elements,
+                                    &std::collections::HashSet::new(),
+                                    expose_active,
+                                );
+                            post_repaint(
+                                &output,
+                                &render_output_result.states,
+                                &all_window_elements,
+                                None,
+                                time,
+                                &window_throttle_states,
+                            );
+                        }
 
                         record_frame_result(has_rendered, frame_submitted);
                         if has_rendered || frame_submitted {
