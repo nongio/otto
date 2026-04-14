@@ -409,6 +409,7 @@ impl Otto<UdevData> {
             scene_has_damage,
             fullscreen_window.as_ref(),
             &window_throttle_states,
+            &mut self.pending_screencopy_frames,
         );
 
         let reschedule = match &result {
@@ -964,6 +965,7 @@ pub(super) fn render_surface<'a>(
         smithay::reexports::wayland_server::backend::ObjectId,
         crate::state::window_throttle::WindowThrottleState,
     >,
+    pending_screencopy: &mut Vec<crate::state::screencopy::PendingScreencopy>,
 ) -> Result<RenderOutcome, SwapBuffersError> {
     // Start frame timing
     #[cfg(feature = "metrics")]
@@ -1051,60 +1053,62 @@ pub(super) fn render_surface<'a>(
     }
 
     // If fullscreen_window is Some, direct scanout is allowed (checked by caller)
-    let (output_elements, clear_color, should_draw) =
-        if let Some(fullscreen_win) = fullscreen_window {
-            // In fullscreen mode: render only the fullscreen window + cursor
-            // Skip the scene element entirely for direct scanout
-            let mut elements: Vec<OutputRenderElements<'a, _, WindowRenderElement<_>>> = Vec::new();
+    let (output_elements, clear_color, should_draw) = if let Some(fullscreen_win) =
+        fullscreen_window
+    {
+        // In fullscreen mode: render only the fullscreen window + cursor
+        // Skip the scene element entirely for direct scanout
+        let mut elements: Vec<OutputRenderElements<'a, _, WindowRenderElement<_>>> = Vec::new();
 
-            // Add pointer elements first (rendered at bottom, but cursor plane may handle separately)
-            elements.extend(
-                workspace_render_elements
-                    .into_iter()
-                    .map(OutputRenderElements::from),
-            );
+        // Add pointer elements first (rendered at bottom, but cursor plane may handle separately)
+        elements.extend(
+            workspace_render_elements
+                .into_iter()
+                .map(OutputRenderElements::from),
+        );
 
-            // Add the fullscreen window's render elements wrapped in Wrap
-            use smithay::backend::renderer::element::Wrap;
-            let window_elements_rendered: Vec<WindowRenderElement<_>> =
-                fullscreen_win.render_elements(renderer, (0, 0).into(), scale, 1.0);
-            elements.extend(
-                window_elements_rendered
-                    .into_iter()
-                    .map(|e| OutputRenderElements::Window(Wrap::from(e))),
-            );
+        // Add the fullscreen window's render elements wrapped in Wrap
+        use smithay::backend::renderer::element::Wrap;
+        let window_elements_rendered: Vec<WindowRenderElement<_>> =
+            fullscreen_win.render_elements(renderer, (0, 0).into(), scale, 1.0);
+        elements.extend(
+            window_elements_rendered
+                .into_iter()
+                .map(|e| OutputRenderElements::Window(Wrap::from(e))),
+        );
 
-            // Always render in fullscreen mode since the window surface may have damage
-            // Use black clear color - the window fills the screen anyway
-            (elements, CLEAR_COLOR, true)
-        } else {
-            // Normal mode: render the full scene
-            workspace_render_elements.push(WorkspaceRenderElements::Scene(scene_element));
+        // Always render in fullscreen mode since the window surface may have damage
+        // Use black clear color - the window fills the screen anyway
+        (elements, CLEAR_COLOR, true)
+    } else {
+        // Normal mode: render the full scene
+        workspace_render_elements.push(WorkspaceRenderElements::Scene(scene_element));
 
-            // We still pass cursor elements to render_frame so the DRM compositor
-            // can manage the hardware cursor plane (ALLOW_CURSOR_PLANE_SCANOUT).
-            // When nothing actually changed, render_frame returns is_empty=true
-            // and no page flip occurs, so this is cheap in the idle case.
-            let cursor_needs_draw = pointer_in_output;
-            let should_draw = scene_has_damage || dnd_needs_draw || cursor_needs_draw;
-            if !should_draw {
-                return Ok(RenderOutcome::skipped());
-            }
+        // We still pass cursor elements to render_frame so the DRM compositor
+        // can manage the hardware cursor plane (ALLOW_CURSOR_PLANE_SCANOUT).
+        // When nothing actually changed, render_frame returns is_empty=true
+        // and no page flip occurs, so this is cheap in the idle case.
+        let cursor_needs_draw = pointer_in_output;
+        let has_screencopy = !pending_screencopy.is_empty();
+        let should_draw = scene_has_damage || dnd_needs_draw || cursor_needs_draw || has_screencopy;
+        if !should_draw {
+            return Ok(RenderOutcome::skipped());
+        }
 
-            let output_render_elements: Vec<OutputRenderElements<'a, _, WindowRenderElement<_>>> =
-                workspace_render_elements
-                    .into_iter()
-                    .map(OutputRenderElements::from)
-                    .collect::<Vec<_>>();
-            let (output_elements, clear_color) = output_elements(
-                output,
-                window_elements.iter().copied(),
-                output_render_elements,
-                dnd_icon,
-                renderer,
-            );
-            (output_elements, clear_color, true)
-        };
+        let output_render_elements: Vec<OutputRenderElements<'a, _, WindowRenderElement<_>>> =
+            workspace_render_elements
+                .into_iter()
+                .map(OutputRenderElements::from)
+                .collect::<Vec<_>>();
+        let (output_elements, clear_color) = output_elements(
+            output,
+            window_elements.iter().copied(),
+            output_render_elements,
+            dnd_icon,
+            renderer,
+        );
+        (output_elements, clear_color, true)
+    };
 
     if !should_draw {
         return Ok(RenderOutcome::skipped());
@@ -1195,6 +1199,15 @@ pub(super) fn render_surface<'a>(
     );
 
     if rendered {
+        if let Some(skia_renderer) = renderer.as_mut().current_skia_renderer() {
+            let mut skia_surface = skia_renderer.surface.clone();
+            crate::state::screencopy::complete_screencopy_for_output(
+                pending_screencopy,
+                output,
+                &mut skia_surface,
+            );
+        }
+
         let output_presentation_feedback =
             take_presentation_feedback(output, &post_repaint_elements, &states);
         surface

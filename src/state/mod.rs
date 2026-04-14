@@ -195,6 +195,8 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub wlr_foreign_toplevel_state: wlr_foreign_toplevel::WlrForeignToplevelManagerState,
     pub cursor_shape_manager_state: CursorShapeManagerState,
     pub virtual_keyboard_manager_state: VirtualKeyboardManagerState,
+    pub screencopy_manager_state: screencopy::ScreencopyManagerState,
+    pub pending_screencopy_frames: Vec<screencopy::PendingScreencopy>,
 
     #[cfg(feature = "xwayland")]
     pub xwayland_shell_state: xwayland_shell::XWaylandShellState,
@@ -306,6 +308,7 @@ pub mod foreign_toplevel_shared;
 pub mod fractional_scale_handler;
 pub mod gamma_control;
 pub mod input_method_handler;
+pub mod screencopy;
 pub mod seat_handler;
 pub mod security_context_handler;
 pub mod selection_handler;
@@ -441,6 +444,18 @@ smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 
     crate::otto_dock::protocol::gen::otto_dock_item_v1::OttoDockItemV1: crate::otto_dock::protocol::DockItem
 ] => crate::otto_dock::handlers::OttoDockState);
 
+smithay::reexports::wayland_server::delegate_global_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
+    smithay::reexports::wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1: ()
+] => screencopy::ScreencopyManagerState);
+
+smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
+    smithay::reexports::wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1: ()
+] => screencopy::ScreencopyManagerState);
+
+smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
+    smithay::reexports::wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1: screencopy::ScreencopyFrameData
+] => screencopy::ScreencopyManagerState);
+
 impl<BackendData: Backend + 'static> Otto<BackendData> {
     pub fn init(
         display: Display<Otto<BackendData>>,
@@ -554,6 +569,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         InputMethodManagerState::new::<Self, _>(&dh, |_client| true);
         let virtual_keyboard_manager_state =
             VirtualKeyboardManagerState::new::<Self, _>(&dh, |_client| true);
+        let screencopy_manager_state = screencopy::ScreencopyManagerState::new::<BackendData>(&dh);
         // Expose global only if backend supports relative motion events
         if BackendData::HAS_RELATIVE_MOTION {
             RelativePointerManagerState::new::<Self>(&dh);
@@ -693,6 +709,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             wlr_foreign_toplevel_state,
             cursor_shape_manager_state,
             virtual_keyboard_manager_state,
+            screencopy_manager_state,
+            pending_screencopy_frames: Vec::new(),
             dnd_icon: None,
             suppressed_keys: Vec::new(),
             current_modifiers: ModifiersState::default(),
