@@ -185,6 +185,7 @@ fn handle_event(event: WlcsEvent, state: &mut Otto<TestState>) {
                     utime: 0,
                 },
             );
+            ptr.frame(state);
         }
         WlcsEvent::PointerMoveRelative {
             device_id: _,
@@ -212,6 +213,7 @@ fn handle_event(event: WlcsEvent, state: &mut Otto<TestState>) {
                     utime: 0,
                 },
             );
+            pointer.frame(state);
         }
         WlcsEvent::PointerButtonDown {
             device_id: _,
@@ -242,6 +244,7 @@ fn handle_event(event: WlcsEvent, state: &mut Otto<TestState>) {
                     time: 0,
                 },
             );
+            ptr.frame(state);
         }
         WlcsEvent::PointerButtonUp {
             device_id: _,
@@ -258,6 +261,7 @@ fn handle_event(event: WlcsEvent, state: &mut Otto<TestState>) {
                     time: 0,
                 },
             );
+            ptr.frame(state);
         }
         WlcsEvent::PointerRemoved { .. } => {}
         WlcsEvent::NewTouch { .. } => {}

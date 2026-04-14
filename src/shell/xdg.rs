@@ -45,9 +45,6 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
-        // Do not send a configure here, the initial configure
-        // of a xdg_surface has to be sent during the commit if
-        // the surface is not already configured
 
         let window_layer = self.layers_engine.new_layer();
         let expose_mirror_layer = self.layers_engine.new_layer();
@@ -180,6 +177,10 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
         // Create the rendering layer for sc_layers to find
         self.get_or_create_layer_for_surface(surface.wl_surface());
+
+        // Send the initial configure so the client can ack and commit.
+        // This also delivers wm_capabilities (fullscreen, maximize, minimize, window_menu).
+        surface.send_configure();
 
         let keyboard = self.seat.get_keyboard().unwrap();
         keyboard.set_focus(self, Some(window_element.into()), Serial::from(0));
