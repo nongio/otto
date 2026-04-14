@@ -220,10 +220,7 @@ impl DockView {
             .build()
             .unwrap();
         dock_apps_container.build_layer_tree(&container_tree);
-        dock_apps_container.set_position(
-            Point::new(0.0, 0.0),
-            None,
-        );
+        dock_apps_container.set_position(Point::new(0.0, 0.0), None);
         let resize_handle = layers_engine.new_layer();
         let _ = view_layer.add_sublayer(&resize_handle);
 
@@ -1115,8 +1112,7 @@ impl DockView {
                     // Height = icon + dot area so the running indicator dot
                     // sits below the icon inside the container.
                     let app_height = focused_icon_size + dot_area_height;
-                    let change =
-                        layer.change_size(Size::points(focused_icon_size, app_height));
+                    let change = layer.change_size(Size::points(focused_icon_size, app_height));
                     changes.push(change);
 
                     let change = entry
