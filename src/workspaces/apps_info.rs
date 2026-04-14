@@ -21,6 +21,20 @@ pub struct Application {
 }
 
 impl Application {
+    #[cfg(test)]
+    pub fn test_new(id: &str) -> Self {
+        Self {
+            identifier: id.to_string(),
+            match_id: id.to_string(),
+            icon_path: None,
+            icon: None,
+            picture: None,
+            override_name: None,
+            desktop_file_id: None,
+            app_info: None,
+        }
+    }
+
     pub fn desktop_name(&self) -> Option<String> {
         if let Some(name) = &self.override_name {
             return Some(name.clone());
