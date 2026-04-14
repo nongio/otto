@@ -54,7 +54,7 @@ cargo run -- --winit &
 WAYLAND_DISPLAY=wayland-1 cargo run -p apps-manager
 ```
 
-**Note:** No test suite exists yet. Minimum supported Rust version is 1.85.0.
+**Note:** Minimum supported Rust version is 1.85.0.
 
 ## Architecture Overview
 
@@ -65,6 +65,7 @@ Otto is a Wayland compositor built on Smithay with a Skia-based rendering pipeli
 Interchangeable backends implement the same compositor logic:
 - `src/udev.rs` — Production backend using DRM/GBM/libinput for bare-metal display
 - `src/winit.rs` — Development backend running as a window inside another compositor
+- `src/headless.rs` — Headless backend for integration tests (no GPU, feature-gated `headless`)
 - `src/x11.rs` — X11 client backend (basic, not actively maintained)
 
 Each backend sets up its display/input subsystem, creates `Otto<BackendData>` state, runs the event loop with calloop, and calls the shared rendering pipeline.
@@ -142,6 +143,47 @@ Keep the subject line short (50 chars or fewer). Omit a body unless the change g
 ## Spec Sync
 
 After implementing a behavior change, check if a spec exists in `specs/` for the affected feature. If so, update it to match. If none exists and the feature is non-trivial, create one from `specs/SPEC-TEMPLATE.md`. See `.github/instructions/spec-sync.instructions.md` for details.
+
+## Testing
+
+Otto has two test systems. See [docs/developer/testing.md](./docs/developer/testing.md) for the full guide.
+
+### Headless Integration Tests
+
+Tests compositor behavior (gestures, expose, workspaces, window lifecycle, scene graph) using a real compositor instance without GPU.
+
+```sh
+cargo test --features headless --test headless_basic
+```
+
+- **Backend**: `src/headless.rs` — `HeadlessHandle` starts compositor on a background thread
+- **Test client**: `components/otto-kit/src/testing.rs` — lightweight Wayland client with SHM buffers
+- **Tests**: `tests/headless_basic.rs`
+- **Key APIs**: `handle.swipe_begin/update/end()`, `handle.settle(frames)`, `handle.query(|state| ...)`, `handle.scene_snapshot()`
+- Tests must use `#[serial]` attribute
+
+### WLCS Protocol Conformance
+
+Tests Wayland protocol compliance (surface roles, pointer/touch routing, xdg_shell).
+
+```sh
+# One-time: build the WLCS test runner
+./compile_wlcs.sh
+
+# Build the Otto WLCS adapter
+cargo build -p wlcs_otto
+
+# Run specific test groups
+./wlcs/wlcs target/debug/libwlcs_otto.so --gtest_filter='SelfTest*:FrameSubmission*'
+./wlcs/wlcs target/debug/libwlcs_otto.so --gtest_filter='*/SurfacePointerMotionTest*'
+./wlcs/wlcs target/debug/libwlcs_otto.so --gtest_filter='XdgToplevelStableTest.*'
+
+# List all tests
+./wlcs/wlcs target/debug/libwlcs_otto.so --gtest_list_tests
+```
+
+- **Adapter**: `wlcs_otto/` — cdylib that WLCS loads, runs a headless Otto instance
+- **Key files**: `wlcs_otto/src/main_loop.rs` (event handling), `wlcs_otto/src/ffi_wrappers.rs` (C FFI)
 
 ## Key Dependencies
 
