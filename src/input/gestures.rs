@@ -260,7 +260,6 @@ impl crate::Otto<crate::udev::UdevData> {
             },
         );
     }
-
 }
 
 // ── Headless / test helpers ──────────────────────────────────────────

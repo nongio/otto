@@ -141,8 +141,7 @@ impl TestClient {
             title: title.to_string(),
         }));
 
-        let xdg_surface =
-            xdg_wm_base.get_xdg_surface(&surface, &self.qh, toplevel_state.clone());
+        let xdg_surface = xdg_wm_base.get_xdg_surface(&surface, &self.qh, toplevel_state.clone());
         let toplevel = xdg_surface.get_toplevel(&self.qh, toplevel_state.clone());
         toplevel.set_title(title.to_string());
 
@@ -195,11 +194,8 @@ impl ShmBuffer {
         let size = (stride * height) as usize;
 
         // Create a memfd for the SHM pool
-        let fd = rustix::fs::memfd_create(
-            c"otto-test-shm",
-            rustix::fs::MemfdFlags::CLOEXEC,
-        )
-        .expect("memfd_create failed");
+        let fd = rustix::fs::memfd_create(c"otto-test-shm", rustix::fs::MemfdFlags::CLOEXEC)
+            .expect("memfd_create failed");
 
         rustix::io::retry_on_intr(|| rustix::fs::ftruncate(&fd, size as u64))
             .expect("ftruncate failed");
@@ -245,8 +241,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for TestClientState {
         {
             match interface.as_str() {
                 "wl_compositor" => {
-                    state.wl_compositor =
-                        Some(registry.bind(name, version.min(6), qh, ()));
+                    state.wl_compositor = Some(registry.bind(name, version.min(6), qh, ()));
                 }
                 "wl_shm" => {
                     state.wl_shm = Some(registry.bind(name, version.min(1), qh, ()));
@@ -255,8 +250,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for TestClientState {
                     state.wl_seat = Some(registry.bind(name, version.min(9), qh, ()));
                 }
                 "xdg_wm_base" => {
-                    state.xdg_wm_base =
-                        Some(registry.bind(name, version.min(6), qh, ()));
+                    state.xdg_wm_base = Some(registry.bind(name, version.min(6), qh, ()));
                 }
                 _ => {}
             }
@@ -395,9 +389,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, Arc<Mutex<TestToplevel>>> for TestClien
         _qh: &QueueHandle<Self>,
     ) {
         match event {
-            xdg_toplevel::Event::Configure {
-                width, height, ..
-            } => {
+            xdg_toplevel::Event::Configure { width, height, .. } => {
                 if width > 0 && height > 0 {
                     let mut tl = data.lock().unwrap();
                     tl.width = width;

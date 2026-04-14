@@ -9,10 +9,7 @@ use std::{
 };
 
 use smithay::{
-    backend::{
-        allocator::dmabuf::Dmabuf,
-        renderer::utils::RendererSurfaceState,
-    },
+    backend::{allocator::dmabuf::Dmabuf, renderer::utils::RendererSurfaceState},
     delegate_dmabuf,
     input::pointer::CursorImageStatus,
     output::{Mode, Output, PhysicalProperties, Subpixel},
@@ -118,9 +115,7 @@ impl HeadlessHandle {
             run_headless_loop(config, ready_tx, query_rx, result_tx, running_clone);
         });
 
-        let socket_name = ready_rx
-            .recv()
-            .expect("Compositor thread failed to start");
+        let socket_name = ready_rx.recv().expect("Compositor thread failed to start");
 
         Self {
             socket_name,
@@ -274,9 +269,7 @@ impl HeadlessHandle {
     /// Programmatically switch to a workspace by index.
     pub fn set_workspace(&self, index: usize) {
         self.with_state(move |state| {
-            state
-                .workspaces
-                .set_current_workspace_index(index, None);
+            state.workspaces.set_current_workspace_index(index, None);
         });
     }
 
@@ -395,15 +388,7 @@ impl HeadlessHandle {
             selector_state
                 .rects
                 .iter()
-                .map(|r| {
-                    (
-                        r.window_title.clone(),
-                        r.x,
-                        r.y,
-                        r.w,
-                        r.h,
-                    )
-                })
+                .map(|r| (r.window_title.clone(), r.x, r.y, r.w, r.h))
                 .collect()
         })
     }
@@ -456,9 +441,7 @@ impl Otto<HeadlessData> {
     /// Press or release the left pointer button.
     fn synthetic_pointer_button(&mut self, pressed: bool) {
         use smithay::{
-            backend::input::ButtonState,
-            input::pointer::ButtonEvent,
-            utils::SERIAL_COUNTER,
+            backend::input::ButtonState, input::pointer::ButtonEvent, utils::SERIAL_COUNTER,
         };
 
         let serial = SERIAL_COUNTER.next_serial();
@@ -516,8 +499,7 @@ fn run_headless_loop(
     let mut display_handle = display.handle();
 
     let mut dmabuf_state = DmabufState::new();
-    let dmabuf_global = dmabuf_state
-        .create_global::<Otto<HeadlessData>>(&display.handle(), vec![]);
+    let dmabuf_global = dmabuf_state.create_global::<Otto<HeadlessData>>(&display.handle(), vec![]);
 
     let data = HeadlessData {
         dmabuf_state,

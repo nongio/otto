@@ -36,7 +36,10 @@ mod headless_tests {
         let handle = start_compositor();
         let client = connect_client(&handle);
 
-        assert!(client.state.wl_compositor.is_some(), "wl_compositor not bound");
+        assert!(
+            client.state.wl_compositor.is_some(),
+            "wl_compositor not bound"
+        );
         assert!(client.state.wl_shm.is_some(), "wl_shm not bound");
         assert!(client.state.xdg_wm_base.is_some(), "xdg_wm_base not bound");
 
@@ -53,7 +56,10 @@ mod headless_tests {
         handle.wait(Duration::from_millis(100));
         let _ = client.roundtrip();
 
-        assert!(toplevel.lock().unwrap().configured, "Toplevel should be configured");
+        assert!(
+            toplevel.lock().unwrap().configured,
+            "Toplevel should be configured"
+        );
 
         handle.stop();
     }
@@ -120,7 +126,10 @@ mod headless_tests {
 
         // Let animations settle
         let frames = handle.settle(300);
-        assert!(frames > 0, "Expected animation frames during expose transition");
+        assert!(
+            frames > 0,
+            "Expected animation frames during expose transition"
+        );
 
         // Should be fully active after settling
         assert!(handle.is_expose_active());
@@ -151,12 +160,7 @@ mod headless_tests {
         assert_eq!(handle.window_count(), 3);
 
         // Simulate a strong vertical swipe to enter expose
-        handle.swipe(&[
-            (0.0, -10.0),
-            (0.0, -50.0),
-            (0.0, -80.0),
-            (0.0, -80.0),
-        ]);
+        handle.swipe(&[(0.0, -10.0), (0.0, -50.0), (0.0, -80.0), (0.0, -80.0)]);
 
         // Let the spring animation finish
         handle.settle(300);
@@ -198,7 +202,10 @@ mod headless_tests {
         let handle = start_compositor();
 
         let snapshot = handle.scene_snapshot();
-        assert!(!snapshot.nodes.is_empty(), "Scene should have at least the root node");
+        assert!(
+            !snapshot.nodes.is_empty(),
+            "Scene should have at least the root node"
+        );
 
         // The root should have key "otto_root"
         let root = &snapshot.nodes[0];
@@ -320,7 +327,10 @@ mod headless_tests {
         handle.swipe_update(0.0, -80.0);
         handle.swipe_end();
         handle.settle(300);
-        assert!(handle.is_expose_active(), "Expose should be active after swipe up");
+        assert!(
+            handle.is_expose_active(),
+            "Expose should be active after swipe up"
+        );
 
         // Swipe DOWN to close expose (without selecting a window)
         handle.swipe_begin();
@@ -330,7 +340,10 @@ mod headless_tests {
         handle.swipe_update(0.0, 80.0);
         handle.swipe_end();
         handle.settle(300);
-        assert!(!handle.is_expose_active(), "Expose should be closed after swipe down");
+        assert!(
+            !handle.is_expose_active(),
+            "Expose should be closed after swipe down"
+        );
 
         // Stacking order must be identical
         let order_after = window_order(&handle);
@@ -515,7 +528,10 @@ mod headless_tests {
 
         let order_before = window_order(&handle);
         let top_before = order_before.last().cloned().unwrap();
-        assert_eq!(top_before, "window-4", "window-4 should be on top initially");
+        assert_eq!(
+            top_before, "window-4",
+            "window-4 should be on top initially"
+        );
 
         // Enter expose via swipe
         handle.swipe_begin();
@@ -584,7 +600,10 @@ mod headless_tests {
 
         let json = handle.scene_json();
         assert!(!json.is_empty(), "Scene JSON should not be empty");
-        assert!(json.contains("otto_root"), "Scene JSON should contain root node");
+        assert!(
+            json.contains("otto_root"),
+            "Scene JSON should contain root node"
+        );
 
         // Should be valid JSON
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(&json);
