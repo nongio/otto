@@ -38,6 +38,9 @@ pub struct WorkspaceView {
     is_fullscreen_animating: Arc<AtomicBool>,
     name: Arc<RwLock<Option<String>>>,
     window_base_layers: Arc<RwLock<HashMap<ObjectId, Layer>>>,
+    /// Stacking order (bottom→top ObjectIds) saved when expose opens,
+    /// so it can be restored verbatim when expose closes without selection.
+    pre_expose_order: Arc<RwLock<Vec<ObjectId>>>,
 }
 
 impl fmt::Debug for WorkspaceView {
@@ -169,6 +172,7 @@ impl WorkspaceView {
             is_fullscreen_animating: Arc::new(AtomicBool::new(false)),
             name: Arc::new(RwLock::new(None)),
             window_base_layers: Arc::new(RwLock::new(HashMap::new())),
+            pre_expose_order: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -322,6 +326,21 @@ impl WorkspaceView {
 
     pub fn get_name(&self) -> Option<String> {
         self.name.read().unwrap().clone()
+    }
+
+    /// Returns true if no pre-expose stacking order has been saved yet.
+    pub fn peek_pre_expose_order_empty(&self) -> bool {
+        self.pre_expose_order.read().unwrap().is_empty()
+    }
+
+    /// Snapshot the current stacking order so it can be restored after expose.
+    pub fn save_pre_expose_order(&self, order: Vec<ObjectId>) {
+        *self.pre_expose_order.write().unwrap() = order;
+    }
+
+    /// Take the saved pre-expose stacking order, leaving it empty.
+    pub fn take_pre_expose_order(&self) -> Vec<ObjectId> {
+        std::mem::take(&mut *self.pre_expose_order.write().unwrap())
     }
 }
 

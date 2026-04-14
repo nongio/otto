@@ -199,7 +199,13 @@ impl<BackendData: Backend> Otto<BackendData> {
             let h = self
                 .workspaces
                 .get_workspace_at(workspace_index)
-                .and_then(|wv| wv.window_selector_view.get_selected_window_id());
+                .and_then(|wv| {
+                    // The close gesture clears the selection before we get here,
+                    // so fall back to the snapshot taken at gesture start.
+                    wv.window_selector_view
+                        .get_selected_window_id()
+                        .or_else(|| wv.window_selector_view.take_pre_close_hovered())
+                });
             tracing::debug!("expose_end_with_velocity_and_focus_top: hovered={:?}", h);
             h
         } else {

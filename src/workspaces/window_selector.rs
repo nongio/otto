@@ -100,6 +100,8 @@ pub struct WindowSelectorView {
     pub drag_state: Arc<RwLock<Option<DragState>>>,
     pub expose_bin: Arc<RwLock<HashMap<ObjectId, LayoutRect>>>,
     layout_hash: Arc<RwLock<u64>>,
+    /// Hovered window saved before the close gesture clears the selection.
+    pre_close_hovered: Arc<RwLock<Option<ObjectId>>>,
 }
 
 /// # WindowSelectorView Layer Structure
@@ -223,6 +225,7 @@ impl WindowSelectorView {
             drag_state: Arc::new(RwLock::new(None)),
             expose_bin: Arc::new(RwLock::new(HashMap::new())),
             layout_hash: Arc::new(RwLock::new(0)),
+            pre_close_hovered: Arc::new(RwLock::new(None)),
         }
     }
     pub fn layer_for_window(&self, window: &ObjectId) -> Option<Layer> {
@@ -279,6 +282,17 @@ impl WindowSelectorView {
         let state = self.view.get_state();
         let index = state.current_selection?;
         state.rects.get(index)?.window_id.clone()
+    }
+
+    /// Snapshot the current selection so it survives `clear_selection` during
+    /// the close gesture.
+    pub fn save_pre_close_hovered(&self) {
+        *self.pre_close_hovered.write().unwrap() = self.get_selected_window_id();
+    }
+
+    /// Take the saved pre-close hovered window, leaving it empty.
+    pub fn take_pre_close_hovered(&self) -> Option<ObjectId> {
+        self.pre_close_hovered.write().unwrap().take()
     }
 
     pub fn bring_window_to_front(&self, window_id: &ObjectId) {
@@ -795,7 +809,6 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
         otto: &mut crate::Otto<Backend>,
         event: &smithay::input::pointer::MotionEvent,
     ) {
-        // println!("on_motion");
         let state = self.view.get_state().clone();
         let screen_scale = Config::with(|config| config.screen_scale);
         let location = event.location.to_physical(screen_scale);
