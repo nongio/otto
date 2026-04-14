@@ -37,12 +37,6 @@ impl crate::Otto<crate::udev::UdevData> {
         );
     }
 
-    fn gesture_swipe_begin_3finger(&mut self) {
-        self.swipe_gesture = crate::state::SwipeGestureState::Detecting {
-            accumulated: (0.0, 0.0),
-        };
-    }
-
     pub(crate) fn on_gesture_swipe_update<B: InputBackend>(
         &mut self,
         evt: B::GestureSwipeUpdateEvent,
@@ -163,36 +157,6 @@ impl crate::Otto<crate::udev::UdevData> {
         );
     }
 
-    fn gesture_swipe_end_expose(&mut self, velocity_samples: Vec<f64>) {
-        // Calculate average velocity from samples
-        let velocity = if velocity_samples.is_empty() {
-            0.0
-        } else {
-            velocity_samples.iter().sum::<f64>() / velocity_samples.len() as f64
-        };
-
-        self.expose_end_with_velocity_and_focus_top(velocity as f32);
-    }
-
-    fn gesture_swipe_end_workspace(
-        &mut self,
-        velocity_samples: Vec<f64>,
-        output_name: String,
-        cancelled: bool,
-    ) {
-        let velocity = if !cancelled && !velocity_samples.is_empty() {
-            velocity_samples.iter().sum::<f64>() / velocity_samples.len() as f64
-        } else {
-            0.0
-        };
-        let target_index = self
-            .workspaces
-            .workspace_swipe_end(&output_name, velocity as f32);
-
-        // Update keyboard focus to top window of the target workspace
-        self.focus_top_window_or_clear(target_index);
-    }
-
     pub(crate) fn on_gesture_pinch_begin<B: InputBackend>(
         &mut self,
         evt: B::GesturePinchBeginEvent,
@@ -295,6 +259,168 @@ impl crate::Otto<crate::udev::UdevData> {
                 cancelled: evt.cancelled(),
             },
         );
+    }
+
+}
+
+// ── Headless / test helpers ──────────────────────────────────────────
+// These bypass InputBackend events and manipulate gesture state directly.
+// Available for any backend (not just udev).
+impl<B: crate::state::Backend> crate::Otto<B> {
+    /// Simulate a 3-finger swipe begin gesture.
+    pub fn gesture_swipe_begin_3finger(&mut self) {
+        self.swipe_gesture = crate::state::SwipeGestureState::Detecting {
+            accumulated: (0.0, 0.0),
+        };
+    }
+
+    /// Simulate a swipe gesture update with raw deltas (no InputBackend needed).
+    pub fn gesture_swipe_update(&mut self, dx: f64, dy: f64) {
+        let delta = smithay::utils::Point::<f64, smithay::utils::Logical>::from((dx, dy));
+
+        match &mut self.swipe_gesture {
+            crate::state::SwipeGestureState::Detecting { accumulated } => {
+                accumulated.0 += delta.x;
+                accumulated.1 += delta.y;
+
+                let direction = crate::state::SwipeDirection::from_accumulated(
+                    accumulated.0.abs(),
+                    accumulated.1.abs(),
+                );
+
+                match direction {
+                    crate::state::SwipeDirection::Horizontal(_) => {
+                        let pointer_loc = self.pointer.current_location();
+                        let output_name = self
+                            .workspaces
+                            .output_under(pointer_loc)
+                            .next()
+                            .map(|o| o.name())
+                            .or_else(|| self.workspaces.primary_output().map(|o| o.name()))
+                            .unwrap_or_default();
+
+                        self.swipe_gesture = crate::state::SwipeGestureState::WorkspaceSwitching {
+                            velocity_samples: vec![delta.x],
+                            output_name: output_name.clone(),
+                        };
+                        self.workspaces
+                            .workspace_swipe_update(&output_name, delta.x as f32);
+                    }
+                    crate::state::SwipeDirection::Vertical(_) => {
+                        self.dismiss_all_popups();
+                        if !self.workspaces.get_show_all() {
+                            self.workspaces.expose_gesture_start();
+                        } else {
+                            self.workspaces.expose_gesture_close_start();
+                        }
+                        self.swipe_gesture = crate::state::SwipeGestureState::Expose {
+                            velocity_samples: vec![-delta.y],
+                        };
+                        let expose_delta =
+                            (-delta.y / crate::state::EXPOSE_DELTA_MULTIPLIER) as f32;
+                        self.workspaces.expose_update(expose_delta);
+                    }
+                    crate::state::SwipeDirection::Undetermined => {}
+                }
+            }
+            crate::state::SwipeGestureState::WorkspaceSwitching {
+                velocity_samples,
+                output_name,
+            } => {
+                velocity_samples.push(delta.x);
+                if velocity_samples.len() > crate::state::VELOCITY_SAMPLE_COUNT {
+                    velocity_samples.remove(0);
+                }
+                let name = output_name.clone();
+                self.workspaces
+                    .workspace_swipe_update(&name, delta.x as f32);
+            }
+            crate::state::SwipeGestureState::Expose { velocity_samples } => {
+                velocity_samples.push(-delta.y);
+                if velocity_samples.len() > crate::state::VELOCITY_SAMPLE_COUNT {
+                    velocity_samples.remove(0);
+                }
+                let expose_delta = (-delta.y / crate::state::EXPOSE_DELTA_MULTIPLIER) as f32;
+                self.workspaces.expose_update(expose_delta);
+            }
+            crate::state::SwipeGestureState::Idle => {}
+        }
+    }
+
+    fn gesture_swipe_end_expose(&mut self, velocity_samples: Vec<f64>) {
+        let velocity = if velocity_samples.is_empty() {
+            0.0
+        } else {
+            velocity_samples.iter().sum::<f64>() / velocity_samples.len() as f64
+        };
+        self.expose_end_with_velocity_and_focus_top(velocity as f32);
+    }
+
+    fn gesture_swipe_end_workspace(
+        &mut self,
+        velocity_samples: Vec<f64>,
+        output_name: String,
+        cancelled: bool,
+    ) {
+        let velocity = if !cancelled && !velocity_samples.is_empty() {
+            velocity_samples.iter().sum::<f64>() / velocity_samples.len() as f64
+        } else {
+            0.0
+        };
+        let target_index = self
+            .workspaces
+            .workspace_swipe_end(&output_name, velocity as f32);
+        self.focus_top_window_or_clear(target_index);
+    }
+
+    /// Simulate ending a swipe gesture (no InputBackend needed).
+    pub fn gesture_swipe_end(&mut self, cancelled: bool) {
+        match std::mem::replace(
+            &mut self.swipe_gesture,
+            crate::state::SwipeGestureState::Idle,
+        ) {
+            crate::state::SwipeGestureState::Expose { velocity_samples } => {
+                self.gesture_swipe_end_expose(velocity_samples);
+            }
+            crate::state::SwipeGestureState::WorkspaceSwitching {
+                velocity_samples,
+                output_name,
+            } => {
+                self.gesture_swipe_end_workspace(velocity_samples, output_name, cancelled);
+            }
+            _ => {}
+        }
+    }
+
+    /// Simulate a 4-finger pinch begin (no InputBackend needed).
+    pub fn gesture_pinch_begin_4finger(&mut self) {
+        let is_swiping = !matches!(self.swipe_gesture, crate::state::SwipeGestureState::Idle);
+        let is_expose_active = self.workspaces.get_show_all();
+        if !is_swiping && !is_expose_active {
+            self.is_pinching = true;
+            self.pinch_last_scale = 1.0;
+            self.workspaces.reset_show_desktop_gesture();
+        }
+    }
+
+    /// Simulate a pinch gesture update with a scale value (no InputBackend needed).
+    pub fn gesture_pinch_update(&mut self, scale: f64) {
+        if self.is_pinching {
+            let current_scale = scale as f32;
+            let last_scale = self.pinch_last_scale as f32;
+            let scale_delta = current_scale - last_scale;
+            let delta = scale_delta * 1.5;
+            self.pinch_last_scale = scale;
+            self.workspaces.expose_show_desktop(delta, false);
+        }
+    }
+
+    /// Simulate ending a pinch gesture (no InputBackend needed).
+    pub fn gesture_pinch_end(&mut self) {
+        if self.is_pinching {
+            self.workspaces.expose_show_desktop(0.0, true);
+            self.is_pinching = false;
+        }
     }
 }
 

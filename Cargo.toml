@@ -126,11 +126,15 @@ xwayland = [
 profile-with-puffin = ["profiling/profile-with-puffin", "puffin_http"]
 profile-with-tracy = ["profiling/profile-with-tracy"]
 profile-with-tracy-mem = ["profile-with-tracy"]
+headless = []
 renderer_sync = []
 
 [dev-dependencies]
 tempfile = "3"
 serial_test = "3"
+serde_json = "1"
+otto-kit = { path = "components/otto-kit", features = ["testing"] }
+wayland-client = "0.31"
 
 # [profile.release]
 # opt-level = 3

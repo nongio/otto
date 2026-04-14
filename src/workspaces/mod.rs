@@ -2569,7 +2569,7 @@ impl Workspaces {
     /// Raise thw windowelement on top of all the windows in its space
     /// activate: will set the window as active
     /// update: will update the workspace model
-    fn raise_element(&mut self, window_id: &ObjectId, activate: bool, update: bool) {
+    pub fn raise_element(&mut self, window_id: &ObjectId, activate: bool, update: bool) {
         // get the space with the window
         // tracing::info!("workspaces::raise_element: {:?}", window_id);
         // Find window index in primary output's spaces

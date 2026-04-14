@@ -1,3 +1,6 @@
+#[cfg(feature = "testing")]
+pub mod testing;
+
 pub mod app_runner;
 pub mod color_scheme;
 pub mod common;
