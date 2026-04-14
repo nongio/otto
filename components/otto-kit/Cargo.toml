@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+rustix = { version = "0.38", features = ["fs", "process"], optional = true }
 smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
@@ -29,6 +30,7 @@ freedesktop-desktop-entry = "0.7.5"
 
 [features]
 default = []
+testing = ["rustix"]
 debugger = ["laye-rs/debugger"]
 
 [dependencies.laye-rs]

@@ -52,6 +52,7 @@ async fn main() {
                 && !other.starts_with("--tty-udev")
                 && !other.starts_with("--probe")
                 && !other.starts_with("--x11")
+                && !other.starts_with("--headless")
                 && !other.starts_with("--systemd-notify") =>
         {
             eprintln!("Unknown argument: {}", other);
@@ -114,6 +115,12 @@ async fn main() {
             tracing::info!("Starting otto with x11 backend");
             std::env::set_var("OTTO_BACKEND", "x11");
             otto::x11::run_x11();
+        }
+        #[cfg(feature = "headless")]
+        Some("--headless") => {
+            tracing::info!("Starting otto with headless backend");
+            std::env::set_var("OTTO_BACKEND", "headless");
+            otto::headless::run_headless();
         }
         Some("--version") => {
             println!("otto {}", env!("CARGO_PKG_VERSION"));

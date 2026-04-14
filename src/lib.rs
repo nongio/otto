@@ -1,12 +1,12 @@
 // If no backend is enabled, a large portion of the codebase is unused.
 // So silence this useless warning for the CI.
 #![cfg_attr(
-    not(any(feature = "winit", feature = "x11", feature = "udev")),
+    not(any(feature = "winit", feature = "x11", feature = "udev", feature = "headless")),
     allow(dead_code, unused_imports)
 )]
 
 pub mod audio;
-#[cfg(any(feature = "udev", feature = "xwayland"))]
+#[cfg(any(feature = "udev", feature = "xwayland", feature = "headless"))]
 pub mod cursor;
 pub mod drawing;
 pub mod focus;
@@ -26,6 +26,8 @@ pub mod skia_renderer;
 pub mod state;
 pub mod surface_style;
 pub mod textures_storage;
+#[cfg(feature = "headless")]
+pub mod headless;
 #[cfg(feature = "udev")]
 pub mod udev;
 pub mod virtual_output;
