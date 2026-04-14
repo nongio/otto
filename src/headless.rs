@@ -354,6 +354,140 @@ impl HeadlessHandle {
         }
         frames_with_damage
     }
+
+    // ── Synthetic pointer input ──────────────────────────────────────────
+
+    /// Move the pointer to an absolute position (logical pixels).
+    pub fn pointer_move(&self, x: f64, y: f64) {
+        self.with_state(move |state| {
+            state.synthetic_pointer_move(x, y);
+        });
+    }
+
+    /// Simulate a left-button click (press + release) at the current pointer position.
+    pub fn pointer_click(&self) {
+        self.with_state(|state| {
+            state.synthetic_pointer_button(true);
+            state.synthetic_pointer_button(false);
+        });
+    }
+
+    /// Return the title of the currently hovered window in expose, if any.
+    pub fn expose_selected_title(&self) -> Option<String> {
+        self.query(|state| {
+            let ws_index = state.workspaces.get_current_workspace_index();
+            let workspace = state.workspaces.get_workspace_at(ws_index)?;
+            let selector_state = workspace.window_selector_view.view.get_state();
+            let index = selector_state.current_selection?;
+            Some(selector_state.rects.get(index)?.window_title.clone())
+        })
+    }
+
+    /// Return the expose window rects for the current workspace: (title, x, y, w, h)
+    /// in physical pixels (same coordinate space as the window selector).
+    pub fn expose_window_rects(&self) -> Vec<(String, f32, f32, f32, f32)> {
+        self.query(|state| {
+            let ws_index = state.workspaces.get_current_workspace_index();
+            let Some(workspace) = state.workspaces.get_workspace_at(ws_index) else {
+                return Vec::new();
+            };
+            let selector_state = workspace.window_selector_view.view.get_state();
+            selector_state
+                .rects
+                .iter()
+                .map(|r| {
+                    (
+                        r.window_title.clone(),
+                        r.x,
+                        r.y,
+                        r.w,
+                        r.h,
+                    )
+                })
+                .collect()
+        })
+    }
+}
+
+impl Otto<HeadlessData> {
+    /// Move pointer to (x, y) in logical pixels, updating focus and layers engine.
+    fn synthetic_pointer_move(&mut self, x: f64, y: f64) {
+        use smithay::{
+            input::pointer::MotionEvent,
+            utils::{Logical, Point, SERIAL_COUNTER},
+        };
+
+        let pos: Point<f64, Logical> = (x, y).into();
+        let serial = SERIAL_COUNTER.next_serial();
+
+        let under = self.surface_under(pos);
+        let pointer = self.pointer.clone();
+        self.last_pointer_location = (pos.x, pos.y);
+
+        {
+            let focused = self.workspaces.output_under(pos).next().cloned();
+            self.workspaces.set_focused_output(focused.as_ref());
+        }
+
+        pointer.motion(
+            self,
+            under,
+            &MotionEvent {
+                location: pos,
+                serial,
+                time: 0,
+            },
+        );
+        pointer.frame(self);
+
+        // Also update the layers engine in physical pixels.
+        let scale = self
+            .workspaces
+            .outputs()
+            .next()
+            .map(|o| o.current_scale().fractional_scale())
+            .unwrap_or(1.0);
+        let phys = pos.to_physical(scale);
+        self.cursor_physical_position = (phys.x, phys.y);
+        self.layers_engine
+            .pointer_move(&(phys.x as f32, phys.y as f32).into(), None);
+    }
+
+    /// Press or release the left pointer button.
+    fn synthetic_pointer_button(&mut self, pressed: bool) {
+        use smithay::{
+            backend::input::ButtonState,
+            input::pointer::ButtonEvent,
+            utils::SERIAL_COUNTER,
+        };
+
+        let serial = SERIAL_COUNTER.next_serial();
+        let button_state = if pressed {
+            ButtonState::Pressed
+        } else {
+            ButtonState::Released
+        };
+
+        // BTN_LEFT = 0x110
+        if !self.workspaces.get_show_all() && pressed {
+            self.focus_window_under_cursor(serial);
+        }
+        let pointer = self.pointer.clone();
+        pointer.button(
+            self,
+            &ButtonEvent {
+                button: 0x110,
+                state: button_state,
+                serial,
+                time: 0,
+            },
+        );
+        pointer.frame(self);
+        match button_state {
+            ButtonState::Pressed => self.layers_engine.pointer_button_down(),
+            ButtonState::Released => self.layers_engine.pointer_button_up(),
+        }
+    }
 }
 
 impl Drop for HeadlessHandle {

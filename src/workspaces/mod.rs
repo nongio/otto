@@ -803,7 +803,8 @@ impl Workspaces {
                     .window_selector_view
                     .window_selector_view
                     .set_opacity(0.0, None);
-                // Clear any leftover selection and force a fresh layout recalculation.
+                // Clear any leftover selection/state and force a fresh layout recalculation.
+                workspace_view.window_selector_view.take_pre_close_hovered();
                 workspace_view.window_selector_view.clear_selection();
                 workspace_view.window_selector_view.invalidate_layout();
             }
@@ -839,6 +840,7 @@ impl Workspaces {
                     .window_selector_view
                     .window_selector_view
                     .set_opacity(0.0, None);
+                workspace_view.window_selector_view.save_pre_close_hovered();
                 workspace_view.window_selector_view.clear_selection();
             }
         }
@@ -1159,6 +1161,24 @@ impl Workspaces {
                 Vec::new()
             }
         });
+
+        // Snapshot the pre-expose stacking order the first time layout runs
+        // while expose is active (or the gesture is starting).  This avoids
+        // capturing a stale snapshot during normal window-mapping which also
+        // calls expose_show_all_layout.
+        let expose_active = self.get_show_all()
+            || self
+                .expose_gesture_active
+                .load(std::sync::atomic::Ordering::Relaxed);
+        if expose_active && workspace.peek_pre_expose_order_empty() {
+            if let Some(space) = self
+                .primary_output_workspaces()
+                .and_then(|ows| ows.spaces.get(workspace_index))
+            {
+                let order: Vec<ObjectId> = space.elements().map(|e| e.id()).collect();
+                workspace.save_pre_expose_order(order);
+            }
+        }
 
         // Keep expose layout stable regardless of runtime z-order changes.
         // Window stacking may change (hover raise/focus), but tiling positions should not.
@@ -3379,12 +3399,20 @@ impl Workspaces {
             return;
         };
 
-        let state = workspace.window_selector_view.view.get_state().clone();
-        let order: Vec<ObjectId> = state
-            .rects
-            .iter()
-            .filter_map(|rect| rect.window_id.clone())
-            .collect();
+        // Restore the stacking order that was saved when expose opened.
+        // This avoids replacing the user's z-order with the sorted layout order.
+        let saved = workspace.take_pre_expose_order();
+        let order = if saved.is_empty() {
+            // Fallback: use expose rects order (should not normally happen).
+            let state = workspace.window_selector_view.view.get_state().clone();
+            state
+                .rects
+                .iter()
+                .filter_map(|rect| rect.window_id.clone())
+                .collect()
+        } else {
+            saved
+        };
 
         for window_id in order {
             self.raise_element(&window_id, false, false);

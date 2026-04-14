@@ -342,6 +342,239 @@ mod headless_tests {
         );
     }
 
+    #[test]
+    #[serial]
+    fn expose_click_raises_window() {
+        let handle = start_compositor();
+        let mut client = connect_client(&handle);
+
+        // Create 3 windows — last opened ends up on top
+        let _w1 = client.create_toplevel("window-1", 640, 480);
+        let _w2 = client.create_toplevel("window-2", 800, 600);
+        let _w3 = client.create_toplevel("window-3", 400, 300);
+        handle.wait(Duration::from_millis(200));
+        let _ = client.roundtrip();
+        assert_eq!(handle.window_count(), 3);
+
+        // Record which window is on top before expose
+        let top_before = window_order(&handle).last().cloned().unwrap();
+        eprintln!("Top window before expose: {}", top_before);
+
+        // Enter expose via swipe
+        handle.swipe_begin();
+        handle.swipe_update(0.0, -10.0);
+        handle.swipe_update(0.0, -50.0);
+        handle.swipe_update(0.0, -80.0);
+        handle.swipe_update(0.0, -80.0);
+        handle.swipe_end();
+        handle.settle(300);
+        assert!(handle.is_expose_active(), "Expose should be active");
+
+        // Find the expose rect for a window that is NOT currently on top
+        let rects = handle.expose_window_rects();
+        eprintln!("Expose rects: {:?}", rects);
+        assert!(!rects.is_empty(), "Expose should have window rects");
+
+        let target = rects
+            .iter()
+            .find(|(title, _, _, _, _)| *title != top_before)
+            .expect("Should find a non-top window to click");
+        let target_title = target.0.clone();
+        eprintln!(
+            "Clicking on '{}' at physical ({}, {}, {}, {})",
+            target_title, target.1, target.2, target.3, target.4
+        );
+
+        // Click the center of the target window rect.
+        // Rects are in physical pixels; pointer_move takes logical pixels.
+        let scale: f64 = handle.query(|state| {
+            state
+                .workspaces
+                .outputs()
+                .next()
+                .map(|o| o.current_scale().fractional_scale())
+                .unwrap_or(1.0)
+        });
+        let center_x = (target.1 + target.3 / 2.0) as f64 / scale;
+        let center_y = (target.2 + target.4 / 2.0) as f64 / scale;
+        eprintln!("Pointer move to logical ({}, {})", center_x, center_y);
+
+        // Establish pointer focus on window selector (first move triggers smithay
+        // enter, not motion — the selection is only updated on motion events).
+        handle.pointer_move(5.0, 300.0);
+        handle.settle(2);
+        handle.pointer_move(center_x, center_y);
+        handle.settle(10);
+        handle.pointer_click();
+        handle.settle(300);
+
+        assert!(
+            !handle.is_expose_active(),
+            "Expose should close after clicking a window"
+        );
+
+        // The clicked window should now be on top
+        let order_after = window_order(&handle);
+        let top_after = order_after.last().cloned().unwrap();
+        eprintln!("Order after: {:?}", order_after);
+
+        assert_eq!(
+            top_after, target_title,
+            "Clicked window '{}' should be raised to top, but top is '{}'",
+            target_title, top_after
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn expose_pointer_selects_hovered_window() {
+        let handle = start_compositor();
+        let mut client = connect_client(&handle);
+
+        let _w1 = client.create_toplevel("window-1", 640, 480);
+        let _w2 = client.create_toplevel("window-2", 800, 600);
+        let _w3 = client.create_toplevel("window-3", 400, 300);
+        handle.wait(Duration::from_millis(200));
+        let _ = client.roundtrip();
+
+        // Enter expose
+        handle.swipe_begin();
+        handle.swipe_update(0.0, -10.0);
+        handle.swipe_update(0.0, -50.0);
+        handle.swipe_update(0.0, -80.0);
+        handle.swipe_update(0.0, -80.0);
+        handle.swipe_end();
+        handle.settle(300);
+        assert!(handle.is_expose_active(), "Expose should be active");
+
+        // No selection yet
+        assert_eq!(
+            handle.expose_selected_title(),
+            None,
+            "No window should be selected before pointer enters any rect"
+        );
+
+        let rects = handle.expose_window_rects();
+        let scale: f64 = handle.query(|state| {
+            state
+                .workspaces
+                .outputs()
+                .next()
+                .map(|o| o.current_scale().fractional_scale())
+                .unwrap_or(1.0)
+        });
+
+        // Establish pointer focus on the window selector area (smithay sends
+        // enter on first focus, then motion on subsequent moves within the
+        // same target).  Move to a point that lies inside the window selector
+        // but outside any window rect.
+        handle.pointer_move(5.0, 300.0);
+        handle.settle(2);
+
+        // Move pointer over each window rect and verify it becomes selected
+        for (title, x, y, w, h) in &rects {
+            let cx = (*x + *w / 2.0) as f64 / scale;
+            let cy = (*y + *h / 2.0) as f64 / scale;
+            handle.pointer_move(cx, cy);
+            handle.settle(10);
+
+            let selected = handle.expose_selected_title();
+            assert_eq!(
+                selected.as_deref(),
+                Some(title.as_str()),
+                "Moving pointer over '{}' should select it, but selected is {:?}",
+                title,
+                selected
+            );
+        }
+
+        // Move pointer away from all rects — selection should clear
+        handle.pointer_move(0.0, 0.0);
+        handle.settle(10);
+        assert_eq!(
+            handle.expose_selected_title(),
+            None,
+            "Moving pointer away should clear selection"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn expose_gesture_close_raises_hovered_window() {
+        let handle = start_compositor();
+        let mut client = connect_client(&handle);
+
+        // Open 4 windows — w4 ends up on top
+        let _w1 = client.create_toplevel("window-1", 640, 480);
+        let _w2 = client.create_toplevel("window-2", 800, 600);
+        let _w3 = client.create_toplevel("window-3", 400, 300);
+        let _w4 = client.create_toplevel("window-4", 500, 400);
+        handle.wait(Duration::from_millis(200));
+        let _ = client.roundtrip();
+        assert_eq!(handle.window_count(), 4);
+
+        let order_before = window_order(&handle);
+        let top_before = order_before.last().cloned().unwrap();
+        assert_eq!(top_before, "window-4", "window-4 should be on top initially");
+
+        // Enter expose via swipe
+        handle.swipe_begin();
+        handle.swipe_update(0.0, -10.0);
+        handle.swipe_update(0.0, -50.0);
+        handle.swipe_update(0.0, -80.0);
+        handle.swipe_update(0.0, -80.0);
+        handle.swipe_end();
+        handle.settle(300);
+        assert!(handle.is_expose_active(), "Expose should be active");
+
+        // Find the expose rect for window-1 (the bottom-most window)
+        let rects = handle.expose_window_rects();
+        let scale: f64 = handle.query(|state| {
+            state
+                .workspaces
+                .outputs()
+                .next()
+                .map(|o| o.current_scale().fractional_scale())
+                .unwrap_or(1.0)
+        });
+        let target = rects
+            .iter()
+            .find(|(title, _, _, _, _)| title == "window-1")
+            .expect("window-1 should have an expose rect");
+
+        // Establish pointer focus, then hover window-1
+        handle.pointer_move(5.0, 300.0);
+        handle.settle(2);
+        let cx = (target.1 + target.3 / 2.0) as f64 / scale;
+        let cy = (target.2 + target.4 / 2.0) as f64 / scale;
+        handle.pointer_move(cx, cy);
+        handle.settle(10);
+        assert_eq!(
+            handle.expose_selected_title().as_deref(),
+            Some("window-1"),
+            "window-1 should be selected"
+        );
+
+        // Close expose via downward swipe gesture (no click)
+        handle.swipe_begin();
+        handle.swipe_update(0.0, 10.0);
+        handle.swipe_update(0.0, 50.0);
+        handle.swipe_update(0.0, 80.0);
+        handle.swipe_update(0.0, 80.0);
+        handle.swipe_end();
+        handle.settle(300);
+        assert!(!handle.is_expose_active(), "Expose should be closed");
+
+        // window-1 must now be on top
+        let order_after = window_order(&handle);
+        let top_after = order_after.last().cloned().unwrap();
+        assert_eq!(
+            top_after, "window-1",
+            "Hovered window-1 should be raised to top after gesture close, but top is '{}'",
+            top_after
+        );
+    }
+
     // ── Scene JSON for debugging ─────────────────────────────────────────
 
     #[test]
