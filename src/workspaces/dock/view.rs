@@ -43,6 +43,7 @@ pub(super) struct AppLayerEntry {
     /// Mirror layer: replicates the icon stack from `AppIconsManager` (icon + badge + progress).
     pub(super) icon_mirror: Layer,
     pub(super) label_layer: Layer,
+    pub(super) dot_layer: Layer,
     pub(super) running: bool,
     pub(super) identifier: String,
 }
@@ -131,9 +132,7 @@ impl DockView {
     /// Calculate dock bar height based on icon size
     /// Bar height = app container height + top padding + bottom padding
     fn calculate_bar_height(icon_size: f32, scale: f32) -> f32 {
-        let padding_top = 0.0 * scale;
-        let padding_bottom = 0.0 * scale;
-        icon_size + padding_top + padding_bottom
+        icon_size + 3.0 * scale
     }
 
     pub fn new(layers_engine: Arc<Engine>, app_icons_manager: Arc<AppIconsManager>) -> Self {
@@ -198,12 +197,13 @@ impl DockView {
         let dock_apps_container = layers_engine.new_layer();
         let _ = view_layer.add_sublayer(&dock_apps_container);
 
+        let dot_area_height = 3.0 * draw_scale;
         let container_tree = LayerTreeBuilder::default()
             .key("dock_app_container")
             .pointer_events(false)
             .size(Size {
                 width: taffy::Dimension::Auto,
-                height: taffy::Dimension::Length(scaled_icon_size),
+                height: taffy::Dimension::Length(scaled_icon_size + dot_area_height),
             })
             .layout_style(taffy::Style {
                 display: taffy::Display::Flex,
@@ -220,10 +220,7 @@ impl DockView {
             .build()
             .unwrap();
         dock_apps_container.build_layer_tree(&container_tree);
-        dock_apps_container.set_position(
-            Point::new(0.0, (initial_bar_height - scaled_icon_size) / 2.0),
-            None,
-        );
+        dock_apps_container.set_position(Point::new(0.0, 0.0), None);
         let resize_handle = layers_engine.new_layer();
         let _ = view_layer.add_sublayer(&resize_handle);
 
@@ -398,30 +395,7 @@ impl DockView {
         self.view_layer.set_position((0.0, 0.0), transition)
     }
     fn display_entries(&self, state: &DockModel) -> Vec<(Application, bool)> {
-        let mut entries: Vec<(Application, bool)> = state
-            .launchers
-            .iter()
-            .map(|launcher| (launcher.clone(), false))
-            .collect();
-
-        for running in state.running_apps.iter() {
-            if let Some(entry) = entries
-                .iter_mut()
-                .find(|(app, _)| app.match_id == running.match_id)
-            {
-                let override_name = entry.0.override_name.clone();
-                let mut combined = running.clone();
-                if override_name.is_some() {
-                    combined.override_name = override_name;
-                }
-                entry.0 = combined;
-                entry.1 = true;
-            } else {
-                entries.push((running.clone(), true));
-            }
-        }
-
-        entries
+        state.display_entries()
     }
     fn render_elements_layers(&self, available_icon_width: f32, icon_size: f32) {
         let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
@@ -529,24 +503,7 @@ impl DockView {
                     self.app_icons_manager.update_app(&match_id, &app_copy);
 
                     entry.running = *running;
-                    let entry_is_running = entry.running;
-
-                    // update main layer render function (running indicator dot)
-                    layer.set_draw_content(move |canvas: &skia::Canvas, w: f32, h: f32| {
-                        if entry_is_running {
-                            let color = theme_colors().text_primary.opacity(0.9).c4f();
-                            let mut paint = layers::skia::Paint::new(color, None);
-                            paint.set_anti_alias(true);
-                            paint.set_style(layers::skia::paint::Style::Fill);
-                            let radius = 2.0 * draw_scale;
-                            canvas.draw_circle(
-                                (w / 2.0, h - radius + 4.0 * draw_scale),
-                                radius,
-                                &paint,
-                            );
-                        }
-                        layers::skia::Rect::from_xywh(0.0, 0.0, w, h)
-                    });
+                    entry.dot_layer.set_hidden(!*running);
 
                     previous_app_layers.retain(|l| l.id() != layer.id());
                 }
@@ -627,17 +584,55 @@ impl DockView {
                     let label_layer = self.layers_engine.new_layer();
                     setup_label(&label_layer, app_name);
 
+                    // Running indicator dot — absolute-positioned at bottom center,
+                    // rendered on top of the icon because it's the last child.
+                    let dot_layer = self.layers_engine.new_layer();
+                    let dot_radius = 2.0 * draw_scale;
+                    let dot_height = 5.0 * draw_scale;
+                    {
+                        use layers::view::BuildLayerTree;
+                        let dot_tree = layers::view::LayerTreeBuilder::default()
+                            .key("_dot")
+                            .layout_style(taffy::Style {
+                                position: taffy::Position::Absolute,
+                                inset: taffy::Rect {
+                                    left: taffy::length(0.0),
+                                    right: taffy::length(0.0),
+                                    top: taffy::LengthPercentageAuto::Auto,
+                                    bottom: taffy::length(0.0),
+                                },
+                                ..Default::default()
+                            })
+                            .size(Size {
+                                width: taffy::Dimension::Percent(1.0),
+                                height: taffy::Dimension::Length(dot_height),
+                            })
+                            .pointer_events(false)
+                            .build()
+                            .unwrap();
+                        dot_layer.build_layer_tree(&dot_tree);
+                    }
+                    dot_layer.set_draw_content(move |canvas: &skia::Canvas, w: f32, h: f32| {
+                        let color = theme_colors().text_primary.opacity(0.9).c4f();
+                        let mut paint = layers::skia::Paint::new(color, None);
+                        paint.set_anti_alias(true);
+                        canvas.draw_circle((w / 2.0, h / 2.0), dot_radius, &paint);
+                        layers::skia::Rect::from_xywh(0.0, 0.0, w, h)
+                    });
+                    dot_layer.set_hidden(!*running);
+
                     let _ = self.dock_apps_container.add_sublayer(&new_layer);
                     let _ = new_layer.add_sublayer(&icon_scaler);
                     let _ = icon_scaler.add_sublayer(&icon_mirror);
-                    // label is a direct child of new_layer, NOT inside icon_mirror
                     let _ = new_layer.add_sublayer(&label_layer);
+                    let _ = new_layer.add_sublayer(&dot_layer);
 
                     vac.insert(AppLayerEntry {
                         layer: new_layer.clone(),
                         icon_scaler: icon_scaler.clone(),
                         icon_mirror: icon_mirror.clone(),
                         label_layer: label_layer.clone(),
+                        dot_layer: dot_layer.clone(),
                         running: *running,
                         identifier: app.identifier.clone(),
                     });
@@ -823,6 +818,7 @@ impl DockView {
                 };
 
                 if let Some(workspace) = event {
+                    tracing::info!(target: "otto::dock", "dock event: {} running apps in application_list", workspace.application_list.len());
                     let mut app_set = HashSet::new();
                     let mut apps: Vec<Application> = Vec::new();
 
@@ -838,6 +834,7 @@ impl DockView {
 
                     let state = dock.get_state();
 
+                    tracing::info!(target: "otto::dock", "dock update_state: {} resolved apps, running={:?}", apps.len(), apps.iter().map(|a| &a.match_id).collect::<Vec<_>>());
                     dock.update_state(&DockModel {
                         running_apps: apps,
                         minimized_windows,
@@ -1089,9 +1086,12 @@ impl DockView {
             scale_override.unwrap_or_else(|| self.dock_config.read().unwrap().genie_scale);
         let genie_span = self.dock_config.read().unwrap().genie_span;
         {
+            let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
+            let dot_area_height = 3.0 * draw_scale;
+            let container_height = icon_size + dot_area_height;
             let change = self.dock_apps_container.change_size(Size {
                 width: taffy::Dimension::Auto,
-                height: taffy::Dimension::Length(icon_size),
+                height: taffy::Dimension::Length(container_height),
             });
             changes.push(change);
             let position_change = self
@@ -1108,8 +1108,11 @@ impl DockView {
                         1.0 + magnify_function(focus - icon_pos, genie_span) * genie_scale;
                     let focused_icon_size = icon_size * icon_focus as f32;
 
-                    let change =
-                        layer.change_size(Size::points(focused_icon_size, focused_icon_size));
+                    // Width = focused icon size (for magnification);
+                    // Height = icon + dot area so the running indicator dot
+                    // sits below the icon inside the container.
+                    let app_height = focused_icon_size + dot_area_height;
+                    let change = layer.change_size(Size::points(focused_icon_size, app_height));
                     changes.push(change);
 
                     let change = entry
@@ -1123,7 +1126,6 @@ impl DockView {
                     let scaler_change_position = entry.icon_scaler.change_position(Point {
                         x: focused_icon_size / 2.0,
                         y: focused_icon_size / 2.0,
-                        // y: focused_icon_size,
                     });
                     changes.push(scaler_change_position);
                     let scaler_change = entry.icon_scaler.change_scale(Point {
