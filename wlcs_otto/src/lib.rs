@@ -3,7 +3,7 @@ mod ffi_wrappers;
 mod main_loop;
 mod renderer;
 
-use std::{os::unix::net::UnixStream, thread::JoinHandle};
+use std::os::unix::net::UnixStream;
 
 use smithay::{
     reexports::calloop,
@@ -107,6 +107,6 @@ pub enum WlcsEvent {
     },
 }
 
-fn start_anvil(channel: calloop::channel::Channel<WlcsEvent>) -> JoinHandle<()> {
-    std::thread::spawn(move || main_loop::run(channel))
+fn start_otto(channel: calloop::channel::Channel<WlcsEvent>) {
+    std::thread::spawn(move || main_loop::run(channel));
 }

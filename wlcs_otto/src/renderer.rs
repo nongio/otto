@@ -4,8 +4,8 @@ use smithay::{
     backend::{
         allocator::{dmabuf::Dmabuf, Fourcc},
         renderer::{
-            sync::SyncPoint, DebugFlags, Frame, ImportDma, ImportDmaWl, ImportEgl, ImportMem, ImportMemWl,
-            Renderer, Texture, TextureFilter,
+            sync::SyncPoint, ContextId, DebugFlags, Frame, ImportDma, ImportDmaWl, ImportEgl,
+            ImportMem, ImportMemWl, Renderer, RendererSuper, Texture, TextureFilter,
         },
         SwapBuffersError,
     },
@@ -23,35 +23,61 @@ impl DummyRenderer {
     }
 }
 
-impl Renderer for DummyRenderer {
+#[derive(Debug, Clone)]
+pub struct DummyFramebuffer {}
+
+impl Texture for DummyFramebuffer {
+    fn width(&self) -> u32 {
+        800
+    }
+    fn height(&self) -> u32 {
+        600
+    }
+    fn format(&self) -> Option<Fourcc> {
+        None
+    }
+}
+
+impl RendererSuper for DummyRenderer {
     type Error = SwapBuffersError;
     type TextureId = DummyTexture;
-    type Frame<'a> = DummyFrame;
+    type Framebuffer<'buffer> = DummyFramebuffer;
+    type Frame<'frame, 'buffer>
+        = DummyFrame
+    where
+        'buffer: 'frame,
+        Self: 'frame;
+}
 
-    fn id(&self) -> usize {
-        0
+impl Renderer for DummyRenderer {
+    fn context_id(&self) -> ContextId<Self::TextureId> {
+        ContextId::new()
     }
 
-    fn render(
-        &mut self,
-        _size: Size<i32, Physical>,
+    fn render<'frame, 'buffer>(
+        &'frame mut self,
+        _framebuffer: &'frame mut Self::Framebuffer<'buffer>,
+        _output_size: Size<i32, Physical>,
         _dst_transform: Transform,
-    ) -> Result<DummyFrame, Self::Error> {
+    ) -> Result<Self::Frame<'frame, 'buffer>, Self::Error>
+    where
+        'buffer: 'frame,
+    {
         Ok(DummyFrame {})
     }
 
     fn upscale_filter(&mut self, _filter: TextureFilter) -> Result<(), Self::Error> {
         Ok(())
     }
-
     fn downscale_filter(&mut self, _filter: TextureFilter) -> Result<(), Self::Error> {
         Ok(())
     }
-
     fn set_debug_flags(&mut self, _flags: DebugFlags) {}
-
     fn debug_flags(&self) -> DebugFlags {
         DebugFlags::empty()
+    }
+    fn wait(&mut self, _sync: &SyncPoint) -> Result<(), Self::Error> {
+        Ok(())
     }
 }
 
@@ -62,16 +88,16 @@ impl ImportMem for DummyRenderer {
         _format: Fourcc,
         _size: Size<i32, Buffer>,
         _flipped: bool,
-    ) -> Result<<Self as Renderer>::TextureId, <Self as Renderer>::Error> {
+    ) -> Result<Self::TextureId, Self::Error> {
         unimplemented!()
     }
 
     fn update_memory(
         &mut self,
-        _texture: &<Self as Renderer>::TextureId,
+        _texture: &Self::TextureId,
         _data: &[u8],
         _region: Rectangle<i32, Buffer>,
-    ) -> Result<(), <Self as Renderer>::Error> {
+    ) -> Result<(), Self::Error> {
         unimplemented!()
     }
 
@@ -86,7 +112,7 @@ impl ImportMemWl for DummyRenderer {
         buffer: &wl_buffer::WlBuffer,
         surface: Option<&SurfaceData>,
         _damage: &[Rectangle<i32, Buffer>],
-    ) -> Result<<Self as Renderer>::TextureId, <Self as Renderer>::Error> {
+    ) -> Result<Self::TextureId, Self::Error> {
         use smithay::wayland::shm::with_buffer_contents;
         use std::ptr;
         let ret = with_buffer_contents(buffer, |ptr, len, data| {
@@ -124,7 +150,7 @@ impl ImportDma for DummyRenderer {
         &mut self,
         _dmabuf: &Dmabuf,
         _damage: Option<&[Rectangle<i32, Buffer>]>,
-    ) -> Result<<Self as Renderer>::TextureId, <Self as Renderer>::Error> {
+    ) -> Result<Self::TextureId, Self::Error> {
         unimplemented!()
     }
 }
@@ -150,7 +176,7 @@ impl ImportEgl for DummyRenderer {
         _buffer: &wl_buffer::WlBuffer,
         _surface: Option<&smithay::wayland::compositor::SurfaceData>,
         _damage: &[Rectangle<i32, Buffer>],
-    ) -> Result<<Self as Renderer>::TextureId, <Self as Renderer>::Error> {
+    ) -> Result<Self::TextureId, Self::Error> {
         unimplemented!()
     }
 }
@@ -163,11 +189,15 @@ impl Frame for DummyFrame {
     type Error = SwapBuffersError;
     type TextureId = DummyTexture;
 
-    fn id(&self) -> usize {
-        0
+    fn context_id(&self) -> ContextId<Self::TextureId> {
+        ContextId::new()
     }
 
-    fn clear(&mut self, _color: [f32; 4], _damage: &[Rectangle<i32, Physical>]) -> Result<(), Self::Error> {
+    fn clear(
+        &mut self,
+        _color: smithay::backend::renderer::Color32F,
+        _at: &[Rectangle<i32, Physical>],
+    ) -> Result<(), Self::Error> {
         Ok(())
     }
 
@@ -175,7 +205,21 @@ impl Frame for DummyFrame {
         &mut self,
         _dst: Rectangle<i32, Physical>,
         _damage: &[Rectangle<i32, Physical>],
-        _color: [f32; 4],
+        _color: smithay::backend::renderer::Color32F,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn render_texture_at(
+        &mut self,
+        _texture: &Self::TextureId,
+        _pos: smithay::utils::Point<i32, Physical>,
+        _texture_scale: i32,
+        _output_scale: impl Into<smithay::utils::Scale<f64>>,
+        _src_transform: Transform,
+        _damage: &[Rectangle<i32, Physical>],
+        _opaque_regions: &[Rectangle<i32, Physical>],
+        _alpha: f32,
     ) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -186,6 +230,7 @@ impl Frame for DummyFrame {
         _src: Rectangle<f64, Buffer>,
         _dst: Rectangle<i32, Physical>,
         _damage: &[Rectangle<i32, Physical>],
+        _opaque_regions: &[Rectangle<i32, Physical>],
         _src_transform: Transform,
         _alpha: f32,
     ) -> Result<(), Self::Error> {
@@ -199,9 +244,13 @@ impl Frame for DummyFrame {
     fn finish(self) -> Result<SyncPoint, Self::Error> {
         Ok(SyncPoint::default())
     }
+
+    fn wait(&mut self, _sync: &SyncPoint) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub struct DummyTexture {
     width: u32,
     height: u32,
@@ -211,11 +260,9 @@ impl Texture for DummyTexture {
     fn width(&self) -> u32 {
         self.width
     }
-
     fn height(&self) -> u32 {
         self.height
     }
-
     fn format(&self) -> Option<Fourcc> {
         None
     }

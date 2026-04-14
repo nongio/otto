@@ -1,20 +1,16 @@
 [package]
 name = "wlcs_otto"
-version = "0.0.1"
+version = "0.0.2"
+edition = "2021"
 license = "MIT"
-publish = false
-edition = "2018"
+rust-version = "1.85.0"
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-smithay = { path = "../../smithay", default-features = false, features = [
-    "wayland_frontend",
-    "backend_egl",
-    "use_system_lib",
-] }
-otto = { path = "../", default-features = false,  features = [
+otto = { path = "../", default-features = false, features = [
+    "egl",
     "udev",
     "winit",
     "debug",
@@ -24,9 +20,19 @@ libc = "0.2"
 memoffset = "0.6"
 cgmath = "0.18"
 nix = "0.24"
+tokio = { version = "1", features = ["full"] }
+
+[dependencies.smithay]
+git = "https://github.com/Smithay/smithay"
+rev = "f9d4d7ffd82d743fb89737b3ffaed57505b477d1"
+default-features = false
+features = [
+    "wayland_frontend",
+    "backend_egl",
+    "use_system_lib",
+]
 
 [dependencies.laye-rs]
-# path = "../layers"
 git = "https://github.com/nongio/layers"
-tag = "v1.6.0"
+tag = "v1.10.0"
 features = ["export-taffy"]

@@ -1,6 +1,6 @@
 #!/bin/sh
 
-WLCS_SHA=12234affdc0a4cc104fbaf8a502efc5f822b973b
+WLCS_SHA=9eec608740aad848535c643936c9d158aadc8175
 
 if [ -f "./wlcs/wlcs" ] && [ "$(cd wlcs; git rev-parse HEAD)" = "${WLCS_SHA}" ] ; then
     echo "Using cached WLCS."

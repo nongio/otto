@@ -149,6 +149,7 @@ members = [
     "sample-clients/client-rainbow",
     "sample-clients/submenu",
     "sample-clients/submenu-gtk",
+    "wlcs_otto",
 ]
 
 [package.metadata.deb]
