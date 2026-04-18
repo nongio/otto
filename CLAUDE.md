@@ -108,6 +108,14 @@ The state module also contains protocol handler implementations (`*_handler.rs` 
 
 Located in `src/screenshare/`. See [docs/developer/screenshare.md](./docs/developer/screenshare.md) for detailed architecture.
 
+### Screen Capture (wlr-screencopy)
+
+`src/state/screencopy.rs` implements `zwlr_screencopy_manager_v1` for tools like `grim` and `wl-mirror`. Reads pixels from the Skia surface after render into SHM buffers. See [docs/developer/screencopy.md](./docs/developer/screencopy.md).
+
+### Virtual Pointer
+
+`src/state/virtual_pointer.rs` implements `wlr-virtual-pointer-unstable-v1` for automation tools (`wlrctl`, `wtype`). Together with the existing `virtual-keyboard` and `wlr-foreign-toplevel` protocols, enables full compositor remote control. See [docs/developer/virtual-pointer.md](./docs/developer/virtual-pointer.md).
+
 ## Coordinate Systems & Naming Conventions
 
 Otto has two coordinate spaces — mixing them causes subtle scale-dependent bugs.
@@ -157,6 +165,6 @@ Two tiers:
 - `docs/user/` — End-user configuration and usage guides
 - `docs/developer/` — Architecture, design docs, and implementation details
 
-Key developer docs: `rendering.md`, `render_loop.md`, `wayland.md`, `screenshare.md`, `expose.md`, `dock-design.md`, `sc-layer-protocol-design.md`.
+Key developer docs: `rendering.md`, `render_loop.md`, `rendering-optimizations.md`, `wayland.md`, `screenshare.md`, `screencopy.md`, `virtual-pointer.md`, `expose.md`, `dock-design.md`, `testing.md`, `sc-layer-protocol-design.md`.
 
 Review and documentation guidelines: `.github/instructions/review.instructions.md`, `.github/instructions/documentation.instructions.md`.
