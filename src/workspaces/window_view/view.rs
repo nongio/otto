@@ -75,7 +75,7 @@ impl WindowView {
         let mirror_layer = window.mirror_layer().clone();
         mirror_layer.set_size(shadow_layer.render_layer().bounds.size(), None);
 
-        layer.set_image_cached(true);
+        shadow_layer.set_image_cached(true);
 
         let genie_effect = GenieEffect::new();
 
