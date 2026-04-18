@@ -18,7 +18,11 @@ use smithay::{
     wayland::{dmabuf::get_dmabuf, shm},
 };
 
-use crate::{renderer::BlitCurrentFrame, state::{Backend, Otto}, udev::UdevRenderer};
+use crate::{
+    renderer::BlitCurrentFrame,
+    state::{Backend, Otto},
+    udev::UdevRenderer,
+};
 
 #[derive(Debug)]
 pub struct ScreencopyManagerState {

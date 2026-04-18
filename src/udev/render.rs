@@ -1053,65 +1053,64 @@ pub(super) fn render_surface<'a>(
     }
 
     // If fullscreen_window is Some, direct scanout is allowed (checked by caller)
-    let (output_elements, clear_color, should_draw) = if let Some(fullscreen_win) =
-        fullscreen_window
-    {
-        // In fullscreen mode: render only the fullscreen window + cursor
-        // Skip the scene element entirely for direct scanout
-        let mut elements: Vec<OutputRenderElements<'a, _, WindowRenderElement<_>>> = Vec::new();
+    let (output_elements, clear_color, should_draw) =
+        if let Some(fullscreen_win) = fullscreen_window {
+            // In fullscreen mode: render only the fullscreen window + cursor
+            // Skip the scene element entirely for direct scanout
+            let mut elements: Vec<OutputRenderElements<'a, _, WindowRenderElement<_>>> = Vec::new();
 
-        // Add pointer elements first (rendered at bottom, but cursor plane may handle separately)
-        elements.extend(
-            workspace_render_elements
-                .into_iter()
-                .map(OutputRenderElements::from),
-        );
+            // Add pointer elements first (rendered at bottom, but cursor plane may handle separately)
+            elements.extend(
+                workspace_render_elements
+                    .into_iter()
+                    .map(OutputRenderElements::from),
+            );
 
-        // Add the fullscreen window's render elements wrapped in Wrap
-        use smithay::backend::renderer::element::Wrap;
-        let window_elements_rendered: Vec<WindowRenderElement<_>> =
-            fullscreen_win.render_elements(renderer, (0, 0).into(), scale, 1.0);
-        elements.extend(
-            window_elements_rendered
-                .into_iter()
-                .map(|e| OutputRenderElements::Window(Wrap::from(e))),
-        );
+            // Add the fullscreen window's render elements wrapped in Wrap
+            use smithay::backend::renderer::element::Wrap;
+            let window_elements_rendered: Vec<WindowRenderElement<_>> =
+                fullscreen_win.render_elements(renderer, (0, 0).into(), scale, 1.0);
+            elements.extend(
+                window_elements_rendered
+                    .into_iter()
+                    .map(|e| OutputRenderElements::Window(Wrap::from(e))),
+            );
 
-        // Always render in fullscreen mode since the window surface may have damage
-        // Use black clear color - the window fills the screen anyway
-        (elements, CLEAR_COLOR, true)
-    } else {
-        // Normal mode: render the full scene
-        workspace_render_elements.push(WorkspaceRenderElements::Scene(scene_element));
+            // Always render in fullscreen mode since the window surface may have damage
+            // Use black clear color - the window fills the screen anyway
+            (elements, CLEAR_COLOR, true)
+        } else {
+            // Normal mode: render the full scene
+            workspace_render_elements.push(WorkspaceRenderElements::Scene(scene_element));
 
-        // We still pass cursor elements to render_frame so the DRM compositor
-        // can manage the hardware cursor plane (ALLOW_CURSOR_PLANE_SCANOUT).
-        // When nothing actually changed, render_frame returns is_empty=true
-        // and no page flip occurs, so this is cheap in the idle case.
-        let cursor_needs_draw = pointer_in_output;
-        // Screencopy never forces a render: pending capture frames piggyback on
-        // the next render that happens for some other reason (scene damage,
-        // cursor, DND). This avoids a 120 Hz capture loop when a client keeps
-        // a frame request outstanding.
-        let should_draw = scene_has_damage || dnd_needs_draw || cursor_needs_draw;
-        if !should_draw {
-            return Ok(RenderOutcome::skipped());
-        }
+            // We still pass cursor elements to render_frame so the DRM compositor
+            // can manage the hardware cursor plane (ALLOW_CURSOR_PLANE_SCANOUT).
+            // When nothing actually changed, render_frame returns is_empty=true
+            // and no page flip occurs, so this is cheap in the idle case.
+            let cursor_needs_draw = pointer_in_output;
+            // Screencopy never forces a render: pending capture frames piggyback on
+            // the next render that happens for some other reason (scene damage,
+            // cursor, DND). This avoids a 120 Hz capture loop when a client keeps
+            // a frame request outstanding.
+            let should_draw = scene_has_damage || dnd_needs_draw || cursor_needs_draw;
+            if !should_draw {
+                return Ok(RenderOutcome::skipped());
+            }
 
-        let output_render_elements: Vec<OutputRenderElements<'a, _, WindowRenderElement<_>>> =
-            workspace_render_elements
-                .into_iter()
-                .map(OutputRenderElements::from)
-                .collect::<Vec<_>>();
-        let (output_elements, clear_color) = output_elements(
-            output,
-            window_elements.iter().copied(),
-            output_render_elements,
-            dnd_icon,
-            renderer,
-        );
-        (output_elements, clear_color, true)
-    };
+            let output_render_elements: Vec<OutputRenderElements<'a, _, WindowRenderElement<_>>> =
+                workspace_render_elements
+                    .into_iter()
+                    .map(OutputRenderElements::from)
+                    .collect::<Vec<_>>();
+            let (output_elements, clear_color) = output_elements(
+                output,
+                window_elements.iter().copied(),
+                output_render_elements,
+                dnd_icon,
+                renderer,
+            );
+            (output_elements, clear_color, true)
+        };
 
     if !should_draw {
         return Ok(RenderOutcome::skipped());
