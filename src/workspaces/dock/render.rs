@@ -190,9 +190,8 @@ pub fn setup_app_icon(
             None, // None
         ))
         .pointer_events(false)
-        // .image_cache(true)
-        .picture_cached(false)
-        .image_cache(false)
+        .picture_cached(true)
+        .image_cache(true)
         .background_color(Color::new_rgba(1.0, 0.0, 0.0, 0.0))
         .content(draw_picture)
         .build()
