@@ -1089,8 +1089,11 @@ pub(super) fn render_surface<'a>(
         // When nothing actually changed, render_frame returns is_empty=true
         // and no page flip occurs, so this is cheap in the idle case.
         let cursor_needs_draw = pointer_in_output;
-        let has_screencopy = !pending_screencopy.is_empty();
-        let should_draw = scene_has_damage || dnd_needs_draw || cursor_needs_draw || has_screencopy;
+        // Screencopy never forces a render: pending capture frames piggyback on
+        // the next render that happens for some other reason (scene damage,
+        // cursor, DND). This avoids a 120 Hz capture loop when a client keeps
+        // a frame request outstanding.
+        let should_draw = scene_has_damage || dnd_needs_draw || cursor_needs_draw;
         if !should_draw {
             return Ok(RenderOutcome::skipped());
         }
@@ -1199,12 +1202,14 @@ pub(super) fn render_surface<'a>(
     );
 
     if rendered {
-        if let Some(skia_renderer) = renderer.as_mut().current_skia_renderer() {
-            let mut skia_surface = skia_renderer.surface.clone();
+        // Gated: only enter the screencopy path when a client has actually
+        // asked for a frame on this output. Internally branches between the
+        // GPU dmabuf blit (reusing the screenshare path) and SHM read_pixels.
+        if !pending_screencopy.is_empty() {
             crate::state::screencopy::complete_screencopy_for_output(
                 pending_screencopy,
                 output,
-                &mut skia_surface,
+                renderer,
             );
         }
 

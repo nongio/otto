@@ -1,5 +1,13 @@
 ## Screenshot Portal Implementation Plan
 
+> **Status**: Planning doc — not implemented. For the related but separate
+> `wlr-screencopy-v1` Wayland protocol (used by `grim`, `wf-recorder`,
+> `wl-mirror`, OBS via wlrobs) see `src/state/screencopy.rs` and the
+> "Related: wlr-screencopy-v1" section of [screenshare.md](./screenshare.md).
+> wlr-screencopy is already in production and reuses the screenshare
+> dmabuf blit path; this doc covers the D-Bus portal interface that
+> GTK/Qt screenshot apps use.
+
 ### Overview
 
 Implement `org.freedesktop.impl.portal.Screenshot` D-Bus interface to allow third-party screenshot tools (GNOME Screenshot, Spectacle, Flameshot, etc.) to capture screen content.

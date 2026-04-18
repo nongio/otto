@@ -1,6 +1,7 @@
 use std::sync::Mutex;
 
 use smithay::{
+    backend::allocator::{dmabuf::Dmabuf, Fourcc},
     output::Output,
     reexports::{
         wayland_protocols_wlr::screencopy::v1::server::{
@@ -13,11 +14,11 @@ use smithay::{
             Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
         },
     },
-    utils::Rectangle,
-    wayland::shm,
+    utils::{Physical, Rectangle, Size},
+    wayland::{dmabuf::get_dmabuf, shm},
 };
 
-use crate::state::{Backend, Otto};
+use crate::{renderer::BlitCurrentFrame, state::{Backend, Otto}, udev::UdevRenderer};
 
 #[derive(Debug)]
 pub struct ScreencopyManagerState {
@@ -33,7 +34,10 @@ impl ScreencopyManagerState {
         Otto<BackendData>: Dispatch<ZwlrScreencopyManagerV1, ()>,
         Otto<BackendData>: Dispatch<ZwlrScreencopyFrameV1, ScreencopyFrameData>,
     {
-        let global = display.create_global::<Otto<BackendData>, ZwlrScreencopyManagerV1, ()>(2, ());
+        // v3 advertises linux_dmabuf so capable clients can negotiate a GPU
+        // dmabuf and receive frames via the screenshare blit path (zero CPU
+        // copy). v1/v2 clients fall back to the SHM read_pixels path.
+        let global = display.create_global::<Otto<BackendData>, ZwlrScreencopyManagerV1, ()>(3, ());
         Self { global }
     }
 }
@@ -56,10 +60,21 @@ enum FrameState {
     Copying,
 }
 
+/// What the client gave us as the destination buffer.
+///
+/// `Dmabuf` clients ride the same GPU blit path as PipeWire screenshare —
+/// zero CPU copy. `Shm` clients fall back to the synchronous `read_pixels`
+/// path; this is the legacy slow path kept only for compatibility with
+/// `grim` and other v1/v2 tools.
+pub enum CaptureBuffer {
+    Shm(WlBuffer),
+    Dmabuf(Dmabuf),
+}
+
 /// A pending screencopy frame waiting to be filled during the render loop.
 pub struct PendingScreencopy {
     pub frame: ZwlrScreencopyFrameV1,
-    pub buffer: WlBuffer,
+    pub buffer: CaptureBuffer,
     pub output: Output,
     pub region: Option<Rectangle<i32, smithay::utils::Logical>>,
     pub width: u32,
@@ -187,6 +202,9 @@ fn init_frame<BackendData: Backend + 'static>(
 
     frame.buffer(wl_shm::Format::Argb8888, width, height, stride);
     if frame.version() >= 3 {
+        // Advertise dmabuf so capable clients (PipeWire portal, OBS,
+        // wf-recorder) can hand us a GPU buffer and skip the SHM readback.
+        frame.linux_dmabuf(Fourcc::Argb8888 as u32, width, height);
         frame.buffer_done();
     }
 }
@@ -216,9 +234,16 @@ where
                 *frame_state = FrameState::Copying;
                 drop(frame_state);
 
+                // Pick the GPU dmabuf path when the client gave us a
+                // dmabuf-backed buffer; otherwise fall back to legacy SHM.
+                let capture_buffer = match get_dmabuf(&buffer) {
+                    Ok(dmabuf) => CaptureBuffer::Dmabuf(dmabuf.clone()),
+                    Err(_) => CaptureBuffer::Shm(buffer),
+                };
+
                 state.pending_screencopy_frames.push(PendingScreencopy {
                     frame: resource.clone(),
-                    buffer,
+                    buffer: capture_buffer,
                     output: data.output.clone(),
                     region: data.region,
                     width: data.width,
@@ -232,21 +257,26 @@ where
     }
 
     fn destroyed(
-        _state: &mut Otto<BackendData>,
+        state: &mut Otto<BackendData>,
         _client: ClientId,
-        _resource: &ZwlrScreencopyFrameV1,
+        resource: &ZwlrScreencopyFrameV1,
         _data: &ScreencopyFrameData,
     ) {
+        // Drop any pending entries belonging to this destroyed frame so the
+        // render loop doesn't keep doing GPU readback for a dead resource.
+        state
+            .pending_screencopy_frames
+            .retain(|p| p.frame != *resource);
     }
 }
 
-/// Called from the render loop after the output has been rendered to
-/// a Skia surface. Reads pixels from the Skia surface into pending
-/// screencopy shm buffers for this output.
+/// Called from the render loop after the output has been rendered.
+/// Dmabuf clients ride the screenshare GPU blit path (zero CPU copy);
+/// SHM clients fall back to the legacy synchronous read_pixels path.
 pub fn complete_screencopy_for_output(
     pending: &mut Vec<PendingScreencopy>,
     output: &Output,
-    skia_surface: &mut layers::skia::Surface,
+    renderer: &mut UdevRenderer<'_>,
 ) {
     let indices: Vec<usize> = pending
         .iter()
@@ -255,59 +285,115 @@ pub fn complete_screencopy_for_output(
         .map(|(i, _)| i)
         .collect();
 
+    if indices.is_empty() {
+        return;
+    }
+
     for i in indices.into_iter().rev() {
         let p = pending.remove(i);
-        let result = shm::with_buffer_contents(&p.buffer, |ptr, len, buf_data| {
-            if buf_data.format != wl_shm::Format::Argb8888 {
-                return false;
-            }
-            let expected = p.stride as usize * p.height as usize;
-            if len < expected {
-                return false;
-            }
+        let success = match &p.buffer {
+            CaptureBuffer::Dmabuf(dmabuf) => copy_to_dmabuf(renderer, &p, dmabuf, output),
+            CaptureBuffer::Shm(buffer) => copy_to_shm(renderer, &p, buffer, output),
+        };
 
-            let x_off = p
-                .region
-                .map(|r| {
-                    let scale = output.current_scale().fractional_scale();
-                    (r.loc.x as f64 * scale) as i32
-                })
-                .unwrap_or(0);
-            let y_off = p
-                .region
-                .map(|r| {
-                    let scale = output.current_scale().fractional_scale();
-                    (r.loc.y as f64 * scale) as i32
-                })
-                .unwrap_or(0);
-
-            let info = layers::skia::ImageInfo::new(
-                (p.width as i32, p.height as i32),
-                layers::skia::ColorType::BGRA8888,
-                layers::skia::AlphaType::Premul,
-                None,
+        if success {
+            p.frame.flags(zwlr_screencopy_frame_v1::Flags::empty());
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default();
+            p.frame.ready(
+                (now.as_secs() >> 32) as u32,
+                now.as_secs() as u32,
+                now.subsec_nanos(),
             );
-
-            let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, expected) };
-
-            skia_surface.read_pixels(&info, dst, p.stride as usize, (x_off, y_off))
-        });
-
-        match result {
-            Ok(true) => {
-                p.frame.flags(zwlr_screencopy_frame_v1::Flags::empty());
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default();
-                p.frame.ready(
-                    (now.as_secs() >> 32) as u32,
-                    now.as_secs() as u32,
-                    now.subsec_nanos(),
-                );
-            }
-            _ => {
-                p.frame.failed();
-            }
+        } else {
+            p.frame.failed();
         }
     }
+}
+
+/// Compute the (source on framebuffer, destination on output buffer)
+/// rectangles for a capture, in physical pixels.
+fn capture_rects(
+    p: &PendingScreencopy,
+    output: &Output,
+) -> (Rectangle<i32, Physical>, Rectangle<i32, Physical>) {
+    let dst_size: Size<i32, Physical> = (p.width as i32, p.height as i32).into();
+    let dst = Rectangle::from_size(dst_size);
+    let src = if let Some(region) = p.region {
+        let scale = output.current_scale().fractional_scale();
+        Rectangle::new(
+            (
+                (region.loc.x as f64 * scale) as i32,
+                (region.loc.y as f64 * scale) as i32,
+            )
+                .into(),
+            dst_size,
+        )
+    } else {
+        dst
+    };
+    (src, dst)
+}
+
+fn copy_to_dmabuf(
+    renderer: &mut UdevRenderer<'_>,
+    p: &PendingScreencopy,
+    dmabuf: &Dmabuf,
+    output: &Output,
+) -> bool {
+    let (src, dst) = capture_rects(p, output);
+    let mut dmabuf = dmabuf.clone();
+    match renderer.blit_current_frame(&mut dmabuf, src, dst) {
+        Ok(()) => true,
+        Err(err) => {
+            tracing::warn!(?err, "screencopy dmabuf blit failed");
+            false
+        }
+    }
+}
+
+fn copy_to_shm(
+    renderer: &mut UdevRenderer<'_>,
+    p: &PendingScreencopy,
+    buffer: &WlBuffer,
+    output: &Output,
+) -> bool {
+    let Some(skia_renderer) = renderer.as_mut().current_skia_renderer() else {
+        return false;
+    };
+    let mut skia_surface = skia_renderer.surface.clone();
+    let scale = output.current_scale().fractional_scale();
+
+    let result = shm::with_buffer_contents(buffer, |ptr, len, buf_data| {
+        if buf_data.format != wl_shm::Format::Argb8888 {
+            return false;
+        }
+        let expected = p.stride as usize * p.height as usize;
+        if len < expected {
+            return false;
+        }
+
+        let x_off = p
+            .region
+            .map(|r| (r.loc.x as f64 * scale) as i32)
+            .unwrap_or(0);
+        let y_off = p
+            .region
+            .map(|r| (r.loc.y as f64 * scale) as i32)
+            .unwrap_or(0);
+
+        let info = layers::skia::ImageInfo::new(
+            (p.width as i32, p.height as i32),
+            layers::skia::ColorType::BGRA8888,
+            layers::skia::AlphaType::Premul,
+            None,
+        );
+
+        let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, expected) };
+
+        skia_surface.read_pixels(&info, dst, p.stride as usize, (x_off, y_off))
+    });
+
+    matches!(result, Ok(true))
 }
