@@ -38,15 +38,13 @@ jobs:
         uses: dtolnay/rust-toolchain@1.87.0
         with:
           components: clippy
-      - name: Cargo registry cache
-        uses: actions/cache@v4
+      - name: Cargo cache (registry + target)
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
-          restore-keys: ${{ runner.os }}-cargo-registry-
+          # Shared with build-deb/rpm/arch — cache accumulates debug + release
+          # artifacts so successive jobs can incrementally compile.
+          shared-key: workspace-build
+          cache-on-failure: true
       - name: System dependencies
         run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev hicolor-icon-theme fonts-dejavu-core
       - name: Clippy
@@ -59,21 +57,20 @@ jobs:
         run: cargo test --lib -p otto -- workspaces::utils::tests --ignored
   
   build-deb:
+    # Package builds only run on merge to main and tags, not on every PR.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@1.87.0
-      - name: Cargo registry cache
-        uses: actions/cache@v4
+      - name: Cargo cache (registry + target)
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
-          restore-keys: ${{ runner.os }}-cargo-registry-
+          # Shared with build-rpm and build-arch — same release artifacts.
+          shared-key: workspace-build
+          cache-on-failure: true
       - name: System dependencies
         run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev hicolor-icon-theme
       - name: Install cargo-deb
@@ -90,21 +87,19 @@ jobs:
           retention-days: 30
   
   build-rpm:
+    # Package builds only run on merge to main and tags, not on every PR.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@1.87.0
-      - name: Cargo registry cache
-        uses: actions/cache@v4
+      - name: Cargo cache (registry + target)
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
-          restore-keys: ${{ runner.os }}-cargo-registry-
+          shared-key: workspace-build
+          cache-on-failure: true
       - name: System dependencies
         run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev hicolor-icon-theme
       - name: Install cargo-generate-rpm
@@ -121,21 +116,19 @@ jobs:
           retention-days: 30
   
   build-arch:
+    # Package builds only run on merge to main and tags, not on every PR.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@1.87.0
-      - name: Cargo registry cache
-        uses: actions/cache@v4
+      - name: Cargo cache (registry + target)
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
-          restore-keys: ${{ runner.os }}-cargo-registry-
+          shared-key: workspace-build
+          cache-on-failure: true
       - name: System dependencies
         run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev hicolor-icon-theme
       - name: Build workspace binaries

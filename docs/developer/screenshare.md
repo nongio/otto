@@ -308,6 +308,35 @@ Expected performance: typically capped at 60 FPS for WebRTC compatibility.
 | `src/udev.rs` | Direct blit integration (udev backend) |
 | `src/winit.rs` | Starts the screenshare D-Bus service (frame delivery currently udev-only) |
 
+### Related: wlr-screencopy-v1
+
+The portal/PipeWire path above is **not** the only way to get frames out of Otto.
+External tools (`grim`, `wf-recorder`, `wl-mirror`, OBS via wlrobs) use the
+`zwlr_screencopy_manager_v1` Wayland protocol directly, implemented in
+`src/state/screencopy.rs`.
+
+To avoid two parallel readback paths, wlr-screencopy reuses the same
+`BlitCurrentFrame` infrastructure as PipeWire screenshare:
+
+- The compositor advertises **`linux_dmabuf`** alongside the SHM
+  `buffer` event (v3+ clients), so capable consumers can negotiate a GPU
+  dmabuf and skip CPU readback.
+- **Dmabuf clients** ride `BlitCurrentFrame::blit_current_frame` — the
+  same `glBlitFramebuffer` call PipeWire screenshare uses. Zero CPU copy.
+- **SHM clients** (legacy `grim`, default `wf-recorder`) fall back to
+  `skia_surface.read_pixels` — synchronous, expensive, but only paid by
+  the few tools that need it. This path could later be replaced with a
+  GPU blit-into-temp-dmabuf + async PBO readback for parity.
+- The post-render hook is **gated on `!pending_screencopy_frames.is_empty()`**;
+  it does no work when no client is asking. It does **not** force renders —
+  pending frames piggyback on the next render that happens for some other
+  reason (scene damage, cursor, DND).
+
+**Quick perf reference** (Iris Xe, 2880×1920 @ 120 Hz, idle desktop ~7%):
+- `wf-recorder -c h264_vaapi` (dmabuf): ~9% Otto CPU during capture
+- `wf-recorder` default (SHM, libx264): ~30% Otto CPU during capture
+- No active capture: 7% (no overhead)
+
 ### Known Issues and Fixes
 
 #### Framerate Compatibility (January 2026)
