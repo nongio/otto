@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Render Perf Demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #111; overflow: hidden; width: 100vw; height: 100vh; }
+  .box {
+    position: absolute;
+    border-radius: 8px;
+    will-change: transform, opacity;
+  }
+  #stats {
+    position: fixed;
+    top: 12px; left: 12px;
+    color: #fff;
+    font: 14px/1.6 monospace;
+    background: rgba(0,0,0,0.6);
+    padding: 8px 12px;
+    border-radius: 6px;
+    z-index: 9999;
+  }
+  #controls {
+    position: fixed;
+    top: 12px; right: 12px;
+    color: #fff;
+    font: 13px/2 monospace;
+    background: rgba(0,0,0,0.6);
+    padding: 8px 12px;
+    border-radius: 6px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  input[type=range] { width: 120px; }
+</style>
+</head>
+<body>
+<div id="stats"></div>
+<div id="controls">
+  <label>Count <input type="range" id="countSlider" min="50" max="1000" step="50" value="300"> <span id="countVal">300</span></label>
+  <label>Size  <input type="range" id="sizeSlider"  min="10"  max="80"   step="5"   value="30">  <span id="sizeVal">30</span></label>
+  <label><input type="checkbox" id="rotateChk" checked> rotate</label>
+  <label><input type="checkbox" id="opacityChk" checked> opacity</label>
+  <label><input type="checkbox" id="colorChk">   color shift</label>
+</div>
+
+<script>
+const container = document.body;
+let boxes = [];
+let N = 300;
+let SIZE = 30;
+let doRotate = true, doOpacity = true, doColor = false;
+
+const W = () => window.innerWidth;
+const H = () => window.innerHeight;
+
+const COLORS = ['#e74c3c','#e67e22','#f1c40f','#2ecc71','#1abc9c','#3498db','#9b59b6','#e91e63'];
+
+function rand(a, b) { return a + Math.random() * (b - a); }
+
+function spawnBoxes(count) {
+  boxes.forEach(b => b.el.remove());
+  boxes = [];
+  for (let i = 0; i < count; i++) {
+    const el = document.createElement('div');
+    el.className = 'box';
+    const size = SIZE + rand(-SIZE * 0.3, SIZE * 0.3);
+    el.style.width  = size + 'px';
+    el.style.height = size + 'px';
+    el.style.background = COLORS[i % COLORS.length];
+    container.appendChild(el);
+    boxes.push({
+      el,
+      x:  rand(0, W() - size),
+      y:  rand(0, H() - size),
+      vx: rand(-2, 2) || 1,
+      vy: rand(-2, 2) || 1,
+      size,
+      phase: rand(0, Math.PI * 2),
+      speed: rand(0.5, 2),
+    });
+  }
+}
+
+// FPS tracking
+let frames = 0, fps = 0, fpsLast = performance.now();
+const statsEl = document.getElementById('stats');
+
+function tick(now) {
+  const W_ = W(), H_ = H();
+  frames++;
+  if (now - fpsLast >= 500) {
+    fps = Math.round(frames / ((now - fpsLast) / 1000));
+    frames = 0;
+    fpsLast = now;
+  }
+
+  const t = now * 0.001;
+
+  for (let i = 0; i < boxes.length; i++) {
+    const b = boxes[i];
+    b.x += b.vx;
+    b.y += b.vy;
+    if (b.x <= 0)        { b.x = 0;            b.vx = Math.abs(b.vx); }
+    if (b.x >= W_-b.size){ b.x = W_-b.size;    b.vx = -Math.abs(b.vx); }
+    if (b.y <= 0)        { b.y = 0;             b.vy = Math.abs(b.vy); }
+    if (b.y >= H_-b.size){ b.y = H_-b.size;    b.vy = -Math.abs(b.vy); }
+
+    const angle   = doRotate  ? (t * b.speed * 60)  : 0;
+    const opacity = doOpacity ? 0.5 + 0.5 * Math.sin(t * b.speed + b.phase) : 1;
+
+    let transform = `translate(${b.x.toFixed(1)}px,${b.y.toFixed(1)}px)`;
+    if (doRotate) transform += ` rotate(${angle.toFixed(1)}deg)`;
+
+    b.el.style.transform = transform;
+    b.el.style.opacity   = opacity.toFixed(3);
+
+    if (doColor) {
+      const hue = (t * 40 * b.speed + i * 20) % 360;
+      b.el.style.background = `hsl(${hue},80%,55%)`;
+    }
+  }
+
+  statsEl.textContent = `fps: ${fps}\nelements: ${boxes.length}`;
+  requestAnimationFrame(tick);
+}
+
+// Controls
+document.getElementById('countSlider').addEventListener('input', function() {
+  N = +this.value;
+  document.getElementById('countVal').textContent = N;
+  spawnBoxes(N);
+});
+document.getElementById('sizeSlider').addEventListener('input', function() {
+  SIZE = +this.value;
+  document.getElementById('sizeVal').textContent = SIZE;
+  spawnBoxes(N);
+});
+document.getElementById('rotateChk').addEventListener('change',  e => doRotate  = e.target.checked);
+document.getElementById('opacityChk').addEventListener('change', e => doOpacity = e.target.checked);
+document.getElementById('colorChk').addEventListener('change',   e => doColor   = e.target.checked);
+
+spawnBoxes(N);
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
