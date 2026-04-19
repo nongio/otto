@@ -1,46 +1,26 @@
-//! Dmabuf-backed scene render element.
+//! Dmabuf-backed scene render element with swapchain buffering.
 //!
-//! # Why
+//! Renders a lay-rs scene subtree (identified by a `NodeRef`) into a
+//! GBM-allocated swapchain. Each acquired slot is exported as a `Dmabuf`
+//! and exposed to Smithay via `UnderlyingStorage::Dmabuf`, making the
+//! element eligible for direct KMS plane assignment.
 //!
-//! The plain [`SceneElement`](crate::render_elements::scene_element::SceneElement)
-//! renders the lay-rs scene into the renderer's primary framebuffer (allocator-
-//! provided swapchain slot). Smithay's `DrmCompositor` then either scans out
-//! that framebuffer to the primary plane or composites it together with other
-//! elements. The element itself isn't a plane-eligible "buffer" — it's just a
-//! drawing operation against whatever the renderer hands it.
-//!
-//! For overlay-plane scanout to work for a top window WHILE the scene also
-//! shows around it (dock, bar, background), Otto needs the scene to be on its
-//! OWN plane (typically primary), so:
-//!
-//! - Scene FB lives in a dmabuf-backed buffer that Smithay can hand to the
-//!   primary plane directly (no per-frame composite when scene is unchanged)
-//! - Window dmabuf goes on an overlay plane (still depends on Smithay's
-//!   overlay-rule fix — see matrix-p writeup)
-//!
-//! This module provides the scene-as-dmabuf-element side of that architecture.
-//!
-//! # Status
-//!
-//! **Scaffolding only**. The type signatures are in place to lock down the
-//! shape of the integration. The actual rendering path — GBM buffer allocation,
-//! dmabuf import as GL texture, Skia surface creation, scene render into it —
-//! is left as TODOs. Pairs with our local smithay `feat/dmabuf-scanout` branch
-//! that adds `UnderlyingStorage::Dmabuf` so a render element of this kind can
-//! be assigned to a KMS plane.
+//! The swapchain (2–3 slots) prevents the single-buffer tearing we hit
+//! when KMS scans a buffer while the GPU is still writing it.
 
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Instant;
+use std::cell::UnsafeCell;
+use std::sync::{Arc, Mutex};
 
-use layers::engine::Engine;
+use layers::drawing::render_node_tree;
+use layers::engine::{Engine, NodeRef};
 use smithay::{
     backend::{
         allocator::{
             dmabuf::{AsDmabuf, Dmabuf},
-            gbm::{GbmAllocator, GbmBuffer, GbmBufferFlags, GbmDevice},
-            Allocator, Buffer, Fourcc, Modifier,
+            gbm::{GbmAllocator, GbmBuffer, GbmBufferFlags},
+            Fourcc, Modifier, Slot, Swapchain,
         },
-        drm::DrmDeviceFd,
+        drm::{DrmDeviceFd, DrmNode},
         renderer::{
             element::{Element, Id, Kind, RenderElement, UnderlyingStorage},
             utils::{CommitCounter, DamageBag, DamageSet},
@@ -50,215 +30,240 @@ use smithay::{
     utils::{Buffer as BufferCoord, Physical, Point, Rectangle, Scale},
 };
 
-use crate::{
-    renderer::skia_surface::SkiaSurface, skia_renderer::SkiaRenderer, udev::UdevRenderer,
-};
+use crate::{skia_renderer::SkiaRenderer, udev::UdevRenderer};
 
-/// A scene render element whose output is rendered into a GBM/dmabuf-backed
-/// buffer. The buffer is exposed to Smithay's `DrmCompositor` via
-/// [`UnderlyingStorage::Dmabuf`], making the element eligible for direct KMS
-/// plane assignment (primary or overlay) instead of composite-into-FB.
-///
-/// Lifecycle:
-/// - Construct once (per output) with a target size and format
-/// - On each frame: lay-rs `engine.update()` — if dirty, render into the
-///   wrapped Skia surface; if clean, the previous buffer is reused
-/// - Smithay reads the dmabuf via `underlying_storage()` and assigns the
-///   element to a plane
-///
-/// Resize: not handled in this scaffold; `recreate_for_size()` will need to
-/// allocate a new GBM buffer when the output dimensions change.
+// ── Slot-local SkiaSurface ─────────────────────────────────────────────────
+//
+// Smithay's Slot::userdata() requires Send+Sync. SkiaSurface holds GL/Skia
+// state that is !Send by default. We wrap it in UnsafeCell and assert Send+Sync
+// because all access is confined to the single render thread.
+
+use crate::renderer::skia_surface::SkiaSurface;
+
+struct SlotSurface(UnsafeCell<SkiaSurface>);
+// SAFETY: accessed only from the render thread; never aliased across threads.
+unsafe impl Send for SlotSurface {}
+unsafe impl Sync for SlotSurface {}
+
+// ── SceneDmabufElement ─────────────────────────────────────────────────────
+
+/// A render element that draws a lay-rs scene subtree into a GBM swapchain
+/// and exposes the result as a `Dmabuf` for direct KMS plane assignment.
 #[derive(Clone)]
 pub struct SceneDmabufElement {
     id: Id,
-    dmabuf: Arc<OnceLock<Dmabuf>>,
     inner: Arc<Mutex<Inner>>,
-    /// Position of this element in physical output coordinates.
+    /// Last exported dmabuf, stored outside the lock so `underlying_storage()`
+    /// can hand out `&Dmabuf` without holding a MutexGuard.
+    current_dmabuf: Arc<Mutex<Option<Dmabuf>>>,
+    /// Position in physical output coordinates.
     pub position: (i32, i32),
-    /// Global plane alpha (0.0–1.0). Passed to the KMS plane `alpha` property.
+    /// KMS plane-level alpha (0.0–1.0).
     pub plane_alpha: f32,
 }
 
 struct Inner {
     commit_counter: CommitCounter,
     engine: Arc<Engine>,
-    /// Per-output sub-tree node. Same role as `SceneElement::output_root`.
-    output_root: Option<layers::engine::NodeRef>,
-    /// Physical size of the buffer.
+    /// Subtree to render. `None` → render a placeholder.
+    node_ref: Option<NodeRef>,
     size: (i32, i32),
-    /// Damage tracker — same shape as `SceneElement::damage` so the existing
-    /// damage-tracking logic carries over.
     damage: DamageBag<i32, Physical>,
-    /// The GBM buffer kept alive for the duration of `dmabuf`'s validity.
-    _gbm_buffer: Option<GbmBuffer>,
-    /// Skia surface wrapping the GL texture imported from `dmabuf`. Set by
-    /// [`SceneDmabufElement::ensure_render_target`] which needs the renderer.
-    skia_surface: Option<SkiaSurface>,
-    /// Last lay-rs `engine.update()` time stamp for delta-time computation.
-    last_update: Instant,
+    swapchain: Option<Swapchain<GbmAllocator<DrmDeviceFd>>>,
+    /// Slot held across the frame while KMS scans it out.
+    current_slot: Option<Slot<GbmBuffer>>,
+    /// DRM render node — tagged onto each exported dmabuf so Smithay's
+    /// GbmFramebufferExporter accepts it.
+    render_node: Option<DrmNode>,
 }
 
 impl SceneDmabufElement {
-    /// Construct a new dmabuf-backed scene element. Allocates the initial
-    /// GBM buffer at `size` with `format`, imports it as a GL texture, and
-    /// wraps that as a Skia render surface.
-    ///
-    /// **TODO**: implement allocation + GL import + Skia surface creation.
-    /// For now this stores the inputs and leaves `target = None`.
-    pub fn new(
-        engine: Arc<Engine>,
-        _gbm: GbmDevice<DrmDeviceFd>,
-        size: (i32, i32),
-        _format: Fourcc,
-    ) -> Self {
+    pub fn new(engine: Arc<Engine>, size: (i32, i32)) -> Self {
         Self {
             id: Id::new(),
-            dmabuf: Arc::new(OnceLock::new()),
+            current_dmabuf: Arc::new(Mutex::new(None)),
             inner: Arc::new(Mutex::new(Inner {
                 commit_counter: CommitCounter::default(),
                 engine,
-                output_root: None,
+                node_ref: None,
                 size,
                 damage: DamageBag::new(5),
-                _gbm_buffer: None,
-                skia_surface: None,
-                last_update: Instant::now(),
+                swapchain: None,
+                current_slot: None,
+                render_node: None,
             })),
             position: (0, 0),
             plane_alpha: 1.0,
         }
     }
 
-    /// Set the per-output sub-tree this element renders from.
-    pub fn set_output_root(&self, root: layers::engine::NodeRef) {
-        self.inner.lock().unwrap().output_root = Some(root);
+    /// Set the lay-rs subtree this element renders.
+    pub fn set_node_ref(&self, node: NodeRef) {
+        self.inner.lock().unwrap().node_ref = Some(node);
     }
 
-    /// Resize the underlying GBM buffer. **TODO**: free the old buffer + GL
-    /// texture + Skia surface, allocate a new one at the new size, re-bind.
-    pub fn recreate_for_size(&self, _size: (i32, i32)) {
-        // TODO
+    /// Backwards-compatible alias used by the existing udev render path.
+    pub fn set_output_root(&self, node: NodeRef) {
+        self.set_node_ref(node);
     }
 
-    /// Allocate the GBM buffer + dmabuf if not yet done. Returns `Ok(())` on
-    /// success or if a buffer is already present.
-    ///
-    /// GL texture import + Skia surface wrapping happen in
-    /// [`Self::ensure_render_target`], which needs a renderer reference and
-    /// is therefore called from the rendering path rather than here.
-    pub fn ensure_buffer(
+    /// Allocate the GBM swapchain (3 slots, RENDERING|SCANOUT flags).
+    /// Idempotent — does nothing if the swapchain already exists.
+    pub fn ensure_swapchain(
         &self,
-        allocator: &mut GbmAllocator<DrmDeviceFd>,
+        gbm: smithay::backend::allocator::gbm::GbmDevice<DrmDeviceFd>,
         format: Fourcc,
-        render_node: smithay::backend::drm::DrmNode,
-    ) -> Result<(), AllocateError> {
-        if self.dmabuf.get().is_some() {
+        render_node: DrmNode,
+    ) -> Result<(), AllocError> {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.swapchain.is_some() {
             return Ok(());
         }
-        let (w, h) = {
-            let inner = self.inner.lock().unwrap();
-            inner.size
-        };
-        let gbm_buffer = allocator
-            .create_buffer(w as u32, h as u32, format, &[Modifier::Linear])
-            .map_err(AllocateError::Gbm)?;
-        let dmabuf = gbm_buffer.export().map_err(AllocateError::Export)?;
-        // Tag the dmabuf with the render node so Smithay's GbmFramebufferExporter
-        // accepts it (its `import_node` is the render node, while GBM export
-        // defaults to the primary node).
-        dmabuf.set_node(render_node);
-        tracing::info!(
-            target: "otto::scanout",
-            "scene_dmabuf: allocated {}x{} format={:?} modifier={:?} node={:?}",
-            w,
-            h,
-            dmabuf.format().code,
-            dmabuf.format().modifier,
-            dmabuf.node(),
-        );
-        self.inner.lock().unwrap()._gbm_buffer = Some(gbm_buffer);
-        let _ = self.dmabuf.set(dmabuf);
-        Ok(())
-    }
-
-    /// Returns the dmabuf if `ensure_buffer` has been called successfully.
-    pub fn dmabuf(&self) -> Option<&Dmabuf> {
-        self.dmabuf.get()
-    }
-
-    /// Build the GL texture + Skia surface for our dmabuf using `renderer`.
-    /// Idempotent: returns immediately if the Skia surface is already set up.
-    /// Must be called after [`Self::ensure_buffer`] has produced the dmabuf.
-    pub fn ensure_render_target(
-        &self,
-        renderer: &mut SkiaRenderer,
-    ) -> Result<(), smithay::backend::renderer::gles::GlesError> {
-        let mut inner = self.inner.lock().unwrap();
-        if inner.skia_surface.is_some() {
-            return Ok(());
-        }
-        let Some(dmabuf) = self.dmabuf.get() else {
-            return Ok(()); // ensure_buffer not yet called; nothing to set up
-        };
-        let surface = renderer.create_surface_from_dmabuf(dmabuf)?;
-        inner.skia_surface = Some(surface);
-        Ok(())
-    }
-
-    /// Render the lay-rs scene into the dmabuf-backed Skia surface. Called
-    /// each frame from the udev render path before Smithay scans the buffer
-    /// out. Skips the render when lay-rs reports no damage, so the GPU does
-    /// no work on idle frames.
-    /// Render the current scene state into the dmabuf-backed Skia surface.
-    /// Does NOT call `engine.update()` — that's done by the caller-side
-    /// `scene_element.update()` earlier in the frame; we just consume the
-    /// current scene state.
-    pub fn update(&self) -> bool {
-        let mut inner = self.inner.lock().unwrap();
-        inner.last_update = Instant::now();
-
         let (w, h) = inner.size;
+        let allocator = GbmAllocator::new(gbm, GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT);
+        inner.swapchain = Some(Swapchain::new(
+            allocator,
+            w as u32,
+            h as u32,
+            format,
+            vec![Modifier::Linear],
+        ));
+        inner.render_node = Some(render_node);
+        Ok(())
+    }
 
-        let Some(skia_surface) = inner.skia_surface.as_mut() else {
-            return false;
+    /// Render the scene subtree into the next free swapchain slot.
+    ///
+    /// Returns `true` if a new frame was rendered, `false` if skipped
+    /// (no swapchain, no free slot, or surface creation failed).
+    pub fn render(&self, renderer: &mut SkiaRenderer) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+
+        let swapchain = match inner.swapchain.as_mut() {
+            Some(s) => s,
+            None => return false,
         };
-        let canvas = skia_surface.canvas();
-        let save_point = canvas.save();
 
-        // Solid opaque fill — plane_alpha drives the blend, not pixel alpha.
-        canvas.clear(layers::skia::Color4f::new(0.2, 0.6, 1.0, 1.0));
-        let mut paint = layers::skia::Paint::default();
-        paint.set_color(layers::skia::Color::from_rgb(255, 255, 255));
-        paint.set_anti_alias(true);
-        canvas.draw_circle((w as f32 / 2.0, h as f32 / 2.0), 80.0, &paint);
-        canvas.restore_to_count(save_point);
-        skia_surface.gr_context.flush_and_submit_surface(
-            &mut skia_surface.surface,
-            layers::skia::gpu::SyncCpu::Yes,
-        );
+        let slot = match swapchain.acquire() {
+            Ok(Some(s)) => s,
+            Ok(None) => {
+                tracing::warn!(target: "otto::planes", "SceneDmabufElement: no free swapchain slot");
+                return false;
+            }
+            Err(e) => {
+                tracing::warn!(target: "otto::planes", "SceneDmabufElement: acquire error: {e:?}");
+                return false;
+            }
+        };
 
+        // Export dmabuf (Slot caches it in userdata on first call).
+        let mut dmabuf = match slot.export() {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::warn!(target: "otto::planes", "SceneDmabufElement: export error: {e:?}");
+                return false;
+            }
+        };
+
+        // Tag with render node so GbmFramebufferExporter accepts it.
+        if let Some(node) = inner.render_node {
+            dmabuf.set_node(node);
+        }
+
+        // Create a SkiaSurface for this slot on first use.
+        if slot.userdata().get::<SlotSurface>().is_none() {
+            match renderer.create_surface_from_dmabuf(&dmabuf) {
+                Ok(surface) => {
+                    slot.userdata()
+                        .insert_if_missing(|| SlotSurface(UnsafeCell::new(surface)));
+                }
+                Err(e) => {
+                    tracing::warn!(target: "otto::planes", "SceneDmabufElement: surface error: {e:?}");
+                    return false;
+                }
+            }
+        }
+
+        // Render into the slot's Skia surface.
+        let (w, h) = inner.size;
+        {
+            let slot_surface = slot.userdata().get::<SlotSurface>().unwrap();
+            // SAFETY: single render thread; no concurrent access to this slot.
+            let skia_surface = unsafe { &mut *slot_surface.0.get() };
+            let canvas = skia_surface.canvas();
+            let save_point = canvas.save();
+
+            let scene = inner.engine.scene();
+            let root = inner.node_ref.or_else(|| inner.engine.scene_root());
+
+            if let Some(root_id) = root {
+                scene.with_arena(|arena| {
+                    scene.with_renderable_arena(|renderable_arena| {
+                        render_node_tree(
+                            root_id,
+                            arena,
+                            renderable_arena,
+                            canvas,
+                            1.0,
+                            None,
+                            None,
+                        );
+                    });
+                });
+            } else {
+                // No subtree configured — render a visible placeholder so we
+                // can tell the element is alive during debugging.
+                canvas.clear(layers::skia::Color4f::new(0.1, 0.1, 0.1, 1.0));
+            }
+
+            canvas.restore_to_count(save_point);
+            skia_surface.gr_context.flush_and_submit_surface(
+                &mut skia_surface.surface,
+                layers::skia::gpu::SyncCpu::Yes,
+            );
+        }
+
+        // Update damage and commit counter.
         inner.commit_counter.increment();
         inner
             .damage
             .add(vec![Rectangle::new((0, 0).into(), (w, h).into())]);
 
+        // Store the node-tagged dmabuf for underlying_storage().
+        *self.current_dmabuf.lock().unwrap() = Some(dmabuf);
+
+        // Hold the slot until VBlank signals it's safe to release.
+        inner.current_slot = Some(slot);
+
         true
+    }
+
+    /// Release the current swapchain slot back to the pool.
+    /// Call this from the VBlank / frame_submitted callback.
+    pub fn submitted(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(slot) = inner.current_slot.take() {
+            if let Some(swapchain) = &mut inner.swapchain {
+                swapchain.submitted(&slot);
+            }
+        }
+    }
+
+    /// The dmabuf currently being scanned out, if any.
+    pub fn current_dmabuf(&self) -> Option<Dmabuf> {
+        self.current_dmabuf.lock().unwrap().clone()
     }
 }
 
-/// Errors when allocating the GBM-backed render target.
+/// Error from swapchain allocation (currently a placeholder — GBM errors
+/// surface through the swapchain's Allocator trait).
 #[derive(Debug, thiserror::Error)]
-pub enum AllocateError {
-    #[error("gbm buffer allocation failed: {0}")]
-    Gbm(std::io::Error),
-    #[error("dmabuf export failed: {0}")]
-    Export(smithay::backend::allocator::gbm::GbmConvertError),
+pub enum AllocError {
+    #[error("gbm allocation failed")]
+    Gbm,
 }
 
 // ── Element trait ──────────────────────────────────────────────────────────
-//
-// The geometry/location/damage logic mirrors SceneElement so the rest of the
-// render pipeline doesn't have to special-case this element.
 
 impl Element for SceneDmabufElement {
     fn id(&self) -> &Id {
@@ -289,8 +294,7 @@ impl Element for SceneDmabufElement {
         commit: Option<CommitCounter>,
     ) -> DamageSet<i32, Physical> {
         let inner = self.inner.lock().unwrap();
-        let geometry_size = (inner.size.0, inner.size.1).into();
-        let full = Rectangle::new((0, 0).into(), geometry_size);
+        let full = Rectangle::new((0, 0).into(), (inner.size.0, inner.size.1).into());
         match inner.damage.damage_since(commit) {
             Some(rects) if !rects.is_empty() => DamageSet::from_slice(&rects),
             None => DamageSet::from_slice(&[full]),
@@ -303,17 +307,9 @@ impl Element for SceneDmabufElement {
     }
 
     fn kind(&self) -> Kind {
-        // Mark as scanout-eligible so Smithay's DrmCompositor will attempt
-        // primary/overlay-plane assignment instead of falling through to
-        // composite-into-FB.
         Kind::ScanoutCandidate
     }
 
-    /// The whole surface is opaque: the scene render covers every pixel in
-    /// our geometry (background / dock / windows). Telling Smithay this lets
-    /// its overlay-plane assignment path accept us even when we overlap with
-    /// the primary plane (our patched overlap rule in smithay relaxes the
-    /// check for fully-opaque overlays).
     fn opaque_regions(
         &self,
         scale: Scale<f64>,
@@ -321,6 +317,8 @@ impl Element for SceneDmabufElement {
         smithay::backend::renderer::utils::OpaqueRegions::from_slice(&[self.geometry(scale)])
     }
 }
+
+// ── RenderElement impls ────────────────────────────────────────────────────
 
 impl<'renderer> RenderElement<UdevRenderer<'renderer>> for SceneDmabufElement {
     fn draw(
@@ -331,18 +329,16 @@ impl<'renderer> RenderElement<UdevRenderer<'renderer>> for SceneDmabufElement {
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
     ) -> Result<(), <UdevRenderer<'renderer> as RendererSuper>::Error> {
-        // If Smithay assigned us to a plane via underlying_storage(), draw()
-        // is never called. If draw() IS called, Smithay rejected the plane
-        // assignment and is asking us to composite. We log the first call so
-        // the diag tells us whether scanout is succeeding.
+        // draw() is only called when Smithay fell back to GPU composite.
+        // Log once so we know the plane assignment failed.
         {
             use std::sync::atomic::{AtomicBool, Ordering};
             static LOGGED: AtomicBool = AtomicBool::new(false);
             if !LOGGED.swap(true, Ordering::Relaxed) {
                 tracing::info!(
-                    target: "otto::scanout",
-                    "SceneDmabufElement::draw() called — Smithay fell back to composite \
-                     (no plane assigned). dst={dst:?} damage_count={}",
+                    target: "otto::planes",
+                    "SceneDmabufElement::draw() — plane assignment failed, compositing. \
+                     dst={dst:?} damage_count={}",
                     damage.len()
                 );
             }
@@ -351,15 +347,17 @@ impl<'renderer> RenderElement<UdevRenderer<'renderer>> for SceneDmabufElement {
         Ok(())
     }
 
-    /// The whole point: hand Smithay the dmabuf so it can assign this
-    /// element to a KMS plane directly. Returns the rendered scene's dmabuf
-    /// as `UnderlyingStorage::Dmabuf` (added by our local smithay
-    /// `feat/dmabuf-scanout` patch).
     fn underlying_storage(
         &self,
         _renderer: &mut UdevRenderer<'renderer>,
     ) -> Option<UnderlyingStorage<'_>> {
-        self.dmabuf.get().map(UnderlyingStorage::Dmabuf)
+        let guard = self.current_dmabuf.lock().unwrap();
+        let ptr = guard.as_ref()? as *const Dmabuf;
+        drop(guard);
+        // SAFETY: The Dmabuf lives inside Arc<Mutex<Option<Dmabuf>>> which is
+        // owned by self. It is only replaced in render(), which completes
+        // before underlying_storage() is called. No concurrent mutation.
+        Some(UnderlyingStorage::Dmabuf(unsafe { &*ptr }))
     }
 }
 
@@ -372,24 +370,14 @@ impl RenderElement<SkiaRenderer> for SceneDmabufElement {
         _damage: &[Rectangle<i32, Physical>],
         _opaque_regions: &[Rectangle<i32, Physical>],
     ) -> Result<(), <SkiaRenderer as RendererSuper>::Error> {
-        // TODO: same as the UdevRenderer impl — blit the dmabuf-backed
-        // texture onto the SkiaRenderer's surface as the composite fallback.
         Ok(())
     }
 
     fn underlying_storage(&self, _renderer: &mut SkiaRenderer) -> Option<UnderlyingStorage<'_>> {
-        self.dmabuf.get().map(UnderlyingStorage::Dmabuf)
+        let guard = self.current_dmabuf.lock().unwrap();
+        let ptr = guard.as_ref()? as *const Dmabuf;
+        drop(guard);
+        // SAFETY: same as UdevRenderer impl above.
+        Some(UnderlyingStorage::Dmabuf(unsafe { &*ptr }))
     }
 }
-
-#[allow(dead_code)]
-fn _build_allocator(gbm: GbmDevice<DrmDeviceFd>) -> GbmAllocator<DrmDeviceFd> {
-    // The allocator pattern Otto uses elsewhere (see `udev/device.rs`). The
-    // SCANOUT flag is what makes the buffer plane-eligible.
-    GbmAllocator::new(gbm, GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT)
-}
-
-// Suppress warnings for fields that aren't fully wired yet but lock down
-// the eventual ownership shape.
-#[allow(dead_code)]
-fn _shape_check<A: Allocator>(_a: &A) {}
