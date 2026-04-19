@@ -478,6 +478,34 @@ impl Otto<UdevData> {
             }
         }
 
+        // Lazily allocate the test semi-transparent overlay (600×400, top-left corner).
+        if allow_direct_scanout && surface.test_overlay_element.is_none() {
+            if output.current_mode().is_some() {
+                use crate::render_elements::scene_dmabuf_element::SceneDmabufElement;
+                use smithay::backend::allocator::{
+                    gbm::{GbmAllocator, GbmBufferFlags},
+                    Fourcc,
+                };
+                let mut element = SceneDmabufElement::new(
+                    self.layers_engine.clone(),
+                    device_gbm.clone(),
+                    (600, 400),
+                    Fourcc::Argb8888,
+                );
+                element.position = (100, 100);
+                element.plane_alpha = 0.5;
+                let mut allocator = GbmAllocator::new(
+                    device_gbm.clone(),
+                    GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,
+                );
+                match element.ensure_buffer(&mut allocator, Fourcc::Argb8888, surface.render_node)
+                {
+                    Ok(()) => surface.test_overlay_element = Some(element),
+                    Err(e) => tracing::warn!("Failed to allocate test overlay: {e}"),
+                }
+            }
+        }
+
         // Mark which windows are being scanned out this frame. The flag is
         // available to future opt-in optimisations (e.g. skipping per-commit
         // scene work for scanned-out windows) but is not currently consumed
@@ -1216,9 +1244,18 @@ pub(super) fn render_surface<'a>(
                     .into_iter()
                     .map(OutputRenderElements::from),
             );
-            // Push the top window as an overlay-plane candidate. DrmCompositor
-            // will attempt to assign its wl_buffer dmabuf to an overlay plane;
-            // falls back to composite if the plane test fails.
+            // Test: semi-transparent overlay element — pushed first so it gets
+            // a higher z-pos plane than the window below it.
+            if let Some(test_overlay) = surface.test_overlay_element.clone() {
+                if test_overlay.ensure_render_target(renderer.as_mut()).is_ok() {
+                    test_overlay.update();
+                    elements.push(OutputRenderElements::from(
+                        WorkspaceRenderElements::SceneDmabuf(test_overlay),
+                    ));
+                }
+            }
+
+            // Window overlay plane — below the test overlay, above the scene.
             if let Some(wl_surface) = fullscreen_win.wl_surface() {
                 use smithay::backend::renderer::element::surface::render_elements_from_surface_tree;
                 use smithay::backend::renderer::element::Kind;
@@ -1235,7 +1272,6 @@ pub(super) fn render_surface<'a>(
             }
 
             // Scene composited into primary swapchain (Smithay manages buffering).
-            // Window goes on overlay plane via the ScanoutCandidate elements above.
             elements.push(OutputRenderElements::from(WorkspaceRenderElements::Scene(
                 scene_element,
             )));

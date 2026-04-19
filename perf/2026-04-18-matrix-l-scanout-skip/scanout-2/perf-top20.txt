@@ -1,0 +1,20 @@
+     4.65%  [.] wayland_backend::sys::server_impl::client_id_from_ptr                                                                                                    -      -            
+     3.75%  [.] alloc::vec::Vec<T,A>::extend_trusted                                                                                                                     -      -            
+     3.30%  [.] <T as core::any::Any>::type_id                                                                                                                           -      -            
+     3.19%  [.] <std::sync::poison::mutex::Mutex<smithay::wayland::compositor::cache::CachedState<T>> as smithay::wayland::compositor::cache::Cache>::apply_state        -      -            
+     2.95%  [.] hashbrown::map::HashMap<K,V,S,A>::insert                                                                                                                 -      -            
+     2.87%  [.] smithay::wayland::compositor::transaction::TransactionQueue::take_ready                                                                                  -      -            
+     2.70%  [.] wl_list_empty                                                                                                                                            -      -            
+     2.51%  [.] wl_display_flush_clients                                                                                                                                 -      -            
+     2.47%  [.] otto::workspaces::Workspaces::get_top_window_of_workspace                                                                                                -      -            
+     2.42%  [.] <indextree::traverse::Traverse<T> as core::iter::traits::iterator::Iterator>::next                                                                       -      -            
+     2.34%  [.] smithay::wayland::compositor::tree::PrivateSurfaceData::map                                                                                              -      -            
+     2.19%  [.] <alloc::vec::Vec<T> as alloc::vec::spec_from_iter::SpecFromIter<T,I>>::from_iter                                                                         -      -            
+     2.19%  [.] <wayland_backend::sys::server_impl::State<D> as wayland_backend::sys::server_impl::ErasedState>::get_client_data                                         -      -            
+     2.17%  [.] 0x0000000000132b10                                                                                                                                       -      -            
+     2.09%  [.] <wayland_backend::sys::server_impl::State<D> as wayland_backend::sys::server_impl::ErasedState>::get_object_data_any                                     -      -            
+     1.99%  [.] __rustc::__rdl_alloc                                                                                                                                     -      -            
+     1.97%  [.] smithay::wayland::compositor::cache::MultiCache::get                                                                                                     -      -            
+     1.97%  [.] 0x00000000008cfa64                                                                                                                                       -      -            
+     1.97%  [.] wl_resource_get_version                                                                                                                                  -      -            
+     1.94%  [.] <smithay::wayland::shell::xdg::ToplevelCachedState as smithay::wayland::compositor::cache::Cacheable>::commit                                            -      -            

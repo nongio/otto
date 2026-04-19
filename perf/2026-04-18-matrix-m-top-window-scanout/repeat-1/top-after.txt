@@ -1,0 +1,9 @@
+top - 17:16:52 up  7:31,  2 users,  load average: 2,49, 1,42, 1,07
+Tasks: 1 total, 0 running, 1 sleep, 0 d-sleep, 0 stopped, 0 zombie
+%Cpu(s):  1,2 us,  0,6 sy, 17,3 ni, 55,6 id, 22,8 wa,  1,9 hi,  0,6 si,  0,0 st 
+MiB Mem :  31881,1 total,   6999,3 free,   8861,3 used,  17416,7 buff/cache     
+MiB Swap:  17365,5 total,  17365,5 free,      0,0 used.  23019,7 avail Mem 
+
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+ 496544 riccardo  25   5 2102052 132580  80740 S  10,0   0,4   0:04.32 otto
+

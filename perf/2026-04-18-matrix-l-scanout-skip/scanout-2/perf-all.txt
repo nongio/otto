@@ -1,0 +1,70 @@
+     4.65%  [.] wayland_backend::sys::server_impl::client_id_from_ptr                                                                                                    -      -            
+     3.75%  [.] alloc::vec::Vec<T,A>::extend_trusted                                                                                                                     -      -            
+     3.30%  [.] <T as core::any::Any>::type_id                                                                                                                           -      -            
+     3.19%  [.] <std::sync::poison::mutex::Mutex<smithay::wayland::compositor::cache::CachedState<T>> as smithay::wayland::compositor::cache::Cache>::apply_state        -      -            
+     2.95%  [.] hashbrown::map::HashMap<K,V,S,A>::insert                                                                                                                 -      -            
+     2.87%  [.] smithay::wayland::compositor::transaction::TransactionQueue::take_ready                                                                                  -      -            
+     2.70%  [.] wl_list_empty                                                                                                                                            -      -            
+     2.51%  [.] wl_display_flush_clients                                                                                                                                 -      -            
+     2.47%  [.] otto::workspaces::Workspaces::get_top_window_of_workspace                                                                                                -      -            
+     2.42%  [.] <indextree::traverse::Traverse<T> as core::iter::traits::iterator::Iterator>::next                                                                       -      -            
+     2.34%  [.] smithay::wayland::compositor::tree::PrivateSurfaceData::map                                                                                              -      -            
+     2.19%  [.] <alloc::vec::Vec<T> as alloc::vec::spec_from_iter::SpecFromIter<T,I>>::from_iter                                                                         -      -            
+     2.19%  [.] <wayland_backend::sys::server_impl::State<D> as wayland_backend::sys::server_impl::ErasedState>::get_client_data                                         -      -            
+     2.17%  [.] 0x0000000000132b10                                                                                                                                       -      -            
+     2.09%  [.] <wayland_backend::sys::server_impl::State<D> as wayland_backend::sys::server_impl::ErasedState>::get_object_data_any                                     -      -            
+     1.99%  [.] __rustc::__rdl_alloc                                                                                                                                     -      -            
+     1.97%  [.] smithay::wayland::compositor::cache::MultiCache::get                                                                                                     -      -            
+     1.97%  [.] 0x00000000008cfa64                                                                                                                                       -      -            
+     1.97%  [.] wl_resource_get_version                                                                                                                                  -      -            
+     1.94%  [.] <smithay::wayland::shell::xdg::ToplevelCachedState as smithay::wayland::compositor::cache::Cacheable>::commit                                            -      -            
+     1.93%  [.] hashbrown::rustc_entry::<impl hashbrown::map::HashMap<K,V,S,A>>::rustc_entry                                                                             -      -            
+     1.86%  [.] <wayland_backend::sys::server_impl::State<D> as wayland_backend::sys::server_impl::ErasedState>::flush                                                   -      -            
+     1.83%  [.] cfree                                                                                                                                                    -      -            
+     1.75%  [.] <wayland_server::protocol::wl_surface::WlSurface as wayland_server::Resource>::parse_request                                                             -      -            
+     1.72%  [.] wayland_server::dispatch::DataInit<D>::init                                                                                                              -      -            
+     1.72%  [.] otto::udev::render::<impl otto::state::Otto<otto::udev::types::UdevData>>::render_surface                                                                -      -            
+     1.70%  [.] polling::Poller::wait_impl                                                                                                                               -      -            
+     1.62%  [.] <T as core::any::Any>::type_id                                                                                                                           -      -            
+     1.61%  [.] wayland_backend::sys::server_impl::resource_dispatcher                                                                                                   -      -            
+     1.60%  [.] wayland_server::Resource::client                                                                                                                         -      -            
+     1.57%  [.] otto::cursor::CursorTextureCache::get                                                                                                                    -      -            
+     1.43%  [.] smithay::backend::allocator::dmabuf::DmabufSource::new                                                                                                   -      -            
+     1.31%  [.] <wayland_backend::sys::server_impl::State<D> as wayland_backend::sys::server_impl::ErasedState>::send_event                                              -      -            
+     1.29%  [.] core::hash::BuildHasher::hash_one                                                                                                                        -      -            
+     1.23%  [.] operator new(unsigned long)                                                                                                                              -      -            
+     1.23%  [.] core::hash::BuildHasher::hash_one                                                                                                                        -      -            
+     1.17%  [.] smithay::backend::drm::device::atomic::PropMapping::crtc_prop_handle                                                                                     -      -            
+     1.07%  [.] <smithay::backend::allocator::swapchain::Slot<B> as smithay::backend::allocator::dmabuf::AsDmabuf>::export                                               -      -            
+     1.07%  [.] smithay::backend::renderer::utils::wayland::import_surface                                                                                               -      -            
+     1.06%  [.] wayland_backend::sys::server_impl::InnerHandle::get_client                                                                                               -      -            
+     1.06%  [.] 0x0000000000006e60                                                                                                                                       -      -            
+     0.92%  [.] <otto::render_elements::workspace_render_elements::WorkspaceRenderElements<R> as smithay::backend::renderer::element::Element>::opaque_regions           -      -            
+     0.87%  [.] 0x00000000003a8fd0                                                                                                                                       -      -            
+     0.58%  [.] <T as core::any::Any>::type_id                                                                                                                           -      -            
+     0.58%  [.] <T as core::any::Any>::type_id                                                                                                                           -      -            
+     0.58%  [.] <alloc::vec::into_iter::IntoIter<T,A> as core::ops::drop::Drop>::drop                                                                                    -      -            
+     0.58%  [.] <wayland_server::dispatch::ResourceData<I,U> as wayland_backend::sys::server::ObjectData<D>>::request                                                    -      -            
+     0.58%  [.] SkTDStorage::append()                                                                                                                                    -      -            
+     0.58%  [.] _Znwm$plt                                                                                                                                                -      -            
+     0.58%  [.] alloc::raw_vec::RawVecInner<A>::finish_grow                                                                                                              -      -            
+     0.58%  [.] calloop::loop_logic::EventLoop<Data>::dispatch                                                                                                           -      -            
+     0.58%  [.] core::ops::function::impls::<impl core::ops::function::FnMut<A> for &mut F>::call_mut                                                                    -      -            
+     0.58%  [.] hashbrown::map::HashMap<K,V,S,A>::insert                                                                                                                 -      -            
+     0.58%  [.] otto::udev::render::<impl otto::state::Otto<otto::udev::types::UdevData>>::frame_finish                                                                  -      -            
+     0.58%  [.] smithay::backend::drm::compositor::DrmCompositor<A,F,U,G>::element_config                                                                                -      -            
+     0.58%  [.] smithay::backend::drm::surface::DrmSurface::claim_plane                                                                                                  -      -            
+     0.58%  [.] smithay::backend::renderer::element::surface::render_elements_from_surface_tree                                                                          -      -            
+     0.58%  [.] smithay::desktop::space::wayland::window::<impl smithay::desktop::space::element::SpaceElement for smithay::desktop::wayland::window::Window>::geometry  -      -            
+     0.58%  [.] smithay::output::Output::name                                                                                                                            -      -            
+     0.58%  [.] smithay::wayland::compositor::cache::MultiCache::get                                                                                                     -      -            
+     0.58%  [.] smithay::wayland::compositor::tree::PrivateSurfaceData::lock_user_data                                                                                   -      -            
+     0.58%  [.] smithay::wayland::viewporter::ensure_viewport_valid                                                                                                      -      -            
+     0.58%  [.] virtual thunk to GrTexture::onGpuMemorySize() const                                                                                                      -      -            
+     0.58%  [.] wl_resource_queue_event                                                                                                                                  -      -            
+     0.58%  [.] 0x0000000000006938                                                                                                                                       -      -            
+     0.58%  [.] 0x000000000011e1c0                                                                                                                                       -      -            
+     0.58%  [.] 0x0000000000160df0                                                                                                                                       -      -            
+     0.58%  [.] 0x000000000017c534                                                                                                                                       -      -            
+     0.58%  [.] 0x000000000017ed96                                                                                                                                       -      -            
+     0.57%  [.] 0x00000000000a46f0                                                                                                                                       -      -            

@@ -1,0 +1,21 @@
+riccardo  409529  409471  0 15:38 ?        00:00:00 Xwayland :0 -verbose -rootless -terminate -wm 51 -displayfd 58 -listenfd 55 -listenfd 56
+riccardo  409540  409471  1 15:38 ?        00:00:00 otto-bar
+riccardo  409541  409471  0 15:38 ?        00:00:00 xdg-desktop-portal-otto
+riccardo  409542  409471  0 15:38 ?        00:00:00 nm-applet
+riccardo  409544  409471  0 15:38 ?        00:00:00 /usr/bin/python /usr/bin/blueman-applet
+riccardo  409554  409471  0 15:38 ?        00:00:00 emote
+riccardo  409556  409471  0 15:38 ?        00:00:00 [pasystray] <defunct>
+riccardo  409558  409471  0 15:38 ?        00:00:00 /usr/bin/kdeconnectd
+riccardo  409559  409471  0 15:38 ?        00:00:00 [zeitgeist-datah] <defunct>
+riccardo  409560  409471  0 15:38 ?        00:00:00 [sh] <defunct>
+riccardo  409561  409471  0 15:38 ?        00:00:00 [applet.py] <defunct>
+riccardo  409562  409471 33 15:38 ?        00:00:20 /usr/bin/jamesdsp --tray
+riccardo  409566  409471  0 15:38 ?        00:00:00 [agent] <defunct>
+riccardo  409567  409471  0 15:38 ?        00:00:00 [xapp-sn-watcher] <defunct>
+riccardo  409570  409471  0 15:38 ?        00:00:00 [env] <defunct>
+riccardo  409575  409471  0 15:38 ?        00:00:00 [qpwgraph] <defunct>
+riccardo  409581  409471  0 15:38 ?        00:00:00 [snap] <defunct>
+riccardo  409582  409471  0 15:38 ?        00:00:00 [blueberry-tray] <defunct>
+riccardo  409583  409471  0 15:38 ?        00:00:00 [blueberry-obex-] <defunct>
+riccardo  409594  409471  0 15:38 ?        00:00:00 [xdg-user-dirs-u] <defunct>
+riccardo  409597  409471  0 15:38 ?        00:00:00 [pam_kwallet_ini] <defunct>

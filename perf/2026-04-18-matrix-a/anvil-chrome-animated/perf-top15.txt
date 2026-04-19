@@ -1,0 +1,15 @@
+     8.37%  [.] 0x00000000001773b4                                                                                                                                      -      -            
+     6.97%  [.] smithay::backend::drm::compositor::DrmCompositor<A,F,U,G>::render_frame                                                                                 -      -            
+     6.69%  [.] core::ptr::drop_in_place<core::option::Option<wayland_server::protocol::wl_output::WlOutput>>                                                           -      -            
+     2.57%  [.] 0x00000000001495b7                                                                                                                                      -      -            
+     2.52%  [.] 0x00000000003a1564                                                                                                                                      -      -            
+     2.26%  [.] <std::sync::poison::mutex::Mutex<smithay::wayland::compositor::cache::CachedState<T>> as smithay::wayland::compositor::cache::Cache>::commit            -      -            
+     2.02%  [.] smithay::wayland::compositor::tree::PrivateSurfaceData::map                                                                                             -      -            
+     1.97%  [.] <smithay::backend::renderer::gles::GlesRenderer as smithay::backend::renderer::ImportDma>::import_dmabuf                                                -      -            
+     1.97%  [.] 0x00000000000048a0                                                                                                                                      -      -            
+     1.88%  [.] 0x000000000001ad30                                                                                                                                      -      -            
+     1.71%  [.] <smithay::backend::renderer::gles::GlesFrame as smithay::backend::renderer::Frame>::context_id                                                          -      -            
+     1.71%  [.] smithay::desktop::wayland::popup::manager::PopupManager::popups_for_surface                                                                             -      -            
+     1.61%  [.] <smithay::backend::renderer::gles::GlesRenderer as smithay::backend::renderer::Bind<smithay::backend::allocator::dmabuf::Dmabuf>>::bind                 -      -            
+     1.61%  [.] alloc::sync::Arc<T,A>::drop_slow                                                                                                                        -      -            
+     1.61%  [.] alloc::vec::Vec<T,A>::retain                                                                                                                            -      -            

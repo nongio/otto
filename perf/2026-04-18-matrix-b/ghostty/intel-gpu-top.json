@@ -1,0 +1,1762 @@
+[
+
+{
+	"period": {
+		"duration": 3.560626,
+		"unit": "ms"
+	},
+	"frequency": {
+		"requested": 0.000000,
+		"actual": 0.000000,
+		"unit": "MHz"
+	},
+	"interrupts": {
+		"count": 1123.397964,
+		"unit": "irq/s"
+	},
+	"rc6": {
+		"value": 90.267273,
+		"unit": "%"
+	},
+	"power": {
+		"GPU": 0.805660,
+		"Package": 24.735462,
+		"unit": "W"
+	},
+	"engines": {
+		"Render/3D": {
+			"busy": 17.036358,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"Blitter": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"Video": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"VideoEnhance": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		}
+	},
+	"clients": {
+		"4294629760": {
+			"name": "otto",
+			"pid": "337536",
+			"memory": {
+				"system": {
+					"total": "390127616",
+					"shared": "109330432",
+					"resident": "390127616",
+					"purgeable": "835584",
+					"active": "163373056"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "82.678986",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629136": {
+			"name": "ghostty",
+			"pid": "338160",
+			"memory": {
+				"system": {
+					"total": "69439488",
+					"shared": "37748736",
+					"resident": "69439488",
+					"purgeable": "573440",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629691": {
+			"name": "otto-bar",
+			"pid": "337605",
+			"memory": {
+				"system": {
+					"total": "14405632",
+					"shared": "917504",
+					"resident": "14405632",
+					"purgeable": "258048",
+					"active": "393216"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629702": {
+			"name": "Xwayland",
+			"pid": "337594",
+			"memory": {
+				"system": {
+					"total": "6479872",
+					"shared": "32768",
+					"resident": "6479872",
+					"purgeable": "393216",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		}
+	}
+},
+{
+	"period": {
+		"duration": 1003.075321,
+		"unit": "ms"
+	},
+	"frequency": {
+		"requested": 35.889628,
+		"actual": 36.886562,
+		"unit": "MHz"
+	},
+	"interrupts": {
+		"count": 29.908023,
+		"unit": "irq/s"
+	},
+	"rc6": {
+		"value": 93.698535,
+		"unit": "%"
+	},
+	"power": {
+		"GPU": 0.187716,
+		"Package": 4.866443,
+		"unit": "W"
+	},
+	"engines": {
+		"Render/3D": {
+			"busy": 6.225914,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"Blitter": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"Video": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"VideoEnhance": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		}
+	},
+	"clients": {
+		"4294629760": {
+			"name": "otto",
+			"pid": "337536",
+			"memory": {
+				"system": {
+					"total": "390127616",
+					"shared": "109330432",
+					"resident": "390127616",
+					"purgeable": "966656",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "5.702707",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629136": {
+			"name": "ghostty",
+			"pid": "338160",
+			"memory": {
+				"system": {
+					"total": "69439488",
+					"shared": "37748736",
+					"resident": "69439488",
+					"purgeable": "573440",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.301663",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629691": {
+			"name": "otto-bar",
+			"pid": "337605",
+			"memory": {
+				"system": {
+					"total": "14405632",
+					"shared": "917504",
+					"resident": "14405632",
+					"purgeable": "258048",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629702": {
+			"name": "Xwayland",
+			"pid": "337594",
+			"memory": {
+				"system": {
+					"total": "6479872",
+					"shared": "32768",
+					"resident": "6479872",
+					"purgeable": "393216",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		}
+	}
+},
+{
+	"period": {
+		"duration": 1003.226933,
+		"unit": "ms"
+	},
+	"frequency": {
+		"requested": 64.790924,
+		"actual": 65.787707,
+		"unit": "MHz"
+	},
+	"interrupts": {
+		"count": 34.887421,
+		"unit": "irq/s"
+	},
+	"rc6": {
+		"value": 91.097084,
+		"unit": "%"
+	},
+	"power": {
+		"GPU": 0.322507,
+		"Package": 5.888652,
+		"unit": "W"
+	},
+	"engines": {
+		"Render/3D": {
+			"busy": 8.754260,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"Blitter": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"Video": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"VideoEnhance": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		}
+	},
+	"clients": {
+		"4294629760": {
+			"name": "otto",
+			"pid": "337536",
+			"memory": {
+				"system": {
+					"total": "390193152",
+					"shared": "109330432",
+					"resident": "390193152",
+					"purgeable": "966656",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "7.586103",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629136": {
+			"name": "ghostty",
+			"pid": "338160",
+			"memory": {
+				"system": {
+					"total": "69439488",
+					"shared": "37748736",
+					"resident": "69439488",
+					"purgeable": "573440",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "1.084424",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629691": {
+			"name": "otto-bar",
+			"pid": "337605",
+			"memory": {
+				"system": {
+					"total": "14405632",
+					"shared": "917504",
+					"resident": "14405632",
+					"purgeable": "258048",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629702": {
+			"name": "Xwayland",
+			"pid": "337594",
+			"memory": {
+				"system": {
+					"total": "6479872",
+					"shared": "32768",
+					"resident": "6479872",
+					"purgeable": "393216",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		}
+	}
+},
+{
+	"period": {
+		"duration": 1002.932598,
+		"unit": "ms"
+	},
+	"frequency": {
+		"requested": 39.883039,
+		"actual": 40.880115,
+		"unit": "MHz"
+	},
+	"interrupts": {
+		"count": 38.885963,
+		"unit": "irq/s"
+	},
+	"rc6": {
+		"value": 91.493918,
+		"unit": "%"
+	},
+	"power": {
+		"GPU": 0.237585,
+		"Package": 5.146224,
+		"unit": "W"
+	},
+	"engines": {
+		"Render/3D": {
+			"busy": 8.395949,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"Blitter": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"Video": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"VideoEnhance": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		}
+	},
+	"clients": {
+		"4294629760": {
+			"name": "otto",
+			"pid": "337536",
+			"memory": {
+				"system": {
+					"total": "390717440",
+					"shared": "109330432",
+					"resident": "390717440",
+					"purgeable": "901120",
+					"active": "163897344"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "7.999525",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629136": {
+			"name": "ghostty",
+			"pid": "338160",
+			"memory": {
+				"system": {
+					"total": "69439488",
+					"shared": "37748736",
+					"resident": "69439488",
+					"purgeable": "573440",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.585028",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629691": {
+			"name": "otto-bar",
+			"pid": "337605",
+			"memory": {
+				"system": {
+					"total": "14405632",
+					"shared": "917504",
+					"resident": "14405632",
+					"purgeable": "258048",
+					"active": "393216"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629702": {
+			"name": "Xwayland",
+			"pid": "337594",
+			"memory": {
+				"system": {
+					"total": "6479872",
+					"shared": "32768",
+					"resident": "6479872",
+					"purgeable": "393216",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		}
+	}
+},
+{
+	"period": {
+		"duration": 1004.056593,
+		"unit": "ms"
+	},
+	"frequency": {
+		"requested": 71.709105,
+		"actual": 71.709105,
+		"unit": "MHz"
+	},
+	"interrupts": {
+		"count": 27.886874,
+		"unit": "irq/s"
+	},
+	"rc6": {
+		"value": 97.570295,
+		"unit": "%"
+	},
+	"power": {
+		"GPU": 0.253306,
+		"Package": 4.592880,
+		"unit": "W"
+	},
+	"engines": {
+		"Render/3D": {
+			"busy": 2.347318,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"Blitter": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"Video": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"VideoEnhance": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		}
+	},
+	"clients": {
+		"4294629760": {
+			"name": "otto",
+			"pid": "337536",
+			"memory": {
+				"system": {
+					"total": "390717440",
+					"shared": "109330432",
+					"resident": "390717440",
+					"purgeable": "1490944",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "1.941430",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629136": {
+			"name": "ghostty",
+			"pid": "338160",
+			"memory": {
+				"system": {
+					"total": "69439488",
+					"shared": "37748736",
+					"resident": "69439488",
+					"purgeable": "573440",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.111978",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629691": {
+			"name": "otto-bar",
+			"pid": "337605",
+			"memory": {
+				"system": {
+					"total": "14405632",
+					"shared": "917504",
+					"resident": "14405632",
+					"purgeable": "258048",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629702": {
+			"name": "Xwayland",
+			"pid": "337594",
+			"memory": {
+				"system": {
+					"total": "6479872",
+					"shared": "32768",
+					"resident": "6479872",
+					"purgeable": "393216",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		}
+	}
+},
+{
+	"period": {
+		"duration": 1003.178327,
+		"unit": "ms"
+	},
+	"frequency": {
+		"requested": 82.737035,
+		"actual": 82.737035,
+		"unit": "MHz"
+	},
+	"interrupts": {
+		"count": 44.857428,
+		"unit": "irq/s"
+	},
+	"rc6": {
+		"value": 96.053184,
+		"unit": "%"
+	},
+	"power": {
+		"GPU": 0.378375,
+		"Package": 15.142972,
+		"unit": "W"
+	},
+	"engines": {
+		"Render/3D": {
+			"busy": 3.788600,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"Blitter": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"Video": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"VideoEnhance": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		}
+	},
+	"clients": {
+		"4294629760": {
+			"name": "otto",
+			"pid": "337536",
+			"memory": {
+				"system": {
+					"total": "390193152",
+					"shared": "109330432",
+					"resident": "390193152",
+					"purgeable": "1032192",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "3.484008",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629136": {
+			"name": "ghostty",
+			"pid": "338160",
+			"memory": {
+				"system": {
+					"total": "69439488",
+					"shared": "37748736",
+					"resident": "69439488",
+					"purgeable": "573440",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.214459",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629691": {
+			"name": "otto-bar",
+			"pid": "337605",
+			"memory": {
+				"system": {
+					"total": "14405632",
+					"shared": "917504",
+					"resident": "14405632",
+					"purgeable": "258048",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629702": {
+			"name": "Xwayland",
+			"pid": "337594",
+			"memory": {
+				"system": {
+					"total": "6479872",
+					"shared": "32768",
+					"resident": "6479872",
+					"purgeable": "393216",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		}
+	}
+},
+{
+	"period": {
+		"duration": 1003.640139,
+		"unit": "ms"
+	},
+	"frequency": {
+		"requested": 74.727980,
+		"actual": 63.767876,
+		"unit": "MHz"
+	},
+	"interrupts": {
+		"count": 44.836788,
+		"unit": "irq/s"
+	},
+	"rc6": {
+		"value": 94.736165,
+		"unit": "%"
+	},
+	"power": {
+		"GPU": 0.356126,
+		"Package": 19.481575,
+		"unit": "W"
+	},
+	"engines": {
+		"Render/3D": {
+			"busy": 5.125720,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"Blitter": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"Video": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"VideoEnhance": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		}
+	},
+	"clients": {
+		"4294629760": {
+			"name": "otto",
+			"pid": "337536",
+			"memory": {
+				"system": {
+					"total": "390193152",
+					"shared": "109330432",
+					"resident": "390193152",
+					"purgeable": "966656",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "4.782255",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629136": {
+			"name": "ghostty",
+			"pid": "338160",
+			"memory": {
+				"system": {
+					"total": "69439488",
+					"shared": "37748736",
+					"resident": "69439488",
+					"purgeable": "573440",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.245435",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629691": {
+			"name": "otto-bar",
+			"pid": "337605",
+			"memory": {
+				"system": {
+					"total": "14405632",
+					"shared": "917504",
+					"resident": "14405632",
+					"purgeable": "258048",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629702": {
+			"name": "Xwayland",
+			"pid": "337594",
+			"memory": {
+				"system": {
+					"total": "6479872",
+					"shared": "32768",
+					"resident": "6479872",
+					"purgeable": "393216",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		}
+	}
+},
+{
+	"period": {
+		"duration": 1003.263408,
+		"unit": "ms"
+	},
+	"frequency": {
+		"requested": 32.892658,
+		"actual": 33.889405,
+		"unit": "MHz"
+	},
+	"interrupts": {
+		"count": 17.941450,
+		"unit": "irq/s"
+	},
+	"rc6": {
+		"value": 94.873065,
+		"unit": "%"
+	},
+	"power": {
+		"GPU": 0.189749,
+		"Package": 19.353833,
+		"unit": "W"
+	},
+	"engines": {
+		"Render/3D": {
+			"busy": 5.066038,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"Blitter": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"Video": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"VideoEnhance": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		}
+	},
+	"clients": {
+		"4294629760": {
+			"name": "otto",
+			"pid": "337536",
+			"memory": {
+				"system": {
+					"total": "390193152",
+					"shared": "109330432",
+					"resident": "390193152",
+					"purgeable": "966656",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "4.845366",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629136": {
+			"name": "ghostty",
+			"pid": "338160",
+			"memory": {
+				"system": {
+					"total": "69505024",
+					"shared": "37748736",
+					"resident": "69505024",
+					"purgeable": "638976",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.198290",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629691": {
+			"name": "otto-bar",
+			"pid": "337605",
+			"memory": {
+				"system": {
+					"total": "14405632",
+					"shared": "917504",
+					"resident": "14405632",
+					"purgeable": "258048",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629702": {
+			"name": "Xwayland",
+			"pid": "337594",
+			"memory": {
+				"system": {
+					"total": "6479872",
+					"shared": "32768",
+					"resident": "6479872",
+					"purgeable": "393216",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		}
+	}
+},
+{
+	"period": {
+		"duration": 1003.358810,
+		"unit": "ms"
+	},
+	"frequency": {
+		"requested": 81.725500,
+		"actual": 71.758975,
+		"unit": "MHz"
+	},
+	"interrupts": {
+		"count": 39.866097,
+		"unit": "irq/s"
+	},
+	"rc6": {
+		"value": 92.748068,
+		"unit": "%"
+	},
+	"power": {
+		"GPU": 0.412068,
+		"Package": 19.296454,
+		"unit": "W"
+	},
+	"engines": {
+		"Render/3D": {
+			"busy": 7.113611,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"Blitter": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"Video": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"VideoEnhance": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		}
+	},
+	"clients": {
+		"4294629760": {
+			"name": "otto",
+			"pid": "337536",
+			"memory": {
+				"system": {
+					"total": "390193152",
+					"shared": "109330432",
+					"resident": "390193152",
+					"purgeable": "966656",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "6.774948",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629136": {
+			"name": "ghostty",
+			"pid": "338160",
+			"memory": {
+				"system": {
+					"total": "69505024",
+					"shared": "37748736",
+					"resident": "69505024",
+					"purgeable": "638976",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.264086",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629691": {
+			"name": "otto-bar",
+			"pid": "337605",
+			"memory": {
+				"system": {
+					"total": "14405632",
+					"shared": "917504",
+					"resident": "14405632",
+					"purgeable": "258048",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629702": {
+			"name": "Xwayland",
+			"pid": "337594",
+			"memory": {
+				"system": {
+					"total": "6479872",
+					"shared": "32768",
+					"resident": "6479872",
+					"purgeable": "393216",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		}
+	}
+},
+{
+	"period": {
+		"duration": 1003.455428,
+		"unit": "ms"
+	},
+	"frequency": {
+		"requested": 61.786501,
+		"actual": 60.789945,
+		"unit": "MHz"
+	},
+	"interrupts": {
+		"count": 42.851928,
+		"unit": "irq/s"
+	},
+	"rc6": {
+		"value": 95.351276,
+		"unit": "%"
+	},
+	"power": {
+		"GPU": 0.361422,
+		"Package": 19.213212,
+		"unit": "W"
+	},
+	"engines": {
+		"Render/3D": {
+			"busy": 4.483830,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"Blitter": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"Video": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		},
+		"VideoEnhance": {
+			"busy": 0.000000,
+			"sema": 0.000000,
+			"wait": 0.000000,
+			"unit": "%"
+		}
+	},
+	"clients": {
+		"4294629760": {
+			"name": "otto",
+			"pid": "337536",
+			"memory": {
+				"system": {
+					"total": "390193152",
+					"shared": "109330432",
+					"resident": "390193152",
+					"purgeable": "966656",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "4.160694",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629136": {
+			"name": "ghostty",
+			"pid": "338160",
+			"memory": {
+				"system": {
+					"total": "69439488",
+					"shared": "37748736",
+					"resident": "69439488",
+					"purgeable": "573440",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.239089",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629691": {
+			"name": "otto-bar",
+			"pid": "337605",
+			"memory": {
+				"system": {
+					"total": "14405632",
+					"shared": "917504",
+					"resident": "14405632",
+					"purgeable": "258048",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		},
+		"4294629702": {
+			"name": "Xwayland",
+			"pid": "337594",
+			"memory": {
+				"system": {
+					"total": "6479872",
+					"shared": "32768",
+					"resident": "6479872",
+					"purgeable": "393216",
+					"active": "0"
+				}
+			},
+			"engine-classes": {
+				"Render/3D": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Blitter": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"Video": {
+					"busy": "0.000000",
+					"unit": "%"
+				},
+				"VideoEnhance": {
+					"busy": "0.000000",
+					"unit": "%"
+				}
+			}
+		}
+	}
+}

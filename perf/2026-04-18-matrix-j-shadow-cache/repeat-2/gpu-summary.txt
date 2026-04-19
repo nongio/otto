@@ -1,0 +1,10 @@
+samples: 10
+RCS busy %    avg= 49.77  min= 45.87  max= 61.19
+GPU power W   avg=  4.88  min=  4.01  max=  5.33
+Pkg power W   avg= 23.85  min= 23.11  max= 24.43
+Freq MHz      avg=   701  min=   567  max=   757
+RC6 %         avg= 49.12  min= 37.94  max= 52.94
+
+Per-client RCS avg:
+  otto                      pid= 469279  avg= 45.8%  max= 57.5%
+  chromium                  pid= 470139  avg=  3.6%  max=  3.9%

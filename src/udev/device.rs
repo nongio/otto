@@ -491,6 +491,7 @@ impl Otto<UdevData> {
                 idle_countdown: 0,
                 prefetched_scene_damage: None,
                 scene_dmabuf_element: None,
+                test_overlay_element: None,
                 #[cfg(feature = "renderer_sync")]
                 pending_gpu_fence: SyncPoint::signaled(),
             };

@@ -1,0 +1,17 @@
+    15.51%  [.] smithay::backend::renderer::damage::OutputDamageTracker::render_output                              -      -            
+     9.86%  [.] 0x000000000039f2c6                                                                                  -      -            
+     9.86%  [.] 0x00000000003b488a                                                                                  -      -            
+     8.01%  [.] 0x00000000000a339f                                                                                  -      -            
+     6.47%  [.] SkMatrix::computeTypeMask() const                                                                   -      -            
+     6.44%  [.] GrProcessorSet::visitProxies(std::function<void (GrSurfaceProxy*, skgpu::Mipmapped)> const&) const  -      -            
+     5.67%  [.] 0x00000000016d0f7e                                                                                  -      -            
+     5.65%  [.] calloop::loop_logic::EventLoop<Data>::dispatch                                                      -      -            
+     4.43%  [.] __vdso_clock_gettime                                                                                -      -            
+     4.33%  [.] skgpu::Swizzle::Swizzle(char const*)                                                                -      -            
+     4.18%  [.] <smithay::backend::renderer::multigpu::MultiFrame<R,T> as core::ops::drop::Drop>::drop              -      -            
+     3.86%  [.] 0x00000000016b1c70                                                                                  -      -            
+     3.15%  [.] indexmap::map::IndexMap<K,V,S>::get_index_of                                                        -      -            
+     3.15%  [.] smithay::backend::drm::compositor::FrameState<B,F>::test_state_complete                             -      -            
+     3.15%  [.] 0x00000000000a5c21                                                                                  -      -            
+     3.15%  [.] 0x00000000001337e1                                                                                  -      -            
+     3.15%  [.] 0x00000000016cb02e                                                                                  -      -            

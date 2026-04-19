@@ -1,0 +1,20 @@
+     4.99%  [.] skia_safe::core::m44::M44::to_m33                                                                                                                                          -      -            
+     3.50%  [.] 0x000000000013451c                                                                                                                                                         -      -            
+     2.51%  [.] <indextree::traverse::Traverse<T> as core::iter::traits::iterator::Iterator>::next                                                                                         -      -            
+     2.44%  [.] wayland_backend::sys::server_impl::InnerHandle::flush                                                                                                                      -      -            
+     2.42%  [k] 0xffffffffb36001c8                                                                                                                                                         -      -            
+     2.08%  [.] <wayland_protocols::wp::presentation_time::generated::server::wp_presentation_feedback::WpPresentationFeedback as wayland_server::Resource>::send_event                    -      -            
+     2.08%  [.] skgpu::ganesh::OpsTask::onPrepare(GrOpFlushState*)                                                                                                                         -      -            
+     2.08%  [.] 0x00000000016b6da1                                                                                                                                                         -      -            
+     2.06%  [.] smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement<R>::from_surface                                                                                 -      -            
+     1.97%  [.] 0x00000000017569b0                                                                                                                                                         -      -            
+     1.96%  [.] 0x00000000003d58f2                                                                                                                                                         -      -            
+     1.95%  [.] 0x0000000000130ff9                                                                                                                                                         -      -            
+     1.93%  [.] <smallvec::SmallVec<A> as core::iter::traits::collect::Extend<<A as smallvec::Array>::Item>>::extend                                                                       -      -            
+     1.89%  [.] smithay::wayland::presentation::PresentationFeedbackCachedState::add_callback                                                                                              -      -            
+     1.88%  [.] malloc                                                                                                                                                                     -      -            
+     1.68%  [.] SkRegion::intersects(SkIRect const&) const                                                                                                                                 -      -            
+     1.62%  [.] smithay::backend::allocator::dmabuf::DmabufSource::new                                                                                                                     -      -            
+     1.61%  [.] otto::shell::<impl smithay::wayland::compositor::CompositorHandler for otto::state::Otto<BackendData>>::commit                                                             -      -            
+     1.49%  [.] calloop::sys::Poll::poll                                                                                                                                                   -      -            
+     1.46%  [.] smithay::wayland::compositor::add_pre_commit_hook::{{closure}}                                                                                                             -      -            

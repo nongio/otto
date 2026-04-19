@@ -1,0 +1,88 @@
+     8.37%  [.] 0x00000000001773b4                                                                                                                                      -      -            
+     6.97%  [.] smithay::backend::drm::compositor::DrmCompositor<A,F,U,G>::render_frame                                                                                 -      -            
+     6.69%  [.] core::ptr::drop_in_place<core::option::Option<wayland_server::protocol::wl_output::WlOutput>>                                                           -      -            
+     2.57%  [.] 0x00000000001495b7                                                                                                                                      -      -            
+     2.52%  [.] 0x00000000003a1564                                                                                                                                      -      -            
+     2.26%  [.] <std::sync::poison::mutex::Mutex<smithay::wayland::compositor::cache::CachedState<T>> as smithay::wayland::compositor::cache::Cache>::commit            -      -            
+     2.02%  [.] smithay::wayland::compositor::tree::PrivateSurfaceData::map                                                                                             -      -            
+     1.97%  [.] <smithay::backend::renderer::gles::GlesRenderer as smithay::backend::renderer::ImportDma>::import_dmabuf                                                -      -            
+     1.97%  [.] 0x00000000000048a0                                                                                                                                      -      -            
+     1.88%  [.] 0x000000000001ad30                                                                                                                                      -      -            
+     1.71%  [.] <smithay::backend::renderer::gles::GlesFrame as smithay::backend::renderer::Frame>::context_id                                                          -      -            
+     1.71%  [.] smithay::desktop::wayland::popup::manager::PopupManager::popups_for_surface                                                                             -      -            
+     1.61%  [.] <smithay::backend::renderer::gles::GlesRenderer as smithay::backend::renderer::Bind<smithay::backend::allocator::dmabuf::Dmabuf>>::bind                 -      -            
+     1.61%  [.] alloc::sync::Arc<T,A>::drop_slow                                                                                                                        -      -            
+     1.61%  [.] alloc::vec::Vec<T,A>::retain                                                                                                                            -      -            
+     1.61%  [.] smithay::wayland::compositor::cache::MultiCache::commit                                                                                                 -      -            
+     1.61%  [.] smithay::wayland::compositor::tree::PrivateSurfaceData::with_states                                                                                     -      -            
+     1.61%  [.] 0x0000000000009eef                                                                                                                                      -      -            
+     1.61%  [.] 0x0000000000fa8410                                                                                                                                      -      -            
+     1.60%  [.] <calloop::sources::generic::Generic<F,E> as calloop::sources::EventSource>::process_events                                                              -      -            
+     1.60%  [.] <calloop::sources::timer::Timer as calloop::sources::EventSource>::unregister                                                                           -      -            
+     1.60%  [.] smithay::backend::renderer::gles::texture::TextureSync::update_read                                                                                     -      -            
+     1.50%  [.] cfree                                                                                                                                                   -      -            
+     1.50%  [.] smithay::desktop::wayland::popup::manager::PopupManager::commit                                                                                         -      -            
+     1.50%  [.] 0x000000000005b733                                                                                                                                      -      -            
+     1.45%  [.] 0x0000000001e518e0                                                                                                                                      -      -            
+     1.37%  [.] 0x00000000016b584f                                                                                                                                      -      -            
+     1.33%  [.] 0x000000000005b718                                                                                                                                      -      -            
+     1.30%  [.] <T as core::any::Any>::type_id                                                                                                                          -      -            
+     1.29%  [.] core::ptr::drop_in_place<wayland_protocols::wp::linux_drm_syncobj::v1::generated::server::wp_linux_drm_syncobj_surface_v1::WpLinuxDrmSyncobjSurfaceV1>  -      -            
+     1.21%  [.] wl_client_get_destroy_listener                                                                                                                          -      -            
+     1.20%  [.] hashbrown::rustc_entry::<impl hashbrown::map::HashMap<K,V,S,A>>::rustc_entry                                                                            -      -            
+     1.20%  [.] 0x0000000000006977                                                                                                                                      -      -            
+     1.20%  [.] 0x000000000176c7ad                                                                                                                                      -      -            
+     1.14%  [.] <drm::control::Events as core::iter::traits::iterator::Iterator>::next                                                                                  -      -            
+     1.11%  [.] 0x0000000000133efa                                                                                                                                      -      -            
+     0.99%  [.] calloop::loop_logic::LoopHandle<Data>::insert_source                                                                                                    -      -            
+     0.93%  [.] sharded_slab::pool::Pool<T,C>::get                                                                                                                      -      -            
+     0.93%  [.] 0x000000000017c6c6                                                                                                                                      -      -            
+     0.92%  [.] std::sys::pal::unix::time::Timespec::now                                                                                                                -      -            
+     0.87%  [.] <std::sync::poison::mutex::Mutex<smithay::wayland::compositor::cache::CachedState<T>> as smithay::wayland::compositor::cache::Cache>::apply_state       -      -            
+     0.79%  [.] <wayland_server::dispatch::ResourceData<I,U> as wayland_backend::sys::server::ObjectData<D>>::destroyed                                                 -      -            
+     0.74%  [.] smithay::wayland::compositor::tree::PrivateSurfaceData::commit                                                                                          -      -            
+     0.74%  [.] 0x00000000016b1d10                                                                                                                                      -      -            
+     0.70%  [.] smithay::wayland::compositor::tree::PrivateSurfaceData::map                                                                                             -      -            
+     0.62%  [.] smithay::desktop::wayland::utils::surface_primary_scanout_output                                                                                        -      -            
+     0.62%  [.] smithay::utils::geometry::Rectangle<N,Kind>::subtract_rects_many_in_place                                                                               -      -            
+     0.61%  [.] <smithay::backend::renderer::gles::GlesRenderer as smithay::backend::renderer::Renderer>::context_id                                                    -      -            
+     0.61%  [.] __vdso_clock_gettime                                                                                                                                    -      -            
+     0.60%  [.] <alloc::vec::Vec<T,A> as core::ops::drop::Drop>::drop                                                                                                   -      -            
+     0.60%  [.] <tracing_subscriber::registry::sharded::Registry as tracing_core::subscriber::Subscriber>::current_span                                                 -      -            
+     0.60%  [.] drm::control::property::<impl core::convert::From<drm::control::property::Value> for u64>::from                                                         -      -            
+     0.60%  [.] smithay::wayland::compositor::transaction::TransactionState::insert                                                                                     -      -            
+     0.60%  [.] smithay::wayland::compositor::tree::PrivateSurfaceData::map                                                                                             -      -            
+     0.50%  [.] <wayland_server::dispatch::ResourceData<I,U> as wayland_backend::sys::server::ObjectData<D>>::request                                                   -      -            
+     0.50%  [.] 0x0000000000818a67                                                                                                                                      -      -            
+     0.47%  [.] smithay::wayland::compositor::cache::MultiCache::get                                                                                                    -      -            
+     0.46%  [.] __rustc::__rust_no_alloc_shim_is_unstable_v2                                                                                                            -      -            
+     0.46%  [.] hashbrown::set::HashSet<T,S,A>::retain                                                                                                                  -      -            
+     0.46%  [.] 0x000000000017c849                                                                                                                                      -      -            
+     0.41%  [.] <alloc::vec::Vec<T> as alloc::vec::spec_from_iter::SpecFromIter<T,I>>::from_iter                                                                        -      -            
+     0.41%  [.] __errno_location                                                                                                                                        -      -            
+     0.41%  [.] 0x00000000000a4760                                                                                                                                      -      -            
+     0.41%  [.] 0x000000000013f2ed                                                                                                                                      -      -            
+     0.37%  [.] __glDispatchGetCurrentThreadState                                                                                                                       -      -            
+     0.37%  [.] smithay::backend::drm::surface::DrmSurface::claim_plane                                                                                                 -      -            
+     0.37%  [.] 0x000000000006427d                                                                                                                                      -      -            
+     0.33%  [.] <std::sync::poison::mutex::Mutex<smithay::wayland::compositor::cache::CachedState<T>> as smithay::wayland::compositor::cache::Cache>::commit            -      -            
+     0.33%  [.] <wayland_server::protocol::wl_surface::WlSurface as wayland_server::Resource>::parse_request                                                            -      -            
+     0.33%  [.] anvil::state::update_primary_scanout_output                                                                                                             -      -            
+     0.33%  [.] core::ops::function::impls::<impl core::ops::function::FnMut<A> for &mut F>::call_mut                                                                   -      -            
+     0.33%  [.] smithay::backend::renderer::multigpu::MultiRenderer<R,T>::import_dmabuf_internal                                                                        -      -            
+     0.33%  [.] smithay::backend::renderer::multigpu::MultiTexture::get                                                                                                 -      -            
+     0.33%  [.] smithay::wayland::compositor::tree::PrivateSurfaceData::map                                                                                             -      -            
+     0.33%  [.] 0x00000000001518e0                                                                                                                                      -      -            
+     0.33%  [.] 0x000000000017c614                                                                                                                                      -      -            
+     0.30%  [.] core::ops::function::FnOnce::call_once                                                                                                                  -      -            
+     0.28%  [.] <smithay::wayland::compositor::transaction::PendingTransaction as core::default::Default>::default                                                      -      -            
+     0.28%  [.] core::ptr::drop_in_place<smithay::backend::renderer::multigpu::GpuSingleTexture>                                                                        -      -            
+     0.28%  [.] core::time::Duration::from_secs_f64                                                                                                                     -      -            
+     0.28%  [.] malloc                                                                                                                                                  -      -            
+     0.28%  [.] smithay::wayland::compositor::transaction::PendingTransaction::insert_state                                                                             -      -            
+     0.28%  [.] smithay::wayland::compositor::tree::PrivateSurfaceData::with_states                                                                                     -      -            
+     0.28%  [.] smithay::wayland::compositor::tree::PrivateSurfaceData::with_states                                                                                     -      -            
+     0.28%  [.] 0x00000000000fe541                                                                                                                                      -      -            
+     0.28%  [.] 0x000000000012745b                                                                                                                                      -      -            
+     0.28%  [.] 0x00000000003b05a2                                                                                                                                      -      -            
+     0.28%  [.] 0x00000000003b4666                                                                                                                                      -      -            
