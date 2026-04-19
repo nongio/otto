@@ -8,6 +8,31 @@ biggest single lever left after the Skia/lay-rs optimisations in PLAN.md.
 
 ---
 
+## Target plane layout (per output, bottom → top)
+
+```
+6  Dock                   overlay plane   SceneDmabufElement (swapchain)
+5  Popups                 overlay plane   Wayland surface dmabuf
+4  Overlay UI             overlay plane   SceneDmabufElement (swapchain)
+   (app switcher, workspace selector,
+    layer_shell_overlay, OSD, DnD)
+3  Top window             overlay plane   Wayland surface dmabuf  ← already working
+2  Other windows          overlay planes  Wayland surface dmabufs (one plane each)
+1  Background             primary plane   SceneDmabufElement (swapchain)
+   (background_view + layer_shell_bg)
+   ────────────────────────────────────
+   Cursor                 cursor plane    always on
+```
+
+Planes 1, 4, 6 are Skia-rendered scenes exported as dmabufs.
+Planes 2, 3, 5 are raw Wayland client dmabufs handed straight to KMS.
+Total overlays needed: up to 5 + N windows; with 6 overlays available this
+covers the common case (1 focused window + overlay UI + dock + popups).
+When a plane assignment fails (format mismatch, overlap, scaling) Smithay falls
+back to GPU compositing for that element only.
+
+---
+
 ## What we have proven (2026-04-19)
 
 - **Cursor → cursor plane**: works, always on.
