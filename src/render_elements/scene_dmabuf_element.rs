@@ -70,17 +70,13 @@ use crate::{
 /// allocate a new GBM buffer when the output dimensions change.
 #[derive(Clone)]
 pub struct SceneDmabufElement {
-    /// Stable identity, kept outside the Mutex so [`Element::id`] can return
-    /// `&Id` without locking.
     id: Id,
-    /// Exported dmabuf for the GBM buffer that backs the Skia surface.
-    /// Set once by [`Self::ensure_buffer`] and never replaced for the
-    /// lifetime of this element. Held outside the Mutex so
-    /// [`RenderElement::underlying_storage`] can return `&Dmabuf`.
-    /// On resize, construct a new `SceneDmabufElement`.
     dmabuf: Arc<OnceLock<Dmabuf>>,
-    /// Mutable inner state behind a Mutex for cheap clones.
     inner: Arc<Mutex<Inner>>,
+    /// Position of this element in physical output coordinates.
+    pub position: (i32, i32),
+    /// Global plane alpha (0.0–1.0). Passed to the KMS plane `alpha` property.
+    pub plane_alpha: f32,
 }
 
 struct Inner {
@@ -128,6 +124,8 @@ impl SceneDmabufElement {
                 skia_surface: None,
                 last_update: Instant::now(),
             })),
+            position: (0, 0),
+            plane_alpha: 1.0,
         }
     }
 
@@ -227,12 +225,12 @@ impl SceneDmabufElement {
         let canvas = skia_surface.canvas();
         let save_point = canvas.save();
 
-        // Test: solid background + a circle to confirm primary-plane content.
-        canvas.clear(layers::skia::Color4f::new(0.1, 0.1, 0.3, 1.0));
+        // Solid opaque fill — plane_alpha drives the blend, not pixel alpha.
+        canvas.clear(layers::skia::Color4f::new(0.2, 0.6, 1.0, 1.0));
         let mut paint = layers::skia::Paint::default();
-        paint.set_color(layers::skia::Color::from_rgb(255, 80, 80));
+        paint.set_color(layers::skia::Color::from_rgb(255, 255, 255));
         paint.set_anti_alias(true);
-        canvas.draw_circle((w as f32 / 2.0, h as f32 / 2.0), 200.0, &paint);
+        canvas.draw_circle((w as f32 / 2.0, h as f32 / 2.0), 80.0, &paint);
         canvas.restore_to_count(save_point);
         skia_surface.gr_context.flush_and_submit_surface(
             &mut skia_surface.surface,
@@ -268,8 +266,7 @@ impl Element for SceneDmabufElement {
     }
 
     fn location(&self, _scale: Scale<f64>) -> Point<i32, Physical> {
-        // Per-output element: always at (0,0) in the output framebuffer.
-        (0, 0).into()
+        self.position.into()
     }
 
     fn src(&self) -> Rectangle<f64, BufferCoord> {
@@ -279,7 +276,7 @@ impl Element for SceneDmabufElement {
 
     fn geometry(&self, _scale: Scale<f64>) -> Rectangle<i32, Physical> {
         let inner = self.inner.lock().unwrap();
-        Rectangle::new((0, 0).into(), (inner.size.0, inner.size.1).into())
+        Rectangle::new(self.position.into(), (inner.size.0, inner.size.1).into())
     }
 
     fn current_commit(&self) -> CommitCounter {
@@ -302,7 +299,7 @@ impl Element for SceneDmabufElement {
     }
 
     fn alpha(&self) -> f32 {
-        1.0
+        self.plane_alpha
     }
 
     fn kind(&self) -> Kind {

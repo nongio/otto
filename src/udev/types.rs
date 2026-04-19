@@ -150,6 +150,9 @@ pub struct SurfaceData {
     /// on first scanout-mode render of this surface.
     pub(super) scene_dmabuf_element:
         Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
+    /// Test: semi-transparent overlay element.
+    pub(super) test_overlay_element:
+        Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
     /// Deferred GPU sync point from the previous frame.
     ///
     /// Instead of blocking immediately after `render_frame()`, we store the
