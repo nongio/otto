@@ -17,19 +17,27 @@ biggest single lever left after the Skia/lay-rs optimisations in PLAN.md.
    (app switcher, workspace selector,
     layer_shell_overlay, OSD, DnD)
 3  Top window             overlay plane   Wayland surface dmabuf  ← already working
-2  Other windows          overlay planes  Wayland surface dmabufs (one plane each)
+2  Windows / Expose       overlay plane   SceneDmabufElement (swapchain)
+   (all non-top windows rendered together;
+    expose mode renders into the same plane —
+    no transition cost, just a different render pass)
 1  Background             primary plane   SceneDmabufElement (swapchain)
    (background_view + layer_shell_bg)
    ────────────────────────────────────
    Cursor                 cursor plane    always on
 ```
 
-Planes 1, 4, 6 are Skia-rendered scenes exported as dmabufs.
-Planes 2, 3, 5 are raw Wayland client dmabufs handed straight to KMS.
-Total overlays needed: up to 5 + N windows; with 6 overlays available this
-covers the common case (1 focused window + overlay UI + dock + popups).
-When a plane assignment fails (format mismatch, overlap, scaling) Smithay falls
-back to GPU compositing for that element only.
+Planes 1, 2, 4, 6 are Skia-rendered scenes exported as dmabufs (SceneDmabufElement).
+Planes 3, 5 are raw Wayland client dmabufs handed straight to KMS.
+Total overlays: exactly 5, leaving 1 spare regardless of window count.
+
+Expose mode is a render-mode switch on plane 2: instead of compositing the
+non-top windows at their normal positions, the same SceneDmabufElement renders
+the expose grid. Same plane, same dmabuf slot — no layer rebuild or transition
+plane needed.
+
+When a plane assignment fails Smithay falls back to GPU compositing for that
+element only.
 
 ---
 
@@ -78,32 +86,30 @@ artifacts until we dropped `SceneDmabufElement` from the primary path.
 
 ---
 
-## P-Plane-1 — All visible non-overlapping windows on overlay planes
+## P-Plane-1 — Non-top windows + expose on a shared overlay plane
 
-**Current**: only the top focused window gets `Kind::ScanoutCandidate`.
-Other windows are composited into the scene.
+**Current**: non-top windows and expose are part of the lay-rs scene, composited
+into the primary plane via Skia every frame.
 
-**Target**: mark ALL window surface elements as `ScanoutCandidate`.  Smithay's
-`DrmCompositor` iterates planes top→bottom and atomic-tests each element;
-non-overlapping windows each get their own overlay plane automatically.
+**Target**: a dedicated `SceneDmabufElement` (swapchain) for all non-top windows.
+This element renders the `workspace_windows_container` layers (minus the top
+window) and is assigned to its own overlay plane.
 
-**Constraints**:
-- Overlapping windows: only one can be on a plane (the topmost one passes the
-  atomic test; the rest fall back to GPU composite).
-- Format: client must have submitted a dmabuf with a plane-compatible format
-  (ARGB8888 / XRGB8888 / ABGR2101010).  SHM buffers never qualify.
-- Scaling: overlay planes may not support arbitrary scaling — if window size ≠
-  buffer size the atomic test fails and Smithay falls through to GPU composite.
+Expose mode is a render-mode flag on the same element: when expose is active,
+render the expose grid into the same swapchain slot instead of the normal window
+layout.  No extra plane, no transition — just a different Skia draw pass into the
+same dmabuf.
 
-**Implementation**: change the element-building path to tag all window elements
-(not just the top one) with `Kind::ScanoutCandidate`.  No other change needed
-— Smithay handles the rest via atomic test.
+**Benefits**:
+- Fixed overlay budget: exactly 1 plane for all non-top windows, regardless of count.
+- Expose is free: same plane, same infrastructure, mode switch only.
+- No per-window format/scaling constraints (Skia composites them internally).
 
-**Expected impact**: on a two-window tiled layout, both windows avoid GPU
-composite.  Scales linearly with number of non-overlapping visible windows (up
-to 6 overlays).
+**Damage**: only re-render this plane when a non-top window has new damage or
+the expose animation is running.  Static backgrounds of non-top windows cost
+nothing.
 
-**Effort**: hours.  The change is one-line; the work is testing edge cases.
+**Effort**: 2 days.  Requires P-Plane-0 swapchain infra first (shared pattern).
 
 ---
 
