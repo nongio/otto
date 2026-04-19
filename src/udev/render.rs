@@ -27,7 +27,7 @@ use smithay::{
         drm::{DrmAccessError, DrmError, DrmEventMetadata, DrmNode},
         renderer::{
             damage::OutputDamageTracker,
-            element::{AsRenderElements, Kind},
+            element::Kind,
             Bind,
         },
         SwapBuffersError,
@@ -117,6 +117,14 @@ impl Otto<UdevData> {
             // somehow we got called with an invalid output
             return;
         };
+
+        // Release swapchain slots now that KMS has finished scanning them.
+        if let Some(el) = &surface.scene_dmabuf_element {
+            el.submitted();
+        }
+        if let Some(el) = &surface.test_overlay_element {
+            el.submitted();
+        }
 
         let schedule_render =
             match surface.compositor.frame_submitted() {
@@ -439,41 +447,23 @@ impl Otto<UdevData> {
         // before the surface mut-borrow) so we don't conflict with the
         // existing mutable borrows.
         if allow_direct_scanout && surface.scene_dmabuf_element.is_none() {
-            // Skip dmabuf setup if the output doesn't have a mode yet
-            // (transient at startup); we'll retry on the next render.
-            // The render path's scanout branch also falls back to the
-            // legacy SceneElement when scene_dmabuf_element is None.
             if let Some(mode) = output.current_mode() {
-                let size = (mode.size.w, mode.size.h);
                 use crate::render_elements::scene_dmabuf_element::SceneDmabufElement;
-                use smithay::backend::allocator::{
-                    gbm::{GbmAllocator, GbmBufferFlags},
-                    Fourcc,
-                };
+                use smithay::backend::allocator::Fourcc;
                 let element = SceneDmabufElement::new(
                     self.layers_engine.clone(),
-                    device_gbm.clone(),
-                    size,
-                    Fourcc::Abgr2101010,
+                    (mode.size.w, mode.size.h),
                 );
-                // Render from the per-output sub-tree, mirroring how
-                // `scene_element.for_output_layer(...)` is used below.
                 if let Some(ows) = self.workspaces.output_workspaces.get(&output.name()) {
                     element.set_output_root(ows.output_layer.id);
                 }
-                let mut allocator = GbmAllocator::new(
+                match element.ensure_swapchain(
                     device_gbm.clone(),
-                    GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,
-                );
-                match element.ensure_buffer(
-                    &mut allocator,
                     Fourcc::Abgr2101010,
                     surface.render_node,
                 ) {
                     Ok(()) => surface.scene_dmabuf_element = Some(element),
-                    Err(e) => {
-                        tracing::warn!("Failed to allocate scene dmabuf for {crtc:?}: {e}")
-                    }
+                    Err(e) => tracing::warn!("Failed to allocate scene dmabuf for {crtc:?}: {e}"),
                 }
             }
         }
@@ -482,24 +472,18 @@ impl Otto<UdevData> {
         if allow_direct_scanout && surface.test_overlay_element.is_none() {
             if output.current_mode().is_some() {
                 use crate::render_elements::scene_dmabuf_element::SceneDmabufElement;
-                use smithay::backend::allocator::{
-                    gbm::{GbmAllocator, GbmBufferFlags},
-                    Fourcc,
-                };
+                use smithay::backend::allocator::Fourcc;
                 let mut element = SceneDmabufElement::new(
                     self.layers_engine.clone(),
-                    device_gbm.clone(),
                     (600, 400),
-                    Fourcc::Argb8888,
                 );
                 element.position = (100, 100);
                 element.plane_alpha = 0.5;
-                let mut allocator = GbmAllocator::new(
+                match element.ensure_swapchain(
                     device_gbm.clone(),
-                    GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,
-                );
-                match element.ensure_buffer(&mut allocator, Fourcc::Argb8888, surface.render_node)
-                {
+                    Fourcc::Argb8888,
+                    surface.render_node,
+                ) {
                     Ok(()) => surface.test_overlay_element = Some(element),
                     Err(e) => tracing::warn!("Failed to allocate test overlay: {e}"),
                 }
@@ -1247,8 +1231,7 @@ pub(super) fn render_surface<'a>(
             // Test: semi-transparent overlay element — pushed first so it gets
             // a higher z-pos plane than the window below it.
             if let Some(test_overlay) = surface.test_overlay_element.clone() {
-                if test_overlay.ensure_render_target(renderer.as_mut()).is_ok() {
-                    test_overlay.update();
+                if test_overlay.render(renderer.as_mut()) {
                     elements.push(OutputRenderElements::from(
                         WorkspaceRenderElements::SceneDmabuf(test_overlay),
                     ));
