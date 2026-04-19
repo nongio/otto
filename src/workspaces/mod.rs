@@ -617,6 +617,40 @@ impl Workspaces {
         true
     }
 
+    /// Check whether direct scanout of the top window is allowed right now.
+    /// Geometry doesn't matter — Smithay scans out whatever the top window is;
+    /// the only requirements are that no overlay UI sits above it.
+    pub fn is_top_window_scanout_eligible(&self) -> bool {
+        if self.get_show_all() {
+            return false;
+        }
+        if self.app_switcher.alive() {
+            return false;
+        }
+        if self.osd.is_visible() {
+            return false;
+        }
+        // DIAG: `is_animating` sticks true after startup — some transition's
+        // on_finish never fires (handover open-knob #1). Bypass for now so
+        // we can confirm the scanout path works; fix separately.
+        // if self.is_animating.load(std::sync::atomic::Ordering::Relaxed) {
+        //     return false;
+        // }
+        true
+    }
+
+    /// Return the top (focused) window of the current workspace if there is one.
+    /// Used by the udev render path to pick a candidate for direct scanout.
+    pub fn get_top_window(&self) -> Option<WindowElement> {
+        let current_index = self.with_model(|m| m.current_workspace);
+        self.primary_output_workspaces()?
+            .spaces
+            .get(current_index)?
+            .elements()
+            .last()
+            .cloned()
+    }
+
     /// Get the fullscreen window from the current workspace, if any.
     /// Returns Some(WindowElement) if the current workspace is in fullscreen mode
     /// and has a fullscreen window.

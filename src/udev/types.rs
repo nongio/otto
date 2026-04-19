@@ -143,6 +143,13 @@ pub struct SurfaceData {
     /// first frame or after an idle wakeup); the draw phase falls back to
     /// calling `update()` inline in that case.
     pub(super) prefetched_scene_damage: Option<bool>,
+    /// Scene rendered into its own dmabuf for the multi-plane scanout path.
+    /// Used when [`crate::workspaces::Workspaces::is_top_window_scanout_eligible`]
+    /// is true: the top window goes on an overlay plane and the scene goes on
+    /// the primary plane via `UnderlyingStorage::Dmabuf`. Allocated lazily
+    /// on first scanout-mode render of this surface.
+    pub(super) scene_dmabuf_element:
+        Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
     /// Deferred GPU sync point from the previous frame.
     ///
     /// Instead of blocking immediately after `render_frame()`, we store the

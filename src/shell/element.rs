@@ -55,6 +55,11 @@ pub struct WindowElementInner {
     pub mirror_layer: Layer,
     pub workspace_index: AtomicUsize,
     pub fullscreen_workspace_index: AtomicUsize,
+    /// Set when this window is currently being direct-scanned-out to a KMS plane.
+    /// While true, surface commits should skip scene-graph damage propagation
+    /// (the buffer goes directly to the display, no compositing needed).
+    /// Set/cleared by the udev render path each frame.
+    pub is_scanned_out: AtomicBool,
     /// Cached stable ID derived from the wl_surface on first call.
     /// Survives after the wl_surface is destroyed (e.g. on window close).
     cached_id: OnceLock<ObjectId>,
@@ -78,8 +83,26 @@ impl WindowElement {
             app_id: "".to_string(),
             base_layer,
             mirror_layer,
+            is_scanned_out: AtomicBool::new(false),
             cached_id: OnceLock::new(),
         }))
+    }
+
+    /// True if this window is currently being direct-scanned-out (its buffer
+    /// goes straight to a KMS plane, bypassing Otto's scene composite).
+    pub fn is_scanned_out(&self) -> bool {
+        self.0
+            .is_scanned_out
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Mark whether this window is currently being scanned out. Returns the
+    /// previous value so callers can detect transitions (e.g. trigger a
+    /// one-shot damage refresh when scanout exits).
+    pub fn set_scanned_out(&self, scanned_out: bool) -> bool {
+        self.0
+            .is_scanned_out
+            .swap(scanned_out, std::sync::atomic::Ordering::Relaxed)
     }
     pub fn id(&self) -> ObjectId {
         self.0

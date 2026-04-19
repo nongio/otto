@@ -490,6 +490,7 @@ impl Otto<UdevData> {
                 avg_render_time_us: 2000.0, // start with 2ms estimate
                 idle_countdown: 0,
                 prefetched_scene_damage: None,
+                scene_dmabuf_element: None,
                 #[cfg(feature = "renderer_sync")]
                 pending_gpu_fence: SyncPoint::signaled(),
             };

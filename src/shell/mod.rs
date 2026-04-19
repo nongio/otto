@@ -202,7 +202,39 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
                     if let Some(window) = window {
                         window.on_commit();
 
-                        self.update_window_view(&window);
+                        // Skip scene damage propagation when this window is on a
+                        // scanout plane this frame — its buffer goes straight to
+                        // the display, no scene composite needed.
+                        let scanned_out = window.is_scanned_out();
+                        if !scanned_out {
+                            self.update_window_view(&window);
+                        }
+                        // Verification: log skipped/normal commit rates at 1Hz.
+                        {
+                            use std::sync::Mutex;
+                            use std::sync::OnceLock;
+                            use std::time::{Duration, Instant};
+                            static STATS: OnceLock<Mutex<(Instant, u32, u32)>> = OnceLock::new();
+                            let mut g = STATS
+                                .get_or_init(|| Mutex::new((Instant::now(), 0, 0)))
+                                .lock()
+                                .unwrap();
+                            if scanned_out {
+                                g.1 += 1;
+                            } else {
+                                g.2 += 1;
+                            }
+                            if g.0.elapsed() >= Duration::from_secs(1) {
+                                tracing::info!(
+                                    target: "otto::scanout",
+                                    "commits/s: skipped={} normal={}",
+                                    g.1, g.2,
+                                );
+                                g.0 = Instant::now();
+                                g.1 = 0;
+                                g.2 = 0;
+                            }
+                        }
 
                         // Update foreign toplevel list only if title or app_id actually changed
                         if let Some(handle) = root_id

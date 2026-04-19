@@ -9,6 +9,7 @@ otto_config.toml
 otto_config.*.toml
 
 wlcs/CMakeFiles/**/*
+wlcs/generated/
 
 # Product docs inbox (scratch space, not committed)
 docs/inbox/
@@ -24,3 +25,10 @@ pkg/
 *.tar.xz
 *.tar.zst
 specs/tmp/
+
+# Perf scratch — raw profiler data (large binary, not committed)
+perf.data
+perf.data.old
+*.skp
+perf/**/perf.data
+perf/**/perf.data.old

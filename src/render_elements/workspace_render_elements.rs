@@ -12,7 +12,7 @@ use smithay::{
 
 use crate::drawing::PointerRenderElement;
 
-use super::scene_element::SceneElement;
+use super::{scene_dmabuf_element::SceneDmabufElement, scene_element::SceneElement};
 
 #[cfg(feature = "fps_ticker")]
 use crate::drawing::FpsElement;
@@ -20,11 +20,13 @@ use crate::drawing::FpsElement;
 smithay::backend::renderer::element::render_elements! {
     pub WorkspaceRenderElements<'a, R> where
         R: ImportAll + ImportMem + 'a,
-        SceneElement: (RenderElement<R>);
+        SceneElement: (RenderElement<R>),
+        SceneDmabufElement: (RenderElement<R>);
     Pointer=PointerRenderElement<R>,
     Cursor=MemoryRenderBufferRenderElement<R>,
     Surface=WaylandSurfaceRenderElement<R>,
     Scene=SceneElement,
+    SceneDmabuf=SceneDmabufElement,
     // this is needed to make the macro work with a lifetime specifier in the where clauses
     PhantomElement=PhantomElement<'a>,
     #[cfg(feature = "fps_ticker")]

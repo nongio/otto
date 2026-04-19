@@ -32,7 +32,7 @@ libc = "0.2"
 shell-words = "1.1"
 tracing = { version = "0.1.37", features = [
     "max_level_trace",
-    "release_max_level_debug",
+    "release_max_level_trace",
 ] }
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 puffin_http = { version = "0.16", optional = true }
@@ -51,20 +51,21 @@ mpris = "2.0"
 otto-kit = { path = "components/otto-kit" }
 
 [dependencies.laye-rs]
-git = "https://github.com/nongio/layers"
-tag = "v1.12.0"
+# git = "https://github.com/nongio/layers"
+# tag = "v1.10.0"
+path = "../layers"
 features = ["export-taffy"]
 
 [dependencies.smithay-drm-extras]
-# path = "../smithay/smithay-drm-extras"
-git = "https://github.com/Smithay/smithay"
-rev = "f9d4d7ffd82d743fb89737b3ffaed57505b477d1"
+path = "../smithay/smithay-drm-extras"
+# git = "https://github.com/Smithay/smithay"
+# rev = "f9d4d7ffd82d743fb89737b3ffaed57505b477d1"
 optional = true
 
 [dependencies.smithay]
-# path = "../smithay"
-git = "https://github.com/Smithay/smithay"
-rev = "f9d4d7ffd82d743fb89737b3ffaed57505b477d1"
+path = "../smithay"
+# git = "https://github.com/Smithay/smithay"
+# rev = "f9d4d7ffd82d743fb89737b3ffaed57505b477d1"
 default-features = false
 features = [
     "backend_winit",

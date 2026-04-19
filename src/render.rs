@@ -144,6 +144,8 @@ where
     <R as RendererSuper>::TextureId: Clone + 'static,
     <R as RendererSuper>::Error: std::error::Error,
     SceneElement: smithay::backend::renderer::element::RenderElement<R>,
+    crate::render_elements::scene_dmabuf_element::SceneDmabufElement:
+        smithay::backend::renderer::element::RenderElement<R>,
 {
     let (elements, clear_color) = output_elements(
         output,

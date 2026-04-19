@@ -113,10 +113,17 @@ impl SkiaSurface {
         origin: skia::gpu::SurfaceOrigin,
     ) -> Self {
         let sample_cnt = sample_cnt.into();
+        let gl_format = match color_type {
+            skia::ColorType::RGBA1010102 | skia::ColorType::BGRA1010102 => {
+                skia::gpu::gl::Format::RGB10_A2
+            }
+            skia::ColorType::RGB888x => skia::gpu::gl::Format::RGB8,
+            _ => skia::gpu::gl::Format::RGBA8,
+        };
         let gl_info = skia::gpu::gl::TextureInfo {
             target: ffi::TEXTURE_2D,
             id: texid.into(),
-            format: skia::gpu::gl::Format::RGBA8.into(),
+            format: gl_format.into(),
             ..Default::default()
         };
         let backend_texture = unsafe {
