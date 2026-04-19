@@ -16,7 +16,7 @@ biggest single lever left after the Skia/lay-rs optimisations in PLAN.md.
 4  Overlay UI             overlay plane   SceneDmabufElement (swapchain)
    (app switcher, workspace selector,
     layer_shell_overlay, OSD, DnD)
-3  Top window             overlay plane   Wayland surface dmabuf  ← already working
+3  Top N windows          overlay planes  Wayland surface dmabufs (N configurable, default 1)
 2  Windows / Expose       overlay plane   SceneDmabufElement (swapchain)
    (all non-top windows rendered together;
     expose mode renders into the same plane —
@@ -29,7 +29,12 @@ biggest single lever left after the Skia/lay-rs optimisations in PLAN.md.
 
 Planes 1, 2, 4, 6 are Skia-rendered scenes exported as dmabufs (SceneDmabufElement).
 Planes 3, 5 are raw Wayland client dmabufs handed straight to KMS.
-Total overlays: exactly 5, leaving 1 spare regardless of window count.
+
+Fixed overlays: dock(1) + popups(1) + overlay UI(1) + windows/expose(1) = 4.
+Remaining overlays available for top windows: 6 − 4 = **2 by default**.
+N is a config knob (`top_window_planes`, default 1). Max useful value is 2
+given the hardware budget; raising it reduces the windows/expose plane or
+drops one of the fixed UI planes.
 
 Expose mode is a render-mode switch on plane 2: instead of compositing the
 non-top windows at their normal positions, the same SceneDmabufElement renders
