@@ -210,12 +210,62 @@ client is on.
 
 ---
 
+## P-Plane-6 — Layer restructuring (prerequisite for plane rendering)
+
+**Problem**: `render_node_tree` needs a single clean `NodeRef` per plane group.
+The current scene graph does not have explicit container nodes matching the
+target plane groupings — layers for background, windows, overlay UI, dock etc.
+are peers under the output node without clear group boundaries.
+
+**Target layer tree** (each bullet = one `NodeRef` passed to a `SceneDmabufElement`):
+
+```
+output_[name]
+├── plane_background          ← background_view + layer_shell_bg_mirror
+├── plane_windows             ← workspace_windows_container (non-top windows)
+│                               + expose grid (same node, mode-switched)
+├── plane_top_window_[i]      ← (no lay-rs layer — Wayland surface dmabuf direct)
+├── plane_overlay_ui          ← app_switcher, workspace_selector, layer_shell_overlay,
+│                               OSD, DnD
+├── plane_popups              ← (no lay-rs layer — Wayland surface dmabufs direct)
+└── plane_dock                ← dock.wrap_layer
+```
+
+**Work**:
+1. Add explicit plane-group container layers to output creation
+   (`src/workspaces/mod.rs`, `src/shell/mod.rs`).
+2. Move existing child layers into the correct container at creation time.
+3. Expose a `PlaneRoots` struct per output holding the six `NodeRef`s so the
+   render path can pass them to the corresponding `SceneDmabufElement`s.
+4. Verify visually that the scene renders identically before and after — this
+   is a pure structural refactor, no behaviour change.
+
+**Effort**: 1–2 days.  No render-path changes, only scene graph structure.
+
+---
+
 ## Suggested order
 
-1. **P-Plane-3** (telemetry) — know what's actually being assigned before
-   changing anything.
-2. **P-Plane-0** (background swapchain) — highest GPU impact, infra all others share.
-3. **P-Plane-1** (windows + expose plane) — built on P-Plane-0 swapchain pattern.
-4. **P-Plane-2** (dock plane) — after P-Plane-0.
-5. **P-Plane-5** (cross-plane blur) — after P-Plane-0/2, restores blur across planes.
-6. **P-Plane-4** (frame callbacks) — polish once plane assignment is stable.
+Phase 1 — **Swapchain infra** (2 days)
+: Replace `OnceLock` with `Swapchain` in `SceneDmabufElement`, wire VBlank
+  release, add `NodeRef` subtree rendering replacing the placeholder.
+
+Phase 2 — **P-Plane-6: Layer restructuring** (1–2 days)
+: Reorganise the scene graph into the six plane-group containers.
+  Pure refactor — no visual change, no render-path change.
+
+Phase 3 — **P-Plane-0: Background on primary** (2 days)
+: `plane_background` NodeRef → SceneDmabufElement swapchain → primary plane.
+
+Phase 4 — **P-Plane-1: Windows + expose** (2 days)
+: `plane_windows` NodeRef → SceneDmabufElement swapchain → overlay plane.
+  Expose = render-mode flag on the same element.
+
+Phase 5 — **P-Plane-2: Dock + Overlay UI** (2 days)
+: Dock and overlay UI each on their own SceneDmabufElement → overlay planes.
+
+Phase 6 — **P-Plane-5: Cross-plane blur** (2 days)
+: `import_image_from_dmabuf` + blur pass for dock/overlay UI.
+
+Phase 7 — **P-Plane-3 + P-Plane-4: Telemetry + frame callbacks** (1 day)
+: Plane assignment logging, frame callback rate tied to plane assignment.
