@@ -327,7 +327,8 @@ impl HeadlessHandle {
     /// Advance the scene graph by one frame with the given delta time (seconds).
     /// Returns true if the frame produced damage (i.e. animations are still running).
     pub fn tick(&self, dt: f32) -> bool {
-        self.query(move |state| state.layers_engine.update(dt))
+        let stats = self.query(move |state| state.layers_engine.update(dt));
+        stats.nodes_repainted > 0 || stats.taffy_computed
     }
 
     /// Run the scene graph at 60fps until animations finish or `max_frames` is reached.
@@ -338,7 +339,8 @@ impl HeadlessHandle {
         const DT: f32 = 1.0 / 60.0;
         let mut frames_with_damage = 0;
         for _ in 0..max_frames {
-            let has_damage = self.query(move |state| state.layers_engine.update(DT));
+            let stats = self.query(move |state| state.layers_engine.update(DT));
+            let has_damage = stats.nodes_repainted > 0 || stats.taffy_computed;
             if has_damage {
                 frames_with_damage += 1;
             } else {

@@ -68,7 +68,48 @@ impl SceneElement {
             stats.total_updates += 1;
         }
 
-        let updated = self.engine.update(dt);
+        let stats = self.engine.update(dt);
+        let updated = stats.nodes_repainted > 0 || stats.taffy_computed;
+        // DEBUG: log scene-update reason at 1Hz so we can see WHY scene damage
+        // is reported when chromium commits are scanout-skipped.
+        {
+            use std::sync::Mutex;
+            use std::sync::OnceLock;
+            use std::time::Duration;
+            static LOG: OnceLock<
+                Mutex<(
+                    Instant,
+                    u64, /* updated_count */
+                    u64, /* nodes_repainted_sum */
+                    u64, /* taffy_count */
+                    u64, /* total */
+                )>,
+            > = OnceLock::new();
+            let mut g = LOG
+                .get_or_init(|| Mutex::new((Instant::now(), 0, 0, 0, 0)))
+                .lock()
+                .unwrap();
+            g.4 += 1;
+            if updated {
+                g.1 += 1;
+                g.2 += stats.nodes_repainted as u64;
+                if stats.taffy_computed {
+                    g.3 += 1;
+                }
+            }
+            if g.0.elapsed() >= Duration::from_secs(1) {
+                tracing::info!(
+                    target: "otto::scene",
+                    "update/s: total={} updated={} (taffy_runs={}, total_nodes_repainted={})",
+                    g.4, g.1, g.3, g.2,
+                );
+                g.0 = Instant::now();
+                g.1 = 0;
+                g.2 = 0;
+                g.3 = 0;
+                g.4 = 0;
+            }
+        }
         if !updated {
             #[cfg(feature = "perf-counters")]
             stats.log_if_due();
@@ -353,6 +394,8 @@ impl RenderElement<SkiaRenderer> for SceneElement {
             None
         };
         let occluded_ref = occluded_set.as_ref();
+        // EXPERIMENT: always pass damage region to enable subtree culling.
+        // Should reduce `subtree_has_visible_drawables` overhead seen in perf.
         let damage_ref = damage_region.as_ref();
 
         scene.with_arena(|arena| {

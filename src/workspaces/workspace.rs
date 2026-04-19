@@ -89,6 +89,7 @@ impl WorkspaceView {
         });
         workspace_layer.set_clip_children(true, None);
         workspace_layer.set_clip_content(true, None);
+        workspace_layer.set_image_cached(false);
         workspace_layer.set_size(layers::types::Size::auto(), None);
         workspace_layer.set_position((0.0, 0.0), None);
         workspace_layer.set_pointer_events(false);

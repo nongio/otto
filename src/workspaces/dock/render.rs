@@ -190,6 +190,7 @@ pub fn setup_app_icon(
             None, // None
         ))
         .pointer_events(false)
+        // EXPERIMENT P4: enable picture+image caching on dock icon layers (icons are static)
         .picture_cached(true)
         .image_cache(true)
         .background_color(Color::new_rgba(1.0, 0.0, 0.0, 0.0))
