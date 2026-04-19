@@ -128,14 +128,11 @@ to an overlay plane.  Dock updates (badge counts, hover effects) don't
 invalidate the scene or the window planes.
 
 **Constraints**:
-- Dock has rounded corners → pixels outside the visible rect are transparent.
-  Transparent pixels on a plane are fine as long as the plane below shows
-  through — display controller alpha-blends them.  No opaque-region issue.
-- Blur behind dock: if dock has a frosted-glass blur, we can't do it purely on
-  a plane (blur samples from below, which is a different plane).  Options:
-  a) bake the blur into the dmabuf each frame the scene changes (acceptable if
-     scene is static most of the time);
-  b) disable blur for dock when on overlay plane.
+- Dock has rounded corners → transparent pixels outside the visible rect.
+  Fine on a plane — display controller alpha-blends with the plane below.
+- Background blur (frosted glass) samples pixels from planes below the dock.
+  Those planes are separate dmabufs; the dock's Skia surface can't sample them
+  directly.  Solved by P-Plane-5 (cross-plane blur via dmabuf reimport).
 
 **Expected impact**: dock updates no longer re-render the full scene.
 
@@ -155,6 +152,41 @@ candidates silently.
 - Track running totals (`planes_hit`, `planes_miss`) behind `feature = "dev"`.
 
 **Effort**: half day.  Prerequisite for validating P-Plane-0 through P-Plane-2.
+
+---
+
+## P-Plane-5 — Cross-plane backdrop blur via dmabuf reimport
+
+**Problem**: planes below a Skia-rendered element (e.g., the blur behind the
+dock, or a frosted-glass app-switcher overlay) are separate dmabufs — the
+upper plane's Skia canvas can't sample them directly.
+
+**Solution**: before rendering a plane that needs backdrop blur, reimport the
+dmabufs from the planes below it as `skia::Image` objects, composite them into
+a temporary Skia surface (respecting each plane's `plane_alpha`), apply the
+blur filter to the relevant region, then use the blurred result as the backdrop
+when drawing the plane's own content.
+
+**Implementation**:
+1. `SkiaRenderer::import_image_from_dmabuf(dmabuf)` — already designed:
+   `dmabuf → EGLImage → GL texture → skia::Image` via the existing
+   `import_egl_image` + `import_skia_image_from_texture` path.
+2. Each `SceneDmabufElement` that needs blur holds references to the
+   `SceneDmabufElement`s below it (passed in at construction or as a slice).
+3. On `update()`, before rendering own content:
+   a. For each lower plane: call `import_image_from_dmabuf` on its current slot.
+   b. Draw lower images onto a scratch Skia surface (size = blur region only,
+      not full output — keep the scratch small).
+   c. Apply `skia::image_filters::blur` to the scratch.
+   d. Draw the blurred scratch as the backdrop, then render own content on top.
+4. **Cache invalidation**: only redo the blur blit if any lower plane's
+   `current_commit()` has advanced since last frame.  Static background behind
+   a static dock = zero extra GPU work.
+
+**Scope**: dock blur, app-switcher frosted glass, any future overlay with
+backdrop filter.  The general pattern is reusable across all Skia planes.
+
+**Effort**: 1–2 days after P-Plane-0 and `import_image_from_dmabuf` land.
 
 ---
 
@@ -182,9 +214,8 @@ client is on.
 
 1. **P-Plane-3** (telemetry) — know what's actually being assigned before
    changing anything.
-2. **P-Plane-1** (all windows as candidates) — trivial code change, high ROI.
-3. **P-Plane-0** (scene swapchain) — highest GPU impact, most implementation
-   work.
-4. **P-Plane-2** (dock plane) — after P-Plane-0 lands (shares the swapchain
-   infra).
-5. **P-Plane-4** (frame callbacks) — polish, after the above stabilise.
+2. **P-Plane-0** (background swapchain) — highest GPU impact, infra all others share.
+3. **P-Plane-1** (windows + expose plane) — built on P-Plane-0 swapchain pattern.
+4. **P-Plane-2** (dock plane) — after P-Plane-0.
+5. **P-Plane-5** (cross-plane blur) — after P-Plane-0/2, restores blur across planes.
+6. **P-Plane-4** (frame callbacks) — polish once plane assignment is stable.
