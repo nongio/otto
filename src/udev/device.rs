@@ -456,7 +456,7 @@ impl Otto<UdevData> {
             SUPPORTED_FORMATS
         };
 
-        let compositor = self.create_surface_compositor(
+        let result = self.create_surface_compositor(
             node,
             surface,
             allocator,
@@ -465,7 +465,17 @@ impl Otto<UdevData> {
             &output,
         );
 
-        if let Some(compositor) = compositor {
+        if let Some((compositor, overlay_count)) = result {
+            // Reserve fixed overlay planes: windows/expose (1), overlay_ui (1), dock (1).
+            // The remainder are available for direct top-window KMS scanout.
+            const FIXED_OVERLAY_PLANES: usize = 3;
+            let max_scanout_windows = overlay_count.saturating_sub(FIXED_OVERLAY_PLANES).min(1);
+            tracing::info!(
+                target: "otto::planes",
+                "max_scanout_windows for {}: {} ({} overlays − {} fixed)",
+                output.name(), max_scanout_windows, overlay_count, FIXED_OVERLAY_PLANES,
+            );
+
             let dmabuf_feedback = get_surface_dmabuf_feedback(
                 self.backend_data.primary_gpu,
                 device_render_node,
@@ -474,6 +484,7 @@ impl Otto<UdevData> {
             );
 
             let surface_data = SurfaceData {
+                max_scanout_windows,
                 dh: self.display_handle.clone(),
                 device_id: node,
                 render_node: device_render_node,
@@ -484,14 +495,18 @@ impl Otto<UdevData> {
                 #[cfg(feature = "fps_ticker")]
                 fps_element,
                 dmabuf_feedback,
-                was_direct_scanout: false,
                 #[cfg(feature = "metrics")]
                 render_metrics: Some(self.render_metrics.clone()),
                 avg_render_time_us: 2000.0, // start with 2ms estimate
                 idle_countdown: 0,
                 prefetched_scene_damage: None,
                 scene_dmabuf_element: None,
-                test_overlay_element: None,
+                windows_dmabuf_element: None,
+                top_window_dmabuf_element: None,
+                expose_dmabuf_element: None,
+                overlay_dmabuf_element: None,
+                dock_dmabuf_element: None,
+                current_scanout_windows: Vec::new(),
                 #[cfg(feature = "renderer_sync")]
                 pending_gpu_fence: SyncPoint::signaled(),
             };
@@ -503,7 +518,12 @@ impl Otto<UdevData> {
         }
     }
 
-    /// Creates a surface compositor (either Surface or Compositor mode)
+    /// Creates a surface compositor and returns the available overlay plane count.
+    ///
+    /// The overlay count (after driver-specific filtering) is used by the caller
+    /// to size `max_scanout_windows`: we reserve `FIXED_OVERLAY_PLANES` overlays
+    /// for the fixed scene planes (windows/expose, overlay_ui, dock) and offer the
+    /// remainder as direct-scanout candidates for the top N client windows.
     fn create_surface_compositor(
         &mut self,
         node: DrmNode,
@@ -512,7 +532,7 @@ impl Otto<UdevData> {
         color_formats: &[smithay::backend::allocator::Fourcc],
         render_formats: smithay::backend::allocator::format::FormatSet,
         output: &Output,
-    ) -> Option<GbmDrmCompositor> {
+    ) -> Option<(GbmDrmCompositor, usize)> {
         let device = self.backend_data.backends.get_mut(&node)?;
 
         let driver = match device.drm.get_driver() {
@@ -540,6 +560,25 @@ impl Otto<UdevData> {
             planes.overlay = vec![];
         }
 
+        let overlay_count = planes.overlay.len();
+        tracing::info!(
+            target: "otto::planes",
+            "DRM overlay planes available for {}: {} (primary={}, cursor={})",
+            output.name(),
+            overlay_count,
+            planes.primary.len(),
+            planes.cursor.len(),
+        );
+        // Log supported formats/modifiers for primary and overlay planes.
+        for (i, p) in planes.primary.iter().enumerate() {
+            let fmts: Vec<_> = p.formats.iter().map(|f| format!("{:?}+{:?}", f.code, f.modifier)).collect();
+            tracing::debug!(target: "otto::planes", "primary[{i}] formats: {fmts:?}");
+        }
+        for (i, p) in planes.overlay.iter().enumerate() {
+            let fmts: Vec<_> = p.formats.iter().map(|f| format!("{:?}+{:?}", f.code, f.modifier)).collect();
+            tracing::debug!(target: "otto::planes", "overlay[{i}] formats: {fmts:?}");
+        }
+
         tracing::debug!("Max cursor size: {:?}", device.drm.cursor_size());
         let compositor = match smithay::backend::drm::compositor::DrmCompositor::new(
             output,
@@ -558,7 +597,7 @@ impl Otto<UdevData> {
                 return None;
             }
         };
-        Some(compositor)
+        Some((compositor, overlay_count))
     }
 
     /// Handles connector disconnection events
