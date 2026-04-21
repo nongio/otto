@@ -75,10 +75,6 @@ impl WindowView {
         let mirror_layer = window.mirror_layer().clone();
         mirror_layer.set_size(shadow_layer.render_layer().bounds.size(), None);
 
-        // EXPERIMENT: cache only the shadow, not the whole window.
-        // The shadow is stable per window state; the content changes per chrome commit.
-        // Outer cache invalidates per frame (content changes), wasting cache work.
-        // Caching shadow alone keeps the expensive blur cached across frames.
         shadow_layer.set_image_cached(true);
 
         let genie_effect = GenieEffect::new();
@@ -106,6 +102,11 @@ impl WindowView {
             ..current_state.clone()
         };
         self.view_base.update_state(&new_state);
+    }
+
+    /// Hide/show the content layer for shadow-only (direct scanout) mode.
+    pub fn set_content_hidden(&self, hidden: bool) {
+        self.content_layer.set_hidden(hidden);
     }
 
     pub fn set_is_minimizing(&self, minimizing: bool) {

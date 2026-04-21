@@ -465,17 +465,7 @@ impl Otto<UdevData> {
             &output,
         );
 
-        if let Some((compositor, overlay_count)) = result {
-            // Reserve fixed overlay planes: windows/expose (1), overlay_ui (1), dock (1).
-            // The remainder are available for direct top-window KMS scanout.
-            const FIXED_OVERLAY_PLANES: usize = 3;
-            let max_scanout_windows = overlay_count.saturating_sub(FIXED_OVERLAY_PLANES).min(1);
-            tracing::info!(
-                target: "otto::planes",
-                "max_scanout_windows for {}: {} ({} overlays − {} fixed)",
-                output.name(), max_scanout_windows, overlay_count, FIXED_OVERLAY_PLANES,
-            );
-
+        if let Some((compositor, _overlay_count)) = result {
             let dmabuf_feedback = get_surface_dmabuf_feedback(
                 self.backend_data.primary_gpu,
                 device_render_node,
@@ -484,7 +474,6 @@ impl Otto<UdevData> {
             );
 
             let surface_data = SurfaceData {
-                max_scanout_windows,
                 dh: self.display_handle.clone(),
                 device_id: node,
                 render_node: device_render_node,
@@ -501,14 +490,15 @@ impl Otto<UdevData> {
                 idle_countdown: 0,
                 prefetched_scene_damage: None,
                 scene_dmabuf_element: None,
+                probe_dmabufs: Vec::new(),
+                test_dmabuf_element: None,
                 windows_dmabuf_element: None,
-                top_window_dmabuf_element: None,
                 expose_dmabuf_element: None,
                 overlay_dmabuf_element: None,
-                dock_dmabuf_element: None,
-                current_scanout_windows: Vec::new(),
+                shadow_only_windows: Vec::new(),
                 #[cfg(feature = "renderer_sync")]
                 pending_gpu_fence: SyncPoint::signaled(),
+                current_tier: None,
             };
 
             let device = self.backend_data.backends.get_mut(&node).unwrap();

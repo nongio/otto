@@ -111,9 +111,6 @@ pub struct SurfaceData {
     pub(super) fps_element:
         Option<crate::drawing::FpsElement<smithay::backend::renderer::multigpu::MultiTexture>>,
     pub(super) dmabuf_feedback: Option<DrmSurfaceDmabufFeedback>,
-    /// Track whether we were in direct scanout mode on the previous frame
-    /// Used to reset buffers when transitioning between modes
-    pub(super) was_direct_scanout: bool,
     /// Rendering metrics
     #[cfg(feature = "metrics")]
     pub(super) render_metrics: Option<Arc<crate::render_metrics::RenderMetrics>>,
@@ -150,9 +147,32 @@ pub struct SurfaceData {
     /// on first scanout-mode render of this surface.
     pub(super) scene_dmabuf_element:
         Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
-    /// Test: semi-transparent overlay element.
-    pub(super) test_overlay_element:
+    /// KMS plane for all workspace windows (overlay plane above the background).
+    pub(super) windows_dmabuf_element:
         Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
+    /// KMS plane for the expose / window-selector view (overlay plane, mutually
+    /// exclusive with windows_plane in practice — one is hidden when the other shows).
+    pub(super) expose_dmabuf_element:
+        Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
+    /// KMS plane for overlay UI: workspace selector, app switcher, layer shell,
+    /// OSD, DnD — above windows, below dock.
+    pub(super) overlay_dmabuf_element:
+        Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
+    /// Solid-black probe buffers for KMS tier grading (TEST_ONLY commits).
+    /// Each element is Argb8888, has no lay-rs subtree, renders black once and caches.
+    /// All four are committed to different GBM swapchains so they carry distinct gem
+    /// handles — required because the kernel rejects duplicate handles on separate planes.
+    ///   [0] primary plane   [1] overlay0   [2] overlay1   [3] overlay2
+    pub(super) probe_dmabufs: Vec<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
+    /// Alias kept for the visual debug path (push [0] to an overlay to see it go black).
+    pub(super) test_dmabuf_element:
+        Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
+    /// Windows currently in shadow-only mode for direct surface scanout.
+    /// Their `content_layer` is hidden in lay-rs so only the shadow renders in
+    /// `windows_dmabuf_element`. The client buffer is pushed directly as a
+    /// `ScanoutCandidate` render element on the plane above.
+    pub(super) shadow_only_windows:
+        Vec<smithay::reexports::wayland_server::backend::ObjectId>,
     /// Deferred GPU sync point from the previous frame.
     ///
     /// Instead of blocking immediately after `render_frame()`, we store the
@@ -161,6 +181,9 @@ pub struct SurfaceData {
     /// that happens between frames (scene-graph update, input processing, etc.).
     #[cfg(feature = "renderer_sync")]
     pub(super) pending_gpu_fence: SyncPoint,
+    /// Highest render tier confirmed by `DRM_MODE_ATOMIC_TEST_ONLY` for this surface.
+    /// `None` means the probe has not run yet (dmabufs not yet available).
+    pub(super) current_tier: Option<RenderTier>,
 }
 
 impl Drop for SurfaceData {
@@ -191,6 +214,36 @@ pub enum DeviceAddError {
     DrmNode(smithay::backend::drm::CreateDrmNodeError),
     #[error("Failed to add device to GpuManager: {0}")]
     AddNode(smithay::backend::egl::Error),
+}
+
+/// Highest render tier the current hardware + buffer configuration supports.
+///
+/// Determined once per output via `DRM_MODE_ATOMIC_TEST_ONLY` before the first
+/// render and whenever the overlay buffer format/modifier changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderTier {
+    /// No overlay planes accepted our buffers — everything GPU-composited.
+    Fallback,
+    /// overlay_ui on one overlay; bg + windows in primary.
+    Tier1,
+    /// windows on an overlay + overlay_ui on another; bg in primary.
+    Tier2,
+    /// bg in primary; windows, overlay_ui, and dock each on separate overlays.
+    Tier3,
+    /// bg in primary; windows, overlay_ui, dock, and one more overlay confirmed.
+    Tier4,
+}
+
+impl std::fmt::Display for RenderTier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RenderTier::Fallback => write!(f, "Fallback"),
+            RenderTier::Tier1 => write!(f, "Tier1"),
+            RenderTier::Tier2 => write!(f, "Tier2"),
+            RenderTier::Tier3 => write!(f, "Tier3"),
+            RenderTier::Tier4 => write!(f, "Tier4"),
+        }
+    }
 }
 
 /// Outcome of a render operation
