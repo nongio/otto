@@ -63,6 +63,8 @@ pub struct SceneDmabufElement {
     /// Whether the element covers its geometry with fully opaque pixels.
     /// Background plane = true. All overlay planes = false.
     pub opaque: bool,
+    /// Short name used in trace logging (e.g. "bg", "windows", "overlay").
+    pub label: &'static str,
 }
 
 struct Inner {
@@ -89,7 +91,7 @@ struct Inner {
 }
 
 impl SceneDmabufElement {
-    pub fn new(engine: Arc<Engine>, size: (i32, i32)) -> Self {
+    pub fn new(engine: Arc<Engine>, size: (i32, i32), label: &'static str) -> Self {
         Self {
             id: Id::new(),
             current_dmabuf: Arc::new(Mutex::new(None)),
@@ -107,6 +109,7 @@ impl SceneDmabufElement {
             position: (0, 0),
             plane_alpha: 1.0,
             opaque: false,
+            label,
         }
     }
 
@@ -156,15 +159,30 @@ impl SceneDmabufElement {
     pub fn render(&self, renderer: &mut SkiaRenderer) -> bool {
         let mut inner = self.inner.lock().unwrap();
 
-        // Skip re-render if the plane's subtree has no damage this frame and
-        // we already have a valid dmabuf. `commit_counter` stays unchanged so
-        // Smithay's damage_since() returns empty and the DRM compositor reuses
-        // the existing framebuffer without a page-flip.
-        if let Some(node_ref) = inner.node_ref {
-            let has_dmabuf = self.current_dmabuf.lock().unwrap().is_some();
-            if has_dmabuf && inner.engine.subtree_damage(node_ref).is_none() {
-                return false;
+        // Skip re-render when a valid dmabuf already exists and there is nothing
+        // new to draw.  Two cases:
+        //   • Subtree element: skip when the subtree reports no damage.
+        //   • Solid-black test element (no node_ref): skip always — a solid black
+        //     buffer never changes, so one render is enough.
+        // Capture the dirty rect before acquiring a swapchain slot.
+        // `subtree_damage()` unions all per-node damage rects in the subtree.
+        // Stored here so we can pass the tight rect to DamageBag instead of
+        // always reporting full-buffer — lets the DRM compositor set
+        // FB_DAMAGE_CLIPS correctly, enabling PSR partial-refresh on eDP.
+        let dirty_rect: Option<layers::skia::Rect>;
+        let has_dmabuf = self.current_dmabuf.lock().unwrap().is_some();
+        if has_dmabuf {
+            match inner.node_ref {
+                Some(node_ref) => {
+                    dirty_rect = inner.engine.subtree_damage(node_ref);
+                    if dirty_rect.is_none() {
+                        return false;
+                    }
+                }
+                None => return false,
             }
+        } else {
+            dirty_rect = None;
         }
 
         let swapchain = match inner.swapchain.as_mut() {
@@ -259,9 +277,8 @@ impl SceneDmabufElement {
                     });
                 });
             } else {
-                // No subtree configured — render a visible placeholder so we
-                // can tell the element is alive during debugging.
-                canvas.clear(layers::skia::Color4f::new(0.1, 0.1, 0.1, 1.0));
+                // No subtree — solid black (used as a test/placeholder plane).
+                canvas.clear(layers::skia::Color4f::new(0.0, 0.0, 0.0, 1.0));
             }
 
             canvas.restore_to_count(save_point);
@@ -272,10 +289,30 @@ impl SceneDmabufElement {
         }
 
         // Update damage and commit counter.
+        // Use the tight dirty rect when available so FB_DAMAGE_CLIPS is set
+        // correctly for PSR partial-refresh; fall back to full-buffer on the
+        // first render (no prior dmabuf) or when no node_ref is set.
         inner.commit_counter.increment();
-        inner
-            .damage
-            .add(vec![Rectangle::new((0, 0).into(), (w, h).into())]);
+        // Map the scene-space dirty rect into buffer space and clamp to buffer
+        // bounds. The canvas was translated by the root node's render_position()
+        // so buffer coords = scene coords − root_pos.
+        let root_pos = inner.node_ref
+            .and_then(|r| inner.engine.get_layer(&r))
+            .map(|l| l.render_position())
+            .unwrap_or_default();
+        let damage_rect = dirty_rect
+            .map(|r| {
+                let x = ((r.left()  - root_pos.x) as i32).clamp(0, w);
+                let y = ((r.top()   - root_pos.y) as i32).clamp(0, h);
+                let x2 = ((r.right() - root_pos.x) as i32).clamp(0, w);
+                let y2 = ((r.bottom()- root_pos.y) as i32).clamp(0, h);
+                Rectangle::<i32, Physical>::new(
+                    (x, y).into(),
+                    ((x2 - x).max(1), (y2 - y).max(1)).into(),
+                )
+            })
+            .unwrap_or_else(|| Rectangle::new((0, 0).into(), (w, h).into()));
+        inner.damage.add(vec![damage_rect]);
 
         // Store the node-tagged dmabuf for underlying_storage().
         *self.current_dmabuf.lock().unwrap() = Some(dmabuf);
@@ -285,6 +322,7 @@ impl SceneDmabufElement {
         // page flip completes; swapchain.acquire() skips it while refcount > 1.
         inner.current_slot = Some(Arc::new(slot));
 
+        tracing::debug!(target: "otto::planes", "plane redrawn: {}", self.label);
         true
     }
 
@@ -293,7 +331,15 @@ impl SceneDmabufElement {
         self.current_dmabuf.lock().unwrap().clone()
     }
 
+    /// Clear engine damage after all planes for this frame have been rendered.
+    /// Must be called once per frame so `subtree_damage()` returns `None` on
+    /// the next frame when nothing has changed.
+    pub fn clear_engine_damage(&self) {
+        self.inner.lock().unwrap().engine.clear_damage();
+    }
+
     /// Save the current slot's rendered content to a PNG file (debug only).
+    #[cfg(feature = "debug-kms")]
     pub fn save_to_png(&self, path: &str) {
         let inner = self.inner.lock().unwrap();
         if inner.swapchain.is_none() {

@@ -78,6 +78,19 @@ pub struct OutputWorkspaces {
     /// Mirrored into each workspace view and expose window selector.
     pub layer_shell_background: Layer,
     pub workspace_views: Vec<Arc<WorkspaceView>>,
+    /// Single layer containing all workspace backgrounds, child of workspaces_layer.
+    /// Rendered as a single KMS background plane; scrolls in sync automatically.
+    pub background_plane: Layer,
+    /// Single layer containing all workspace window containers, child of workspaces_layer.
+    /// Rendered as a single KMS windows plane; scrolls in sync automatically.
+    pub windows_plane: Layer,
+    /// Overlay UI plane: workspace selector, app switcher, layer_shell_top,
+    /// layer_shell_overlay, OSD, DnD, and dock — everything above windows.
+    /// Dock is the topmost sublayer so the combined plane includes it.
+    pub overlay_plane: Layer,
+    /// Debug indicator: red circle visible when rendering into a single scene
+    /// plane (expose active), hidden when individual planes are in use.
+    pub debug_plane_indicator: Layer,
 }
 
 impl OutputWorkspaces {
@@ -542,6 +555,7 @@ impl Workspaces {
 
             ows.expose_layer.set_size(Size::points(w, h), None);
             ows.workspaces_layer.set_size(Size::points(w, h), None);
+            ows.overlay_plane.set_size(Size::points(w, h), None);
 
             for (logical_index, workspace) in ows.workspace_views.iter().enumerate() {
                 workspace.update_layout(logical_index, w, h, scale);
@@ -621,21 +635,12 @@ impl Workspaces {
     /// Geometry doesn't matter — Smithay scans out whatever the top window is;
     /// the only requirements are that no overlay UI sits above it.
     pub fn is_top_window_scanout_eligible(&self) -> bool {
+        // App switcher and OSD each have their own plane — no need to block.
+        // Expose has its own plane too but changes workspace layout during
+        // transition so we keep that check.
         if self.get_show_all() {
             return false;
         }
-        if self.app_switcher.alive() {
-            return false;
-        }
-        if self.osd.is_visible() {
-            return false;
-        }
-        // DIAG: `is_animating` sticks true after startup — some transition's
-        // on_finish never fires (handover open-knob #1). Bypass for now so
-        // we can confirm the scanout path works; fix separately.
-        // if self.is_animating.load(std::sync::atomic::Ordering::Relaxed) {
-        //     return false;
-        // }
         true
     }
 
@@ -3071,10 +3076,36 @@ impl Workspaces {
             let _ = root.add_sublayer(&layer_shell_background);
         }
 
+        // Single container for all workspace backgrounds, first child of workspaces_layer
+        // so it scrolls in sync automatically. The SceneDmabufElement for the background
+        // KMS plane renders this node.
+        let background_plane = self.layers_engine.new_layer();
+        background_plane.set_key(format!("background_plane_{}", output.name()));
+        background_plane.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        background_plane.set_size(layers::types::Size::auto(), None);
+        background_plane.set_pointer_events(false);
+        let _ = workspaces_layer.add_sublayer(&background_plane);
+
+        // Single container for all workspace window layers, child of workspaces_layer.
+        // Rendered as a single KMS windows plane; scrolls in sync automatically.
+        let windows_plane = self.layers_engine.new_layer();
+        windows_plane.set_key(format!("windows_plane_{}", output.name()));
+        windows_plane.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        windows_plane.set_size(layers::types::Size::auto(), None);
+        windows_plane.set_pointer_events(false);
+        let _ = workspaces_layer.add_sublayer(&windows_plane);
+
+
         // Attach layers to output_layer in z-order (bottom to top):
-        // workspaces → expose → overlay (dnd, osd) →
-        // dock (primary) → layer_shell_top → workspace_selector →
-        // layer_shell_overlay → app_switcher (primary) → popup_overlay (primary)
+        // workspaces (background_plane, windows_plane, expose_layer) →
+        // dock (primary) → overlay_plane (layer_shell_top, workspace_selector,
+        // app_switcher, layer_shell_overlay, dnd/osd, popups)
         let _ = output_layer.add_sublayer(&workspaces_layer);
 
         // Create a per-output expose layer
@@ -3088,13 +3119,24 @@ impl Workspaces {
         expose_layer.set_hidden(true);
         expose_layer.set_picture_cached(false);
         expose_layer.set_image_cached(false);
-        let _ = output_layer.add_sublayer(&expose_layer);
+        let _ = workspaces_layer.add_sublayer(&expose_layer);
+
+        // overlay_plane: workspace selector, app switcher, layer shell UI,
+        // OSD and DnD — above windows/expose, below popups and dock.
+        let overlay_plane = self.layers_engine.new_layer();
+        overlay_plane.set_key(format!("overlay_plane_{}", output.name()));
+        overlay_plane.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        overlay_plane.set_size(layers::types::Size::points(phys_w, phys_h), None);
+        overlay_plane.set_pointer_events(false);
 
         if is_this_primary {
             // Wire the primary output's expose layer into self.expose_layer so all
             // existing show/hide logic works unchanged.
             self.expose_layer = expose_layer.clone();
-            // overlay contains dnd and osd
+            // overlay_layer contains dnd and osd
             let _ = self.overlay_layer.add_sublayer(&self.dnd_view.layer);
             let _ = self
                 .overlay_layer
@@ -3109,13 +3151,21 @@ impl Workspaces {
             {
                 let _ = root.add_sublayer(&self.app_icons_manager.container);
             }
-            let _ = output_layer.add_sublayer(&self.dock.wrap_layer.clone());
-            let _ = output_layer.add_sublayer(&self.layer_shell_top);
-            let _ = output_layer.add_sublayer(&self.workspace_selector_view.layer.clone());
-            let _ = output_layer.add_sublayer(&self.app_switcher.wrap_layer.clone());
-            let _ = output_layer.add_sublayer(&self.popup_overlay.layer.clone());
-            let _ = output_layer.add_sublayer(&self.layer_shell_overlay);
-            let _ = output_layer.add_sublayer(&self.overlay_layer);
+            // Group overlay UI into the overlay_plane node (single KMS plane),
+            // including popups which sit above other overlay content.
+            let _ = overlay_plane.add_sublayer(&self.layer_shell_top);
+            let _ = overlay_plane.add_sublayer(&self.workspace_selector_view.layer.clone());
+            let _ = overlay_plane.add_sublayer(&self.app_switcher.wrap_layer.clone());
+            let _ = overlay_plane.add_sublayer(&self.layer_shell_overlay);
+            let _ = overlay_plane.add_sublayer(&self.overlay_layer);
+            let _ = overlay_plane.add_sublayer(&self.popup_overlay.layer.clone());
+
+            // Dock is the topmost child of overlay_plane so overlay_dmabuf_element
+            // captures both UI and dock in a single KMS plane.
+            let _ = overlay_plane.add_sublayer(&self.dock.wrap_layer.clone());
+            let _ = output_layer.add_sublayer(&overlay_plane.clone());
+        } else {
+            let _ = output_layer.add_sublayer(&overlay_plane.clone());
         }
 
         let workspace_counter_start = self.with_model(|m| m.workspace_counter);
@@ -3136,12 +3186,48 @@ impl Workspaces {
                 &layer_shell_background,
             ));
             let _ = expose_layer.add_sublayer(&workspace.window_selector_view.window_selector_root);
+            // Attach this workspace's background into the shared background_plane
+            // so all workspace backgrounds live under one node for the KMS plane.
+            let _ = background_plane.add_sublayer(&workspace.workspace_background);
+            let _ = windows_plane.add_sublayer(&workspace.windows_layer);
             workspace_views.push(workspace);
         }
 
         self.with_model_mut(|m| {
             m.workspace_counter = workspace_counter_start + n_workspaces;
         });
+
+        let debug_plane_indicator = {
+            use layers::prelude::{BorderRadius, BuildLayerTree, Color, LayerTreeBuilder};
+            const SIZE: f32 = 30.0;
+            let auto = taffy::LengthPercentageAuto::Auto;
+            let tree = LayerTreeBuilder::default()
+                .key(format!("debug_plane_indicator_{}", output.name()))
+                .layout_style(taffy::Style {
+                    position: taffy::Position::Absolute,
+                    inset: taffy::Rect {
+                        left: taffy::LengthPercentageAuto::Length(10.0),
+                        top: taffy::LengthPercentageAuto::Length(10.0),
+                        right: auto,
+                        bottom: auto,
+                    },
+                    ..Default::default()
+                })
+                .size(layers::types::Size {
+                    width: taffy::Dimension::Length(SIZE),
+                    height: taffy::Dimension::Length(SIZE),
+                })
+                .background_color(Color::new_rgba(1.0, 0.0, 0.0, 0.85))
+                .border_corner_radius(BorderRadius::new_single(SIZE / 2.0))
+                .pointer_events(false)
+                .build()
+                .unwrap();
+            let layer = self.layers_engine.new_layer();
+            layer.build_layer_tree(&tree);
+            layer.set_hidden(true);
+            let _ = output_layer.add_sublayer(&layer);
+            layer
+        };
 
         let ows = OutputWorkspaces {
             current_workspace: 0,
@@ -3151,6 +3237,10 @@ impl Workspaces {
             expose_layer,
             layer_shell_background,
             workspace_views,
+            background_plane,
+            windows_plane,
+            overlay_plane,
+            debug_plane_indicator,
         };
         self.output_workspaces.insert(output.name(), ows);
         self.sync_model_from_primary();
@@ -3654,7 +3744,6 @@ impl Workspaces {
             let workspace_gap_px = WORKSPACE_SPACING * scale;
             let offset = i as f32 * (w + workspace_gap_px);
             changes.push(ows.workspaces_layer.change_position((-offset, 0.0)));
-            changes.push(ows.expose_layer.change_position((-offset, 0.0)));
         }
         let tr = self
             .layers_engine
@@ -3720,9 +3809,7 @@ impl Workspaces {
             current_offset - physical_delta
         };
 
-        // Apply only to this output's layers (workspaces + expose in sync)
         ows.workspaces_layer.set_position((-new_offset, 0.0), None);
-        ows.expose_layer.set_position((-new_offset, 0.0), None);
 
         // Interpolate layer_shell_top opacity during swipe based on fullscreen state
         // of the two workspaces we're swiping between.
@@ -3875,7 +3962,6 @@ impl Workspaces {
             for (name, ows) in self.output_workspaces.iter() {
                 if output_name.is_none() || output_name == Some(name.as_str()) {
                     changes.push(ows.workspaces_layer.change_position((-offset, 0.0)));
-                    changes.push(ows.expose_layer.change_position((-offset, 0.0)));
                 }
             }
             let tr = self

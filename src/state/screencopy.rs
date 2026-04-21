@@ -254,6 +254,10 @@ where
                     height: data.height,
                     stride: data.stride,
                 });
+                // Wake the render loop — the compositor may be idle with no pending
+                // damage, so `should_draw` would normally be false and screencopy
+                // would never be fulfilled without this kick.
+                state.backend_data.request_redraw();
             }
             zwlr_screencopy_frame_v1::Request::Destroy => {}
             _ => {}

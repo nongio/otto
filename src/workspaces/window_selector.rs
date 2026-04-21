@@ -87,7 +87,6 @@ pub struct DragState {
 #[derive(Clone)]
 pub struct WindowSelectorView {
     pub window_selector_root: layers::prelude::Layer,
-    pub window_selector_background: layers::prelude::Layer,
     pub window_selector_windows_container: layers::prelude::Layer,
     pub window_selector_view: layers::prelude::Layer,
     pub drag_overlay_layer: layers::prelude::Layer,
@@ -109,14 +108,12 @@ pub struct WindowSelectorView {
 /// ```diagram
 /// WindowSelectorView
 /// ├── window_selector_root
-/// │   ├── window_selector_background
 /// │   ├── window_selector_windows_container
 /// │   ├── window_selector_view (view(view_window_selector))
 /// │   │   └── window_selector_label
 /// ```
 ///
 /// - `window_selector_root`: The root layer for the window selector view.
-/// - `window_selector_background`: a replica of the workspace background
 /// - `window_selector_windows_container`: windows replica container
 /// - `window_selector_view`: draw the window selection and text
 /// - `window_selector_label`: text layer for the window title
@@ -124,9 +121,7 @@ impl WindowSelectorView {
     pub fn new(
         index: usize,
         layers_engine: Arc<Engine>,
-        background_layer: Layer,
         drag_overlay_layer: Layer,
-        layer_shell_background: &Layer,
     ) -> Self {
         let window_selector_root = layers_engine.new_layer();
         window_selector_root.set_layout_style(taffy::Style {
@@ -166,17 +161,6 @@ impl WindowSelectorView {
         );
         view.mount_layer(window_selector_view.clone());
 
-        let window_selector_background = layers_engine.new_layer();
-        window_selector_background.set_key(format!("window_selector_background_{}", index));
-        window_selector_background.set_layout_style(taffy::Style {
-            position: taffy::Position::Absolute,
-            ..Default::default()
-        });
-        window_selector_background.set_size(layers::types::Size::percent(1.0, 1.0), None);
-        window_selector_background.set_draw_content(background_layer.as_content());
-        window_selector_background.set_picture_cached(false);
-        background_layer.add_follower_node(&window_selector_background);
-        window_selector_background.set_opacity(1.0, None);
         let window_selector_windows_container = layers_engine.new_layer();
         window_selector_windows_container
             .set_key(format!("window_selector_windows_container_{}", index));
@@ -189,23 +173,6 @@ impl WindowSelectorView {
         // window_selector_windows_container.set_image_cached(false);
         window_selector_windows_container.set_size(layers::types::Size::percent(1.0, 1.0), None);
 
-        let _ = window_selector_root.add_sublayer(&window_selector_background);
-
-        // Mirror the per-output wlr-layer-shell background into expose,
-        // above the config background mirror and below windows.
-        let layer_shell_bg_expose_mirror = layers_engine.new_layer();
-        layer_shell_bg_expose_mirror.set_key(format!("layer_shell_bg_expose_mirror_{}", index));
-        layer_shell_bg_expose_mirror.set_layout_style(taffy::Style {
-            position: taffy::Position::Absolute,
-            ..Default::default()
-        });
-        layer_shell_bg_expose_mirror.set_size(layers::types::Size::percent(1.0, 1.0), None);
-        layer_shell_bg_expose_mirror.set_draw_content(layer_shell_background.as_content());
-        layer_shell_bg_expose_mirror.set_picture_cached(false);
-        layer_shell_background.add_follower_node(&layer_shell_bg_expose_mirror);
-        layer_shell_bg_expose_mirror.set_pointer_events(false);
-        let _ = window_selector_root.add_sublayer(&layer_shell_bg_expose_mirror);
-
         let _ = window_selector_root.add_sublayer(&window_selector_windows_container);
 
         let _ = window_selector_root.add_sublayer(&window_selector_view);
@@ -213,7 +180,6 @@ impl WindowSelectorView {
         Self {
             view,
             window_selector_root,
-            window_selector_background,
             window_selector_windows_container,
             window_selector_view,
             drag_overlay_layer,

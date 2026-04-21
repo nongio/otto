@@ -13,6 +13,40 @@ use smithay::{
 
 use crate::{config::Config, state::Backend, Otto};
 
+// ── Debug plane toggles (debug-kms feature only) ─────────────────────────────
+// 1/2/3/4/5 — toggle background / windows / expose / overlay / top-window planes.
+// 6/7/8/9/0 — save those same planes to PNG.
+#[cfg(feature = "debug-kms")]
+pub static DBG_PLANE_BG: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(feature = "debug-kms")]
+pub static DBG_PLANE_WIN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(feature = "debug-kms")]
+pub static DBG_PLANE_EXPOSE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(feature = "debug-kms")]
+pub static DBG_PLANE_OVERLAY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(feature = "debug-kms")]
+pub static DBG_PLANE_TOP_WIN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(feature = "debug-kms")]
+pub static DBG_SAVE_BG: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(feature = "debug-kms")]
+pub static DBG_SAVE_WIN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(feature = "debug-kms")]
+pub static DBG_SAVE_EXPOSE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(feature = "debug-kms")]
+pub static DBG_SAVE_OVERLAY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(feature = "debug-kms")]
+pub static DBG_SAVE_TOP_WIN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 use super::actions::KeyAction;
 
 pub fn capture_app_switcher_hold_modifiers(
@@ -78,6 +112,7 @@ pub fn process_keyboard_shortcut(
             (keysym.raw() - KEY_XF86Switch_VT_1 + 1) as i32,
         ));
     }
+
 
     let result = config
         .shortcut_bindings()
@@ -145,6 +180,32 @@ impl<BackendData: Backend> Otto<BackendData> {
                 time,
                 |_, modifiers, handle| {
                     let keysym = handle.modified_sym();
+
+                    // Debug plane toggles — highest priority, always intercept.
+                    #[cfg(feature = "debug-kms")]
+                    if matches!(state, KeyState::Pressed)
+                        && !modifiers.ctrl && !modifiers.alt && !modifiers.logo && !modifiers.shift
+                    {
+                        use std::sync::atomic::Ordering;
+                        let toggled = match keysym {
+                            Keysym::_1 => { let v = !DBG_PLANE_BG.load(Ordering::Relaxed); DBG_PLANE_BG.store(v, Ordering::Relaxed); Some(format!("bg={v}")) }
+                            Keysym::_2 => { let v = !DBG_PLANE_WIN.load(Ordering::Relaxed); DBG_PLANE_WIN.store(v, Ordering::Relaxed); Some(format!("win={v}")) }
+                            Keysym::_3 => { let v = !DBG_PLANE_EXPOSE.load(Ordering::Relaxed); DBG_PLANE_EXPOSE.store(v, Ordering::Relaxed); Some(format!("expose={v}")) }
+                            Keysym::_4 => { let v = !DBG_PLANE_OVERLAY.load(Ordering::Relaxed); DBG_PLANE_OVERLAY.store(v, Ordering::Relaxed); Some(format!("overlay={v}")) }
+                            Keysym::_5 => { let v = !DBG_PLANE_TOP_WIN.load(Ordering::Relaxed); DBG_PLANE_TOP_WIN.store(v, Ordering::Relaxed); Some(format!("top_win={v}")) }
+                            Keysym::_6 => { DBG_SAVE_BG.store(true, Ordering::Relaxed); Some("save bg".into()) }
+                            Keysym::_7 => { DBG_SAVE_WIN.store(true, Ordering::Relaxed); Some("save win".into()) }
+                            Keysym::_8 => { DBG_SAVE_EXPOSE.store(true, Ordering::Relaxed); Some("save expose".into()) }
+                            Keysym::_9 => { DBG_SAVE_OVERLAY.store(true, Ordering::Relaxed); Some("save overlay".into()) }
+                            Keysym::_0 => { DBG_SAVE_TOP_WIN.store(true, Ordering::Relaxed); Some("save top_win".into()) }
+                            _ => None,
+                        };
+                        if let Some(msg) = toggled {
+                            tracing::info!(target: "otto::planes", "debug plane toggle: {msg}");
+                            suppressed_keys.push(keysym);
+                            return FilterResult::Intercept(KeyAction::None);
+                        }
+                    }
 
                     let shortcut_action = Config::with(|config| {
                         if matches!(state, KeyState::Pressed) && !inhibited {

@@ -3,269 +3,158 @@
 Hardware: Intel GPU, 8 planes per CRTC — 1 Primary + 6 Overlays + 1 Cursor.
 
 When an element is assigned to a plane the display controller composites it in
-hardware.  The GPU does zero work for that surface on idle frames.  This is the
-biggest single lever left after the Skia/lay-rs optimisations in PLAN.md.
+hardware. The GPU does zero work for that surface on idle frames.
 
 ---
 
 ## Target plane layout (per output, bottom → top)
 
-```
-6  Dock                   overlay plane   SceneDmabufElement (swapchain)
-5  Popups                 overlay plane   Wayland surface dmabuf
-4  Overlay UI             overlay plane   SceneDmabufElement (swapchain)
-   (app switcher, workspace selector,
-    layer_shell_overlay, OSD, DnD)
-3  Top N windows          overlay planes  Wayland surface dmabufs (N configurable, default 1)
-2  Windows / Expose       overlay plane   SceneDmabufElement (swapchain)
-   (all non-top windows rendered together;
-    expose mode renders into the same plane —
-    no transition cost, just a different render pass)
-1  Background             primary plane   SceneDmabufElement (swapchain)
-   (background_view + layer_shell_bg)
-   ────────────────────────────────────
-   Cursor                 cursor plane    always on
-```
-
-Planes 1, 2, 4, 6 are Skia-rendered scenes exported as dmabufs (SceneDmabufElement).
-Planes 3, 5 are raw Wayland client dmabufs handed straight to KMS.
-
-Fixed overlays: dock(1) + popups(1) + overlay UI(1) + windows/expose(1) = 4.
-Remaining overlays available for top windows: 6 − 4 = **2 by default**.
-N is a config knob (`top_window_planes`, default 1). Max useful value is 2
-given the hardware budget; raising it reduces the windows/expose plane or
-drops one of the fixed UI planes.
-
-Expose mode is a render-mode switch on plane 2: instead of compositing the
-non-top windows at their normal positions, the same SceneDmabufElement renders
-the expose grid. Same plane, same dmabuf slot — no layer rebuild or transition
-plane needed.
-
-When a plane assignment fails Smithay falls back to GPU compositing for that
-element only.
-
----
-
-## What we have proven (2026-04-19)
-
-- **Cursor → cursor plane**: works, always on.
-- **Top focused window → overlay plane**: proven. `Kind::ScanoutCandidate` +
-  `render_elements_from_surface_tree` → Smithay atomic-tests and assigns.
-- **Scene → primary plane via Smithay swapchain**: works, no tearing.
-- **Semi-transparent overlay → overlay plane**: `plane_alpha` property, proven
-  with a 0.5-opacity `SceneDmabufElement`.
-- **Smithay patches** (`feat/dmabuf-scanout`): `UnderlyingStorage::Dmabuf`,
-  opaque-overlay overlap rule relaxed, `GbmFramebufferExporter` dmabuf path.
-
----
-
-## P-Plane-0 — Scene on primary via SceneDmabufElement swapchain
-
-**Current cost**: scene is Skia-rendered into Smithay's swapchain every frame
-(GPU composite: read scene layers → write framebuffer → primary plane).
-
-**Target**: scene rendered into a GBM swapchain (2-3 slots).  On each frame,
-acquire slot → render → release.  Expose the slot's dmabuf via
-`UnderlyingStorage::Dmabuf` → primary plane.  When scene is static, the
-previous slot is reused — zero GPU work.
-
-**Why swapchain (not single buffer)**: single buffer = KMS scans while GPU
-writes = tearing.  We hit this exact bug in the session — the circle had
-artifacts until we dropped `SceneDmabufElement` from the primary path.
-
-**Implementation**:
-1. Replace `OnceLock<Dmabuf>` + `_gbm_buffer` in `SceneDmabufElement` with
-   `Swapchain<GbmAllocator<DrmDeviceFd>>` (same type as `GbmDrmCompositor`'s
-   internal swapchain).
-2. On `update()`: `swapchain.acquire()` → render into slot → `slot.export()`
-   → store as current dmabuf → `underlying_storage()` returns it.
-3. On VBlank (`frame_submitted` callback): `swapchain.submitted()` to release
-   the slot.
-4. Damage tracking: if `engine.update()` reports no damage AND previous slot
-   is still valid, skip render and return the same dmabuf.
-
-**Expected impact**: compositor GPU share → ~0% on static-scene frames
-(background, dock unchanged, only window animating).  Largest single win.
-
-**Effort**: 1–2 days.
-
----
-
-## P-Plane-1 — Non-top windows + expose on a shared overlay plane
-
-**Current**: non-top windows and expose are part of the lay-rs scene, composited
-into the primary plane via Skia every frame.
-
-**Target**: a dedicated `SceneDmabufElement` (swapchain) for all non-top windows.
-This element renders the `workspace_windows_container` layers (minus the top
-window) and is assigned to its own overlay plane.
-
-Expose mode is a render-mode flag on the same element: when expose is active,
-render the expose grid into the same swapchain slot instead of the normal window
-layout.  No extra plane, no transition — just a different Skia draw pass into the
-same dmabuf.
-
-**Benefits**:
-- Fixed overlay budget: exactly 1 plane for all non-top windows, regardless of count.
-- Expose is free: same plane, same infrastructure, mode switch only.
-- No per-window format/scaling constraints (Skia composites them internally).
-
-**Damage**: only re-render this plane when a non-top window has new damage or
-the expose animation is running.  Static backgrounds of non-top windows cost
-nothing.
-
-**Effort**: 2 days.  Requires P-Plane-0 swapchain infra first (shared pattern).
-
----
-
-## P-Plane-2 — Dock on its own overlay plane
-
-**Current**: dock is part of the scene — it lives in the lay-rs tree and is
-composited into the primary plane via Skia every frame.
-
-**Target**: render the dock into its own `SceneDmabufElement` dmabuf, assign
-to an overlay plane.  Dock updates (badge counts, hover effects) don't
-invalidate the scene or the window planes.
-
-**Constraints**:
-- Dock has rounded corners → transparent pixels outside the visible rect.
-  Fine on a plane — display controller alpha-blends with the plane below.
-- Background blur (frosted glass) samples pixels from planes below the dock.
-  Those planes are separate dmabufs; the dock's Skia surface can't sample them
-  directly.  Solved by P-Plane-5 (cross-plane blur via dmabuf reimport).
-
-**Expected impact**: dock updates no longer re-render the full scene.
-
-**Effort**: 2–3 days (SceneDmabufElement swapchain must land first).
-
----
-
-## P-Plane-3 — Telemetry: plane assignment success rate
-
-Without logging we can't tell if Smithay's atomic test is rejecting our
-candidates silently.
-
-**Implementation**:
-- Hook into `DrmCompositor::render_frame()` result: it already returns which
-  elements were assigned to planes vs composited.  Log a summary at 1 Hz:
-  `planes: primary=scene overlay=[win0, win1] composited=[win2]`.
-- Track running totals (`planes_hit`, `planes_miss`) behind `feature = "dev"`.
-
-**Effort**: half day.  Prerequisite for validating P-Plane-0 through P-Plane-2.
-
----
-
-## P-Plane-5 — Cross-plane backdrop blur via dmabuf reimport
-
-**Problem**: planes below a Skia-rendered element (e.g., the blur behind the
-dock, or a frosted-glass app-switcher overlay) are separate dmabufs — the
-upper plane's Skia canvas can't sample them directly.
-
-**Solution**: before rendering a plane that needs backdrop blur, reimport the
-dmabufs from the planes below it as `skia::Image` objects, composite them into
-a temporary Skia surface (respecting each plane's `plane_alpha`), apply the
-blur filter to the relevant region, then use the blurred result as the backdrop
-when drawing the plane's own content.
-
-**Implementation**:
-1. `SkiaRenderer::import_image_from_dmabuf(dmabuf)` — already designed:
-   `dmabuf → EGLImage → GL texture → skia::Image` via the existing
-   `import_egl_image` + `import_skia_image_from_texture` path.
-2. Each `SceneDmabufElement` that needs blur holds references to the
-   `SceneDmabufElement`s below it (passed in at construction or as a slice).
-3. On `update()`, before rendering own content:
-   a. For each lower plane: call `import_image_from_dmabuf` on its current slot.
-   b. Draw lower images onto a scratch Skia surface (size = blur region only,
-      not full output — keep the scratch small).
-   c. Apply `skia::image_filters::blur` to the scratch.
-   d. Draw the blurred scratch as the backdrop, then render own content on top.
-4. **Cache invalidation**: only redo the blur blit if any lower plane's
-   `current_commit()` has advanced since last frame.  Static background behind
-   a static dock = zero extra GPU work.
-
-**Scope**: dock blur, app-switcher frosted glass, any future overlay with
-backdrop filter.  The general pattern is reusable across all Skia planes.
-
-**Effort**: 1–2 days after P-Plane-0 and `import_image_from_dmabuf` land.
-
----
-
-## P-Plane-4 — Frame callbacks tied to plane assignment
-
-When a window is on an overlay plane the compositor doesn't render it — it must
-still send `wl_surface.frame` callbacks so the client advances.  When a window
-is GPU-composited the frame callback already fires on page flip.
-
-**Current**: frame callbacks fire uniformly.  There is a separate frame-callback
-throttle plan in memory (Focused/Secondary/Occluded states).
-
-**Integration**: after plane assignment is stable, wire frame callback rate:
-- Window on overlay plane: callback at display refresh rate (always, even if
-  compositor didn't render).
-- Window GPU-composited but visible: callback on page flip.
-- Window occluded / minimised: throttled or suppressed.
-
-**Effort**: 1 day.  Depends on P-Plane-3 telemetry to confirm which path a
-client is on.
-
----
-
-## P-Plane-6 — Layer restructuring (prerequisite for plane rendering)
-
-**Problem**: `render_node_tree` needs a single clean `NodeRef` per plane group.
-The current scene graph does not have explicit container nodes matching the
-target plane groupings — layers for background, windows, overlay UI, dock etc.
-are peers under the output node without clear group boundaries.
-
-**Target layer tree** (each bullet = one `NodeRef` passed to a `SceneDmabufElement`):
+### Tier3 layout (confirmed on eDP-1, i915 Tiger Lake)
 
 ```
-output_[name]
-├── plane_background          ← background_view + layer_shell_bg_mirror
-├── plane_windows             ← workspace_windows_container (non-top windows)
-│                               + expose grid (same node, mode-switched)
-├── plane_top_window_[i]      ← (no lay-rs layer — Wayland surface dmabuf direct)
-├── plane_overlay_ui          ← app_switcher, workspace_selector, layer_shell_overlay,
-│                               OSD, DnD
-├── plane_popups              ← (no lay-rs layer — Wayland surface dmabufs direct)
-└── plane_dock                ← dock.wrap_layer
+Z  KMS plane   Render element                     lay-rs subtree root
+─────────────────────────────────────────────────────────────────────
+3  Overlay 2   overlay_dmabuf_element             overlay_plane  (UI + dock combined)
+2  Overlay 1   top_window_dmabuf_element          scanout_windows
+1  Overlay 0   windows_dmabuf_element             windows_plane
+               OR expose_dmabuf_element           expose_plane   (mutually exclusive)
+0  Primary     scene_dmabuf_element               background_plane
+   ─────────────────────────────────────────────────────────────────
+   Cursor      cursor texture                     (no lay-rs node)
 ```
 
-**Work**:
-1. Add explicit plane-group container layers to output creation
-   (`src/workspaces/mod.rs`, `src/shell/mod.rs`).
-2. Move existing child layers into the correct container at creation time.
-3. Expose a `PlaneRoots` struct per output holding the six `NodeRef`s so the
-   render path can pass them to the corresponding `SceneDmabufElement`s.
-4. Verify visually that the scene renders identically before and after — this
-   is a pure structural refactor, no behaviour change.
+**Dock is a sublayer of overlay_plane** (not a separate plane). The combined
+overlay captures: app switcher, workspace selector, layer_shell_overlay, OSD,
+DnD, popups, and dock — all composited into one dmabuf by the GPU, then
+scanned out on Overlay 2.
 
-**Effort**: 1–2 days.  No render-path changes, only scene graph structure.
+### Conditional presence
+
+- **Overlay 2 (UI+dock)**: always pushed when tier ≥ Tier1. Even when no
+  overlay UI is active, dock is still present in the subtree. The per-plane
+  damage skip means idle frames cost nothing.
+- **Overlay 1 (top window)**: pushed only when `scanout_windows` is non-empty
+  (i.e. at least one window is parked there). Tier ≥ Tier3.
+- **Overlay 0 (windows/expose)**: pushed when there are non-parked windows.
+  Tier ≥ Tier2. Skipped entirely when all windows are in scanout_windows.
+- **Primary (background)**: pushed as separate plane when tier ≥ Tier2.
+  Below Tier2 the full GPU-composited frame goes to primary as usual.
+
+### Lower-tier fallbacks
+
+| Tier     | Primary       | Overlay 0     | Overlay 1   | Overlay 2    |
+|----------|---------------|---------------|-------------|--------------|
+| Fallback | full scene    | —             | —           | —            |
+| Tier1    | full scene    | —             | —           | UI+dock      |
+| Tier2    | background    | windows/expose| —           | UI+dock      |
+| Tier3    | background    | windows/expose| top window  | UI+dock      |
 
 ---
 
-## Suggested order
+## Implementation status
 
-Phase 1 — **Swapchain infra** (2 days)
-: Replace `OnceLock` with `Swapchain` in `SceneDmabufElement`, wire VBlank
-  release, add `NodeRef` subtree rendering replacing the placeholder.
+| Phase | Description                        | Status |
+|-------|------------------------------------|--------|
+| 1     | SceneDmabufElement swapchain infra | ✅ done |
+| 2     | Layer restructuring (plane groups) | ✅ done |
+| 3     | Background on primary plane        | ✅ done |
+| 4     | Windows + expose overlay plane     | ✅ done |
+| 5     | Dock + overlay UI planes           | ✅ done |
+| —     | Per-plane damage skip              | ✅ done |
+| —     | KMS tier grading (TEST_ONLY probe) | ✅ done — Tier3 confirmed, Tier4 rejected (i915 Tiger Lake eDP-1, 6 overlays) |
+| 8     | Tier activation (wire tiers to render) | ✅ done |
+| 6     | Cross-plane backdrop blur          | 🔲 todo |
+| 7     | Telemetry + frame callbacks        | 🔲 todo |
 
-Phase 2 — **P-Plane-6: Layer restructuring** (1–2 days)
-: Reorganise the scene graph into the six plane-group containers.
-  Pure refactor — no visual change, no render-path change.
+---
 
-Phase 3 — **P-Plane-0: Background on primary** (2 days)
-: `plane_background` NodeRef → SceneDmabufElement swapchain → primary plane.
+## Phase 8 — Tier activation
 
-Phase 4 — **P-Plane-1: Windows + expose** (2 days)
-: `plane_windows` NodeRef → SceneDmabufElement swapchain → overlay plane.
-  Expose = render-mode flag on the same element.
+Replace all `DBG_PLANE_*` keyboard guards with tier-based automatic enabling.
+Debug flags remain as manual overrides (OR-combined with tier check).
 
-Phase 5 — **P-Plane-2: Dock + Overlay UI** (2 days)
-: Dock and overlay UI each on their own SceneDmabufElement → overlay planes.
+### Step 1 — Move dock into overlay_plane subtree (`workspaces/mod.rs`)
 
-Phase 6 — **P-Plane-5: Cross-plane blur** (2 days)
-: `import_image_from_dmabuf` + blur pass for dock/overlay UI.
+Currently dock.wrap_layer and overlay_plane are siblings under output_layer:
 
-Phase 7 — **P-Plane-3 + P-Plane-4: Telemetry + frame callbacks** (1 day)
-: Plane assignment logging, frame callback rate tied to plane assignment.
+```
+output_layer
+  ├── dock.wrap_layer       ← to be moved
+  └── overlay_plane
+        └── ... ui children
+```
+
+Change (primary output path only):
+
+```
+output_layer
+  └── overlay_plane
+        ├── ... ui children
+        └── dock.wrap_layer   ← added last = topmost in subtree
+```
+
+`overlay_dmabuf_element` already renders `overlay_plane`, so it will
+automatically capture dock after this change. The `dock_dmabuf_element` field
+and its alloc/push code in render.rs can be removed.
+
+### Step 2 — Wire tier gates (`udev/render.rs`)
+
+Compute once per frame, near the top of the plane-push block:
+
+```rust
+let tier = surface.current_tier.unwrap_or(RenderTier::Fallback);
+let use_bg_plane      = matches!(tier, Tier2 | Tier3 | Tier4);
+let use_windows_plane = matches!(tier, Tier2 | Tier3 | Tier4);
+let use_topwin_plane  = matches!(tier, Tier3 | Tier4);
+let use_ui_dock_plane = matches!(tier, Tier1 | Tier2 | Tier3 | Tier4);
+```
+
+Replace each `DBG_PLANE_X.load(…)` with `use_X_plane || DBG_PLANE_X.load(…)`.
+
+Push order (top → bottom so Smithay assigns overlays front-first):
+1. `overlay_dmabuf_element` — when `use_ui_dock_plane`
+2. `top_window_dmabuf_element` — when `use_topwin_plane && scanout_windows non-empty`
+3. `expose_dmabuf_element` — when `use_windows_plane && expose_active`
+4. `windows_dmabuf_element` — when `use_windows_plane && !expose_active && !all_parked`
+5. `scene_dmabuf_element` — when `use_bg_plane`
+
+### Step 3 — Remove dock_dmabuf_element
+
+After Step 1, `dock_dmabuf_element` is redundant. Remove:
+- `SurfaceData::dock_dmabuf_element` field (`types.rs`)
+- `alloc_plane!(surface.dock_dmabuf_element, …)` alloc block (`render.rs`)
+- `el.set_node_ref(dock_layer.id)` node assignment (`render.rs`)
+- The unconditional `push_plane!(surface.dock_dmabuf_element.clone())` (`render.rs`)
+
+### Open issues (deferred past phase 8)
+
+- **draw() fallback**: `SceneDmabufElement::draw()` is a no-op. If a plane
+  fails KMS assignment at runtime the layer goes black. Acceptable short-term
+  since the tier probe gates entry. Long-term: GPU blit of dmabuf content.
+- **Tier re-probe on mode change**: `current_tier` is never cleared after a
+  CRTC mode change. Add a reset hook so the probe re-runs if the display mode
+  changes (e.g. external monitor hotplug).
+
+---
+
+## Per-plane damage skip
+
+**Implemented** in `src/render_elements/scene_dmabuf_element.rs`.
+
+Each `SceneDmabufElement::render()` calls `engine.subtree_damage(node_ref)` at
+the top. If the subtree has no damage and a valid dmabuf already exists, `render()`
+returns early without touching the swapchain or advancing `commit_counter`.
+Smithay's `damage_since()` therefore returns empty and the DRM compositor reuses
+the existing framebuffer — zero GPU and zero KMS work on idle planes.
+
+---
+
+## Phase 6 — Cross-plane backdrop blur
+
+See `phase-6-cross-plane-blur.md`. Deferred until phase 8 is confirmed
+stable. Requires `SkiaRenderer::import_image_from_dmabuf`.
+
+## Phase 7 — Telemetry + frame callbacks
+
+See `phase-7-polish.md`. Plane assignment success rate logging and
+frame-callback rate tied to plane assignment state.
