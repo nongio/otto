@@ -1288,12 +1288,18 @@ pub(super) fn render_surface<'a>(
                     for win_id in &surface.shadow_only_windows {
                         if let Some(win) = window_elements.iter().find(|w| w.id() == *win_id) {
                             if let Some(wl_surface) = win.wl_surface() {
+                                // render_position() is the visible-content origin (physical px).
+                                // render_elements_from_surface_tree expects the wl_surface buffer
+                                // origin, which for CSD windows is shifted back by geometry.loc.
                                 let pos = win.base_layer().render_position();
+                                let geo_loc = win.geometry().loc.to_f64().to_physical(scale);
+                                let buf_x = pos.x as i32 - geo_loc.x.round() as i32;
+                                let buf_y = pos.y as i32 - geo_loc.y.round() as i32;
                                 let elems: Vec<WorkspaceRenderElements<_>> =
                                     render_elements_from_surface_tree(
                                         renderer,
                                         &wl_surface,
-                                        Point::<i32, Physical>::from((pos.x as i32, pos.y as i32)),
+                                        Point::<i32, Physical>::from((buf_x, buf_y)),
                                         scale,
                                         1.0,
                                         Kind::ScanoutCandidate,
