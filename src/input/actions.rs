@@ -45,6 +45,7 @@ pub enum KeyAction {
     ExposeShowAll,
     WorkspaceNum(usize),
     SceneSnapshot,
+    SkpSnapshot,
     BrightnessUp,
     BrightnessDown,
     VolumeUp,
@@ -231,6 +232,89 @@ impl<BackendData: Backend> Otto<BackendData> {
                         }
                     }
                     Err(err) => error!(?err, "Failed to serialize scene snapshot"),
+                }
+            }
+
+            KeyAction::SkpSnapshot => {
+                use layers::drawing::render_node_tree;
+                use layers::skia;
+
+                info!("SKP export triggered");
+                let engine = &self.layers_engine;
+                let scene = engine.scene();
+
+                let (output_root, w, h) = {
+                    let output = self.workspaces.focused_output().cloned();
+                    let output_name = output.as_ref().map(|o| o.name());
+                    let ows = output_name
+                        .as_deref()
+                        .and_then(|n| self.workspaces.output_workspaces.get(n));
+                    match ows {
+                        Some(ows) => {
+                            let layer = &ows.output_layer;
+                            let sz = layer.size();
+                            let to_f32 = |d: layers::prelude::taffy::Dimension| match d {
+                                layers::prelude::taffy::Dimension::Length(v) => v,
+                                _ => 0.0,
+                            };
+                            (layer.id, to_f32(sz.width), to_f32(sz.height))
+                        }
+                        None => {
+                            error!("No focused output — cannot export SKP");
+                            return;
+                        }
+                    }
+                };
+
+                let bounds = skia::Rect::from_wh(w, h);
+                let mut recorder = skia::PictureRecorder::new();
+                let canvas = recorder.begin_recording(bounds, true);
+
+                if let Some(layer) = engine.get_layer(&output_root) {
+                    let pos = layer.render_position();
+                    if pos.x != 0.0 || pos.y != 0.0 {
+                        canvas.translate((-pos.x, -pos.y));
+                    }
+                }
+
+                canvas.clip_rect(bounds, None, false);
+
+                scene.with_arena(|arena| {
+                    scene.with_renderable_arena(|renderable_arena| {
+                        render_node_tree(
+                            output_root,
+                            arena,
+                            renderable_arena,
+                            canvas,
+                            1.0,
+                            None,
+                            None,
+                        );
+                    });
+                });
+
+                if let Some(picture) = recorder.finish_recording_as_picture(None) {
+                    let data = picture.serialize();
+                    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+                    let dir = std::path::PathBuf::from(&home).join("Pictures/Screenshots");
+                    let _ = fs::create_dir_all(&dir);
+                    let secs = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    let path = dir.join(format!("scene_{secs}.skp"));
+                    if let Err(err) = fs::write(&path, data.as_bytes()) {
+                        error!(?err, path = %path.display(), "Failed to write SKP snapshot");
+                    } else {
+                        info!(
+                            path = %path.display(),
+                            ops = picture.approximate_op_count(),
+                            bytes = data.len(),
+                            "SKP snapshot saved"
+                        );
+                    }
+                } else {
+                    error!("PictureRecorder produced no picture");
                 }
             }
 
@@ -448,6 +532,7 @@ pub fn resolve_shortcut_action(config: &Config, action: &ShortcutAction) -> Opti
             BuiltinAction::ExposeShowAll => Some(KeyAction::ExposeShowAll),
             BuiltinAction::WorkspaceNum { index } => Some(KeyAction::WorkspaceNum(*index)),
             BuiltinAction::SceneSnapshot => Some(KeyAction::SceneSnapshot),
+            BuiltinAction::SkpSnapshot => Some(KeyAction::SkpSnapshot),
             BuiltinAction::BrightnessUp => Some(KeyAction::BrightnessUp),
             BuiltinAction::BrightnessDown => Some(KeyAction::BrightnessDown),
             BuiltinAction::VolumeUp => Some(KeyAction::VolumeUp),
