@@ -1,13 +1,13 @@
 # Otto
-A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail, inspired by familiar macOS interactions. 
+A visually-focused desktop system designed around smooth animations, thoughtful gestures, and careful attention to detail, inspired by familiar macOS interactions. 
 
-This system aims to be visually refined and pleasant to use, while at the same time, serving as an experimental platform to push the Linux desktop environment forward.
+This system aims to be visually refined and pleasant to use, while at the same time serving as an experimental platform to push the Linux desktop environment forward.
 
-Otto is a Wayland compositor and stacking window manager, built in Rust on top of [LayersEngine](https://github.com/nongio/layers) and uses Skia for rendering.
+Otto is a Wayland compositor and stacking window manager, built in Rust on top of [LayersEngine](https://github.com/nongio/layers), with Skia used for rendering.
 
 ## :information_source: Testing phase
 While many features are ready for daily use, there is still some work required for full stability. 
-Testing is valuable therefore you are invited to play around with Otto.
+Testing is valuable, so you are invited to play around with Otto.
 
 Feedback and questions are welcome in the Matrix chat: 
 [`#otto-compositor:matrix.org`](https://matrix.to/#/#otto-compositor:matrix.org).
@@ -21,7 +21,7 @@ Feedback and questions are welcome in the Matrix chat:
 
 <video src="https://github.com/user-attachments/assets/014df942-4a79-43f5-9562-73f1858152ba" autoplay muted loop playsinline></video>
 
-*Minimising windows with animated genie effect to the Dock.*
+*Minimizing windows to the Dock with an animated genie effect.*
 
 <video src="https://github.com/user-attachments/assets/dedfed16-6713-4a70-b5aa-e0057c6d4aad" autoplay muted loop playsinline></video>
 
@@ -49,17 +49,16 @@ Otto is in an early but functional state. You can install it from pre-built pack
 Testing and issue reports are welcome. Development follows a draft roadmap of planned features and improvements.
 
 ## Features and roadmap
-
-- **Window management:** move/resize, fullscreen/maximize (animated), minimise to the Dock (animated).
+- **Window management:** move/resize, fullscreen/maximize (animated), minimize to the Dock (animated).
 - **Workspaces:** multiple workspaces, animated switching, drag windows between workspaces, configurable background.
-- **Dock (task manager):** shows running apps, minimised windows and pinned/bookmarked apps.
+- **Dock (task manager):** shows running apps, minimized windows and pinned/bookmarked apps.
 - **App switcher** (default: `Ctrl+Tab`): searches app metadata/icons (XDG), can close apps, cycles between windows of the same app.
 - **Exposé / overview** (default: `PageDown`, gesture: three-finger swipe up): shows all windows, shows window previews with names, includes “show desktop”.
 - **Input:** natural scrolling, two-finger scrolling, keyboard remapping.
 - **Theming:** dark/light.
 - **Screen sharing:** works through an XDG Desktop Portal backend + PipeWire (full-screen capture via GPU blit + dmabuf).
 - **System UI:** brightness, volume, keyboard backlight
-- 
+
 ### Still to come
  - **Multi-monitor:** multiple screens.
  - **Screen capture:** per-window capture, screenshots, and a permission dialog UI.
@@ -70,7 +69,7 @@ Testing and issue reports are welcome. Development follows a draft roadmap of pl
  - **Input polish:** scroll acceleration.
 
  ### Experimentation
-- **Scene graph protocol:** WIP protocol ([otto-scene-v1](protocols/otto-scene-v1.xml)) to expose the scene graph and animations to external clients for advanced UI customisation and effects.
+- **Scene graph protocol:** WIP protocol ([otto-scene-v1](protocols/otto-scene-v1.xml)) to expose the scene graph and animations to external clients for advanced UI customization and effects.
 - **Ideas:** remote "virtual screens" (VNC/RDP).
 
 ## Supported Wayland Protocols
@@ -98,9 +97,9 @@ Otto consists of the main compositor and additional components:
 The portal backend is located in `components/xdg-desktop-portal-otto/`.
 
 ## How can you contribute?
-Both this project and the LayersEngine are open to contributions. Contribute by testing the compositor, reporting bugs, by implementing new features or by bringing new ideas. If you have any questions, open an issue on the repository.
+Both this project and the LayersEngine are open to contributions. Contribute by testing the compositor, reporting bugs, implementing new features, or bringing new ideas. If you have any questions, open an issue on the repository.
 
-The repository provides AGENTS.md, automated code review instructions and developer documentation to support both human contributors and coding agents.
+The repository provides [AGENTS.md](AGENTS.md), automated code review instructions, and developer documentation to support both human contributors and coding agents.
 
 ## Installation
 
@@ -133,7 +132,7 @@ curl -O https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD
 makepkg -si
 ```
 
-If you already downloaded the tarball from GitHub Releases, put the PKGBUILD in the same directory — makepkg will use it without re-downloading:
+If you already downloaded the tarball from GitHub Releases, put the PKGBUILD in the same directory — `makepkg` will use it without re-downloading:
 ```bash
 cd ~/Downloads  # wherever your otto-*-x86_64.tar.gz is
 curl -O https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD
@@ -149,8 +148,8 @@ Once installed, Otto will appear in your login manager (GDM, SDDM, LightDM, etc.
 ## Building Otto
 
 ### Prerequisites
-You'll need to install the following dependencies (note, that those package
-names may vary depending on your OS and linux distribution):
+You'll need to install the following dependencies (note that these package
+names may vary depending on your OS and Linux distribution):
 - `libwayland`
 - `libxkbcommon`
 - `libudev`
@@ -159,8 +158,7 @@ names may vary depending on your OS and linux distribution):
 - [`libseat`](https://git.sr.ht/~kennylevinsen/seatd)
 
 If you want to enable X11 support (to run X11 applications within Otto),
-then you'll need to install the following packages as well:
-    - `xwayland`
+you'll need to install the `xwayland` package as well.
 
 ### Build and run
 
@@ -186,12 +184,13 @@ Otto automatically detects the best backend for your environment:
 
 **You can force a specific backend** by passing it as an argument:
 
-- `--tty-udev`: start Otto in a tty with udev support. This is the "traditional" launch of a Wayland
-  compositor. Note that this might require you to start Otto as root if your system does not have logind
+- `--tty-udev`: start Otto in a tty with `udev` support. This is the "traditional" launch of a Wayland
+  compositor. Note that this might require you to start Otto as root if your system does not have `logind`
   available.
 - `--winit`: start Otto as a [Winit](https://github.com/tomaka/winit) application. This allows you to run it
-  inside of an other X11 or Wayland session, useful for development.
-- `--x11`: start Otto as an X11 client. This allows you to run the compositor inside an X11 session or any compositor supporting XWayland. This implementation is quite basic and not really maintained.
+  inside another X11 or Wayland session — useful for development.
+- `--x11`: start Otto as an X11 client. This allows you to run the compositor inside an X11 session or any
+  compositor supporting XWayland. This implementation is quite basic and is not really maintained.
 
 
 ## Configure Otto
@@ -246,16 +245,16 @@ Hotkeys are now fully configurable via the `otto_config.toml` file. See the `[ke
 
 ## Profiling
 
-Otto includes built-in support for profiling using [puffin](https://github.com/EmbarkStudios/puffin). The profiler is enabled by default through the `profile` feature.
+Otto includes built-in support for profiling using [puffin](https://github.com/EmbarkStudios/puffin). The profiler is enabled by default via the `profile` feature.
 
 ### Using the Profiler
 
-1. **Run the compositor** - The puffin HTTP server starts automatically on port 8585:
+1. **Run the compositor** — The puffin HTTP server starts automatically on port 8585:
    ```bash
    cargo run -- --winit
    ```
 
-2. **Install puffin_viewer** (if you haven't already):
+2. **Install `puffin_viewer`** (if you haven't already):
    ```bash
    cargo install puffin_viewer
    ```
