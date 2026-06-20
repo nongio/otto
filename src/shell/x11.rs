@@ -176,6 +176,17 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
                 .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
                 .cloned()
         }) else {
+            // The element does not exist yet: Otto defers X11 mapping to
+            // XWaylandShellHandler::surface_associated, so a client that maps and
+            // immediately requests _NET_WM_STATE_FULLSCREEN (Unity/Proton games)
+            // reaches this handler before the element is in the space. Record the
+            // request on the X11Surface (net_state) so surface_associated can replay
+            // it once the element exists, instead of silently dropping it.
+            tracing::debug!(
+                ?window,
+                "x11 fullscreen_request before element mapped; deferring to surface_associated"
+            );
+            let _ = window.set_fullscreen(true);
             return;
         };
 
@@ -183,57 +194,7 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
             return;
         }
 
-        let outputs_for_window = self.workspaces.outputs_for_element(&elem);
-        let output = outputs_for_window
-            .first()
-            .or_else(|| self.workspaces.outputs().next())
-            .expect("No outputs found")
-            .clone();
-        let geometry = self.workspaces.output_geometry(&output).unwrap();
-
-        let id = elem.id();
-
-        // Save the current geometry so unfullscreen can restore it
-        if let Some(mut view) = self.workspaces.get_window_view(&id) {
-            let current_element_geometry = self.workspaces.element_geometry(&elem).unwrap();
-            view.unmaximised_rect = current_element_geometry;
-            self.workspaces.set_window_view(&id, view);
-        }
-
-        // Register for direct scanout
-        output
-            .user_data()
-            .insert_if_missing(FullscreenSurface::default);
-        output
-            .user_data()
-            .get::<FullscreenSurface>()
-            .unwrap()
-            .set(elem.clone());
-
-        self.backend_data.reset_buffers(&output);
-
-        // Create a dedicated fullscreen workspace
-        let current_workspace_index = self.workspaces.get_current_workspace_index();
-        let (next_workspace_index, next_workspace) = self.workspaces.get_next_free_workspace();
-        next_workspace.set_fullscreen_mode(true);
-
-        self.workspaces.expose_set_visible(false);
-
-        elem.set_fullscreen(true, next_workspace_index);
-        elem.set_workspace(current_workspace_index);
-
-        self.workspaces
-            .move_window_to_workspace(&elem, next_workspace_index, (0, 0));
-
-        let transition = Transition::ease_in_out_quad(1.4);
-        self.workspaces
-            .set_current_workspace_index(next_workspace_index, Some(transition));
-
-        self.workspaces.set_fullscreen_overlay_visibility(true);
-        self.workspaces.dock.hide(None);
-
-        window.set_fullscreen(true).unwrap();
-        window.configure(geometry).unwrap();
+        self.apply_x11_fullscreen(&elem, &window);
     }
 
     fn unfullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
@@ -483,6 +444,77 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
 }
 
 impl<BackendData: Backend> Otto<BackendData> {
+    /// Run the X11 fullscreen transition for an already-mapped element.
+    ///
+    /// Split out of `XwmHandler::fullscreen_request` so `surface_associated` can
+    /// replay a fullscreen request that arrived before the element was mapped
+    /// (the Unity/Proton-game deferred-mapping race). The caller is responsible
+    /// for ensuring the element exists and is not already fullscreen.
+    pub fn apply_x11_fullscreen(
+        &mut self,
+        elem: &crate::shell::WindowElement,
+        window: &X11Surface,
+    ) {
+        let outputs_for_window = self.workspaces.outputs_for_element(elem);
+        let output = outputs_for_window
+            .first()
+            .or_else(|| self.workspaces.outputs().next())
+            .expect("No outputs found")
+            .clone();
+        let geometry = self.workspaces.output_geometry(&output).unwrap();
+
+        let id = elem.id();
+
+        // Save the current geometry so unfullscreen can restore it
+        if let Some(mut view) = self.workspaces.get_window_view(&id) {
+            let current_element_geometry = self.workspaces.element_geometry(elem).unwrap();
+            view.unmaximised_rect = current_element_geometry;
+            self.workspaces.set_window_view(&id, view);
+        }
+
+        // Register for direct scanout
+        output
+            .user_data()
+            .insert_if_missing(FullscreenSurface::default);
+        output
+            .user_data()
+            .get::<FullscreenSurface>()
+            .unwrap()
+            .set(elem.clone());
+
+        self.backend_data.reset_buffers(&output);
+
+        // Create a dedicated fullscreen workspace
+        let current_workspace_index = self.workspaces.get_current_workspace_index();
+        let (next_workspace_index, next_workspace) = self.workspaces.get_next_free_workspace();
+        next_workspace.set_fullscreen_mode(true);
+
+        self.workspaces.expose_set_visible(false);
+
+        elem.set_fullscreen(true, next_workspace_index);
+        elem.set_workspace(current_workspace_index);
+
+        self.workspaces
+            .move_window_to_workspace(elem, next_workspace_index, (0, 0));
+
+        let transition = Some(Transition::ease_in_out_quad(1.4));
+        self.workspaces
+            .set_current_workspace_index(next_workspace_index, transition);
+
+        self.workspaces.set_fullscreen_overlay_visibility(true);
+        self.workspaces.dock.hide(None);
+
+        // Ensure the X11 `_NET_WM_STATE_FULLSCREEN` atom is set so the client can read
+        // its fullscreen state back (Wine/Unity games block until they see it). We set
+        // ONLY fullscreen here, matching exactly what the client requested — adding
+        // MAXIMIZED would make the readback bitmask differ from the client's request and
+        // re-trigger the same wait/hang. The initial pre-map `_NET_WM_STATE` is already
+        // seeded into smithay's net_state (X11Surface::update_net_wm_state at map time),
+        // so this is usually a no-op; it covers runtime fullscreen toggles too.
+        window.set_fullscreen(true).unwrap();
+        window.configure(geometry).unwrap();
+    }
+
     pub fn maximize_request_x11(&mut self, window: &X11Surface) {
         let Some(elem) = self.workspaces.space().and_then(|s| {
             s.elements()

@@ -427,8 +427,10 @@ pub fn run_udev() {
         }
     }
 
-    // init dmabuf support with format list from our primary gpu
-    let dmabuf_formats = renderer.dmabuf_formats();
+    // init dmabuf support with format list from our primary gpu.
+    // Strip the clear-color CCS modifiers Otto can't sample (see
+    // feedback::strip_clear_color_modifiers) so clients fall back to renderable ones.
+    let dmabuf_formats = super::feedback::strip_clear_color_modifiers(renderer.dmabuf_formats());
     let default_feedback = DmabufFeedbackBuilder::new(primary_gpu.dev_id(), dmabuf_formats)
         .build()
         .unwrap();

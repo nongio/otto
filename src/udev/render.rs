@@ -320,7 +320,8 @@ impl Otto<UdevData> {
         // are dropped for those frames. Disabled during capture and the
         // 3-finger swipe (the finger-drag moves the workspace with no
         // animation flag, so a fixed plane would not follow it).
-        let allow_fullscreen_scanout = self.workspaces.is_fullscreen_and_stable()
+        let allow_fullscreen_scanout = std::env::var_os("DISABLE_DIRECT_SCANOUT").is_none()
+            && self.workspaces.is_fullscreen_and_stable()
             && !self.swipe_gesture.is_active()
             && !capture_active;
         let fullscreen_window = if allow_fullscreen_scanout {
@@ -328,6 +329,14 @@ impl Otto<UdevData> {
         } else {
             None
         };
+        // XWayland surfaces must not take the fullscreen direct-scanout path:
+        // the single fullscreen dmabuf element it produces (correct geometry)
+        // scans out black, whereas the normal lay-rs scene composition renders
+        // the same surface correctly. This affects fullscreen Proton/Unity
+        // games (e.g. Cuphead), which run under XWayland and would otherwise
+        // show a black screen. Composite them through the scene instead.
+        // (Native Wayland fullscreen clients keep using direct scanout.)
+        let fullscreen_window = fullscreen_window.filter(|w| !w.is_x11());
         // Whether this output uses the plane decomposition at all (set once at
         // surface creation from overlay count / atomic / GPU identity).
         let planes_enabled = self
