@@ -2307,19 +2307,12 @@ impl Workspaces {
         let output_geometry = output
             .and_then(|o| {
                 let geo = self.output_geometry(&o)?;
-                tracing::info!("new_window_placement: output geometry = {:?}", geo);
-
                 let map = layer_map_for_output(&o);
                 let zone = map.non_exclusive_zone();
-                tracing::info!("new_window_placement: non_exclusive_zone = {:?}", zone);
-
                 let mut adjusted = Rectangle::new(geo.loc + zone.loc, zone.size);
-                tracing::info!("new_window_placement: adjusted geometry (geo.loc + zone.loc, zone.size) = {:?}", adjusted);
 
                 // Account for the dock geometry (internal compositor UI, not layer-shell)
                 let dock_geom = self.get_dock_geometry();
-                tracing::info!("new_window_placement: dock geometry = {:?}", dock_geom);
-
                 if dock_geom.size.h > 0 {
                     let dock_top = dock_geom.loc.y;
                     let available_bottom = adjusted.loc.y + adjusted.size.h;
@@ -2327,7 +2320,6 @@ impl Workspaces {
                     // If dock is in the usable area, reduce height to stop above dock
                     if dock_top < available_bottom {
                         adjusted.size.h = dock_top - adjusted.loc.y;
-                        tracing::info!("new_window_placement: adjusted for dock, new height = {}", adjusted.size.h);
                     }
                 }
 
@@ -2335,63 +2327,70 @@ impl Workspaces {
             })
             .unwrap_or_else(|| Rectangle::new((0, 0).into(), (800, 800).into()));
 
-        let num_open_windows = self.spaces_elements().count();
-        let window_index = num_open_windows + 1; // Index of the new window
-
-        tracing::info!(
-            "new_window_placement: window_index = {}, num_open_windows = {}",
-            window_index,
-            num_open_windows
-        );
-
-        // Default window size assumption (will be adjusted by client during configure)
+        // The client's real size is unknown until it configures; assume a typical
+        // size for placement and clamp it to the usable area.
         const DEFAULT_WINDOW_WIDTH: i32 = 800;
         const DEFAULT_WINDOW_HEIGHT: i32 = 600;
-        const CASCADE_OFFSET: i32 = 40; // Offset for each new window in cascade
+        let usable = output_geometry;
+        let win_w = DEFAULT_WINDOW_WIDTH.min(usable.size.w);
+        let win_h = DEFAULT_WINDOW_HEIGHT.min(usable.size.h);
 
-        // Calculate available space within the non-exclusive zone
-        let available_width = output_geometry.size.w;
-        let available_height = output_geometry.size.h;
+        // Existing window rectangles (current workspace) to avoid overlapping.
+        let existing: Vec<Rectangle<i32, smithay::utils::Logical>> = self
+            .spaces_elements()
+            .filter_map(|we| self.element_geometry(we))
+            .collect();
 
-        tracing::info!(
-            "new_window_placement: available_width = {}, available_height = {}",
-            available_width,
-            available_height
+        // Clamp a top-left position so the assumed window stays inside `usable`.
+        let clamp = |p: smithay::utils::Point<i32, smithay::utils::Logical>| {
+            smithay::utils::Point::<i32, smithay::utils::Logical>::from((
+                p.x.clamp(usable.loc.x, usable.loc.x + (usable.size.w - win_w).max(0)),
+                p.y.clamp(usable.loc.y, usable.loc.y + (usable.size.h - win_h).max(0)),
+            ))
+        };
+
+        // Candidate top-left positions in priority order: clockwise corners from
+        // top-left, then snapped to the right/bottom edges of existing windows.
+        // The least-overlap pick favours disjoint placement so multiple windows
+        // stay eligible for direct scanout.
+        let right = usable.loc.x + usable.size.w - win_w;
+        let bottom = usable.loc.y + usable.size.h - win_h;
+        let mut candidates: Vec<smithay::utils::Point<i32, smithay::utils::Logical>> = vec![
+            (usable.loc.x, usable.loc.y).into(), // top-left
+            (right, usable.loc.y).into(),        // top-right
+            (right, bottom).into(),              // bottom-right
+            (usable.loc.x, bottom).into(),       // bottom-left
+        ];
+        for r in &existing {
+            candidates.push((r.loc.x + r.size.w, r.loc.y).into()); // to the right
+            candidates.push((r.loc.x, r.loc.y + r.size.h).into()); // below
+        }
+
+        // Total overlap area of the assumed window placed at `p` against existing
+        // windows. `min_by_key` keeps the first candidate on ties, so the
+        // clockwise corners win and a disjoint top-left placement is preferred.
+        let overlap_area = |p: smithay::utils::Point<i32, smithay::utils::Logical>| -> i64 {
+            let rect = Rectangle::new(p, (win_w, win_h).into());
+            existing
+                .iter()
+                .filter_map(|r| r.intersection(rect))
+                .map(|i| i.size.w as i64 * i.size.h as i64)
+                .sum()
+        };
+
+        let location = candidates
+            .into_iter()
+            .map(clamp)
+            .min_by_key(|&p| overlap_area(p))
+            .unwrap_or_else(|| clamp((usable.loc.x, usable.loc.y).into()));
+
+        tracing::debug!(
+            "new_window_placement: {} existing windows, placed at {:?}",
+            existing.len(),
+            location
         );
 
-        // Calculate cascade position with wrapping to stay within bounds
-        let cascade_x = (window_index as i32 * CASCADE_OFFSET)
-            % (available_width - DEFAULT_WINDOW_WIDTH).max(CASCADE_OFFSET);
-        let cascade_y = (window_index as i32 * CASCADE_OFFSET)
-            % (available_height - DEFAULT_WINDOW_HEIGHT).max(CASCADE_OFFSET);
-
-        tracing::info!(
-            "new_window_placement: cascade_x = {}, cascade_y = {}",
-            cascade_x,
-            cascade_y
-        );
-
-        // Calculate final position, ensuring window fits within available area
-        let mut x = output_geometry.loc.x + cascade_x;
-        let mut y = output_geometry.loc.y + cascade_y;
-
-        tracing::info!("new_window_placement: initial x = {}, y = {}", x, y);
-
-        // Clamp position to ensure window doesn't exceed boundaries
-        x = x.min(
-            output_geometry.loc.x + available_width - DEFAULT_WINDOW_WIDTH.min(available_width),
-        );
-        y = y.min(
-            output_geometry.loc.y + available_height - DEFAULT_WINDOW_HEIGHT.min(available_height),
-        );
-
-        // Ensure position is not before the output start
-        x = x.max(output_geometry.loc.x);
-        y = y.max(output_geometry.loc.y);
-
-        tracing::info!("new_window_placement: final position = ({}, {})", x, y);
-
-        (output_geometry, (x, y).into())
+        (output_geometry, location)
     }
 
     /// map the window element, in the position on the current space,
