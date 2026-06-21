@@ -66,6 +66,18 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
         let pointer = self.pointer.clone();
         let button_state = state.try_into().unwrap();
+
+        // On press, re-resolve the lay-rs hover against live layer positions
+        // before dispatching the button. `current_hover()` is otherwise only
+        // refreshed on motion, so a layer that animated under a stationary
+        // cursor (dock launch bounce, autohide slide-in, magnification settle)
+        // would leave a stale hover and the click would be silently dropped.
+        if button_state == ButtonState::Pressed {
+            let (cx, cy) = self.cursor_physical_position;
+            self.layers_engine
+                .pointer_move(&(cx as f32, cy as f32).into(), None);
+        }
+
         pointer.button(
             self,
             &ButtonEvent {
