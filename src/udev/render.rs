@@ -403,8 +403,18 @@ impl Otto<UdevData> {
         // distinct fields, so field-projection rules allow the mutable borrow
         // of `self.scene_element` here even though `surface` (derived from
         // `self.backend_data`) is also live.
-        let scene_has_damage =
-            prefetched_scene_damage.unwrap_or_else(|| self.scene_element.update());
+        let scene_has_damage = if !departed_windows.is_empty() {
+            // A window was demoted from scanout this frame: its buffer was
+            // re-imported (above) *after* the Phase-1 scene prefetch, so that
+            // content transaction is still unflushed. Re-run the engine update
+            // now to apply it before compositing, and force a draw — otherwise
+            // the first composited frame after demotion shows the stale,
+            // shadow-only scene (a one-frame flicker).
+            self.scene_element.update();
+            true
+        } else {
+            prefetched_scene_damage.unwrap_or_else(|| self.scene_element.update())
+        };
 
         let all_window_elements: Vec<&WindowElement> = self.workspaces.spaces_elements().collect();
 
