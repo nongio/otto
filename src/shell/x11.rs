@@ -84,6 +84,21 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
                 .cloned()
         });
         if let Some(elem) = maybe {
+            // Free the dedicated fullscreen workspace when a fullscreen window closes,
+            // mirroring the XDG path in xdg.rs::toplevel_destroyed.
+            if elem.is_fullscreen() {
+                let fullscreen_workspace = elem.get_fullscreen_workspace();
+                if let Some(workspace) = self.workspaces.get_workspace_at(fullscreen_workspace) {
+                    workspace.set_fullscreen_mode(false);
+                    workspace.set_fullscreen_animating(false);
+                    workspace.set_name(None);
+                }
+                if self.workspaces.get_current_workspace_index() == fullscreen_workspace {
+                    let prev_workspace = (fullscreen_workspace as i32 - 1).min(0) as usize;
+                    self.workspaces
+                        .set_current_workspace_index(prev_workspace, None);
+                }
+            }
             if let Some(surface) = elem.wl_surface() {
                 self.workspaces.unmap_window(&surface.as_ref().id());
             } else if let Some(space) = self.workspaces.space_mut() {
@@ -488,6 +503,27 @@ impl<BackendData: Backend> Otto<BackendData> {
         let current_workspace_index = self.workspaces.get_current_workspace_index();
         let (next_workspace_index, next_workspace) = self.workspaces.get_next_free_workspace();
         next_workspace.set_fullscreen_mode(true);
+
+        // Fetch app info asynchronously to get the proper display name for the workspace.
+        // Mirrors the XDG path in xdg.rs; `display_app_id` resolves to the X11 class
+        // (falling back to PID resolution) for X11 surfaces.
+        let app_id = elem.display_app_id(&self.display_handle);
+        if !app_id.is_empty() {
+            let workspace_clone = next_workspace.clone();
+            tokio::spawn(async move {
+                if let Some(app_info) =
+                    crate::workspaces::ApplicationsInfo::get_app_info_by_id(&app_id).await
+                {
+                    if let Some(name) = app_info.desktop_name() {
+                        workspace_clone.set_name(Some(name));
+                    } else {
+                        workspace_clone.set_name(Some(app_id));
+                    }
+                } else {
+                    workspace_clone.set_name(Some(app_id));
+                }
+            });
+        }
 
         self.workspaces.expose_set_visible(false);
 
