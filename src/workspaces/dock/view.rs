@@ -5,7 +5,10 @@ use std::{
 };
 
 use layers::{
-    engine::{animation::Transition, AnimationRef, Engine, NodeRef, TransactionRef},
+    engine::{
+        animation::{Easing, KeyframeSegment, Transition},
+        AnimationRef, Engine, NodeRef, TransactionRef,
+    },
     prelude::{taffy, Layer, Point, Spring, TimingFunction},
     skia,
     taffy::{prelude::FromLength, style::Style},
@@ -93,6 +96,10 @@ pub struct DockView {
     last_layout_animation: Arc<RwLock<Option<AnimationRef>>>,
     /// The layer currently showing the "pressed" darkening effect.
     pressed_layer: Arc<RwLock<Option<Layer>>>,
+    /// Apps whose icon is currently bouncing while a launch is in flight, keyed by
+    /// `match_id`. The flag stays `true` while bouncing; setting it `false` (or
+    /// removing the entry) stops the bounce loop once a window appears.
+    bouncing: Arc<RwLock<HashMap<String, Arc<AtomicBool>>>>,
 }
 impl PartialEq for DockView {
     fn eq(&self, other: &Self) -> bool {
@@ -311,6 +318,7 @@ impl DockView {
             active_label: Arc::new(RwLock::new(None)),
             last_layout_animation: Arc::new(RwLock::new(None)),
             pressed_layer: Arc::new(RwLock::new(None)),
+            bouncing: Arc::new(RwLock::new(HashMap::new())),
             app_icons_manager,
         };
         // Sync AtomicBool from dock_config (single source)
@@ -483,6 +491,8 @@ impl DockView {
         );
 
         let mut previous_app_layers = self.get_app_layers();
+        // Apps that just gained their first window this render — used to stop launch bounces.
+        let mut newly_running: Vec<String> = Vec::new();
         let mut apps_layers_map = self.app_layers.write().unwrap();
         for (app, running) in display_apps.iter() {
             let match_id = app.match_id.clone();
@@ -502,6 +512,9 @@ impl DockView {
                     // Update icon content if the icon changed (AppIconsManager tracks icon_id).
                     self.app_icons_manager.update_app(&match_id, &app_copy);
 
+                    if !entry.running && *running {
+                        newly_running.push(match_id.clone());
+                    }
                     entry.running = *running;
                     entry.dot_layer.set_hidden(!*running);
 
@@ -716,6 +729,14 @@ impl DockView {
             );
 
             miniwindows_layers_map.retain(|_k, (v, ..)| v.id() != layer.id());
+        }
+
+        // Stop launch bounces for apps that just got their first window.
+        // Drop the layer locks first — `stop_bounce` re-acquires `app_layers`.
+        drop(apps_layers_map);
+        drop(miniwindows_layers_map);
+        for match_id in newly_running {
+            self.stop_bounce(&match_id);
         }
     }
     pub fn available_icon_size(&self) -> (f32, f32) {
@@ -1168,6 +1189,131 @@ impl DockView {
     /// Update the physical screen dimensions so `render_dock` can compute a correct hot zone.
     pub fn set_screen_size(&self, w: i32, h: i32) {
         *self.screen_size.write().unwrap() = (w, h);
+    }
+
+    /// Start bouncing the icon for `match_id` to signal that a launch is in progress.
+    /// The icon keeps hopping until [`Self::stop_bounce`] is called (a window appeared)
+    /// or a safety cap is reached. No-op if the app is already running or already bouncing.
+    pub fn start_bounce(&self, match_id: &str) {
+        // Capacity guard: only bounce launchers that aren't already running, and
+        // grab the container layer to animate.
+        let layer = {
+            let layers = self.app_layers.read().unwrap();
+            match layers.get(match_id) {
+                Some(entry) if !entry.running => entry.layer.clone(),
+                _ => return,
+            }
+        };
+
+        let mut bouncing = self.bouncing.write().unwrap();
+        if bouncing.contains_key(match_id) {
+            return;
+        }
+        let flag = Arc::new(AtomicBool::new(true));
+        bouncing.insert(match_id.to_string(), flag.clone());
+        drop(bouncing);
+
+        // Bounce roughly two-thirds of an icon height above the dock.
+        let height = self.available_icon_size().0 * 0.7;
+        // Each hop lasts ~0.8s; cap the loop so a failed launch settles after ~20s.
+        Self::schedule_bounce_hop(
+            layer,
+            flag,
+            height,
+            24,
+            self.bouncing.clone(),
+            match_id.to_string(),
+        );
+    }
+
+    /// Stop bouncing the icon for `match_id` and settle it back into the dock.
+    pub fn stop_bounce(&self, match_id: &str) {
+        let flag = self.bouncing.write().unwrap().remove(match_id);
+        if let Some(flag) = flag {
+            flag.store(false, std::sync::atomic::Ordering::Relaxed);
+            // Settle immediately; this also cancels any in-flight hop animation
+            // because it targets the same position value.
+            if let Some(entry) = self.app_layers.read().unwrap().get(match_id) {
+                entry
+                    .layer
+                    .set_position(Point::new(0.0, 0.0), Some(Transition::spring(0.3, 0.2)));
+            }
+        }
+    }
+
+    /// Run one bounce hop (up, down, small rebound, pause) and, while still flagged
+    /// and under the hop cap, schedule the next one from the transaction's finish callback.
+    fn schedule_bounce_hop(
+        layer: Layer,
+        flag: Arc<AtomicBool>,
+        height: f32,
+        remaining: u32,
+        bouncing: Arc<RwLock<HashMap<String, Arc<AtomicBool>>>>,
+        match_id: String,
+    ) {
+        if remaining == 0 || !flag.load(std::sync::atomic::Ordering::Relaxed) {
+            layer.set_position(Point::new(0.0, 0.0), Some(Transition::spring(0.3, 0.2)));
+            bouncing.write().unwrap().remove(&match_id);
+            return;
+        }
+
+        // The keyframes drive `y` from rest (0) up to `-height` and back to rest, so
+        // the icon settles exactly where it started at the end of every hop.
+        layer
+            .set_position(Point::new(0.0, -height), Some(Self::bounce_transition()))
+            .on_finish(
+                move |l: &Layer, _| {
+                    Self::schedule_bounce_hop(
+                        l.clone(),
+                        flag.clone(),
+                        height,
+                        remaining - 1,
+                        bouncing.clone(),
+                        match_id.clone(),
+                    );
+                },
+                true,
+            );
+    }
+
+    /// Keyframe timing for a single launch-bounce hop. `progress` is the fraction of the
+    /// target offset applied: a tall hop, a short rebound, then a brief pause at rest.
+    fn bounce_transition() -> Transition {
+        Transition {
+            delay: 0.0,
+            timing: TimingFunction::keyframes(vec![
+                KeyframeSegment {
+                    duration: 0.18,
+                    easing: Easing::ease_out_quad(),
+                    start_progress: 0.0,
+                    end_progress: 1.0,
+                },
+                KeyframeSegment {
+                    duration: 0.16,
+                    easing: Easing::ease_in_quad(),
+                    start_progress: 1.0,
+                    end_progress: 0.0,
+                },
+                KeyframeSegment {
+                    duration: 0.09,
+                    easing: Easing::ease_out_quad(),
+                    start_progress: 0.0,
+                    end_progress: 0.18,
+                },
+                KeyframeSegment {
+                    duration: 0.09,
+                    easing: Easing::ease_in_quad(),
+                    start_progress: 0.18,
+                    end_progress: 0.0,
+                },
+                KeyframeSegment {
+                    duration: 0.30,
+                    easing: Easing::linear(),
+                    start_progress: 0.0,
+                    end_progress: 0.0,
+                },
+            ]),
+        }
     }
 
     pub(super) fn magnify_elements_animated(&self) {
