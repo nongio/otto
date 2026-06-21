@@ -27,6 +27,10 @@ pub struct WindowView {
     pub genie_effect: GenieEffect,
 
     pub unmaximised_rect: smithay::utils::Rectangle<i32, Logical>,
+    /// The tiling zone this window is currently snapped into, if any. Set when
+    /// a window is tiled (drag-snap or shortcut), cleared on drag-off or restore.
+    /// `unmaximised_rect` holds the pre-snap geometry.
+    pub tiled_zone: Option<crate::workspaces::TileZone>,
     pub minimizing_animation: Arc<AtomicBool>,
     pub is_unmapped: Arc<AtomicBool>,
 }
@@ -84,6 +88,7 @@ impl WindowView {
             genie_effect,
             mirror_layer,
             unmaximised_rect: smithay::utils::Rectangle::default(),
+            tiled_zone: None,
             minimizing_animation: Arc::new(AtomicBool::new(false)),
             is_unmapped: Arc::new(AtomicBool::new(false)),
         }

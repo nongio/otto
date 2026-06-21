@@ -110,6 +110,12 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
                 KeyAction::ToggleMaximize => {
                     self.handle_toggle_maximize();
                 }
+                KeyAction::TileLeft => {
+                    self.handle_tile_left();
+                }
+                KeyAction::TileRight => {
+                    self.handle_tile_right();
+                }
                 KeyAction::CloseWindow => {
                     self.handle_close_window();
                 }
@@ -351,6 +357,12 @@ impl Otto<UdevData> {
                 }
                 KeyAction::ToggleMaximize => {
                     self.handle_toggle_maximize();
+                }
+                KeyAction::TileLeft => {
+                    self.handle_tile_left();
+                }
+                KeyAction::TileRight => {
+                    self.handle_tile_right();
                 }
                 KeyAction::CloseWindow => {
                     self.handle_close_window();

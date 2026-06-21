@@ -524,6 +524,44 @@ impl<BackendData: Backend> Otto<BackendData> {
             .map_window(&elem, geometry.loc, false, Some(Transition::ease_out(0.3)));
     }
 
+    /// Snap an X11 window into a tiling target rectangle (logical pixels).
+    ///
+    /// Saves the current geometry into `OldGeometry` so the existing drag-off
+    /// restore path in [`Self::move_request_x11`] can return it to its pre-snap
+    /// size. `maximize` is set only for the maximize zone, so it integrates with
+    /// the regular maximize/unmaximize handling.
+    pub fn apply_tile_x11(
+        &mut self,
+        window: &X11Surface,
+        target: Rectangle<i32, Logical>,
+        maximize: bool,
+    ) {
+        let Some(elem) = self.workspaces.space().and_then(|s| {
+            s.elements()
+                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == window))
+                .cloned()
+        }) else {
+            return;
+        };
+
+        let old_geo = self
+            .workspaces
+            .space()
+            .and_then(|s| s.element_bbox(&elem))
+            .unwrap();
+        window.user_data().insert_if_missing(OldGeometry::default);
+        window
+            .user_data()
+            .get::<OldGeometry>()
+            .unwrap()
+            .save(old_geo);
+
+        let _ = window.set_maximized(maximize);
+        let _ = window.configure(target);
+        self.workspaces
+            .map_window(&elem, target.loc, false, Some(Transition::ease_out(0.3)));
+    }
+
     pub fn unmaximize_request_x11(&mut self, window: &X11Surface) {
         let Some(elem) = self.workspaces.space().and_then(|s| {
             s.elements()
@@ -566,7 +604,16 @@ impl<BackendData: Backend> Otto<BackendData> {
                     let mut initial_window_location =
                         self.workspaces.element_location(&element).unwrap();
 
-                    if window.is_maximized() {
+                    let is_tiled = self
+                        .workspaces
+                        .get_window_view(&element.id())
+                        .map(|v| v.tiled_zone.is_some())
+                        .unwrap_or(false);
+                    if window.is_maximized() || is_tiled {
+                        if let Some(mut view) = self.workspaces.get_window_view(&element.id()) {
+                            view.tiled_zone = None;
+                            self.workspaces.set_window_view(&element.id(), view);
+                        }
                         let maximized_geometry = self
                             .workspaces
                             .space()
@@ -638,7 +685,16 @@ impl<BackendData: Backend> Otto<BackendData> {
 
         let mut initial_window_location = self.workspaces.element_location(&element).unwrap();
 
-        if window.is_maximized() {
+        let is_tiled = self
+            .workspaces
+            .get_window_view(&element.id())
+            .map(|v| v.tiled_zone.is_some())
+            .unwrap_or(false);
+        if window.is_maximized() || is_tiled {
+            if let Some(mut view) = self.workspaces.get_window_view(&element.id()) {
+                view.tiled_zone = None;
+                self.workspaces.set_window_view(&element.id(), view);
+            }
             let maximized_geometry = self
                 .workspaces
                 .space()
@@ -688,6 +744,7 @@ impl<BackendData: Backend> Otto<BackendData> {
             start_data,
             window: element.clone(),
             initial_window_location,
+            active_zone: None,
         };
 
         let pointer = self.pointer.clone();

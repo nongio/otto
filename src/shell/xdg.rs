@@ -878,42 +878,12 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 .expect("No outputs found")
                 .clone(); // Clone to avoid borrow conflicts
 
-            let output_geom = self.workspaces.output_geometry(&output).unwrap();
-
             // Recalculate exclusive zones for this output before using them
             // This ensures we have fresh data even if layer surfaces changed
             self.recalculate_exclusive_zones(&output);
 
-            // Get tracked exclusive zones for this output (from layer shell surfaces)
-            let output_name = output.name();
-            let zones = self
-                .exclusive_zones
-                .get(&output_name)
-                .cloned()
-                .unwrap_or_default();
-
-            // Calculate usable area from tracked exclusive zones
-            let mut usable_zone = zones.apply_to_output(output_geom);
-
-            // Get the actual dock geometry (position and size).
-            // When autohide is enabled the dock slides out of the way, so maximized
-            // windows should use the full output height instead of stopping above it.
-            let dock_autohide = self.workspaces.dock.is_autohide_enabled();
-            if !dock_autohide {
-                let dock_geom = self.workspaces.get_dock_geometry();
-
-                // Dock reduces available height from the bottom
-                if dock_geom.size.h > 0 {
-                    let dock_top = dock_geom.loc.y;
-                    let available_bottom = usable_zone.loc.y + usable_zone.size.h;
-
-                    // If dock is in the usable area, reduce height to stop above dock
-                    if dock_top < available_bottom {
-                        usable_zone.size.h = dock_top - usable_zone.loc.y;
-                    }
-                }
-            }
-            let new_geometry = usable_zone;
+            // Usable area = output minus exclusive zones minus (non-autohide) dock
+            let new_geometry = self.usable_zone(&output);
 
             let transition = Transition::ease_out(0.3);
             let animation = self
@@ -1221,11 +1191,17 @@ impl<BackendData: Backend> Otto<BackendData> {
 
         let mut initial_window_location = self.workspaces.element_location(window).unwrap();
 
-        // If surface is maximized then unmaximize it
+        // If the surface is maximized or tiled, restore it as the drag begins.
+        let id = surface.wl_surface().id();
         let is_maximized = surface
             .with_pending_state(|state| state.states.contains(xdg_toplevel::State::Maximized));
-        if is_maximized {
-            // Get current maximized geometry before unmaximizing
+        let is_tiled = self
+            .workspaces
+            .get_window_view(&id)
+            .map(|v| v.tiled_zone.is_some())
+            .unwrap_or(false);
+        if is_maximized || is_tiled {
+            // Get current maximized/tiled geometry before restoring
             let maximized_geometry = self.workspaces.element_geometry(window).unwrap();
             let pointer_location = pointer.current_location();
 
@@ -1247,13 +1223,22 @@ impl<BackendData: Backend> Otto<BackendData> {
 
             surface.with_pending_state(|state| {
                 state.states.unset(xdg_toplevel::State::Maximized);
+                state.states.unset(xdg_toplevel::State::TiledLeft);
+                state.states.unset(xdg_toplevel::State::TiledRight);
+                state.states.unset(xdg_toplevel::State::TiledTop);
+                state.states.unset(xdg_toplevel::State::TiledBottom);
                 state.size = None;
             });
 
             surface.send_configure();
 
+            // Clear the tiled marker now that the window is being dragged free.
+            if let Some(mut view) = self.workspaces.get_window_view(&id) {
+                view.tiled_zone = None;
+                self.workspaces.set_window_view(&id, view);
+            }
+
             // Get restored window size from unmaximised_rect
-            let id = surface.wl_surface().id();
             if let Some(view) = self.workspaces.get_window_view(&id) {
                 let restored_size = view.unmaximised_rect.size;
 
@@ -1277,9 +1262,142 @@ impl<BackendData: Backend> Otto<BackendData> {
             start_data,
             window: window.clone(),
             initial_window_location,
+            active_zone: None,
         };
 
         pointer.set_grab(self, grab, serial, Focus::Clear);
+    }
+
+    /// Snap `window` into the given tiling `zone` on its current output, animating
+    /// size and position the same way maximize does. Records the pre-snap geometry
+    /// in the window view so dragging the window off later restores it.
+    pub fn apply_tile(&mut self, window: &WindowElement, zone: crate::workspaces::TileZone) {
+        use crate::workspaces::TileZone;
+
+        let Some(output) = self
+            .workspaces
+            .outputs_for_element(window)
+            .first()
+            .cloned()
+            .or_else(|| {
+                self.workspaces
+                    .outputs()
+                    .find(|o| !crate::virtual_output::is_virtual_output(o))
+                    .cloned()
+            })
+        else {
+            return;
+        };
+
+        // Fresh exclusive zones, then derive the target rect for this zone.
+        self.recalculate_exclusive_zones(&output);
+        let target = zone.target_rect(self.usable_zone(&output));
+
+        let Some(current_geometry) = self.workspaces.element_geometry(window) else {
+            return;
+        };
+
+        // Remember the pre-snap geometry for restore-on-drag-off, unless the
+        // window is already tiled/maximized (keep the original restore rect).
+        let id = window.id();
+        if let Some(mut view) = self.workspaces.get_window_view(&id) {
+            let already_tiled = view.tiled_zone.is_some()
+                || window
+                    .toplevel()
+                    .map(|t| {
+                        t.with_pending_state(|s| s.states.contains(xdg_toplevel::State::Maximized))
+                    })
+                    .unwrap_or(false);
+            if !already_tiled {
+                view.unmaximised_rect = current_geometry;
+            }
+            view.tiled_zone = Some(zone);
+            self.workspaces.set_window_view(&id, view);
+        }
+
+        match window.underlying_surface() {
+            WindowSurface::Wayland(_) => {
+                let Some(toplevel) = window.toplevel().cloned() else {
+                    return;
+                };
+
+                let transition = Transition::ease_out(0.3);
+                let animation = self
+                    .layers_engine
+                    .add_animation_from_transition(&transition, false);
+
+                let current_width = current_geometry.size.w.max(600) as f32;
+                let current_height = current_geometry.size.h.max(400) as f32;
+                let new_width = target.size.w as f32;
+                let new_height = target.size.h as f32;
+
+                let maximize = matches!(zone, TileZone::Maximize);
+                let tiled_left = matches!(zone, TileZone::LeftHalf);
+                let tiled_right = matches!(zone, TileZone::RightHalf);
+
+                let s = toplevel.clone();
+                self.layers_engine.on_animation_update(
+                    animation,
+                    move |p: f32| {
+                        let width = current_width.interpolate(&new_width, p) as i32;
+                        let height = current_height.interpolate(&new_height, p) as i32;
+                        let size = Rectangle::new((0, 0).into(), (width, height).into());
+                        s.with_pending_state(|state| {
+                            if (p - 1.0).abs() < f32::EPSILON {
+                                // Replace any prior maximized/tiled flags with this zone's.
+                                state.states.unset(xdg_toplevel::State::Maximized);
+                                state.states.unset(xdg_toplevel::State::TiledLeft);
+                                state.states.unset(xdg_toplevel::State::TiledRight);
+                                state.states.unset(xdg_toplevel::State::TiledTop);
+                                state.states.unset(xdg_toplevel::State::TiledBottom);
+                                if maximize {
+                                    state.states.set(xdg_toplevel::State::Maximized);
+                                } else {
+                                    state.states.set(xdg_toplevel::State::TiledTop);
+                                    state.states.set(xdg_toplevel::State::TiledBottom);
+                                    if tiled_left {
+                                        state.states.set(xdg_toplevel::State::TiledLeft);
+                                    }
+                                    if tiled_right {
+                                        state.states.set(xdg_toplevel::State::TiledRight);
+                                    }
+                                }
+                            }
+                            state.size = Some(size.size);
+                        });
+                        s.send_configure();
+                    },
+                    false,
+                );
+                self.layers_engine.start_animation(animation, 0.0);
+
+                self.workspaces
+                    .map_window(window, target.loc, true, Some(transition));
+            }
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(x11) => {
+                let x11 = x11.clone();
+                self.apply_tile_x11(&x11, target, matches!(zone, TileZone::Maximize));
+            }
+            #[cfg(not(feature = "xwayland"))]
+            _ => {}
+        }
+    }
+
+    /// Snap the keyboard-focused window into `zone` (keyboard-shortcut entry point).
+    pub fn tile_focused_window(&mut self, zone: crate::workspaces::TileZone) {
+        let Some(window) = self
+            .seat
+            .get_keyboard()
+            .and_then(|keyboard| keyboard.current_focus())
+            .and_then(|focus| match focus {
+                KeyboardFocusTarget::Window(window) => Some(window),
+                _ => None,
+            })
+        else {
+            return;
+        };
+        self.apply_tile(&window, zone);
     }
 
     pub(crate) fn unconstrain_popup(&self, popup: &PopupSurface) {

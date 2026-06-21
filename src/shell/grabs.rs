@@ -38,6 +38,9 @@ pub struct PointerMoveSurfaceGrab<B: Backend + 'static> {
     pub start_data: PointerGrabStartData<Otto<B>>,
     pub window: WindowElement,
     pub initial_window_location: Point<i32, Logical>,
+    /// The snap zone currently previewed under the cursor while Ctrl is held
+    /// during the drag. `None` when no zone is active. Applied on button release.
+    pub active_zone: Option<crate::workspaces::TileZone>,
 }
 
 impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
@@ -75,6 +78,39 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
                 None,
             );
         }
+
+        // While Ctrl is held, preview the snap zone the pointer is over;
+        // release applies it (see `button`).
+        if state.current_modifiers.ctrl {
+            if let Some(output) = state
+                .workspaces
+                .outputs_for_element(&self.window)
+                .first()
+                .cloned()
+            {
+                let usable = state.usable_zone(&output);
+                let zone = crate::workspaces::zone_from_pointer(usable, event.location);
+                self.active_zone = zone;
+                match zone {
+                    Some(zone) => {
+                        let target = zone.target_rect(usable);
+                        let out_scale = output.current_scale().fractional_scale() as f32;
+                        let x_px = target.loc.x as f32 * out_scale;
+                        let y_px = target.loc.y as f32 * out_scale;
+                        let w_px = target.size.w as f32 * out_scale;
+                        let h_px = target.size.h as f32 * out_scale;
+                        state
+                            .workspaces
+                            .tiling_overlay
+                            .show_zone(x_px, y_px, w_px, h_px, out_scale);
+                    }
+                    None => state.workspaces.tiling_overlay.hide(),
+                }
+            }
+        } else if self.active_zone.is_some() || state.workspaces.tiling_overlay.is_visible() {
+            self.active_zone = None;
+            state.workspaces.tiling_overlay.hide();
+        }
     }
 
     fn relative_motion(
@@ -97,6 +133,12 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
         if handle.current_pressed().is_empty() {
             // No more buttons are pressed, release the grab.
             handle.unset_grab(self, data, event.serial, event.time, true);
+
+            // Snap the window into the previewed zone, if any.
+            data.workspaces.tiling_overlay.hide();
+            if let Some(zone) = self.active_zone.take() {
+                data.apply_tile(&self.window, zone);
+            }
         }
     }
 
