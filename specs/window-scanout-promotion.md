@@ -44,7 +44,7 @@ A window is eligible for promotion only when all of the following hold:
 - It has no active per-window effect — full opacity, no in-progress scale/genie transform.
 - It has no client subsurfaces above its main buffer.
 - It is opaque-ish (translucent windows are still allowed; the system blends correctly based on the buffer's opaque region).
-- Its rectangle does not overlap a visible reserved chrome area (the dock when visible, the top bar, or a layer-shell Top surface).
+- Its rectangle is not behind (overlapped by) a visible layer-shell **Top or Overlay** surface — panels, the top bar, or a notification daemon's surfaces — nor the dock when visible. This is overlap-aware: the always-present top bar only blocks the windows it actually covers, not every window.
 - It has no open popup, unless that popup is itself promoted to a higher plane.
 
 ### When scanout is globally disabled
@@ -59,7 +59,6 @@ In any of these situations no window is promoted this frame; everything composit
 - A context menu is open.
 - A workspace-selection transition is in progress.
 - A workspace swipe gesture is active.
-- A layer-shell Overlay surface is visible (it draws above everything).
 - The tiling drop-zone preview overlay is showing.
 - The dock has a context menu open, is hovered/magnifying, or is running a layout animation.
 - A screenshot capture is pending (screencopy) or a recording session is active (screenshare) — capture must read a fully-composited frame, so planes are folded back in.
@@ -91,7 +90,7 @@ In any of these situations no window is promoted this frame; everything composit
 
 - **No overlapping planes:** the selection rule guarantees promoted windows never overlap, so the feature does not depend on display-hardware plane blending, z-position mutability, or per-device blend support.
 - **Square corners while promoted:** a promoted window carries the client's square buffer; any compositor-applied content rounding is dropped while promoted and restored on demotion. The shadow's rounded cutout remains.
-- **Reserved-area overlap:** a window overlapping the dock (while visible), the top bar, or a layer-shell Top surface cannot be promoted, because its plane would otherwise sit above that chrome.
+- **Behind a layer surface:** a window overlapped by a visible Top/Overlay layer-shell surface (panels, the top bar, notification daemons) or the dock cannot be promoted — its scanout plane would otherwise sit above that chrome and hide it. The check is per-window overlap, not a blanket gate, so chrome only blocks the windows it actually covers.
 - **Popups:** a popup over a promoted window must itself be promoted to a higher plane; otherwise the whole stack must demote to a composited frame.
 - **Capture mid-playback:** an in-flight screenshot or recording forces a fully-composited frame for that capture; there is a single-frame mode transition when entering/leaving scanout.
 - **Maximized buffer smaller than output:** plane source/destination geometry must match the committed buffer so the plane never samples outside the buffer (which would show black strips) and a smaller buffer is positioned correctly.
