@@ -678,12 +678,12 @@ impl Workspaces {
         if self.app_switcher.alive() || self.osd.is_visible() {
             return Vec::new();
         }
-        // A visible wlr-layer-shell overlay surface draws above everything.
-        if !self.layer_shell_overlay.hidden() {
-            return Vec::new();
-        }
-        // The window-tiling drop-zone overlay is drawn above windows during a
-        // drag — disable scanout while it's visible, like any other overlay.
+        // Note: wlr-layer-shell Top/Overlay surfaces (panels, notification
+        // daemons) are handled per-window below via `layer_rects` — a window is
+        // only blocked if a layer surface actually overlaps it, so the
+        // always-present top bar doesn't disable scanout for unrelated windows.
+        // The window-tiling drop-zone overlay is an Otto scene overlay (not a
+        // layer-shell surface), so it still needs its own global gate.
         if self.tiling_overlay.is_visible() {
             return Vec::new();
         }
@@ -726,6 +726,26 @@ impl Workspaces {
                 })
             };
 
+        // Top/Overlay layer-shell surfaces (notification daemons, panels)
+        // composite above windows in the scene, so a window one of them overlaps
+        // would be hidden behind its own scanout plane — don't promote it. This
+        // is overlap-aware (not a blanket gate) so the always-present top bar
+        // only blocks windows it actually covers, not every window.
+        let layer_rects: Vec<Rectangle<i32, smithay::utils::Logical>> = self
+            .primary_output
+            .as_ref()
+            .map(|output| {
+                let map = smithay::desktop::layer_map_for_output(output);
+                map.layers()
+                    .filter(|l| {
+                        use smithay::wayland::shell::wlr_layer::Layer;
+                        matches!(l.layer(), Layer::Top | Layer::Overlay)
+                    })
+                    .filter_map(|l| map.layer_geometry(l))
+                    .collect()
+            })
+            .unwrap_or_default();
+
         // ---- per-window eligibility + top-to-bottom overlap selection ----
         let mut promoted = Vec::new();
         // Union of visible-window rects seen so far (everything above current).
@@ -763,7 +783,9 @@ impl Workspaces {
                 })
                 .unwrap_or(false);
             let overlaps_dock = dock_logical.map(|d| d.overlaps(rect)).unwrap_or(false);
-            if !overlaps_above && !animating && !has_popups && !overlaps_dock {
+            // Behind a notification/panel layer surface → must composite.
+            let overlaps_layer = layer_rects.iter().any(|r| r.overlaps(rect));
+            if !overlaps_above && !animating && !has_popups && !overlaps_dock && !overlaps_layer {
                 promoted.push((window.clone(), location));
             }
         }
