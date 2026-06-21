@@ -34,8 +34,10 @@ testing = ["rustix"]
 debugger = ["laye-rs/debugger"]
 
 [dependencies.laye-rs]
-git = "https://github.com/nongio/layers"
-tag = "v1.10.0"
+# Temporarily repointed to local checkout to test the experimental small-save-layer blur.
+path = "../../../layers"
+# git = "https://github.com/nongio/layers"
+# tag = "v1.10.0"
 features = ["export-taffy"]
 
 [dependencies.skia-safe]

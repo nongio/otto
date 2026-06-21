@@ -39,6 +39,8 @@ pub enum KeyAction {
     ApplicationSwitchPrev,
     ApplicationSwitchQuit,
     ToggleMaximize,
+    TileLeft,
+    TileRight,
     CloseWindow,
     ApplicationSwitchNextWindow,
     ExposeShowDesktop,
@@ -62,22 +64,50 @@ impl<BackendData: Backend> Otto<BackendData> {
     pub fn launch_program(&mut self, cmd: String, args: Vec<String>) {
         info!(program = %cmd, args = ?args, "Starting program");
 
-        if let Err(e) = Command::new(&cmd)
-            .args(&args)
-            .envs(
-                self.socket_name
-                    .clone()
-                    .map(|v| ("WAYLAND_DISPLAY", v))
-                    .into_iter()
-                    .chain(
-                        #[cfg(feature = "xwayland")]
-                        self.xdisplay.map(|v| ("DISPLAY", format!(":{}", v))),
-                        #[cfg(not(feature = "xwayland"))]
-                        None,
-                    ),
-            )
-            .spawn()
-        {
+        let mut command = Command::new(&cmd);
+        command.args(&args).envs(
+            self.socket_name
+                .clone()
+                .map(|v| ("WAYLAND_DISPLAY", v))
+                .into_iter()
+                .chain(
+                    #[cfg(feature = "xwayland")]
+                    self.xdisplay.map(|v| ("DISPLAY", format!(":{}", v))),
+                    #[cfg(not(feature = "xwayland"))]
+                    None,
+                ),
+        );
+
+        // Tie the child's lifetime to the compositor: ask the kernel to send the
+        // child SIGTERM as soon as Otto's process dies, so that crashing or
+        // quitting Otto also tears down the apps it launched instead of leaving
+        // them dangling. PR_SET_PDEATHSIG is relative to the spawning thread, so
+        // this relies on launch_program always being called from the main event
+        // loop thread (which lives for the whole process).
+        #[cfg(target_os = "linux")]
+        unsafe {
+            use std::os::unix::process::CommandExt;
+            command.pre_exec(|| {
+                if libc::prctl(
+                    libc::PR_SET_PDEATHSIG,
+                    libc::SIGTERM as libc::c_ulong,
+                    0,
+                    0,
+                    0,
+                ) != 0
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
+                // Guard against the race where Otto already died between fork and
+                // the prctl above: if we have been reparented, exit immediately.
+                if libc::getppid() == 1 {
+                    libc::_exit(0);
+                }
+                Ok(())
+            });
+        }
+
+        if let Err(e) = command.spawn() {
             error!(program = %cmd, err = %e, "Failed to start program");
         }
     }
@@ -265,6 +295,14 @@ impl<BackendData: Backend> Otto<BackendData> {
         self.toggle_maximize_focused_window();
     }
 
+    pub(crate) fn handle_tile_left(&mut self) {
+        self.tile_focused_window(crate::workspaces::TileZone::LeftHalf);
+    }
+
+    pub(crate) fn handle_tile_right(&mut self) {
+        self.tile_focused_window(crate::workspaces::TileZone::RightHalf);
+    }
+
     pub(crate) fn handle_close_window(&mut self) {
         self.close_focused_window();
     }
@@ -440,6 +478,8 @@ pub fn resolve_shortcut_action(config: &Config, action: &ShortcutAction) -> Opti
             BuiltinAction::ApplicationSwitchPrev => Some(KeyAction::ApplicationSwitchPrev),
             BuiltinAction::ApplicationSwitchQuit => Some(KeyAction::ApplicationSwitchQuit),
             BuiltinAction::ToggleMaximizeWindow => Some(KeyAction::ToggleMaximize),
+            BuiltinAction::TileWindowLeft => Some(KeyAction::TileLeft),
+            BuiltinAction::TileWindowRight => Some(KeyAction::TileRight),
             BuiltinAction::CloseWindow => Some(KeyAction::CloseWindow),
             BuiltinAction::ApplicationSwitchNextWindow => {
                 Some(KeyAction::ApplicationSwitchNextWindow)

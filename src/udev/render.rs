@@ -289,8 +289,55 @@ impl Otto<UdevData> {
             .and_then(|d| d.surfaces.get_mut(&crtc))
             .and_then(|s| s.prefetched_scene_damage.take());
 
-        // Get screenshare sessions before borrowing backend_data
-        // let _has_screenshare = !self.screenshare_sessions.is_empty();
+        // Determine if fullscreen direct scanout should be allowed:
+        // - Current workspace must be in fullscreen mode and not animating
+        // - Disable during expose gesture / workspace swipe gesture
+        let allow_direct_scanout =
+            self.workspaces.is_fullscreen_and_stable() && !self.swipe_gesture.is_active();
+        let fullscreen_window = if allow_direct_scanout {
+            self.workspaces.get_fullscreen_window()
+        } else {
+            None
+        };
+
+        // ---- Topmost-window (non-fullscreen) scanout selection ----
+        // Computed here, BEFORE the `device`/`surface` mutable borrow of
+        // `self.backend_data`, because the demotion re-import below calls
+        // `self.update_window_view` (full `&mut self`), which can't coexist with
+        // a live `surface` borrow. Capture (screenshot via screencopy /
+        // recording via screenshare) must see a fully-composited primary, so it
+        // disables scanout; fullscreen (own path) and the swipe gesture too.
+        let capture_active =
+            !self.pending_screencopy_frames.is_empty() || !self.screenshare_sessions.is_empty();
+        let scanout_windows =
+            if fullscreen_window.is_none() && !self.swipe_gesture.is_active() && !capture_active {
+                self.workspaces.get_scanout_candidates()
+            } else {
+                Vec::new()
+            };
+
+        // Demotion: windows that LEFT the scanout set had their lay-rs content
+        // import skipped while promoted; re-import them now (after the set
+        // update unhides their content_layer) so the first composited frame
+        // shows the current buffer, not a stale one.
+        let new_scanout_ids: std::collections::HashSet<
+            smithay::reexports::wayland_server::backend::ObjectId,
+        > = scanout_windows.iter().map(|(w, _)| w.id()).collect();
+        let prev_scanout_ids = self.workspaces.scanout_window_ids();
+        let departed_windows: Vec<WindowElement> = self
+            .workspaces
+            .spaces_elements()
+            .filter(|w| prev_scanout_ids.contains(&w.id()) && !new_scanout_ids.contains(&w.id()))
+            .cloned()
+            .collect();
+        {
+            let scanout_refs: Vec<&WindowElement> =
+                scanout_windows.iter().map(|(w, _)| w).collect();
+            self.workspaces.set_scanout_windows(&scanout_refs);
+        }
+        for w in &departed_windows {
+            self.update_window_view(w);
+        }
 
         let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {
             device
@@ -358,21 +405,8 @@ impl Otto<UdevData> {
         // `self.backend_data`) is also live.
         let scene_has_damage =
             prefetched_scene_damage.unwrap_or_else(|| self.scene_element.update());
+
         let all_window_elements: Vec<&WindowElement> = self.workspaces.spaces_elements().collect();
-
-        // Determine if direct scanout should be allowed:
-        // - Current workspace must be in fullscreen mode and not animating
-        // - Disable during expose gesture
-        // - Disable during workspace swipe gesture
-        let allow_direct_scanout =
-            self.workspaces.is_fullscreen_and_stable() && !self.swipe_gesture.is_active();
-
-        // Only fetch the fullscreen window if direct scanout is allowed
-        let fullscreen_window = if allow_direct_scanout {
-            self.workspaces.get_fullscreen_window()
-        } else {
-            None
-        };
 
         // Build a per-output scene element that renders from the output's own layer node
         let output_scene_element = self
@@ -408,6 +442,7 @@ impl Otto<UdevData> {
             output_scene_element,
             scene_has_damage,
             fullscreen_window.as_ref(),
+            &scanout_windows,
             &window_throttle_states,
             &mut self.pending_screencopy_frames,
         );
@@ -961,6 +996,7 @@ pub(super) fn render_surface<'a>(
     scene_element: SceneElement,
     scene_has_damage: bool,
     fullscreen_window: Option<&WindowElement>,
+    scanout_windows: &[(WindowElement, Point<i32, Logical>)],
     window_throttle_states: &std::collections::HashMap<
         smithay::reexports::wayland_server::backend::ObjectId,
         crate::state::window_throttle::WindowThrottleState,
@@ -1041,8 +1077,10 @@ pub(super) fn render_surface<'a>(
         workspace_render_elements.push(WorkspaceRenderElements::Fps(element.clone()));
     }
 
-    // Track direct scanout mode transitions
-    let is_direct_scanout = fullscreen_window.is_some();
+    // Track direct scanout mode transitions. Fullscreen scanout (skips the
+    // scene entirely) and topmost-window scanout (keeps the scene for shadow +
+    // chrome) both count — switching either way needs a buffer reset.
+    let is_direct_scanout = fullscreen_window.is_some() || !scanout_windows.is_empty();
     let mode_changed = is_direct_scanout != surface.was_direct_scanout;
     surface.was_direct_scanout = is_direct_scanout;
 
@@ -1078,6 +1116,78 @@ pub(super) fn render_surface<'a>(
 
             // Always render in fullscreen mode since the window surface may have damage
             // Use black clear color - the window fills the screen anyway
+            (elements, CLEAR_COLOR, true)
+        } else if !scanout_windows.is_empty() {
+            // Topmost-window scanout: render the scene (each candidate's
+            // content_layer is hidden, so the scene draws shadows + chrome +
+            // everything not promoted) AND append each candidate's surface tree
+            // ABOVE the scene in top-to-bottom z-order as a Kind::ScanoutCandidate
+            // so smithay's DrmCompositor can promote it to an overlay plane.
+            // Whatever can't fit a plane GPU-composites the same (current)
+            // element above the scene — so a same-frame plane failure is z-correct.
+            use smithay::backend::renderer::element::surface::render_elements_from_surface_tree;
+            use smithay::backend::renderer::element::Wrap;
+
+            let mut elements: Vec<OutputRenderElements<'a, _, WindowRenderElement<_>>> = Vec::new();
+            elements.extend(
+                workspace_render_elements
+                    .into_iter()
+                    .map(OutputRenderElements::from),
+            );
+
+            for (scanout_win, location) in scanout_windows {
+                // Drive the buffer position from the lay-rs scene layer (the
+                // animated visible top-left) rather than the static smithay
+                // Space location, so an unexpected fall-back to compositing
+                // doesn't make the window jump. CSD clients draw shadows past
+                // the visible region — geometry().loc is the buffer→visible
+                // inset, so subtract it to get the buffer top-left.
+                let base_bounds = scanout_win.base_layer().render_bounds_transformed();
+                let geom_phys = scanout_win.geometry().loc.to_f64().to_physical(scale);
+                let layer_ready = base_bounds.x() != 0.0 || base_bounds.y() != 0.0;
+                let physical_loc: Point<i32, Physical> = if layer_ready {
+                    (
+                        (base_bounds.x() as f64 - geom_phys.x).round() as i32,
+                        (base_bounds.y() as f64 - geom_phys.y).round() as i32,
+                    )
+                        .into()
+                } else {
+                    let render_location = *location - scanout_win.geometry().loc;
+                    render_location.to_physical_precise_round(scale)
+                };
+                let window_elements_rendered: Vec<WindowRenderElement<_>> =
+                    if let Some(surface) = scanout_win.wl_surface() {
+                        render_elements_from_surface_tree(
+                            renderer,
+                            &surface,
+                            physical_loc,
+                            scale,
+                            1.0,
+                            Kind::ScanoutCandidate,
+                        )
+                        .into_iter()
+                        .map(WindowRenderElement::Window)
+                        .collect()
+                    } else {
+                        scanout_win.render_elements(renderer, physical_loc, scale, 1.0)
+                    };
+                elements.extend(
+                    window_elements_rendered
+                        .into_iter()
+                        .map(|e| OutputRenderElements::Window(Wrap::from(e))),
+                );
+            }
+
+            // Scene below all scanout windows: shadows + chrome + non-promoted.
+            elements.push(OutputRenderElements::from(WorkspaceRenderElements::Scene(
+                scene_element,
+            )));
+
+            // Must always render: a promoted window's buffer commit produces no
+            // scene damage (its content_layer is hidden and its import skipped),
+            // so gating on scene_has_damage would drop video frames. render_frame
+            // returns is_empty when nothing actually changed, so the idle case
+            // stays cheap (no page flip).
             (elements, CLEAR_COLOR, true)
         } else {
             // Normal mode: render the full scene
@@ -1123,7 +1233,8 @@ pub(super) fn render_surface<'a>(
             &output_elements,
             clear_color,
             smithay::backend::drm::compositor::FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT
-                | smithay::backend::drm::compositor::FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY,
+                | smithay::backend::drm::compositor::FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY
+                | smithay::backend::drm::compositor::FrameFlags::ALLOW_OVERLAY_PLANE_SCANOUT,
         )
         .map_err(|err| match err {
             smithay::backend::drm::compositor::RenderFrameError::PrepareFrame(err) => err.into(),
@@ -1236,7 +1347,8 @@ pub(super) fn initial_render(
             &[],
             CLEAR_COLOR,
             smithay::backend::drm::compositor::FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT
-                | smithay::backend::drm::compositor::FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY,
+                | smithay::backend::drm::compositor::FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY
+                | smithay::backend::drm::compositor::FrameFlags::ALLOW_OVERLAY_PLANE_SCANOUT,
         )
         .map_err(|err| match err {
             smithay::backend::drm::compositor::RenderFrameError::PrepareFrame(err) => err.into(),

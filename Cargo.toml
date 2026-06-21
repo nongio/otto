@@ -28,6 +28,7 @@ xdgkit = "3.2.5"
 freedesktop-icons = "0.2.4"
 freedesktop-desktop-entry = "0.7.5"
 sd-notify = "0.4"
+libc = "0.2"
 shell-words = "1.1"
 tracing = { version = "0.1.37", features = [
     "max_level_trace",
@@ -50,8 +51,10 @@ mpris = "2.0"
 otto-kit = { path = "components/otto-kit" }
 
 [dependencies.laye-rs]
-git = "https://github.com/nongio/layers"
-tag = "v1.10.0"
+# Temporarily repointed to local checkout to test the experimental small-save-layer blur.
+path = "../layers"
+# git = "https://github.com/nongio/layers"
+# tag = "v1.10.0"
 features = ["export-taffy"]
 
 [dependencies.smithay-drm-extras]

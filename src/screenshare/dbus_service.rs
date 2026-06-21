@@ -549,6 +549,33 @@ impl CompositorInterface {
             .map_err(|e| zbus::fdo::Error::Failed(format!("channel send failed: {e}")))?;
         Ok(true)
     }
+
+    /// Tile the focused window to the left half (test/automation).
+    async fn tile_left(&self) -> zbus::fdo::Result<bool> {
+        info!("tile_left via D-Bus");
+        self.compositor_tx
+            .send(CompositorCommand::TileLeft)
+            .map_err(|e| zbus::fdo::Error::Failed(format!("channel send failed: {e}")))?;
+        Ok(true)
+    }
+
+    /// Tile the focused window to the right half (test/automation).
+    async fn tile_right(&self) -> zbus::fdo::Result<bool> {
+        info!("tile_right via D-Bus");
+        self.compositor_tx
+            .send(CompositorCommand::TileRight)
+            .map_err(|e| zbus::fdo::Error::Failed(format!("channel send failed: {e}")))?;
+        Ok(true)
+    }
+
+    /// Toggle maximize on the focused window (test/automation).
+    async fn maximize(&self) -> zbus::fdo::Result<bool> {
+        info!("maximize via D-Bus");
+        self.compositor_tx
+            .send(CompositorCommand::MaximizeFocused)
+            .map_err(|e| zbus::fdo::Error::Failed(format!("channel send failed: {e}")))?;
+        Ok(true)
+    }
 }
 
 /// Starts the D-Bus service on the session bus.

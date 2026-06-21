@@ -105,6 +105,12 @@ pub enum CompositorCommand {
     DestroySession { session_id: String },
     /// Focus an application by app_id (e.g. from notification click).
     FocusApp { app_id: String },
+    /// Tile the focused window to the left half (test/automation via D-Bus).
+    TileLeft,
+    /// Tile the focused window to the right half (test/automation via D-Bus).
+    TileRight,
+    /// Toggle maximize on the focused window (test/automation via D-Bus).
+    MaximizeFocused,
 }
 
 /// Information about an available output.
@@ -412,6 +418,18 @@ fn handle_screenshare_command<B: crate::state::Backend + 'static>(
         CompositorCommand::FocusApp { app_id } => {
             tracing::info!("FocusApp: {}", app_id);
             state.focus_app(&app_id);
+        }
+        CompositorCommand::TileLeft => {
+            tracing::info!("TileLeft via D-Bus");
+            state.handle_tile_left();
+        }
+        CompositorCommand::TileRight => {
+            tracing::info!("TileRight via D-Bus");
+            state.handle_tile_right();
+        }
+        CompositorCommand::MaximizeFocused => {
+            tracing::info!("MaximizeFocused via D-Bus");
+            state.handle_toggle_maximize();
         }
     }
 }
