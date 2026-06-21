@@ -5,4 +5,3 @@
 
 pub mod otto_client;
 pub mod portal;
-pub mod watchdog;
