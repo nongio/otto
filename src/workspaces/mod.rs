@@ -671,17 +671,6 @@ impl Workspaces {
     )> {
         use smithay::utils::Rectangle;
 
-        // TEMP diagnostic: log every gate state each frame to find what blocks scanout.
-        tracing::debug!(target: "otto::scanout",
-            show_all = self.get_show_all(),
-            expose = self.is_expose_transitioning(),
-            switcher = self.app_switcher.alive(),
-            osd = self.osd.is_visible(),
-            overlay = !self.layer_shell_overlay.hidden(),
-            dock_menu = self.dock.is_context_menu_open(),
-            dock_magnify = self.dock.is_magnifying(),
-            "scanout gate states");
-
         // ---- global stable gate ----
         if self.get_show_all() || self.is_expose_transitioning() {
             return Vec::new();
@@ -774,10 +763,6 @@ impl Workspaces {
                 })
                 .unwrap_or(false);
             let overlaps_dock = dock_logical.map(|d| d.overlaps(rect)).unwrap_or(false);
-            tracing::debug!(target: "otto::scanout",
-                win = ?rect, dock = ?dock_logical, dock_hidden = self.dock.is_hidden(),
-                overlaps_above, animating, has_popups, overlaps_dock,
-                "candidate eval");
             if !overlaps_above && !animating && !has_popups && !overlaps_dock {
                 promoted.push((window.clone(), location));
             }
