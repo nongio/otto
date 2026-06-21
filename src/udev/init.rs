@@ -448,9 +448,15 @@ pub fn run_udev() {
             .node_with_type(NodeType::Primary)
             .and_then(|x| x.ok())
         {
+            // Set OTTO_NO_EXPLICIT_SYNC=1 to suppress wp_linux_drm_syncobj so
+            // clients fall back to implicit dmabuf fences (which smithay applies
+            // to KMS planes automatically) — used to isolate scanout tearing.
+            let suppress_explicit_sync = std::env::var_os("OTTO_NO_EXPLICIT_SYNC").is_some();
             if let Some(backend) = state.backend_data.backends.get(&primary_node) {
                 let import_device = backend.drm.device_fd().clone();
-                if supports_syncobj_eventfd(&import_device) {
+                if suppress_explicit_sync {
+                    info!("Explicit sync suppressed via OTTO_NO_EXPLICIT_SYNC (implicit fences)");
+                } else if supports_syncobj_eventfd(&import_device) {
                     let syncobj_state =
                         DrmSyncobjState::new::<Otto<UdevData>>(&display_handle, import_device);
                     state.backend_data.syncobj_state = Some(syncobj_state);

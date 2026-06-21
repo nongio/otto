@@ -154,6 +154,15 @@ pub struct Workspaces {
     observers: Vec<Weak<dyn Observer<WorkspacesModel>>>,
     expose_dragged_window: Arc<std::sync::Mutex<Option<ObjectId>>>,
     remove_workspace_sender: CalloopSender<usize>,
+
+    /// Windows whose client buffer is currently scanned out on a KMS plane.
+    /// Their `content_layer` is hidden in the scene (the shadow keeps drawing)
+    /// and the WindowElement is appended above the SceneElement as a plane
+    /// candidate. See `docs/developer/window-scanout-promotion.md`.
+    scanout_windows: Arc<RwLock<HashSet<ObjectId>>>,
+    /// Popups currently scanned out (content hidden so the scene doesn't
+    /// double-draw them). Tracked separately — popups live in PopupOverlayView.
+    scanout_popups: Arc<RwLock<HashSet<ObjectId>>>,
 }
 
 /// # Workspaces Layer Structure
@@ -361,6 +370,8 @@ impl Workspaces {
             expose_dragged_window: Arc::new(std::sync::Mutex::new(None)),
             remove_workspace_sender,
             display_handle,
+            scanout_windows: Arc::new(RwLock::new(HashSet::new())),
+            scanout_popups: Arc::new(RwLock::new(HashSet::new())),
         };
 
         workspaces.add_listener(dock.clone());
@@ -637,6 +648,185 @@ impl Workspaces {
             .cloned()?;
 
         Some(window)
+    }
+
+    /// Select the regular (non-fullscreen) windows of the current workspace to
+    /// promote to KMS plane scanout, top-to-bottom (front first).
+    ///
+    /// Stable gate (returns empty if any holds): expose/show-all (window &
+    /// workspace selection), expose transitioning, app switcher, OSD, a visible
+    /// layer-shell overlay surface, fullscreen mode/animating. Capture
+    /// (screenshot/recording), the workspace swipe gesture and overlay state
+    /// owned by `Otto` are checked at the call-site.
+    ///
+    /// Overlap rule: a window is promoted only if it is **disjoint from every
+    /// visible window above it** — so the topmost window always promotes and a
+    /// lower one promotes only when nothing overlaps it. Promoted windows are
+    /// therefore mutually disjoint and unoccluded (independent planes).
+    pub fn get_scanout_candidates(
+        &self,
+    ) -> Vec<(
+        WindowElement,
+        smithay::utils::Point<i32, smithay::utils::Logical>,
+    )> {
+        use smithay::utils::Rectangle;
+
+        // TEMP diagnostic: log every gate state each frame to find what blocks scanout.
+        tracing::debug!(target: "otto::scanout",
+            show_all = self.get_show_all(),
+            expose = self.is_expose_transitioning(),
+            switcher = self.app_switcher.alive(),
+            osd = self.osd.is_visible(),
+            overlay = !self.layer_shell_overlay.hidden(),
+            dock_menu = self.dock.is_context_menu_open(),
+            dock_magnify = self.dock.is_magnifying(),
+            "scanout gate states");
+
+        // ---- global stable gate ----
+        if self.get_show_all() || self.is_expose_transitioning() {
+            return Vec::new();
+        }
+        if self.app_switcher.alive() || self.osd.is_visible() {
+            return Vec::new();
+        }
+        // A visible wlr-layer-shell overlay surface draws above everything.
+        if !self.layer_shell_overlay.hidden() {
+            return Vec::new();
+        }
+        // The window-tiling drop-zone overlay is drawn above windows during a
+        // drag — disable scanout while it's visible, like any other overlay.
+        if self.tiling_overlay.is_visible() {
+            return Vec::new();
+        }
+        // Dock interaction composites above windows: a context menu open, or the
+        // hover/magnification animation running, means the scene around the dock
+        // is changing and must keep compositing.
+        if self.dock.is_context_menu_open() || self.dock.is_magnifying() {
+            return Vec::new();
+        }
+        let Some(current_workspace) = self.get_current_workspace() else {
+            return Vec::new();
+        };
+        // Fullscreen has its own dedicated direct-scanout path.
+        if current_workspace.get_fullscreen_mode() || current_workspace.get_fullscreen_animating() {
+            return Vec::new();
+        }
+
+        let current_index = self.get_current_workspace_index();
+        let Some(space) = self
+            .primary_output_workspaces()
+            .and_then(|ows| ows.spaces.get(current_index))
+        else {
+            return Vec::new();
+        };
+
+        // Windows overlapping the visible dock can't be promoted: the dock
+        // composites in the primary plane, above the scanned-out overlay.
+        // `cached_dock_bounds` is already in LOGICAL coords (the dock divides
+        // screen size by scale when computing it), so compare directly — do NOT
+        // divide by scale again.
+        let dock_logical: Option<Rectangle<i32, smithay::utils::Logical>> =
+            if self.dock.is_hidden() {
+                None
+            } else {
+                self.dock.dock_bounds().map(|r| {
+                    Rectangle::new(
+                        (r.left as i32, r.top as i32).into(),
+                        ((r.right - r.left) as i32, (r.bottom - r.top) as i32).into(),
+                    )
+                })
+            };
+
+        // ---- per-window eligibility + top-to-bottom overlap selection ----
+        let mut promoted = Vec::new();
+        // Union of visible-window rects seen so far (everything above current).
+        let mut covered: Vec<Rectangle<i32, smithay::utils::Logical>> = Vec::new();
+        // Space::elements yields bottom-to-top; rev() => top-to-bottom.
+        for window in space.elements().rev() {
+            if window.is_minimised() {
+                continue; // not visible — doesn't occlude
+            }
+            let view = self.get_window_view(&window.id());
+            if view.as_ref().map(|v| v.is_unmapped()).unwrap_or(false) {
+                continue; // gone — doesn't occlude
+            }
+            let Some(location) = space.element_location(window) else {
+                continue;
+            };
+            let rect = Rectangle::new(location, window.geometry().size);
+            let overlaps_above = covered.iter().any(|c| c.overlaps(rect));
+            // This window occupies space for everything below it, whether or
+            // not it ends up promoted.
+            covered.push(rect);
+
+            // A minimizing window is still visible (animating to the dock) so
+            // it occludes, but can't be promoted (it has a live transform).
+            let animating = view.as_ref().map(|v| v.is_minimizing()).unwrap_or(false);
+            // v1 doesn't scan out popups; a window with an open popup must
+            // composite normally or the (scene-drawn) popup would be hidden
+            // under the window's overlay plane.
+            let has_popups = window
+                .wl_surface()
+                .map(|s| {
+                    smithay::desktop::PopupManager::popups_for_surface(&s)
+                        .next()
+                        .is_some()
+                })
+                .unwrap_or(false);
+            let overlaps_dock = dock_logical.map(|d| d.overlaps(rect)).unwrap_or(false);
+            tracing::debug!(target: "otto::scanout",
+                win = ?rect, dock = ?dock_logical, dock_hidden = self.dock.is_hidden(),
+                overlaps_above, animating, has_popups, overlaps_dock,
+                "candidate eval");
+            if !overlaps_above && !animating && !has_popups && !overlaps_dock {
+                promoted.push((window.clone(), location));
+            }
+        }
+        promoted
+    }
+
+    /// Snapshot of the windows currently flagged for scanout (their
+    /// `content_layer` is hidden). The render call-site diffs against this to
+    /// re-import departing windows before they're composited again.
+    pub fn scanout_window_ids(&self) -> HashSet<ObjectId> {
+        self.scanout_windows.read().unwrap().clone()
+    }
+
+    /// Replace the scanout window set: hides `content_layer` for new entrants,
+    /// unhides it for departures. Idempotent. The caller must re-import any
+    /// departing window's buffer (via `update_window_view`) *before* this call
+    /// so the unhidden `content_layer` shows the current frame, not a stale one.
+    pub fn set_scanout_windows(&self, windows: &[&WindowElement]) {
+        let new_ids: HashSet<ObjectId> = windows.iter().map(|w| w.id()).collect();
+        let prev_ids = self.scanout_windows.read().unwrap().clone();
+        if prev_ids == new_ids {
+            return;
+        }
+        tracing::info!(
+            target: "otto::scanout",
+            prev = prev_ids.len(),
+            new = new_ids.len(),
+            "scanout window set changed"
+        );
+        for prev in prev_ids.difference(&new_ids) {
+            if let Some(view) = self.get_window_view(prev) {
+                view.set_content_hidden(false);
+            }
+        }
+        for new in new_ids.difference(&prev_ids) {
+            if let Some(view) = self.get_window_view(new) {
+                view.set_content_hidden(true);
+            }
+        }
+        *self.scanout_windows.write().unwrap() = new_ids;
+    }
+
+    /// Replace the scanout popup set. v1 tracks the set only; popup content
+    /// hiding is a follow-up (windows with open popups are simply not promoted,
+    /// see the call-site), so this currently only records state.
+    pub fn set_scanout_popups(&self, popup_ids: &[ObjectId]) {
+        let new_ids: HashSet<ObjectId> = popup_ids.iter().cloned().collect();
+        *self.scanout_popups.write().unwrap() = new_ids;
     }
 
     /// Return if we are in window selection mode

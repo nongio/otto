@@ -93,6 +93,11 @@ pub struct ClassifierContext<'a> {
     /// True when the expose overview is animating or open; all non-minimized
     /// windows get smooth live previews during this period.
     pub expose_active: bool,
+    /// Windows that are tiled (snapped to a half/maximized via the tiling
+    /// feature). Tiled windows sit side-by-side and are all fully visible, so
+    /// they're primary targets and must run at full rate — not the Secondary
+    /// 30 Hz bucket, which judders video in the non-active half.
+    pub tiled_ids: &'a HashSet<ObjectId>,
 }
 
 /// Classify a single window given its own minimized flag and a context
@@ -117,6 +122,12 @@ pub fn classify_one(
         // A fullscreen exists on the current workspace and it's not this
         // window — we're behind it, fully covered.
         return WindowThrottleState::Occluded;
+    }
+    if ctx.tiled_ids.contains(window_id) {
+        // Tiled windows are side-by-side and fully visible — both halves are
+        // primary targets and need full rate (a 30 Hz Secondary bucket judders
+        // video playing in the non-focused half).
+        return WindowThrottleState::Focused;
     }
     if ctx.top_of_current == Some(window_id) {
         // Top of the current workspace = user's primary focus target.
@@ -150,11 +161,25 @@ pub fn classify_windows(
     let current_workspace_index = workspaces.with_model(|m| m.current_workspace);
     let top_of_current = workspaces.get_top_window_of_workspace(current_workspace_index);
 
+    // Windows currently tiled (snapped to a half / maximized): both halves are
+    // fully visible primaries and must run at full rate.
+    let tiled_ids: HashSet<ObjectId> = windows
+        .iter()
+        .map(|w| w.id())
+        .filter(|id| {
+            workspaces
+                .get_window_view(id)
+                .map(|v| v.tiled_zone.is_some())
+                .unwrap_or(false)
+        })
+        .collect();
+
     let ctx = ClassifierContext {
         fullscreen_id: fullscreen_id.as_ref(),
         top_of_current: top_of_current.as_ref(),
         occluded_ids,
         expose_active,
+        tiled_ids: &tiled_ids,
     };
 
     let mut result = HashMap::with_capacity(windows.len());
@@ -205,6 +230,7 @@ mod tests {
             top_of_current: Some(&id),
             occluded_ids: &occ,
             expose_active: true,
+            tiled_ids: &occ,
         };
         assert_eq!(
             classify_one(&id, true, &ctx),
@@ -222,6 +248,7 @@ mod tests {
             top_of_current: None,
             occluded_ids: &occ,
             expose_active: true,
+            tiled_ids: &occ,
         };
         assert_eq!(
             classify_one(&id, false, &ctx),
@@ -239,6 +266,7 @@ mod tests {
             top_of_current: Some(&id),
             occluded_ids: &occ,
             expose_active: false,
+            tiled_ids: &occ,
         };
         assert_eq!(
             classify_one(&id, false, &ctx),
