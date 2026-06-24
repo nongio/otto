@@ -51,10 +51,8 @@ mpris = "2.0"
 otto-kit = { path = "components/otto-kit" }
 
 [dependencies.laye-rs]
-# Temporarily repointed to local checkout to test the experimental small-save-layer blur.
-path = "../layers"
-# git = "https://github.com/nongio/layers"
-# tag = "v1.10.0"
+git = "https://github.com/nongio/layers"
+tag = "v1.12.0"
 features = ["export-taffy"]
 
 [dependencies.smithay-drm-extras]
