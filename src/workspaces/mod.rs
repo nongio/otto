@@ -142,6 +142,13 @@ pub struct Workspaces {
     pub is_animating: Arc<AtomicBool>,
     /// True while a 3-finger expose gesture is physically in progress (fingers on trackpad).
     pub expose_gesture_active: Arc<AtomicBool>,
+    /// True for the full duration of an expose open/close *release* animation
+    /// (after the finger lifts / on keyboard toggle), cleared in the spring's
+    /// `on_finish`. Unlike the gesture value — which snaps to its target (0 or
+    /// 1000) the instant the closing animation is scheduled — this stays true
+    /// until the animation actually settles, so scanout promotion waits for the
+    /// expose-exit animation to finish. See [`is_expose_transitioning`].
+    pub expose_animating: Arc<AtomicBool>,
 
     // layers
     pub layers_engine: Arc<Engine>,
@@ -364,6 +371,7 @@ impl Workspaces {
             show_desktop_gesture: Arc::new(AtomicI32::new(0)),
             is_animating: Arc::new(AtomicBool::new(false)),
             expose_gesture_active: Arc::new(AtomicBool::new(false)),
+            expose_animating: Arc::new(AtomicBool::new(false)),
             window_views: Arc::new(RwLock::new(HashMap::new())),
             observers: Vec::new(),
             layers_engine,
@@ -853,9 +861,16 @@ impl Workspaces {
         let is_animating = self.is_animating.load(std::sync::atomic::Ordering::Relaxed);
 
         // We're transitioning if:
+        // 0. A release animation is in flight. The gesture value snaps to its
+        //    target (0 on close) the instant the animation is scheduled, so the
+        //    clauses below can't see a close-in-progress — this flag bridges the
+        //    gap until `on_finish` clears it, keeping scanout disabled until the
+        //    expose-exit animation actually finishes.
         // 1. Gesture value is between 0 and 1000 (not fully closed or fully open), OR
         // 2. Animation is in progress AND we're not at a stable state (0 or 1000)
-        (gesture_value > 0 && gesture_value < 1000)
+        self.expose_animating
+            .load(std::sync::atomic::Ordering::Relaxed)
+            || (gesture_value > 0 && gesture_value < 1000)
             || (is_animating && gesture_value != 0 && gesture_value != 1000)
     }
 
@@ -1498,6 +1513,15 @@ impl Workspaces {
             .clone();
         self.is_animating
             .store(is_starting_animation, std::sync::atomic::Ordering::Relaxed);
+        // A release animation is about to run: mark expose as transitioning so
+        // scanout stays disabled until it settles. Only set (never clear) here —
+        // the loop in `expose_end_with_velocity` calls this for non-current
+        // workspaces with `transition = None`, and those must not clobber the
+        // flag. The clear happens in the spring's `on_finish` below.
+        if is_starting_animation {
+            self.expose_animating
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
 
         window_selector_view.set_opacity(0.0, None);
 
@@ -1613,6 +1637,7 @@ impl Workspaces {
             let show_all_ref = self.show_all.clone();
             let show_all_gesture_ref = self.show_all_gesture.clone();
             let expose_gesture_active_ref = self.expose_gesture_active.clone();
+            let expose_animating_ref = self.expose_animating.clone();
             let expose_dragged_window_ref = self.expose_dragged_window.clone();
             let model_ref = self.model.clone();
 
@@ -1660,6 +1685,12 @@ impl Workspaces {
                 window_selector_view_ref.set_position((0.0, 0.0), None);
                 transaction.on_finish(
                     move |_: &Layer, _: f32| {
+                        // The release animation has settled (this fires only on
+                        // natural completion — a reversal cancels the transaction
+                        // without firing it), so expose is no longer transitioning
+                        // and scanout may resume.
+                        expose_animating_ref
+                            .store(false, std::sync::atomic::Ordering::Relaxed);
                         let is_dragging =
                             expose_dragged_window_ref.lock().unwrap().is_some();
                         // Re-read the current state at finish time — the gesture may have
