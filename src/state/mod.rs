@@ -876,6 +876,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         self.exclusive_zones.insert(output_name.clone(), zones);
     }
 
+    /// The usable area of `output` in logical pixels: the output geometry minus
+    /// tracked exclusive zones (layer-shell reservations) and, when the dock is
+    /// not in autohide, minus the dock. Used by maximize and window tiling.
+    ///
+    /// Reads the cached exclusive zones; call [`Self::recalculate_exclusive_zones`]
+    /// first when fresh data is required.
     pub fn usable_zone(&self, output: &Output) -> utils::Rectangle<i32, utils::Logical> {
         let output_geom = self.workspaces.output_geometry(output).unwrap();
         let zones = self
@@ -1279,182 +1285,217 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             let title = window.xdg_title();
             let fullscreen = window.is_fullscreen();
 
-            let mut render_elements = VecDeque::new();
+            // While a window is promoted to KMS plane scanout its content_layer
+            // is hidden and its buffer is scanned out directly. Skip importing
+            // the surface tree into lay-rs entirely so a buffer commit pushes no
+            // scene transaction (the primary is not redrawn for content
+            // updates). The shadow model is still kept current (size-gated)
+            // below. See docs/developer/window-scanout-promotion.md.
+            let content_hidden = self
+                .workspaces
+                .get_window_view(&id)
+                .map(|v| v.is_content_hidden())
+                .unwrap_or(false);
 
-            // Collect popup surfaces and send them to the popup overlay layer
-            PopupManager::popups_for_surface(&window_surface).for_each(|(popup, popup_offset)| {
-                let offset: smithay::utils::Point<f64, smithay::utils::Physical> =
-                    popup_offset.to_physical_precise_round(scale_factor);
-                let popup_surface = popup.wl_surface();
-                let popup_id = popup_surface.id();
+            if !content_hidden {
+                let mut render_elements = VecDeque::new();
 
-                // Calculate absolute popup position (window position + popup offset)
-                let popup_position = layers::types::Point {
-                    x: location.x as f32 + offset.x as f32,
-                    y: location.y as f32 + offset.y as f32,
-                };
+                // Collect popup surfaces and send them to the popup overlay layer
+                PopupManager::popups_for_surface(&window_surface).for_each(
+                    |(popup, popup_offset)| {
+                        let offset: smithay::utils::Point<f64, smithay::utils::Physical> =
+                            popup_offset.to_physical_precise_round(scale_factor);
+                        let popup_surface = popup.wl_surface();
+                        let popup_id = popup_surface.id();
 
-                // Collect surfaces for this popup
-                let mut popup_surfaces = Vec::new();
-                let popup_origin: smithay::utils::Point<f64, smithay::utils::Physical> =
-                    (0.0, 0.0).into();
-                with_surfaces_surface_tree(popup_surface, |surface, states| {
-                    // For popups, parent tracking is simpler - just use None for root
-                    // The popup itself is the root of its own surface tree
-                    if let Some(window_view) = self.window_view_for_surface(
-                        surface,
-                        states,
-                        &popup_origin,
-                        scale_factor,
-                        None,
-                    ) {
-                        popup_surfaces.push(window_view);
-                    }
-                });
+                        // Calculate absolute popup position (window position + popup offset)
+                        let popup_position = layers::types::Point {
+                            x: location.x as f32 + offset.x as f32,
+                            y: location.y as f32 + offset.y as f32,
+                        };
 
-                // Send popup to the overlay layer and register its surface layers
-                #[allow(clippy::mutable_key_type)]
-                let popup_layers = self.workspaces.popup_overlay.update_popup(
-                    &popup_id,
-                    &id,
-                    popup_position,
-                    popup_surfaces,
-                    None, // No warm cache needed anymore
-                    &self.layers_engine,
-                    &self.surface_layers,
+                        // Collect surfaces for this popup
+                        let mut popup_surfaces = Vec::new();
+                        let popup_origin: smithay::utils::Point<f64, smithay::utils::Physical> =
+                            (0.0, 0.0).into();
+                        with_surfaces_surface_tree(popup_surface, |surface, states| {
+                            // For popups, parent tracking is simpler - just use None for root
+                            // The popup itself is the root of its own surface tree
+                            if let Some(window_view) = self.window_view_for_surface(
+                                surface,
+                                states,
+                                &popup_origin,
+                                scale_factor,
+                                None,
+                            ) {
+                                popup_surfaces.push(window_view);
+                            }
+                        });
+
+                        // Send popup to the overlay layer and register its surface layers
+                        #[allow(clippy::mutable_key_type)]
+                        let popup_layers = self.workspaces.popup_overlay.update_popup(
+                            &popup_id,
+                            &id,
+                            popup_position,
+                            popup_surfaces,
+                            None, // No warm cache needed anymore
+                            &self.layers_engine,
+                            &self.surface_layers,
+                        );
+
+                        self.surface_layers.extend(popup_layers);
+                    },
                 );
 
-                self.surface_layers.extend(popup_layers);
-            });
+                let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> =
+                    (0.0, 0.0).into();
 
-            let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> =
-                (0.0, 0.0).into();
+                // Track parent through traversal context: (location, parent_location, parent_id)
+                let initial_context = (initial_location, initial_location, None);
 
-            // Track parent through traversal context: (location, parent_location, parent_id)
-            let initial_context = (initial_location, initial_location, None);
+                // Collect all surfaces and build parent-child map
+                #[allow(clippy::mutable_key_type, clippy::type_complexity)]
+                let mut surface_info: std::collections::HashMap<
+                    ObjectId,
+                    (
+                        WlSurface,
+                        smithay::utils::Point<f64, smithay::utils::Physical>,
+                        Option<ObjectId>,
+                    ),
+                > = std::collections::HashMap::new();
 
-            // Collect all surfaces and build parent-child map
-            #[allow(clippy::mutable_key_type, clippy::type_complexity)]
-            let mut surface_info: std::collections::HashMap<
-                ObjectId,
-                (
-                    WlSurface,
-                    smithay::utils::Point<f64, smithay::utils::Physical>,
-                    Option<ObjectId>,
-                ),
-            > = std::collections::HashMap::new();
+                smithay::wayland::compositor::with_surface_tree_downward(
+                    &window_surface,
+                    initial_context,
+                    |surface, states, (location, _parent_location, _parent_id)| {
+                        profiling::scope!("surface_tree_downward");
+                        let mut location = *location;
+                        let data = states.data_map.get::<RendererSurfaceStateUserData>();
+                        let mut cached_state = states.cached_state.get::<SurfaceCachedState>();
+                        let cached_state = cached_state.current();
+                        let surface_geometry = cached_state.geometry.unwrap_or_default();
 
-            smithay::wayland::compositor::with_surface_tree_downward(
-                &window_surface,
-                initial_context,
-                |surface, states, (location, _parent_location, _parent_id)| {
-                    profiling::scope!("surface_tree_downward");
-                    let mut location = *location;
-                    let data = states.data_map.get::<RendererSurfaceStateUserData>();
-                    let mut cached_state = states.cached_state.get::<SurfaceCachedState>();
-                    let cached_state = cached_state.current();
-                    let surface_geometry = cached_state.geometry.unwrap_or_default();
+                        if let Some(data) = data {
+                            let data = data.lock().unwrap();
 
-                    if let Some(data) = data {
-                        let data = data.lock().unwrap();
-
-                        if let Some(view) = data.view() {
-                            location += view.offset.to_f64().to_physical(scale_factor);
-                            location -= surface_geometry.loc.to_f64().to_physical(scale_factor);
-                            TraversalAction::DoChildren((location, location, Some(surface.id())))
+                            if let Some(view) = data.view() {
+                                location += view.offset.to_f64().to_physical(scale_factor);
+                                location -= surface_geometry.loc.to_f64().to_physical(scale_factor);
+                                TraversalAction::DoChildren((
+                                    location,
+                                    location,
+                                    Some(surface.id()),
+                                ))
+                            } else {
+                                TraversalAction::SkipChildren
+                            }
                         } else {
                             TraversalAction::SkipChildren
                         }
-                    } else {
-                        TraversalAction::SkipChildren
-                    }
-                },
-                |surface, states, (location, parent_location, parent_id)| {
-                    let relative_offset = if parent_id.is_some() {
-                        *location - *parent_location
-                    } else {
-                        *location
-                    };
+                    },
+                    |surface, states, (location, parent_location, parent_id)| {
+                        let relative_offset = if parent_id.is_some() {
+                            *location - *parent_location
+                        } else {
+                            *location
+                        };
 
-                    if let Some(window_view) = self.window_view_for_surface(
-                        surface,
-                        states,
-                        &relative_offset,
-                        scale_factor,
-                        parent_id.clone(),
-                    ) {
-                        render_elements.push_front(window_view.clone());
-                        surface_info.insert(
-                            surface.id(),
-                            (surface.clone(), *location, parent_id.clone()),
-                        );
-                    } else {
-                        // Surface committed a null buffer (unmapped subsurface) — hide its layer
-                        if let Some(layer) = self.surface_layers.get(&surface.id()) {
-                            layer.set_hidden(true);
+                        if let Some(window_view) = self.window_view_for_surface(
+                            surface,
+                            states,
+                            &relative_offset,
+                            scale_factor,
+                            parent_id.clone(),
+                        ) {
+                            render_elements.push_front(window_view.clone());
+                            surface_info.insert(
+                                surface.id(),
+                                (surface.clone(), *location, parent_id.clone()),
+                            );
+                        } else {
+                            // Surface committed a null buffer (unmapped subsurface) — hide its layer
+                            if let Some(layer) = self.surface_layers.get(&surface.id()) {
+                                layer.set_hidden(true);
+                            }
                         }
-                    }
-                },
-                |_, _, _| true,
-            );
+                    },
+                    |_, _, _| true,
+                );
 
-            // Now sync the layer hierarchy to match the surface tree
-            for (surface_id, (surface, _pos, parent_id)) in surface_info.iter() {
-                let layer = self.get_or_create_layer_for_surface(surface);
+                // Now sync the layer hierarchy to match the surface tree
+                for (surface_id, (surface, _pos, parent_id)) in surface_info.iter() {
+                    let layer = self.get_or_create_layer_for_surface(surface);
 
-                // Configure layer with all properties and draw callback
-                if let Some(wvs) = render_elements.iter().find(|e| &e.id == surface_id) {
-                    layer.set_hidden(false);
-                    let style = self.surfaces_style.get(surface_id).and_then(|v| v.first());
-                    let gravity = style.map(|s| s.contents_gravity).unwrap_or_default();
-                    let client_owns_size = style.map(|s| s.client_owns_size).unwrap_or(false);
-                    let shared_gravity = style.map(|s| s.shared_gravity.clone());
-                    crate::workspaces::utils::configure_surface_layer(
-                        &layer,
-                        wvs,
-                        gravity,
-                        client_owns_size,
-                        shared_gravity,
-                    );
+                    // Configure layer with all properties and draw callback
+                    if let Some(wvs) = render_elements.iter().find(|e| &e.id == surface_id) {
+                        layer.set_hidden(false);
+                        let style = self.surfaces_style.get(surface_id).and_then(|v| v.first());
+                        let gravity = style.map(|s| s.contents_gravity).unwrap_or_default();
+                        let client_owns_size = style.map(|s| s.client_owns_size).unwrap_or(false);
+                        let shared_gravity = style.map(|s| s.shared_gravity.clone());
+                        crate::workspaces::utils::configure_surface_layer(
+                            &layer,
+                            wvs,
+                            gravity,
+                            client_owns_size,
+                            shared_gravity,
+                        );
 
-                    // Set up parent-child relationship using layers_engine.
-                    // Only re-parent if the parent changed — re-appending on
-                    // every commit detaches and re-attaches the node, which
-                    // causes flicker.
-                    if let Some(parent_id) = parent_id {
-                        let needs_reparent =
-                            self.surface_layer_parents.get(surface_id) != Some(parent_id);
-                        if needs_reparent {
-                            if let Some(parent_layer) = self.surface_layers.get(parent_id) {
-                                let _ = self.layers_engine.append_layer(&layer, parent_layer.id());
-                                self.surface_layer_parents
-                                    .insert(surface_id.clone(), parent_id.clone());
+                        // Set up parent-child relationship using layers_engine.
+                        // Only re-parent if the parent changed — re-appending on
+                        // every commit detaches and re-attaches the node, which
+                        // causes flicker.
+                        if let Some(parent_id) = parent_id {
+                            let needs_reparent =
+                                self.surface_layer_parents.get(surface_id) != Some(parent_id);
+                            if needs_reparent {
+                                if let Some(parent_layer) = self.surface_layers.get(parent_id) {
+                                    let _ =
+                                        self.layers_engine.append_layer(&layer, parent_layer.id());
+                                    self.surface_layer_parents
+                                        .insert(surface_id.clone(), parent_id.clone());
+                                }
                             }
                         }
                     }
                 }
-            }
+            } // end: import surface tree into lay-rs only when not scanned out
 
             if let Some(window_view) = self.workspaces.get_window_view(&id) {
-                let model = WindowViewBaseModel {
-                    x: location.x as f32,
-                    y: location.y as f32,
-                    w: window_geometry.size.w as f32,
-                    h: window_geometry.size.h as f32,
-                    title,
-                    fullscreen,
-                    active: false,
-                };
-                window_view.view_base.update_state(&model);
+                // Re-raster the shadow only when the window SIZE (or title /
+                // fullscreen) changes — never on a pure move — so a promoted
+                // window that only moves doesn't dirty the primary plane.
+                let new_w = window_geometry.size.w as f32;
+                let new_h = window_geometry.size.h as f32;
+                let cur = window_view.view_base.get_state();
+                let needs_shadow_update = cur.w != new_w
+                    || cur.h != new_h
+                    || cur.title != title
+                    || cur.fullscreen != fullscreen;
+                if needs_shadow_update {
+                    let model = WindowViewBaseModel {
+                        x: location.x as f32,
+                        y: location.y as f32,
+                        w: new_w,
+                        h: new_h,
+                        title,
+                        fullscreen,
+                        active: cur.active,
+                    };
+                    window_view.view_base.update_state(&model);
+                }
 
-                // Directly add root surface layer to content layer without using LayerTreeBuilder
-                let content_layer = &window_view.content_layer;
-
-                if let Some(root_layer) = self.surface_layers.get(&id) {
-                    // Use layers_engine to set parent-child relationship
-                    let _ = self
-                        .layers_engine
-                        .append_layer(root_layer, content_layer.id());
+                // Re-parent the root surface layer under content_layer only when
+                // we actually imported it (skipped while scanned out).
+                if !content_hidden {
+                    let content_layer = &window_view.content_layer;
+                    if let Some(root_layer) = self.surface_layers.get(&id) {
+                        // Use layers_engine to set parent-child relationship
+                        let _ = self
+                            .layers_engine
+                            .append_layer(root_layer, content_layer.id());
+                    }
                 }
 
                 self.workspaces.expose_update_if_needed();

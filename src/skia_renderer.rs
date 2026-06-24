@@ -778,6 +778,14 @@ impl SkiaRenderer {
             self.gl.DeleteFramebuffers(1, &dst_fbo);
             self.gl.BindRenderbuffer(ffi::RENDERBUFFER, 0);
             self.gl.DeleteRenderbuffers(1, &src_rbo);
+
+            // GPU sync: the source EGLImage is the client's just-written buffer
+            // (mpv video) and the blit result is sampled by Skia immediately
+            // after. Without a sync the blit can read a half-written client
+            // buffer (no implicit fence under explicit-sync clients) and Skia can
+            // sample a partial texture — seen as "texture not fully mapped /
+            // black tearing". Finish ensures the read+blit complete before use.
+            self.gl.Finish();
         }
         Ok(())
     }

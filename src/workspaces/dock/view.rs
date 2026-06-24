@@ -379,6 +379,19 @@ impl DockView {
     pub fn is_autohide_enabled(&self) -> bool {
         self.dock_config.read().unwrap().autohide
     }
+    /// True while the dock is showing a right-click context menu.
+    pub fn is_context_menu_open(&self) -> bool {
+        self.context_menu.read().unwrap().is_some()
+    }
+    /// True while the pointer is over the dock and magnification is active (the
+    /// icons are animating). The rest position is the -500 off-screen sentinel.
+    pub fn is_magnifying(&self) -> bool {
+        *self.magnification_position.read().unwrap() > -100.0
+    }
+    /// Full dock bounds in physical/scene pixels, if the dock has been laid out.
+    pub fn dock_bounds(&self) -> Option<skia::Rect> {
+        *self.cached_dock_bounds.read().unwrap()
+    }
     pub fn set_active_flag(&self, active: bool) {
         self.active
             .store(active, std::sync::atomic::Ordering::Relaxed);

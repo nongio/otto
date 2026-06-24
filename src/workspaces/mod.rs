@@ -142,6 +142,13 @@ pub struct Workspaces {
     pub is_animating: Arc<AtomicBool>,
     /// True while a 3-finger expose gesture is physically in progress (fingers on trackpad).
     pub expose_gesture_active: Arc<AtomicBool>,
+    /// True for the full duration of an expose open/close *release* animation
+    /// (after the finger lifts / on keyboard toggle), cleared in the spring's
+    /// `on_finish`. Unlike the gesture value — which snaps to its target (0 or
+    /// 1000) the instant the closing animation is scheduled — this stays true
+    /// until the animation actually settles, so scanout promotion waits for the
+    /// expose-exit animation to finish. See [`is_expose_transitioning`].
+    pub expose_animating: Arc<AtomicBool>,
 
     // layers
     pub layers_engine: Arc<Engine>,
@@ -154,6 +161,15 @@ pub struct Workspaces {
     observers: Vec<Weak<dyn Observer<WorkspacesModel>>>,
     expose_dragged_window: Arc<std::sync::Mutex<Option<ObjectId>>>,
     remove_workspace_sender: CalloopSender<usize>,
+
+    /// Windows whose client buffer is currently scanned out on a KMS plane.
+    /// Their `content_layer` is hidden in the scene (the shadow keeps drawing)
+    /// and the WindowElement is appended above the SceneElement as a plane
+    /// candidate. See `docs/developer/window-scanout-promotion.md`.
+    scanout_windows: Arc<RwLock<HashSet<ObjectId>>>,
+    /// Popups currently scanned out (content hidden so the scene doesn't
+    /// double-draw them). Tracked separately — popups live in PopupOverlayView.
+    scanout_popups: Arc<RwLock<HashSet<ObjectId>>>,
 }
 
 /// # Workspaces Layer Structure
@@ -355,12 +371,15 @@ impl Workspaces {
             show_desktop_gesture: Arc::new(AtomicI32::new(0)),
             is_animating: Arc::new(AtomicBool::new(false)),
             expose_gesture_active: Arc::new(AtomicBool::new(false)),
+            expose_animating: Arc::new(AtomicBool::new(false)),
             window_views: Arc::new(RwLock::new(HashMap::new())),
             observers: Vec::new(),
             layers_engine,
             expose_dragged_window: Arc::new(std::sync::Mutex::new(None)),
             remove_workspace_sender,
             display_handle,
+            scanout_windows: Arc::new(RwLock::new(HashSet::new())),
+            scanout_popups: Arc::new(RwLock::new(HashSet::new())),
         };
 
         workspaces.add_listener(dock.clone());
@@ -639,6 +658,195 @@ impl Workspaces {
         Some(window)
     }
 
+    /// Select the regular (non-fullscreen) windows of the current workspace to
+    /// promote to KMS plane scanout, top-to-bottom (front first).
+    ///
+    /// Stable gate (returns empty if any holds): expose/show-all (window &
+    /// workspace selection), expose transitioning, app switcher, OSD, a visible
+    /// layer-shell overlay surface, fullscreen mode/animating. Capture
+    /// (screenshot/recording), the workspace swipe gesture and overlay state
+    /// owned by `Otto` are checked at the call-site.
+    ///
+    /// Overlap rule: a window is promoted only if it is **disjoint from every
+    /// visible window above it** — so the topmost window always promotes and a
+    /// lower one promotes only when nothing overlaps it. Promoted windows are
+    /// therefore mutually disjoint and unoccluded (independent planes).
+    pub fn get_scanout_candidates(
+        &self,
+    ) -> Vec<(
+        WindowElement,
+        smithay::utils::Point<i32, smithay::utils::Logical>,
+    )> {
+        use smithay::utils::Rectangle;
+
+        // ---- global stable gate ----
+        if self.get_show_all() || self.is_expose_transitioning() {
+            return Vec::new();
+        }
+        if self.app_switcher.alive() || self.osd.is_visible() {
+            return Vec::new();
+        }
+        // Note: wlr-layer-shell Top/Overlay surfaces (panels, notification
+        // daemons) are handled per-window below via `layer_rects` — a window is
+        // only blocked if a layer surface actually overlaps it, so the
+        // always-present top bar doesn't disable scanout for unrelated windows.
+        // The window-tiling drop-zone overlay is an Otto scene overlay (not a
+        // layer-shell surface), so it still needs its own global gate.
+        if self.tiling_overlay.is_visible() {
+            return Vec::new();
+        }
+        // Dock interaction composites above windows: a context menu open, or the
+        // hover/magnification animation running, means the scene around the dock
+        // is changing and must keep compositing.
+        if self.dock.is_context_menu_open() || self.dock.is_magnifying() {
+            return Vec::new();
+        }
+        let Some(current_workspace) = self.get_current_workspace() else {
+            return Vec::new();
+        };
+        // Fullscreen has its own dedicated direct-scanout path.
+        if current_workspace.get_fullscreen_mode() || current_workspace.get_fullscreen_animating() {
+            return Vec::new();
+        }
+
+        let current_index = self.get_current_workspace_index();
+        let Some(space) = self
+            .primary_output_workspaces()
+            .and_then(|ows| ows.spaces.get(current_index))
+        else {
+            return Vec::new();
+        };
+
+        // Windows overlapping the visible dock can't be promoted: the dock
+        // composites in the primary plane, above the scanned-out overlay.
+        // `cached_dock_bounds` is already in LOGICAL coords (the dock divides
+        // screen size by scale when computing it), so compare directly — do NOT
+        // divide by scale again.
+        let dock_logical: Option<Rectangle<i32, smithay::utils::Logical>> = if self.dock.is_hidden()
+        {
+            None
+        } else {
+            self.dock.dock_bounds().map(|r| {
+                Rectangle::new(
+                    (r.left as i32, r.top as i32).into(),
+                    ((r.right - r.left) as i32, (r.bottom - r.top) as i32).into(),
+                )
+            })
+        };
+
+        // Top/Overlay layer-shell surfaces (notification daemons, panels)
+        // composite above windows in the scene, so a window one of them overlaps
+        // would be hidden behind its own scanout plane — don't promote it. This
+        // is overlap-aware (not a blanket gate) so the always-present top bar
+        // only blocks windows it actually covers, not every window.
+        let layer_rects: Vec<Rectangle<i32, smithay::utils::Logical>> = self
+            .primary_output
+            .as_ref()
+            .map(|output| {
+                let map = smithay::desktop::layer_map_for_output(output);
+                map.layers()
+                    .filter(|l| {
+                        use smithay::wayland::shell::wlr_layer::Layer;
+                        matches!(l.layer(), Layer::Top | Layer::Overlay)
+                    })
+                    .filter_map(|l| map.layer_geometry(l))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // ---- per-window eligibility + top-to-bottom overlap selection ----
+        let mut promoted = Vec::new();
+        // Union of visible-window rects seen so far (everything above current).
+        let mut covered: Vec<Rectangle<i32, smithay::utils::Logical>> = Vec::new();
+        // Space::elements yields bottom-to-top; rev() => top-to-bottom.
+        for window in space.elements().rev() {
+            if window.is_minimised() {
+                continue; // not visible — doesn't occlude
+            }
+            let view = self.get_window_view(&window.id());
+            if view.as_ref().map(|v| v.is_unmapped()).unwrap_or(false) {
+                continue; // gone — doesn't occlude
+            }
+            let Some(location) = space.element_location(window) else {
+                continue;
+            };
+            let rect = Rectangle::new(location, window.geometry().size);
+            let overlaps_above = covered.iter().any(|c| c.overlaps(rect));
+            // This window occupies space for everything below it, whether or
+            // not it ends up promoted.
+            covered.push(rect);
+
+            // A minimizing window is still visible (animating to the dock) so
+            // it occludes, but can't be promoted (it has a live transform).
+            let animating = view.as_ref().map(|v| v.is_minimizing()).unwrap_or(false);
+            // v1 doesn't scan out popups; a window with an open popup must
+            // composite normally or the (scene-drawn) popup would be hidden
+            // under the window's overlay plane.
+            let has_popups = window
+                .wl_surface()
+                .map(|s| {
+                    smithay::desktop::PopupManager::popups_for_surface(&s)
+                        .next()
+                        .is_some()
+                })
+                .unwrap_or(false);
+            let overlaps_dock = dock_logical.map(|d| d.overlaps(rect)).unwrap_or(false);
+            // Behind a notification/panel layer surface → must composite.
+            let overlaps_layer = layer_rects.iter().any(|r| r.overlaps(rect));
+            if !overlaps_above && !animating && !has_popups && !overlaps_dock && !overlaps_layer {
+                promoted.push((window.clone(), location));
+            }
+        }
+        promoted
+    }
+
+    /// Snapshot of the windows currently flagged for scanout (their
+    /// `content_layer` is hidden). The render call-site diffs against this to
+    /// re-import departing windows before they're composited again.
+    #[allow(clippy::mutable_key_type)]
+    pub fn scanout_window_ids(&self) -> HashSet<ObjectId> {
+        self.scanout_windows.read().unwrap().clone()
+    }
+
+    /// Replace the scanout window set: hides `content_layer` for new entrants,
+    /// unhides it for departures. Idempotent. The caller must re-import any
+    /// departing window's buffer (via `update_window_view`) *before* this call
+    /// so the unhidden `content_layer` shows the current frame, not a stale one.
+    #[allow(clippy::mutable_key_type)]
+    pub fn set_scanout_windows(&self, windows: &[&WindowElement]) {
+        let new_ids: HashSet<ObjectId> = windows.iter().map(|w| w.id()).collect();
+        let prev_ids = self.scanout_windows.read().unwrap().clone();
+        if prev_ids == new_ids {
+            return;
+        }
+        tracing::info!(
+            target: "otto::scanout",
+            prev = prev_ids.len(),
+            new = new_ids.len(),
+            "scanout window set changed"
+        );
+        for prev in prev_ids.difference(&new_ids) {
+            if let Some(view) = self.get_window_view(prev) {
+                view.set_content_hidden(false);
+            }
+        }
+        for new in new_ids.difference(&prev_ids) {
+            if let Some(view) = self.get_window_view(new) {
+                view.set_content_hidden(true);
+            }
+        }
+        *self.scanout_windows.write().unwrap() = new_ids;
+    }
+
+    /// Replace the scanout popup set. v1 tracks the set only; popup content
+    /// hiding is a follow-up (windows with open popups are simply not promoted,
+    /// see the call-site), so this currently only records state.
+    #[allow(clippy::mutable_key_type)]
+    pub fn set_scanout_popups(&self, popup_ids: &[ObjectId]) {
+        let new_ids: HashSet<ObjectId> = popup_ids.iter().cloned().collect();
+        *self.scanout_popups.write().unwrap() = new_ids;
+    }
+
     /// Return if we are in window selection mode
     pub fn get_show_all(&self) -> bool {
         self.show_all.load(std::sync::atomic::Ordering::Relaxed)
@@ -653,9 +861,16 @@ impl Workspaces {
         let is_animating = self.is_animating.load(std::sync::atomic::Ordering::Relaxed);
 
         // We're transitioning if:
+        // 0. A release animation is in flight. The gesture value snaps to its
+        //    target (0 on close) the instant the animation is scheduled, so the
+        //    clauses below can't see a close-in-progress — this flag bridges the
+        //    gap until `on_finish` clears it, keeping scanout disabled until the
+        //    expose-exit animation actually finishes.
         // 1. Gesture value is between 0 and 1000 (not fully closed or fully open), OR
         // 2. Animation is in progress AND we're not at a stable state (0 or 1000)
-        (gesture_value > 0 && gesture_value < 1000)
+        self.expose_animating
+            .load(std::sync::atomic::Ordering::Relaxed)
+            || (gesture_value > 0 && gesture_value < 1000)
             || (is_animating && gesture_value != 0 && gesture_value != 1000)
     }
 
@@ -1298,6 +1513,15 @@ impl Workspaces {
             .clone();
         self.is_animating
             .store(is_starting_animation, std::sync::atomic::Ordering::Relaxed);
+        // A release animation is about to run: mark expose as transitioning so
+        // scanout stays disabled until it settles. Only set (never clear) here —
+        // the loop in `expose_end_with_velocity` calls this for non-current
+        // workspaces with `transition = None`, and those must not clobber the
+        // flag. The clear happens in the spring's `on_finish` below.
+        if is_starting_animation {
+            self.expose_animating
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
 
         window_selector_view.set_opacity(0.0, None);
 
@@ -1413,6 +1637,7 @@ impl Workspaces {
             let show_all_ref = self.show_all.clone();
             let show_all_gesture_ref = self.show_all_gesture.clone();
             let expose_gesture_active_ref = self.expose_gesture_active.clone();
+            let expose_animating_ref = self.expose_animating.clone();
             let expose_dragged_window_ref = self.expose_dragged_window.clone();
             let model_ref = self.model.clone();
 
@@ -1460,6 +1685,12 @@ impl Workspaces {
                 window_selector_view_ref.set_position((0.0, 0.0), None);
                 transaction.on_finish(
                     move |_: &Layer, _: f32| {
+                        // The release animation has settled (this fires only on
+                        // natural completion — a reversal cancels the transaction
+                        // without firing it), so expose is no longer transitioning
+                        // and scanout may resume.
+                        expose_animating_ref
+                            .store(false, std::sync::atomic::Ordering::Relaxed);
                         let is_dragging =
                             expose_dragged_window_ref.lock().unwrap().is_some();
                         // Re-read the current state at finish time — the gesture may have

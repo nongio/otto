@@ -27,12 +27,16 @@ pub struct WindowView {
     pub genie_effect: GenieEffect,
 
     pub unmaximised_rect: smithay::utils::Rectangle<i32, Logical>,
-    /// The tiling zone this window is currently snapped into, if any. Set when
-    /// a window is tiled (drag-snap or shortcut), cleared on drag-off or restore.
-    /// `unmaximised_rect` holds the pre-snap geometry.
+    /// The tiling zone this window is currently snapped into, if any. Set when a
+    /// window is tiled (drag-snap or shortcut), cleared when it is dragged off or
+    /// restored. `unmaximised_rect` holds the pre-snap geometry to restore to.
     pub tiled_zone: Option<crate::workspaces::TileZone>,
     pub minimizing_animation: Arc<AtomicBool>,
     pub is_unmapped: Arc<AtomicBool>,
+    /// True when the content_layer is hidden because the window's client buffer
+    /// is being scanned out directly on a KMS plane. The shadow layer stays
+    /// visible so it composites underneath the scanned-out plane.
+    pub content_hidden: Arc<AtomicBool>,
 }
 
 impl WindowView {
@@ -91,7 +95,25 @@ impl WindowView {
             tiled_zone: None,
             minimizing_animation: Arc::new(AtomicBool::new(false)),
             is_unmapped: Arc::new(AtomicBool::new(false)),
+            content_hidden: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Toggle content_layer visibility for direct-scanout: when `hidden` is
+    /// true the scene stops compositing the client surface buffer (the shadow
+    /// keeps drawing) so the buffer can be scanned out on a KMS plane.
+    pub fn set_content_hidden(&self, hidden: bool) {
+        let prev = self
+            .content_hidden
+            .swap(hidden, std::sync::atomic::Ordering::SeqCst);
+        if prev != hidden {
+            self.content_layer.set_hidden(hidden);
+        }
+    }
+
+    pub fn is_content_hidden(&self) -> bool {
+        self.content_hidden
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Update the activation state of the window shadow
