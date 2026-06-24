@@ -33,6 +33,7 @@ mod dnd_view;
 mod dock;
 mod osd;
 mod popup_overlay;
+mod tiling_overlay;
 pub mod workspace;
 
 pub mod utils;
@@ -53,6 +54,7 @@ pub use dnd_view::DndView;
 pub use dock::DockView;
 pub use osd::OsdView;
 pub use popup_overlay::PopupOverlayView;
+pub use tiling_overlay::{zone_from_pointer, TileZone, TilingOverlayView};
 pub use workspace::WORKSPACE_SPACING;
 pub use workspace_selector::{WorkspaceSelectorView, WORKSPACE_SELECTOR_PREVIEW_WIDTH};
 
@@ -128,6 +130,7 @@ pub struct Workspaces {
     pub dnd_view: DndView,
     pub popup_overlay: PopupOverlayView,
     pub osd: OsdView,
+    pub tiling_overlay: TilingOverlayView,
     pub app_icons_manager: Arc<AppIconsManager>,
 
     // gestures states
@@ -324,6 +327,9 @@ impl Workspaces {
         // Create OSD view; attach it to overlay_layer in map_output_with_primary
         let osd = OsdView::new(layers_engine.clone());
 
+        // Window-tiling drop-zone overlay; attached to overlay_layer in map_output_with_primary
+        let tiling_overlay = TilingOverlayView::new(layers_engine.clone());
+
         let mut workspaces = Self {
             // layer,
             output_workspaces: HashMap::new(),
@@ -338,6 +344,7 @@ impl Workspaces {
             dnd_view,
             popup_overlay,
             osd,
+            tiling_overlay,
             app_icons_manager,
             overlay_layer,
             layer_shell_top,
@@ -3056,6 +3063,9 @@ impl Workspaces {
             self.expose_layer = expose_layer.clone();
             // overlay contains dnd and osd
             let _ = self.overlay_layer.add_sublayer(&self.dnd_view.layer);
+            let _ = self
+                .overlay_layer
+                .add_sublayer(&self.tiling_overlay.wrap_layer);
             let _ = self.overlay_layer.add_sublayer(&self.osd.wrap_layer);
             // App icons manager lives at the root — sibling of output layers, never rendered
             // on any output, but present in the scene so its subtree gets laid out.

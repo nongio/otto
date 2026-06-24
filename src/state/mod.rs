@@ -876,6 +876,31 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         self.exclusive_zones.insert(output_name.clone(), zones);
     }
 
+    pub fn usable_zone(&self, output: &Output) -> utils::Rectangle<i32, utils::Logical> {
+        let output_geom = self.workspaces.output_geometry(output).unwrap();
+        let zones = self
+            .exclusive_zones
+            .get(&output.name())
+            .cloned()
+            .unwrap_or_default();
+        let mut usable_zone = zones.apply_to_output(output_geom);
+
+        // When autohide is enabled the dock slides away, so tiled/maximized
+        // windows can use the full height; otherwise stop above the dock.
+        if !self.workspaces.dock.is_autohide_enabled() {
+            let dock_geom = self.workspaces.get_dock_geometry();
+            if dock_geom.size.h > 0 {
+                let dock_top = dock_geom.loc.y;
+                let available_bottom = usable_zone.loc.y + usable_zone.size.h;
+                if dock_top < available_bottom {
+                    usable_zone.size.h = dock_top - usable_zone.loc.y;
+                }
+            }
+        }
+
+        usable_zone
+    }
+
     pub fn schedule_event_loop_dispatch(&self) {
         if !self.loop_wakeup_pending.swap(true, Ordering::AcqRel)
             && self.loop_wakeup_sender.send(()).is_err()
