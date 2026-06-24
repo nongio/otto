@@ -714,17 +714,17 @@ impl Workspaces {
         // `cached_dock_bounds` is already in LOGICAL coords (the dock divides
         // screen size by scale when computing it), so compare directly — do NOT
         // divide by scale again.
-        let dock_logical: Option<Rectangle<i32, smithay::utils::Logical>> =
-            if self.dock.is_hidden() {
-                None
-            } else {
-                self.dock.dock_bounds().map(|r| {
-                    Rectangle::new(
-                        (r.left as i32, r.top as i32).into(),
-                        ((r.right - r.left) as i32, (r.bottom - r.top) as i32).into(),
-                    )
-                })
-            };
+        let dock_logical: Option<Rectangle<i32, smithay::utils::Logical>> = if self.dock.is_hidden()
+        {
+            None
+        } else {
+            self.dock.dock_bounds().map(|r| {
+                Rectangle::new(
+                    (r.left as i32, r.top as i32).into(),
+                    ((r.right - r.left) as i32, (r.bottom - r.top) as i32).into(),
+                )
+            })
+        };
 
         // Top/Overlay layer-shell surfaces (notification daemons, panels)
         // composite above windows in the scene, so a window one of them overlaps
@@ -795,6 +795,7 @@ impl Workspaces {
     /// Snapshot of the windows currently flagged for scanout (their
     /// `content_layer` is hidden). The render call-site diffs against this to
     /// re-import departing windows before they're composited again.
+    #[allow(clippy::mutable_key_type)]
     pub fn scanout_window_ids(&self) -> HashSet<ObjectId> {
         self.scanout_windows.read().unwrap().clone()
     }
@@ -803,6 +804,7 @@ impl Workspaces {
     /// unhides it for departures. Idempotent. The caller must re-import any
     /// departing window's buffer (via `update_window_view`) *before* this call
     /// so the unhidden `content_layer` shows the current frame, not a stale one.
+    #[allow(clippy::mutable_key_type)]
     pub fn set_scanout_windows(&self, windows: &[&WindowElement]) {
         let new_ids: HashSet<ObjectId> = windows.iter().map(|w| w.id()).collect();
         let prev_ids = self.scanout_windows.read().unwrap().clone();
@@ -831,6 +833,7 @@ impl Workspaces {
     /// Replace the scanout popup set. v1 tracks the set only; popup content
     /// hiding is a follow-up (windows with open popups are simply not promoted,
     /// see the call-site), so this currently only records state.
+    #[allow(clippy::mutable_key_type)]
     pub fn set_scanout_popups(&self, popup_ids: &[ObjectId]) {
         let new_ids: HashSet<ObjectId> = popup_ids.iter().cloned().collect();
         *self.scanout_popups.write().unwrap() = new_ids;
