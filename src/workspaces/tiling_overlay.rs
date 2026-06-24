@@ -6,7 +6,6 @@ use layers::{
 use smithay::utils::{Logical, Rectangle};
 use std::sync::Arc;
 
-
 /// A window-tiling drop zone a dragged window can snap into.
 ///
 /// Push a dragged window toward the top-center to maximize it,
