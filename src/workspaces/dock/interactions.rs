@@ -192,6 +192,8 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
                                                 app.command(&bookmark.exec_args)
                                             {
                                                 state.launch_program(cmd, args);
+                                                // Bounce the icon until the app's window shows up.
+                                                self.start_bounce(&match_id);
                                             } else {
                                                 warn!(
                                                     "bookmark {} has no executable command",
