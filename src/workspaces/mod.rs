@@ -84,10 +84,18 @@ pub struct OutputWorkspaces {
     /// Single layer containing all workspace window containers, child of workspaces_layer.
     /// Rendered as a single KMS windows plane; scrolls in sync automatically.
     pub windows_plane: Layer,
-    /// Overlay UI plane: workspace selector, app switcher, layer_shell_top,
-    /// layer_shell_overlay, OSD, DnD, and dock — everything above windows.
-    /// Dock is the topmost sublayer so the combined plane includes it.
+    /// Overlay UI plane: workspace selector, layer_shell_top,
+    /// layer_shell_overlay, OSD, DnD and popups — chrome above windows that
+    /// changes rarely. Dock and app switcher have their own planes.
     pub overlay_plane: Layer,
+    /// App-switcher plane: full-screen container (so the switcher centers
+    /// itself with normal layout) rendered through a strip-sized viewport
+    /// onto its own KMS plane. Above overlay_plane.
+    pub switcher_plane: Layer,
+    /// Dock plane: full-screen container (dock positions itself bottom-center
+    /// with normal layout) rendered through a bottom-strip viewport onto its
+    /// own KMS plane. Topmost.
+    pub dock_plane: Layer,
     /// Debug indicator: red circle visible when rendering into a single scene
     /// plane (expose active), hidden when individual planes are in use.
     pub debug_plane_indicator: Layer,
@@ -562,6 +570,8 @@ impl Workspaces {
             ows.expose_layer.set_size(Size::points(w, h), None);
             ows.workspaces_layer.set_size(Size::points(w, h), None);
             ows.overlay_plane.set_size(Size::points(w, h), None);
+            ows.switcher_plane.set_size(Size::points(w, h), None);
+            ows.dock_plane.set_size(Size::points(w, h), None);
 
             for (logical_index, workspace) in ows.workspace_views.iter().enumerate() {
                 workspace.update_layout(logical_index, w, h, scale);
@@ -3138,6 +3148,24 @@ impl Workspaces {
         overlay_plane.set_size(layers::types::Size::points(phys_w, phys_h), None);
         overlay_plane.set_pointer_events(false);
 
+        let switcher_plane = self.layers_engine.new_layer();
+        switcher_plane.set_key(format!("switcher_plane_{}", output.name()));
+        switcher_plane.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        switcher_plane.set_size(layers::types::Size::points(phys_w, phys_h), None);
+        switcher_plane.set_pointer_events(false);
+
+        let dock_plane = self.layers_engine.new_layer();
+        dock_plane.set_key(format!("dock_plane_{}", output.name()));
+        dock_plane.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        dock_plane.set_size(layers::types::Size::points(phys_w, phys_h), None);
+        dock_plane.set_pointer_events(false);
+
         if is_this_primary {
             // Wire the primary output's expose layer into self.expose_layer so all
             // existing show/hide logic works unchanged.
@@ -3161,17 +3189,22 @@ impl Workspaces {
             // including popups which sit above other overlay content.
             let _ = overlay_plane.add_sublayer(&self.layer_shell_top);
             let _ = overlay_plane.add_sublayer(&self.workspace_selector_view.layer.clone());
-            let _ = overlay_plane.add_sublayer(&self.app_switcher.wrap_layer.clone());
             let _ = overlay_plane.add_sublayer(&self.layer_shell_overlay);
             let _ = overlay_plane.add_sublayer(&self.overlay_layer);
             let _ = overlay_plane.add_sublayer(&self.popup_overlay.layer.clone());
-
-            // Dock is the topmost child of overlay_plane so overlay_dmabuf_element
-            // captures both UI and dock in a single KMS plane.
-            let _ = overlay_plane.add_sublayer(&self.dock.wrap_layer.clone());
             let _ = output_layer.add_sublayer(&overlay_plane.clone());
+            // App switcher and dock get their own full-screen containers (so
+            // their existing centering layout keeps working) rendered through
+            // strip viewports onto dedicated KMS planes — their animations no
+            // longer redraw the shared overlay buffer.
+            let _ = switcher_plane.add_sublayer(&self.app_switcher.wrap_layer.clone());
+            let _ = output_layer.add_sublayer(&switcher_plane.clone());
+            let _ = dock_plane.add_sublayer(&self.dock.wrap_layer.clone());
+            let _ = output_layer.add_sublayer(&dock_plane.clone());
         } else {
             let _ = output_layer.add_sublayer(&overlay_plane.clone());
+            let _ = output_layer.add_sublayer(&switcher_plane.clone());
+            let _ = output_layer.add_sublayer(&dock_plane.clone());
         }
 
         let workspace_counter_start = self.with_model(|m| m.workspace_counter);
@@ -3246,6 +3279,8 @@ impl Workspaces {
             background_plane,
             windows_plane,
             overlay_plane,
+            switcher_plane,
+            dock_plane,
             debug_plane_indicator,
         };
         self.output_workspaces.insert(output.name(), ows);

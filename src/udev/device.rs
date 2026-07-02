@@ -496,6 +496,8 @@ impl Otto<UdevData> {
                 windows_dmabuf_element: None,
                 expose_dmabuf_element: None,
                 overlay_dmabuf_element: None,
+                switcher_dmabuf_element: None,
+                dock_dmabuf_element: None,
                 shadow_only_windows: Vec::new(),
                 #[cfg(feature = "renderer_sync")]
                 pending_gpu_fence: SyncPoint::signaled(),
