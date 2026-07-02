@@ -176,6 +176,10 @@ pub struct SurfaceData {
     pub(super) backdrop_surface: Option<BackdropSurface>,
     /// Snapshot of `backdrop_surface` handed to the overlay element.
     pub(super) backdrop_image: Option<layers::skia::Image>,
+    /// Whether the previous frame used a direct-scanout mode (fullscreen or
+    /// promoted windows). The compositor swapchain is reset on transitions so
+    /// stale buffer ages don't leak across the mode switch.
+    pub(super) was_direct_scanout: bool,
     /// Windows currently in shadow-only mode for direct surface scanout.
     /// Their `content_layer` is hidden in lay-rs so only the shadow renders in
     /// `windows_dmabuf_element`. The client buffer is pushed directly as a

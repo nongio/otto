@@ -52,6 +52,18 @@ vibrancy even though the content behind it lives on other planes.
 - When a lower plane records damage, the composite is rebuilt and the
   blur-bearing planes re-render once with the new backdrop (triggered by
   the fresh snapshot's unique id).
+- A stable fullscreen workspace (single window, no animation, no capture,
+  no swipe) direct-scans the client buffer on the PRIMARY plane with all
+  chrome planes dropped; frames always render (client commits produce no
+  scene damage) and only the fullscreen window receives frame callbacks.
+  The compositor swapchain resets on scanout-mode transitions.
+- The 3-finger workspace swipe (finger-drag, before any animation) gates
+  all direct scanout: the drag moves content with no animation flag, and a
+  fixed plane would not follow it.
+- The promoted-window set is capped (currently 1): the hardware admits ~5
+  simultaneous planes and bg/windows/dock/cursor take four — a second
+  client plane evicts the windows plane, which costs more than
+  compositing the extra window.
 - Scanout candidate selection uses only STABLE geometry (dock bar bounds,
   app-switcher/OSD view bounds, layer-shell Top/Overlay rects, window
   rects) — never per-frame scene state such as bubbled blur regions, which

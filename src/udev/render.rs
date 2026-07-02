@@ -315,8 +315,21 @@ impl Otto<UdevData> {
         // composited primary, so it disables scanout.
         let capture_active =
             !self.pending_screencopy_frames.is_empty() || !self.screenshare_sessions.is_empty();
+        // Fullscreen direct scanout: a stable single fullscreen window is
+        // scanned out on the primary plane on its own — all chrome planes
+        // are dropped for those frames. Disabled during capture and the
+        // 3-finger swipe (the finger-drag moves the workspace with no
+        // animation flag, so a fixed plane would not follow it).
+        let allow_fullscreen_scanout = self.workspaces.is_fullscreen_and_stable()
+            && !self.swipe_gesture.is_active()
+            && !capture_active;
+        let fullscreen_window = if allow_fullscreen_scanout {
+            self.workspaces.get_fullscreen_window()
+        } else {
+            None
+        };
         let scanout_desired: Vec<smithay::reexports::wayland_server::backend::ObjectId> =
-            if capture_active {
+            if capture_active || self.swipe_gesture.is_active() || fullscreen_window.is_some() {
                 Vec::new()
             } else {
                 self.workspaces.get_scanout_candidates()
@@ -592,6 +605,7 @@ impl Otto<UdevData> {
             &window_throttle_states,
             &mut self.pending_screencopy_frames,
             expose_active,
+            fullscreen_window.as_ref(),
             self.workspaces.app_switcher.alive(),
             !self.workspaces.dock.is_hidden(),
             {
@@ -1180,6 +1194,7 @@ pub(super) fn render_surface<'a>(
     >,
     pending_screencopy: &mut Vec<crate::state::screencopy::PendingScreencopy>,
     expose_active: bool,
+    fullscreen_window: Option<&WindowElement>,
     switcher_active: bool,
     dock_visible: bool,
     overlay_active: bool,
@@ -1263,7 +1278,14 @@ pub(super) fn render_surface<'a>(
 
     let (output_elements, clear_color, should_draw) = {
         let cursor_needs_draw = pointer_in_output;
-            let should_draw = scene_has_damage || dnd_needs_draw || cursor_needs_draw || screencopy_pending;
+            // Fullscreen scanout must always draw: the promoted buffer's
+            // commits produce no scene damage, and gating on it would drop
+            // video frames.
+            let should_draw = scene_has_damage
+                || dnd_needs_draw
+                || cursor_needs_draw
+                || screencopy_pending
+                || fullscreen_window.is_some();
             if !should_draw {
                 return Ok(RenderOutcome::skipped());
             }
@@ -1273,6 +1295,34 @@ pub(super) fn render_surface<'a>(
             if screencopy_pending {
                 workspace_render_elements
                     .push(WorkspaceRenderElements::Scene(output_scene_element));
+            } else if let Some(fs_win) = fullscreen_window {
+                // ── Fullscreen direct scanout ─────────────────────────────
+                // The client buffer IS the frame: push only the window's
+                // surface tree (cursor elements were pushed above) and skip
+                // every chrome plane — dock and topbar are hidden in
+                // fullscreen anyway. The buffer spans the output and is
+                // opaque, so Smithay direct-scans it on the primary plane
+                // (ALLOW_PRIMARY_PLANE_SCANOUT_ANY); if that fails it
+                // GPU-composites the same element, which stays z-correct.
+                use smithay::backend::renderer::element::surface::render_elements_from_surface_tree;
+                if let Some(wl_surface) = fs_win.wl_surface() {
+                    let geo_loc = fs_win.geometry().loc.to_f64().to_physical(scale);
+                    let pos: Point<i32, Physical> = (
+                        -(geo_loc.x.round() as i32),
+                        -(geo_loc.y.round() as i32),
+                    )
+                        .into();
+                    let elems: Vec<WorkspaceRenderElements<_>> =
+                        render_elements_from_surface_tree(
+                            renderer,
+                            &wl_surface,
+                            pos,
+                            scale,
+                            1.0,
+                            Kind::ScanoutCandidate,
+                        );
+                    workspace_render_elements.extend(elems);
+                }
             } else {
             // Push plane elements top→bottom. Smithay's `DrmCompositor::render_frame`
             // assigns overlay planes front-first and tries every element tagged
@@ -1750,7 +1800,21 @@ pub(super) fn render_surface<'a>(
 
     let damage_for_return = damage.clone();
 
-    let post_repaint_elements: Vec<&WindowElement> = window_elements.to_vec();
+    // Reset the compositor's swapchain when entering/leaving direct-scanout
+    // modes so stale buffer ages don't leak across the mode switch.
+    let is_direct_scanout = fullscreen_window.is_some() || !surface.shadow_only_windows.is_empty();
+    if is_direct_scanout != surface.was_direct_scanout {
+        surface.was_direct_scanout = is_direct_scanout;
+        surface.compositor.reset_buffers();
+    }
+
+    // In fullscreen scanout only the fullscreen window gets frame callbacks —
+    // other windows generating damage would only cause pointless wakeups.
+    let post_repaint_elements: Vec<&WindowElement> = if let Some(fs_win) = fullscreen_window {
+        vec![fs_win]
+    } else {
+        window_elements.to_vec()
+    };
 
     post_repaint(
         output,
