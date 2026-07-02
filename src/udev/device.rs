@@ -490,15 +490,15 @@ impl Otto<UdevData> {
                 idle_countdown: 0,
                 prefetched_scene_damage: None,
                 scene_dmabuf_element: None,
-                probe_dmabufs: Vec::new(),
                 test_dmabuf_element: None,
+                backdrop_surface: None,
+                backdrop_image: None,
                 windows_dmabuf_element: None,
                 expose_dmabuf_element: None,
                 overlay_dmabuf_element: None,
                 shadow_only_windows: Vec::new(),
                 #[cfg(feature = "renderer_sync")]
                 pending_gpu_fence: SyncPoint::signaled(),
-                current_tier: None,
             };
 
             let device = self.backend_data.backends.get_mut(&node).unwrap();

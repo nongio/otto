@@ -158,15 +158,17 @@ pub struct SurfaceData {
     /// OSD, DnD — above windows, below dock.
     pub(super) overlay_dmabuf_element:
         Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
-    /// Solid-black probe buffers for KMS tier grading (TEST_ONLY commits).
-    /// Each element is Argb8888, has no lay-rs subtree, renders black once and caches.
-    /// All four are committed to different GBM swapchains so they carry distinct gem
-    /// handles — required because the kernel rejects duplicate handles on separate planes.
-    ///   [0] primary plane   [1] overlay0   [2] overlay1   [3] overlay2
-    pub(super) probe_dmabufs: Vec<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
-    /// Alias kept for the visual debug path (push [0] to an overlay to see it go black).
+    /// Optional solid-black debug element (kept for the visual debug path —
+    /// push it to an overlay to see it go black).
     pub(super) test_dmabuf_element:
         Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
+    /// Downscaled composite of the planes below the overlay-UI plane
+    /// (bg + windows/expose), seeding cross-plane backdrop blur (dock
+    /// vibrancy). Rebuilt only when a lower plane changes under the
+    /// overlay's blur region.
+    pub(super) backdrop_surface: Option<BackdropSurface>,
+    /// Snapshot of `backdrop_surface` handed to the overlay element.
+    pub(super) backdrop_image: Option<layers::skia::Image>,
     /// Windows currently in shadow-only mode for direct surface scanout.
     /// Their `content_layer` is hidden in lay-rs so only the shadow renders in
     /// `windows_dmabuf_element`. The client buffer is pushed directly as a
@@ -181,9 +183,6 @@ pub struct SurfaceData {
     /// that happens between frames (scene-graph update, input processing, etc.).
     #[cfg(feature = "renderer_sync")]
     pub(super) pending_gpu_fence: SyncPoint,
-    /// Highest render tier confirmed by `DRM_MODE_ATOMIC_TEST_ONLY` for this surface.
-    /// `None` means the probe has not run yet (dmabufs not yet available).
-    pub(super) current_tier: Option<RenderTier>,
 }
 
 impl Drop for SurfaceData {
@@ -216,35 +215,16 @@ pub enum DeviceAddError {
     AddNode(smithay::backend::egl::Error),
 }
 
-/// Highest render tier the current hardware + buffer configuration supports.
-///
-/// Determined once per output via `DRM_MODE_ATOMIC_TEST_ONLY` before the first
-/// render and whenever the overlay buffer format/modifier changes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RenderTier {
-    /// No overlay planes accepted our buffers — everything GPU-composited.
-    Fallback,
-    /// overlay_ui on one overlay; bg + windows in primary.
-    Tier1,
-    /// windows on an overlay + overlay_ui on another; bg in primary.
-    Tier2,
-    /// bg in primary; windows, overlay_ui, and dock each on separate overlays.
-    Tier3,
-    /// bg in primary; windows, overlay_ui, dock, and one more overlay confirmed.
-    Tier4,
+/// Skia GPU surface + context for the cross-plane backdrop composite.
+/// Confined to the single render thread (same discipline as the slot
+/// surfaces inside `SceneDmabufElement`), hence the manual Send/Sync.
+pub(super) struct BackdropSurface {
+    pub(super) surface: layers::skia::Surface,
+    pub(super) context: layers::skia::gpu::DirectContext,
 }
-
-impl std::fmt::Display for RenderTier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RenderTier::Fallback => write!(f, "Fallback"),
-            RenderTier::Tier1 => write!(f, "Tier1"),
-            RenderTier::Tier2 => write!(f, "Tier2"),
-            RenderTier::Tier3 => write!(f, "Tier3"),
-            RenderTier::Tier4 => write!(f, "Tier4"),
-        }
-    }
-}
+// SAFETY: accessed only from the render thread; never aliased across threads.
+unsafe impl Send for BackdropSurface {}
+unsafe impl Sync for BackdropSurface {}
 
 /// Outcome of a render operation
 pub struct RenderOutcome {

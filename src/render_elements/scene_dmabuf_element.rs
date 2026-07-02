@@ -40,6 +40,13 @@ use crate::{skia_renderer::SkiaRenderer, udev::UdevRenderer};
 
 use crate::renderer::skia_surface::SkiaSurface;
 
+/// When true, the GPU-composite fallback path washes its output red so it is
+/// visually distinguishable from zero-copy plane scanout. Toggled at runtime
+/// by `touch /tmp/otto-tint` (checked once per second in the udev renderer),
+/// mirroring Smithay's `DebugFlags::TINT` which tints client textures.
+pub static TINT_COMPOSITE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 struct SlotSurface(UnsafeCell<SkiaSurface>);
 // SAFETY: accessed only from the render thread; never aliased across threads.
 unsafe impl Send for SlotSurface {}
@@ -63,6 +70,12 @@ pub struct SceneDmabufElement {
     /// Whether the element covers its geometry with fully opaque pixels.
     /// Background plane = true. All overlay planes = false.
     pub opaque: bool,
+    /// Element kind reported to Smithay. `ScanoutCandidate` makes the element
+    /// eligible for OVERLAY planes. The background must use `Unspecified`:
+    /// it may only direct-scan the PRIMARY plane (which ignores kind) — on an
+    /// overlay it stacks ABOVE the primary swapchain and, being opaque and
+    /// full-output, hides every element that fell back to GPU compositing.
+    pub kind: Kind,
     /// Short name used in trace logging (e.g. "bg", "windows", "overlay").
     pub label: &'static str,
 }
@@ -88,6 +101,14 @@ struct Inner {
     /// DRM render node — tagged onto each exported dmabuf so Smithay's
     /// GbmFramebufferExporter accepts it.
     render_node: Option<DrmNode>,
+    /// Composite of the planes BELOW this one (global scene coordinates) plus
+    /// its resolution relative to the scene (1.0 = full, 0.25 = quarter).
+    /// Passed to `render_node_tree` so `BackgroundBlur` layers in the subtree
+    /// sample the real content behind the plane (cross-buffer vibrancy).
+    backdrop: Option<(layers::skia::Image, f32)>,
+    /// `unique_id()` of the backdrop the current buffer was rendered with —
+    /// a backdrop swap forces a re-render even when the subtree is clean.
+    last_backdrop_id: Option<u32>,
 }
 
 impl SceneDmabufElement {
@@ -105,10 +126,13 @@ impl SceneDmabufElement {
                 current_slot: None,
                 render_node: None,
                 skip_root_translate: false,
+                backdrop: None,
+                last_backdrop_id: None,
             })),
             position: (0, 0),
             plane_alpha: 1.0,
             opaque: false,
+            kind: Kind::ScanoutCandidate,
             label,
         }
     }
@@ -125,6 +149,43 @@ impl SceneDmabufElement {
     /// Backwards-compatible alias used by the existing udev render path.
     pub fn set_output_root(&self, node: NodeRef) {
         self.set_node_ref(node);
+    }
+
+    /// Provide the composite of the planes below this one so `BackgroundBlur`
+    /// layers in the subtree sample real content (cross-buffer vibrancy).
+    /// `scale` is the image's resolution relative to the scene. A new image
+    /// (different `unique_id`) triggers a re-render on the next `render()`.
+    pub fn set_backdrop(&self, backdrop: Option<(layers::skia::Image, f32)>) {
+        self.inner.lock().unwrap().backdrop = backdrop;
+    }
+
+    /// Snapshot of the most recently rendered buffer, if any. Cheap when the
+    /// buffer hasn't been re-rendered since the last call (Skia returns the
+    /// cached snapshot with the same `unique_id`).
+    pub fn snapshot(&self) -> Option<layers::skia::Image> {
+        let inner = self.inner.lock().unwrap();
+        let slot = inner.current_slot.as_ref()?;
+        let slot_surface = slot.userdata().get::<SlotSurface>()?;
+        // SAFETY: single render thread; no concurrent access to this slot.
+        let skia_surface = unsafe { &mut *slot_surface.0.get() };
+        Some(skia_surface.surface.image_snapshot())
+    }
+
+    /// Skia GPU context of the current slot surface, if one exists yet.
+    pub fn gr_context(&self) -> Option<layers::skia::gpu::DirectContext> {
+        let inner = self.inner.lock().unwrap();
+        let slot = inner.current_slot.as_ref()?;
+        let slot_surface = slot.userdata().get::<SlotSurface>()?;
+        // SAFETY: single render thread; no concurrent access to this slot.
+        let skia_surface = unsafe { &*slot_surface.0.get() };
+        Some(skia_surface.gr_context.clone())
+    }
+
+    /// Damage recorded under this element's subtree since the engine's last
+    /// `clear_damage()`, in global scene coordinates.
+    pub fn subtree_damage(&self) -> Option<layers::skia::Rect> {
+        let inner = self.inner.lock().unwrap();
+        inner.node_ref.and_then(|n| inner.engine.subtree_damage(n))
     }
 
     /// Allocate the GBM swapchain (3 slots, RENDERING|SCANOUT flags).
@@ -170,12 +231,17 @@ impl SceneDmabufElement {
         // always reporting full-buffer — lets the DRM compositor set
         // FB_DAMAGE_CLIPS correctly, enabling PSR partial-refresh on eDP.
         let dirty_rect: Option<layers::skia::Rect>;
+        // A backdrop swap (new unique_id) means the content behind this
+        // plane changed under a blur region — re-render even when the
+        // subtree itself is clean so vibrancy tracks the planes below.
+        let backdrop_id = inner.backdrop.as_ref().map(|(img, _)| img.unique_id());
+        let backdrop_changed = backdrop_id != inner.last_backdrop_id;
         let has_dmabuf = self.current_dmabuf.lock().unwrap().is_some();
         if has_dmabuf {
             match inner.node_ref {
                 Some(node_ref) => {
                     dirty_rect = inner.engine.subtree_damage(node_ref);
-                    if dirty_rect.is_none() {
+                    if dirty_rect.is_none() && !backdrop_changed {
                         return false;
                     }
                 }
@@ -263,6 +329,7 @@ impl SceneDmabufElement {
                         }
                     }
                 }
+                let external_backdrop = inner.backdrop.as_ref().map(|(img, s)| (img, *s));
                 scene.with_arena(|arena| {
                     scene.with_renderable_arena(|renderable_arena| {
                         render_node_tree(
@@ -273,6 +340,7 @@ impl SceneDmabufElement {
                             1.0,
                             None,
                             None,
+                            external_backdrop,
                         );
                     });
                 });
@@ -291,7 +359,9 @@ impl SceneDmabufElement {
         // Update damage and commit counter.
         // Use the tight dirty rect when available so FB_DAMAGE_CLIPS is set
         // correctly for PSR partial-refresh; fall back to full-buffer on the
-        // first render (no prior dmabuf) or when no node_ref is set.
+        // first render (no prior dmabuf), when no node_ref is set, or when
+        // the backdrop changed (blur regions repaint without subtree damage).
+        inner.last_backdrop_id = backdrop_id;
         inner.commit_counter.increment();
         // Map the scene-space dirty rect into buffer space and clamp to buffer
         // bounds. The canvas was translated by the root node's render_position()
@@ -301,6 +371,7 @@ impl SceneDmabufElement {
             .map(|l| l.render_position())
             .unwrap_or_default();
         let damage_rect = dirty_rect
+            .filter(|_| !backdrop_changed)
             .map(|r| {
                 let x = ((r.left()  - root_pos.x) as i32).clamp(0, w);
                 let y = ((r.top()   - root_pos.y) as i32).clamp(0, h);
@@ -339,7 +410,6 @@ impl SceneDmabufElement {
     }
 
     /// Save the current slot's rendered content to a PNG file (debug only).
-    #[cfg(feature = "debug-kms")]
     pub fn save_to_png(&self, path: &str) {
         let inner = self.inner.lock().unwrap();
         if inner.swapchain.is_none() {
@@ -443,7 +513,7 @@ impl Element for SceneDmabufElement {
     }
 
     fn kind(&self) -> Kind {
-        Kind::ScanoutCandidate
+        self.kind
     }
 
     fn opaque_regions(
@@ -469,18 +539,13 @@ impl<'renderer> RenderElement<UdevRenderer<'renderer>> for SceneDmabufElement {
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
     ) -> Result<(), <UdevRenderer<'renderer> as RendererSuper>::Error> {
-        let inner = self.inner.lock().unwrap();
-        let key = inner.node_ref
-            .and_then(|n| inner.engine.get_layer(&n))
-            .map(|l| l.key())
-            .unwrap_or_default();
-        drop(inner);
-        tracing::trace!(
+        tracing::debug!(
             target: "otto::planes",
-            "SceneDmabufElement::draw() fallback — node={key} dst={dst:?}",
+            "plane demoted to GPU composite: {} dst={dst:?}",
+            self.label,
         );
-        let _ = (frame, src, dst, damage, opaque_regions);
-        Ok(())
+        RenderElement::<SkiaRenderer>::draw(self, frame.as_mut(), src, dst, damage, opaque_regions)
+            .map_err(|e| e.into())
     }
 
     fn underlying_storage(
@@ -507,12 +572,68 @@ impl<'renderer> RenderElement<UdevRenderer<'renderer>> for SceneDmabufElement {
 impl RenderElement<SkiaRenderer> for SceneDmabufElement {
     fn draw<'frame>(
         &self,
-        _frame: &mut <SkiaRenderer as RendererSuper>::Frame<'frame, 'frame>,
-        _src: Rectangle<f64, BufferCoord>,
-        _dst: Rectangle<i32, Physical>,
-        _damage: &[Rectangle<i32, Physical>],
+        frame: &mut <SkiaRenderer as RendererSuper>::Frame<'frame, 'frame>,
+        src: Rectangle<f64, BufferCoord>,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
         _opaque_regions: &[Rectangle<i32, Physical>],
     ) -> Result<(), <SkiaRenderer as RendererSuper>::Error> {
+        // GPU-composite fallback: this element did not get a hardware plane
+        // this frame, so Smithay composites it into the primary swapchain.
+        // Blit the current slot's rendered content — a no-op here makes the
+        // whole plane's content vanish (black) whenever assignment fails.
+        let Some(image) = self.snapshot() else {
+            return Ok(());
+        };
+        let mut surface = frame.skia_surface.clone();
+        let canvas = surface.canvas();
+        let src_rect = layers::skia::Rect::from_xywh(
+            src.loc.x as f32,
+            src.loc.y as f32,
+            src.size.w as f32,
+            src.size.h as f32,
+        );
+        let dst_rect = layers::skia::Rect::from_xywh(
+            dst.loc.x as f32,
+            dst.loc.y as f32,
+            dst.size.w as f32,
+            dst.size.h as f32,
+        );
+        let sampling = layers::skia::SamplingOptions::new(
+            layers::skia::FilterMode::Linear,
+            layers::skia::MipmapMode::None,
+        );
+        let mut paint = layers::skia::Paint::default();
+        paint.set_alpha_f(self.plane_alpha);
+        // Damage rects are element-local; offset to dst and clip each blit.
+        for rect in damage {
+            let save = canvas.save();
+            let clip = layers::skia::Rect::from_xywh(
+                (dst.loc.x + rect.loc.x) as f32,
+                (dst.loc.y + rect.loc.y) as f32,
+                rect.size.w as f32,
+                rect.size.h as f32,
+            );
+            canvas.clip_rect(clip, layers::skia::ClipOp::Intersect, Some(false));
+            canvas.draw_image_rect_with_sampling_options(
+                &image,
+                Some((
+                    &src_rect,
+                    layers::skia::canvas::SrcRectConstraint::Fast,
+                )),
+                dst_rect,
+                sampling,
+                &paint,
+            );
+            if TINT_COMPOSITE.load(std::sync::atomic::Ordering::Relaxed) {
+                // Debug: mark GPU-composited plane content with a red wash.
+                canvas.draw_color(
+                    layers::skia::Color4f::new(1.0, 0.0, 0.0, 0.25),
+                    layers::skia::BlendMode::SrcOver,
+                );
+            }
+            canvas.restore_to_count(save);
+        }
         Ok(())
     }
 

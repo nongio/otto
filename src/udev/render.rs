@@ -47,7 +47,7 @@ use smithay::{
 };
 use tracing::{debug, trace, warn};
 
-use super::types::{GbmDrmCompositor, RenderOutcome, RenderTier, SurfaceData, UdevData, UdevOutputId, UdevRenderer};
+use super::types::{RenderOutcome, SurfaceData, UdevData, UdevOutputId, UdevRenderer};
 use crate::state::Otto;
 
 // Type alias for the framebuffer returned when binding a Dmabuf with UdevRenderer
@@ -307,8 +307,38 @@ impl Otto<UdevData> {
             .and_then(|d| d.surfaces.get_mut(&crtc))
             .and_then(|s| s.prefetched_scene_damage.take());
 
-        // Get screenshare sessions before borrowing backend_data
-        // let _has_screenshare = !self.screenshare_sessions.is_empty();
+        // ---- Topmost-window scanout selection ----
+        // Computed here, BEFORE the `device`/`surface` mutable borrow of
+        // `self.backend_data`, because the demotion re-import below calls
+        // `self.update_window_view` (full `&mut self`). Capture (screenshot
+        // via screencopy / recording via screenshare) must see a fully
+        // composited primary, so it disables scanout.
+        let capture_active =
+            !self.pending_screencopy_frames.is_empty() || !self.screenshare_sessions.is_empty();
+        let scanout_desired: Vec<smithay::reexports::wayland_server::backend::ObjectId> =
+            if capture_active {
+                Vec::new()
+            } else {
+                self.workspaces.get_scanout_candidates()
+            };
+        // Demotion: windows that LEAVE the scanout set had a stale (or no)
+        // lay-rs content import while promoted; re-import them now (after the
+        // set update unhides their content_layer) so the first composited
+        // frame shows the current buffer, not a stale one.
+        let new_scanout_ids: std::collections::HashSet<
+            smithay::reexports::wayland_server::backend::ObjectId,
+        > = scanout_desired.iter().cloned().collect();
+        let prev_scanout_ids = self.workspaces.scanout_window_ids();
+        let departed_windows: Vec<WindowElement> = self
+            .workspaces
+            .spaces_elements()
+            .filter(|w| prev_scanout_ids.contains(&w.id()) && !new_scanout_ids.contains(&w.id()))
+            .cloned()
+            .collect();
+        self.workspaces.set_scanout_windows(&scanout_desired);
+        for w in &departed_windows {
+            self.update_window_view(w);
+        }
 
         let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {
             device
@@ -379,8 +409,18 @@ impl Otto<UdevData> {
         // distinct fields, so field-projection rules allow the mutable borrow
         // of `self.scene_element` here even though `surface` (derived from
         // `self.backend_data`) is also live.
-        let scene_has_damage =
-            prefetched_scene_damage.unwrap_or_else(|| self.scene_element.update());
+        let scene_has_damage = if !departed_windows.is_empty() {
+            // A window was demoted from scanout this frame: its buffer was
+            // re-imported (above) *after* the Phase-1 scene prefetch, so that
+            // content transaction is still unflushed. Re-run the engine update
+            // now to apply it before compositing, and force a draw — otherwise
+            // the first composited frame after demotion shows the stale,
+            // shadow-only scene (a one-frame flicker).
+            self.scene_element.update();
+            true
+        } else {
+            prefetched_scene_damage.unwrap_or_else(|| self.scene_element.update())
+        };
         let all_window_elements: Vec<&WindowElement> = self.workspaces.spaces_elements().collect();
 
         // Lazily set up the dmabuf-backed scene element for this surface when
@@ -411,36 +451,15 @@ impl Otto<UdevData> {
             }
 
             alloc_plane!(surface.scene_dmabuf_element,      Fourcc::Xrgb8888, true,  "bg");
+            // The background may only direct-scan the PRIMARY plane: as a
+            // full-output opaque buffer it must never float to an overlay
+            // above the primary swapchain (it would hide every element that
+            // fell back to GPU compositing there).
+            if let Some(el) = surface.scene_dmabuf_element.as_mut() {
+                el.kind = smithay::backend::renderer::element::Kind::Unspecified;
+            }
             // Solid-black test element (visual debug plane).
             alloc_plane!(surface.test_dmabuf_element,       Fourcc::Argb8888, true,  "test");
-
-            // Probe buffers for KMS tier grading.  Each gets its own GBM swapchain so
-            // all four carry distinct gem handles (kernel rejects duplicates on separate
-            // planes).  [0]=primary  [1]=overlay0  [2]=overlay1  [3]=overlay2  [4]=overlay3.
-            //
-            // TEST: probes [1..4] use half-screen size to simulate realistic overlay
-            // buffer sizes and check whether the KMS watermark budget allows Tier4.
-            while surface.probe_dmabufs.len() < 5 {
-                let is_primary_probe = surface.probe_dmabufs.is_empty();
-                let size = if is_primary_probe {
-                    (mode.size.w, mode.size.h)
-                } else {
-                    (mode.size.w / 2, mode.size.h / 2)
-                };
-                let mut el = SceneDmabufElement::new(
-                    self.layers_engine.clone(),
-                    size,
-                    "probe",
-                );
-                el.opaque = true;
-                match el.ensure_swapchain(device_gbm.clone(), Fourcc::Argb8888, surface.render_node) {
-                    Ok(()) => surface.probe_dmabufs.push(el),
-                    Err(e) => {
-                        tracing::warn!("probe buf alloc failed for {crtc:?}: {e}");
-                        break;
-                    }
-                }
-            }
             alloc_plane!(surface.windows_dmabuf_element,    Fourcc::Argb8888, false, "windows");
             alloc_plane!(surface.expose_dmabuf_element,     Fourcc::Argb8888, false, "expose");
             alloc_plane!(surface.overlay_dmabuf_element,    Fourcc::Argb8888, false, "overlay");
@@ -468,6 +487,18 @@ impl Otto<UdevData> {
         // for the main "background app behind a maximized window" case.
         let expose_active =
             self.workspaces.is_expose_transitioning() || self.workspaces.get_show_all();
+        tracing::debug!(
+            target: "otto::planes",
+            "expose inputs: transitioning={} show_all={} gesture={} animating={}",
+            self.workspaces.is_expose_transitioning(),
+            self.workspaces.get_show_all(),
+            self.workspaces
+                .show_all_gesture
+                .load(std::sync::atomic::Ordering::Relaxed),
+            self.workspaces
+                .is_animating
+                .load(std::sync::atomic::Ordering::Relaxed),
+        );
 
         if let Some(ows) = self.workspaces.output_workspaces.get(&output.name()) {
             ows.debug_plane_indicator.set_hidden(!expose_active);
@@ -493,64 +524,9 @@ impl Otto<UdevData> {
             .iter()
             .any(|p| p.output == output);
 
-        {
-            use crate::udev::types::RenderTier;
-            let use_topwin_plane = surface.current_tier
-                .map(|t| matches!(t, RenderTier::Tier3 | RenderTier::Tier4))
-                .unwrap_or(false);
-
-            let overlay_ui_active = {
-                use smithay::desktop::layer_map_for_output;
-                use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
-                let app_switcher = self.workspaces.app_switcher.alive();
-                let osd = self.workspaces.osd.is_visible();
-                let has_layer_shell = layer_map_for_output(&output)
-                    .layers()
-                    .any(|l| matches!(l.layer(), WlrLayer::Overlay | WlrLayer::Top));
-                app_switcher || osd || has_layer_shell
-            };
-
-            let desired: Vec<smithay::reexports::wayland_server::backend::ObjectId> =
-                if use_topwin_plane && !expose_active && !overlay_ui_active && !screencopy_pending {
-                    self.workspaces
-                        .output_workspaces
-                        .get(&output.name())
-                        .map(|ows| {
-                            let ws = &ows.workspace_views[ows.current_workspace];
-                            let list = ws.windows_list.read().unwrap();
-                            // Pick topmost non-animating window(s). Start with 1;
-                            // extend to non-overlapping later.
-                            list.iter()
-                                .rev()
-                                .filter(|id| {
-                                    self.workspaces
-                                        .get_window_view(id)
-                                        .map(|wv| !wv.is_minimizing() && !wv.is_unmapped())
-                                        .unwrap_or(false)
-                                })
-                                .take(1)
-                                .cloned()
-                                .collect()
-                        })
-                        .unwrap_or_default()
-                } else {
-                    Vec::new()
-                };
-
-            // Apply set_content_hidden transitions only on changes.
-            let current = surface.shadow_only_windows.clone();
-            for id in current.iter().filter(|id| !desired.contains(id)) {
-                if let Some(wv) = self.workspaces.get_window_view(id) {
-                    wv.set_content_hidden(false);
-                }
-            }
-            for id in desired.iter().filter(|id| !current.contains(*id)) {
-                if let Some(wv) = self.workspaces.get_window_view(id) {
-                    wv.set_content_hidden(true);
-                }
-            }
-            surface.shadow_only_windows = desired;
-        }
+        // Apply the scanout set (selection + content_layer transitions were
+        // done in `set_scanout_windows`, before the `surface` borrow).
+        surface.shadow_only_windows = scanout_desired.clone();
 
         let output_scene_element = self
             .workspaces
@@ -1222,107 +1198,234 @@ pub(super) fn render_surface<'a>(
                 workspace_render_elements
                     .push(WorkspaceRenderElements::Scene(output_scene_element));
             } else {
-            // Push plane elements top→bottom so Smithay assigns overlay planes
-            // from the front of the list. Scene element goes last as primary
-            // plane / GPU-composite fallback for any plane that fails assignment.
-            macro_rules! render_plane {
-                ($el:expr) => {
-                    if let Some(el) = &$el {
-                        el.render(renderer.as_mut());
-                    }
-                };
-            }
+            // Push plane elements top→bottom. Smithay's `DrmCompositor::render_frame`
+            // assigns overlay planes front-first and tries every element tagged
+            // `Kind::ScanoutCandidate` on an overlay before falling back to
+            // GPU-compositing that element into the primary plane. Our
+            // `SceneDmabufElement` already reports `ScanoutCandidate`, so we just
+            // push in z-order and let Smithay do plane assignment + fallback.
+            // Push-only: planes are rendered explicitly bottom-up further
+            // down (the backdrop composite needs the lower planes rendered
+            // before the overlay), and engine damage is cleared only once
+            // per frame — a render inside the push would re-render planes a
+            // second time.
             macro_rules! push_plane {
                 ($el:expr) => {
-                    if let Some(el) = $el {
-                        el.render(renderer.as_mut());
-                        // Push even when render() returned false (no new damage):
+                    if let Some(el) = $el.as_ref() {
+                        // Pushed even when nothing new was rendered this frame:
                         // the existing dmabuf stays on the plane and Smithay sees
                         // an unchanged commit_counter → empty damage → no page-flip.
                         if el.current_dmabuf().is_some() {
                             workspace_render_elements
-                                .push(WorkspaceRenderElements::SceneDmabuf(el));
+                                .push(WorkspaceRenderElements::SceneDmabuf(el.clone()));
                         }
                     }
                 };
             }
-            // Warm the solid-black test element (visual debug plane).
-            render_plane!(surface.test_dmabuf_element.clone());
-            // Warm all probe buffers so they have a dmabuf ready for the tier probe.
-            for probe in &surface.probe_dmabufs {
-                probe.render(renderer.as_mut());
+
+            // ── Cross-plane backdrop (vibrancy) ──────────────────────────
+            //
+            // The blur-bearing planes (overlay UI: dock, switcher, menus, OSD
+            // — and expose) render into their own buffers, so their
+            // `BackgroundBlur` layers can't see the planes below. Build a
+            // DOWNSCALED composite of the lower planes and hand it to them via
+            // lay-rs' external-backdrop API (`render_node_tree`'s backdrop
+            // parameter seeds it behind the blur shapes with DstOver).
+            // Downscaled because the blur re-downscales its input anyway: a
+            // low-res backdrop is imperceptible after blurring but far cheaper
+            // to build, hold and sample than a full-res snapshot.
+            //
+            // Two-stage build in one small surface: draw bg → snapshot (the
+            // expose backdrop), then draw the middle plane on top → snapshot
+            // (the overlay backdrop). Rebuilt only when a lower plane recorded
+            // damage this frame; the fresh snapshot's unique_id is what makes
+            // the consumers re-render.
+            const BACKDROP_SCALE: f32 = 0.25;
+
+            // Render the bottom plane first so the composite reflects this frame.
+            if let Some(el) = &surface.scene_dmabuf_element {
+                el.render(renderer.as_mut());
             }
 
-            let tier = surface.current_tier.unwrap_or(RenderTier::Fallback);
-            let use_bg_plane      = matches!(tier, RenderTier::Tier2 | RenderTier::Tier3 | RenderTier::Tier4);
-            let use_windows_plane = matches!(tier, RenderTier::Tier2 | RenderTier::Tier3 | RenderTier::Tier4);
-            let use_topwin_plane  = matches!(tier, RenderTier::Tier3 | RenderTier::Tier4);
-            let use_ui_dock_plane = matches!(tier, RenderTier::Tier1 | RenderTier::Tier2 | RenderTier::Tier3 | RenderTier::Tier4);
+            let bg_damaged = surface
+                .scene_dmabuf_element
+                .as_ref()
+                .and_then(|el| el.subtree_damage())
+                .is_some();
+            let middle_el = if expose_active {
+                surface.expose_dmabuf_element.as_ref()
+            } else {
+                surface.windows_dmabuf_element.as_ref()
+            };
+            let middle_damaged = middle_el.and_then(|el| el.subtree_damage()).is_some();
+            let rebuild = surface.backdrop_image.is_none() || bg_damaged || middle_damaged;
 
-            macro_rules! dbg_plane_load {
-                ($flag:ident) => {{
-                    #[cfg(feature = "debug-kms")]
-                    { crate::input::keyboard::$flag.load(std::sync::atomic::Ordering::Relaxed) }
-                    #[cfg(not(feature = "debug-kms"))]
-                    { false }
-                }};
-            }
-            if use_ui_dock_plane || dbg_plane_load!(DBG_PLANE_OVERLAY) {
-                push_plane!(surface.overlay_dmabuf_element.clone());
+            if rebuild {
+                let bg_img = surface
+                    .scene_dmabuf_element
+                    .as_ref()
+                    .and_then(|el| el.snapshot());
+                let ctx = surface
+                    .scene_dmabuf_element
+                    .as_ref()
+                    .and_then(|el| el.gr_context());
+                if let (Some(bg_img), Some(mut ctx)) = (bg_img, ctx) {
+                    let (out_w, out_h) = output
+                        .current_mode()
+                        .map(|m| (m.size.w, m.size.h))
+                        .unwrap_or((bg_img.width(), bg_img.height()));
+                    let (bw, bh) = (
+                        ((out_w as f32 * BACKDROP_SCALE) as i32).max(1),
+                        ((out_h as f32 * BACKDROP_SCALE) as i32).max(1),
+                    );
+                    if surface.backdrop_surface.is_none() {
+                        let image_info = layers::skia::ImageInfo::new(
+                            (bw, bh),
+                            layers::skia::ColorType::RGBA8888,
+                            layers::skia::AlphaType::Premul,
+                            None,
+                        );
+                        surface.backdrop_surface = layers::skia::gpu::surfaces::render_target(
+                            &mut ctx,
+                            layers::skia::gpu::Budgeted::No,
+                            &image_info,
+                            None,
+                            layers::skia::gpu::SurfaceOrigin::TopLeft,
+                            None,
+                            false,
+                            false,
+                        )
+                        .map(|surface| crate::udev::types::BackdropSurface {
+                            surface,
+                            context: ctx.clone(),
+                        });
+                    }
+                    if let Some(bs) = surface.backdrop_surface.as_mut() {
+                        let dst = layers::skia::Rect::from_xywh(0.0, 0.0, bw as f32, bh as f32);
+                        let sampling = layers::skia::SamplingOptions::new(
+                            layers::skia::FilterMode::Linear,
+                            layers::skia::MipmapMode::None,
+                        );
+                        let paint = layers::skia::Paint::default();
+                        // Stage 1: bg only — the expose backdrop.
+                        {
+                            let canvas = bs.surface.canvas();
+                            canvas.clear(layers::skia::Color4f::new(0.0, 0.0, 0.0, 1.0));
+                            canvas.draw_image_rect_with_sampling_options(
+                                &bg_img, None, dst, sampling, &paint,
+                            );
+                        }
+                        if expose_active {
+                            if let Some(expose) = &surface.expose_dmabuf_element {
+                                bs.context.flush_and_submit();
+                                let bg_small = bs.surface.image_snapshot();
+                                expose.set_backdrop(Some((bg_small, BACKDROP_SCALE)));
+                            }
+                        }
+                        // Render the middle plane now (expose renders with its
+                        // fresh backdrop; windows has no blur).
+                        if let Some(el) = middle_el {
+                            el.render(renderer.as_mut());
+                        }
+                        // Stage 2: + middle plane — the overlay backdrop.
+                        if let Some(middle_img) = middle_el.and_then(|el| el.snapshot()) {
+                            let canvas = bs.surface.canvas();
+                            canvas.draw_image_rect_with_sampling_options(
+                                &middle_img, None, dst, sampling, &paint,
+                            );
+                        }
+                        bs.context.flush_and_submit();
+                        surface.backdrop_image = Some(bs.surface.image_snapshot());
+                    }
+                } else if let Some(el) = middle_el {
+                    // No bg snapshot/context yet (first frames) — still render
+                    // the middle plane so the stack stays warm.
+                    el.render(renderer.as_mut());
+                }
+            } else if let Some(el) = middle_el {
+                el.render(renderer.as_mut());
             }
 
-            // expose and windows are mutually exclusive planes.
+            if let Some(el) = &surface.overlay_dmabuf_element {
+                el.set_backdrop(
+                    surface
+                        .backdrop_image
+                        .clone()
+                        .map(|img| (img, BACKDROP_SCALE)),
+                );
+                el.render(renderer.as_mut());
+            }
+
+            // UI + dock overlay (topmost).
+            push_plane!(surface.overlay_dmabuf_element);
+
             if expose_active {
-                // Keep the windows plane warm while expose is active so it has a
-                // fresh dmabuf ready the moment expose closes (no cold-start re-render).
-                render_plane!(surface.windows_dmabuf_element.clone());
-                if use_windows_plane || dbg_plane_load!(DBG_PLANE_EXPOSE) {
-                    push_plane!(surface.expose_dmabuf_element.clone());
+                // Expose replaces the windows plane while it's visible.
+                push_plane!(surface.expose_dmabuf_element);
+                // Keep the windows swapchain warm for the expose→windows
+                // transition so closing expose doesn't flash a cold frame.
+                if let Some(el) = &surface.windows_dmabuf_element {
+                    el.render(renderer.as_mut());
                 }
             } else {
-                // Direct surface scanout for shadow-only windows (set by Otto::render_surface).
-                // Each window's content_layer is hidden in lay-rs so the shadow still renders
-                // into windows_dmabuf below; the client buffer scans out directly on top.
-                if use_topwin_plane || dbg_plane_load!(DBG_PLANE_TOP_WIN) {
-                    use smithay::backend::renderer::element::surface::render_elements_from_surface_tree;
-                    for win_id in &surface.shadow_only_windows {
-                        if let Some(win) = window_elements.iter().find(|w| w.id() == *win_id) {
-                            if let Some(wl_surface) = win.wl_surface() {
-                                // render_position() is the visible-content origin (physical px).
-                                // render_elements_from_surface_tree expects the wl_surface buffer
-                                // origin, which for CSD windows is shifted back by geometry.loc.
-                                let pos = win.base_layer().render_position();
-                                let geo_loc = win.geometry().loc.to_f64().to_physical(scale);
-                                let buf_x = pos.x as i32 - geo_loc.x.round() as i32;
-                                let buf_y = pos.y as i32 - geo_loc.y.round() as i32;
-                                let elems: Vec<WorkspaceRenderElements<_>> =
-                                    render_elements_from_surface_tree(
-                                        renderer,
-                                        &wl_surface,
-                                        Point::<i32, Physical>::from((buf_x, buf_y)),
-                                        scale,
-                                        1.0,
-                                        Kind::ScanoutCandidate,
+                // Top-window direct scanout: the client's Wayland buffer goes
+                // to Smithay as a `ScanoutCandidate`. Smithay tries to bind
+                // it to an overlay; if that fails it composites the client
+                // buffer into primary (one GPU blit — still cheaper than
+                // doubly-walking the scene graph).
+                use smithay::backend::renderer::element::surface::render_elements_from_surface_tree;
+                for win_id in &surface.shadow_only_windows {
+                    if let Some(win) = window_elements.iter().find(|w| w.id() == *win_id) {
+                        if let Some(wl_surface) = win.wl_surface() {
+                            // render_position() is the visible-content origin
+                            // (physical px). render_elements_from_surface_tree
+                            // expects the wl_surface buffer origin, which for
+                            // CSD windows is shifted back by geometry.loc.
+                            let pos = win.base_layer().render_position();
+                            let geo_loc = win.geometry().loc.to_f64().to_physical(scale);
+                            let buf_x = pos.x as i32 - geo_loc.x.round() as i32;
+                            let buf_y = pos.y as i32 - geo_loc.y.round() as i32;
+                            let elems: Vec<WorkspaceRenderElements<_>> =
+                                render_elements_from_surface_tree(
+                                    renderer,
+                                    &wl_surface,
+                                    Point::<i32, Physical>::from((buf_x, buf_y)),
+                                    scale,
+                                    1.0,
+                                    Kind::ScanoutCandidate,
+                                );
+                            {
+                                use smithay::backend::renderer::element::Element as _;
+                                for e in &elems {
+                                    tracing::debug!(
+                                        target: "otto::planes",
+                                        "topwin elem {:?} geo={:?}",
+                                        e.id(),
+                                        e.geometry(scale.into()),
                                     );
-                                workspace_render_elements.extend(elems);
+                                }
                             }
+                            tracing::debug!(
+                                target: "otto::planes",
+                                "topwin scanout push: {} elements at ({buf_x},{buf_y})",
+                                elems.len(),
+                            );
+                            workspace_render_elements.extend(elems);
                         }
                     }
                 }
-                // Always push windows plane when there are windows — shadow-only windows
-                // still need their shadows rendered here.
+
                 let has_windows = output_workspaces.map_or(false, |ows| {
                     let ws = &ows.workspace_views[ows.current_workspace];
                     !ws.windows_list.read().unwrap().is_empty()
                 });
-                if has_windows && (use_windows_plane || dbg_plane_load!(DBG_PLANE_WIN)) {
-                    push_plane!(surface.windows_dmabuf_element.clone());
+                if has_windows {
+                    push_plane!(surface.windows_dmabuf_element);
                 }
             }
 
-            if use_bg_plane || dbg_plane_load!(DBG_PLANE_BG) {
-                push_plane!(surface.scene_dmabuf_element.clone());
-            }
+            // Background on primary plane (bottom).
+            push_plane!(surface.scene_dmabuf_element);
 
             // Debug PNG saves — triggered by keys 6-0 (debug-kms feature only).
             #[cfg(feature = "debug-kms")]
@@ -1346,6 +1449,27 @@ pub(super) fn render_surface<'a>(
                 dbg_save!(DBG_SAVE_WIN,     surface.windows_dmabuf_element,    ss_path!("win"));
                 dbg_save!(DBG_SAVE_EXPOSE,  surface.expose_dmabuf_element,     ss_path!("expose"));
                 dbg_save!(DBG_SAVE_OVERLAY, surface.overlay_dmabuf_element,    ss_path!("overlay"));
+            }
+
+            // Debug: dump every plane buffer to PNG when the trigger file
+            // exists (`touch /tmp/otto-dump-planes`), then remove it. Shows
+            // exactly what each KMS plane scans out, independent of the
+            // GPU-composited screencopy path.
+            if std::path::Path::new("/tmp/otto-dump-planes").exists() {
+                let _ = std::fs::remove_file("/tmp/otto-dump-planes");
+                let dir = "/home/riccardo/Pictures/Screenshots";
+                macro_rules! dump_plane {
+                    ($el:expr, $name:literal) => {
+                        if let Some(el) = &$el {
+                            el.save_to_png(&format!("{dir}/otto_plane_{}.png", $name));
+                        }
+                    };
+                }
+                dump_plane!(surface.scene_dmabuf_element, "bg");
+                dump_plane!(surface.windows_dmabuf_element, "windows");
+                dump_plane!(surface.expose_dmabuf_element, "expose");
+                dump_plane!(surface.overlay_dmabuf_element, "overlay");
+                tracing::info!(target: "otto::planes", "plane buffers dumped to {dir}");
             }
 
             } // end !screencopy_pending
@@ -1377,26 +1501,14 @@ pub(super) fn render_surface<'a>(
         return Ok(RenderOutcome::skipped());
     }
 
-    // KMS tier probe — uses TEST_ONLY so no pixels are written and no flip happens.
-    // Runs once (when current_tier == None). By this point render_plane! has already
-    // rendered test_dmabuf_element (solid black, Argb8888, never committed to KMS),
-    // giving us a distinct gem handle for the Tier2 two-plane test.
-    // After the first probe the result is final; no re-probing is needed or safe
-    // (overlay_ui_buf may enter active KMS scanout on subsequent frames).
-    if surface.current_tier.is_none() {
-        if let Some(t) = grade_render_tier(
-            &surface.compositor,
-            &surface.probe_dmabufs,
-            output,
-        ) {
-            tracing::info!(
-                output = %output.name(),
-                tier = %t,
-                overlays = surface.compositor.surface().planes().overlay.len(),
-                "KMS render tier"
-            );
-            surface.current_tier = Some(t);
-        }
+    // Debug: dump the final element order handed to render_frame (front→back).
+    if output_elements.len() > 4 {
+        use smithay::backend::renderer::element::Element as _;
+        let order: Vec<String> = output_elements
+            .iter()
+            .map(|e| format!("{:?}", e.id()))
+            .collect();
+        tracing::debug!(target: "otto::planes", "element order: {}", order.join(" | "));
     }
 
     let render_frame_result = surface
@@ -1437,6 +1549,78 @@ pub(super) fn render_surface<'a>(
 
     let rendered = !render_frame_result.is_empty;
     let states = render_frame_result.states;
+
+    // Debug: once per second, log how each plane element was realized
+    // (ZeroCopy = on a hardware plane, Rendering = GPU-composited into the
+    // primary swapchain, missing = not part of this frame at all).
+    {
+        use std::sync::{Mutex, OnceLock};
+        use std::time::{Duration, Instant};
+        static LAST: OnceLock<Mutex<Instant>> = OnceLock::new();
+        let mut last = LAST
+            .get_or_init(|| Mutex::new(Instant::now() - Duration::from_secs(2)))
+            .lock()
+            .unwrap();
+        if last.elapsed() >= Duration::from_secs(1) {
+            *last = Instant::now();
+
+            // Debug: `touch /tmp/otto-tint` tints everything GPU-composited
+            // red (client textures via Smithay's DebugFlags::TINT, our plane
+            // fallback blits via TINT_COMPOSITE). Zero-copy plane scanout
+            // stays untinted. Remove the file to switch the tint off.
+            {
+                use smithay::backend::renderer::DebugFlags;
+                let tint = std::path::Path::new("/tmp/otto-tint").exists();
+                let flags = if tint {
+                    DebugFlags::TINT
+                } else {
+                    DebugFlags::empty()
+                };
+                if surface.compositor.debug_flags() != flags {
+                    surface.compositor.set_debug_flags(flags);
+                    tracing::info!(target: "otto::planes", "composite tint {}", if tint { "ON" } else { "OFF" });
+                }
+                crate::render_elements::scene_dmabuf_element::TINT_COMPOSITE
+                    .store(tint, std::sync::atomic::Ordering::Relaxed);
+            }
+
+            let mut summary = String::new();
+            macro_rules! log_state {
+                ($el:expr, $name:literal) => {
+                    if let Some(el) = $el.as_ref() {
+                        use smithay::backend::renderer::element::Element as _;
+                        let s = states
+                            .element_render_state(el.id().clone())
+                            .map(|s| format!("{:?}", s.presentation_state))
+                            .unwrap_or_else(|| "absent".into());
+                        summary.push_str(&format!("{}[{:?}]={} ", $name, el.id(), s));
+                    }
+                };
+            }
+            log_state!(surface.scene_dmabuf_element, "bg");
+            log_state!(surface.windows_dmabuf_element, "windows");
+            log_state!(surface.expose_dmabuf_element, "expose");
+            log_state!(surface.overlay_dmabuf_element, "overlay");
+            // Histogram over every element smithay saw this frame — client
+            // buffers (direct scanout candidates) show up here even though
+            // we can't match their ids to a plane element.
+            let (mut zc, mut rend, mut skip) = (0, 0, 0);
+            for s in states.states.values() {
+                use smithay::backend::renderer::element::RenderElementPresentationState as P;
+                match s.presentation_state {
+                    P::ZeroCopy => zc += 1,
+                    P::Rendering { .. } => rend += 1,
+                    P::Skipped => skip += 1,
+                }
+            }
+            tracing::info!(
+                target: "otto::planes",
+                "frame realization: {summary}expose_active={expose_active} shadow_only={} elements: total={} zerocopy={zc} rendering={rend} skipped={skip}",
+                surface.shadow_only_windows.len(),
+                states.states.len(),
+            );
+        }
+    }
     let damage: Option<Vec<Rectangle<i32, Physical>>> = None; // DRM compositor doesn't provide damage info
 
     // Record damage metrics if available
@@ -1535,102 +1719,4 @@ pub(super) fn initial_render(
     surface.compositor.reset_buffers();
 
     Ok(())
-}
-
-/// Probe the hardware with `DRM_MODE_ATOMIC_TEST_ONLY` to determine the highest
-/// render tier achievable for this output.  Returns `None` when a previous-frame
-/// dmabuf is not yet available (typically the very first frame).
-/// Probes KMS overlay support via TEST_ONLY atomic commits.
-///
-/// Each test mirrors the realistic plane arrangement Otto would commit for that tier:
-///   Tier2: primary[0] + overlay0[1] + overlay1[2]
-///   Tier1: primary[0] + overlay0[1]
-///
-/// The primary plane is always included — i915 requires the full pipe state for its
-/// DBUF/watermark budget check (`skl_compute_wm`); omitting it causes EINVAL.
-/// `probe_dmabufs` provides 5 distinct gem handles (separate GBM swapchains).
-fn grade_render_tier(
-    compositor: &GbmDrmCompositor,
-    probe_dmabufs: &[crate::render_elements::scene_dmabuf_element::SceneDmabufElement],
-    output: &Output,
-) -> Option<RenderTier> {
-    if probe_dmabufs.len() < 2 {
-        return None; // not enough probe bufs yet
-    }
-    let mode = output.current_mode()?;
-    let full = Rectangle::new((0, 0).into(), mode.size);
-    // TEST: overlay probes are half-screen — use matching half-size dst so there
-    // is no scaling (scaling needs more DBUF, not less). We want to know whether
-    // the smaller footprint lets the watermark budget accept more planes.
-    let half: Rectangle<i32, Physical> = Rectangle::new(
-        (0, 0).into(),
-        (mode.size.w / 2, mode.size.h / 2).into(),
-    );
-    let overlay_planes = compositor.surface().planes().overlay.clone();
-
-    let buf0 = probe_dmabufs[0].current_dmabuf()?;
-    let buf1 = probe_dmabufs[1].current_dmabuf()?;
-
-    // Tier4: primary (full) + 4 overlays (half each).
-    if overlay_planes.len() >= 4 && probe_dmabufs.len() >= 5 {
-        if let (Some(buf2), Some(buf3), Some(buf4)) = (
-            probe_dmabufs[2].current_dmabuf(),
-            probe_dmabufs[3].current_dmabuf(),
-            probe_dmabufs[4].current_dmabuf(),
-        ) {
-            let overlays = [
-                (overlay_planes[0].handle, &buf1, half),
-                (overlay_planes[1].handle, &buf2, half),
-                (overlay_planes[2].handle, &buf3, half),
-                (overlay_planes[3].handle, &buf4, half),
-            ];
-            if compositor.test_overlay_planes(Some((&buf0, full)), &overlays) {
-                return Some(RenderTier::Tier4);
-            }
-            tracing::debug!("grade_render_tier: Tier4 rejected");
-        }
-    }
-
-    // Tier3: primary (full) + 3 overlays (half each).
-    if overlay_planes.len() >= 3 && probe_dmabufs.len() >= 4 {
-        if let (Some(buf2), Some(buf3)) = (
-            probe_dmabufs[2].current_dmabuf(),
-            probe_dmabufs[3].current_dmabuf(),
-        ) {
-            let overlays = [
-                (overlay_planes[0].handle, &buf1, half),
-                (overlay_planes[1].handle, &buf2, half),
-                (overlay_planes[2].handle, &buf3, half),
-            ];
-            if compositor.test_overlay_planes(Some((&buf0, full)), &overlays) {
-                return Some(RenderTier::Tier3);
-            }
-            tracing::debug!("grade_render_tier: Tier3 rejected");
-        }
-    }
-
-    // Tier2: primary (full) + 2 overlays (half each).
-    if overlay_planes.len() >= 2 && probe_dmabufs.len() >= 3 {
-        if let Some(buf2) = probe_dmabufs[2].current_dmabuf() {
-            let overlays = [
-                (overlay_planes[0].handle, &buf1, half),
-                (overlay_planes[1].handle, &buf2, half),
-            ];
-            if compositor.test_overlay_planes(Some((&buf0, full)), &overlays) {
-                return Some(RenderTier::Tier2);
-            }
-            tracing::debug!("grade_render_tier: Tier2 rejected");
-        }
-    }
-
-    // Tier1: primary (full) + 1 overlay (half).
-    if let Some(plane) = overlay_planes.first() {
-        let overlays = [(plane.handle, &buf1, half)];
-        if compositor.test_overlay_planes(Some((&buf0, full)), &overlays) {
-            return Some(RenderTier::Tier1);
-        }
-        tracing::debug!("grade_render_tier: Tier1 rejected");
-    }
-
-    Some(RenderTier::Fallback)
 }
