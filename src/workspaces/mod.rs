@@ -3560,8 +3560,12 @@ impl Workspaces {
         let Some(current_workspace) = self.get_current_workspace() else {
             return Vec::new();
         };
-        // Fullscreen composites via its own path.
-        if current_workspace.get_fullscreen_mode() {
+        // Fullscreen has its own dedicated direct-scanout path.
+        if current_workspace.get_fullscreen_mode() || current_workspace.get_fullscreen_animating() {
+            return Vec::new();
+        }
+        // The tiling drop-zone overlay composites above windows.
+        if self.tiling_overlay.is_visible() {
             return Vec::new();
         }
         let Some(output) = self.primary_output.as_ref() else {
@@ -3660,7 +3664,18 @@ impl Workspaces {
                 })
                 .unwrap_or(false);
             let overlaps_occluder = occluders.iter().any(|r| r.overlaps(rect));
-            if !overlaps_above && !animating && !has_popups && !overlaps_occluder {
+            // Cap the promoted set: the hardware admits ~5 simultaneous
+            // planes and bg/windows/dock/cursor already take four — a second
+            // client plane evicts the windows plane (measured), which costs
+            // more than compositing the extra window. Windows past the cap
+            // still occlude the ones below.
+            const MAX_PROMOTED: usize = 1;
+            if promoted.len() < MAX_PROMOTED
+                && !overlaps_above
+                && !animating
+                && !has_popups
+                && !overlaps_occluder
+            {
                 promoted.push(window.id());
             }
         }
