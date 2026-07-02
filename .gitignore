@@ -8,8 +8,7 @@ resources/backgrounds/*
 otto_config.toml
 otto_config.*.toml
 
-wlcs/CMakeFiles/**/*
-wlcs/generated/
+wlcs/
 
 # Product docs inbox (scratch space, not committed)
 docs/inbox/
