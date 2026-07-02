@@ -3511,6 +3511,11 @@ impl Workspaces {
         use smithay::utils::{Physical, Rectangle};
 
         // ---- global stable gates ----
+        // Debug: `touch /tmp/otto-no-scanout` disables promotion entirely so
+        // scanout-vs-composite cost can be A/B measured at runtime.
+        if std::path::Path::new("/tmp/otto-no-scanout").exists() {
+            return Vec::new();
+        }
         if self.get_show_all() || self.is_expose_transitioning() {
             return Vec::new();
         }
