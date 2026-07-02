@@ -29,9 +29,9 @@ pub fn view_window_shadow(
         canvas.clip_rrect(rrect, layers::skia::ClipOp::Difference, false);
 
         // Inner shadow - lighter for active, very light for inactive
-        let inner_opacity = if is_active { 0.85 } else { 0.6 };
+        let inner_opacity = if is_active { 0.25 } else { 0.08 };
         let mut shadow_paint = layers::skia::Paint::new(
-            layers::skia::Color4f::new(1.0, 0.0, 0.0, inner_opacity),
+            layers::skia::Color4f::new(0.0, 0.0, 0.0, inner_opacity),
             None,
         );
         shadow_paint.set_mask_filter(layers::skia::MaskFilter::blur(
@@ -57,9 +57,9 @@ pub fn view_window_shadow(
         ));
 
         // Active: darker shadow (0.35), Inactive: very light shadow (0.12)
-        let outer_opacity = if is_active { 0.85 } else { 0.6 };
+        let outer_opacity = if is_active { 0.35 } else { 0.12 };
         shadow_paint.set_color4f(
-            layers::skia::Color4f::new(1.0, 0.0, 0.0, outer_opacity),
+            layers::skia::Color4f::new(0.1, 0.1, 0.1, outer_opacity),
             None,
         );
 
