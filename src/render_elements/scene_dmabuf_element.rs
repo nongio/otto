@@ -90,6 +90,12 @@ struct Inner {
     /// global scene positions. Used for scanout_windows whose children are
     /// already scroll-compensated.
     skip_root_translate: bool,
+    /// Viewport origin in scene coordinates (physical px). The buffer shows
+    /// the scene rect `viewport .. viewport+size`; the caller positions the
+    /// KMS plane at the same origin. Lets a small strip-sized buffer render a
+    /// crop of a full-screen container (dock strip, app-switcher band) while
+    /// the content keeps positioning itself with normal layout.
+    viewport: (i32, i32),
     damage: DamageBag<i32, Physical>,
     swapchain: Option<Swapchain<GbmAllocator<DrmDeviceFd>>>,
     /// Arc wrapping the most-recently submitted swapchain slot.
@@ -126,6 +132,7 @@ impl SceneDmabufElement {
                 current_slot: None,
                 render_node: None,
                 skip_root_translate: false,
+                viewport: (0, 0),
                 backdrop: None,
                 last_backdrop_id: None,
             })),
@@ -139,6 +146,13 @@ impl SceneDmabufElement {
 
     pub fn set_skip_root_translate(&self, skip: bool) {
         self.inner.lock().unwrap().skip_root_translate = skip;
+    }
+
+    /// Set the viewport origin (scene physical px). Callers must also set
+    /// `self.position` to the same origin so the plane lands where the
+    /// buffer's content was cropped from.
+    pub fn set_viewport(&self, origin: (i32, i32)) {
+        self.inner.lock().unwrap().viewport = origin;
     }
 
     /// Set the lay-rs subtree this element renders.
@@ -315,6 +329,11 @@ impl SceneDmabufElement {
             if let Some(root_id) = root {
                 // Translate so the node's scene-space position maps to (0,0)
                 // on the dmabuf canvas — same correction SceneElement::draw() applies.
+                let (vx, vy) = inner.viewport;
+                if vx != 0 || vy != 0 {
+                    // Map the viewport origin to the buffer origin.
+                    canvas.translate((-vx as f32, -vy as f32));
+                }
                 if !inner.skip_root_translate {
                     if let Some(layer) = inner.engine.get_layer(&root_id) {
                         let pos = layer.render_position();
@@ -370,13 +389,14 @@ impl SceneDmabufElement {
             .and_then(|r| inner.engine.get_layer(&r))
             .map(|l| l.render_position())
             .unwrap_or_default();
+        let (vx, vy) = inner.viewport;
         let damage_rect = dirty_rect
             .filter(|_| !backdrop_changed)
             .map(|r| {
-                let x = ((r.left()  - root_pos.x) as i32).clamp(0, w);
-                let y = ((r.top()   - root_pos.y) as i32).clamp(0, h);
-                let x2 = ((r.right() - root_pos.x) as i32).clamp(0, w);
-                let y2 = ((r.bottom()- root_pos.y) as i32).clamp(0, h);
+                let x = ((r.left()  - root_pos.x) as i32 - vx).clamp(0, w);
+                let y = ((r.top()   - root_pos.y) as i32 - vy).clamp(0, h);
+                let x2 = ((r.right() - root_pos.x) as i32 - vx).clamp(0, w);
+                let y2 = ((r.bottom()- root_pos.y) as i32 - vy).clamp(0, h);
                 Rectangle::<i32, Physical>::new(
                     (x, y).into(),
                     ((x2 - x).max(1), (y2 - y).max(1)).into(),

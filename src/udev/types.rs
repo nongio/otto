@@ -154,9 +154,16 @@ pub struct SurfaceData {
     /// exclusive with windows_plane in practice — one is hidden when the other shows).
     pub(super) expose_dmabuf_element:
         Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
-    /// KMS plane for overlay UI: workspace selector, app switcher, layer shell,
-    /// OSD, DnD — above windows, below dock.
+    /// KMS plane for overlay UI: workspace selector, layer shell, OSD, DnD,
+    /// popups — chrome above windows that changes rarely.
     pub(super) overlay_dmabuf_element:
+        Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
+    /// Strip-sized KMS plane for the app switcher (middle band), above the
+    /// overlay plane. Pushed only while the switcher is alive.
+    pub(super) switcher_dmabuf_element:
+        Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
+    /// Strip-sized KMS plane for the dock (bottom band). Topmost plane.
+    pub(super) dock_dmabuf_element:
         Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
     /// Optional solid-black debug element (kept for the visual debug path —
     /// push it to an overlay to see it go black).

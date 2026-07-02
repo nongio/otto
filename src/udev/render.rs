@@ -463,6 +463,43 @@ impl Otto<UdevData> {
             alloc_plane!(surface.windows_dmabuf_element,    Fourcc::Argb8888, false, "windows");
             alloc_plane!(surface.expose_dmabuf_element,     Fourcc::Argb8888, false, "expose");
             alloc_plane!(surface.overlay_dmabuf_element,    Fourcc::Argb8888, false, "overlay");
+
+            // Strip-sized planes: full output width, cropped bands of their
+            // full-screen containers via the element viewport. Small buffers
+            // mean dock/switcher animations no longer redraw a full-screen
+            // plane, and the KMS watermark cost scales with plane size.
+            let dock_strip_h = (mode.size.h / 4).min(480);
+            let switcher_strip_h = (mode.size.h / 2).min(960);
+            macro_rules! alloc_strip {
+                ($field:expr, $h:expr, $y:expr, $label:literal) => {
+                    if $field.is_none() {
+                        let mut el = SceneDmabufElement::new(
+                            self.layers_engine.clone(),
+                            (mode.size.w, $h),
+                            $label,
+                        );
+                        el.opaque = false;
+                        el.position = (0, $y);
+                        el.set_viewport((0, $y));
+                        match el.ensure_swapchain(device_gbm.clone(), Fourcc::Argb8888, surface.render_node) {
+                            Ok(()) => $field = Some(el),
+                            Err(e) => tracing::warn!("strip plane alloc failed for {crtc:?}: {e}"),
+                        }
+                    }
+                };
+            }
+            alloc_strip!(
+                surface.dock_dmabuf_element,
+                dock_strip_h,
+                mode.size.h - dock_strip_h,
+                "dock"
+            );
+            alloc_strip!(
+                surface.switcher_dmabuf_element,
+                switcher_strip_h,
+                (mode.size.h - switcher_strip_h) / 2,
+                "switcher"
+            );
         }
 
         // Every frame: point each plane element at its output's node.
@@ -478,6 +515,12 @@ impl Otto<UdevData> {
             }
             if let Some(el) = &surface.overlay_dmabuf_element {
                 el.set_node_ref(ows.overlay_plane.id);
+            }
+            if let Some(el) = &surface.switcher_dmabuf_element {
+                el.set_node_ref(ows.switcher_plane.id);
+            }
+            if let Some(el) = &surface.dock_dmabuf_element {
+                el.set_node_ref(ows.dock_plane.id);
             }
         }
 
@@ -549,6 +592,36 @@ impl Otto<UdevData> {
             &window_throttle_states,
             &mut self.pending_screencopy_frames,
             expose_active,
+            self.workspaces.app_switcher.alive(),
+            !self.workspaces.dock.is_hidden(),
+            {
+                // Overlay chrome is on demand: an empty full-screen ARGB
+                // buffer must not waste a hardware plane slot. It is pushed
+                // only when something in its subtree is actually visible.
+                use smithay::desktop::layer_map_for_output;
+                use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
+                let w = &self.workspaces;
+                let layer_shell_active = layer_map_for_output(&output)
+                    .layers()
+                    .any(|l| matches!(l.layer(), WlrLayer::Top | WlrLayer::Overlay));
+                let popups = !w.popup_overlay.layer.children().is_empty();
+                // Selector and DnD layers are never `hidden()` — they are
+                // empty containers until used, so check content/state instead.
+                let selector = w.is_expose_transitioning()
+                    || w.get_show_all()
+                    || w.is_animating.load(std::sync::atomic::Ordering::Relaxed);
+                let osd = w.osd.is_visible();
+                let tiling = w.tiling_overlay.is_visible();
+                let dnd = self.dnd_icon.is_some();
+                let active = layer_shell_active || popups || selector || osd || tiling || dnd;
+                if active {
+                    tracing::debug!(
+                        target: "otto::planes",
+                        "overlay active: shell={layer_shell_active} popups={popups} selector={selector} osd={osd} tiling={tiling} dnd={dnd}",
+                    );
+                }
+                active
+            },
             self.workspaces.output_workspaces.get(&output.name()),
             screencopy_pending,
             output_scene_element,
@@ -1107,6 +1180,9 @@ pub(super) fn render_surface<'a>(
     >,
     pending_screencopy: &mut Vec<crate::state::screencopy::PendingScreencopy>,
     expose_active: bool,
+    switcher_active: bool,
+    dock_visible: bool,
+    overlay_active: bool,
     output_workspaces: Option<&crate::workspaces::OutputWorkspaces>,
     screencopy_pending: bool,
     output_scene_element: crate::render_elements::scene_element::SceneElement,
@@ -1346,18 +1422,43 @@ pub(super) fn render_surface<'a>(
                 el.render(renderer.as_mut());
             }
 
+            // All blur-bearing upper planes consume the same composite; each
+            // re-renders only when the snapshot's unique_id changes or its own
+            // subtree is damaged.
+            let upper_backdrop = surface
+                .backdrop_image
+                .clone()
+                .map(|img| (img, BACKDROP_SCALE));
             if let Some(el) = &surface.overlay_dmabuf_element {
-                el.set_backdrop(
-                    surface
-                        .backdrop_image
-                        .clone()
-                        .map(|img| (img, BACKDROP_SCALE)),
-                );
-                el.render(renderer.as_mut());
+                el.set_backdrop(upper_backdrop.clone());
+                if overlay_active {
+                    el.render(renderer.as_mut());
+                }
+            }
+            if let Some(el) = &surface.switcher_dmabuf_element {
+                el.set_backdrop(upper_backdrop.clone());
+                if switcher_active {
+                    el.render(renderer.as_mut());
+                }
+            }
+            if let Some(el) = &surface.dock_dmabuf_element {
+                el.set_backdrop(upper_backdrop);
+                if dock_visible {
+                    el.render(renderer.as_mut());
+                }
             }
 
-            // UI + dock overlay (topmost).
-            push_plane!(surface.overlay_dmabuf_element);
+            // Push top→bottom: dock, switcher (only while alive — an empty
+            // transparent strip would waste a plane), then overlay chrome.
+            if dock_visible {
+                push_plane!(surface.dock_dmabuf_element);
+            }
+            if switcher_active {
+                push_plane!(surface.switcher_dmabuf_element);
+            }
+            if overlay_active {
+                push_plane!(surface.overlay_dmabuf_element);
+            }
 
             if expose_active {
                 // Expose replaces the windows plane while it's visible.
@@ -1469,6 +1570,8 @@ pub(super) fn render_surface<'a>(
                 dump_plane!(surface.windows_dmabuf_element, "windows");
                 dump_plane!(surface.expose_dmabuf_element, "expose");
                 dump_plane!(surface.overlay_dmabuf_element, "overlay");
+                dump_plane!(surface.switcher_dmabuf_element, "switcher");
+                dump_plane!(surface.dock_dmabuf_element, "dock");
                 tracing::info!(target: "otto::planes", "plane buffers dumped to {dir}");
             }
 
@@ -1601,6 +1704,8 @@ pub(super) fn render_surface<'a>(
             log_state!(surface.windows_dmabuf_element, "windows");
             log_state!(surface.expose_dmabuf_element, "expose");
             log_state!(surface.overlay_dmabuf_element, "overlay");
+            log_state!(surface.switcher_dmabuf_element, "switcher");
+            log_state!(surface.dock_dmabuf_element, "dock");
             // Histogram over every element smithay saw this frame — client
             // buffers (direct scanout candidates) show up here even though
             // we can't match their ids to a plane element.
