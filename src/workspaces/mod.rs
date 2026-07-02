@@ -153,6 +153,11 @@ pub struct Workspaces {
     pub show_desktop_gesture: Arc<AtomicI32>,
     /// Tracks whether the workspace is currently animating (e.g., scrolling between workspaces)
     pub is_animating: Arc<AtomicBool>,
+    /// Windows currently flagged for direct scanout (their `content_layer` is
+    /// hidden; the client buffer is pushed as a `ScanoutCandidate` element).
+    /// The render call-site diffs against this to re-import departing windows
+    /// before they are composited again.
+    scanout_windows: Arc<RwLock<HashSet<ObjectId>>>,
     /// True while a 3-finger expose gesture is physically in progress (fingers on trackpad).
     pub expose_gesture_active: Arc<AtomicBool>,
 
@@ -367,6 +372,7 @@ impl Workspaces {
             show_all_gesture: Arc::new(AtomicI32::new(0)),
             show_desktop_gesture: Arc::new(AtomicI32::new(0)),
             is_animating: Arc::new(AtomicBool::new(false)),
+            scanout_windows: Arc::new(RwLock::new(HashSet::new())),
             expose_gesture_active: Arc::new(AtomicBool::new(false)),
             window_views: Arc::new(RwLock::new(HashMap::new())),
             observers: Vec::new(),
@@ -3487,6 +3493,176 @@ impl Workspaces {
         self.with_model(|m| m.workspaces.get(i).cloned())
     }
 
+    /// Windows eligible for direct client-buffer scanout ("shadow-only" mode).
+    ///
+    /// Ported from the reference implementation in `../otto`
+    /// (feat/window-scanout-new) and adapted to the plane pipeline: the app
+    /// switcher, OSD and layer-shell panels render on the overlay plane, so
+    /// they do not gate scanout globally — only windows they geometrically
+    /// overlap are demoted (their pixels must be in the windows plane for the
+    /// overlay's backdrop blur to sample).
+    ///
+    /// Selection is intentionally based on *stable* geometry (dock bar,
+    /// switcher and OSD layer bounds, layer-shell rects), never on per-frame
+    /// scene state like bubbled blur regions — those are cleared and rebuilt
+    /// every engine update, so sampling them oscillates between promote and
+    /// demote and flickers the window content.
+    pub fn get_scanout_candidates(&self) -> Vec<ObjectId> {
+        use smithay::utils::{Physical, Rectangle};
+
+        // ---- global stable gates ----
+        if self.get_show_all() || self.is_expose_transitioning() {
+            return Vec::new();
+        }
+        if self.is_animating.load(std::sync::atomic::Ordering::Relaxed) {
+            return Vec::new();
+        }
+        let Some(current_workspace) = self.get_current_workspace() else {
+            return Vec::new();
+        };
+        // Fullscreen composites via its own path.
+        if current_workspace.get_fullscreen_mode() {
+            return Vec::new();
+        }
+        let Some(output) = self.primary_output.as_ref() else {
+            return Vec::new();
+        };
+        let scale = output.current_scale().fractional_scale();
+
+        // ---- occluders (physical px): overlay-plane UI compositing above
+        // windows. A window overlapping any of these must stay in the windows
+        // plane so the overlay's backdrop blur can sample its pixels.
+        fn layer_rect(layer: &layers::prelude::Layer) -> Option<Rectangle<i32, Physical>> {
+            let b = layer.render_bounds_with_children_transformed();
+            if b.width() <= 0.0 || b.height() <= 0.0 {
+                return None;
+            }
+            Some(Rectangle::new(
+                (b.x() as i32, b.y() as i32).into(),
+                (b.width() as i32, b.height() as i32).into(),
+            ))
+        }
+        let mut occluders: Vec<Rectangle<i32, Physical>> = Vec::new();
+        // Use the *visible* layers, not the wrap/positioning containers —
+        // those can span the whole output and would demote every window.
+        if !self.dock.is_hidden() {
+            occluders.extend(layer_rect(&self.dock.bar_layer));
+        }
+        if self.app_switcher.alive() {
+            if let Some(layer) = self.app_switcher.view.layer.read().unwrap().as_ref() {
+                occluders.extend(layer_rect(layer));
+            }
+        }
+        if self.osd.is_visible() {
+            occluders.extend(layer_rect(&self.osd.view_layer));
+        }
+        {
+            use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
+            let map = smithay::desktop::layer_map_for_output(output);
+            for l in map
+                .layers()
+                .filter(|l| matches!(l.layer(), WlrLayer::Top | WlrLayer::Overlay))
+            {
+                if let Some(geo) = map.layer_geometry(l) {
+                    occluders.push(Rectangle::new(
+                        geo.loc.to_f64().to_physical(scale).to_i32_round(),
+                        geo.size.to_f64().to_physical(scale).to_i32_round(),
+                    ));
+                }
+            }
+        }
+
+        // ---- per-window eligibility, top-to-bottom ----
+        let current_index = self.get_current_workspace_index();
+        let Some(space) = self
+            .primary_output_workspaces()
+            .and_then(|ows| ows.spaces.get(current_index))
+        else {
+            return Vec::new();
+        };
+
+        tracing::debug!(target: "otto::planes", "scanout occluders: {occluders:?}");
+        let mut promoted = Vec::new();
+        // Union of visible-window rects seen so far (everything above current).
+        let mut covered: Vec<Rectangle<i32, Physical>> = Vec::new();
+        // Space::elements yields bottom-to-top; rev() => top-to-bottom.
+        for window in space.elements().rev() {
+            if window.is_minimised() {
+                continue; // not visible — does not occlude
+            }
+            let view = self.get_window_view(&window.id());
+            if view.as_ref().map(|v| v.is_unmapped()).unwrap_or(true) {
+                continue; // gone — does not occlude
+            }
+            let Some(location) = space.element_location(window) else {
+                continue;
+            };
+            let rect = Rectangle::new(
+                location.to_f64().to_physical(scale).to_i32_round(),
+                window.geometry().size.to_f64().to_physical(scale).to_i32_round(),
+            );
+            let overlaps_above = covered.iter().any(|c| c.overlaps(rect));
+            // Occupies space for everything below it, promoted or not.
+            covered.push(rect);
+
+            // A minimizing window is still visible (animating to the dock) so
+            // it occludes, but cannot be promoted (it has a live transform).
+            let animating = view.as_ref().map(|v| v.is_minimizing()).unwrap_or(true);
+            // v1 does not scan out popups; a window with an open popup must
+            // composite normally or the (scene-drawn) popup would be hidden
+            // under the window's overlay plane.
+            let has_popups = window
+                .wl_surface()
+                .map(|s| {
+                    smithay::desktop::PopupManager::popups_for_surface(&s)
+                        .next()
+                        .is_some()
+                })
+                .unwrap_or(false);
+            let overlaps_occluder = occluders.iter().any(|r| r.overlaps(rect));
+            if !overlaps_above && !animating && !has_popups && !overlaps_occluder {
+                promoted.push(window.id());
+            }
+        }
+        promoted
+    }
+
+    /// Snapshot of the windows currently flagged for scanout.
+    #[allow(clippy::mutable_key_type)]
+    pub fn scanout_window_ids(&self) -> HashSet<ObjectId> {
+        self.scanout_windows.read().unwrap().clone()
+    }
+
+    /// Replace the scanout window set: hides `content_layer` for new entrants,
+    /// unhides it for departures. Idempotent. The caller must re-import any
+    /// departing window's buffer (via `update_window_view`) *after* this call
+    /// so the unhidden `content_layer` shows the current frame, not a stale one.
+    #[allow(clippy::mutable_key_type)]
+    pub fn set_scanout_windows(&self, ids: &[ObjectId]) {
+        let new_ids: HashSet<ObjectId> = ids.iter().cloned().collect();
+        let prev_ids = self.scanout_windows.read().unwrap().clone();
+        if prev_ids == new_ids {
+            return;
+        }
+        tracing::info!(
+            target: "otto::planes",
+            prev = prev_ids.len(),
+            new = new_ids.len(),
+            "scanout window set changed"
+        );
+        for prev in prev_ids.difference(&new_ids) {
+            if let Some(view) = self.get_window_view(prev) {
+                view.set_content_hidden(false);
+            }
+        }
+        for new in new_ids.difference(&prev_ids) {
+            if let Some(view) = self.get_window_view(new) {
+                view.set_content_hidden(true);
+            }
+        }
+        *self.scanout_windows.write().unwrap() = new_ids;
+    }
+
     pub fn get_current_workspace(&self) -> Option<Arc<WorkspaceView>> {
         // Go directly to the authoritative per-output data first
         let focused_name = self.with_model(|m| m.focused_output_name.clone());
@@ -3758,6 +3934,13 @@ impl Workspaces {
                 },
                 true,
             );
+        } else {
+            // No transaction was scheduled (e.g. no outputs yet), so no
+            // on_finish will ever fire — clear the flag here or it wedges
+            // `true` forever, permanently blocking scanout promotion and
+            // misreporting expose transitions.
+            self.is_animating
+                .store(false, std::sync::atomic::Ordering::Relaxed);
         }
         tr
     }
@@ -3979,6 +4162,11 @@ impl Workspaces {
                     },
                     true,
                 );
+            } else {
+                // See scroll variant above: without a transaction the flag
+                // would wedge `true` forever.
+                self.is_animating
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
             }
 
             return tr;
