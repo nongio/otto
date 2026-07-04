@@ -24,10 +24,14 @@ vibrancy even though the content behind it lives on other planes.
 - `BackgroundBlur` layers in the overlay subtree sample a composite of the
   planes below them (background + windows/expose), so vibrancy reflects real
   content even across buffer boundaries.
-- The blur composite is rebuilt only when a lower plane recorded damage; a
-  rebuild triggers exactly one re-render of each blur-bearing plane. The
+- The blur composite is rebuilt only when a lower plane recorded damage
+  that intersects an active blur consumer's region (the dock strip, the
+  switcher strip, or the full output while overlay UI or expose is shown);
+  a rebuild triggers exactly one re-render of each blur-bearing plane. The
   composite is downscaled (currently 1/4 resolution) — blur re-downscales
   its input anyway, so a low-res backdrop is imperceptible but far cheaper.
+  Damage skipped this way marks the composite dirty so a later-activating
+  consumer still gets fresh content.
 - Per-buffer damage is reported tightly (FB_DAMAGE_CLIPS) so PSR
   partial-refresh works on eDP; a backdrop change falls back to full-buffer
   damage.
@@ -43,9 +47,31 @@ vibrancy even though the content behind it lives on other planes.
 
 ## Behavior
 
+- The decomposition is enabled per output at surface creation, only when
+  the driver is atomic, at least 3 overlay planes exist after
+  driver-specific filtering (NVIDIA's are vetoed), and the output renders
+  on the primary GPU. Otherwise — and whenever the background plane has no
+  dmabuf at frame time (allocation/Skia-surface failure) — the output
+  renders as a single full-scene element, which is the pre-decomposition
+  path; the plane machinery would pay all its intermediate renders and
+  then GPU-composite every buffer anyway.
 - When a frame is scheduled, buffers render bottom-up: background first,
   then windows (or expose while expose is active), then the blur composite,
   then the overlay UI.
+- A plane render clips to the damage accumulated since its swapchain slot
+  last rendered (slots rotate, so a reacquired slot is several commits
+  old); only the clip region is cleared and redrawn. Full render on a
+  slot's first use, when the damage history no longer reaches the slot's
+  commit, or when the backdrop changed (blur can repaint anywhere).
+- Plane renders submit to the GPU without a CPU-blocking wait on devices
+  with implicit dmabuf fencing (the kernel's atomic commit waits on the
+  buffer's reservation fences); on the NVIDIA proprietary driver, which
+  has no implicit fencing, the CPU wait is kept.
+- A promoted (scanned-out) window's commits skip the scene import
+  entirely — importing would only re-render its hidden content layer into
+  the windows plane. The skip sets a pending flag that forces the next
+  frame to draw, since a skipped import produces no scene damage and the
+  client's new buffer must still reach its plane.
 - When expose is active, the expose buffer replaces the windows buffer in
   the plane stack; its blur samples the downscaled background-only stage of
   the composite, and the overlay's backdrop then includes expose content.
@@ -70,6 +96,12 @@ vibrancy even though the content behind it lives on other planes.
   are rebuilt every engine update and oscillate promote/demote (content
   flicker). A window overlapping any of those occluders, owning an open
   popup, animating, or covered by a higher window is not promoted.
+- A window whose surface tree contains subsurfaces (e.g. the SSD
+  decoration strips: titlebar, buttons, borders) is not promoted: the tree
+  explodes into many mutually-overlapping plane candidates that lose the
+  plane auction and GPU-composite, and a composited element in front
+  demotes every plane below it (z-order). Single-surface trees — typical
+  CSD and video clients — are the profitable case.
 - A window leaving the scanout set is re-imported and the scene update is
   re-run that same frame, so the first composited frame shows current
   content (no one-frame shadow-only flicker).

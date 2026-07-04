@@ -96,9 +96,6 @@ pub struct OutputWorkspaces {
     /// with normal layout) rendered through a bottom-strip viewport onto its
     /// own KMS plane. Topmost.
     pub dock_plane: Layer,
-    /// Debug indicator: red circle visible when rendering into a single scene
-    /// plane (expose active), hidden when individual planes are in use.
-    pub debug_plane_indicator: Layer,
 }
 
 impl OutputWorkspaces {
@@ -166,6 +163,11 @@ pub struct Workspaces {
     /// The render call-site diffs against this to re-import departing windows
     /// before they are composited again.
     scanout_windows: Arc<RwLock<HashSet<ObjectId>>>,
+    /// Set when a promoted (scanned-out) window commits: the commit skips the
+    /// scene import, so this flag is the only signal that a frame must render
+    /// to submit the client's new buffer to its plane. Consumed (swapped to
+    /// false) by the backend's should_draw check.
+    pub scanout_commit_pending: Arc<std::sync::atomic::AtomicBool>,
     /// True while a 3-finger expose gesture is physically in progress (fingers on trackpad).
     pub expose_gesture_active: Arc<AtomicBool>,
 
@@ -381,6 +383,7 @@ impl Workspaces {
             show_desktop_gesture: Arc::new(AtomicI32::new(0)),
             is_animating: Arc::new(AtomicBool::new(false)),
             scanout_windows: Arc::new(RwLock::new(HashSet::new())),
+            scanout_commit_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             expose_gesture_active: Arc::new(AtomicBool::new(false)),
             window_views: Arc::new(RwLock::new(HashMap::new())),
             observers: Vec::new(),
@@ -645,31 +648,6 @@ impl Workspaces {
         }
 
         true
-    }
-
-    /// Check whether direct scanout of the top window is allowed right now.
-    /// Geometry doesn't matter — Smithay scans out whatever the top window is;
-    /// the only requirements are that no overlay UI sits above it.
-    pub fn is_top_window_scanout_eligible(&self) -> bool {
-        // App switcher and OSD each have their own plane — no need to block.
-        // Expose has its own plane too but changes workspace layout during
-        // transition so we keep that check.
-        if self.get_show_all() {
-            return false;
-        }
-        true
-    }
-
-    /// Return the top (focused) window of the current workspace if there is one.
-    /// Used by the udev render path to pick a candidate for direct scanout.
-    pub fn get_top_window(&self) -> Option<WindowElement> {
-        let current_index = self.with_model(|m| m.current_workspace);
-        self.primary_output_workspaces()?
-            .spaces
-            .get(current_index)?
-            .elements()
-            .last()
-            .cloned()
     }
 
     /// Get the fullscreen window from the current workspace, if any.
@@ -1513,8 +1491,17 @@ impl Workspaces {
             );
             if transition.is_some() {
                 window_selector_view_ref.set_position((0.0, 0.0), None);
+                let is_animating_ref = self.is_animating.clone();
                 transaction.on_finish(
                     move |_: &Layer, _: f32| {
+                        // The expose open/close animation is over. Clear the
+                        // flag BEFORE any early bail below — leaving it set
+                        // wedges `is_animating` true forever (line ~1333 sets
+                        // it for every animated apply and nothing else clears
+                        // it), permanently blocking scanout promotion. A
+                        // reversed gesture schedules a new animation which
+                        // sets the flag again, so clearing here is safe.
+                        is_animating_ref.store(false, std::sync::atomic::Ordering::Relaxed);
                         let is_dragging =
                             expose_dragged_window_ref.lock().unwrap().is_some();
                         // Re-read the current state at finish time — the gesture may have
@@ -3236,38 +3223,6 @@ impl Workspaces {
             m.workspace_counter = workspace_counter_start + n_workspaces;
         });
 
-        let debug_plane_indicator = {
-            use layers::prelude::{BorderRadius, BuildLayerTree, Color, LayerTreeBuilder};
-            const SIZE: f32 = 30.0;
-            let auto = taffy::LengthPercentageAuto::Auto;
-            let tree = LayerTreeBuilder::default()
-                .key(format!("debug_plane_indicator_{}", output.name()))
-                .layout_style(taffy::Style {
-                    position: taffy::Position::Absolute,
-                    inset: taffy::Rect {
-                        left: taffy::LengthPercentageAuto::Length(10.0),
-                        top: taffy::LengthPercentageAuto::Length(10.0),
-                        right: auto,
-                        bottom: auto,
-                    },
-                    ..Default::default()
-                })
-                .size(layers::types::Size {
-                    width: taffy::Dimension::Length(SIZE),
-                    height: taffy::Dimension::Length(SIZE),
-                })
-                .background_color(Color::new_rgba(1.0, 0.0, 0.0, 0.85))
-                .border_corner_radius(BorderRadius::new_single(SIZE / 2.0))
-                .pointer_events(false)
-                .build()
-                .unwrap();
-            let layer = self.layers_engine.new_layer();
-            layer.build_layer_tree(&tree);
-            layer.set_hidden(true);
-            let _ = output_layer.add_sublayer(&layer);
-            layer
-        };
-
         let ows = OutputWorkspaces {
             current_workspace: 0,
             spaces,
@@ -3281,7 +3236,6 @@ impl Workspaces {
             overlay_plane,
             switcher_plane,
             dock_plane,
-            debug_plane_indicator,
         };
         self.output_workspaces.insert(output.name(), ows);
         self.sync_model_from_primary();
@@ -3547,8 +3501,11 @@ impl Workspaces {
 
         // ---- global stable gates ----
         // Debug: `touch /tmp/otto-no-scanout` disables promotion entirely so
-        // scanout-vs-composite cost can be A/B measured at runtime.
-        if std::path::Path::new("/tmp/otto-no-scanout").exists() {
+        // scanout-vs-composite cost can be A/B measured at runtime. The file
+        // is polled at 1 Hz by the renderer; this is just an atomic read.
+        if crate::render_elements::scene_dmabuf_element::NO_SCANOUT
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
             return Vec::new();
         }
         if self.get_show_all() || self.is_expose_transitioning() {
@@ -3664,6 +3621,27 @@ impl Workspaces {
                 })
                 .unwrap_or(false);
             let overlaps_occluder = occluders.iter().any(|r| r.overlaps(rect));
+            // A surface tree with subsurfaces (e.g. the SSD decoration
+            // strips: titlebar, buttons, borders) explodes into many plane
+            // candidates that overlap each other, lose the plane auction and
+            // GPU-composite — and any composited element in front then
+            // demotes the bg/windows planes below it (z-order). Promoting
+            // such a window costs more than compositing it; only
+            // single-surface trees (typical CSD/video clients) are promoted.
+            let has_subsurfaces = window
+                .wl_surface()
+                .map(|s| {
+                    let mut count = 0u32;
+                    smithay::wayland::compositor::with_surface_tree_downward(
+                        &s,
+                        (),
+                        |_, _, _| smithay::wayland::compositor::TraversalAction::DoChildren(()),
+                        |_, _, _| count += 1,
+                        |_, _, _| true,
+                    );
+                    count > 1
+                })
+                .unwrap_or(false);
             // Cap the promoted set: the hardware admits ~5 simultaneous
             // planes and bg/windows/dock/cursor already take four — a second
             // client plane evicts the windows plane (measured), which costs
@@ -3675,6 +3653,7 @@ impl Workspaces {
                 && !animating
                 && !has_popups
                 && !overlaps_occluder
+                && !has_subsurfaces
             {
                 promoted.push(window.id());
             }
@@ -3709,10 +3688,16 @@ impl Workspaces {
             if let Some(view) = self.get_window_view(prev) {
                 view.set_content_hidden(false);
             }
+            if let Some(window) = self.get_window_for_surface(prev) {
+                window.set_scanned_out(false);
+            }
         }
         for new in new_ids.difference(&prev_ids) {
             if let Some(view) = self.get_window_view(new) {
                 view.set_content_hidden(true);
+            }
+            if let Some(window) = self.get_window_for_surface(new) {
+                window.set_scanned_out(true);
             }
         }
         *self.scanout_windows.write().unwrap() = new_ids;
