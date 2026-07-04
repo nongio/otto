@@ -51,9 +51,9 @@ mpris = "2.0"
 otto-kit = { path = "components/otto-kit" }
 
 [dependencies.laye-rs]
-# git = "https://github.com/nongio/layers"
-# tag = "v1.10.0"
-path = "../layers"
+git = "https://github.com/nongio/layers"
+branch = "feat/subtree-buffer-render"
+# local development: path = "../layers"
 features = ["export-taffy"]
 
 [dependencies.smithay-drm-extras]
