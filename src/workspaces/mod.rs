@@ -647,11 +647,23 @@ impl Workspaces {
         // Check that the workspace has exactly one window (only the fullscreen window)
         // If there are additional windows (e.g., dialogs), disable direct scanout
         let current_index = self.get_current_workspace_index();
-        let window_count = self
-            .primary_output_workspaces()
-            .map(|ows| ows.spaces[current_index].elements().count())
-            .unwrap_or(0);
+        let Some(ows) = self.primary_output_workspaces() else {
+            return false;
+        };
+        let window_count = ows.spaces[current_index].elements().count();
         if window_count != 1 {
+            return false;
+        }
+
+        // An open popup (menu, tooltip) renders in the overlay plane, which
+        // fullscreen direct scanout drops entirely — the popup would be
+        // invisible. Composite normally while any popup is mapped.
+        let has_popups = ows.spaces[current_index].elements().any(|w| {
+            w.wl_surface()
+                .map(|s| surface_has_mapped_popup(&s))
+                .unwrap_or(false)
+        });
+        if has_popups {
             return false;
         }
 
@@ -3617,16 +3629,13 @@ impl Workspaces {
             // A minimizing window is still visible (animating to the dock) so
             // it occludes, but cannot be promoted (it has a live transform).
             let animating = view.as_ref().map(|v| v.is_minimizing()).unwrap_or(true);
-            // v1 does not scan out popups; a window with an open popup must
+            // v1 does not scan out popups; a window with a MAPPED popup must
             // composite normally or the (scene-drawn) popup would be hidden
-            // under the window's overlay plane.
+            // under the window's overlay plane. Mapped, not merely alive —
+            // GTK keeps closed popovers' surfaces around for reuse.
             let has_popups = window
                 .wl_surface()
-                .map(|s| {
-                    smithay::desktop::PopupManager::popups_for_surface(&s)
-                        .next()
-                        .is_some()
-                })
+                .map(|s| surface_has_mapped_popup(&s))
                 .unwrap_or(false);
             let overlaps_occluder = occluders.iter().any(|r| r.overlaps(rect));
             // Only dmabuf-backed buffers can scan out. An SHM client (e.g. a
@@ -4609,6 +4618,20 @@ impl Observable<WorkspacesModel> for Workspaces {
 }
 
 /// Whether the window's surface tree contains subsurfaces (e.g. the SSD
+/// Whether `surface` has any MAPPED popup (menu, tooltip). "Alive" is not
+/// enough: GTK keeps a popover's xdg_popup surface alive after popdown for
+/// reuse, so an aliveness check would block scanout promotion forever after
+/// the first menu. A popup only occludes when it has a committed buffer.
+fn surface_has_mapped_popup(surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface) -> bool {
+    smithay::desktop::PopupManager::popups_for_surface(surface).any(|(popup, _)| {
+        smithay::backend::renderer::utils::with_renderer_surface_state(
+            popup.wl_surface(),
+            |state| state.buffer().is_some(),
+        )
+        .unwrap_or(false)
+    })
+}
+
 /// decoration strips: titlebar, buttons, borders). Such windows are
 /// promoted in "base-only" mode: the root surface scans out on a KMS
 /// plane while the decorations keep rendering in the windows plane.
