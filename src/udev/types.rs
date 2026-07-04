@@ -175,6 +175,12 @@ pub struct SurfaceData {
     /// composite (or outside every active consumer's region); the next
     /// frame with an active consumer must rebuild even without new damage.
     pub(super) backdrop_dirty: bool,
+    /// Last frame the expose / switcher / overlay UI was active — drives
+    /// releasing their swapchains after prolonged inactivity
+    /// (see `planes::maybe_release_plane`).
+    pub(super) expose_last_active: Option<std::time::Instant>,
+    pub(super) switcher_last_active: Option<std::time::Instant>,
+    pub(super) overlay_last_active: Option<std::time::Instant>,
     /// Which element set the previous frame was built from. The compositor
     /// swapchain is reset on transitions so stale buffer ages don't leak
     /// across the mode switch.

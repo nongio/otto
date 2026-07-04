@@ -182,3 +182,32 @@ pub(super) fn push_ready<'a>(
         }
     }
 }
+
+/// Reclaim the GPU memory of a plane whose UI has been closed for
+/// [`PLANE_RELEASE_AFTER`]: a full-screen swapchain (up to 4 slots of
+/// ~22 MB at 3K) otherwise stays allocated forever after its first use.
+/// Dropping the element is enough — buffer allocation is lazy and
+/// [`ensure_plane_elements`] recreates it on the next active frame (the
+/// recreated element renders cold, which the first frame of a reopening
+/// UI does anyway). Frames only run when something draws, so release
+/// happens on the first frame at least this long after the UI closed.
+pub(super) const PLANE_RELEASE_AFTER: std::time::Duration = std::time::Duration::from_secs(30);
+
+pub(super) fn maybe_release_plane(
+    el: &mut Option<SceneDmabufElement>,
+    active: bool,
+    last_active: &mut Option<std::time::Instant>,
+    label: &str,
+) {
+    if active {
+        *last_active = Some(std::time::Instant::now());
+        return;
+    }
+    if el.is_some() {
+        let idle_since = last_active.get_or_insert_with(std::time::Instant::now);
+        if idle_since.elapsed() >= PLANE_RELEASE_AFTER {
+            *el = None;
+            tracing::debug!(target: "otto::planes", "released {label} plane swapchain");
+        }
+    }
+}
