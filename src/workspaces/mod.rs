@@ -3700,6 +3700,50 @@ impl Workspaces {
         active
     }
 
+    /// Windows on the current workspace fully contained in a single
+    /// non-minimized window stacked above them. Feeds the frame-callback
+    /// throttle classifier's Occluded bucket. Union coverage is deliberately
+    /// not attempted: the single-cover case (a maximized or large window over
+    /// smaller ones) is the one that matters, and containment in one window
+    /// cannot false-positive on a partially visible window.
+    #[allow(clippy::mutable_key_type)]
+    pub fn occluded_window_ids(&self) -> HashSet<ObjectId> {
+        use smithay::utils::{Physical, Rectangle};
+        let mut occluded = HashSet::new();
+        let scale = Config::with(|c| c.screen_scale);
+        let current_index = self.get_current_workspace_index();
+        let Some(space) = self
+            .primary_output_workspaces()
+            .and_then(|ows| ows.spaces.get(current_index))
+        else {
+            return occluded;
+        };
+        let mut above: Vec<Rectangle<i32, Physical>> = Vec::new();
+        // Space::elements yields bottom-to-top; rev() => top-to-bottom.
+        for window in space.elements().rev() {
+            if window.is_minimised() {
+                continue;
+            }
+            let Some(location) = space.element_location(window) else {
+                continue;
+            };
+            let rect = Rectangle::new(
+                location.to_f64().to_physical(scale).to_i32_round(),
+                window
+                    .geometry()
+                    .size
+                    .to_f64()
+                    .to_physical(scale)
+                    .to_i32_round(),
+            );
+            if above.iter().any(|a| a.contains_rect(rect)) {
+                occluded.insert(window.id());
+            }
+            above.push(rect);
+        }
+        occluded
+    }
+
     /// Snapshot of the windows currently flagged for scanout.
     #[allow(clippy::mutable_key_type)]
     pub fn scanout_window_ids(&self) -> HashSet<ObjectId> {

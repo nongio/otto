@@ -124,6 +124,16 @@ vibrancy even though the content behind it lives on other planes.
   the first frame showing the previous mode's content.
 - If a buffer has no new damage, its existing dmabuf is re-submitted with an
   unchanged commit count, which must result in no page-flip for that plane.
+- Plane swapchains whose UI has been closed for a while (expose, app
+  switcher, overlay chrome; currently 30 s) are dropped to reclaim their
+  GPU memory. Allocation is lazy, so the plane is recreated cold on the
+  next active frame — which is a UI-opening animation frame anyway.
+- Frame callbacks: every mapped window is throttled per its visibility
+  class. Windows behind a fullscreen window and windows fully contained
+  in a single higher window's geometry get the 2 Hz Occluded trickle —
+  never zero (Chromium's buffer-eviction heuristic blanks canvases when
+  callbacks stop entirely). Union coverage is deliberately not computed;
+  single-window containment cannot false-positive on partial visibility.
 
 ## Constraints & Edge Cases
 

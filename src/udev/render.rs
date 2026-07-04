@@ -488,10 +488,11 @@ impl Otto<UdevData> {
                 .load(std::sync::atomic::Ordering::Relaxed),
         );
 
+        let occluded_ids = self.workspaces.occluded_window_ids();
         let window_throttle_states = crate::state::window_throttle::classify_windows(
             &self.workspaces,
             &all_window_elements,
-            &std::collections::HashSet::new(),
+            &occluded_ids,
             expose_active,
         );
 
@@ -511,6 +512,31 @@ impl Otto<UdevData> {
         // Apply the scanout set (selection + content_layer transitions were
         // done in `set_scanout_windows`, before the `surface` borrow).
         surface.shadow_only_windows = scanout_desired.clone();
+
+        let switcher_active = self.workspaces.app_switcher.alive();
+        let overlay_active =
+            self.workspaces.is_overlay_ui_active(&output) || self.dnd_icon.is_some();
+        {
+            use super::planes::maybe_release_plane;
+            maybe_release_plane(
+                &mut surface.expose_dmabuf_element,
+                expose_active,
+                &mut surface.expose_last_active,
+                "expose",
+            );
+            maybe_release_plane(
+                &mut surface.switcher_dmabuf_element,
+                switcher_active,
+                &mut surface.switcher_last_active,
+                "switcher",
+            );
+            maybe_release_plane(
+                &mut surface.overlay_dmabuf_element,
+                overlay_active,
+                &mut surface.overlay_last_active,
+                "overlay",
+            );
+        }
 
         let output_scene_element = self
             .workspaces
@@ -534,9 +560,9 @@ impl Otto<UdevData> {
             &mut self.pending_screencopy_frames,
             expose_active,
             fullscreen_window.as_ref(),
-            self.workspaces.app_switcher.alive(),
+            switcher_active,
             !self.workspaces.dock.is_hidden(),
-            self.workspaces.is_overlay_ui_active(&output) || self.dnd_icon.is_some(),
+            overlay_active,
             self.workspaces.output_workspaces.get(&output.name()),
             screencopy_pending,
             self.workspaces
@@ -1517,16 +1543,14 @@ pub(super) fn render_output_frame<'a>(
 
     // In fullscreen scanout only the fullscreen window gets frame callbacks —
     // other windows generating damage would only cause pointless wakeups.
-    let post_repaint_elements: Vec<&WindowElement> = if let Some(fs_win) = fullscreen_window {
-        vec![fs_win]
-    } else {
-        window_elements.to_vec()
-    };
-
+    // All windows get callbacks, always: the throttle classifier already
+    // demotes everything behind a fullscreen window to the 2 Hz Occluded
+    // bucket, and dropping below that starves Chromium's buffer-eviction
+    // heuristic (blank canvas on restore).
     post_repaint(
         output,
         &states,
-        &post_repaint_elements,
+        window_elements,
         surface
             .dmabuf_feedback
             .as_ref()
@@ -1551,7 +1575,7 @@ pub(super) fn render_output_frame<'a>(
         }
 
         let output_presentation_feedback =
-            take_presentation_feedback(output, &post_repaint_elements, &states);
+            take_presentation_feedback(output, window_elements, &states);
         surface
             .compositor
             .queue_frame(Some(output_presentation_feedback))?;
