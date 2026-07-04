@@ -143,8 +143,10 @@ vibrancy even though the content behind it lives on other planes.
   planes below (material is semi-opaque); acceptable by design.
 - The first frame after startup renders the overlay without a backdrop (the
   lower buffers don't exist yet); the composite arrives on the next frame.
-- Removed scene nodes can't be attributed to a subtree; their damage
-  conservatively re-renders all plane buffers that frame.
+- Removed scene nodes attribute their damage to the nearest surviving
+  ancestor, so a window close re-renders only the windows plane. Only
+  removals with no surviving ancestor (whole-tree teardown) fall back to
+  damaging every plane buffer that frame.
 - Moving content into its own plane subtree breaks views that mirrored the
   old parent: the workspace-selector previews replicate `windows_layer` and
   `workspace_background` as two separate mirrors because the wallpaper no
