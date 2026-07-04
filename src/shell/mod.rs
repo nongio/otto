@@ -106,7 +106,24 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
 
     fn new_surface(&mut self, surface: &WlSurface) {
         add_pre_commit_hook::<Self, _>(surface, move |state, _dh, surface| {
+            // Explicit-sync (wp_linux_drm_syncobj) acquire point, if the client
+            // committed one. smithay only validates these points in its own
+            // commit_hook — the compositor must add the blocker so the surface
+            // transaction waits until the client's GPU render completes. Without
+            // it, KMS plane scanout flips a half-rendered buffer (tearing),
+            // because smithay assumes a blocker already waited. udev-only:
+            // DrmSyncobjCachedState lives behind smithay's backend_drm feature.
+            #[cfg(feature = "udev")]
+            let mut acquire_point = None;
             let maybe_dmabuf = with_states(surface, |surface_data| {
+                #[cfg(feature = "udev")]
+                acquire_point.clone_from(
+                    &surface_data
+                        .cached_state
+                        .get::<smithay::wayland::drm_syncobj::DrmSyncobjCachedState>()
+                        .pending()
+                        .acquire_point,
+                );
                 surface_data
                     .cached_state
                     .get::<SurfaceAttributes>()
@@ -119,6 +136,25 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
                     })
             });
             if let Some(dmabuf) = maybe_dmabuf {
+                // Prefer the explicit acquire fence when the client provided one.
+                #[cfg(feature = "udev")]
+                if let Some(acquire_point) = acquire_point {
+                    if let Ok((blocker, source)) = acquire_point.generate_blocker() {
+                        if let Some(client) = surface.client() {
+                            let res = state.handle.insert_source(source, move |_, _, data| {
+                                let dh = data.display_handle.clone();
+                                data.client_compositor_state(&client)
+                                    .blocker_cleared(data, &dh);
+                                Ok(())
+                            });
+                            if res.is_ok() {
+                                add_blocker(surface, blocker);
+                                // Don't also add the implicit blocker for this commit.
+                                return;
+                            }
+                        }
+                    }
+                }
                 if let Ok((blocker, source)) = dmabuf.generate_blocker(Interest::READ) {
                     if let Some(client) = surface.client() {
                         let res = state.handle.insert_source(source, move |_, _, data| {
@@ -203,37 +239,18 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
                         window.on_commit();
 
                         // Skip scene damage propagation when this window is on a
-                        // scanout plane this frame — its buffer goes straight to
-                        // the display, no scene composite needed.
-                        let scanned_out = window.is_scanned_out();
-                        if !scanned_out {
+                        // scanout plane — its buffer goes straight to the display,
+                        // and importing it would only re-render the (hidden)
+                        // content layer into the windows plane. The pending flag
+                        // makes the backend draw a frame anyway so the new buffer
+                        // reaches its plane (a skipped import produces no scene
+                        // damage, which is otherwise the draw trigger).
+                        if window.is_scanned_out() {
+                            self.workspaces
+                                .scanout_commit_pending
+                                .store(true, std::sync::atomic::Ordering::Relaxed);
+                        } else {
                             self.update_window_view(&window);
-                        }
-                        // Verification: log skipped/normal commit rates at 1Hz.
-                        {
-                            use std::sync::Mutex;
-                            use std::sync::OnceLock;
-                            use std::time::{Duration, Instant};
-                            static STATS: OnceLock<Mutex<(Instant, u32, u32)>> = OnceLock::new();
-                            let mut g = STATS
-                                .get_or_init(|| Mutex::new((Instant::now(), 0, 0)))
-                                .lock()
-                                .unwrap();
-                            if scanned_out {
-                                g.1 += 1;
-                            } else {
-                                g.2 += 1;
-                            }
-                            if g.0.elapsed() >= Duration::from_secs(1) {
-                                tracing::info!(
-                                    target: "otto::scanout",
-                                    "commits/s: skipped={} normal={}",
-                                    g.1, g.2,
-                                );
-                                g.0 = Instant::now();
-                                g.1 = 0;
-                                g.2 = 0;
-                            }
                         }
 
                         // Update foreign toplevel list only if title or app_id actually changed

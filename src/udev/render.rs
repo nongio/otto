@@ -84,7 +84,7 @@ impl Otto<UdevData> {
             let elapsed = g.0.elapsed();
             if elapsed >= Duration::from_secs(1) {
                 let fps = g.1 as f64 / elapsed.as_secs_f64();
-                tracing::info!(target: "otto::fps", "fps={fps:.1} ({} frames in {:.2}s)", g.1, elapsed.as_secs_f64());
+                tracing::debug!(target: "otto::fps", "fps={fps:.1} ({} frames in {:.2}s)", g.1, elapsed.as_secs_f64());
                 g.0 = Instant::now();
                 g.1 = 0;
             }
@@ -328,8 +328,21 @@ impl Otto<UdevData> {
         } else {
             None
         };
+        // Whether this output uses the plane decomposition at all (set once at
+        // surface creation from overlay count / atomic / GPU identity).
+        let planes_enabled = self
+            .backend_data
+            .backends
+            .get(&node)
+            .and_then(|d| d.surfaces.get(&crtc))
+            .map(|s| s.planes_enabled)
+            .unwrap_or(false);
         let scanout_desired: Vec<smithay::reexports::wayland_server::backend::ObjectId> =
-            if capture_active || self.swipe_gesture.is_active() || fullscreen_window.is_some() {
+            if !planes_enabled
+                || capture_active
+                || self.swipe_gesture.is_active()
+                || fullscreen_window.is_some()
+            {
                 Vec::new()
             } else {
                 self.workspaces.get_scanout_candidates()
@@ -436,13 +449,12 @@ impl Otto<UdevData> {
         };
         let all_window_elements: Vec<&WindowElement> = self.workspaces.spaces_elements().collect();
 
-        // Lazily set up the dmabuf-backed scene element for this surface when
-        // scanout is allowed. Uses `device_gbm` (cloned out of `device`
-        // before the surface mut-borrow) so we don't conflict with the
-        // existing mutable borrows.
-        // Allocate plane elements unconditionally — planes are always needed,
-        // not just when a fullscreen window is present.
-        if let Some(mode) = output.current_mode() {
+        // Lazily set up the dmabuf-backed scene elements for this surface.
+        // Uses `device_gbm` (cloned out of `device` before the surface
+        // mut-borrow) so we don't conflict with the existing mutable borrows.
+        // Skipped entirely when the plane decomposition is disabled for this
+        // output — the swapchains would only waste GPU memory.
+        if let (true, Some(mode)) = (planes_enabled, output.current_mode()) {
             use crate::render_elements::scene_dmabuf_element::SceneDmabufElement;
             use smithay::backend::allocator::Fourcc;
 
@@ -471,8 +483,6 @@ impl Otto<UdevData> {
             if let Some(el) = surface.scene_dmabuf_element.as_mut() {
                 el.kind = smithay::backend::renderer::element::Kind::Unspecified;
             }
-            // Solid-black test element (visual debug plane).
-            alloc_plane!(surface.test_dmabuf_element,       Fourcc::Argb8888, true,  "test");
             alloc_plane!(surface.windows_dmabuf_element,    Fourcc::Argb8888, false, "windows");
             alloc_plane!(surface.expose_dmabuf_element,     Fourcc::Argb8888, false, "expose");
             alloc_plane!(surface.overlay_dmabuf_element,    Fourcc::Argb8888, false, "overlay");
@@ -556,10 +566,6 @@ impl Otto<UdevData> {
                 .load(std::sync::atomic::Ordering::Relaxed),
         );
 
-        if let Some(ows) = self.workspaces.output_workspaces.get(&output.name()) {
-            ows.debug_plane_indicator.set_hidden(!expose_active);
-        }
-
         let window_throttle_states = crate::state::window_throttle::classify_windows(
             &self.workspaces,
             &all_window_elements,
@@ -583,6 +589,13 @@ impl Otto<UdevData> {
         // Apply the scanout set (selection + content_layer transitions were
         // done in `set_scanout_windows`, before the `surface` borrow).
         surface.shadow_only_windows = scanout_desired.clone();
+
+        let output_scene_element = self
+            .workspaces
+            .output_workspaces
+            .get(&output.name())
+            .map(|ows| self.scene_element.for_output_layer(&ows.output_layer))
+            .unwrap_or_else(|| self.scene_element.clone());
 
         let result = render_surface(
             surface,
@@ -631,6 +644,11 @@ impl Otto<UdevData> {
             },
             self.workspaces.output_workspaces.get(&output.name()),
             screencopy_pending,
+            self.workspaces
+                .scanout_commit_pending
+                .swap(false, std::sync::atomic::Ordering::Relaxed),
+            planes_enabled,
+            output_scene_element,
         );
 
         let reschedule = match &result {
@@ -1192,6 +1210,9 @@ pub(super) fn render_surface<'a>(
     overlay_active: bool,
     output_workspaces: Option<&crate::workspaces::OutputWorkspaces>,
     screencopy_pending: bool,
+    scanout_commit: bool,
+    planes_enabled: bool,
+    output_scene_element: crate::render_elements::scene_element::SceneElement,
 ) -> Result<RenderOutcome, SwapBuffersError> {
     // Start frame timing
     #[cfg(feature = "metrics")]
@@ -1271,12 +1292,14 @@ pub(super) fn render_surface<'a>(
         let cursor_needs_draw = pointer_in_output;
             // Fullscreen scanout must always draw: the promoted buffer's
             // commits produce no scene damage, and gating on it would drop
-            // video frames.
+            // video frames. `scanout_commit` is the same signal for promoted
+            // (non-fullscreen) windows, set per-commit by the shell.
             let should_draw = scene_has_damage
                 || dnd_needs_draw
                 || cursor_needs_draw
                 || screencopy_pending
-                || fullscreen_window.is_some();
+                || fullscreen_window.is_some()
+                || scanout_commit;
             if !should_draw {
                 return Ok(RenderOutcome::skipped());
             }
@@ -1290,6 +1313,25 @@ pub(super) fn render_surface<'a>(
             // isolation and ignore ancestor visibility (e.g. the hidden
             // workspaces_layer while expose is shown), so a tree re-render
             // diverges from what the planes display.
+            // Render the bottom plane first (planes mode only) — the backdrop
+            // composite needs it, and its dmabuf's existence decides whether
+            // the plane stack has a floor at all.
+            let bg_plane_ready = if planes_enabled && fullscreen_window.is_none() {
+                if let Some(el) = &surface.scene_dmabuf_element {
+                    el.render(renderer.as_mut());
+                    el.current_dmabuf().is_some()
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            // Whether the full-scene element is part of this frame. It clears
+            // engine damage itself in draw(); clearing here as well would wipe
+            // the damage region its subtree culling depends on.
+            let mut scene_element_pushed = false;
+
             if let Some(fs_win) = fullscreen_window {
                 // ── Fullscreen direct scanout ─────────────────────────────
                 // The client buffer IS the frame: push only the window's
@@ -1318,6 +1360,25 @@ pub(super) fn render_surface<'a>(
                         );
                     workspace_render_elements.extend(elems);
                 }
+            } else if !planes_enabled || !bg_plane_ready {
+                // Single-element path: the plane decomposition is disabled for
+                // this output (plane-poor / non-atomic / secondary-GPU
+                // hardware), or the bg plane unexpectedly has no dmabuf
+                // (allocation or Skia-surface failure) — without a floor the
+                // plane stack would show only the clear color.
+                if planes_enabled {
+                    static WARNED: std::sync::atomic::AtomicBool =
+                        std::sync::atomic::AtomicBool::new(false);
+                    if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                        tracing::warn!(
+                            target: "otto::planes",
+                            "bg plane has no dmabuf — falling back to scene composite"
+                        );
+                    }
+                }
+                workspace_render_elements
+                    .push(WorkspaceRenderElements::Scene(output_scene_element.clone()));
+                scene_element_pushed = true;
             } else {
             // Push plane elements top→bottom. Smithay's `DrmCompositor::render_frame`
             // assigns overlay planes front-first and tries every element tagged
@@ -1363,23 +1424,78 @@ pub(super) fn render_surface<'a>(
             // the consumers re-render.
             const BACKDROP_SCALE: f32 = 0.25;
 
-            // Render the bottom plane first so the composite reflects this frame.
-            if let Some(el) = &surface.scene_dmabuf_element {
-                el.render(renderer.as_mut());
-            }
-
-            let bg_damaged = surface
+            // (The bg plane was already rendered above, before the branch.)
+            let bg_damage = surface
                 .scene_dmabuf_element
                 .as_ref()
-                .and_then(|el| el.subtree_damage())
-                .is_some();
+                .and_then(|el| el.subtree_damage());
             let middle_el = if expose_active {
                 surface.expose_dmabuf_element.as_ref()
             } else {
                 surface.windows_dmabuf_element.as_ref()
             };
-            let middle_damaged = middle_el.and_then(|el| el.subtree_damage()).is_some();
-            let rebuild = surface.backdrop_image.is_none() || bg_damaged || middle_damaged;
+            let middle_damage = middle_el.and_then(|el| el.subtree_damage());
+
+            // The composite only matters to the blur-bearing consumers that
+            // are actually on screen, and only where they sample it: the dock
+            // and switcher sample their own strips; the overlay UI and expose
+            // can blur anywhere. Lower-plane damage outside every active
+            // region (the common case: a window updating above the dock) must
+            // NOT rebuild — a rebuild forces every blur consumer to re-render
+            // its full buffer. Damage skipped this way marks the composite
+            // dirty so a later-activating consumer still gets fresh content.
+            let mut interest: Vec<layers::skia::Rect> = Vec::new();
+            if expose_active || overlay_active {
+                if let Some(m) = output.current_mode() {
+                    interest.push(layers::skia::Rect::from_wh(
+                        m.size.w as f32,
+                        m.size.h as f32,
+                    ));
+                }
+            } else {
+                let strip_rect = |el: &Option<
+                    crate::render_elements::scene_dmabuf_element::SceneDmabufElement,
+                >| {
+                    el.as_ref().map(|el| {
+                        use smithay::backend::renderer::element::Element as _;
+                        let geo = el.geometry(smithay::utils::Scale::from(1.0));
+                        layers::skia::Rect::from_xywh(
+                            geo.loc.x as f32,
+                            geo.loc.y as f32,
+                            geo.size.w as f32,
+                            geo.size.h as f32,
+                        )
+                    })
+                };
+                if dock_visible {
+                    interest.extend(strip_rect(&surface.dock_dmabuf_element));
+                }
+                if switcher_active {
+                    interest.extend(strip_rect(&surface.switcher_dmabuf_element));
+                }
+            }
+            let hits_interest = |d: &Option<layers::skia::Rect>| {
+                d.map_or(false, |r| {
+                    interest.iter().any(|i| {
+                        r.left() < i.right()
+                            && r.right() > i.left()
+                            && r.top() < i.bottom()
+                            && r.bottom() > i.top()
+                    })
+                })
+            };
+            let any_consumer = !interest.is_empty();
+            let lower_damaged = bg_damage.is_some() || middle_damage.is_some();
+            let rebuild = any_consumer
+                && (surface.backdrop_image.is_none()
+                    || surface.backdrop_dirty
+                    || hits_interest(&bg_damage)
+                    || hits_interest(&middle_damage));
+            if rebuild {
+                surface.backdrop_dirty = false;
+            } else if lower_damaged {
+                surface.backdrop_dirty = true;
+            }
 
             if rebuild {
                 let bg_img = surface
@@ -1597,13 +1713,16 @@ pub(super) fn render_surface<'a>(
                 dbg_save!(DBG_SAVE_OVERLAY, surface.overlay_dmabuf_element,    ss_path!("overlay"));
             }
 
-            // Debug: dump every plane buffer to PNG when the trigger file
-            // exists (`touch /tmp/otto-dump-planes`), then remove it. Shows
-            // exactly what each KMS plane scans out, independent of the
-            // GPU-composited screencopy path.
-            if std::path::Path::new("/tmp/otto-dump-planes").exists() {
-                let _ = std::fs::remove_file("/tmp/otto-dump-planes");
-                let dir = "/home/riccardo/Pictures/Screenshots";
+            // Debug: dump every plane buffer to PNG when requested
+            // (`touch /tmp/otto-dump-planes`; the file is polled at 1 Hz and
+            // converted into this one-shot flag). Shows exactly what each KMS
+            // plane scans out, independent of the GPU-composited screencopy.
+            if crate::render_elements::scene_dmabuf_element::DUMP_PLANES
+                .swap(false, std::sync::atomic::Ordering::Relaxed)
+            {
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+                let dir = format!("{home}/Pictures/Screenshots");
+                let _ = std::fs::create_dir_all(&dir);
                 macro_rules! dump_plane {
                     ($el:expr, $name:literal) => {
                         if let Some(el) = &$el {
@@ -1625,9 +1744,15 @@ pub(super) fn render_surface<'a>(
             // Clear engine damage after all plane renders so `subtree_damage()`
             // returns `None` next frame when nothing has changed. Without this
             // call `per_node_damage` is never cleared and every plane redraws
-            // every frame even on an otherwise idle desktop.
-            if let Some(el) = &surface.scene_dmabuf_element {
-                el.clear_engine_damage();
+            // every frame even on an otherwise idle desktop. Skipped when the
+            // full-scene element is in the frame — its draw() both consumes
+            // the damage region and clears it (clearing here would blank its
+            // subtree culling); likewise scene-mode outputs have no plane
+            // elements and rely on draw() entirely.
+            if !scene_element_pushed {
+                if let Some(el) = &surface.scene_dmabuf_element {
+                    el.clear_engine_damage();
+                }
             }
 
             let output_render_elements: Vec<OutputRenderElements<'a, _, WindowRenderElement<_>>> =
@@ -1664,7 +1789,10 @@ pub(super) fn render_surface<'a>(
     }
 
     // Debug: dump the final element order handed to render_frame (front→back).
-    if output_elements.len() > 4 {
+    // Level-checked first — the strings must not be built on every frame when
+    // the target is quiet.
+    if tracing::enabled!(target: "otto::planes", tracing::Level::DEBUG) && output_elements.len() > 4
+    {
         use smithay::backend::renderer::element::Element as _;
         let order: Vec<String> = output_elements
             .iter()
@@ -1749,6 +1877,21 @@ pub(super) fn render_surface<'a>(
                     .store(tint, std::sync::atomic::Ordering::Relaxed);
             }
 
+            // Refresh the other /tmp debug toggles here too, so the hot path
+            // reads atomics instead of stat()ing files every frame.
+            {
+                use crate::render_elements::scene_dmabuf_element::{DUMP_PLANES, NO_SCANOUT};
+                use std::sync::atomic::Ordering;
+                NO_SCANOUT.store(
+                    std::path::Path::new("/tmp/otto-no-scanout").exists(),
+                    Ordering::Relaxed,
+                );
+                if std::path::Path::new("/tmp/otto-dump-planes").exists() {
+                    let _ = std::fs::remove_file("/tmp/otto-dump-planes");
+                    DUMP_PLANES.store(true, Ordering::Relaxed);
+                }
+            }
+
             let mut summary = String::new();
             macro_rules! log_state {
                 ($el:expr, $name:literal) => {
@@ -1780,7 +1923,7 @@ pub(super) fn render_surface<'a>(
                     P::Skipped => skip += 1,
                 }
             }
-            tracing::info!(
+            tracing::debug!(
                 target: "otto::planes",
                 "frame realization: {summary}expose_active={expose_active} shadow_only={} elements: total={} zerocopy={zc} rendering={rend} skipped={skip}",
                 surface.shadow_only_windows.len(),
@@ -1859,10 +2002,6 @@ pub(super) fn render_surface<'a>(
         damage: damage_for_return,
     })
 }
-
-/// Reparent scanout windows when the desired candidate set changes.
-///
-
 
 pub(super) fn initial_render(
     surface: &mut SurfaceData,

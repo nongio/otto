@@ -47,8 +47,64 @@ use crate::renderer::skia_surface::SkiaSurface;
 pub static TINT_COMPOSITE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-struct SlotSurface(UnsafeCell<SkiaSurface>);
-// SAFETY: accessed only from the render thread; never aliased across threads.
+/// `touch /tmp/otto-no-scanout` — disables window promotion for A/B
+/// comparisons. Polled at 1 Hz by the udev renderer, read per-frame here.
+pub static NO_SCANOUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// One-shot request to dump every plane buffer to PNG
+/// (`touch /tmp/otto-dump-planes`; polled at 1 Hz, consumed by the renderer).
+pub static DUMP_PLANES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the DRM device honors implicit dmabuf fencing (true everywhere
+/// except the NVIDIA proprietary driver). With implicit sync the kernel's
+/// atomic commit waits on the buffer's reservation fences, so plane renders
+/// can submit without a CPU-blocking GPU wait. Without it we must block
+/// (`SyncCpu::Yes`) or KMS may scan out a half-rendered buffer. Set once at
+/// device init.
+pub static IMPLICIT_SYNC: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+struct SlotSurface {
+    surface: UnsafeCell<SkiaSurface>,
+    /// Element commit this slot's content was last rendered at. Swapchain
+    /// slots rotate, so a reacquired slot is several commits old — the
+    /// renderer clips to the damage accumulated since this commit instead
+    /// of clearing and redrawing the whole buffer.
+    last_commit: std::cell::Cell<Option<CommitCounter>>,
+    /// Thread that created the surface. The GL/Skia state is thread-affine;
+    /// all access AND the drop must happen on this thread.
+    owner: std::thread::ThreadId,
+}
+
+impl SlotSurface {
+    fn new(surface: SkiaSurface) -> Self {
+        Self {
+            surface: UnsafeCell::new(surface),
+            last_commit: std::cell::Cell::new(None),
+            owner: std::thread::current().id(),
+        }
+    }
+}
+
+impl Drop for SlotSurface {
+    fn drop(&mut self) {
+        // The keepalive Arc handed to Smithay nominally allows the last drop
+        // to happen anywhere, but DrmCompositor releases it on the calloop
+        // thread that runs frame_finish — the same render thread. Make a
+        // violation of that assumption loud instead of silently corrupting
+        // GL state.
+        debug_assert_eq!(
+            std::thread::current().id(),
+            self.owner,
+            "SlotSurface dropped off the render thread"
+        );
+    }
+}
+
+// SAFETY: accessed only from the render thread (enforced by the Drop assert
+// above for the destructor; render()/snapshot() are only called from the
+// backend render path). Send+Sync are required because Slot::userdata()
+// demands them.
 unsafe impl Send for SlotSurface {}
 unsafe impl Sync for SlotSurface {}
 
@@ -86,10 +142,6 @@ struct Inner {
     /// Subtree to render. `None` → render a placeholder.
     node_ref: Option<NodeRef>,
     size: (i32, i32),
-    /// When true, skip the root-position translate so nodes render at their
-    /// global scene positions. Used for scanout_windows whose children are
-    /// already scroll-compensated.
-    skip_root_translate: bool,
     /// Viewport origin in scene coordinates (physical px). The buffer shows
     /// the scene rect `viewport .. viewport+size`; the caller positions the
     /// KMS plane at the same origin. Lets a small strip-sized buffer render a
@@ -131,7 +183,6 @@ impl SceneDmabufElement {
                 swapchain: None,
                 current_slot: None,
                 render_node: None,
-                skip_root_translate: false,
                 viewport: (0, 0),
                 backdrop: None,
                 last_backdrop_id: None,
@@ -144,10 +195,6 @@ impl SceneDmabufElement {
         }
     }
 
-    pub fn set_skip_root_translate(&self, skip: bool) {
-        self.inner.lock().unwrap().skip_root_translate = skip;
-    }
-
     /// Set the viewport origin (scene physical px). Callers must also set
     /// `self.position` to the same origin so the plane lands where the
     /// buffer's content was cropped from.
@@ -158,11 +205,6 @@ impl SceneDmabufElement {
     /// Set the lay-rs subtree this element renders.
     pub fn set_node_ref(&self, node: NodeRef) {
         self.inner.lock().unwrap().node_ref = Some(node);
-    }
-
-    /// Backwards-compatible alias used by the existing udev render path.
-    pub fn set_output_root(&self, node: NodeRef) {
-        self.set_node_ref(node);
     }
 
     /// Provide the composite of the planes below this one so `BackgroundBlur`
@@ -181,7 +223,7 @@ impl SceneDmabufElement {
         let slot = inner.current_slot.as_ref()?;
         let slot_surface = slot.userdata().get::<SlotSurface>()?;
         // SAFETY: single render thread; no concurrent access to this slot.
-        let skia_surface = unsafe { &mut *slot_surface.0.get() };
+        let skia_surface = unsafe { &mut *slot_surface.surface.get() };
         Some(skia_surface.surface.image_snapshot())
     }
 
@@ -191,7 +233,7 @@ impl SceneDmabufElement {
         let slot = inner.current_slot.as_ref()?;
         let slot_surface = slot.userdata().get::<SlotSurface>()?;
         // SAFETY: single render thread; no concurrent access to this slot.
-        let skia_surface = unsafe { &*slot_surface.0.get() };
+        let skia_surface = unsafe { &*slot_surface.surface.get() };
         Some(skia_surface.gr_context.clone())
     }
 
@@ -302,7 +344,7 @@ impl SceneDmabufElement {
             match renderer.create_surface_from_dmabuf(&dmabuf) {
                 Ok(surface) => {
                     slot.userdata()
-                        .insert_if_missing(|| SlotSurface(UnsafeCell::new(surface)));
+                        .insert_if_missing(|| SlotSurface::new(surface));
                 }
                 Err(e) => {
                     tracing::warn!(target: "otto::planes", "SceneDmabufElement: surface error: {e:?}");
@@ -311,17 +353,75 @@ impl SceneDmabufElement {
             }
         }
 
-        // Render into the slot's Skia surface.
+        // Map the scene-space dirty rect into buffer space and clamp to buffer
+        // bounds — used both to clip this render and to report damage below.
+        // The canvas is translated by the root node's render_position(), so
+        // buffer coords = scene coords − root_pos − viewport.
         let (w, h) = inner.size;
+        let root_pos = inner
+            .node_ref
+            .and_then(|r| inner.engine.get_layer(&r))
+            .map(|l| l.render_position())
+            .unwrap_or_default();
+        let (vx, vy) = inner.viewport;
+        let damage_rect = dirty_rect
+            .filter(|_| !backdrop_changed)
+            .map(|r| {
+                let x = ((r.left() - root_pos.x) as i32 - vx).clamp(0, w);
+                let y = ((r.top() - root_pos.y) as i32 - vy).clamp(0, h);
+                let x2 = ((r.right() - root_pos.x) as i32 - vx).clamp(0, w);
+                let y2 = ((r.bottom() - root_pos.y) as i32 - vy).clamp(0, h);
+                Rectangle::<i32, Physical>::new(
+                    (x, y).into(),
+                    ((x2 - x).max(1), (y2 - y).max(1)).into(),
+                )
+            })
+            .unwrap_or_else(|| Rectangle::new((0, 0).into(), (w, h).into()));
+
+        // Render into the slot's Skia surface.
         {
             let slot_surface = slot.userdata().get::<SlotSurface>().unwrap();
             // SAFETY: single render thread; no concurrent access to this slot.
-            let skia_surface = unsafe { &mut *slot_surface.0.get() };
+            let skia_surface = unsafe { &mut *slot_surface.surface.get() };
+
+            // Clip to the damage accumulated since THIS slot last rendered
+            // (slots rotate — a reacquired slot is several commits behind) so
+            // an unchanged region is neither cleared nor redrawn. Full render
+            // when the backdrop changed (blur can repaint anywhere), on a
+            // slot's first use, or when the damage history no longer reaches
+            // back to the slot's commit.
+            let clip: Option<Rectangle<i32, Physical>> = if backdrop_changed || !has_dmabuf {
+                None
+            } else {
+                match inner.damage.damage_since(slot_surface.last_commit.get()) {
+                    Some(rects) => {
+                        let mut acc = damage_rect;
+                        for r in rects.iter() {
+                            acc = acc.merge(*r);
+                        }
+                        Some(acc)
+                    }
+                    None => None,
+                }
+            };
+
             let canvas = skia_surface.canvas();
-            // Clear to transparent before each render so stale swapchain slot
-            // content doesn't accumulate under transparent regions.
-            canvas.clear(layers::skia::Color4f::new(0.0, 0.0, 0.0, 0.0));
             let save_point = canvas.save();
+            if let Some(clip) = clip {
+                canvas.clip_rect(
+                    layers::skia::Rect::from_xywh(
+                        clip.loc.x as f32,
+                        clip.loc.y as f32,
+                        clip.size.w as f32,
+                        clip.size.h as f32,
+                    ),
+                    layers::skia::ClipOp::Intersect,
+                    Some(false),
+                );
+            }
+            // Clear (within the clip) so stale swapchain slot content doesn't
+            // accumulate under transparent regions.
+            canvas.clear(layers::skia::Color4f::new(0.0, 0.0, 0.0, 0.0));
 
             let scene = inner.engine.scene();
             let root = inner.node_ref;
@@ -334,18 +434,16 @@ impl SceneDmabufElement {
                     // Map the viewport origin to the buffer origin.
                     canvas.translate((-vx as f32, -vy as f32));
                 }
-                if !inner.skip_root_translate {
-                    if let Some(layer) = inner.engine.get_layer(&root_id) {
-                        let pos = layer.render_position();
-                        // render_position() returns global scene coords.
-                        // We apply the global offset as the initial canvas transform so
-                        // that each child's accumulated local_transforms bring it to the
-                        // correct output-space position. (Positive translate shifts the
-                        // canvas origin to the node's global position, cancelling the
-                        // parent-chain scroll encoded in local_transforms above the root.)
-                        if pos.x != 0.0 || pos.y != 0.0 {
-                            canvas.translate((pos.x, pos.y));
-                        }
+                if let Some(layer) = inner.engine.get_layer(&root_id) {
+                    let pos = layer.render_position();
+                    // render_position() returns global scene coords.
+                    // We apply the global offset as the initial canvas transform so
+                    // that each child's accumulated local_transforms bring it to the
+                    // correct output-space position. (Positive translate shifts the
+                    // canvas origin to the node's global position, cancelling the
+                    // parent-chain scroll encoded in local_transforms above the root.)
+                    if pos.x != 0.0 || pos.y != 0.0 {
+                        canvas.translate((pos.x, pos.y));
                     }
                 }
                 let external_backdrop = inner.backdrop.as_ref().map(|(img, s)| (img, *s));
@@ -369,41 +467,30 @@ impl SceneDmabufElement {
             }
 
             canvas.restore_to_count(save_point);
-            skia_surface.gr_context.flush_and_submit_surface(
-                &mut skia_surface.surface,
-                layers::skia::gpu::SyncCpu::Yes,
-            );
+            // Submit without blocking the CPU where implicit dmabuf fencing
+            // orders GPU-write → scanout for us; five serial CPU waits per
+            // frame was the single largest hot-path cost during animation.
+            let sync = if IMPLICIT_SYNC.load(std::sync::atomic::Ordering::Relaxed) {
+                layers::skia::gpu::SyncCpu::No
+            } else {
+                layers::skia::gpu::SyncCpu::Yes
+            };
+            skia_surface
+                .gr_context
+                .flush_and_submit_surface(&mut skia_surface.surface, sync);
         }
 
-        // Update damage and commit counter.
-        // Use the tight dirty rect when available so FB_DAMAGE_CLIPS is set
-        // correctly for PSR partial-refresh; fall back to full-buffer on the
-        // first render (no prior dmabuf), when no node_ref is set, or when
-        // the backdrop changed (blur regions repaint without subtree damage).
+        // Update damage and commit counter. The tight damage rect keeps
+        // FB_DAMAGE_CLIPS accurate for PSR partial-refresh; full-buffer on
+        // the first render, when no node_ref is set, or when the backdrop
+        // changed (blur regions repaint without subtree damage). Record the
+        // new commit on the slot so its next render clips to the delta.
         inner.last_backdrop_id = backdrop_id;
         inner.commit_counter.increment();
-        // Map the scene-space dirty rect into buffer space and clamp to buffer
-        // bounds. The canvas was translated by the root node's render_position()
-        // so buffer coords = scene coords − root_pos.
-        let root_pos = inner.node_ref
-            .and_then(|r| inner.engine.get_layer(&r))
-            .map(|l| l.render_position())
-            .unwrap_or_default();
-        let (vx, vy) = inner.viewport;
-        let damage_rect = dirty_rect
-            .filter(|_| !backdrop_changed)
-            .map(|r| {
-                let x = ((r.left()  - root_pos.x) as i32 - vx).clamp(0, w);
-                let y = ((r.top()   - root_pos.y) as i32 - vy).clamp(0, h);
-                let x2 = ((r.right() - root_pos.x) as i32 - vx).clamp(0, w);
-                let y2 = ((r.bottom()- root_pos.y) as i32 - vy).clamp(0, h);
-                Rectangle::<i32, Physical>::new(
-                    (x, y).into(),
-                    ((x2 - x).max(1), (y2 - y).max(1)).into(),
-                )
-            })
-            .unwrap_or_else(|| Rectangle::new((0, 0).into(), (w, h).into()));
         inner.damage.add(vec![damage_rect]);
+        if let Some(ss) = slot.userdata().get::<SlotSurface>() {
+            ss.last_commit.set(Some(inner.commit_counter));
+        }
 
         // Store the node-tagged dmabuf for underlying_storage().
         *self.current_dmabuf.lock().unwrap() = Some(dmabuf);
@@ -445,7 +532,7 @@ impl SceneDmabufElement {
             None => { tracing::warn!(target: "otto::planes", "save_to_png: no surface on slot"); return; }
         };
         // SAFETY: single render thread, same safety invariant as render().
-        let skia_surface = unsafe { &mut *slot_surface.0.get() };
+        let skia_surface = unsafe { &mut *slot_surface.surface.get() };
         skia_surface.gr_context.flush_and_submit_surface(
             &mut skia_surface.surface,
             layers::skia::gpu::SyncCpu::Yes,
@@ -572,9 +659,7 @@ impl<'renderer> RenderElement<UdevRenderer<'renderer>> for SceneDmabufElement {
         &self,
         _renderer: &mut UdevRenderer<'renderer>,
     ) -> Option<UnderlyingStorage<'_>> {
-        let guard = self.current_dmabuf.lock().unwrap();
-        let ptr = guard.as_ref()? as *const Dmabuf;
-        drop(guard);
+        let dmabuf = self.current_dmabuf.lock().unwrap().clone()?;
         let keepalive = self
             .inner
             .lock()
@@ -582,10 +667,7 @@ impl<'renderer> RenderElement<UdevRenderer<'renderer>> for SceneDmabufElement {
             .current_slot
             .clone()
             .map(|s| s as Arc<dyn std::any::Any + Send + Sync>);
-        // SAFETY: The Dmabuf lives inside Arc<Mutex<Option<Dmabuf>>> which is
-        // owned by self. It is only replaced in render(), which completes
-        // before underlying_storage() is called. No concurrent mutation.
-        Some(UnderlyingStorage::Dmabuf(unsafe { &*ptr }, keepalive))
+        Some(UnderlyingStorage::Dmabuf(dmabuf, keepalive))
     }
 }
 
@@ -658,9 +740,7 @@ impl RenderElement<SkiaRenderer> for SceneDmabufElement {
     }
 
     fn underlying_storage(&self, _renderer: &mut SkiaRenderer) -> Option<UnderlyingStorage<'_>> {
-        let guard = self.current_dmabuf.lock().unwrap();
-        let ptr = guard.as_ref()? as *const Dmabuf;
-        drop(guard);
+        let dmabuf = self.current_dmabuf.lock().unwrap().clone()?;
         let keepalive = self
             .inner
             .lock()
@@ -668,7 +748,6 @@ impl RenderElement<SkiaRenderer> for SceneDmabufElement {
             .current_slot
             .clone()
             .map(|s| s as Arc<dyn std::any::Any + Send + Sync>);
-        // SAFETY: same as UdevRenderer impl above.
-        Some(UnderlyingStorage::Dmabuf(unsafe { &*ptr }, keepalive))
+        Some(UnderlyingStorage::Dmabuf(dmabuf, keepalive))
     }
 }

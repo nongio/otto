@@ -140,11 +140,10 @@ pub struct SurfaceData {
     /// first frame or after an idle wakeup); the draw phase falls back to
     /// calling `update()` inline in that case.
     pub(super) prefetched_scene_damage: Option<bool>,
-    /// Scene rendered into its own dmabuf for the multi-plane scanout path.
-    /// Used when [`crate::workspaces::Workspaces::is_top_window_scanout_eligible`]
-    /// is true: the top window goes on an overlay plane and the scene goes on
-    /// the primary plane via `UnderlyingStorage::Dmabuf`. Allocated lazily
-    /// on first scanout-mode render of this surface.
+    /// Background subtree rendered into its own dmabuf — the bottom of the
+    /// plane stack, direct-scanned on the PRIMARY plane via
+    /// `UnderlyingStorage::Dmabuf`. Allocated lazily on the first
+    /// planes-mode render of this surface.
     pub(super) scene_dmabuf_element:
         Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
     /// KMS plane for all workspace windows (overlay plane above the background).
@@ -165,10 +164,6 @@ pub struct SurfaceData {
     /// Strip-sized KMS plane for the dock (bottom band). Topmost plane.
     pub(super) dock_dmabuf_element:
         Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
-    /// Optional solid-black debug element (kept for the visual debug path —
-    /// push it to an overlay to see it go black).
-    pub(super) test_dmabuf_element:
-        Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
     /// Downscaled composite of the planes below the overlay-UI plane
     /// (bg + windows/expose), seeding cross-plane backdrop blur (dock
     /// vibrancy). Rebuilt only when a lower plane changes under the
@@ -176,10 +171,21 @@ pub struct SurfaceData {
     pub(super) backdrop_surface: Option<BackdropSurface>,
     /// Snapshot of `backdrop_surface` handed to the overlay element.
     pub(super) backdrop_image: Option<layers::skia::Image>,
+    /// Lower-plane damage occurred while no blur consumer needed the
+    /// composite (or outside every active consumer's region); the next
+    /// frame with an active consumer must rebuild even without new damage.
+    pub(super) backdrop_dirty: bool,
     /// Which element set the previous frame was built from. The compositor
     /// swapchain is reset on transitions so stale buffer ages don't leak
     /// across the mode switch.
     pub(super) last_frame_mode: FrameMode,
+    /// Whether this output uses the per-purpose plane decomposition.
+    /// Requires an atomic driver, enough overlay planes for the scene
+    /// buffers, and the primary GPU (cross-device EGL import of the plane
+    /// dmabufs is unreliable). When false the output renders as a single
+    /// scene element — the plane path would pay all its intermediate
+    /// renders and then GPU-composite every buffer anyway.
+    pub(super) planes_enabled: bool,
     /// Windows currently in shadow-only mode for direct surface scanout.
     /// Their `content_layer` is hidden in lay-rs so only the shadow renders in
     /// `windows_dmabuf_element`. The client buffer is pushed directly as a

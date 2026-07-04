@@ -456,6 +456,7 @@ impl Otto<UdevData> {
             SUPPORTED_FORMATS
         };
 
+        let surface_is_legacy = surface.is_legacy();
         let result = self.create_surface_compositor(
             node,
             surface,
@@ -465,7 +466,25 @@ impl Otto<UdevData> {
             &output,
         );
 
-        if let Some((compositor, _overlay_count)) = result {
+        if let Some((compositor, overlay_count)) = result {
+            // Plane decomposition needs an atomic driver (per-frame TEST_ONLY
+            // assignment), enough overlay planes for the per-purpose buffers,
+            // and the primary GPU (plane dmabufs are rendered with the primary
+            // GPU's EGL context; a cross-device import per plane per frame is
+            // unreliable). Anything else renders as a single scene element.
+            let planes_enabled = !surface_is_legacy
+                && overlay_count >= 3
+                && device_render_node == self.backend_data.primary_gpu;
+            if !planes_enabled {
+                tracing::info!(
+                    target: "otto::planes",
+                    "plane decomposition disabled for {}: legacy={} overlays={} primary_gpu={}",
+                    output.name(),
+                    surface_is_legacy,
+                    overlay_count,
+                    device_render_node == self.backend_data.primary_gpu,
+                );
+            }
             let dmabuf_feedback = get_surface_dmabuf_feedback(
                 self.backend_data.primary_gpu,
                 device_render_node,
@@ -490,15 +509,16 @@ impl Otto<UdevData> {
                 idle_countdown: 0,
                 prefetched_scene_damage: None,
                 scene_dmabuf_element: None,
-                test_dmabuf_element: None,
                 backdrop_surface: None,
                 backdrop_image: None,
+                backdrop_dirty: false,
                 windows_dmabuf_element: None,
                 expose_dmabuf_element: None,
                 overlay_dmabuf_element: None,
                 switcher_dmabuf_element: None,
                 dock_dmabuf_element: None,
                 last_frame_mode: super::types::FrameMode::Planes,
+                planes_enabled,
                 shadow_only_windows: Vec::new(),
                 #[cfg(feature = "renderer_sync")]
                 pending_gpu_fence: SyncPoint::signaled(),
@@ -511,12 +531,10 @@ impl Otto<UdevData> {
         }
     }
 
-    /// Creates a surface compositor and returns the available overlay plane count.
-    ///
-    /// The overlay count (after driver-specific filtering) is used by the caller
-    /// to size `max_scanout_windows`: we reserve `FIXED_OVERLAY_PLANES` overlays
-    /// for the fixed scene planes (windows/expose, overlay_ui, dock) and offer the
-    /// remainder as direct-scanout candidates for the top N client windows.
+    /// Creates a surface compositor and returns the available overlay plane
+    /// count (after driver-specific filtering). The caller uses the count to
+    /// decide whether the per-purpose plane decomposition is worth enabling
+    /// for this output (`SurfaceData::planes_enabled`).
     fn create_surface_compositor(
         &mut self,
         node: DrmNode,
@@ -551,6 +569,10 @@ impl Otto<UdevData> {
                 .contains("nvidia")
         {
             planes.overlay = vec![];
+            // The proprietary driver has no implicit dmabuf fencing: plane
+            // renders must block on the GPU before submission.
+            crate::render_elements::scene_dmabuf_element::IMPLICIT_SYNC
+                .store(false, std::sync::atomic::Ordering::Relaxed);
         }
 
         let overlay_count = planes.overlay.len();
