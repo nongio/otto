@@ -38,6 +38,7 @@ pub struct WorkspaceViewState {
     name: String,
     index: usize,
     workspace_node: Option<NodeRef>,
+    background_node: Option<NodeRef>,
     workspace_width: f32,
     workspace_height: f32,
     fullscreen: bool,
@@ -49,6 +50,7 @@ impl Hash for WorkspaceViewState {
         self.name.hash(state);
         self.index.hash(state);
         self.workspace_node.hash(state);
+        self.background_node.hash(state);
         self.workspace_width.to_bits().hash(state);
         self.workspace_height.to_bits().hash(state);
         self.fullscreen.hash(state);
@@ -340,6 +342,39 @@ fn render_workspace_selector_view(
                 })
                 .children::<LayerTree>({
                     let children: Vec<Option<LayerTree>> = vec![
+                        // The wallpaper lives in the shared background_plane (own KMS
+                        // plane), outside the windows subtree mirrored below — mirror
+                        // it separately so the preview shows the full desktop.
+                        Some(
+                            LayerTreeBuilder::with_key(format!(
+                                "workspace_selector_desktop_bg_mirror_{}",
+                                workspace_index.clone()
+                            ))
+                            .layout_style(taffy::Style {
+                                position: taffy::Position::Absolute,
+                                ..Default::default()
+                            })
+                            .size((
+                                layers::types::Size {
+                                    width: layers::taffy::style::Dimension::Length(workspace_width),
+                                    height: layers::taffy::style::Dimension::Length(
+                                        workspace_height,
+                                    ),
+                                },
+                                None,
+                            ))
+                            .scale(Point::new(scale, scale))
+                            .replicate_node(w.background_node)
+                            .picture_cached(true)
+                            .image_cache(true)
+                            .color_filter(color_filter.clone())
+                            .border_corner_radius(BorderRadius::new_single(20.0 / scale))
+                            .clip_children(true)
+                            .clip_content(true)
+                            .pointer_events(false)
+                            .build()
+                            .unwrap(),
+                        ),
                         Some(
                             LayerTreeBuilder::with_key(format!(
                                 "workspace_selector_desktop_content_mirror_{}",
@@ -546,6 +581,7 @@ impl Observer<WorkspacesModel> for WorkspaceSelectorView {
                         .unwrap_or_else(|| format!("Workspace {}", i + 1)),
                     index: w.index,
                     workspace_node: Some(w.windows_layer.id()),
+                    background_node: Some(w.workspace_background.id()),
                     workspace_width: model.width as f32,
                     workspace_height: model.height as f32,
                     fullscreen: w.get_fullscreen_mode(),
