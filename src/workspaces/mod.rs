@@ -102,6 +102,14 @@ impl OutputWorkspaces {
     pub fn current_space(&self) -> &Space<WindowElement> {
         &self.spaces[self.current_workspace]
     }
+    /// Whether the current workspace has any windows. Checked lookup — the
+    /// index can briefly trail workspace removal.
+    pub fn current_workspace_has_windows(&self) -> bool {
+        self.workspace_views
+            .get(self.current_workspace)
+            .map(|ws| !ws.windows_list.read().unwrap().is_empty())
+            .unwrap_or(false)
+    }
     pub fn current_space_mut(&mut self) -> &mut Space<WindowElement> {
         &mut self.spaces[self.current_workspace]
     }
@@ -3659,6 +3667,37 @@ impl Workspaces {
             }
         }
         promoted
+    }
+
+    /// Whether any overlay-UI chrome is visible on `output` — used by the
+    /// backend to decide if the overlay plane deserves a hardware plane
+    /// slot this frame. Overlay chrome is on demand: an empty full-screen
+    /// ARGB buffer must not waste a plane. Covers layer-shell Top/Overlay
+    /// surfaces, popups, the workspace selector (expose state), the OSD and
+    /// the tiling overlay. DnD is NOT included — the drag icon lives on
+    /// `Otto`, so the caller ORs it in.
+    pub fn is_overlay_ui_active(&self, output: &Output) -> bool {
+        use smithay::desktop::layer_map_for_output;
+        use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
+        let layer_shell_active = layer_map_for_output(output)
+            .layers()
+            .any(|l| matches!(l.layer(), WlrLayer::Top | WlrLayer::Overlay));
+        let popups = !self.popup_overlay.layer.children().is_empty();
+        // Selector and DnD layers are never `hidden()` — they are
+        // empty containers until used, so check content/state instead.
+        let selector = self.is_expose_transitioning()
+            || self.get_show_all()
+            || self.is_animating.load(std::sync::atomic::Ordering::Relaxed);
+        let osd = self.osd.is_visible();
+        let tiling = self.tiling_overlay.is_visible();
+        let active = layer_shell_active || popups || selector || osd || tiling;
+        if active {
+            tracing::debug!(
+                target: "otto::planes",
+                "overlay active: shell={layer_shell_active} popups={popups} selector={selector} osd={osd} tiling={tiling}",
+            );
+        }
+        active
     }
 
     /// Snapshot of the windows currently flagged for scanout.

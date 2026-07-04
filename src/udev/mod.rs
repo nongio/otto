@@ -7,6 +7,9 @@ pub mod device;
 pub mod feedback;
 pub mod gamma;
 pub mod init;
+pub mod backdrop;
+pub mod debug;
+pub mod planes;
 pub mod render;
 pub mod types;
 
