@@ -13,24 +13,8 @@ use smithay::{
 
 use crate::{config::Config, state::Backend, Otto};
 
-// ── Debug plane toggles (debug-kms feature only) ─────────────────────────────
-// 1/2/3/4/5 — toggle background / windows / expose / overlay / top-window planes.
-// 6/7/8/9/0 — save those same planes to PNG.
-#[cfg(feature = "debug-kms")]
-pub static DBG_PLANE_BG: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-#[cfg(feature = "debug-kms")]
-pub static DBG_PLANE_WIN: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-#[cfg(feature = "debug-kms")]
-pub static DBG_PLANE_EXPOSE: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-#[cfg(feature = "debug-kms")]
-pub static DBG_PLANE_OVERLAY: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-#[cfg(feature = "debug-kms")]
-pub static DBG_PLANE_TOP_WIN: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+// ── Debug plane PNG dumps (debug-kms feature only) ───────────────────────────
+// Shift+6/7/8/9 — save the bg / windows / expose / overlay plane to PNG.
 #[cfg(feature = "debug-kms")]
 pub static DBG_SAVE_BG: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -42,9 +26,6 @@ pub static DBG_SAVE_EXPOSE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 #[cfg(feature = "debug-kms")]
 pub static DBG_SAVE_OVERLAY: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-#[cfg(feature = "debug-kms")]
-pub static DBG_SAVE_TOP_WIN: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 use super::actions::KeyAction;
@@ -181,27 +162,23 @@ impl<BackendData: Backend> Otto<BackendData> {
                 |_, modifiers, handle| {
                     let keysym = handle.modified_sym();
 
-                    // Debug plane toggles — highest priority, always intercept.
+                    // Debug plane PNG dumps. Shift-modified so clients still
+                    // receive plain digit keys even in debug-kms builds.
                     #[cfg(feature = "debug-kms")]
                     if matches!(state, KeyState::Pressed)
-                        && !modifiers.ctrl && !modifiers.alt && !modifiers.logo && !modifiers.shift
+                        && modifiers.shift
+                        && !modifiers.ctrl && !modifiers.alt && !modifiers.logo
                     {
                         use std::sync::atomic::Ordering;
                         let toggled = match keysym {
-                            Keysym::_1 => { let v = !DBG_PLANE_BG.load(Ordering::Relaxed); DBG_PLANE_BG.store(v, Ordering::Relaxed); Some(format!("bg={v}")) }
-                            Keysym::_2 => { let v = !DBG_PLANE_WIN.load(Ordering::Relaxed); DBG_PLANE_WIN.store(v, Ordering::Relaxed); Some(format!("win={v}")) }
-                            Keysym::_3 => { let v = !DBG_PLANE_EXPOSE.load(Ordering::Relaxed); DBG_PLANE_EXPOSE.store(v, Ordering::Relaxed); Some(format!("expose={v}")) }
-                            Keysym::_4 => { let v = !DBG_PLANE_OVERLAY.load(Ordering::Relaxed); DBG_PLANE_OVERLAY.store(v, Ordering::Relaxed); Some(format!("overlay={v}")) }
-                            Keysym::_5 => { let v = !DBG_PLANE_TOP_WIN.load(Ordering::Relaxed); DBG_PLANE_TOP_WIN.store(v, Ordering::Relaxed); Some(format!("top_win={v}")) }
-                            Keysym::_6 => { DBG_SAVE_BG.store(true, Ordering::Relaxed); Some("save bg".into()) }
-                            Keysym::_7 => { DBG_SAVE_WIN.store(true, Ordering::Relaxed); Some("save win".into()) }
-                            Keysym::_8 => { DBG_SAVE_EXPOSE.store(true, Ordering::Relaxed); Some("save expose".into()) }
-                            Keysym::_9 => { DBG_SAVE_OVERLAY.store(true, Ordering::Relaxed); Some("save overlay".into()) }
-                            Keysym::_0 => { DBG_SAVE_TOP_WIN.store(true, Ordering::Relaxed); Some("save top_win".into()) }
+                            Keysym::_6 | Keysym::asciicircum => { DBG_SAVE_BG.store(true, Ordering::Relaxed); Some("save bg") }
+                            Keysym::_7 | Keysym::ampersand => { DBG_SAVE_WIN.store(true, Ordering::Relaxed); Some("save win") }
+                            Keysym::_8 | Keysym::asterisk => { DBG_SAVE_EXPOSE.store(true, Ordering::Relaxed); Some("save expose") }
+                            Keysym::_9 | Keysym::parenleft => { DBG_SAVE_OVERLAY.store(true, Ordering::Relaxed); Some("save overlay") }
                             _ => None,
                         };
                         if let Some(msg) = toggled {
-                            tracing::info!(target: "otto::planes", "debug plane toggle: {msg}");
+                            tracing::info!(target: "otto::planes", "debug plane dump: {msg}");
                             suppressed_keys.push(keysym);
                             return FilterResult::Intercept(KeyAction::None);
                         }

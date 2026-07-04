@@ -69,38 +69,6 @@ impl SceneElement {
         }
 
         let updated = self.engine.update(dt);
-        // DEBUG: log scene-update rate at 1Hz so we can see how often scene
-        // damage is reported when client commits are scanout-skipped.
-        {
-            use std::sync::Mutex;
-            use std::sync::OnceLock;
-            use std::time::Duration;
-            static LOG: OnceLock<
-                Mutex<(
-                    Instant,
-                    u64, /* updated_count */
-                    u64, /* total */
-                )>,
-            > = OnceLock::new();
-            let mut g = LOG
-                .get_or_init(|| Mutex::new((Instant::now(), 0, 0)))
-                .lock()
-                .unwrap();
-            g.2 += 1;
-            if updated {
-                g.1 += 1;
-            }
-            if g.0.elapsed() >= Duration::from_secs(1) {
-                tracing::info!(
-                    target: "otto::scene",
-                    "update/s: total={} updated={}",
-                    g.2, g.1,
-                );
-                g.0 = Instant::now();
-                g.1 = 0;
-                g.2 = 0;
-            }
-        }
         if !updated {
             #[cfg(feature = "perf-counters")]
             stats.log_if_due();
@@ -385,8 +353,8 @@ impl RenderElement<SkiaRenderer> for SceneElement {
             None
         };
         let occluded_ref = occluded_set.as_ref();
-        // EXPERIMENT: always pass damage region to enable subtree culling.
-        // Should reduce `subtree_has_visible_drawables` overhead seen in perf.
+        // The damage region is always forwarded so render_node_tree can cull
+        // whole untouched subtrees instead of re-walking them per frame.
         let damage_ref = damage_region.as_ref();
 
         scene.with_arena(|arena| {

@@ -614,17 +614,32 @@ mod headless_tests {
 
     // ── Direct scanout candidate selection ───────────────────────────────
     //
-    // These tests exercise `Workspaces::is_top_window_scanout_eligible()` and
-    // `Workspaces::get_top_window()` — the predicate the udev render path uses
-    // to decide whether to scan out the top window directly to a KMS plane.
-    //
-    // Eligibility rule: any top window can be scanned out as long as no
-    // overlay UI (expose, app switcher, OSD) is shown and the scene isn't
-    // animating. Geometry doesn't matter — Smithay's DrmCompositor handles
-    // plane assignment given the candidate.
+    // These tests exercise `Workspaces::get_scanout_candidates()` — the
+    // selector the udev render path uses to decide which client windows are
+    // promoted to KMS plane scanout. A window is a candidate when no overlay
+    // UI (expose, app switcher, OSD, layer-shell chrome) overlaps it, it is
+    // not animating/minimizing, owns no popups, and is not covered by a
+    // higher window; the set is capped at the promotion limit.
+
+    /// Titles of the current scanout candidates, top-most first.
+    fn scanout_candidate_titles(handle: &HeadlessHandle) -> Vec<String> {
+        handle.query(|state| {
+            state
+                .workspaces
+                .get_scanout_candidates()
+                .iter()
+                .filter_map(|id| {
+                    state
+                        .workspaces
+                        .get_window_for_surface(id)
+                        .map(|w| w.xdg_title())
+                })
+                .collect()
+        })
+    }
 
     /// Wait until animations from compositor startup have settled, so
-    /// `is_top_window_scanout_eligible()` reflects the steady state.
+    /// `get_scanout_candidates()` reflects the steady state.
     ///
     /// Note: in headless mode the workspace `is_animating` flag isn't
     /// reset by the udev render loop (which doesn't run), so we also
@@ -646,43 +661,34 @@ mod headless_tests {
         let handle = start_compositor();
         settle_animations(&handle);
 
-        // Diagnostic: query each blocking condition individually so a failure
-        // pinpoints which one is keeping eligibility false.
-        let (show_all, app_switcher_alive, osd, animating, eligible, top): (
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            Option<String>,
-        ) = handle.query(|state| {
-            (
-                state.workspaces.get_show_all(),
-                {
-                    use otto::focus::IsAlive;
-                    state.workspaces.app_switcher.alive()
-                },
-                state.workspaces.osd.is_visible(),
-                state
-                    .workspaces
-                    .is_animating
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                state.workspaces.is_top_window_scanout_eligible(),
-                state.workspaces.get_top_window().map(|w| w.xdg_title()),
-            )
-        });
+        // Diagnostic: query each global gate individually so a failure
+        // pinpoints which one is active.
+        let (show_all, app_switcher_alive, osd, animating): (bool, bool, bool, bool) = handle
+            .query(|state| {
+                (
+                    state.workspaces.get_show_all(),
+                    {
+                        use otto::focus::IsAlive;
+                        state.workspaces.app_switcher.alive()
+                    },
+                    state.workspaces.osd.is_visible(),
+                    state
+                        .workspaces
+                        .is_animating
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                )
+            });
 
         eprintln!(
             "show_all={show_all} app_switcher={app_switcher_alive} \
-             osd={osd} animating={animating} eligible={eligible} top={top:?}"
-        );
-
-        assert!(
-            eligible,
-            "Eligibility blocked: show_all={show_all} app_switcher={app_switcher_alive} \
              osd={osd} animating={animating}"
         );
-        assert_eq!(top, None, "No top window when no clients are connected");
+
+        let candidates = scanout_candidate_titles(&handle);
+        assert!(
+            candidates.is_empty(),
+            "No candidates when no clients are connected, got {candidates:?}"
+        );
 
         handle.stop();
     }
@@ -698,18 +704,11 @@ mod headless_tests {
         let _ = client.roundtrip();
         settle_animations(&handle);
 
-        let (eligible, top): (bool, Option<String>) = handle.query(|state| {
-            (
-                state.workspaces.is_top_window_scanout_eligible(),
-                state.workspaces.get_top_window().map(|w| w.xdg_title()),
-            )
-        });
-
-        assert!(eligible, "One windowed toplevel + no overlays → eligible");
+        let candidates = scanout_candidate_titles(&handle);
         assert_eq!(
-            top.as_deref(),
-            Some("scanout-only-window"),
-            "Top window should be the only one created"
+            candidates,
+            vec!["scanout-only-window".to_string()],
+            "One windowed toplevel + no overlays → it is the only candidate"
         );
 
         handle.stop();
@@ -729,10 +728,8 @@ mod headless_tests {
         settle_animations(&handle);
 
         // Last-created window is on top by default.
-        let top: Option<String> = handle.query(|state| {
-            state.workspaces.get_top_window().map(|w| w.xdg_title())
-        });
-        assert_eq!(top.as_deref(), Some("top-window"));
+        let top = scanout_candidate_titles(&handle);
+        assert_eq!(top.first().map(String::as_str), Some("top-window"));
 
         // Raise bottom-window to the top.
         handle.with_state(|state| {
@@ -746,11 +743,9 @@ mod headless_tests {
         });
         handle.settle(60);
 
-        let top_after: Option<String> = handle.query(|state| {
-            state.workspaces.get_top_window().map(|w| w.xdg_title())
-        });
+        let top_after = scanout_candidate_titles(&handle);
         assert_eq!(
-            top_after.as_deref(),
+            top_after.first().map(String::as_str),
             Some("bottom-window"),
             "After raising bottom-window, it should be the scanout candidate"
         );
@@ -769,33 +764,30 @@ mod headless_tests {
         let _ = client.roundtrip();
         settle_animations(&handle);
 
-        // Sanity check: scanout-eligible before expose.
-        let eligible_before: bool =
-            handle.query(|state| state.workspaces.is_top_window_scanout_eligible());
-        assert!(eligible_before, "Eligible before expose opens");
+        // Sanity check: window is a candidate before expose.
+        let before = scanout_candidate_titles(&handle);
+        assert!(!before.is_empty(), "Candidate exists before expose opens");
 
         // Open expose.
         handle.toggle_expose();
         handle.settle(300);
         assert!(handle.is_expose_active(), "Expose should be active");
 
-        let eligible_during: bool =
-            handle.query(|state| state.workspaces.is_top_window_scanout_eligible());
+        let during = scanout_candidate_titles(&handle);
         assert!(
-            !eligible_during,
-            "Expose mode must block scanout eligibility (overlay UI visible)"
+            during.is_empty(),
+            "Expose mode must block scanout candidates (overlay UI visible), got {during:?}"
         );
 
-        // Close expose — eligibility returns.
+        // Close expose — candidates return.
         handle.toggle_expose();
         settle_animations(&handle);
         assert!(!handle.is_expose_active(), "Expose should be closed");
 
-        let eligible_after: bool =
-            handle.query(|state| state.workspaces.is_top_window_scanout_eligible());
+        let after = scanout_candidate_titles(&handle);
         assert!(
-            eligible_after,
-            "Eligibility should return after expose closes"
+            !after.is_empty(),
+            "Candidates should return after expose closes"
         );
 
         handle.stop();
@@ -820,7 +812,8 @@ mod headless_tests {
         let scanned_out: bool = handle.query(|state| {
             state
                 .workspaces
-                .get_top_window()
+                .spaces_elements()
+                .find(|w| w.xdg_title() == "flag-test")
                 .map(|w| w.is_scanned_out())
                 .unwrap_or(false)
         });
