@@ -1354,44 +1354,81 @@ pub(super) fn render_output_frame<'a>(
                 // it to an overlay; if that fails it composites the client
                 // buffer into primary (one GPU blit — still cheaper than
                 // doubly-walking the scene graph).
-                use smithay::backend::renderer::element::surface::render_elements_from_surface_tree;
+                //
+                // Only the ROOT surface is pushed. Decoration subsurfaces
+                // (SSD titlebar/buttons/borders) keep rendering in the
+                // windows plane — they never overlap the root surface's
+                // rect, so outside the client element the windows plane
+                // simply shows through. Pushing the whole tree instead made
+                // every promoted SSD window explode into many overlapping
+                // candidates that lost the plane auction and dragged the
+                // full stack into GPU composite.
+                use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
+                use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
                 for win_id in &surface.shadow_only_windows {
                     if let Some(win) = window_elements.iter().find(|w| w.id() == *win_id) {
                         if let Some(wl_surface) = win.wl_surface() {
                             // render_position() is the visible-content origin
-                            // (physical px). render_elements_from_surface_tree
-                            // expects the wl_surface buffer origin, which for
-                            // CSD windows is shifted back by geometry.loc.
+                            // (physical px). The element expects the wl_surface
+                            // buffer origin, which for CSD windows is shifted
+                            // back by geometry.loc.
                             let pos = win.base_layer().render_position();
                             let geo_loc = win.geometry().loc.to_f64().to_physical(scale);
-                            let buf_x = pos.x as i32 - geo_loc.x.round() as i32;
-                            let buf_y = pos.y as i32 - geo_loc.y.round() as i32;
-                            let elems: Vec<WorkspaceRenderElements<_>> =
-                                render_elements_from_surface_tree(
-                                    renderer,
-                                    &wl_surface,
-                                    Point::<i32, Physical>::from((buf_x, buf_y)),
-                                    scale,
-                                    1.0,
-                                    Kind::ScanoutCandidate,
-                                );
-                            {
-                                use smithay::backend::renderer::element::Element as _;
-                                for e in &elems {
-                                    tracing::debug!(
+                            let buf_x = pos.x as f64 - geo_loc.x;
+                            let buf_y = pos.y as f64 - geo_loc.y;
+                            let elem = smithay::wayland::compositor::with_states(
+                                &wl_surface,
+                                |states| {
+                                    // Same location math as the tree walk in
+                                    // render_elements_from_surface_tree: the
+                                    // root element sits at origin + its view
+                                    // offset.
+                                    let mut location: Point<f64, Physical> =
+                                        (buf_x, buf_y).into();
+                                    match states
+                                        .data_map
+                                        .get::<RendererSurfaceStateUserData>()
+                                        .and_then(|d| d.lock().unwrap().view())
+                                    {
+                                        Some(view) => {
+                                            location +=
+                                                view.offset.to_f64().to_physical(scale);
+                                        }
+                                        // Unmapped — nothing to scan out.
+                                        None => return Ok(None),
+                                    }
+                                    WaylandSurfaceRenderElement::from_surface(
+                                        renderer,
+                                        &wl_surface,
+                                        states,
+                                        location,
+                                        1.0,
+                                        Kind::ScanoutCandidate,
+                                    )
+                                },
+                            );
+                            match elem {
+                                Ok(Some(e)) => {
+                                    {
+                                        use smithay::backend::renderer::element::Element as _;
+                                        tracing::debug!(
+                                            target: "otto::planes",
+                                            "topwin scanout push at ({buf_x},{buf_y}) geo={:?} src={:?}",
+                                            e.geometry(scale),
+                                            e.src(),
+                                        );
+                                    }
+                                    workspace_render_elements
+                                        .push(WorkspaceRenderElements::from(e));
+                                }
+                                Ok(None) => {}
+                                Err(err) => {
+                                    tracing::warn!(
                                         target: "otto::planes",
-                                        "topwin elem {:?} geo={:?}",
-                                        e.id(),
-                                        e.geometry(scale.into()),
+                                        "topwin surface import failed: {err}"
                                     );
                                 }
                             }
-                            tracing::debug!(
-                                target: "otto::planes",
-                                "topwin scanout push: {} elements at ({buf_x},{buf_y})",
-                                elems.len(),
-                            );
-                            workspace_render_elements.extend(elems);
                         }
                     }
                 }
