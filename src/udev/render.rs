@@ -455,96 +455,18 @@ impl Otto<UdevData> {
         // Skipped entirely when the plane decomposition is disabled for this
         // output — the swapchains would only waste GPU memory.
         if let (true, Some(mode)) = (planes_enabled, output.current_mode()) {
-            use crate::render_elements::scene_dmabuf_element::SceneDmabufElement;
-            use smithay::backend::allocator::Fourcc;
-
-            macro_rules! alloc_plane {
-                ($field:expr, $format:expr, $opaque:expr, $label:literal) => {
-                    if $field.is_none() {
-                        let mut el = SceneDmabufElement::new(
-                            self.layers_engine.clone(),
-                            (mode.size.w, mode.size.h),
-                            $label,
-                        );
-                        el.opaque = $opaque;
-                        match el.ensure_swapchain(device_gbm.clone(), $format, surface.render_node) {
-                            Ok(()) => $field = Some(el),
-                            Err(e) => tracing::warn!("plane alloc failed for {crtc:?}: {e}"),
-                        }
-                    }
-                };
-            }
-
-            alloc_plane!(surface.scene_dmabuf_element,      Fourcc::Xrgb8888, true,  "bg");
-            // The background may only direct-scan the PRIMARY plane: as a
-            // full-output opaque buffer it must never float to an overlay
-            // above the primary swapchain (it would hide every element that
-            // fell back to GPU compositing there).
-            if let Some(el) = surface.scene_dmabuf_element.as_mut() {
-                el.kind = smithay::backend::renderer::element::Kind::Unspecified;
-            }
-            alloc_plane!(surface.windows_dmabuf_element,    Fourcc::Argb8888, false, "windows");
-            alloc_plane!(surface.expose_dmabuf_element,     Fourcc::Argb8888, false, "expose");
-            alloc_plane!(surface.overlay_dmabuf_element,    Fourcc::Argb8888, false, "overlay");
-
-            // Strip-sized planes: full output width, cropped bands of their
-            // full-screen containers via the element viewport. Small buffers
-            // mean dock/switcher animations no longer redraw a full-screen
-            // plane, and the KMS watermark cost scales with plane size.
-            let dock_strip_h = (mode.size.h / 4).min(480);
-            let switcher_strip_h = (mode.size.h / 2).min(960);
-            macro_rules! alloc_strip {
-                ($field:expr, $h:expr, $y:expr, $label:literal) => {
-                    if $field.is_none() {
-                        let mut el = SceneDmabufElement::new(
-                            self.layers_engine.clone(),
-                            (mode.size.w, $h),
-                            $label,
-                        );
-                        el.opaque = false;
-                        el.position = (0, $y);
-                        el.set_viewport((0, $y));
-                        match el.ensure_swapchain(device_gbm.clone(), Fourcc::Argb8888, surface.render_node) {
-                            Ok(()) => $field = Some(el),
-                            Err(e) => tracing::warn!("strip plane alloc failed for {crtc:?}: {e}"),
-                        }
-                    }
-                };
-            }
-            alloc_strip!(
-                surface.dock_dmabuf_element,
-                dock_strip_h,
-                mode.size.h - dock_strip_h,
-                "dock"
-            );
-            alloc_strip!(
-                surface.switcher_dmabuf_element,
-                switcher_strip_h,
-                (mode.size.h - switcher_strip_h) / 2,
-                "switcher"
+            super::planes::ensure_plane_elements(
+                surface,
+                &self.layers_engine,
+                &device_gbm,
+                crtc,
+                (mode.size.w, mode.size.h),
             );
         }
 
         // Every frame: point each plane element at its output's node.
         if let Some(ows) = self.workspaces.output_workspaces.get(&output.name()) {
-            if let Some(el) = &surface.scene_dmabuf_element {
-                el.set_node_ref(ows.background_plane.id);
-            }
-            if let Some(el) = &surface.windows_dmabuf_element {
-                el.set_node_ref(ows.windows_plane.id);
-            }
-            if let Some(el) = &surface.expose_dmabuf_element {
-                el.set_node_ref(ows.expose_layer.id);
-            }
-            if let Some(el) = &surface.overlay_dmabuf_element {
-                el.set_node_ref(ows.overlay_plane.id);
-            }
-            if let Some(el) = &surface.switcher_dmabuf_element {
-                el.set_node_ref(ows.switcher_plane.id);
-            }
-            if let Some(el) = &surface.dock_dmabuf_element {
-                el.set_node_ref(ows.dock_plane.id);
-            }
+            super::planes::wire_plane_nodes(surface, ows);
         }
 
         // Classify every window into its visibility state so post_repaint can
@@ -597,7 +519,7 @@ impl Otto<UdevData> {
             .map(|ows| self.scene_element.for_output_layer(&ows.output_layer))
             .unwrap_or_else(|| self.scene_element.clone());
 
-        let result = render_surface(
+        let result = render_output_frame(
             surface,
             &mut renderer,
             &all_window_elements,
@@ -614,34 +536,7 @@ impl Otto<UdevData> {
             fullscreen_window.as_ref(),
             self.workspaces.app_switcher.alive(),
             !self.workspaces.dock.is_hidden(),
-            {
-                // Overlay chrome is on demand: an empty full-screen ARGB
-                // buffer must not waste a hardware plane slot. It is pushed
-                // only when something in its subtree is actually visible.
-                use smithay::desktop::layer_map_for_output;
-                use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
-                let w = &self.workspaces;
-                let layer_shell_active = layer_map_for_output(&output)
-                    .layers()
-                    .any(|l| matches!(l.layer(), WlrLayer::Top | WlrLayer::Overlay));
-                let popups = !w.popup_overlay.layer.children().is_empty();
-                // Selector and DnD layers are never `hidden()` — they are
-                // empty containers until used, so check content/state instead.
-                let selector = w.is_expose_transitioning()
-                    || w.get_show_all()
-                    || w.is_animating.load(std::sync::atomic::Ordering::Relaxed);
-                let osd = w.osd.is_visible();
-                let tiling = w.tiling_overlay.is_visible();
-                let dnd = self.dnd_icon.is_some();
-                let active = layer_shell_active || popups || selector || osd || tiling || dnd;
-                if active {
-                    tracing::debug!(
-                        target: "otto::planes",
-                        "overlay active: shell={layer_shell_active} popups={popups} selector={selector} osd={osd} tiling={tiling} dnd={dnd}",
-                    );
-                }
-                active
-            },
+            self.workspaces.is_overlay_ui_active(&output) || self.dnd_icon.is_some(),
             self.workspaces.output_workspaces.get(&output.name()),
             screencopy_pending,
             self.workspaces
@@ -1187,7 +1082,7 @@ impl Otto<UdevData> {
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::mutable_key_type)] // ObjectId as HashMap key — see window_throttle.rs
-pub(super) fn render_surface<'a>(
+pub(super) fn render_output_frame<'a>(
     surface: &'a mut SurfaceData,
     renderer: &mut UdevRenderer<'a>,
     window_elements: &[&WindowElement],
@@ -1386,244 +1281,42 @@ pub(super) fn render_surface<'a>(
             // GPU-compositing that element into the primary plane. Our
             // `SceneDmabufElement` already reports `ScanoutCandidate`, so we just
             // push in z-order and let Smithay do plane assignment + fallback.
-            // Push-only: planes are rendered explicitly bottom-up further
-            // down (the backdrop composite needs the lower planes rendered
-            // before the overlay), and engine damage is cleared only once
-            // per frame — a render inside the push would re-render planes a
-            // second time.
-            macro_rules! push_plane {
-                ($el:expr) => {
-                    if let Some(el) = $el.as_ref() {
-                        // Pushed even when nothing new was rendered this frame:
-                        // the existing dmabuf stays on the plane and Smithay sees
-                        // an unchanged commit_counter → empty damage → no page-flip.
-                        if el.current_dmabuf().is_some() {
-                            workspace_render_elements
-                                .push(WorkspaceRenderElements::SceneDmabuf(el.clone()));
-                        }
-                    }
-                };
-            }
+            // Push-only (`planes::push_ready`): planes are rendered
+            // explicitly bottom-up further down (the backdrop composite
+            // needs the lower planes rendered before the overlay), and
+            // engine damage is cleared only once per frame — a render
+            // inside the push would re-render planes a second time.
+            use super::planes::push_ready;
 
-            // ── Cross-plane backdrop (vibrancy) ──────────────────────────
-            //
-            // The blur-bearing planes (overlay UI: dock, switcher, menus, OSD
-            // — and expose) render into their own buffers, so their
-            // `BackgroundBlur` layers can't see the planes below. Build a
-            // DOWNSCALED composite of the lower planes and hand it to them via
-            // lay-rs' external-backdrop API (`render_node_tree`'s backdrop
-            // parameter seeds it behind the blur shapes with DstOver).
-            // Downscaled because the blur re-downscales its input anyway: a
-            // low-res backdrop is imperceptible after blurring but far cheaper
-            // to build, hold and sample than a full-res snapshot.
-            //
-            // Two-stage build in one small surface: draw bg → snapshot (the
-            // expose backdrop), then draw the middle plane on top → snapshot
-            // (the overlay backdrop). Rebuilt only when a lower plane recorded
-            // damage this frame; the fresh snapshot's unique_id is what makes
-            // the consumers re-render.
-            const BACKDROP_SCALE: f32 = 0.25;
-
-            // (The bg plane was already rendered above, before the branch.)
-            let bg_damage = surface
-                .scene_dmabuf_element
-                .as_ref()
-                .and_then(|el| el.subtree_damage());
-            let middle_el = if expose_active {
-                surface.expose_dmabuf_element.as_ref()
-            } else {
-                surface.windows_dmabuf_element.as_ref()
-            };
-            let middle_damage = middle_el.and_then(|el| el.subtree_damage());
-
-            // The composite only matters to the blur-bearing consumers that
-            // are actually on screen, and only where they sample it: the dock
-            // and switcher sample their own strips; the overlay UI and expose
-            // can blur anywhere. Lower-plane damage outside every active
-            // region (the common case: a window updating above the dock) must
-            // NOT rebuild — a rebuild forces every blur consumer to re-render
-            // its full buffer. Damage skipped this way marks the composite
-            // dirty so a later-activating consumer still gets fresh content.
-            let mut interest: Vec<layers::skia::Rect> = Vec::new();
-            if expose_active || overlay_active {
-                if let Some(m) = output.current_mode() {
-                    interest.push(layers::skia::Rect::from_wh(
-                        m.size.w as f32,
-                        m.size.h as f32,
-                    ));
-                }
-            } else {
-                let strip_rect = |el: &Option<
-                    crate::render_elements::scene_dmabuf_element::SceneDmabufElement,
-                >| {
-                    el.as_ref().map(|el| {
-                        use smithay::backend::renderer::element::Element as _;
-                        let geo = el.geometry(smithay::utils::Scale::from(1.0));
-                        layers::skia::Rect::from_xywh(
-                            geo.loc.x as f32,
-                            geo.loc.y as f32,
-                            geo.size.w as f32,
-                            geo.size.h as f32,
-                        )
-                    })
-                };
-                if dock_visible {
-                    interest.extend(strip_rect(&surface.dock_dmabuf_element));
-                }
-                if switcher_active {
-                    interest.extend(strip_rect(&surface.switcher_dmabuf_element));
-                }
-            }
-            let hits_interest = |d: &Option<layers::skia::Rect>| {
-                d.map_or(false, |r| {
-                    interest.iter().any(|i| {
-                        r.left() < i.right()
-                            && r.right() > i.left()
-                            && r.top() < i.bottom()
-                            && r.bottom() > i.top()
-                    })
-                })
-            };
-            let any_consumer = !interest.is_empty();
-            let lower_damaged = bg_damage.is_some() || middle_damage.is_some();
-            let rebuild = any_consumer
-                && (surface.backdrop_image.is_none()
-                    || surface.backdrop_dirty
-                    || hits_interest(&bg_damage)
-                    || hits_interest(&middle_damage));
-            if rebuild {
-                surface.backdrop_dirty = false;
-            } else if lower_damaged {
-                surface.backdrop_dirty = true;
-            }
-
-            if rebuild {
-                let bg_img = surface
-                    .scene_dmabuf_element
-                    .as_ref()
-                    .and_then(|el| el.snapshot());
-                let ctx = surface
-                    .scene_dmabuf_element
-                    .as_ref()
-                    .and_then(|el| el.gr_context());
-                if let (Some(bg_img), Some(mut ctx)) = (bg_img, ctx) {
-                    let (out_w, out_h) = output
-                        .current_mode()
-                        .map(|m| (m.size.w, m.size.h))
-                        .unwrap_or((bg_img.width(), bg_img.height()));
-                    let (bw, bh) = (
-                        ((out_w as f32 * BACKDROP_SCALE) as i32).max(1),
-                        ((out_h as f32 * BACKDROP_SCALE) as i32).max(1),
-                    );
-                    if surface.backdrop_surface.is_none() {
-                        let image_info = layers::skia::ImageInfo::new(
-                            (bw, bh),
-                            layers::skia::ColorType::RGBA8888,
-                            layers::skia::AlphaType::Premul,
-                            None,
-                        );
-                        surface.backdrop_surface = layers::skia::gpu::surfaces::render_target(
-                            &mut ctx,
-                            layers::skia::gpu::Budgeted::No,
-                            &image_info,
-                            None,
-                            layers::skia::gpu::SurfaceOrigin::TopLeft,
-                            None,
-                            false,
-                            false,
-                        )
-                        .map(|surface| crate::udev::types::BackdropSurface {
-                            surface,
-                            context: ctx.clone(),
-                        });
-                    }
-                    if let Some(bs) = surface.backdrop_surface.as_mut() {
-                        let dst = layers::skia::Rect::from_xywh(0.0, 0.0, bw as f32, bh as f32);
-                        let sampling = layers::skia::SamplingOptions::new(
-                            layers::skia::FilterMode::Linear,
-                            layers::skia::MipmapMode::None,
-                        );
-                        let paint = layers::skia::Paint::default();
-                        // Stage 1: bg only — the expose backdrop.
-                        {
-                            let canvas = bs.surface.canvas();
-                            canvas.clear(layers::skia::Color4f::new(0.0, 0.0, 0.0, 1.0));
-                            canvas.draw_image_rect_with_sampling_options(
-                                &bg_img, None, dst, sampling, &paint,
-                            );
-                        }
-                        if expose_active {
-                            if let Some(expose) = &surface.expose_dmabuf_element {
-                                bs.context.flush_and_submit();
-                                let bg_small = bs.surface.image_snapshot();
-                                expose.set_backdrop(Some((bg_small, BACKDROP_SCALE)));
-                            }
-                        }
-                        // Render the middle plane now (expose renders with its
-                        // fresh backdrop; windows has no blur).
-                        if let Some(el) = middle_el {
-                            el.render(renderer.as_mut());
-                        }
-                        // Stage 2: + middle plane — the overlay backdrop.
-                        if let Some(middle_img) = middle_el.and_then(|el| el.snapshot()) {
-                            let canvas = bs.surface.canvas();
-                            canvas.draw_image_rect_with_sampling_options(
-                                &middle_img, None, dst, sampling, &paint,
-                            );
-                        }
-                        bs.context.flush_and_submit();
-                        surface.backdrop_image = Some(bs.surface.image_snapshot());
-                    }
-                } else if let Some(el) = middle_el {
-                    // No bg snapshot/context yet (first frames) — still render
-                    // the middle plane so the stack stays warm.
-                    el.render(renderer.as_mut());
-                }
-            } else if let Some(el) = middle_el {
-                el.render(renderer.as_mut());
-            }
-
-            // All blur-bearing upper planes consume the same composite; each
-            // re-renders only when the snapshot's unique_id changes or its own
-            // subtree is damaged.
-            let upper_backdrop = surface
-                .backdrop_image
-                .clone()
-                .map(|img| (img, BACKDROP_SCALE));
-            if let Some(el) = &surface.overlay_dmabuf_element {
-                el.set_backdrop(upper_backdrop.clone());
-                if overlay_active {
-                    el.render(renderer.as_mut());
-                }
-            }
-            if let Some(el) = &surface.switcher_dmabuf_element {
-                el.set_backdrop(upper_backdrop.clone());
-                if switcher_active {
-                    el.render(renderer.as_mut());
-                }
-            }
-            if let Some(el) = &surface.dock_dmabuf_element {
-                el.set_backdrop(upper_backdrop);
-                if dock_visible {
-                    el.render(renderer.as_mut());
-                }
-            }
+            // Cross-plane backdrop (vibrancy): rebuild the downscaled
+            // composite when needed, render the middle plane, and hand the
+            // composite to the blur-bearing upper planes (see
+            // `udev::backdrop` for the full design notes).
+            super::backdrop::update_backdrop_and_upper_planes(
+                surface,
+                renderer,
+                output,
+                expose_active,
+                overlay_active,
+                switcher_active,
+                dock_visible,
+            );
 
             // Push top→bottom: dock, switcher (only while alive — an empty
             // transparent strip would waste a plane), then overlay chrome.
             if dock_visible {
-                push_plane!(surface.dock_dmabuf_element);
+                push_ready(&surface.dock_dmabuf_element, &mut workspace_render_elements);
             }
             if switcher_active {
-                push_plane!(surface.switcher_dmabuf_element);
+                push_ready(&surface.switcher_dmabuf_element, &mut workspace_render_elements);
             }
             if overlay_active {
-                push_plane!(surface.overlay_dmabuf_element);
+                push_ready(&surface.overlay_dmabuf_element, &mut workspace_render_elements);
             }
 
             if expose_active {
                 // Expose replaces the windows plane while it's visible.
-                push_plane!(surface.expose_dmabuf_element);
+                push_ready(&surface.expose_dmabuf_element, &mut workspace_render_elements);
                 // Keep the windows swapchain warm for the expose→windows
                 // transition so closing expose doesn't flash a cold frame.
                 if let Some(el) = &surface.windows_dmabuf_element {
@@ -1677,67 +1370,19 @@ pub(super) fn render_surface<'a>(
                     }
                 }
 
-                let has_windows = output_workspaces.map_or(false, |ows| {
-                    let ws = &ows.workspace_views[ows.current_workspace];
-                    !ws.windows_list.read().unwrap().is_empty()
-                });
+                let has_windows =
+                    output_workspaces.map_or(false, |ows| ows.current_workspace_has_windows());
                 if has_windows {
-                    push_plane!(surface.windows_dmabuf_element);
+                    push_ready(&surface.windows_dmabuf_element, &mut workspace_render_elements);
                 }
             }
 
             // Background on primary plane (bottom).
-            push_plane!(surface.scene_dmabuf_element);
+            push_ready(&surface.scene_dmabuf_element, &mut workspace_render_elements);
 
-            // Debug PNG saves — triggered by keys 6-0 (debug-kms feature only).
             #[cfg(feature = "debug-kms")]
-            {
-                use crate::input::keyboard::*;
-                use std::sync::atomic::Ordering;
-                macro_rules! dbg_save {
-                    ($flag:expr, $el:expr, $path:expr) => {
-                        if $flag.swap(false, Ordering::Relaxed) {
-                            if let Some(el) = &$el {
-                                el.save_to_png(&$path);
-                            }
-                        }
-                    };
-                }
-                let ss_dir = std::path::Path::new("/home/riccardo/Pictures/Screenshots");
-                macro_rules! ss_path {
-                    ($name:literal) => { ss_dir.join(format!("otto_plane_{}.png", $name)).to_string_lossy().into_owned() };
-                }
-                dbg_save!(DBG_SAVE_BG,      surface.scene_dmabuf_element,     ss_path!("bg"));
-                dbg_save!(DBG_SAVE_WIN,     surface.windows_dmabuf_element,    ss_path!("win"));
-                dbg_save!(DBG_SAVE_EXPOSE,  surface.expose_dmabuf_element,     ss_path!("expose"));
-                dbg_save!(DBG_SAVE_OVERLAY, surface.overlay_dmabuf_element,    ss_path!("overlay"));
-            }
-
-            // Debug: dump every plane buffer to PNG when requested
-            // (`touch /tmp/otto-dump-planes`; the file is polled at 1 Hz and
-            // converted into this one-shot flag). Shows exactly what each KMS
-            // plane scans out, independent of the GPU-composited screencopy.
-            if crate::render_elements::scene_dmabuf_element::DUMP_PLANES
-                .swap(false, std::sync::atomic::Ordering::Relaxed)
-            {
-                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-                let dir = format!("{home}/Pictures/Screenshots");
-                let _ = std::fs::create_dir_all(&dir);
-                macro_rules! dump_plane {
-                    ($el:expr, $name:literal) => {
-                        if let Some(el) = &$el {
-                            el.save_to_png(&format!("{dir}/otto_plane_{}.png", $name));
-                        }
-                    };
-                }
-                dump_plane!(surface.scene_dmabuf_element, "bg");
-                dump_plane!(surface.windows_dmabuf_element, "windows");
-                dump_plane!(surface.expose_dmabuf_element, "expose");
-                dump_plane!(surface.overlay_dmabuf_element, "overlay");
-                dump_plane!(surface.switcher_dmabuf_element, "switcher");
-                dump_plane!(surface.dock_dmabuf_element, "dock");
-                tracing::info!(target: "otto::planes", "plane buffers dumped to {dir}");
-            }
+            super::debug::maybe_save_planes(surface);
+            super::debug::maybe_dump_planes(surface);
 
             } // end planes branch
 
@@ -1843,94 +1488,9 @@ pub(super) fn render_surface<'a>(
     let rendered = !render_frame_result.is_empty;
     let states = render_frame_result.states;
 
-    // Debug: once per second, log how each plane element was realized
-    // (ZeroCopy = on a hardware plane, Rendering = GPU-composited into the
-    // primary swapchain, missing = not part of this frame at all).
-    {
-        use std::sync::{Mutex, OnceLock};
-        use std::time::{Duration, Instant};
-        static LAST: OnceLock<Mutex<Instant>> = OnceLock::new();
-        let mut last = LAST
-            .get_or_init(|| Mutex::new(Instant::now() - Duration::from_secs(2)))
-            .lock()
-            .unwrap();
-        if last.elapsed() >= Duration::from_secs(1) {
-            *last = Instant::now();
+    // 1 Hz: refresh /tmp debug toggles and log per-plane realization.
+    super::debug::debug_tick(surface, &states, expose_active);
 
-            // Debug: `touch /tmp/otto-tint` tints everything GPU-composited
-            // red (client textures via Smithay's DebugFlags::TINT, our plane
-            // fallback blits via TINT_COMPOSITE). Zero-copy plane scanout
-            // stays untinted. Remove the file to switch the tint off.
-            {
-                use smithay::backend::renderer::DebugFlags;
-                let tint = std::path::Path::new("/tmp/otto-tint").exists();
-                let flags = if tint {
-                    DebugFlags::TINT
-                } else {
-                    DebugFlags::empty()
-                };
-                if surface.compositor.debug_flags() != flags {
-                    surface.compositor.set_debug_flags(flags);
-                    tracing::info!(target: "otto::planes", "composite tint {}", if tint { "ON" } else { "OFF" });
-                }
-                crate::render_elements::scene_dmabuf_element::TINT_COMPOSITE
-                    .store(tint, std::sync::atomic::Ordering::Relaxed);
-            }
-
-            // Refresh the other /tmp debug toggles here too, so the hot path
-            // reads atomics instead of stat()ing files every frame.
-            {
-                use crate::render_elements::scene_dmabuf_element::{DUMP_PLANES, NO_SCANOUT};
-                use std::sync::atomic::Ordering;
-                NO_SCANOUT.store(
-                    std::path::Path::new("/tmp/otto-no-scanout").exists(),
-                    Ordering::Relaxed,
-                );
-                if std::path::Path::new("/tmp/otto-dump-planes").exists() {
-                    let _ = std::fs::remove_file("/tmp/otto-dump-planes");
-                    DUMP_PLANES.store(true, Ordering::Relaxed);
-                }
-            }
-
-            let mut summary = String::new();
-            macro_rules! log_state {
-                ($el:expr, $name:literal) => {
-                    if let Some(el) = $el.as_ref() {
-                        use smithay::backend::renderer::element::Element as _;
-                        let s = states
-                            .element_render_state(el.id().clone())
-                            .map(|s| format!("{:?}", s.presentation_state))
-                            .unwrap_or_else(|| "absent".into());
-                        summary.push_str(&format!("{}[{:?}]={} ", $name, el.id(), s));
-                    }
-                };
-            }
-            log_state!(surface.scene_dmabuf_element, "bg");
-            log_state!(surface.windows_dmabuf_element, "windows");
-            log_state!(surface.expose_dmabuf_element, "expose");
-            log_state!(surface.overlay_dmabuf_element, "overlay");
-            log_state!(surface.switcher_dmabuf_element, "switcher");
-            log_state!(surface.dock_dmabuf_element, "dock");
-            // Histogram over every element smithay saw this frame — client
-            // buffers (direct scanout candidates) show up here even though
-            // we can't match their ids to a plane element.
-            let (mut zc, mut rend, mut skip) = (0, 0, 0);
-            for s in states.states.values() {
-                use smithay::backend::renderer::element::RenderElementPresentationState as P;
-                match s.presentation_state {
-                    P::ZeroCopy => zc += 1,
-                    P::Rendering { .. } => rend += 1,
-                    P::Skipped => skip += 1,
-                }
-            }
-            tracing::debug!(
-                target: "otto::planes",
-                "frame realization: {summary}expose_active={expose_active} shadow_only={} elements: total={} zerocopy={zc} rendering={rend} skipped={skip}",
-                surface.shadow_only_windows.len(),
-                states.states.len(),
-            );
-        }
-    }
     let damage: Option<Vec<Rectangle<i32, Physical>>> = None; // DRM compositor doesn't provide damage info
 
     // Record damage metrics if available
