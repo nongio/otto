@@ -3629,25 +3629,29 @@ impl Workspaces {
                 })
                 .unwrap_or(false);
             let overlaps_occluder = occluders.iter().any(|r| r.overlaps(rect));
-            // A surface tree with subsurfaces (e.g. the SSD decoration
-            // strips: titlebar, buttons, borders) explodes into many plane
-            // candidates that overlap each other, lose the plane auction and
-            // GPU-composite — and any composited element in front then
-            // demotes the bg/windows planes below it (z-order). Promoting
-            // such a window costs more than compositing it; only
-            // single-surface trees (typical CSD/video clients) are promoted.
-            let has_subsurfaces = window
+            // Only dmabuf-backed buffers can scan out. An SHM client (e.g. a
+            // CPU-rendered terminal) would take the whole promotion path just
+            // to have its element GPU-composite anyway — and a composited
+            // element in front demotes every plane below it (z-order), a net
+            // loss over leaving the window in the windows plane.
+            let has_dmabuf_buffer = window
                 .wl_surface()
                 .map(|s| {
-                    let mut count = 0u32;
-                    smithay::wayland::compositor::with_surface_tree_downward(
-                        &s,
-                        (),
-                        |_, _, _| smithay::wayland::compositor::TraversalAction::DoChildren(()),
-                        |_, _, _| count += 1,
-                        |_, _, _| true,
-                    );
-                    count > 1
+                    smithay::wayland::compositor::with_states(&s, |states| {
+                        states
+                            .data_map
+                            .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>()
+                            .map(|data| {
+                                data.lock()
+                                    .unwrap()
+                                    .buffer()
+                                    .map(|b| {
+                                        smithay::wayland::dmabuf::get_dmabuf(b).is_ok()
+                                    })
+                                    .unwrap_or(false)
+                            })
+                            .unwrap_or(false)
+                    })
                 })
                 .unwrap_or(false);
             // Cap the promoted set: the hardware admits ~5 simultaneous
@@ -3655,13 +3659,18 @@ impl Workspaces {
             // client plane evicts the windows plane (measured), which costs
             // more than compositing the extra window. Windows past the cap
             // still occlude the ones below.
+            //
+            // Windows with subsurfaces (SSD decorations) are eligible too:
+            // only their ROOT surface goes to the plane, the decoration
+            // subsurfaces keep rendering in the windows plane
+            // (see `set_scanout_windows`).
             const MAX_PROMOTED: usize = 1;
             if promoted.len() < MAX_PROMOTED
                 && !overlaps_above
                 && !animating
                 && !has_popups
                 && !overlaps_occluder
-                && !has_subsurfaces
+                && has_dmabuf_buffer
             {
                 promoted.push(window.id());
             }
@@ -3776,8 +3785,31 @@ impl Workspaces {
             }
         }
         for new in new_ids.difference(&prev_ids) {
+            let base_only = self
+                .get_window_for_surface(new)
+                .map(window_has_subsurfaces)
+                .unwrap_or(false);
             if let Some(view) = self.get_window_view(new) {
-                view.set_content_hidden(true);
+                if base_only {
+                    // SSD window: only the root surface's client buffer goes
+                    // to a plane. Blank just the root surface layer's draw
+                    // content so the decoration subsurface layers (its
+                    // children: titlebar, buttons, borders) keep rendering
+                    // in the windows plane. Hiding the root layer instead
+                    // would hide the children with it. The no-op closure
+                    // reports full-bounds damage so the old pixels clear;
+                    // the demotion re-import (`update_window_view` →
+                    // `configure_surface_layer`) reinstalls the real draw
+                    // closure and the opaque flag.
+                    for root in view.content_layer.children() {
+                        root.set_content_opaque(false);
+                        root.set_draw_content(|_: &layers::skia::Canvas, w: f32, h: f32| {
+                            layers::skia::Rect::from_wh(w, h)
+                        });
+                    }
+                } else {
+                    view.set_content_hidden(true);
+                }
             }
             if let Some(window) = self.get_window_for_surface(new) {
                 window.set_scanned_out(true);
@@ -4574,4 +4606,25 @@ impl Observable<WorkspacesModel> for Workspaces {
     ) -> Box<dyn Iterator<Item = std::sync::Weak<dyn Observer<WorkspacesModel>>> + 'a> {
         Box::new(self.observers.iter().cloned())
     }
+}
+
+/// Whether the window's surface tree contains subsurfaces (e.g. the SSD
+/// decoration strips: titlebar, buttons, borders). Such windows are
+/// promoted in "base-only" mode: the root surface scans out on a KMS
+/// plane while the decorations keep rendering in the windows plane.
+fn window_has_subsurfaces(window: &WindowElement) -> bool {
+    window
+        .wl_surface()
+        .map(|s| {
+            let mut count = 0u32;
+            smithay::wayland::compositor::with_surface_tree_downward(
+                &s,
+                (),
+                |_, _, _| smithay::wayland::compositor::TraversalAction::DoChildren(()),
+                |_, _, _| count += 1,
+                |_, _, _| true,
+            );
+            count > 1
+        })
+        .unwrap_or(false)
 }

@@ -96,12 +96,22 @@ vibrancy even though the content behind it lives on other planes.
   are rebuilt every engine update and oscillate promote/demote (content
   flicker). A window overlapping any of those occluders, owning an open
   popup, animating, or covered by a higher window is not promoted.
+- Only windows whose current buffer is a dmabuf are promoted. An SHM
+  client (e.g. a CPU-rendered terminal) can never scan out: its element
+  would GPU-composite anyway and, being in front, demote every plane
+  below it — a net loss over leaving it in the windows plane.
 - A window whose surface tree contains subsurfaces (e.g. the SSD
-  decoration strips: titlebar, buttons, borders) is not promoted: the tree
-  explodes into many mutually-overlapping plane candidates that lose the
-  plane auction and GPU-composite, and a composited element in front
-  demotes every plane below it (z-order). Single-surface trees — typical
-  CSD and video clients — are the profitable case.
+  decoration strips: titlebar, buttons, borders) is promoted in
+  "base-only" mode: only the ROOT surface's client buffer is pushed as a
+  plane candidate, and only the root surface's draw content is blanked in
+  the windows plane — the decoration subsurface layers keep rendering
+  there. The decorations never overlap the root surface's rect (titlebar
+  above, borders around), so outside the client element the windows plane
+  shows through and no cross-plane blending issue exists. Pushing the
+  whole tree instead would explode into many mutually-overlapping plane
+  candidates that lose the plane auction, GPU-composite, and demote every
+  plane below them (z-order). The demotion re-import restores the root
+  surface's draw content.
 - A window leaving the scanout set is re-imported and the scene update is
   re-run that same frame, so the first composited frame shows current
   content (no one-frame shadow-only flicker).
