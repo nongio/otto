@@ -47,7 +47,7 @@ use smithay::{
 };
 use tracing::{debug, trace, warn};
 
-use super::types::{RenderOutcome, SurfaceData, UdevData, UdevOutputId, UdevRenderer};
+use super::types::{FrameMode, RenderOutcome, SurfaceData, UdevData, UdevOutputId, UdevRenderer};
 use crate::state::Otto;
 
 // Type alias for the framebuffer returned when binding a Dmabuf with UdevRenderer
@@ -584,13 +584,6 @@ impl Otto<UdevData> {
         // done in `set_scanout_windows`, before the `surface` borrow).
         surface.shadow_only_windows = scanout_desired.clone();
 
-        let output_scene_element = self
-            .workspaces
-            .output_workspaces
-            .get(&output.name())
-            .map(|ows| self.scene_element.for_output_layer(&ows.output_layer))
-            .unwrap_or_else(|| self.scene_element.clone());
-
         let result = render_surface(
             surface,
             &mut renderer,
@@ -638,7 +631,6 @@ impl Otto<UdevData> {
             },
             self.workspaces.output_workspaces.get(&output.name()),
             screencopy_pending,
-            output_scene_element,
         );
 
         let reschedule = match &result {
@@ -1200,7 +1192,6 @@ pub(super) fn render_surface<'a>(
     overlay_active: bool,
     output_workspaces: Option<&crate::workspaces::OutputWorkspaces>,
     screencopy_pending: bool,
-    output_scene_element: crate::render_elements::scene_element::SceneElement,
 ) -> Result<RenderOutcome, SwapBuffersError> {
     // Start frame timing
     #[cfg(feature = "metrics")]
@@ -1290,12 +1281,16 @@ pub(super) fn render_surface<'a>(
                 return Ok(RenderOutcome::skipped());
             }
 
-            // When a screencopy client is waiting, render the full scene as one
-            // GPU-composited pass so `blit_current_frame` captures everything.
-            if screencopy_pending {
-                workspace_render_elements
-                    .push(WorkspaceRenderElements::Scene(output_scene_element));
-            } else if let Some(fs_win) = fullscreen_window {
+            // NOTE: when a screencopy client is waiting we still build the
+            // normal plane-element set — only the scanout FrameFlags are
+            // dropped (below) so every element GPU-composites into the
+            // primary swapchain and `blit_current_frame` captures exactly
+            // the on-screen stack. Re-rendering the scene tree as one
+            // `Scene` element is NOT equivalent: plane subtrees render in
+            // isolation and ignore ancestor visibility (e.g. the hidden
+            // workspaces_layer while expose is shown), so a tree re-render
+            // diverges from what the planes display.
+            if let Some(fs_win) = fullscreen_window {
                 // ── Fullscreen direct scanout ─────────────────────────────
                 // The client buffer IS the frame: push only the window's
                 // surface tree (cursor elements were pushed above) and skip
@@ -1625,7 +1620,7 @@ pub(super) fn render_surface<'a>(
                 tracing::info!(target: "otto::planes", "plane buffers dumped to {dir}");
             }
 
-            } // end !screencopy_pending
+            } // end planes branch
 
             // Clear engine damage after all plane renders so `subtree_damage()`
             // returns `None` next frame when nothing has changed. Without this
@@ -1654,6 +1649,20 @@ pub(super) fn render_surface<'a>(
         return Ok(RenderOutcome::skipped());
     }
 
+    // Reset the swapchain when the element mode changes so the transition
+    // frame itself renders with full damage (see `FrameMode`).
+    let frame_mode = if screencopy_pending {
+        FrameMode::Composite
+    } else if fullscreen_window.is_some() || !surface.shadow_only_windows.is_empty() {
+        FrameMode::DirectScanout
+    } else {
+        FrameMode::Planes
+    };
+    if frame_mode != surface.last_frame_mode {
+        surface.last_frame_mode = frame_mode;
+        surface.compositor.reset_buffers();
+    }
+
     // Debug: dump the final element order handed to render_frame (front→back).
     if output_elements.len() > 4 {
         use smithay::backend::renderer::element::Element as _;
@@ -1664,16 +1673,19 @@ pub(super) fn render_surface<'a>(
         tracing::debug!(target: "otto::planes", "element order: {}", order.join(" | "));
     }
 
+    // Screencopy frames composite everything into the primary swapchain so
+    // the capture blit sees the full image; the cursor keeps its own plane
+    // so captures exclude the pointer.
+    let frame_flags = if screencopy_pending {
+        smithay::backend::drm::compositor::FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT
+    } else {
+        smithay::backend::drm::compositor::FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT
+            | smithay::backend::drm::compositor::FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY
+            | smithay::backend::drm::compositor::FrameFlags::ALLOW_OVERLAY_PLANE_SCANOUT
+    };
     let render_frame_result = surface
         .compositor
-        .render_frame(
-            renderer,
-            &output_elements,
-            clear_color,
-            smithay::backend::drm::compositor::FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT
-                | smithay::backend::drm::compositor::FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY
-                | smithay::backend::drm::compositor::FrameFlags::ALLOW_OVERLAY_PLANE_SCANOUT,
-        )
+        .render_frame(renderer, &output_elements, clear_color, frame_flags)
         .map_err(|err| match err {
             smithay::backend::drm::compositor::RenderFrameError::PrepareFrame(err) => err.into(),
             smithay::backend::drm::compositor::RenderFrameError::RenderFrame(
@@ -1799,14 +1811,6 @@ pub(super) fn render_surface<'a>(
     }
 
     let damage_for_return = damage.clone();
-
-    // Reset the compositor's swapchain when entering/leaving direct-scanout
-    // modes so stale buffer ages don't leak across the mode switch.
-    let is_direct_scanout = fullscreen_window.is_some() || !surface.shadow_only_windows.is_empty();
-    if is_direct_scanout != surface.was_direct_scanout {
-        surface.was_direct_scanout = is_direct_scanout;
-        surface.compositor.reset_buffers();
-    }
 
     // In fullscreen scanout only the fullscreen window gets frame callbacks —
     // other windows generating damage would only cause pointless wakeups.

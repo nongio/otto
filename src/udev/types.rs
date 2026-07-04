@@ -176,10 +176,10 @@ pub struct SurfaceData {
     pub(super) backdrop_surface: Option<BackdropSurface>,
     /// Snapshot of `backdrop_surface` handed to the overlay element.
     pub(super) backdrop_image: Option<layers::skia::Image>,
-    /// Whether the previous frame used a direct-scanout mode (fullscreen or
-    /// promoted windows). The compositor swapchain is reset on transitions so
-    /// stale buffer ages don't leak across the mode switch.
-    pub(super) was_direct_scanout: bool,
+    /// Which element set the previous frame was built from. The compositor
+    /// swapchain is reset on transitions so stale buffer ages don't leak
+    /// across the mode switch.
+    pub(super) last_frame_mode: FrameMode,
     /// Windows currently in shadow-only mode for direct surface scanout.
     /// Their `content_layer` is hidden in lay-rs so only the shadow renders in
     /// `windows_dmabuf_element`. The client buffer is pushed directly as a
@@ -236,6 +236,21 @@ pub(super) struct BackdropSurface {
 // SAFETY: accessed only from the render thread; never aliased across threads.
 unsafe impl Send for BackdropSurface {}
 unsafe impl Sync for BackdropSurface {}
+
+/// Which element set a frame is built from. Buffer ages recorded in one
+/// mode are meaningless in another: without a swapchain reset on
+/// transition, regions the damage tracker considers clean would show the
+/// other mode's stale content (e.g. a black background on the first
+/// screencopy composite after running on planes).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum FrameMode {
+    /// Per-purpose plane elements (normal desktop).
+    Planes,
+    /// Direct scanout of client buffers (fullscreen or promoted windows).
+    DirectScanout,
+    /// Single full-scene GPU composite (screencopy capture).
+    Composite,
+}
 
 /// Outcome of a render operation
 pub struct RenderOutcome {

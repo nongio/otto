@@ -77,8 +77,19 @@ vibrancy even though the content behind it lives on other planes.
   overlay plane it would stack above the primary swapchain and, being
   opaque and full-output, hide every element that fell back to GPU
   compositing ("empty desktop").
-- When a screencopy is pending, the whole scene is GPU-composited for that
-  frame (planes bypassed) so the capture sees the complete image.
+- When a screencopy is pending, the frame is built from the same plane
+  elements but with overlay/primary scanout flags dropped, so every element
+  GPU-composites into the primary swapchain and the capture blit sees
+  exactly the on-screen stack (the cursor keeps its plane and is excluded).
+  Re-rendering the scene tree as one element is NOT equivalent: plane
+  subtrees render in isolation and ignore ancestor visibility (e.g.
+  workspaces_layer is hidden while expose is shown), so a tree re-render
+  diverges from what the planes display.
+- The compositor swapchain is reset whenever the frame's element mode
+  changes (planes ↔ direct scanout ↔ screencopy composite), before the
+  transition frame renders: buffer ages recorded in one mode are
+  meaningless in another, and a stale age would leave undamaged regions of
+  the first frame showing the previous mode's content.
 - If a buffer has no new damage, its existing dmabuf is re-submitted with an
   unchanged commit count, which must result in no page-flip for that plane.
 
@@ -92,6 +103,10 @@ vibrancy even though the content behind it lives on other planes.
   lower buffers don't exist yet); the composite arrives on the next frame.
 - Removed scene nodes can't be attributed to a subtree; their damage
   conservatively re-renders all plane buffers that frame.
+- Moving content into its own plane subtree breaks views that mirrored the
+  old parent: the workspace-selector previews replicate `windows_layer` and
+  `workspace_background` as two separate mirrors because the wallpaper no
+  longer lives under the workspace view.
 
 ## Rationale
 
