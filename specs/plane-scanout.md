@@ -79,7 +79,8 @@ vibrancy even though the content behind it lives on other planes.
   blur-bearing planes re-render once with the new backdrop (triggered by
   the fresh snapshot's unique id).
 - A stable fullscreen workspace (single window, no animation, no capture,
-  no swipe) direct-scans the client buffer on the PRIMARY plane with all
+  no swipe, no mapped popup — the overlay plane holding popups is dropped
+  in this mode) direct-scans the client buffer on the PRIMARY plane with all
   chrome planes dropped; frames always render (client commits produce no
   scene damage) and only the fullscreen window receives frame callbacks.
   The compositor swapchain resets on scanout-mode transitions.
@@ -94,8 +95,10 @@ vibrancy even though the content behind it lives on other planes.
   app-switcher/OSD view bounds, layer-shell Top/Overlay rects, window
   rects) — never per-frame scene state such as bubbled blur regions, which
   are rebuilt every engine update and oscillate promote/demote (content
-  flicker). A window overlapping any of those occluders, owning an open
-  popup, animating, or covered by a higher window is not promoted.
+  flicker). A window overlapping any of those occluders, owning a MAPPED
+  popup (mapped, not merely alive — GTK keeps closed popovers' surfaces
+  around for reuse), animating, or covered by a higher window is not
+  promoted.
 - Only windows whose current buffer is a dmabuf are promoted. An SHM
   client (e.g. a CPU-rendered terminal) can never scan out: its element
   would GPU-composite anyway and, being in front, demote every plane
