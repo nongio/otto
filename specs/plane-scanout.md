@@ -63,6 +63,15 @@ vibrancy even though the content behind it lives on other planes.
   old); only the clip region is cleared and redrawn. Full render on a
   slot's first use, when the damage history no longer reaches the slot's
   commit, or when the backdrop changed (blur can repaint anywhere).
+- A buffer's damage is expanded to the full bounds of any `BackgroundBlur`
+  shape it contains that the damage reaches: because a blur samples a
+  neighborhood of its input, damage under (or within a blur radius of) a
+  blur shape changes the blurred result across the shape, and repainting
+  only a sub-rect leaves a visible seam where fresh and stale blur meet. So
+  the subtree damage query joins the whole blur shape's bounds (the reach
+  test is outset by the blur sigma so damage just outside the shape still
+  triggers it). This matches the whole-scene expansion. (The blur layer's
+  own damage is already sigma-outset when it is drawn.)
 - Plane renders submit to the GPU without a CPU-blocking wait on devices
   with implicit dmabuf fencing (the kernel's atomic commit waits on the
   buffer's reservation fences); on the NVIDIA proprietary driver, which
