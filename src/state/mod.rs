@@ -1285,6 +1285,19 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         if let Some(window_surface) = window.wl_surface() {
             let id = window_surface.id();
 
+            // The shadow's `active` look must track real keyboard focus. Rebuilding
+            // it as inactive unconditionally makes the shadow flick for one frame
+            // whenever this runs on a still-focused window (e.g. on scanout demote,
+            // where the window is demoted but keeps focus).
+            let is_focused = self
+                .seat
+                .get_keyboard()
+                .and_then(|k| k.current_focus())
+                .map(|focus| {
+                    matches!(&focus, crate::focus::KeyboardFocusTarget::Window(w) if w.id() == window.id())
+                })
+                .unwrap_or(false);
+
             // Ensure all surfaces in the tree have rendering layers before building render elements
             // This only creates layers for surfaces that don't already have them
             self.ensure_surface_tree_layers(&window_surface);
@@ -1484,7 +1497,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     h: window_geometry.size.h as f32,
                     title,
                     fullscreen,
-                    active: false,
+                    active: is_focused,
                 };
                 window_view.view_base.update_state(&model);
 
