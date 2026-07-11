@@ -511,10 +511,18 @@ impl Otto<UdevData> {
                 scene_dmabuf_element: None,
                 backdrop_surface: None,
                 backdrop_image: None,
+                backdrop_preblurred: false,
                 backdrop_dirty: false,
                 expose_last_active: None,
                 switcher_last_active: None,
                 overlay_last_active: None,
+                overlay_was_active: false,
+                switcher_was_active: false,
+                promote_candidates: Vec::new(),
+                promote_since: None,
+                was_force_composite: false,
+                composite_hold_until: None,
+                transition_dump_left: 0,
                 windows_dmabuf_element: None,
                 expose_dmabuf_element: None,
                 overlay_dmabuf_element: None,
@@ -572,10 +580,6 @@ impl Otto<UdevData> {
                 .contains("nvidia")
         {
             planes.overlay = vec![];
-            // The proprietary driver has no implicit dmabuf fencing: plane
-            // renders must block on the GPU before submission.
-            crate::render_elements::scene_dmabuf_element::IMPLICIT_SYNC
-                .store(false, std::sync::atomic::Ordering::Relaxed);
         }
 
         let overlay_count = planes.overlay.len();

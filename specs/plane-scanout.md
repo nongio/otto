@@ -24,12 +24,22 @@ vibrancy even though the content behind it lives on other planes.
 - `BackgroundBlur` layers in the overlay subtree sample a composite of the
   planes below them (background + windows/expose), so vibrancy reflects real
   content even across buffer boundaries.
+- The composite is blurred **once, as a whole image**, before it is handed to
+  the consumers; each `BackgroundBlur` layer then seeds the pre-blurred image
+  directly and skips its own blur pass. Blurring within a layer's clipped
+  (rounded) shape samples transparent pixels at the shape edge, leaving a
+  faded rim that re-exposes the raw seed — a whole-image blur has no such edge,
+  so the frosted panel keeps a crisp boundary. It is also cheaper (one blur per
+  frame instead of one per consumer). The `ExternalBackdrop { image, scale,
+  blurred }` handed to a layer carries a `blurred` flag; in-scene blur
+  consumers with no external backdrop (context menus, OSD) still run the real
+  blur against live scene content.
 - The blur composite is rebuilt only when a lower plane recorded damage
   that intersects an active blur consumer's region (the dock strip, the
   switcher strip, or the full output while overlay UI or expose is shown);
   a rebuild triggers exactly one re-render of each blur-bearing plane. The
-  composite is downscaled (currently 1/4 resolution) — blur re-downscales
-  its input anyway, so a low-res backdrop is imperceptible but far cheaper.
+  composite is downscaled (currently 1/4 resolution) — a low-res backdrop is
+  imperceptible after blurring but far cheaper.
   Damage skipped this way marks the composite dirty so a later-activating
   consumer still gets fresh content.
 - Per-buffer damage is reported tightly (FB_DAMAGE_CLIPS) so PSR
@@ -80,7 +90,11 @@ vibrancy even though the content behind it lives on other planes.
   entirely — importing would only re-render its hidden content layer into
   the windows plane. The skip sets a pending flag that forces the next
   frame to draw, since a skipped import produces no scene damage and the
-  client's new buffer must still reach its plane.
+  client's new buffer must still reach its plane. The window's drop-shadow
+  still renders in the windows plane, so the skip path keeps the shadow's
+  geometry in sync with the window's current rect (tile/resize) without
+  re-importing the surface tree; otherwise the shadow ghosts at the
+  pre-change size while the content buffer tiles on its plane.
 - When expose is active, the expose buffer replaces the windows buffer in
   the plane stack; its blur samples the downscaled background-only stage of
   the composite, and the overlay's backdrop then includes expose content.

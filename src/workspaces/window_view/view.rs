@@ -135,6 +135,10 @@ impl WindowView {
     }
 
     pub fn minimize(&self, to_rect: skia::Rect) -> TransactionRef {
+        // Image filters only render through the image-cached (offscreen)
+        // path in lay-rs — a filter set on a plain layer is ignored. Cache
+        // the layer for the duration of the genie; cleared in on_finish.
+        self.window_layer.set_image_cached(true);
         self.window_layer.set_effect(self.genie_effect.clone());
         self.genie_effect.set_destination(to_rect, true);
 
@@ -158,18 +162,33 @@ impl WindowView {
 
         self.set_is_minimizing(true);
         let view_ref = self.clone();
-        let dst_ref = self.genie_effect.dst.clone();
         tr.on_finish(
             move |l: &Layer, _| {
                 if view_ref.is_unmapped() {
+                    // Clear on the early-return too: the flag drives the
+                    // backend's forced-composite mode, and wedging it `true`
+                    // when a window closes mid-animation would lock the
+                    // output in composite forever.
+                    view_ref.set_is_minimizing(false);
                     return;
                 }
-                view_ref.set_is_minimizing(false);
-                let final_dst = *dst_ref.read().unwrap();
-                // After the animation, drop the shader and keep a simple scaled layer
+                // NOTE: is_minimizing stays TRUE here — the caller clears it
+                // only after the layer is reparented into the drawer, so the
+                // backend holds the forced-composite mode across the whole
+                // transition and the planes come back with one clean full
+                // redraw.
+                // After the animation, drop the shader. The caller reparents
+                // the layer into the dock drawer and applies the minimized
+                // scale/position — the genie must run while the window is
+                // still in the windows-plane subtree (reparenting first put
+                // it under the strip-sized dock plane, which clipped the
+                // whole animation), so drawer-local placement can only
+                // happen after this finishes. Hide the layer for the gap:
+                // effect-free and still workspace-parented, it would render
+                // one plain full-size frame at its old spot (ghost).
                 l.remove_effect();
-                view_ref.apply_minimized_scale_to_layer(l, (w, h), final_dst);
-                l.set_position(Point { x: 0.0, y: 0.0 }, None);
+                l.set_image_cached(false);
+                l.set_hidden(true);
             },
             true,
         );
@@ -183,6 +202,8 @@ impl WindowView {
         self.window_layer.set_hidden(false);
         self.window_layer.set_opacity(0.0, None);
         self.window_layer.set_scale(Point { x: 1.0, y: 1.0 }, None);
+        // See minimize(): filters render only via the image-cached path.
+        self.window_layer.set_image_cached(true);
         self.window_layer.set_effect(self.genie_effect.clone());
 
         self.window_layer.engine.update(0.0);
@@ -201,6 +222,7 @@ impl WindowView {
             .on_finish(
                 move |l: &Layer, _| {
                     l.remove_effect();
+                    l.set_image_cached(false);
                     view_ref.set_is_minimizing(false);
                 },
                 true,
@@ -209,13 +231,34 @@ impl WindowView {
 
     /// Apply a scale/position to make the window fit inside the minimized drawer rect.
     /// This is used both after the minimize animation and when the dock resizes.
-    pub fn apply_minimized_scale(&self, target: skia::Rect) {
+    /// Returns the scale transaction so callers can sequence work strictly
+    /// after the scale has been APPLIED by the engine (e.g. unhiding the
+    /// layer — unhiding before the scheduled scale lands would show the
+    /// window at full size for a frame).
+    pub fn apply_minimized_scale(&self, target: skia::Rect) -> Option<TransactionRef> {
         if self.is_unmapped() {
-            return;
+            return None;
         }
         let bounds = self.window_layer.render_layer().bounds_with_children;
         let base_size = (bounds.width(), bounds.height());
-        self.apply_minimized_scale_to_layer(&self.window_layer, base_size, target);
+        self.apply_minimized_scale_to_layer(&self.window_layer, base_size, target)
+    }
+
+    /// Like [`apply_minimized_scale`], but with an explicit unscaled base
+    /// size. Needed when the layer is currently HIDDEN (post-genie settle):
+    /// hidden means `display: none`, the layout skips the node and
+    /// `bounds_with_children` reads zero — the implicit-base variant then
+    /// falls back to scale 1.0 and parks the window in the drawer at full
+    /// size.
+    pub fn apply_minimized_scale_with_base(
+        &self,
+        base_size: (f32, f32),
+        target: skia::Rect,
+    ) -> Option<TransactionRef> {
+        if self.is_unmapped() {
+            return None;
+        }
+        self.apply_minimized_scale_to_layer(&self.window_layer, base_size, target)
     }
 
     fn apply_minimized_scale_to_layer(
@@ -223,21 +266,21 @@ impl WindowView {
         layer: &Layer,
         base_size: (f32, f32),
         target: skia::Rect,
-    ) {
+    ) -> Option<TransactionRef> {
         if self.is_minimizing() {
-            return;
+            return None;
         }
         let (w, h) = base_size;
         let scale_x = if w > 0.0 { target.width() / w } else { 1.0 };
         let scale_y = if h > 0.0 { target.height() / h } else { 1.0 };
         let target_scale = scale_x.min(scale_y);
-        layer.set_scale(
+        Some(layer.set_scale(
             Point {
                 x: target_scale,
                 y: target_scale,
             },
             None,
-        );
+        ))
     }
 }
 

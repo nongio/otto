@@ -55,14 +55,6 @@ pub static NO_SCANOUT: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 /// (`touch /tmp/otto-dump-planes`; polled at 1 Hz, consumed by the renderer).
 pub static DUMP_PLANES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Whether the DRM device honors implicit dmabuf fencing (true everywhere
-/// except the NVIDIA proprietary driver). With implicit sync the kernel's
-/// atomic commit waits on the buffer's reservation fences, so plane renders
-/// can submit without a CPU-blocking GPU wait. Without it we must block
-/// (`SyncCpu::Yes`) or KMS may scan out a half-rendered buffer. Set once at
-/// device init.
-pub static IMPLICIT_SYNC: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(true);
 
 struct SlotSurface {
     surface: UnsafeCell<SkiaSurface>,
@@ -163,10 +155,17 @@ struct Inner {
     /// its resolution relative to the scene (1.0 = full, 0.25 = quarter).
     /// Passed to `render_node_tree` so `BackgroundBlur` layers in the subtree
     /// sample the real content behind the plane (cross-buffer vibrancy).
-    backdrop: Option<(layers::skia::Image, f32)>,
+    backdrop: Option<(layers::skia::Image, f32, bool)>,
     /// `unique_id()` of the backdrop the current buffer was rendered with —
     /// a backdrop swap forces a re-render even when the subtree is clean.
     last_backdrop_id: Option<u32>,
+    /// One-shot: the next `render()` runs unconditionally with full damage.
+    /// Set when the plane re-activates after being idle — its buffer still
+    /// holds whatever was rendered last (e.g. a tooltip that has since been
+    /// destroyed), and subtree damage from the removal was cleared while the
+    /// plane sat out of the frame, so pushing the stale buffer would flash
+    /// ghost content.
+    force_full: bool,
 }
 
 impl SceneDmabufElement {
@@ -186,6 +185,7 @@ impl SceneDmabufElement {
                 viewport: (0, 0),
                 backdrop: None,
                 last_backdrop_id: None,
+                force_full: false,
             })),
             position: (0, 0),
             plane_alpha: 1.0,
@@ -207,11 +207,21 @@ impl SceneDmabufElement {
         self.inner.lock().unwrap().node_ref = Some(node);
     }
 
+    /// Request that the next `render()` redraws the full buffer even if the
+    /// subtree reports no damage. Call when the plane re-enters the frame
+    /// after sitting out — see `Inner::force_full`.
+    pub fn request_full_render(&self) {
+        self.inner.lock().unwrap().force_full = true;
+    }
+
     /// Provide the composite of the planes below this one so `BackgroundBlur`
     /// layers in the subtree sample real content (cross-buffer vibrancy).
     /// `scale` is the image's resolution relative to the scene. A new image
     /// (different `unique_id`) triggers a re-render on the next `render()`.
-    pub fn set_backdrop(&self, backdrop: Option<(layers::skia::Image, f32)>) {
+    /// The `bool` is whether `image` is already blurred — if so the consuming
+    /// `BackgroundBlur` layer seeds it directly and skips its own (shape-clipped)
+    /// blur pass, avoiding a faded rim at the layer edge.
+    pub fn set_backdrop(&self, backdrop: Option<(layers::skia::Image, f32, bool)>) {
         self.inner.lock().unwrap().backdrop = backdrop;
     }
 
@@ -290,14 +300,15 @@ impl SceneDmabufElement {
         // A backdrop swap (new unique_id) means the content behind this
         // plane changed under a blur region — re-render even when the
         // subtree itself is clean so vibrancy tracks the planes below.
-        let backdrop_id = inner.backdrop.as_ref().map(|(img, _)| img.unique_id());
+        let backdrop_id = inner.backdrop.as_ref().map(|(img, _, _)| img.unique_id());
         let backdrop_changed = backdrop_id != inner.last_backdrop_id;
+        let force_full = std::mem::take(&mut inner.force_full);
         let has_dmabuf = self.current_dmabuf.lock().unwrap().is_some();
         if has_dmabuf {
             match inner.node_ref {
                 Some(node_ref) => {
                     dirty_rect = inner.engine.subtree_damage(node_ref);
-                    if dirty_rect.is_none() && !backdrop_changed {
+                    if dirty_rect.is_none() && !backdrop_changed && !force_full {
                         return false;
                     }
                 }
@@ -365,7 +376,7 @@ impl SceneDmabufElement {
             .unwrap_or_default();
         let (vx, vy) = inner.viewport;
         let damage_rect = dirty_rect
-            .filter(|_| !backdrop_changed)
+            .filter(|_| !backdrop_changed && !force_full)
             .map(|r| {
                 let x = ((r.left() - root_pos.x) as i32 - vx).clamp(0, w);
                 let y = ((r.top() - root_pos.y) as i32 - vy).clamp(0, h);
@@ -390,7 +401,10 @@ impl SceneDmabufElement {
             // when the backdrop changed (blur can repaint anywhere), on a
             // slot's first use, or when the damage history no longer reaches
             // back to the slot's commit.
-            let clip: Option<Rectangle<i32, Physical>> = if backdrop_changed || !has_dmabuf {
+            let clip: Option<Rectangle<i32, Physical>> = if backdrop_changed
+                || !has_dmabuf
+                || force_full
+            {
                 None
             } else {
                 match inner.damage.damage_since(slot_surface.last_commit.get()) {
@@ -446,7 +460,15 @@ impl SceneDmabufElement {
                         canvas.translate((pos.x, pos.y));
                     }
                 }
-                let external_backdrop = inner.backdrop.as_ref().map(|(img, s)| (img, *s));
+                let external_backdrop =
+                    inner
+                        .backdrop
+                        .as_ref()
+                        .map(|(img, s, blurred)| layers::drawing::ExternalBackdrop {
+                            image: img,
+                            scale: *s,
+                            blurred: *blurred,
+                        });
                 scene.with_arena(|arena| {
                     scene.with_renderable_arena(|renderable_arena| {
                         render_node_tree(
@@ -467,17 +489,18 @@ impl SceneDmabufElement {
             }
 
             canvas.restore_to_count(save_point);
-            // Submit without blocking the CPU where implicit dmabuf fencing
-            // orders GPU-write → scanout for us; five serial CPU waits per
-            // frame was the single largest hot-path cost during animation.
-            let sync = if IMPLICIT_SYNC.load(std::sync::atomic::Ordering::Relaxed) {
-                layers::skia::gpu::SyncCpu::No
-            } else {
-                layers::skia::gpu::SyncCpu::Yes
-            };
-            skia_surface
-                .gr_context
-                .flush_and_submit_surface(&mut skia_surface.surface, sync);
+            // CPU-blocking sync is REQUIRED before the buffer reaches KMS:
+            // Mesa iris does not attach implicit dma-fences to offscreen
+            // EGLImage render targets (EXEC_OBJECT_ASYNC on everything but
+            // winsys buffers), so the atomic commit does NOT wait for these
+            // GL writes — without this wait every plane flip visibly
+            // flickers with an unfinished buffer. Removing the wait needs
+            // an explicit fence instead: export an EGL native fence here
+            // and deliver it as the plane's IN_FENCE_FD (follow-up).
+            skia_surface.gr_context.flush_and_submit_surface(
+                &mut skia_surface.surface,
+                layers::skia::gpu::SyncCpu::Yes,
+            );
         }
 
         // Update damage and commit counter. The tight damage rect keeps

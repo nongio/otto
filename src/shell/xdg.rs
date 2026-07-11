@@ -297,6 +297,7 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
     fn popup_destroyed(&mut self, popup_surface: PopupSurface) {
         // Use cached root lookup - O(1) instead of traversing popup tree
         let popup_id = popup_surface.wl_surface().id();
+        tracing::debug!(target: "otto::popups", "popup_destroyed {:?} → dismiss_all_popups", popup_id);
 
         // Remove from popup overlay layer and get subsurface IDs for cleanup
         let popup_surface_ids = self.workspaces.popup_overlay.remove_popup(&popup_id);
@@ -1000,6 +1001,10 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 self.workspaces.set_window_view(&id, view);
             }
 
+            // Leave scanout and re-import the current buffer BEFORE the genie
+            // starts: the spawned animation task captures layer bounds and
+            // renders scene content that promotion blanked.
+            self.demote_scanout_window(&window);
             let next_focus = self.workspaces.minimize_window(&window);
 
             match next_focus {
