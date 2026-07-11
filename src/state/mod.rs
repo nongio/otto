@@ -1319,12 +1319,46 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
             let mut render_elements = VecDeque::new();
 
-            // Collect popup surfaces and send them to the popup overlay layer
-            PopupManager::popups_for_surface(&window_surface).for_each(|(popup, popup_offset)| {
-                let offset: smithay::utils::Point<f64, smithay::utils::Physical> =
-                    popup_offset.to_physical_precise_round(scale_factor);
+            // Collect popup surfaces and send them to the popup overlay layer.
+            // Two passes: `popups_for_surface` yields children BEFORE their
+            // parent, so gather every popup's accumulated offset first, then
+            // decide per popup whether its own position is resolved yet.
+            let popups: Vec<(
+                smithay::desktop::PopupKind,
+                smithay::utils::Point<i32, smithay::utils::Logical>,
+            )> = PopupManager::popups_for_surface(&window_surface).collect();
+            let popup_offsets: std::collections::HashMap<
+                smithay::reexports::wayland_server::backend::ObjectId,
+                smithay::utils::Point<i32, smithay::utils::Logical>,
+            > = popups
+                .iter()
+                .map(|(p, o)| (p.wl_surface().id(), *o))
+                .collect();
+            for (popup, popup_offset) in &popups {
+                let popup_offset = *popup_offset;
                 let popup_surface = popup.wl_surface();
                 let popup_id = popup_surface.id();
+
+                // A nested popup whose accumulated offset equals its parent
+                // popup's offset has an unresolved (0,0) own position: its
+                // committed geometry hasn't landed yet (the initial configure
+                // round-trip; `PopupKind::location()` reads committed state).
+                // Drawing it now places it on top of its parent — skip it; a
+                // later frame re-runs this with the real offset once its
+                // geometry commits.
+                let parent_surface = match popup {
+                    smithay::desktop::PopupKind::Xdg(s) => s.get_parent_surface(),
+                    _ => None,
+                };
+                let degenerate_nested = parent_surface
+                    .and_then(|p| popup_offsets.get(&p.id()).copied())
+                    .map_or(false, |parent_off| parent_off == popup_offset);
+                if degenerate_nested {
+                    continue;
+                }
+
+                let offset: smithay::utils::Point<f64, smithay::utils::Physical> =
+                    popup_offset.to_physical_precise_round(scale_factor);
 
                 // Calculate absolute popup position (window position + popup offset)
                 let popup_position = layers::types::Point {
@@ -1379,7 +1413,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 );
 
                 self.surface_layers.extend(popup_layers);
-            });
+            }
 
             let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> =
                 (0.0, 0.0).into();
