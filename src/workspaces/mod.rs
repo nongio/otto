@@ -3733,6 +3733,10 @@ impl Workspaces {
             // only their ROOT surface goes to the plane, the decoration
             // subsurfaces keep rendering in the windows plane
             // (see `set_scanout_windows`).
+            // A subsurface overlapping the root (window content, e.g. Chrome's
+            // account panel) would be hidden behind the scanned-out root plane,
+            // so such a window must composite. Checked last — it only runs for
+            // an otherwise-eligible topmost candidate.
             const MAX_PROMOTED: usize = 1;
             if promoted.len() < MAX_PROMOTED
                 && !overlaps_above
@@ -3740,6 +3744,7 @@ impl Workspaces {
                 && !has_popups
                 && !overlaps_occluder
                 && has_dmabuf_buffer
+                && !window_has_overlapping_subsurface(window)
             {
                 promoted.push(window.id());
             }
@@ -4723,4 +4728,67 @@ fn window_has_subsurfaces(window: &WindowElement) -> bool {
             count > 1
         })
         .unwrap_or(false)
+}
+
+/// Whether the window has any subsurface that overlaps the root surface's own
+/// rect. Such a subsurface is window *content* (e.g. Chrome's account panel,
+/// which Chrome maps as a `wl_subsurface`), not an out-of-bounds SSD decoration.
+///
+/// A window like that must NOT be scanned out base-only: the scanout push only
+/// offers the root `wl_surface` (whose buffer does not contain the subsurface),
+/// and the subsurface renders in the windows dmabuf *below* the root's overlay
+/// plane — so an overlapping subsurface would be hidden behind the plane. Such a
+/// window is demoted to full compositing; a purely decorative (out-of-bounds)
+/// subsurface still qualifies for base-only promotion.
+fn window_has_overlapping_subsurface(window: &WindowElement) -> bool {
+    use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
+    use smithay::utils::{Logical, Point, Rectangle};
+    use smithay::wayland::compositor::{
+        with_states, with_surface_tree_downward, SubsurfaceCachedState, TraversalAction,
+    };
+
+    let Some(root) = window.wl_surface() else {
+        return false;
+    };
+
+    // Root rect in root-local logical coordinates.
+    let root_size = with_states(&root, |states| {
+        states
+            .data_map
+            .get::<RendererSurfaceStateUserData>()
+            .and_then(|d| d.lock().unwrap().surface_size())
+    });
+    let Some(root_size) = root_size else {
+        return false;
+    };
+    let root_rect: Rectangle<i32, Logical> = Rectangle::new((0, 0).into(), root_size);
+
+    let overlaps = std::cell::Cell::new(false);
+    with_surface_tree_downward(
+        &root,
+        Point::<i32, Logical>::from((0, 0)),
+        // Accumulate each surface's position (parent + its subsurface offset).
+        |_surface, states, parent_loc| {
+            let mut cs = states.cached_state.get::<SubsurfaceCachedState>();
+            TraversalAction::DoChildren(*parent_loc + cs.current().location)
+        },
+        |surface, states, parent_loc| {
+            if surface.id() == root.id() {
+                return;
+            }
+            let mut cs = states.cached_state.get::<SubsurfaceCachedState>();
+            let loc = *parent_loc + cs.current().location;
+            if let Some(size) = states
+                .data_map
+                .get::<RendererSurfaceStateUserData>()
+                .and_then(|d| d.lock().unwrap().surface_size())
+            {
+                if Rectangle::new(loc, size).overlaps(root_rect) {
+                    overlaps.set(true);
+                }
+            }
+        },
+        |_, _, _| !overlaps.get(),
+    );
+    overlaps.get()
 }
