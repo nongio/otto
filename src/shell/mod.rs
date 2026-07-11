@@ -238,6 +238,16 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
                     if let Some(window) = window {
                         window.on_commit();
 
+                        if self.popups.find_popup(surface).is_some() {
+                            tracing::debug!(
+                                target: "otto::popups",
+                                "popup surface {:?} commit; root window {:?} scanned_out={}",
+                                surface_id,
+                                window.id(),
+                                window.is_scanned_out()
+                            );
+                        }
+
                         // Skip scene damage propagation when this window is on a
                         // scanout plane — its buffer goes straight to the display,
                         // and importing it would only re-render the (hidden)
@@ -245,10 +255,26 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
                         // makes the backend draw a frame anyway so the new buffer
                         // reaches its plane (a skipped import produces no scene
                         // damage, which is otherwise the draw trigger).
-                        if window.is_scanned_out() {
+                        //
+                        // Only the promoted ROOT surface's own commits qualify:
+                        // popup commits (overlay plane) and SSD subsurface
+                        // commits (windows plane) still composite in the scene,
+                        // so skipping them loses their updates — e.g. a popup
+                        // that maps or redraws while its parent is promoted
+                        // would never reach its layer.
+                        let is_root_commit = window
+                            .wl_surface()
+                            .map(|root| root.id() == surface_id)
+                            .unwrap_or(false);
+                        if window.is_scanned_out() && is_root_commit {
                             self.workspaces
                                 .scanout_commit_pending
                                 .store(true, std::sync::atomic::Ordering::Relaxed);
+                            // The content buffer scans out directly, but the
+                            // shadow still renders in the windows plane — keep
+                            // its geometry in sync (tile/resize) or it ghosts at
+                            // the pre-change size while the content tiles.
+                            self.refresh_window_shadow_geometry(&window);
                         } else {
                             self.update_window_view(&window);
                         }
@@ -285,6 +311,7 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
 
         // ensure_initial_configure(surface, self.space(), &mut self.popups)
         ensure_initial_configure(surface, self);
+        self.backend_data.invalidate_scene_prefetch();
         self.backend_data.request_redraw();
         self.schedule_event_loop_dispatch();
     }

@@ -326,6 +326,7 @@ impl<BackendData: Backend>
             }
             zwlr_foreign_toplevel_handle_v1::Request::SetMinimized => {
                 if let Some(window) = state.workspaces.get_window_for_surface(&window_id).cloned() {
+                    state.demote_scanout_window(&window);
                     state.workspaces.minimize_window(&window);
                 }
             }

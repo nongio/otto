@@ -337,15 +337,79 @@ impl Otto<UdevData> {
             .and_then(|d| d.surfaces.get(&crtc))
             .map(|s| s.planes_enabled)
             .unwrap_or(false);
-        let scanout_desired: Vec<smithay::reexports::wayland_server::backend::ObjectId> =
+        // Any running minimize/unminimize genie forces the full-GPU scene
+        // composite for the frame (and drops scanout promotion): the genie's
+        // image filter paints far outside the per-plane damage rects, so the
+        // plane pipeline's partial redraws corrupt the animation. The mode is
+        // held ~150ms past the animation: the settle work (reparent into the
+        // drawer, rescale, unhide) lands from an async task across several
+        // engine updates, and flipping back to planes mid-settle scans out a
+        // stale frame.
+        let minimize_now = self.workspaces.has_minimizing_window();
+        let minimize_active = if let Some(surf) = self
+            .backend_data
+            .backends
+            .get_mut(&node)
+            .and_then(|d| d.surfaces.get_mut(&crtc))
+        {
+            if minimize_now {
+                surf.composite_hold_until =
+                    Some(Instant::now() + std::time::Duration::from_millis(150));
+                true
+            } else {
+                surf.composite_hold_until
+                    .is_some_and(|t| Instant::now() < t)
+            }
+        } else {
+            minimize_now
+        };
+        let raw_scanout_desired: Vec<smithay::reexports::wayland_server::backend::ObjectId> =
             if !planes_enabled
                 || capture_active
+                || minimize_active
                 || self.swipe_gesture.is_active()
                 || fullscreen_window.is_some()
             {
                 Vec::new()
             } else {
                 self.workspaces.get_scanout_candidates()
+            };
+        // Promotion hysteresis (see `SurfaceData::promote_candidates`):
+        // removals apply this frame, additions only after the candidate set
+        // has been stable for the full window.
+        const PROMOTE_STABLE: std::time::Duration = std::time::Duration::from_millis(500);
+        let current_scanout = self.workspaces.scanout_window_ids();
+        let has_additions = raw_scanout_desired
+            .iter()
+            .any(|id| !current_scanout.contains(id));
+        let scanout_desired: Vec<smithay::reexports::wayland_server::backend::ObjectId> =
+            if !has_additions {
+                raw_scanout_desired
+            } else if let Some(surf) = self
+                .backend_data
+                .backends
+                .get_mut(&node)
+                .and_then(|d| d.surfaces.get_mut(&crtc))
+            {
+                if surf.promote_candidates != raw_scanout_desired {
+                    surf.promote_candidates = raw_scanout_desired.clone();
+                    surf.promote_since = Some(Instant::now());
+                }
+                if surf
+                    .promote_since
+                    .is_some_and(|t| t.elapsed() >= PROMOTE_STABLE)
+                {
+                    raw_scanout_desired
+                } else {
+                    // Additions still settling — keep only the members that
+                    // are already promoted AND still eligible.
+                    raw_scanout_desired
+                        .into_iter()
+                        .filter(|id| current_scanout.contains(id))
+                        .collect()
+                }
+            } else {
+                raw_scanout_desired
             };
         // Demotion: windows that LEAVE the scanout set had a stale (or no)
         // lay-rs content import while promoted; re-import them now (after the
@@ -355,11 +419,15 @@ impl Otto<UdevData> {
             smithay::reexports::wayland_server::backend::ObjectId,
         > = scanout_desired.iter().cloned().collect();
         let prev_scanout_ids = self.workspaces.scanout_window_ids();
-        let departed_windows: Vec<WindowElement> = self
-            .workspaces
-            .spaces_elements()
-            .filter(|w| prev_scanout_ids.contains(&w.id()) && !new_scanout_ids.contains(&w.id()))
-            .cloned()
+        // Resolve departures through windows_map, NOT the Space: a window that
+        // starts minimizing is unmapped from every Space *before* this frame
+        // (hit-test exclusion), so a Space lookup misses it and skips the
+        // re-import — the genie animation would then run on the stale/blank
+        // content left over from promotion.
+        let departed_windows: Vec<WindowElement> = prev_scanout_ids
+            .iter()
+            .filter(|id| !new_scanout_ids.contains(id))
+            .filter_map(|id| self.workspaces.get_window_for_surface(id).cloned())
             .collect();
         self.workspaces.set_scanout_windows(&scanout_desired);
         for w in &departed_windows {
@@ -537,6 +605,47 @@ impl Otto<UdevData> {
                 "overlay",
             );
         }
+        // Re-activation edge: the plane's buffer still shows whatever was
+        // rendered before it left the frame (a destroyed tooltip, a closed
+        // switcher) — the removal damage was cleared on frames where the
+        // plane didn't render. Force a full redraw so re-pushing the plane
+        // can't flash ghost content.
+        if overlay_active && !surface.overlay_was_active {
+            if let Some(el) = &surface.overlay_dmabuf_element {
+                el.request_full_render();
+            }
+        }
+        surface.overlay_was_active = overlay_active;
+        if switcher_active && !surface.switcher_was_active {
+            if let Some(el) = &surface.switcher_dmabuf_element {
+                el.request_full_render();
+            }
+        }
+        surface.switcher_was_active = switcher_active;
+        // Composite→planes edge: the genie frames rendered through the
+        // full-scene element, which consumed and cleared all engine damage
+        // while the plane buffers sat idle. Without a full redraw the first
+        // planes frame scans out the stale pre-composite content (ghost of
+        // the just-minimized window).
+        if surface.was_force_composite && !minimize_active {
+            for el in [
+                &surface.scene_dmabuf_element,
+                &surface.windows_dmabuf_element,
+                &surface.expose_dmabuf_element,
+                &surface.overlay_dmabuf_element,
+                &surface.switcher_dmabuf_element,
+                &surface.dock_dmabuf_element,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                el.request_full_render();
+            }
+            if std::path::Path::new("/tmp/otto-dump-transition").exists() {
+                surface.transition_dump_left = 8;
+            }
+        }
+        surface.was_force_composite = minimize_active;
 
         let output_scene_element = self
             .workspaces
@@ -563,12 +672,33 @@ impl Otto<UdevData> {
             switcher_active,
             !self.workspaces.dock.is_hidden(),
             overlay_active,
-            self.workspaces.output_workspaces.get(&output.name()),
+            {
+                // The windows plane must stay up while a workspace switch is
+                // in flight: `current_workspace` flips to the TARGET workspace
+                // the moment the release animation starts, so gating on the
+                // current workspace alone drops the plane mid-transition when
+                // switching toward an empty workspace — the source windows
+                // vanish while still animating out. The swipe drag and the
+                // follow-up animation both keep it pushed.
+                let current_has_windows = self
+                    .workspaces
+                    .output_workspaces
+                    .get(&output.name())
+                    .map(|ows| ows.current_workspace_has_windows())
+                    .unwrap_or(false);
+                current_has_windows
+                    || self.swipe_gesture.is_active()
+                    || self
+                        .workspaces
+                        .is_animating
+                        .load(std::sync::atomic::Ordering::Relaxed)
+            },
             screencopy_pending,
             self.workspaces
                 .scanout_commit_pending
                 .swap(false, std::sync::atomic::Ordering::Relaxed),
             planes_enabled,
+            minimize_active,
             output_scene_element,
         );
 
@@ -1129,10 +1259,11 @@ pub(super) fn render_output_frame<'a>(
     switcher_active: bool,
     dock_visible: bool,
     overlay_active: bool,
-    output_workspaces: Option<&crate::workspaces::OutputWorkspaces>,
+    windows_plane_has_content: bool,
     screencopy_pending: bool,
     scanout_commit: bool,
     planes_enabled: bool,
+    force_composite: bool,
     output_scene_element: crate::render_elements::scene_element::SceneElement,
 ) -> Result<RenderOutcome, SwapBuffersError> {
     // Start frame timing
@@ -1237,7 +1368,7 @@ pub(super) fn render_output_frame<'a>(
             // Render the bottom plane first (planes mode only) — the backdrop
             // composite needs it, and its dmabuf's existence decides whether
             // the plane stack has a floor at all.
-            let bg_plane_ready = if planes_enabled && fullscreen_window.is_none() {
+            let bg_plane_ready = if planes_enabled && fullscreen_window.is_none() && !force_composite {
                 if let Some(el) = &surface.scene_dmabuf_element {
                     el.render(renderer.as_mut());
                     el.current_dmabuf().is_some()
@@ -1284,10 +1415,13 @@ pub(super) fn render_output_frame<'a>(
             } else if !planes_enabled || !bg_plane_ready {
                 // Single-element path: the plane decomposition is disabled for
                 // this output (plane-poor / non-atomic / secondary-GPU
-                // hardware), or the bg plane unexpectedly has no dmabuf
-                // (allocation or Skia-surface failure) — without a floor the
-                // plane stack would show only the clear color.
-                if planes_enabled {
+                // hardware), a full-GPU composite is explicitly forced (e.g.
+                // during the minimize genie, whose image filter paints far
+                // outside the per-plane damage rects), or the bg plane
+                // unexpectedly has no dmabuf (allocation or Skia-surface
+                // failure) — without a floor the plane stack would show only
+                // the clear color.
+                if planes_enabled && !force_composite {
                     static WARNED: std::sync::atomic::AtomicBool =
                         std::sync::atomic::AtomicBool::new(false);
                     if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
@@ -1433,9 +1567,7 @@ pub(super) fn render_output_frame<'a>(
                     }
                 }
 
-                let has_windows =
-                    output_workspaces.map_or(false, |ows| ows.current_workspace_has_windows());
-                if has_windows {
+                if windows_plane_has_content {
                     push_ready(&surface.windows_dmabuf_element, &mut workspace_render_elements);
                 }
             }
@@ -1446,6 +1578,12 @@ pub(super) fn render_output_frame<'a>(
             #[cfg(feature = "debug-kms")]
             super::debug::maybe_save_planes(surface);
             super::debug::maybe_dump_planes(surface);
+
+            if surface.transition_dump_left > 0 {
+                let idx = 8 - surface.transition_dump_left;
+                surface.transition_dump_left -= 1;
+                super::debug::dump_transition_frame(surface, idx);
+            }
 
             } // end planes branch
 
@@ -1484,7 +1622,7 @@ pub(super) fn render_output_frame<'a>(
 
     // Reset the swapchain when the element mode changes so the transition
     // frame itself renders with full damage (see `FrameMode`).
-    let frame_mode = if screencopy_pending {
+    let frame_mode = if screencopy_pending || force_composite {
         FrameMode::Composite
     } else if fullscreen_window.is_some() || !surface.shadow_only_windows.is_empty() {
         FrameMode::DirectScanout
@@ -1494,6 +1632,23 @@ pub(super) fn render_output_frame<'a>(
     if frame_mode != surface.last_frame_mode {
         surface.last_frame_mode = frame_mode;
         surface.compositor.reset_buffers();
+    }
+
+    // Debug (`/tmp/otto-slow`): frame-by-frame slideshow — sleep 100ms per
+    // frame and log a frame counter with the mode and element set, so a
+    // human-visible glitch can be matched 1:1 to a logged frame.
+    if std::path::Path::new("/tmp/otto-slow").exists() {
+        static FRAME_NO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = FRAME_NO.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        use smithay::backend::renderer::element::Element as _;
+        let order: Vec<String> = output_elements.iter().map(|e| format!("{:?}", e.id())).collect();
+        tracing::info!(
+            target: "otto::planes",
+            "SLOW frame {n}: mode={frame_mode:?} shadow_only={:?} elements=[{}]",
+            surface.shadow_only_windows,
+            order.join(" | ")
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
     // Debug: dump the final element order handed to render_frame (front→back).

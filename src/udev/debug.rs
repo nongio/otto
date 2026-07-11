@@ -129,7 +129,77 @@ pub(super) fn maybe_dump_planes(surface: &SurfaceData) {
     dump_plane!(surface.overlay_dmabuf_element, "overlay");
     dump_plane!(surface.switcher_dmabuf_element, "switcher");
     dump_plane!(surface.dock_dmabuf_element, "dock");
+    // The precalculated cross-plane backdrop composite (downscaled) that is
+    // handed to every blur-bearing consumer via `set_backdrop`. This is the
+    // raw input to their blur shaders — NOT the final blurred result.
+    dump_backdrop_image(surface, &dir);
     tracing::info!(target: "otto::planes", "plane buffers dumped to {dir}");
+}
+
+/// Encode the shared backdrop composite (`surface.backdrop_image`) to
+/// `otto_backdrop.png`. Borrows a GPU context from the bg element to encode.
+fn dump_backdrop_image(surface: &SurfaceData, dir: &str) {
+    let Some(image) = surface.backdrop_image.as_ref() else {
+        tracing::info!(target: "otto::planes", "no backdrop_image to dump");
+        return;
+    };
+    let mut ctx = match surface
+        .scene_dmabuf_element
+        .as_ref()
+        .and_then(|el| el.gr_context())
+    {
+        Some(ctx) => ctx,
+        None => {
+            tracing::warn!(target: "otto::planes", "dump_backdrop: no gr_context");
+            return;
+        }
+    };
+    let path = format!("{dir}/otto_backdrop.png");
+    match image.encode(
+        Some(&mut ctx),
+        layers::skia::EncodedImageFormat::PNG,
+        None,
+    ) {
+        Some(data) => {
+            if let Err(e) = std::fs::write(&path, data.as_bytes()) {
+                tracing::warn!(target: "otto::planes", "dump_backdrop write failed: {e}");
+            } else {
+                tracing::info!(
+                    target: "otto::planes",
+                    "backdrop composite {}x{} dumped to {path}",
+                    image.width(),
+                    image.height()
+                );
+            }
+        }
+        None => tracing::warn!(target: "otto::planes", "dump_backdrop: encode failed"),
+    }
+}
+
+/// Debug (`/tmp/otto-dump-transition`): save every plane buffer with a frame
+/// index for the frames right after the composite→planes edge. Slows frames
+/// massively (PNG encode per plane per frame) — that's fine, it makes the
+/// transition observable in slow motion while recording it.
+pub(super) fn dump_transition_frame(surface: &SurfaceData, idx: u8) {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let dir = format!("{home}/Pictures/Screenshots/otto_transition");
+    let _ = std::fs::create_dir_all(&dir);
+    macro_rules! dump_plane {
+        ($el:expr, $name:literal) => {
+            if let Some(el) = &$el {
+                el.save_to_png(&format!("{dir}/f{idx}_{}.png", $name));
+            }
+        };
+    }
+    dump_plane!(surface.scene_dmabuf_element, "bg");
+    dump_plane!(surface.windows_dmabuf_element, "windows");
+    dump_plane!(surface.overlay_dmabuf_element, "overlay");
+    dump_plane!(surface.dock_dmabuf_element, "dock");
+    tracing::info!(
+        target: "otto::planes",
+        "transition dump f{idx}: shadow_only={:?}",
+        surface.shadow_only_windows
+    );
 }
 
 /// Debug PNG saves — triggered by Shift+6..9 (debug-kms feature only).

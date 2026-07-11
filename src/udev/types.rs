@@ -171,6 +171,9 @@ pub struct SurfaceData {
     pub(super) backdrop_surface: Option<BackdropSurface>,
     /// Snapshot of `backdrop_surface` handed to the overlay element.
     pub(super) backdrop_image: Option<layers::skia::Image>,
+    /// Whether `backdrop_image` is already blurred — consumers seed it directly
+    /// and skip their own shape-clipped blur (which would leave a faded rim).
+    pub(super) backdrop_preblurred: bool,
     /// Lower-plane damage occurred while no blur consumer needed the
     /// composite (or outside every active consumer's region); the next
     /// frame with an active consumer must rebuild even without new damage.
@@ -181,6 +184,39 @@ pub struct SurfaceData {
     pub(super) expose_last_active: Option<std::time::Instant>,
     pub(super) switcher_last_active: Option<std::time::Instant>,
     pub(super) overlay_last_active: Option<std::time::Instant>,
+    /// Whether the overlay / switcher UI was active on the previous frame.
+    /// On the inactive→active edge the plane's buffer still shows whatever
+    /// was rendered before it left the frame (removal damage was cleared
+    /// while it sat out), so the edge forces a full re-render instead of
+    /// flashing ghost content (`SceneDmabufElement::request_full_render`).
+    pub(super) overlay_was_active: bool,
+    pub(super) switcher_was_active: bool,
+    /// Promotion hysteresis: the candidate set currently waiting out its
+    /// stability window, and since when it has been produced unchanged.
+    /// Demotions apply instantly (compositing is always correct); adding a
+    /// window to the scanout set waits until the same candidates have been
+    /// requested continuously for `PROMOTE_STABLE` — a one-frame eligibility
+    /// pulse (activation animation, transient tooltip) otherwise thrashes
+    /// promote/demote, and every transition resets the primary swapchain
+    /// (a visible full-screen flicker).
+    pub(super) promote_candidates: Vec<smithay::reexports::wayland_server::backend::ObjectId>,
+    pub(super) promote_since: Option<std::time::Instant>,
+    /// Whether the previous frame rendered as a forced full-GPU composite
+    /// (minimize genie). Composite frames starve the plane buffers — the
+    /// scene element consumes and clears all engine damage — so on the
+    /// composite→planes edge every plane must redraw in full or the first
+    /// planes frame scans out pre-composite ghosts (e.g. the window that
+    /// was just minimized).
+    pub(super) was_force_composite: bool,
+    /// Keep rendering forced-composite frames until this instant even after
+    /// the trigger (minimize animation) ended: the settle work (reparent,
+    /// rescale, unhide) lands from an async task over several engine
+    /// updates, and returning to planes mid-settle scans out a stale frame.
+    pub(super) composite_hold_until: Option<std::time::Instant>,
+    /// Debug (`/tmp/otto-dump-transition`): dump every plane buffer for this
+    /// many frames after the composite→planes edge, to catch transition
+    /// ghosts frame-exactly.
+    pub(super) transition_dump_left: u8,
     /// Which element set the previous frame was built from. The compositor
     /// swapchain is reset on transitions so stale buffer ages don't leak
     /// across the mode switch.

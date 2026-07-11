@@ -23,6 +23,54 @@ use super::types::{SurfaceData, UdevRenderer};
 
 const BACKDROP_SCALE: f32 = 0.25;
 
+/// Blur sigma applied to the downscaled backdrop composite. The backdrop is
+/// `BACKDROP_SCALE` of the scene, so this is roughly the full-res sigma
+/// (~40) times `BACKDROP_SCALE`. Blurring the whole composite once here lets
+/// the blur-bearing consumers seed it directly and skip their own shape-clipped
+/// blur (which leaves a faded, seed-exposing rim at the layer edge).
+const BACKDROP_BLUR_SIGMA: f32 = 10.0;
+
+/// Gaussian-blur `image` into a fresh same-size GPU surface and return the
+/// snapshot. Returns `None` if the surface or filter can't be built (caller
+/// falls back to the raw image).
+fn blur_image(
+    image: &layers::skia::Image,
+    ctx: &mut layers::skia::gpu::DirectContext,
+    sigma: f32,
+) -> Option<layers::skia::Image> {
+    let info = layers::skia::ImageInfo::new(
+        (image.width(), image.height()),
+        layers::skia::ColorType::RGBA8888,
+        layers::skia::AlphaType::Premul,
+        None,
+    );
+    let mut surface = layers::skia::gpu::surfaces::render_target(
+        ctx,
+        layers::skia::gpu::Budgeted::No,
+        &info,
+        None,
+        layers::skia::gpu::SurfaceOrigin::TopLeft,
+        None,
+        false,
+        false,
+    )?;
+    let blur = layers::skia::image_filters::blur(
+        (sigma, sigma),
+        layers::skia::TileMode::Clamp,
+        None,
+        None,
+    )?;
+    let mut paint = layers::skia::Paint::default();
+    paint.set_image_filter(blur);
+    {
+        let canvas = surface.canvas();
+        canvas.clear(layers::skia::Color4f::new(0.0, 0.0, 0.0, 1.0));
+        canvas.draw_image(image, (0, 0), Some(&paint));
+    }
+    ctx.flush_and_submit();
+    Some(surface.image_snapshot())
+}
+
 /// Rebuild the two-stage backdrop composite when needed, render the middle
 /// plane (windows or expose), and hand the fresh composite to the
 /// blur-bearing upper planes (overlay, switcher, dock), rendering the
@@ -106,7 +154,6 @@ pub(super) fn update_backdrop_and_upper_planes(
     } else if lower_damaged {
         surface.backdrop_dirty = true;
     }
-
     if rebuild {
         let bg_img = surface
             .scene_dmabuf_element
@@ -166,7 +213,13 @@ pub(super) fn update_backdrop_and_upper_planes(
                     if let Some(expose) = &surface.expose_dmabuf_element {
                         bs.context.flush_and_submit();
                         let bg_small = bs.surface.image_snapshot();
-                        expose.set_backdrop(Some((bg_small, BACKDROP_SCALE)));
+                        // Pre-blur so expose seeds it and skips its own blur.
+                        match blur_image(&bg_small, &mut bs.context, BACKDROP_BLUR_SIGMA) {
+                            Some(blurred) => {
+                                expose.set_backdrop(Some((blurred, BACKDROP_SCALE, true)))
+                            }
+                            None => expose.set_backdrop(Some((bg_small, BACKDROP_SCALE, false))),
+                        }
                     }
                 }
                 // Render the middle plane now (expose renders with its
@@ -182,7 +235,11 @@ pub(super) fn update_backdrop_and_upper_planes(
                     );
                 }
                 bs.context.flush_and_submit();
-                surface.backdrop_image = Some(bs.surface.image_snapshot());
+                // Blur the whole composite once; consumers seed it pre-blurred.
+                let composite = bs.surface.image_snapshot();
+                let blurred = blur_image(&composite, &mut bs.context, BACKDROP_BLUR_SIGMA);
+                surface.backdrop_preblurred = blurred.is_some();
+                surface.backdrop_image = Some(blurred.unwrap_or(composite));
             }
         } else if let Some(el) = middle_el {
             // No bg snapshot/context yet (first frames) — still render
@@ -196,14 +253,22 @@ pub(super) fn update_backdrop_and_upper_planes(
     // All blur-bearing upper planes consume the same composite; each
     // re-renders only when the snapshot's unique_id changes or its own
     // subtree is damaged.
+    let preblurred = surface.backdrop_preblurred;
     let upper_backdrop = surface
         .backdrop_image
         .clone()
-        .map(|img| (img, BACKDROP_SCALE));
+        .map(|img| (img, BACKDROP_SCALE, preblurred));
     if let Some(el) = &surface.overlay_dmabuf_element {
         el.set_backdrop(upper_backdrop.clone());
         if overlay_active {
-            el.render(renderer.as_mut());
+            let dmg = el.subtree_damage();
+            let rendered = el.render(renderer.as_mut());
+            tracing::info!(
+                target: "otto::planes",
+                "overlay plane: subtree_damage={:?} rendered={}",
+                dmg,
+                rendered
+            );
         }
     }
     if let Some(el) = &surface.switcher_dmabuf_element {

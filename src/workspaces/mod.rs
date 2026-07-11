@@ -1349,6 +1349,9 @@ impl Workspaces {
             .window_selector_view
             .window_selector_view
             .clone();
+        if is_starting_animation {
+            tracing::debug!(target: "otto::popups", "is_animating(true) site=selector-start");
+        }
         self.is_animating
             .store(is_starting_animation, std::sync::atomic::Ordering::Relaxed);
 
@@ -1835,6 +1838,7 @@ impl Workspaces {
         // If there's a transition, set up a callback to finalize visibility after animation
         if let Some(trans) = transition {
             // Mark as animating when we have a transition
+            tracing::debug!(target: "otto::popups", "is_animating(true) site=show-desktop");
             self.is_animating
                 .store(true, std::sync::atomic::Ordering::Relaxed);
 
@@ -1965,19 +1969,20 @@ impl Workspaces {
                 let inner = inner.clone();
 
                 tokio::spawn(async move {
-                    // Reparent window into the drawer and start the genie
-                    // immediately — both run in parallel with dock slide-in
-                    // and drawer expansion.
-                    view.window_layer.set_layout_style(taffy::Style {
-                        position: taffy::Position::Absolute,
-                        ..Default::default()
-                    });
-                    if let Err(e) = layers_engine
-                        .add_layer_to_positioned(view.window_layer.clone(), Some(inner.id))
-                    {
-                        tracing::warn!("minimize: failed to reparent window into drawer: {e}");
-                    }
-
+                    // Run the genie while the window is STILL in the windows
+                    // plane subtree: the destination rect is global scene
+                    // coordinates, so the animation squeezes toward the dock
+                    // without moving the layer. Reparenting into the drawer
+                    // first put the whole animation under the strip-sized
+                    // dock plane (≤480px tall buffer) — the genie rendered
+                    // clipped into that band (i.e. invisible) while the
+                    // windows plane kept the stale window pixels.
+                    //
+                    // Capture the unscaled window size NOW — the layer is
+                    // hidden during the post-genie settle (display: none →
+                    // zero layout bounds), so it can't be read later.
+                    let base_bounds = view.window_layer.render_bounds_with_children();
+                    let base_size = (base_bounds.width(), base_bounds.height());
                     let inner_bounds = inner.render_bounds_transformed();
                     let minimize_tr = view.minimize(skia::Rect::from_xywh(
                         inner_bounds.x(),
@@ -2025,6 +2030,48 @@ impl Workspaces {
                         }
                     };
                     tokio::join!(minimize_tr, show_fut, layout_fut);
+
+                    // Genie done — NOW move the (effect-free, hidden) window
+                    // layer into the drawer and fit it. From here on it
+                    // renders in the dock plane as the mini-window.
+                    // is_minimizing is still TRUE (holding the backend in
+                    // forced-composite mode); it clears below once the layer
+                    // is settled so the planes return with one clean full
+                    // redraw.
+                    if !view.is_unmapped() {
+                        view.window_layer.set_layout_style(taffy::Style {
+                            position: taffy::Position::Absolute,
+                            ..Default::default()
+                        });
+                        if let Err(e) = layers_engine
+                            .add_layer_to_positioned(view.window_layer.clone(), Some(inner.id))
+                        {
+                            tracing::warn!(
+                                "minimize: failed to reparent window into drawer: {e}"
+                            );
+                        }
+                        view.set_is_minimizing(false);
+                        let bounds = inner.render_bounds_transformed();
+                        let scale_tr = view.apply_minimized_scale_with_base(base_size, bounds);
+                        view.window_layer
+                            .set_position(layers::types::Point { x: 0.0, y: 0.0 }, None);
+                        // scale/position are SCHEDULED engine changes while
+                        // set_hidden is IMMEDIATE: unhiding before they are
+                        // applied lets a render draw the window in the
+                        // drawer at FULL scale for one frame. Await the
+                        // scale transaction (applied by the engine on its
+                        // own thread — calling engine.update() from this
+                        // task instead panics the scene arena), THEN show.
+                        if let Some(tr) = scale_tr {
+                            tr.await;
+                        }
+                        // Hidden since the genie's on_finish (ghost-frame
+                        // guard) — safe to show now that it lives in the
+                        // drawer at mini scale.
+                        view.window_layer.set_hidden(false);
+                    } else {
+                        view.set_is_minimizing(false);
+                    }
 
                     // Re-hide the dock if we revealed it for this minimize.
                     if dock_was_hidden {
@@ -2532,6 +2579,19 @@ impl Workspaces {
         let window_views = self.window_views.read().unwrap();
 
         window_views.get(id).cloned()
+    }
+
+    /// Whether any window is currently running its minimize/unminimize
+    /// (genie) animation. The genie's image filter paints far outside the
+    /// layer's damage rects, so the per-plane partial-redraw pipeline
+    /// corrupts it — the backend switches to the full-GPU scene composite
+    /// for the duration (see `render_output_frame`'s `force_composite`).
+    pub fn has_minimizing_window(&self) -> bool {
+        self.window_views
+            .read()
+            .unwrap()
+            .values()
+            .any(|v| v.is_minimizing())
     }
 
     pub fn set_window_view(&self, id: &ObjectId, window_view: WindowView) {
@@ -3781,9 +3841,9 @@ impl Workspaces {
         }
         tracing::info!(
             target: "otto::planes",
-            prev = prev_ids.len(),
-            new = new_ids.len(),
-            "scanout window set changed"
+            "scanout window set changed: {:?} -> {:?}",
+            prev_ids,
+            new_ids
         );
         for prev in prev_ids.difference(&new_ids) {
             if let Some(view) = self.get_window_view(prev) {
@@ -4064,11 +4124,6 @@ impl Workspaces {
 
         // Compute per-output offset: each output slides by i * (own_phys_width + SPACING)
         let primary_width = self.with_model(|m| m.width as f32);
-        self.is_animating
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-        let animation = self
-            .layers_engine
-            .add_animation_from_transition(&transition, true);
         let mut changes = Vec::new();
         for (output_name, ows) in self.output_workspaces.iter() {
             let output = self.outputs.iter().find(|o| o.name() == *output_name);
@@ -4083,8 +4138,25 @@ impl Workspaces {
 
             let workspace_gap_px = WORKSPACE_SPACING * scale;
             let offset = i as f32 * (w + workspace_gap_px);
-            changes.push(ows.workspaces_layer.change_position((-offset, 0.0)));
+            // Skip outputs already resting at the target offset. Activation
+            // paths re-request the CURRENT workspace on every focus change;
+            // scheduling the no-op spring anyway pulses `is_animating` for a
+            // frame, which demotes/re-promotes the scanout window and resets
+            // the compositor swapchain — a visible full-screen flicker per
+            // click (and per hover that re-activates).
+            if (ows.workspaces_layer.render_position().x - (-offset)).abs() > 0.5 {
+                changes.push(ows.workspaces_layer.change_position((-offset, 0.0)));
+            }
         }
+        if changes.is_empty() {
+            return None;
+        }
+        tracing::debug!(target: "otto::popups", "is_animating(true) site=scroll-workspace i={i}");
+        self.is_animating
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let animation = self
+            .layers_engine
+            .add_animation_from_transition(&transition, true);
         let tr = self
             .layers_engine
             .schedule_changes(&changes, animation)
@@ -4299,6 +4371,7 @@ impl Workspaces {
         }
         if let Some(transition) = &transition {
             // Mark as animating
+            tracing::debug!(target: "otto::popups", "is_animating(true) site=apply-scroll offset={offset}");
             self.is_animating
                 .store(true, std::sync::atomic::Ordering::Relaxed);
 
@@ -4567,6 +4640,19 @@ impl UnminimizeContext {
 
             let drawer_bounds = drawer.render_bounds_transformed();
             drawer.clear_on_change_size_handlers();
+            // Restore the window into the workspace tree NOW, inline. This
+            // used to ride on the drawer-shrink transaction's `on_start`,
+            // which silently never fires when another dock relayout replaces
+            // the transaction — the window then stays parented in the drawer
+            // forever and is drawn at full size inside the dock plane.
+            layer_ref.remove_draw_content();
+            if let Err(e) = windows_layer_ref.add_sublayer(&layer_ref) {
+                tracing::warn!("unminimize: failed to reparent window layer: {e}");
+            }
+            if let Err(e) = expose_windows_ref.add_sublayer(&mirror_ref) {
+                tracing::warn!("unminimize: failed to reparent mirror layer: {e}");
+            }
+            layer_ref.set_position(target_pos, None);
             drawer
                 .set_size(
                     Size::points(0.0, 130.0),
@@ -4574,19 +4660,6 @@ impl UnminimizeContext {
                         delay: 0.2,
                         timing: TimingFunction::ease_out_quad(0.3),
                     },
-                )
-                .on_start(
-                    move |_layer: &Layer, _| {
-                        layer_ref.remove_draw_content();
-                        if let Err(e) = windows_layer_ref.add_sublayer(&layer_ref) {
-                            tracing::warn!("unminimize: failed to reparent window layer: {e}");
-                        }
-                        if let Err(e) = expose_windows_ref.add_sublayer(&mirror_ref) {
-                            tracing::warn!("unminimize: failed to reparent mirror layer: {e}");
-                        }
-                        layer_ref.set_position(target_pos, None);
-                    },
-                    true,
                 )
                 .then(move |layer: &Layer, _| {
                     layer.remove();
