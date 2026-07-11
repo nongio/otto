@@ -451,6 +451,17 @@ impl Otto<UdevData> {
             return;
         };
 
+        // A demoted window's content was hidden/blanked in the windows plane
+        // while it was promoted; on demotion force a full-buffer redraw so the
+        // windows plane repaints the whole region with the re-imported content
+        // instead of trusting partial engine damage (which can miss the freshly
+        // unhidden layer and leave a hole where the scanned-out buffer was).
+        if !departed_windows.is_empty() {
+            if let Some(el) = &surface.windows_dmabuf_element {
+                el.request_full_render();
+            }
+        }
+
         // ── Deferred GPU fence: wait for the *previous* frame's GPU work ─────
         //
         // We stored the EGL fence from the last render_frame() call instead of
