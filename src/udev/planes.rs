@@ -146,25 +146,36 @@ pub(super) fn ensure_plane_elements(
     );
 }
 
-/// Every frame: point each plane element at its output's scene node.
+/// Every frame: point each plane element at its output's scene node and
+/// refresh the output's scene origin (its static position in scene space —
+/// nonzero for any output right of / below the first). Re-set every frame so
+/// a layout change on hotplug propagates without extra plumbing.
 pub(super) fn wire_plane_nodes(surface: &SurfaceData, ows: &OutputWorkspaces) {
+    let pos = ows.output_layer.render_position();
+    let origin = (pos.x as i32, pos.y as i32);
     if let Some(el) = &surface.scene_dmabuf_element {
         el.set_node_ref(ows.background_plane.id);
+        el.set_scene_origin(origin);
     }
     if let Some(el) = &surface.windows_dmabuf_element {
         el.set_node_ref(ows.windows_plane.id);
+        el.set_scene_origin(origin);
     }
     if let Some(el) = &surface.expose_dmabuf_element {
         el.set_node_ref(ows.expose_layer.id);
+        el.set_scene_origin(origin);
     }
     if let Some(el) = &surface.overlay_dmabuf_element {
         el.set_node_ref(ows.overlay_plane.id);
+        el.set_scene_origin(origin);
     }
     if let Some(el) = &surface.switcher_dmabuf_element {
         el.set_node_ref(ows.switcher_plane.id);
+        el.set_scene_origin(origin);
     }
     if let Some(el) = &surface.dock_dmabuf_element {
         el.set_node_ref(ows.dock_plane.id);
+        el.set_scene_origin(origin);
     }
 }
 
