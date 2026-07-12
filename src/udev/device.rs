@@ -582,6 +582,7 @@ impl Otto<UdevData> {
                 avg_render_time_us: 2000.0, // start with 2ms estimate
                 idle_countdown: 0,
                 has_rendered_once: false,
+                full_redraw_done: false,
                 rendered_damage_gen: 0,
                 cursor_was_in_output: false,
                 prefetched_scene_damage: None,

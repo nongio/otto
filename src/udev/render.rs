@@ -282,6 +282,51 @@ impl Otto<UdevData> {
     }
 
     #[allow(clippy::mutable_key_type)] // ObjectId as HashMap key — see window_throttle.rs
+    /// Kernel reported a display FIFO underrun: the display engine could
+    /// not fetch the currently-configured planes. Reduce the plane budget
+    /// one step (1 = no window promotion, 2 = full GPU composite) and
+    /// re-render everything so the lighter configuration flips in now.
+    /// Sticky for the session — underruns tend to recur under the same
+    /// plane load, and each occurrence corrupts a visible frame.
+    pub(super) fn raise_underrun_penalty(&mut self) {
+        if self.backend_data.underrun_penalty >= 2 {
+            return;
+        }
+        self.backend_data.underrun_penalty += 1;
+        let level = self.backend_data.underrun_penalty;
+        tracing::warn!(
+            "display FIFO underrun — reducing plane budget to level {} ({})",
+            level,
+            if level == 1 {
+                "window promotion disabled"
+            } else {
+                "plane decomposition disabled, full GPU composite"
+            }
+        );
+        for device in self.backend_data.backends.values_mut() {
+            for surface in device.surfaces.values_mut() {
+                for el in [
+                    &surface.scene_dmabuf_element,
+                    &surface.windows_dmabuf_element,
+                    &surface.expose_dmabuf_element,
+                    &surface.overlay_dmabuf_element,
+                    &surface.switcher_dmabuf_element,
+                    &surface.dock_dmabuf_element,
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    el.request_full_render();
+                }
+                surface.idle_countdown = 3;
+            }
+        }
+        let nodes: Vec<_> = self.backend_data.backends.keys().copied().collect();
+        for node in nodes {
+            self.render(node, None);
+        }
+    }
+
     pub(super) fn render_surface(&mut self, node: DrmNode, crtc: crtc::Handle) {
         profiling::scope!("render_surface", &format!("{crtc:?}"));
 
@@ -336,13 +381,17 @@ impl Otto<UdevData> {
         };
         // Whether this output uses the plane decomposition at all (set once at
         // surface creation from overlay count / atomic / GPU identity).
+        // Underrun penalty level 2 fully disables the plane decomposition:
+        // the display engine proved it cannot fetch this many planes
+        // (see `UdevData::underrun_penalty`).
         let planes_enabled = self
             .backend_data
             .backends
             .get(&node)
             .and_then(|d| d.surfaces.get(&crtc))
             .map(|s| s.planes_enabled)
-            .unwrap_or(false);
+            .unwrap_or(false)
+            && self.backend_data.underrun_penalty < 2;
         // Any running minimize/unminimize genie forces the full-GPU scene
         // composite for the frame (and drops scanout promotion): the genie's
         // image filter paints far outside the per-plane damage rects, so the
@@ -380,6 +429,7 @@ impl Otto<UdevData> {
         let scanout_output_name = scanout_output.map(|o| o.name());
         let raw_scanout_desired: Vec<smithay::reexports::wayland_server::backend::ObjectId> =
             if !planes_enabled
+                || self.backend_data.underrun_penalty >= 1
                 || capture_active
                 || minimize_active
                 || self.swipe_gesture.is_active()
@@ -671,7 +721,17 @@ impl Otto<UdevData> {
         // done in `set_scanout_windows`, before the `surface` borrow).
         surface.shadow_only_windows = scanout_desired.clone();
 
-        let switcher_active = self.workspaces.app_switcher.alive();
+        // Dock/switcher chrome exists only on the primary output. Beyond
+        // correctness, NOT pushing these strip planes on secondary outputs
+        // matters for display bandwidth: extra full-width planes on a 4K
+        // output can exceed the display engine's fetch budget and cause
+        // pipe FIFO underruns (bottom of the frame scans out as garbage).
+        let chrome_output = self
+            .workspaces
+            .primary_output()
+            .map(|p| p.name() == output.name())
+            .unwrap_or(false);
+        let switcher_active = chrome_output && self.workspaces.app_switcher.alive();
         let overlay_active =
             self.workspaces.is_overlay_ui_active(&output) || self.dnd_icon.is_some();
         {
@@ -712,6 +772,32 @@ impl Otto<UdevData> {
             }
         }
         surface.switcher_was_active = switcher_active;
+        // Debug: `touch /tmp/otto-full-redraw` forces every plane element on
+        // every output to fully re-render and flip a fresh buffer on its
+        // next frame (needs a frame trigger, e.g. moving the cursor).
+        // Remove the file and touch it again to re-trigger.
+        {
+            let want = std::path::Path::new("/tmp/otto-full-redraw").exists();
+            if want && !surface.full_redraw_done {
+                surface.full_redraw_done = true;
+                tracing::info!(target: "otto::planes", "debug full redraw requested");
+                for el in [
+                    &surface.scene_dmabuf_element,
+                    &surface.windows_dmabuf_element,
+                    &surface.expose_dmabuf_element,
+                    &surface.overlay_dmabuf_element,
+                    &surface.switcher_dmabuf_element,
+                    &surface.dock_dmabuf_element,
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    el.request_full_render();
+                }
+            } else if !want {
+                surface.full_redraw_done = false;
+            }
+        }
         // Composite→planes edge: the genie frames rendered through the
         // full-scene element, which consumed and cleared all engine damage
         // while the plane buffers sat idle. Without a full redraw the first
@@ -766,7 +852,7 @@ impl Otto<UdevData> {
             expose_active,
             fullscreen_window.as_ref(),
             switcher_active,
-            !self.workspaces.dock.is_hidden(),
+            chrome_output && !self.workspaces.dock.is_hidden(),
             overlay_active,
             {
                 // The windows plane must stay up while a workspace switch is

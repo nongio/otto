@@ -89,6 +89,13 @@ pub struct UdevData {
     /// damage event happened that they haven't drawn yet. Engine damage is
     /// cleared only once every surface has caught up.
     pub(super) damage_generation: u64,
+    /// Adaptive plane budget: bumped when the kernel reports a display
+    /// FIFO underrun (the display engine starving on plane fetch — the
+    /// affected pipe scans out solid garbage from mid-frame down).
+    /// 0 = full plane use, 1 = no window promotion, 2 = no plane
+    /// decomposition (full GPU composite). Sticky for the session:
+    /// display bandwidth is shared, so the reduction applies globally.
+    pub(super) underrun_penalty: u8,
 }
 
 /// Per-device backend data
@@ -132,6 +139,9 @@ pub struct SurfaceData {
     /// been consumed by another output's render before this surface gets
     /// its turn, and skipping here would leave the display black.
     pub(super) has_rendered_once: bool,
+    /// Debug: whether this surface already honoured the current
+    /// `/tmp/otto-full-redraw` trigger (reset when the file is removed).
+    pub(super) full_redraw_done: bool,
     /// The damage generation this surface last rendered (see
     /// `UdevData::damage_generation`). A surface behind the global counter
     /// must render even when its own tick reports no damage — the damage

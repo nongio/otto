@@ -265,6 +265,7 @@ pub fn run_udev() {
         context_id: None, // Will be set after device initialization
         render_requested: AtomicBool::new(false),
         damage_generation: 0,
+        underrun_penalty: 0,
     };
     let mut state = Otto::init(display, event_loop.handle(), data, true);
 
@@ -610,6 +611,71 @@ pub fn run_udev() {
     /*
      * And run our loop
      */
+
+    // ── Adaptive plane budget: kernel underrun monitor ────────────────────
+    // i915 logs "CPU pipe X FIFO underrun" once per episode when the display
+    // engine starves fetching planes (the affected pipe scans out solid
+    // garbage from mid-frame down — bright green on Intel). Follow the
+    // kernel journal and shed plane usage when it happens: level 1 drops
+    // window promotion, level 2 the whole plane decomposition. Display
+    // bandwidth is shared across pipes, so the penalty is global.
+    {
+        use smithay::reexports::calloop::{
+            generic::Generic, Interest, Mode as CalloopMode, PostAction,
+        };
+        use std::io::Read as _;
+        use std::os::fd::AsRawFd;
+        match std::process::Command::new("journalctl")
+            .args(["-kf", "-o", "cat", "-n", "0"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(mut child) => {
+                let stdout = child.stdout.take().unwrap();
+                // Non-blocking: the source fires on readiness; drain fully.
+                unsafe {
+                    let fd = stdout.as_raw_fd();
+                    let flags = libc::fcntl(fd, libc::F_GETFL);
+                    libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+                }
+                event_loop
+                    .handle()
+                    .insert_source(
+                        Generic::new(stdout, Interest::READ, CalloopMode::Level),
+                        move |_, stdout, data: &mut Otto<UdevData>| {
+                            let mut buf = [0u8; 4096];
+                            let mut hit = false;
+                            loop {
+                                // Safety: the fd stays owned by the source.
+                                match unsafe { stdout.get_mut() }.read(&mut buf) {
+                                    Ok(0) => break,
+                                    Ok(n) => {
+                                        if String::from_utf8_lossy(&buf[..n])
+                                            .contains("FIFO underrun")
+                                        {
+                                            hit = true;
+                                        }
+                                    }
+                                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                                    Err(_) => break,
+                                }
+                            }
+                            if hit {
+                                data.raise_underrun_penalty();
+                            }
+                            Ok(PostAction::Continue)
+                        },
+                    )
+                    .expect("failed to insert underrun monitor");
+                // The follower lives for the whole session.
+                std::mem::forget(child);
+            }
+            Err(e) => {
+                warn!("underrun monitor unavailable (journalctl spawn failed): {e}");
+            }
+        }
+    }
 
     // Perform an initial dispatch so that backends (including XWayland) can
     // finish asynchronous setup (e.g. setting DISPLAY) before autostart.
