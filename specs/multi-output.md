@@ -5,7 +5,7 @@
 
 ## Summary
 
-Otto can drive more than one output (physical monitor or virtual/screenshare output) at once. This spec covers the infrastructure shared by all outputs regardless of what they display: how outputs are laid out relative to each other in the shared scene, how per-output KMS plane buffers stay correctly positioned despite that shared layout, how the render loop schedules and wakes each output independently, and which output(s) show the hardware cursor. Workspace lifecycle/navigation is covered by `workspaces-multi-output.md`; the KMS plane-decomposition mechanism itself is covered by `plane-scanout.md`.
+Otto can drive more than one output (physical monitor or virtual/screenshare output) at once. This spec covers the infrastructure shared by all outputs regardless of what they display: how outputs are laid out relative to each other in the global (window-management/input) layout versus the render scene, how damage and per-output KMS plane buffers stay correct across outputs, how window/space lookups and drags behave with per-output workspaces, how the render loop schedules and wakes each output independently, and which output(s) show the hardware cursor. Workspace lifecycle/navigation is covered by `workspaces-multi-output.md`; the KMS plane-decomposition mechanism itself is covered by `plane-scanout.md`.
 
 ## Goals
 
@@ -17,24 +17,28 @@ Otto can drive more than one output (physical monitor or virtual/screenshare out
 ## Non-Goals
 
 - Vertical or grid output arrangement — only a single horizontal row is supported.
-- User-configurable placement for physical (non-virtual) outputs (see Constraints).
-- A first-class output-mirroring feature (showing the same content on two outputs by design).
+- A first-class output-mirroring feature (showing the same content on two outputs by design) — see Constraints for the one unintentional overlap case that remains.
 - Per-output dock, topbar, or app switcher — these remain primary-output-only (see `workspaces-multi-output.md`).
+- Drag mirrors: while dragging a window across the boundary between two outputs, only one output shows the window at a time (see Cross-Output Drag below). Showing a live preview of the dragged window on both outputs simultaneously while it straddles the boundary is planned but not implemented.
 
 ## Behavior
 
-### Output Layout
+### Output Layout (global / input space)
 
-- The first output mapped is placed at the origin of the shared scene.
-- Each subsequent output is placed immediately to the right of the combined width of all previously-mapped outputs (left-to-right, single row, converted to physical pixels via that output's scale). There is no vertical offset — every output's row position is fixed.
-- Virtual (screenshare) outputs are placed according to their configured position; if unconfigured, a virtual output defaults to the same origin as the first output, which overlaps it (see Constraints).
-- Re-laying-out (e.g. after a mode change, hotplug, or resume) recomputes every output's position from scratch and re-applies it, so positions stay consistent across changes.
+- The first output mapped is placed at the origin of the shared global layout (the coordinate space used by window management, input, and drag/drop — not the render scene, see Output-Local Rendering below).
+- Each subsequent physical output is auto-placed immediately to the right of the combined width of all previously-mapped outputs (left-to-right, single row, logical coordinates), unless a configured position is set for it.
+- A configured position is honored for physical outputs when it does not overlap any already-mapped output's geometry; an overlapping configured position is rejected and that output falls back to auto left-to-right placement instead (outputs are never allowed to overlap in the global layout).
+- Virtual (screenshare) outputs are placed according to their configured position, following the same overlap rule as physical outputs; if unconfigured, a virtual output defaults to the same origin as the first output, which overlaps it (see Constraints).
+- Re-laying-out (e.g. after a mode change, hotplug, or resume) recomputes every output's global position from scratch and re-applies it, so positions stay consistent across changes.
 
-### Output-Local Rendering
+### Output-Local Rendering (scene space)
 
-- Content rendered for a given output — including KMS plane buffers (background, windows, expose, overlay UI, dock, switcher) and the cross-plane backdrop composite used for blur — is always anchored to that output's own top-left corner, never shifted by the output's position in the shared scene.
-- An output placed to the right of another one displays its content starting from its own edge; it never shows a horizontally-shifted or partially-blacked-out view of what should be at its origin.
-- The only positional information that varies per output within its own rendered content is that output's own workspace-scroll offset (e.g. mid-swipe), never its placement relative to other outputs.
+- Every output's render scene subtree — the per-output container layer holding its background, windows, expose, overlay UI, dock, and switcher layers — is positioned at scene coordinate (0,0) and sized to that output's own physical extent. Output subtrees intentionally overlap one another in scene space.
+- Each CRTC/output render pass walks only its own output's subtree (via that output's dedicated plane-element node references), so scene coordinates are output-local by construction: there is no shared/global scene position to subtract or correct for, and no output's content can appear shifted or partially blacked out relative to another's.
+- The scene root and the fallback (non-plane) composite scene element are each sized to fit the single largest mapped output, not the union of all outputs — since subtrees overlap rather than tile, the scene never needs to be wider or taller than the biggest output.
+- A vestigial per-plane-element "scene origin" correction still exists in the renderer but is always applied as (0,0) today, since every output layer's scene position is fixed at the origin; it has no effect while output subtrees overlap and exists only as forward-compatible plumbing.
+- Global side-by-side layout (see Output Layout above) governs the smithay `Space` (window locations), pointer/input geometry, and drag/drop — it is unrelated to, and not reflected in, scene-graph coordinates.
+- The only positional information that varies per output within its own rendered scene content is that output's own workspace-scroll offset (e.g. mid-swipe), never a placement relative to other outputs.
 
 ### Per-Output Render Scheduling
 
@@ -42,6 +46,29 @@ Otto can drive more than one output (physical monitor or virtual/screenshare out
 - An input event (or any event that requests a render) wakes exactly the outputs that are currently idle; an output that already has a render pending absorbs the same event through its own in-flight schedule rather than being redundantly kicked.
 - Every output that receives activity extends its own active window by a short, fixed tail so a burst of input across multiple outputs doesn't cause any of them to prematurely appear idle.
 - Input directed at one output must reliably wake that output's rendering even while other outputs are fully idle, and must not require every output to be idle simultaneously first.
+
+### Damage Delivery Across Outputs
+
+- Scene damage is a single shared signal (one scene graph feeds every output's overlapping subtree), so it is consumed by whichever output's render tick observes it first; a global tick counter increments every time that shared signal reports damage, and every output remembers which tick it last rendered.
+- An output whose last-rendered tick is behind the current counter must render even if its own tick observes no damage — the damage already happened and was consumed by another output on an earlier tick. This is what keeps a secondary output's windows from freezing on whatever frame happened to run first.
+- Damage bookkeeping in the shared scene is only cleared once every output has caught up to the current tick; an output that is idle and behind is explicitly scheduled to render (rather than waiting for its own next natural wakeup) so it cannot stay perpetually behind.
+- Every output always renders its very first frame regardless of the shared damage signal, since that signal may already have been consumed by another output before the new output gets its turn — skipping would leave a newly connected or newly woken output permanently black.
+
+### Per-Output Window & Space Lookups
+
+- A window belongs to exactly one output's workspace set at a time. Every lookup that answers "where is this window" or "what's under this point" — hit-testing, a window's location or geometry, frame-callback delivery, and "which output(s) show this window" — searches every output's workspaces rather than only the primary's, so these queries behave correctly for windows on secondary outputs, not just the primary.
+- Frame-callback bookkeeping (surface enter/leave tracking) runs for every output's workspaces every refresh, not only the primary's — a client on a secondary output keeps receiving frame callbacks and does not freeze.
+
+### Cross-Output Drag
+
+- Dragging a window is tracked by the window's center point. While the center remains within the output whose workspace currently owns the window, the drag behaves as a same-output move.
+- The moment the window's center crosses into another output's region, the window migrates: it is removed from the source output's workspace/space and added to the target output's workspace/space (the same output resolution a drop would use — current owner, then the input-focused output, then the primary output, as fallbacks if the point doesn't land inside any output).
+- A migrated (or otherwise moved) window's on-screen layer position is always written in the target output's own local scene coordinates, consistent with Output-Local Rendering above — never as a raw global/logical coordinate.
+- Only one output shows the dragged window at a time; there is no live preview on the source output after migration (see Non-Goals: drag mirrors).
+
+### Direct-Scanout Promotion
+
+- Direct-scanout candidate selection and the promoted-window cap are evaluated independently per output, using only that output's own workspace; a window can only be promoted onto the CRTC of the output whose space actually contains it. Full detail is in `plane-scanout.md`.
 
 ### Cursor Ownership
 
@@ -53,22 +80,24 @@ Otto can drive more than one output (physical monitor or virtual/screenshare out
 
 ## Constraints & Edge Cases
 
-- **Config position is not honored for physical outputs:** configuration exposes a position field for physical displays, but physical output placement always uses the automatic left-to-right layout described above — a configured position for a physical display has no effect on where it appears. Only virtual (screenshare) outputs honor a configured position.
-- **Virtual outputs default to overlapping the first output:** a virtual output with no configured position is placed at the same origin as the first mapped output, which overlaps it in global space. This is the practical trigger for the cursor mirroring corollary above.
+- **Config position is honored for physical outputs, with overlap rejection:** a configured position for a physical display is used as-is as long as it doesn't overlap any already-mapped output's geometry; if it would overlap, the configured position is ignored (with a warning) and that output falls back to automatic left-to-right placement instead. Outputs can never be made to overlap through configuration alone.
+- **Virtual outputs default to overlapping the first output:** a virtual output with no configured position is placed at the same origin as the first mapped output, which overlaps it in global space. This is the one remaining, unintentional path to output overlap (the overlap-rejection rule above only applies when a position is actually configured) and is the practical trigger for the cursor mirroring corollary above.
 - **No vertical stacking:** all outputs share the same row; there is no way to arrange outputs above/below one another today.
-- **No overlap detection:** the automatic layout never checks for or resolves overlaps; overlap can only occur via virtual-output configuration (or default) as noted above.
-- **Chrome stays primary-only:** dock, topbar, app switcher, and other shared overlay UI are attached only to the primary output's scene subtree; secondary outputs have empty placeholder layers for the same plane roles but no chrome content (see `workspaces-multi-output.md`).
+- **Chrome stays primary-only:** dock, topbar, app switcher, and other shared overlay UI are attached only to the primary output's scene subtree; secondary outputs have empty placeholder layers for the same plane roles but no chrome content (see `workspaces-multi-output.md`). This also means primary-only chrome never occludes direct-scanout candidates on a secondary output (see Direct-Scanout Promotion above).
 - **Idle is per-output, not global:** an output that has gone idle does not gate whether another output can be kicked back into rendering by input; each output's idle state is tracked and consumed independently.
+- **Global layout and scene layout are two different coordinate systems:** an output's position in the side-by-side global layout (Space/input) has no relationship to its position in the render scene (always (0,0), overlapping every other output's subtree). Code that needs an output's on-screen scene content must never reuse its global position for that purpose, and vice versa.
 
 ## Rationale
 
-- **Left-to-right auto-layout** was chosen as the simplest arrangement that covers the common case (monitors placed side by side) without requiring configuration plumbing for physical displays. It was previously assumed (incorrectly) that every output's scene subtree sat at the shared scene origin; plane buffers and cursor placement were computed against the pointer's raw global coordinates and the root scene position, so any output placed to the right of the first rendered its content shifted (and in the KMS-plane case, mostly black) and drew the cursor at the wrong on-screen location. Both the plane render path and the cursor render path now explicitly subtract the target output's own placement before rendering, restoring output-local correctness regardless of layout.
+- **Left-to-right auto-layout** was chosen as the simplest arrangement that covers the common case (monitors placed side by side) without requiring configuration plumbing for physical displays; a configured position is layered on top of it (with overlap rejection) for the cases where the user does want explicit placement.
+- **Overlapping per-output scene subtrees** replaced an earlier design where every output's scene subtree was positioned side-by-side in scene space (mirroring the global layout) and each plane/cursor render explicitly subtracted the output's own scene placement to stay output-local. That correction was easy to miss at each new call site and left a class of "forgot to subtract the origin" bugs (shifted or black content, misplaced cursor) whenever a new render or hit-testing path was added. Making every output's subtree live at scene (0,0) and overlap — with each CRTC's render walking only its own subtree — removes the need for that correction entirely: scene coordinates are output-local by construction, not by convention. Global (Space/input) layout intentionally still stays side-by-side, since window management and input still need real, non-overlapping output geometry.
 - **Per-output idle tracking with per-output kicking** replaced an earlier "kick only when every output is idle" rule. That rule reset every output's idle countdown on any input, but only issued an explicit render when *all* outputs were simultaneously idle; once one output idled out with no render scheduled, the "all idle" condition could never become true again on later input, silently wedging rendering across all outputs. Kicking exactly the outputs that are currently idle (while resetting every output's countdown so busy outputs still get their trailing-activity window extended) fixes this without reintroducing double-renders on outputs that already have a render pending.
+- **A global damage-generation counter** replaced relying on the shared scene's damage flag being observed directly by every output. Because damage is a single shared signal consumed by whichever output's render tick runs first, a second (or later) output's own tick could see "no damage" even though real damage occurred — freezing that output on its first frame, or leaving it black. Tracking a monotonic generation per surface and forcing a render whenever a surface is behind the global counter (plus always drawing an output's very first frame unconditionally) closes that gap without requiring every output to observe every damage event directly.
+- **Per-output space lookups** replaced lookups that only consulted the primary output's workspace. With windows now genuinely distributed across per-output workspaces (rather than all living in one shared space), primary-only lookups silently failed for anything on a secondary output — pointer focus, frame callbacks, and drag scale factors would resolve incorrectly or not at all. Searching every output's workspaces (a window lives in exactly one, so this is unambiguous) fixes this at the small cost of a linear scan over the (small) number of outputs.
 - **Cursor as pure per-output containment, plus one farewell frame** avoids needing a dedicated cross-output cursor-owner concept: geometric containment against each output's own coordinate space is sufficient for the non-overlapping layout that's actually produced today, and naturally extends to (and documents) the overlap/mirroring corner case rather than needing to special-case it. The farewell frame exists because a hardware cursor plane keeps scanning out its last buffer until told otherwise — without one extra cursor-omitted frame on exit, an output the pointer just left would keep showing a stale cursor frozen at the boundary.
 
 ## Open Questions
 
-- Should physical-output configuration position actually be wired up (honoring `[[displays]]` position from config), or should manual output arrangement be dropped from the config schema until it's implemented?
-- Should output mirroring become a first-class, explicitly configured feature, given that the geometry-containment cursor logic already tolerates overlapping outputs?
+- Should output mirroring become a first-class, explicitly configured feature, given that the geometry-containment cursor logic already tolerates overlapping outputs, and virtual outputs already default to overlapping the first output?
 - Is vertical/grid output arrangement worth supporting, or is horizontal-only sufficient for expected hardware setups?
-- Should overlap between two physical (non-virtual) outputs be detected and rejected/warned about, given the current layout algorithm has no such check?
+- Should a dragged window that straddles two outputs show a mirror/preview on both while it's being dragged, instead of only migrating once its center crosses the boundary?

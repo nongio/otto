@@ -57,10 +57,20 @@ vibrancy even though the content behind it lives on other planes.
 
 - Every plane buffer's rendered content — background, windows, expose,
   overlay UI, dock, switcher, and the cross-plane backdrop composite used
-  for blur — is anchored to its own output's top-left corner, independent
-  of where that output is placed in the shared multi-output scene (see
-  multi-output.md). An output placed elsewhere in the shared scene never
-  renders its plane content shifted.
+  for blur — is anchored to its own output's top-left corner. This is
+  inherent rather than corrected for: every output's scene subtree lives at
+  scene coordinate (0,0) and a CRTC's plane elements only ever walk that
+  output's own subtree, so an output's placement in the shared (global)
+  multi-output layout never affects what its plane buffers render (see
+  multi-output.md).
+- Direct-scanout promotion is evaluated independently per output: candidates
+  are drawn only from that output's own current workspace, and the
+  promoted-window cap (see below) applies per output, not globally. Dock,
+  app-switcher, and OSD occluder rects are only applied on the primary
+  output — that chrome is primary-only and never occludes a secondary
+  output's candidates. The set of windows actually applied to plane state
+  is the union of every output's per-output candidate set, so one output's
+  promotion decision cannot demote a window promoted on another output.
 - The decomposition is enabled per output at surface creation, only when
   the driver is atomic, at least 3 overlay planes exist after
   driver-specific filtering (NVIDIA's are vetoed), and the output renders
@@ -205,15 +215,25 @@ vibrancy even though the content behind it lives on other planes.
   importing client dmabufs into the composite for simplicity; fullscreen
   (dock hidden → empty blur region) still gets direct scanout, which is the
   case that matters most.
-- Plane buffers originally assumed an output's subtree sat at the shared
-  scene origin, so any output placed elsewhere (per multi-output.md's
-  left-to-right layout) rendered its content shifted — mostly black except
-  for a strip. Each plane buffer's render translate now re-applies only the
-  dynamic part of the root position (e.g. workspace scroll) and explicitly
-  subtracts the output's own static scene placement, restoring output-local
-  rendering regardless of layout. Since the backdrop composite is built
-  per output surface from those same buffers, this also makes cross-plane
-  blur correct per output with no separate fix needed.
+- Plane buffers originally assumed every output's subtree sat at the shared
+  scene origin, so an output placed elsewhere by the (then side-by-side)
+  scene layout rendered its content shifted — mostly black except for a
+  strip. The fix went through two stages: first, each plane buffer's render
+  translate explicitly subtracted the output's own static scene placement;
+  later this was superseded by making every output's subtree live at scene
+  (0,0) and overlap, so a CRTC's plane elements are output-local simply by
+  only ever walking their own output's subtree — no placement subtraction
+  is needed at all (see multi-output.md). Since the backdrop composite is
+  built per output surface from those same buffers, this also makes
+  cross-plane blur correct per output with no separate fix needed.
+- Direct-scanout promotion originally computed one global candidate set
+  from the primary output's topmost window and applied it to every CRTC,
+  which painted the primary's window on every screen and scanned out
+  garbage buffers on secondary outputs. Candidates are now sourced from
+  each output's own space, and the applied set is the union of every
+  output's candidates (rather than each output's promotion overwriting the
+  shared set) so outputs stop demoting each other's promoted windows every
+  frame.
 
 ## Open Questions
 
