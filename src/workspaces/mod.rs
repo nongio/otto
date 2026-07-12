@@ -521,6 +521,13 @@ impl Workspaces {
         f(&model)
     }
 
+    /// Re-run the multi-output layout pass — public entry for backends
+    /// after mapping/unmapping an output without touching the flattened
+    /// model's (primary) screen dimension.
+    pub fn relayout_outputs(&self) {
+        self.update_workspaces_layout();
+    }
+
     fn update_workspaces_layout(&self) {
         let (primary_width, primary_height) =
             self.with_model(|model| (model.width as f32, model.height as f32));
