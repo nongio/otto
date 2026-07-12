@@ -57,13 +57,15 @@ branch = "feat/subtree-buffer-render"
 features = ["export-taffy"]
 
 [dependencies.smithay-drm-extras]
-# local checkout: feat/dmabuf-scanout + xwm set_input_focus cherry-pick
-path = "../smithay/smithay-drm-extras"
+git = "https://github.com/nongio/smithay"
+branch = "feat/dmabuf-scanout"
+# local development: path = "../smithay/smithay-drm-extras"
 optional = true
 
 [dependencies.smithay]
-# local checkout: feat/dmabuf-scanout + xwm set_input_focus cherry-pick
-path = "../smithay"
+git = "https://github.com/nongio/smithay"
+branch = "feat/dmabuf-scanout"
+# local development: path = "../smithay"
 default-features = false
 features = [
     "backend_winit",
