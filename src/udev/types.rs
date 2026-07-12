@@ -121,6 +121,11 @@ pub struct SurfaceData {
     /// each no-damage frame so animations that briefly report zero pending
     /// transactions aren't cut short.
     pub(super) idle_countdown: u32,
+    /// Whether the pointer was inside this output on the last drawn frame.
+    /// When it leaves, one farewell frame must render without the cursor
+    /// element — otherwise the hardware cursor plane keeps scanning out the
+    /// stale cursor image at its last position on this output.
+    pub(super) cursor_was_in_output: bool,
     /// Pre-computed scene-graph damage state for the upcoming draw phase.
     ///
     /// Frame pipelining splits each render cycle into two phases:

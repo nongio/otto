@@ -830,7 +830,10 @@ impl Otto<UdevData> {
                         let output_geometry =
                             Rectangle::new((0, 0).into(), output.current_mode().unwrap().size);
                         let output_scale = output.current_scale().fractional_scale();
-                        let pointer_location = self.pointer.current_location();
+                        // Rebase the global pointer to this output's space —
+                        // same correction as in render_output_frame.
+                        let pointer_location =
+                            self.pointer.current_location() - output.current_location().to_f64();
 
                         let pointer_in_output = output_geometry
                             .to_f64()
@@ -1340,9 +1343,19 @@ pub(super) fn render_output_frame<'a>(
     let output_scale = output.current_scale().fractional_scale();
     let dnd_needs_draw = dnd_icon.map(|surface| surface.alive()).unwrap_or(false);
 
+    // The pointer location is global (multi-output space) but this frame's
+    // coordinates are output-local — rebase so the in-output test and the
+    // cursor element position are relative to this output's top-left.
+    let pointer_location = pointer_location - output.current_location().to_f64();
+
     let pointer_in_output = output_geometry
         .to_f64()
         .contains(pointer_location.to_physical(scale));
+    // One farewell frame when the pointer crosses to another output: render
+    // without the cursor element so the cursor plane is cleared — otherwise
+    // this output keeps scanning out the stale cursor at its last position.
+    let cursor_left_output = surface.cursor_was_in_output && !pointer_in_output;
+    surface.cursor_was_in_output = pointer_in_output;
 
     if pointer_in_output {
         use crate::cursor::RenderCursor;
@@ -1400,7 +1413,7 @@ pub(super) fn render_output_frame<'a>(
     }
 
     let (output_elements, clear_color, should_draw) = {
-        let cursor_needs_draw = pointer_in_output;
+        let cursor_needs_draw = pointer_in_output || cursor_left_output;
             // Fullscreen scanout must always draw: the promoted buffer's
             // commits produce no scene damage, and gating on it would drop
             // video frames. `scanout_commit` is the same signal for promoted

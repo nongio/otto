@@ -507,6 +507,7 @@ impl Otto<UdevData> {
                 render_metrics: Some(self.render_metrics.clone()),
                 avg_render_time_us: 2000.0, // start with 2ms estimate
                 idle_countdown: 0,
+                cursor_was_in_output: false,
                 prefetched_scene_damage: None,
                 scene_dmabuf_element: None,
                 backdrop_surface: None,
