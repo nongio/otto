@@ -424,11 +424,34 @@ impl Otto<UdevData> {
         // (hit-test exclusion), so a Space lookup misses it and skips the
         // re-import — the genie animation would then run on the stale/blank
         // content left over from promotion.
-        let departed_windows: Vec<WindowElement> = prev_scanout_ids
+        let mut departed_windows: Vec<WindowElement> = prev_scanout_ids
             .iter()
             .filter(|id| !new_scanout_ids.contains(id))
             .filter_map(|id| self.workspaces.get_window_for_surface(id).cloned())
             .collect();
+        // Fullscreen direct scanout never renders the window into the scene, so
+        // when it ends (e.g. an expose gesture switches to render-all) the
+        // composited scene and the expose mirror have no texture for it. Treat
+        // the window leaving fullscreen scanout like a demotion: re-import +
+        // scene damage so its content is drawn before it's shown.
+        let fullscreen_now_id = fullscreen_window.as_ref().map(|w| w.id());
+        let fullscreen_departed = self
+            .backend_data
+            .backends
+            .get_mut(&node)
+            .and_then(|d| d.surfaces.get_mut(&crtc))
+            .and_then(|surf| {
+                let prev = surf.last_fullscreen_scanout.take();
+                surf.last_fullscreen_scanout = fullscreen_now_id.clone();
+                prev.filter(|p| fullscreen_now_id.as_ref() != Some(p))
+            });
+        if let Some(fid) = fullscreen_departed {
+            if let Some(w) = self.workspaces.get_window_for_surface(&fid).cloned() {
+                if !departed_windows.iter().any(|d| d.id() == w.id()) {
+                    departed_windows.push(w);
+                }
+            }
+        }
         self.workspaces.set_scanout_windows(&scanout_desired);
         for w in &departed_windows {
             self.update_window_view(w);

@@ -234,6 +234,12 @@ pub struct SurfaceData {
     /// `ScanoutCandidate` render element on the plane above.
     pub(super) shadow_only_windows:
         Vec<smithay::reexports::wayland_server::backend::ObjectId>,
+    /// Window that was fullscreen direct-scanned-out on the previous frame.
+    /// Fullscreen scanout never renders the window into the scene, so when it
+    /// ends (e.g. an expose gesture) the window is re-imported like a demotion
+    /// so the composited scene / expose mirror have real content to show.
+    pub(super) last_fullscreen_scanout:
+        Option<smithay::reexports::wayland_server::backend::ObjectId>,
     /// Deferred GPU sync point from the previous frame.
     ///
     /// Instead of blocking immediately after `render_frame()`, we store the
