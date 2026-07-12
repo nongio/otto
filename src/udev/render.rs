@@ -457,6 +457,18 @@ impl Otto<UdevData> {
             self.update_window_view(w);
         }
 
+        // A workspace swipe — and the settle/snap animation after the finger
+        // lifts — scrolls the scene content across the output without producing
+        // per-plane subtree damage, so the plane pipeline keeps scanning out a
+        // stale frame (a visible flicker, most obvious with a single full-output
+        // window). Force the scrolling planes to redraw every frame while either
+        // the gesture or the follow-up animation is running.
+        let swipe_active = self.swipe_gesture.is_active()
+            || self
+                .workspaces
+                .is_animating
+                .load(std::sync::atomic::Ordering::Relaxed);
+
         let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {
             device
         } else {
@@ -482,6 +494,19 @@ impl Otto<UdevData> {
         if !departed_windows.is_empty() {
             if let Some(el) = &surface.windows_dmabuf_element {
                 el.request_full_render();
+            }
+        }
+
+        // Swipe: redraw the scrolling planes every frame (see note above).
+        if swipe_active {
+            for el in [
+                &surface.scene_dmabuf_element,
+                &surface.windows_dmabuf_element,
+                &surface.expose_dmabuf_element,
+            ] {
+                if let Some(el) = el {
+                    el.request_full_render();
+                }
             }
         }
 
