@@ -1,7 +1,7 @@
 # KMS Plane Scanout & Cross-Plane Backdrop Blur
 
 **Status:** draft
-**Related specs:** workspaces-multi-output.md
+**Related specs:** workspaces-multi-output.md, multi-output.md
 
 ## Summary
 
@@ -50,13 +50,17 @@ vibrancy even though the content behind it lives on other planes.
 
 - Including direct-scanout client buffers in the blur composite (windows
   under the blur region are demoted to the windows buffer instead).
-- Multi-output correctness of the blur composite (assumes the output's
-  subtree origin is scene origin; multi-output is untested).
 - Tier probing via TEST_ONLY commits — plane acceptance is delegated to
   Smithay's per-frame assignment and fallback.
 
 ## Behavior
 
+- Every plane buffer's rendered content — background, windows, expose,
+  overlay UI, dock, switcher, and the cross-plane backdrop composite used
+  for blur — is anchored to its own output's top-left corner, independent
+  of where that output is placed in the shared multi-output scene (see
+  multi-output.md). An output placed elsewhere in the shared scene never
+  renders its plane content shifted.
 - The decomposition is enabled per output at surface creation, only when
   the driver is atomic, at least 3 overlay planes exist after
   driver-specific filtering (NVIDIA's are vetoed), and the output renders
@@ -201,12 +205,20 @@ vibrancy even though the content behind it lives on other planes.
   importing client dmabufs into the composite for simplicity; fullscreen
   (dock hidden → empty blur region) still gets direct scanout, which is the
   case that matters most.
+- Plane buffers originally assumed an output's subtree sat at the shared
+  scene origin, so any output placed elsewhere (per multi-output.md's
+  left-to-right layout) rendered its content shifted — mostly black except
+  for a strip. Each plane buffer's render translate now re-applies only the
+  dynamic part of the root position (e.g. workspace scroll) and explicitly
+  subtracts the output's own static scene placement, restoring output-local
+  rendering regardless of layout. Since the backdrop composite is built
+  per output surface from those same buffers, this also makes cross-plane
+  blur correct per output with no separate fix needed.
 
 ## Open Questions
 
 - Should direct-scanout client buffers be imported into the blur composite
   (restoring scanout for windows under the dock)?
-- Multi-output: composite and blur-region coordinates per output subtree.
 - Whether hidden (shadow-only) window content still counts damage into the
   windows buffer, causing unnecessary re-renders while direct scanout is
   active.

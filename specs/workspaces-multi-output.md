@@ -1,7 +1,7 @@
 # Workspaces & Multi-Output
 
 **Status:** draft  
-**Related specs:** none
+**Related specs:** multi-output, plane-scanout
 
 ## Summary
 
@@ -98,7 +98,7 @@ Otto supports multiple workspaces across multiple outputs (physical monitors and
 ### Rendering
 
 - Each output renders its own scene subtree independently.
-- Output layers are positioned at (0, 0) in the scene graph — each output renders into its own framebuffer with no global offset.
+- Output layers are arranged left-to-right in the shared scene: the first output sits at the scene origin, and every output added after it is placed immediately to the right of the combined extent of the outputs already placed. There is no vertical stacking. See multi-output.md for the full layout, per-output plane-buffer coordinate, and cursor-ownership contract.
 - Workspace layers, expose layers, and workspace selector layers are all per-output sublayers.
 
 ## Constraints & Edge Cases
@@ -108,12 +108,12 @@ Otto supports multiple workspaces across multiple outputs (physical monitors and
 - **Workspace counter is global:** Workspace indices (used for view identification and the model) are assigned from a shared counter. This means workspace index values are unique across all outputs but non-contiguous within a single output.
 - **Model mirrors primary only:** The shared `WorkspacesModel` (used by observers like the dock and app switcher) reflects only the primary output's workspace list and current index. Secondary outputs do not update the shared model directly.
 - **Dock and app switcher are shared:** These are attached to the primary output layer and respond to the shared model. They are not duplicated on secondary outputs.
-- **Layer engine pointer overlap:** Since all output layers are positioned at (0, 0), layers from different outputs overlap in scene-graph space. Pointer hit-testing through the layer engine with a global root may hit layers belonging to the wrong output. All pointer interactions in expose mode must use output-scoped hit-testing.
+- **Layer engine pointer overlap:** Outputs are normally laid out non-overlapping (left-to-right), but a virtual output left at its default position, or any output explicitly configured to coincide with another, does overlap another output's region in scene-graph space. Pointer hit-testing through the layer engine with a global root may then hit layers belonging to the wrong output. All pointer interactions in expose mode must use output-scoped hit-testing regardless of layout.
 
 ## Rationale
 
 - **Per-output workspaces** allow each monitor to serve a different purpose (e.g. code on one, browser on another) without forcing them to stay in sync.
-- **Output layers at (0, 0)** eliminates the need for a global translate in the draw path, since each output renders into its own framebuffer. This simplifies rendering but requires care with pointer hit-testing.
+- **Left-to-right output layout** was chosen as the simplest arrangement covering the common case (monitors side by side); each output still renders into its own framebuffer, so a nonzero scene position only affects where the output's layers sit in shared scene space, not how many framebuffers exist. Because outputs are no longer guaranteed to sit at the same scene position, pointer hit-testing and plane-buffer rendering must each independently account for an output's own placement (see multi-output.md) rather than assuming a shared origin.
 - **Shared removal channel** ensures all workspace selector instances (primary and secondary) route removal requests through a single handler, avoiding orphaned receivers on secondary selectors.
 - **Model mirrors primary only** because the dock, app switcher, and other observers only need to know about the primary output's state. Extending the model to be per-output would add complexity with no current consumer.
 
