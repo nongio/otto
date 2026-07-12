@@ -306,6 +306,15 @@ where
                             time: 0,
                         },
                     );
+                    // Mirror the real-input path: track which output the
+                    // pointer is on so focused-output consumers (expose,
+                    // selector, window routing) see harness-driven moves.
+                    let focused = state
+                        .workspaces
+                        .output_under(new_location)
+                        .next()
+                        .cloned();
+                    state.workspaces.set_focused_output(focused.as_ref());
                 }
 
                 for (time, button, btn_state) in buttons {

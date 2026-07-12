@@ -426,6 +426,16 @@ impl Workspaces {
         self.output_workspaces.get_mut(&name)
     }
 
+    /// The output whose workspaces the flattened model currently mirrors
+    /// (focused if set, else primary) — `sync_model_from_primary` fills
+    /// `model.workspaces` from it, so expose/gesture code must use this
+    /// output's spaces and dimensions.
+    pub fn focused_output_workspaces(&self) -> Option<&OutputWorkspaces> {
+        self.focused_output()
+            .map(|o| o.name())
+            .and_then(|n| self.output_workspaces.get(&n))
+    }
+
     /// Get all spaces across all outputs and all workspaces (for window search)
     #[allow(dead_code)]
     fn all_spaces(&self) -> impl Iterator<Item = &Space<WindowElement>> {
@@ -1170,8 +1180,8 @@ impl Workspaces {
         let padding_bottom = 10.0;
 
         let size = self
-            .primary_workspaces_layer()
-            .map(|l| l.render_size_transformed())
+            .focused_output_workspaces()
+            .map(|ows| ows.workspaces_layer.render_size_transformed())
             .unwrap_or_default();
         let scale = Config::with(|c| c.screen_scale);
         let screen_size_w = size.x;
@@ -1185,15 +1195,30 @@ impl Workspaces {
             screen_size_h - offset_y,
         );
         let dragging_window = self.expose_dragged_window.lock().unwrap().clone();
+        // Resolve the focused output OUTSIDE the with_model closure —
+        // focused_output() takes the model read lock and nesting it inside
+        // with_model deadlocks the main thread once a writer contends.
+        let focused_name = self.focused_output().map(|o| o.name());
+        let origin = self
+            .focused_output()
+            .map(|o| o.current_location())
+            .unwrap_or_default();
         let mut windows = self.with_model(|model| {
             if let Some(workspace_model) = model.workspaces.get(workspace_index) {
                 let windows_list = workspace_model.windows_list.read().unwrap();
-                let Some(space) = self
-                    .primary_output_workspaces()
+                tracing::debug!(target: "otto::expose",
+                    "layout ws={} focused={:?} list_len={}",
+                    workspace_index, focused_name, windows_list.len());
+                let Some(space) = focused_name
+                    .as_ref()
+                    .and_then(|n| self.output_workspaces.get(n))
                     .and_then(|ows| ows.spaces.get(workspace_index))
                 else {
+                    tracing::debug!(target: "otto::expose", "layout: no space");
                     return Vec::new();
                 };
+                // Space geometry is global; the selector containers live in
+                // the output's local scene space.
                 let mut windows = Vec::new();
 
                 for window_id in windows_list.iter() {
@@ -1204,7 +1229,8 @@ impl Workspaces {
                         if window.is_minimised() {
                             continue;
                         }
-                        if let Some(bbox) = space.element_geometry(window) {
+                        if let Some(mut bbox) = space.element_geometry(window) {
+                            bbox.loc -= origin;
                             let bbox = bbox.to_f64().to_physical(scale);
                             window.mirror_layer().set_size(
                                 Size::points(bbox.size.w as f32, bbox.size.h as f32),
@@ -1240,7 +1266,7 @@ impl Workspaces {
                 .load(std::sync::atomic::Ordering::Relaxed);
         if expose_active && workspace.peek_pre_expose_order_empty() {
             if let Some(space) = self
-                .primary_output_workspaces()
+                .focused_output_workspaces()
                 .and_then(|ows| ows.spaces.get(workspace_index))
             {
                 let order: Vec<ObjectId> = space.elements().map(|e| e.id()).collect();
@@ -1371,12 +1397,20 @@ impl Workspaces {
             .map(|t| self.layers_engine.add_animation_from_transition(t, false));
 
         // Animate window layers
+        // Focused-output lookups take the model read lock — resolve them
+        // BEFORE with_model to avoid nested-lock deadlock.
+        let focused_name = self.focused_output().map(|o| o.name());
+        let origin = self
+            .focused_output()
+            .map(|o| o.current_location())
+            .unwrap_or_default();
         let current_workspace = self.with_model(|model| {
             if let Some(workspace) = model.workspaces.get(workspace_index) {
                 let windows_list = workspace.windows_list.read().unwrap();
                 let window_selector = workspace.window_selector_view.clone();
-                let space = match self
-                    .primary_output_workspaces()
+                let space = match focused_name
+                    .as_ref()
+                    .and_then(|n| self.output_workspaces.get(n))
                     .and_then(|ows| ows.spaces.get(workspace_index))
                 {
                     Some(s) => s,
@@ -1391,7 +1425,8 @@ impl Workspaces {
                         if window.is_minimised() {
                             continue;
                         }
-                        if let Some(bbox) = space.element_geometry(window) {
+                        if let Some(mut bbox) = space.element_geometry(window) {
+                            bbox.loc -= origin;
                             let bbox = bbox.to_f64().to_physical(scale);
                             if let Some(rect) = bin.get(window_id) {
                                 let to_x = rect.x;
@@ -1743,8 +1778,8 @@ impl Workspaces {
 
         // Get screen dimensions for calculating center
         let size = self
-            .primary_workspaces_layer()
-            .map(|l| l.render_size_transformed())
+            .focused_output_workspaces()
+            .map(|ows| ows.workspaces_layer.render_size_transformed())
             .unwrap_or_default();
         let scale = Config::with(|c| c.screen_scale);
         let screen_center_x = size.x / 2.0;

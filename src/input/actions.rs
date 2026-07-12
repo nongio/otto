@@ -353,8 +353,11 @@ impl<BackendData: Backend> Otto<BackendData> {
                 }
             }
 
-            _ => unreachable!(
-                "Common key action handler encountered backend specific action {:?}",
+            // Backend-specific actions (VT switch, screen jumps, scale…)
+            // are dispatched in `process_input_event`; reaching here via a
+            // non-keyboard path (debug trigger) must not crash the session.
+            _ => warn!(
+                "common key action handler ignoring backend-specific action {:?}",
                 action
             ),
         }

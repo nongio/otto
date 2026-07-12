@@ -725,6 +725,14 @@ impl crate::Otto<crate::udev::UdevData> {
         // Cache pointer location for use in button events
         self.last_pointer_location = (pointer_location.x, pointer_location.y);
 
+        // Track which output the pointer is on — drives the flattened model
+        // (expose, workspace selector, new-window routing). Cheap: no-op
+        // when unchanged.
+        {
+            let focused = self.workspaces.output_under(pointer_location).next().cloned();
+            self.workspaces.set_focused_output(focused.as_ref());
+        }
+
         let scale = Config::with(|c| c.screen_scale);
         let pos = pointer_location.to_physical(scale);
         self.cursor_physical_position = (pos.x, pos.y);
@@ -789,6 +797,12 @@ impl crate::Otto<crate::udev::UdevData> {
         let under = self.surface_under(pointer_location);
         // Cache pointer location for use in button events
         self.last_pointer_location = (pointer_location.x, pointer_location.y);
+
+        // Track which output the pointer is on (see on_pointer_move).
+        {
+            let focused = self.workspaces.output_under(pointer_location).next().cloned();
+            self.workspaces.set_focused_output(focused.as_ref());
+        }
 
         pointer.motion(
             self,
