@@ -36,6 +36,23 @@ use super::{
     types::{DeviceAddError, UdevData},
 };
 
+/// Whether a kernel log line reports a display-engine underrun. There is
+/// no standard KMS event for this, so detection is per-driver log
+/// phrasing: i915 says "FIFO underrun", amdgpu/DC says "underflow"
+/// (HUBP/DCN), smaller drivers vary. The context words guard against
+/// unrelated "underrun" sources (audio, serial).
+fn looks_like_display_underrun(line: &str) -> bool {
+    let l = line.to_ascii_lowercase();
+    (l.contains("underrun") || l.contains("underflow"))
+        && (l.contains("drm")
+            || l.contains("i915")
+            || l.contains("amdgpu")
+            || l.contains("pipe")
+            || l.contains("crtc")
+            || l.contains("hubp")
+            || l.contains("display"))
+}
+
 /// Configures all libinput devices based on Otto's configuration
 fn configure_libinput_devices(libinput: &mut Libinput, config: &Config) {
     use smithay::reexports::input::{
@@ -652,7 +669,8 @@ pub fn run_udev() {
                                     Ok(0) => break,
                                     Ok(n) => {
                                         if String::from_utf8_lossy(&buf[..n])
-                                            .contains("FIFO underrun")
+                                            .lines()
+                                            .any(looks_like_display_underrun)
                                         {
                                             hit = true;
                                         }
