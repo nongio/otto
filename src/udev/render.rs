@@ -209,6 +209,12 @@ impl Otto<UdevData> {
             // `scene_element` and `backend_data` are distinct fields of `self`,
             // so Rust's field-projection rules allow concurrent access here.
             let scene_has_damage = self.scene_element.update();
+            if scene_has_damage {
+                // Damage ticks are counted globally: the flag is consumed by
+                // whichever output ticks first, so other surfaces detect the
+                // event by lagging behind `damage_generation`.
+                self.backend_data.damage_generation += 1;
+            }
             surface.prefetched_scene_damage = Some(scene_has_damage);
 
             // ── Frame-pipeline Phase 2: schedule the draw at the deadline ─────
@@ -363,6 +369,15 @@ impl Otto<UdevData> {
         } else {
             minimize_now
         };
+        // Promotion candidates are per-output — resolve this CRTC's output
+        // before the surface borrow below.
+        let scanout_output = self.workspaces.outputs().find(|o| {
+            o.user_data()
+                .get::<UdevOutputId>()
+                .map(|id| id.device_id == node && id.crtc == crtc)
+                .unwrap_or(false)
+        });
+        let scanout_output_name = scanout_output.map(|o| o.name());
         let raw_scanout_desired: Vec<smithay::reexports::wayland_server::backend::ObjectId> =
             if !planes_enabled
                 || capture_active
@@ -371,8 +386,10 @@ impl Otto<UdevData> {
                 || fullscreen_window.is_some()
             {
                 Vec::new()
+            } else if let Some(output) = scanout_output {
+                self.workspaces.get_scanout_candidates(output)
             } else {
-                self.workspaces.get_scanout_candidates()
+                Vec::new()
             };
         // Promotion hysteresis (see `SurfaceData::promote_candidates`):
         // removals apply this frame, additions only after the candidate set
@@ -452,7 +469,10 @@ impl Otto<UdevData> {
                 }
             }
         }
-        self.workspaces.set_scanout_windows(&scanout_desired);
+        if let Some(name) = scanout_output_name.as_deref() {
+            self.workspaces
+                .set_scanout_windows_for_output(name, &scanout_desired);
+        }
         for w in &departed_windows {
             self.update_window_view(w);
         }
@@ -569,10 +589,21 @@ impl Otto<UdevData> {
             // now to apply it before compositing, and force a draw — otherwise
             // the first composited frame after demotion shows the stale,
             // shadow-only scene (a one-frame flicker).
-            self.scene_element.update();
+            if self.scene_element.update() {
+                self.backend_data.damage_generation += 1;
+            }
             true
         } else {
-            prefetched_scene_damage.unwrap_or_else(|| self.scene_element.update())
+            match prefetched_scene_damage {
+                Some(damage) => damage,
+                None => {
+                    let damage = self.scene_element.update();
+                    if damage {
+                        self.backend_data.damage_generation += 1;
+                    }
+                    damage
+                }
+            }
         };
         let all_window_elements: Vec<&WindowElement> = self.workspaces.spaces_elements().collect();
 
@@ -712,6 +743,12 @@ impl Otto<UdevData> {
             .get(&output.name())
             .map(|ows| self.scene_element.for_output_layer(&ows.output_layer))
             .unwrap_or_else(|| self.scene_element.clone());
+
+        // A surface lagging the global damage generation must render even if
+        // its own tick reported no damage — the damage flag was consumed on
+        // another output's tick (see `UdevData::damage_generation`).
+        let frame_gen = self.backend_data.damage_generation;
+        let scene_has_damage = scene_has_damage || surface.rendered_damage_gen < frame_gen;
 
         let result = render_output_frame(
             surface,
@@ -990,6 +1027,12 @@ impl Otto<UdevData> {
                 if has_animations || was_rendered {
                     surface.idle_countdown = 3;
                 }
+                if was_rendered {
+                    surface.has_rendered_once = true;
+                }
+                if result.is_ok() {
+                    surface.rendered_damage_gen = frame_gen;
+                }
             }
         }
 
@@ -1042,6 +1085,40 @@ impl Otto<UdevData> {
         } else {
             let _elapsed = start.elapsed();
             //tracing::trace!(?elapsed, "rendered surface");
+        }
+
+        // Multi-output damage lifecycle: engine damage can only be cleared
+        // once EVERY surface has rendered the current damage generation —
+        // clearing earlier starves the other outputs' plane renders (windows
+        // frozen on their first frame). Surfaces that are behind and idle get
+        // scheduled here; busy ones consume the lag via their own loop.
+        let gen = self.backend_data.damage_generation;
+        let mut lagging: Vec<(DrmNode, crtc::Handle)> = Vec::new();
+        let mut all_caught_up = true;
+        for (n, d) in self.backend_data.backends.iter_mut() {
+            for (c, s) in d.surfaces.iter_mut() {
+                if s.rendered_damage_gen < gen {
+                    all_caught_up = false;
+                    if s.idle_countdown == 0 {
+                        // Marks the surface as scheduled — the same invariant
+                        // the input kick in init.rs relies on.
+                        s.idle_countdown = 3;
+                        lagging.push((*n, *c));
+                    }
+                }
+            }
+        }
+        if all_caught_up {
+            self.layers_engine.clear_damage();
+        } else {
+            for (n, c) in lagging {
+                self.handle
+                    .insert_source(Timer::immediate(), move |_, _, data| {
+                        data.render(n, Some(c));
+                        TimeoutAction::Drop
+                    })
+                    .expect("failed to schedule lagging-output render");
+            }
         }
 
         profiling::finish_frame!();
@@ -1418,7 +1495,11 @@ pub(super) fn render_output_frame<'a>(
             // commits produce no scene damage, and gating on it would drop
             // video frames. `scanout_commit` is the same signal for promoted
             // (non-fullscreen) windows, set per-commit by the shell.
+            // A surface that has never rendered must always draw: the global
+            // scene-damage flag may already have been consumed by another
+            // output's render, and skipping would leave this display black.
             let should_draw = scene_has_damage
+                || !surface.has_rendered_once
                 || dnd_needs_draw
                 || cursor_needs_draw
                 || screencopy_pending
@@ -1659,19 +1740,11 @@ pub(super) fn render_output_frame<'a>(
 
             } // end planes branch
 
-            // Clear engine damage after all plane renders so `subtree_damage()`
-            // returns `None` next frame when nothing has changed. Without this
-            // call `per_node_damage` is never cleared and every plane redraws
-            // every frame even on an otherwise idle desktop. Skipped when the
-            // full-scene element is in the frame — its draw() both consumes
-            // the damage region and clears it (clearing here would blank its
-            // subtree culling); likewise scene-mode outputs have no plane
-            // elements and rely on draw() entirely.
-            if !scene_element_pushed {
-                if let Some(el) = &surface.scene_dmabuf_element {
-                    el.clear_engine_damage();
-                }
-            }
+            // Engine damage is NOT cleared here: with multiple outputs the
+            // other surfaces still need this frame's damage rects for their
+            // own plane renders. The caller (`render_surface`) clears it once
+            // every surface has caught up to the current damage generation.
+            let _ = scene_element_pushed;
 
             let output_render_elements: Vec<OutputRenderElements<'a, _, WindowRenderElement<_>>> =
                 workspace_render_elements

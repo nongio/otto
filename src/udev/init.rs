@@ -264,6 +264,7 @@ pub fn run_udev() {
 
         context_id: None, // Will be set after device initialization
         render_requested: AtomicBool::new(false),
+        damage_generation: 0,
     };
     let mut state = Otto::init(display, event_loop.handle(), data, true);
 

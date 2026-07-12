@@ -171,6 +171,9 @@ pub struct Workspaces {
     /// The render call-site diffs against this to re-import departing windows
     /// before they are composited again.
     scanout_windows: Arc<RwLock<HashSet<ObjectId>>>,
+    /// Per-output desired scanout sets — the global `scanout_windows` set is
+    /// the union of these (see `set_scanout_windows_for_output`).
+    scanout_windows_per_output: Arc<RwLock<HashMap<String, HashSet<ObjectId>>>>,
     /// Set when a promoted (scanned-out) window commits: the commit skips the
     /// scene import, so this flag is the only signal that a frame must render
     /// to submit the client's new buffer to its plane. Consumed (swapped to
@@ -391,6 +394,7 @@ impl Workspaces {
             show_desktop_gesture: Arc::new(AtomicI32::new(0)),
             is_animating: Arc::new(AtomicBool::new(false)),
             scanout_windows: Arc::new(RwLock::new(HashSet::new())),
+            scanout_windows_per_output: Arc::new(RwLock::new(HashMap::new())),
             scanout_commit_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             expose_gesture_active: Arc::new(AtomicBool::new(false)),
             window_views: Arc::new(RwLock::new(HashMap::new())),
@@ -539,32 +543,30 @@ impl Workspaces {
         self.expose_layer
             .set_size(Size::points(primary_width, primary_height), None);
 
-        // Build map: output_name -> physical_x
-        // Use logical_x * scale to honour config positions (e.g. virtual outputs).
-        let mut phys_x_map: std::collections::HashMap<String, f32> =
-            std::collections::HashMap::new();
-        let mut total_phys_w = 0.0f32;
+        // Output subtrees all live at scene (0,0) and OVERLAP: every output
+        // renders only its own `output_layer` subtree (plane elements /
+        // `for_output_layer`), so scene coordinates are output-local by
+        // construction and nothing needs a per-output origin correction.
+        // The outputs' positions in the GLOBAL space (smithay `Space`,
+        // input, window locations) are unrelated to scene placement.
+        let mut max_phys_w = 0.0f32;
         let mut max_phys_h = 0.0f32;
         for o in &self.outputs {
-            let logical_x = o.current_location().x as f32;
-            let scale = o.current_scale().fractional_scale() as f32;
-            let phys_x = logical_x * scale;
-            phys_x_map.insert(o.name(), phys_x);
             if let Some(mode) = o.current_mode() {
-                total_phys_w = total_phys_w.max(phys_x + mode.size.w as f32);
+                max_phys_w = max_phys_w.max(mode.size.w as f32);
                 max_phys_h = max_phys_h.max(mode.size.h as f32);
             }
         }
 
-        // Expand scene root to cover all outputs' physical extents
-        if total_phys_w > 0.0 && max_phys_h > 0.0 {
-            self.layers_engine.scene_set_size(total_phys_w, max_phys_h);
+        // The scene root only needs to fit the largest output.
+        if max_phys_w > 0.0 && max_phys_h > 0.0 {
+            self.layers_engine.scene_set_size(max_phys_w, max_phys_h);
             if let Some(root) = self
                 .layers_engine
                 .scene_root()
                 .and_then(|id| self.layers_engine.get_layer(&id))
             {
-                root.set_size(Size::points(total_phys_w, max_phys_h), None);
+                root.set_size(Size::points(max_phys_w, max_phys_h), None);
             }
         }
 
@@ -580,9 +582,8 @@ impl Workspaces {
             let scale = output
                 .map(|o| o.current_scale().fractional_scale() as f32)
                 .unwrap_or(1.0);
-            // Update the output_layer physical position and size
-            let phys_x = phys_x_map.get(output_name).copied().unwrap_or(0.0);
-            ows.output_layer.set_position((phys_x, 0.0), None);
+            // All output layers overlap at scene (0,0) — see above.
+            ows.output_layer.set_position((0.0, 0.0), None);
             ows.output_layer.set_size(Size::points(w, h), None);
 
             ows.expose_layer.set_size(Size::points(w, h), None);
@@ -2315,6 +2316,17 @@ impl Workspaces {
     /// map the window element, in the position on the current space,
     /// should be called on every window move / drag
     /// sets the position of the window layer in the scene
+    /// The output whose workspaces currently contain this window, if any.
+    pub fn output_for_window(&self, window_element: &WindowElement) -> Option<Output> {
+        self.output_workspaces.iter().find_map(|(name, ows)| {
+            ows.spaces
+                .iter()
+                .any(|s| s.elements().any(|e| e.id() == window_element.id()))
+                .then(|| self.outputs.iter().find(|o| o.name() == *name).cloned())
+                .flatten()
+        })
+    }
+
     pub fn map_window(
         &mut self,
         window_element: &WindowElement,
@@ -2322,27 +2334,48 @@ impl Workspaces {
         activate: bool,
         transition: Option<Transition>,
     ) {
-        if let Some(space) = self.space_mut() {
-            space.map_element(window_element.clone(), location, activate);
+        let location: smithay::utils::Point<i32, smithay::utils::Logical> = location.into();
+        let owning = self.output_for_window(window_element);
+
+        // Route by the window's center: a drag that crosses into another
+        // output's region MIGRATES the window there (space + scene subtree).
+        // Fallbacks: current owner, focused output, primary.
+        let size = window_element.geometry().size;
+        let center = smithay::utils::Point::<f64, smithay::utils::Logical>::from((
+            location.x as f64 + size.w as f64 / 2.0,
+            location.y as f64 + size.h as f64 / 2.0,
+        ));
+        let target = self
+            .output_under(center)
+            .next()
+            .cloned()
+            .or_else(|| owning.clone())
+            .or_else(|| {
+                self.with_model(|m| m.focused_output_name.clone())
+                    .and_then(|n| self.outputs.iter().find(|o| o.name() == n).cloned())
+            })
+            .or_else(|| self.primary_output.clone());
+        let Some(target) = target else {
+            return;
+        };
+
+        if let Some(owning) = owning {
+            if owning.name() != target.name() {
+                // Migrate: drop the window from the old output's spaces and
+                // views. The base layer is re-parented into the target
+                // output's workspace view by `map_window` below.
+                if let Some(old) = self.output_workspaces.get_mut(&owning.name()) {
+                    for space in old.spaces.iter_mut() {
+                        space.unmap_elem(window_element);
+                    }
+                    for view in old.workspace_views.iter() {
+                        view.unmap_window(&window_element.id());
+                    }
+                }
+            }
         }
 
-        if let std::collections::hash_map::Entry::Vacant(e) =
-            self.windows_map.entry(window_element.id())
-        {
-            e.insert(window_element.clone());
-            self.update_workspace_model();
-        }
-
-        {
-            let location = self.element_location(window_element).unwrap_or_default();
-            let Some(workspace_view) = self.get_current_workspace() else {
-                return;
-            };
-            workspace_view.map_window(window_element, location, transition);
-            let _view = self.get_or_add_window_view(window_element);
-        }
-        self.refresh_space();
-        self.expose_update_if_needed();
+        self.map_window_for_output(&target, window_element, location, activate, transition);
     }
 
     /// Map a window onto a specific output's current workspace.
@@ -2398,7 +2431,10 @@ impl Workspaces {
                 return;
             };
 
-            workspace_view.map_window(window_element, loc, transition);
+            // Space locations are global; the workspace view's layers live
+            // under the output's scene container — convert to output-local.
+            let local_loc = loc - output.current_location();
+            workspace_view.map_window(window_element, local_loc, transition);
             let _view = self.get_or_add_window_view(window_element);
         }
         self.refresh_space();
@@ -3017,18 +3053,21 @@ impl Workspaces {
     /// Returns all the window elements from all the spaces
     /// starting from current space
     pub fn spaces_elements(&self) -> impl Iterator<Item = &WindowElement> {
-        let pows = match self.primary_output_workspaces() {
-            Some(p) => p,
-            None => return Vec::new().into_iter(),
-        };
-        let current_idx = pows.current_workspace;
+        // ALL outputs' windows — this list feeds frame-callback delivery
+        // (post_repaint); omitting an output freezes its clients. Per
+        // output, non-current workspaces first, current last (kept from the
+        // single-output ordering: later entries are treated as topmost).
         let mut result: Vec<&WindowElement> = Vec::new();
-        for (i, space) in pows.spaces.iter().enumerate() {
-            if i != current_idx {
+        for ows in self.output_workspaces.values() {
+            for (i, space) in ows.spaces.iter().enumerate() {
+                if i != ows.current_workspace {
+                    result.extend(space.elements());
+                }
+            }
+            if let Some(space) = ows.spaces.get(ows.current_workspace) {
                 result.extend(space.elements());
             }
         }
-        result.extend(pows.spaces[current_idx].elements());
         result.into_iter()
     }
 
@@ -3084,9 +3123,9 @@ impl Workspaces {
                     ows.output_layer
                         .set_size(layers::types::Size::points(w, h), None);
                 }
-                let scale = output.current_scale().fractional_scale() as f32;
-                let phys_x = location.x as f32 * scale;
-                ows.output_layer.set_position((phys_x, 0.0_f32), None);
+                // Output subtrees overlap at scene (0,0) — scene coords are
+                // output-local; `location` only positions the smithay Space.
+                ows.output_layer.set_position((0.0, 0.0_f32), None);
             }
             self.sync_model_from_primary();
             self.update_workspaces_layout();
@@ -3113,12 +3152,10 @@ impl Workspaces {
             .map(|m| (m.size.w as f32, m.size.h as f32))
             .unwrap_or_else(|| self.with_model(|m| (m.width as f32, m.height as f32)));
 
-        // Physical X position: logical_x * scale honours config positions (including virtual outputs).
-        let scale = output.current_scale().fractional_scale() as f32;
-        let phys_x = location.x as f32 * scale;
-        let phys_y = 0.0_f32; // vertical stacking not yet supported
-
-        // Per-output container layer (physical size, positioned in the global scene)
+        // Per-output container layer. All output subtrees overlap at scene
+        // (0,0): each output renders only its own subtree, so scene
+        // coordinates are output-local by construction. `location` positions
+        // the output in the GLOBAL space (smithay Space / input) only.
         let output_layer = self.layers_engine.new_layer();
         output_layer.set_key(format!("output_{}", output.name()));
         output_layer.set_layout_style(taffy::Style {
@@ -3126,7 +3163,7 @@ impl Workspaces {
             ..Default::default()
         });
         output_layer.set_size(layers::types::Size::points(phys_w, phys_h), None);
-        output_layer.set_position((phys_x, phys_y), None);
+        output_layer.set_position((0.0, 0.0), None);
         output_layer.set_pointer_events(false);
         let _ = self.layers_engine.add_layer(&output_layer);
 
@@ -3583,7 +3620,7 @@ impl Workspaces {
     /// scene state like bubbled blur regions — those are cleared and rebuilt
     /// every engine update, so sampling them oscillates between promote and
     /// demote and flickers the window content.
-    pub fn get_scanout_candidates(&self) -> Vec<ObjectId> {
+    pub fn get_scanout_candidates(&self, output: &Output) -> Vec<ObjectId> {
         use smithay::utils::{Physical, Rectangle};
 
         // ---- global stable gates ----
@@ -3601,7 +3638,13 @@ impl Workspaces {
         if self.is_animating.load(std::sync::atomic::Ordering::Relaxed) {
             return Vec::new();
         }
-        let Some(current_workspace) = self.get_current_workspace() else {
+        // Candidates are strictly PER OUTPUT: a window may only be promoted
+        // onto the CRTC of the output whose space contains it — promoting the
+        // primary's topmost window on every CRTC painted it on all screens.
+        let Some(ows) = self.output_workspaces.get(&output.name()) else {
+            return Vec::new();
+        };
+        let Some(current_workspace) = ows.workspace_views.get(ows.current_workspace) else {
             return Vec::new();
         };
         // Fullscreen has its own dedicated direct-scanout path.
@@ -3612,9 +3655,11 @@ impl Workspaces {
         if self.tiling_overlay.is_visible() {
             return Vec::new();
         }
-        let Some(output) = self.primary_output.as_ref() else {
-            return Vec::new();
-        };
+        let is_primary = self
+            .primary_output
+            .as_ref()
+            .map(|p| p.name() == output.name())
+            .unwrap_or(false);
         let scale = output.current_scale().fractional_scale();
 
         // ---- occluders (physical px): overlay-plane UI compositing above
@@ -3633,16 +3678,20 @@ impl Workspaces {
         let mut occluders: Vec<Rectangle<i32, Physical>> = Vec::new();
         // Use the *visible* layers, not the wrap/positioning containers —
         // those can span the whole output and would demote every window.
-        if !self.dock.is_hidden() {
-            occluders.extend(layer_rect(&self.dock.bar_layer));
-        }
-        if self.app_switcher.alive() {
-            if let Some(layer) = self.app_switcher.view.layer.read().unwrap().as_ref() {
-                occluders.extend(layer_rect(layer));
+        // Dock / switcher / OSD chrome is attached to the primary output
+        // only — it never occludes windows on a secondary output.
+        if is_primary {
+            if !self.dock.is_hidden() {
+                occluders.extend(layer_rect(&self.dock.bar_layer));
             }
-        }
-        if self.osd.is_visible() {
-            occluders.extend(layer_rect(&self.osd.view_layer));
+            if self.app_switcher.alive() {
+                if let Some(layer) = self.app_switcher.view.layer.read().unwrap().as_ref() {
+                    occluders.extend(layer_rect(layer));
+                }
+            }
+            if self.osd.is_visible() {
+                occluders.extend(layer_rect(&self.osd.view_layer));
+            }
         }
         {
             use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
@@ -3661,11 +3710,7 @@ impl Workspaces {
         }
 
         // ---- per-window eligibility, top-to-bottom ----
-        let current_index = self.get_current_workspace_index();
-        let Some(space) = self
-            .primary_output_workspaces()
-            .and_then(|ows| ows.spaces.get(current_index))
-        else {
+        let Some(space) = ows.spaces.get(ows.current_workspace) else {
             return Vec::new();
         };
 
@@ -3685,8 +3730,11 @@ impl Workspaces {
             let Some(location) = space.element_location(window) else {
                 continue;
             };
+            // Space locations are global — rebase to output-local physical
+            // px, the coordinate space of the scene-layer occluder rects.
+            let local = location - output.current_location();
             let rect = Rectangle::new(
-                location.to_f64().to_physical(scale).to_i32_round(),
+                local.to_f64().to_physical(scale).to_i32_round(),
                 window.geometry().size.to_f64().to_physical(scale).to_i32_round(),
             );
             let overlaps_above = covered.iter().any(|c| c.overlaps(rect));
@@ -3845,7 +3893,40 @@ impl Workspaces {
     /// departing window's buffer (via `update_window_view`) *after* this call
     /// so the unhidden `content_layer` shows the current frame, not a stale one.
     #[allow(clippy::mutable_key_type)]
-    pub fn set_scanout_windows(&self, ids: &[ObjectId]) {
+    /// Update one output's desired scanout set and apply the union of all
+    /// outputs' sets. Each CRTC computes its own candidates; applying them
+    /// directly to the global set made two outputs demote each other's
+    /// promoted windows every frame.
+    pub fn set_scanout_windows_for_output(&self, output_name: &str, ids: &[ObjectId]) {
+        let union: HashSet<ObjectId> = {
+            let mut per_output = self.scanout_windows_per_output.write().unwrap();
+            let entry = per_output.entry(output_name.to_string()).or_default();
+            let new_set: HashSet<ObjectId> = ids.iter().cloned().collect();
+            if *entry == new_set {
+                return;
+            }
+            *entry = new_set;
+            per_output.values().flatten().cloned().collect()
+        };
+        let union_vec: Vec<ObjectId> = union.into_iter().collect();
+        self.set_scanout_windows(&union_vec);
+    }
+
+    /// Remove one window from every output's scanout set (pre-animation
+    /// demotion) and apply the new union.
+    pub fn remove_scanout_window(&self, id: &ObjectId) {
+        let union: HashSet<ObjectId> = {
+            let mut per_output = self.scanout_windows_per_output.write().unwrap();
+            for set in per_output.values_mut() {
+                set.remove(id);
+            }
+            per_output.values().flatten().cloned().collect()
+        };
+        let union_vec: Vec<ObjectId> = union.into_iter().collect();
+        self.set_scanout_windows(&union_vec);
+    }
+
+    fn set_scanout_windows(&self, ids: &[ObjectId]) {
         let new_ids: HashSet<ObjectId> = ids.iter().cloned().collect();
         let prev_ids = self.scanout_windows.read().unwrap().clone();
         if prev_ids == new_ids {
@@ -4355,12 +4436,17 @@ impl Workspaces {
     // Space management
 
     pub fn outputs_for_element(&self, element: &WindowElement) -> Vec<Output> {
-        self.space()
-            .map(|s| s.outputs_for_element(element))
-            .unwrap_or_default()
-            .into_iter()
+        // Windows live in their owning output's space, not necessarily the
+        // primary's — search every output's spaces.
+        let mut outputs: Vec<Output> = self
+            .output_workspaces
+            .values()
+            .flat_map(|ows| ows.spaces.iter())
+            .flat_map(|s| s.outputs_for_element(element))
             .filter(|o| !crate::virtual_output::is_virtual_output(o))
-            .collect()
+            .collect();
+        outputs.dedup_by_key(|o| o.name());
+        outputs
     }
     #[allow(dead_code)]
     fn apply_scroll_offset(
@@ -4430,7 +4516,13 @@ impl Workspaces {
         &WindowElement,
         smithay::utils::Point<i32, smithay::utils::Logical>,
     )> {
-        self.space()?.element_under(point)
+        // Windows live in their owning output's space — search every
+        // output's CURRENT workspace (spaces are disjoint in global coords,
+        // so at most one output matches the point).
+        let point = point.into();
+        self.output_workspaces
+            .values()
+            .find_map(|ows| ows.spaces.get(ows.current_workspace)?.element_under(point))
     }
 
     pub fn output_geometry(
@@ -4449,8 +4541,14 @@ impl Workspaces {
     }
 
     pub fn refresh_space(&mut self) {
-        if let Some(space) = self.space_mut() {
-            space.refresh();
+        // Refresh EVERY output's spaces — `Space::refresh` drives the
+        // wl_surface enter/leave bookkeeping that per-output frame-callback
+        // delivery depends on. Refreshing only the primary left clients on
+        // secondary outputs without frame callbacks (frozen content).
+        for ows in self.output_workspaces.values_mut() {
+            for space in ows.spaces.iter_mut() {
+                space.refresh();
+            }
         }
     }
 
@@ -4458,7 +4556,10 @@ impl Workspaces {
         &self,
         we: &WindowElement,
     ) -> Option<smithay::utils::Point<i32, smithay::utils::Logical>> {
-        self.space()?.element_location(we)
+        // The window lives in exactly one output's space — search them all.
+        self.output_workspaces
+            .values()
+            .find_map(|ows| ows.spaces.iter().find_map(|s| s.element_location(we)))
     }
 
     pub fn output_under<P: Into<smithay::utils::Point<f64, smithay::utils::Logical>>>(
@@ -4482,7 +4583,10 @@ impl Workspaces {
         &self,
         we: &WindowElement,
     ) -> Option<smithay::utils::Rectangle<i32, smithay::utils::Logical>> {
-        self.space()?.element_geometry(we)
+        // The window lives in exactly one output's space — search them all.
+        self.output_workspaces
+            .values()
+            .find_map(|ows| ows.spaces.iter().find_map(|s| s.element_geometry(we)))
     }
 
     // Add these helper methods

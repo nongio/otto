@@ -41,25 +41,25 @@ use super::{
 #[cfg(feature = "renderer_sync")]
 use smithay::backend::renderer::sync::SyncPoint;
 
-/// Size the fallback composite scene element to the union of all mapped
-/// outputs' physical extents (matches the scene-root sizing in the
-/// workspaces layout pass). Free function over the two fields so callers
-/// can invoke it while other fields of `Otto` are mutably borrowed.
+/// Size the fallback composite scene element to fit the largest mapped
+/// output (output subtrees overlap at scene (0,0), so the scene never
+/// needs to be wider than the biggest output — matches the scene-root
+/// sizing in the workspaces layout pass). Free function over the two
+/// fields so callers can invoke it while other fields of `Otto` are
+/// mutably borrowed.
 fn sync_scene_size_to_outputs(
     workspaces: &crate::workspaces::Workspaces,
     scene_element: &mut crate::render_elements::scene_element::SceneElement,
 ) {
-    let (mut union_w, mut union_h) = (0f32, 0f32);
+    let (mut max_w, mut max_h) = (0f32, 0f32);
     for o in workspaces.outputs() {
-        let scale = o.current_scale().fractional_scale() as f32;
-        let phys_x = o.current_location().x as f32 * scale;
         if let Some(mode) = o.current_mode() {
-            union_w = union_w.max(phys_x + mode.size.w as f32);
-            union_h = union_h.max(mode.size.h as f32);
+            max_w = max_w.max(mode.size.w as f32);
+            max_h = max_h.max(mode.size.h as f32);
         }
     }
-    if union_w > 0.0 && union_h > 0.0 {
-        scene_element.set_size(union_w, union_h);
+    if max_w > 0.0 && max_h > 0.0 {
+        scene_element.set_size(max_w, max_h);
     }
 }
 
@@ -439,11 +439,34 @@ impl Otto<UdevData> {
         let global = output.create_global::<Otto<UdevData>>(&self.display_handle);
 
         // Position from the config profile when set, otherwise auto-place to
-        // the right of the existing outputs (logical coordinates).
+        // the right of the existing outputs (logical coordinates). There is
+        // no mirroring feature: a configured position that overlaps an
+        // existing output is rejected in favour of auto-placement.
+        let screen_scale = Config::with(|c| c.screen_scale);
+        let logical_size = smithay::utils::Size::<i32, smithay::utils::Logical>::from((
+            (wl_mode.size.w as f64 / screen_scale) as i32,
+            (wl_mode.size.h as f64 / screen_scale) as i32,
+        ));
         let position: smithay::utils::Point<i32, smithay::utils::Logical> = config_profile
             .as_ref()
             .and_then(|p| p.position)
-            .map(|p| (p.x, p.y).into())
+            .map(|p| smithay::utils::Point::from((p.x, p.y)))
+            .filter(|&pos| {
+                let rect = smithay::utils::Rectangle::new(pos, logical_size);
+                let overlap = self.workspaces.outputs().any(|o| {
+                    self.workspaces
+                        .output_geometry(o)
+                        .is_some_and(|g| g.overlaps(rect))
+                });
+                if overlap {
+                    warn!(
+                        "Configured position {:?} for {} overlaps an existing output; \
+                         falling back to auto placement (outputs cannot overlap)",
+                        pos, output_name
+                    );
+                }
+                !overlap
+            })
             .unwrap_or_else(|| {
                 let x = self.workspaces.outputs().fold(0, |acc, o| {
                     acc + self
@@ -455,7 +478,6 @@ impl Otto<UdevData> {
                 (x, 0).into()
             });
         output.set_preferred(wl_mode);
-        let screen_scale = Config::with(|c| c.screen_scale);
         output.change_current_state(
             Some(wl_mode),
             None,
@@ -559,6 +581,8 @@ impl Otto<UdevData> {
                 render_metrics: Some(self.render_metrics.clone()),
                 avg_render_time_us: 2000.0, // start with 2ms estimate
                 idle_countdown: 0,
+                has_rendered_once: false,
+                rendered_damage_gen: 0,
                 cursor_was_in_output: false,
                 prefetched_scene_damage: None,
                 scene_dmabuf_element: None,
