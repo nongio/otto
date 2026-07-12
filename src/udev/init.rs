@@ -653,14 +653,24 @@ pub fn run_udev() {
                 .render_requested
                 .swap(false, Ordering::AcqRel);
             if was_requested {
-                let was_idle = state
-                    .backend_data
-                    .backends
-                    .values()
-                    .flat_map(|d| d.surfaces.values())
-                    .all(|s| s.idle_countdown == 0);
-                for device in state.backend_data.backends.values_mut() {
-                    for surface in device.surfaces.values_mut() {
+                // Idle is a PER-SURFACE property: with multiple outputs one
+                // can be idle (no timer, no VBlank pending) while another is
+                // mid-loop. Kick exactly the idle ones — resetting a busy
+                // surface's countdown is enough, its pending timer/VBlank
+                // consumes it. (Kicking only when ALL surfaces were idle
+                // wedged multi-output: an idle surface's countdown got reset
+                // to 3 with no render scheduled, nothing ever decremented it,
+                // so `all(== 0)` never held again and input stopped waking
+                // the render loop entirely.)
+                let mut kick: Vec<(
+                    smithay::backend::drm::DrmNode,
+                    smithay::reexports::drm::control::crtc::Handle,
+                )> = Vec::new();
+                for (node, device) in state.backend_data.backends.iter_mut() {
+                    for (crtc, surface) in device.surfaces.iter_mut() {
+                        if surface.idle_countdown == 0 {
+                            kick.push((*node, *crtc));
+                        }
                         // Short tail after the last input/commit — enough to absorb
                         // one missed event gap without flapping fast/slow dispatch.
                         // (Was 30 ≈ 500 ms which kept the 1 kHz poll loop hot
@@ -668,12 +678,8 @@ pub fn run_udev() {
                         surface.idle_countdown = 3;
                     }
                 }
-                if was_idle {
-                    let device_nodes: Vec<_> =
-                        state.backend_data.backends.keys().copied().collect();
-                    for node in device_nodes {
-                        state.render(node, None);
-                    }
+                for (node, crtc) in kick {
+                    state.render(node, Some(crtc));
                 }
             }
             display_handle.flush_clients().unwrap();
