@@ -71,6 +71,12 @@ vibrancy even though the content behind it lives on other planes.
   output's candidates. The set of windows actually applied to plane state
   is the union of every output's per-output candidate set, so one output's
   promotion decision cannot demote a window promoted on another output.
+- The dock and app-switcher strip planes themselves are pushed only to the
+  CRTC of the output that actually hosts that chrome (the primary output);
+  a secondary output never submits a plane for either role. This is both a
+  correctness fix (that chrome has no content on a secondary output) and a
+  fetch-bandwidth saving — an otherwise-empty full-width strip plane on a
+  secondary output still costs the display engine fetch budget to scan out.
 - The decomposition is enabled per output at surface creation, only when
   the driver is atomic, at least 3 overlay planes exist after
   driver-specific filtering (NVIDIA's are vetoed), and the output renders
@@ -184,6 +190,31 @@ vibrancy even though the content behind it lives on other planes.
   never zero (Chromium's buffer-eviction heuristic blanks canvases when
   callbacks stop entirely). Union coverage is deliberately not computed;
   single-window containment cannot false-positive on partial visibility.
+- Otto maintains a session-wide adaptive plane budget on top of the
+  per-output decomposition decision above: it follows the kernel log for
+  display FIFO underrun reports and sheds plane usage globally when one is
+  seen. A display FIFO underrun means the display engine failed to fetch
+  the currently-configured planes in time; the affected pipe scans out
+  solid garbage (bright green on Intel) from the point in the frame where
+  the fetch fell behind, even though every plane's buffer content is
+  perfectly valid — reducing plane count is the only fix, there is nothing
+  wrong with any individual buffer to repair. The first underrun disables
+  direct-scanout window promotion on every output (candidates fall back to
+  compositing into the windows buffer instead); a second underrun disables
+  the plane decomposition entirely on every output (full GPU composite,
+  the same path used when decomposition isn't supported at all). Both
+  steps are applied globally rather than per output, because display fetch
+  bandwidth is shared across pipes rather than partitioned per output.
+- The adaptive plane budget is sticky for the running session: once shed,
+  plane usage is not restored until Otto restarts. Shedding immediately
+  forces a full re-render of every plane element on every output, so the
+  lighter configuration is visible on the very next frame rather than only
+  once each region happens to redraw on its own.
+- A debug trigger (`touch /tmp/otto-full-redraw`) forces that same full
+  re-render of every plane element on every output on demand, without a
+  real underrun — useful for confirming a fallback configuration renders
+  correctly. It fires once per file creation; remove and re-touch the file
+  to trigger it again.
 
 ## Constraints & Edge Cases
 
@@ -201,6 +232,14 @@ vibrancy even though the content behind it lives on other planes.
   old parent: the workspace-selector previews replicate `windows_layer` and
   `workspace_background` as two separate mirrors because the wallpaper no
   longer lives under the workspace view.
+- On the i915 driver, an underrun is reported once per affected pipe until
+  that pipe's next modeset — a second underrun on the same pipe with no
+  intervening modeset produces no further kernel report. Escalating the
+  adaptive plane budget from level 1 to level 2 therefore typically needs a
+  modeset (e.g. DPMS cycle, mode change, hotplug) to happen in between the
+  two underrun episodes; a session that underruns repeatedly without any
+  modeset can stay stuck at level 1 even though the underlying overcommit
+  is still occurring.
 
 ## Rationale
 
@@ -234,6 +273,18 @@ vibrancy even though the content behind it lives on other planes.
   output's candidates (rather than each output's promotion overwriting the
   shared set) so outputs stop demoting each other's promoted windows every
   frame.
+- The adaptive plane budget follows the live kernel journal rather than
+  pre-computing a plane budget from mode/format math, because the actual
+  fetch-bandwidth ceiling is driver- and GPU-specific and impractical to
+  model up front (diagnosed in practice on an eDP 2.8K@120 + DP 4K@60 dual
+  setup with the full plane stack on both outputs) — the same reasoning
+  that already ruled out TEST_ONLY tier probing above. The kernel's own
+  underrun report is also the only reliable signal available: the failure
+  mode leaves every buffer valid, so there is no compositor-side state to
+  detect it from directly. The reduction is sticky for the session, rather
+  than probing back up, because the overcommit that caused the underrun is
+  a property of the current output configuration and content and would
+  simply recur.
 
 ## Open Questions
 
