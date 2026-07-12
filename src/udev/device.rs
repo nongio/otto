@@ -513,6 +513,7 @@ impl Otto<UdevData> {
                 backdrop_image: None,
                 backdrop_preblurred: false,
                 backdrop_dirty: false,
+                last_fullscreen_scanout: None,
                 expose_last_active: None,
                 switcher_last_active: None,
                 overlay_last_active: None,
