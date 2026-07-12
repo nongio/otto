@@ -968,6 +968,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     .expect("Failed to set xwayland default cursor");
                     data.xwm = Some(wm);
                     data.xdisplay = Some(display_number);
+                    // The native-resolution X screen (see client_scale above)
+                    // leaves X11 apps rendering at scale 1 — publish the scale
+                    // via XSETTINGS so toolkits (GTK, Chromium/CEF — e.g. the
+                    // Steam UI) scale themselves. Games ignore XSETTINGS and
+                    // keep the native resolution.
+                    data.apply_xwayland_xsettings();
                 }
                 XWaylandEvent::Error => {
                     warn!("XWayland crashed on startup");
@@ -1011,6 +1017,40 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     pub fn update_xwayland_scale(&mut self) {
         if let Some(client) = self.xwayland_client.clone() {
             self.set_xwayland_client_scale(&client);
+        }
+        self.apply_xwayland_xsettings();
+    }
+
+    /// Publish the primary output's scale to X11 clients via XSETTINGS.
+    ///
+    /// The native-resolution X screen (`client_scale`, see `start_xwayland`)
+    /// makes X11 apps render at scale 1; well-behaved toolkits (GTK,
+    /// Chromium/CEF — e.g. the Steam UI) read `Gdk/WindowScalingFactor` and
+    /// `Xft/DPI` from XSETTINGS and scale themselves back up. Games ignore
+    /// XSETTINGS and keep rendering at the native resolution. Same approach
+    /// as mutter's xwayland-native-scaling.
+    #[cfg(feature = "xwayland")]
+    pub fn apply_xwayland_xsettings(&mut self) {
+        use smithay::xwayland::xwm::settings::Value;
+        let scale = self.xwayland_target_scale();
+        let Some(wm) = self.xwm.as_mut() else { return };
+        let settings = [
+            (
+                "Gdk/WindowScalingFactor".to_string(),
+                Value::Integer(scale as i32),
+            ),
+            // Base DPI before the window scaling factor (96 in 1024ths).
+            ("Gdk/UnscaledDPI".to_string(), Value::Integer(96 * 1024)),
+            // Effective DPI (in 1024ths) for toolkits without integer-scale
+            // support (Xft consumers, Chromium/CEF).
+            (
+                "Xft/DPI".to_string(),
+                Value::Integer((96.0 * scale * 1024.0) as i32),
+            ),
+        ];
+        match wm.set_xsettings(settings.into_iter()) {
+            Ok(()) => tracing::info!(scale, "published XWayland XSETTINGS scale"),
+            Err(err) => tracing::warn!(?err, "failed to set XWayland XSETTINGS"),
         }
     }
 
