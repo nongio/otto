@@ -76,6 +76,26 @@ impl<BackendData: Backend> Otto<BackendData> {
             let (cx, cy) = self.cursor_physical_position;
             self.layers_engine
                 .pointer_move(&(cx as f32, cy as f32).into(), None);
+
+            // Re-resolve the Wayland pointer focus against live surface
+            // positions before dispatching the button. Smithay's pointer focus
+            // is otherwise only refreshed on motion, so a window that animated,
+            // relayouted, or appeared under a stationary cursor (no motion event
+            // in between) would leave a stale focus and the press would land on
+            // the wrong surface — or none — and be silently dropped. This is the
+            // Wayland-side counterpart to the lay-rs hover refresh above.
+            let location = self.pointer.current_location();
+            let under = self.surface_under(location);
+            pointer.motion(
+                self,
+                under,
+                &MotionEvent {
+                    location,
+                    serial,
+                    time: evt.time_msec(),
+                },
+            );
+            pointer.frame(self);
         }
 
         pointer.button(
