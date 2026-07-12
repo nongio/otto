@@ -118,6 +118,10 @@ impl Otto<UdevData> {
             return;
         };
 
+        // Debug (`/tmp/otto-slow`): a VBlank line proves page flips complete.
+        if std::path::Path::new("/tmp/otto-slow").exists() {
+            tracing::info!(target: "otto::planes", "SLOW vblank on {crtc:?}");
+        }
         let schedule_render =
             match surface.compositor.frame_submitted() {
                 Ok(user_data) => {
@@ -329,14 +333,11 @@ impl Otto<UdevData> {
         } else {
             None
         };
-        // XWayland surfaces must not take the fullscreen direct-scanout path:
-        // the single fullscreen dmabuf element it produces (correct geometry)
-        // scans out black, whereas the normal lay-rs scene composition renders
-        // the same surface correctly. This affects fullscreen Proton/Unity
-        // games (e.g. Cuphead), which run under XWayland and would otherwise
-        // show a black screen. Composite them through the scene instead.
-        // (Native Wayland fullscreen clients keep using direct scanout.)
-        let fullscreen_window = fullscreen_window.filter(|w| !w.is_x11());
+        // XWayland fullscreen windows take the same direct-scanout path as
+        // native clients: the black-scanout they used to show was the
+        // clear-color CCS modifiers (stripped since — see
+        // feedback::strip_clear_color_modifiers) plus the missing
+        // explicit-sync acquire blocker (added in shell::new_surface).
         // Whether this output uses the plane decomposition at all (set once at
         // surface creation from overlay count / atomic / GPU identity).
         let planes_enabled = self
@@ -1619,6 +1620,17 @@ pub(super) fn render_output_frame<'a>(
                                             e.geometry(scale),
                                             e.src(),
                                         );
+                                        // Debug (`/tmp/otto-slow`): commit counter must advance
+                                        // with every client frame — a constant value here means
+                                        // the surface's damage bag never ticks and the plane
+                                        // keeps scanning the first buffer forever.
+                                        if std::path::Path::new("/tmp/otto-slow").exists() {
+                                            tracing::info!(
+                                                target: "otto::planes",
+                                                "SLOW topwin {win_id:?} commit={:?}",
+                                                e.current_commit(),
+                                            );
+                                        }
                                     }
                                     workspace_render_elements
                                         .push(WorkspaceRenderElements::from(e));
@@ -1773,6 +1785,13 @@ pub(super) fn render_output_frame<'a>(
 
     let rendered = !render_frame_result.is_empty;
     let states = render_frame_result.states;
+
+    // Debug (`/tmp/otto-slow`): log the frame outcome — pairs with the
+    // pre-render SLOW frame line so a frozen screen can be attributed to
+    // either "no flip queued" (rendered=false) or a post-queue problem.
+    if std::path::Path::new("/tmp/otto-slow").exists() {
+        tracing::info!(target: "otto::planes", "SLOW result: rendered={rendered}");
+    }
 
     // 1 Hz: refresh /tmp debug toggles and log per-plane realization.
     super::debug::debug_tick(surface, &states, expose_active);
