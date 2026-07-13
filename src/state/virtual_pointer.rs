@@ -283,16 +283,18 @@ where
 
                 let pointer = state.pointer.clone();
 
-                // Compute the new absolute location. We deliberately don't
-                // clamp to screen bounds for synthesized events — if the test
-                // harness wants to drive the cursor off-screen, that's its
-                // problem, and we save a dependency on `clamp_coords`.
+                // Compute the new absolute location, clamped to screen
+                // bounds like real input — unclamped synthesized motion
+                // accumulates unbounded off-screen positions, which breaks
+                // focused-output tracking and makes harness moves land on
+                // the wrong output.
                 let mut new_location = pointer.current_location();
                 if let Some((ax, ay)) = motion_abs {
                     new_location = Point::from((ax, ay));
                 } else if let Some((dx, dy)) = motion_rel {
                     new_location += Point::from((dx, dy));
                 }
+                let new_location = state.clamp_coords(new_location);
 
                 if motion_rel.is_some() || motion_abs.is_some() {
                     let under = state.surface_under(new_location);

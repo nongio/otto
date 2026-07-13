@@ -859,6 +859,13 @@ impl Workspaces {
             }
         }
 
+        // The selector strip is a singleton — bring it to the focused
+        // output's overlay so expose UI appears on the screen it opens on.
+        if let Some(ows) = self.focused_output_workspaces() {
+            let _ = ows
+                .overlay_plane
+                .add_sublayer(&self.workspace_selector_view.layer.clone());
+        }
         // Workspace selector: only visible if expose was already open
         self.workspace_selector_view
             .layer
@@ -889,6 +896,20 @@ impl Workspaces {
             // Compute layout and trigger a view render so the selection overlay is ready
             // to show immediately when the open animation completes.
             self.expose_show_all_layout(i);
+        }
+        // Secondary outputs: lay out THEIR current workspace so expose
+        // opens on every screen simultaneously.
+        {
+            let focused = self.focused_output().map(|o| o.name());
+            let others: Vec<(String, usize)> = self
+                .output_workspaces
+                .iter()
+                .filter(|(n, _)| focused.as_deref() != Some(n.as_str()))
+                .map(|(n, ows)| (n.clone(), ows.current_workspace))
+                .collect();
+            for (name, ws) in others {
+                self.expose_show_all_layout_for(&name, ws);
+            }
         }
 
         // Hide the workspace content layers: during expose the windows are shown via mirror
@@ -1086,6 +1107,27 @@ impl Workspaces {
             }
         }
 
+        // Lay out every output's current workspace (expose opens on all
+        // screens together).
+        if show {
+            let layouts: Vec<(String, usize)> = self
+                .output_workspaces
+                .iter()
+                .map(|(n, ows)| (n.clone(), ows.current_workspace))
+                .collect();
+            for (name, ws) in layouts {
+                self.expose_show_all_layout_for(&name, ws);
+            }
+        }
+        // Singleton selector strip follows the focused output (see the
+        // gesture-start path for rationale).
+        if show {
+            if let Some(ows) = self.focused_output_workspaces() {
+                let _ = ows
+                    .overlay_plane
+                    .add_sublayer(&self.workspace_selector_view.layer.clone());
+            }
+        }
         // When showing expose via keyboard, hide workspace content layers now (mirrors take over).
         self.expose_show_all_end(current_workspace, delta_normalized, show, Some(transition));
     }
@@ -1169,7 +1211,19 @@ impl Workspaces {
     /// This ensures the bin has correct layout positions for all windows
     /// Returns true when a relayout was performed.
     fn expose_show_all_layout(&self, workspace_index: usize) -> bool {
-        let Some(workspace) = self.get_workspace_at(workspace_index) else {
+        let Some(name) = self.focused_output().map(|o| o.name()) else {
+            return false;
+        };
+        self.expose_show_all_layout_for(&name, workspace_index)
+    }
+
+    /// Compute the expose grid for one output's workspace. Bins and mirrors
+    /// are per workspace view; geometry is output-local.
+    fn expose_show_all_layout_for(&self, output_name: &str, workspace_index: usize) -> bool {
+        let Some(ows) = self.output_workspaces.get(output_name) else {
+            return false;
+        };
+        let Some(workspace) = ows.workspace_views.get(workspace_index).cloned() else {
             tracing::warn!("Workspace {} not found for expose layout", workspace_index);
             return false;
         };
@@ -1179,10 +1233,7 @@ impl Workspaces {
         let padding_top = 10.0;
         let padding_bottom = 10.0;
 
-        let size = self
-            .focused_output_workspaces()
-            .map(|ows| ows.workspaces_layer.render_size_transformed())
-            .unwrap_or_default();
+        let size = ows.workspaces_layer.render_size_transformed();
         let scale = Config::with(|c| c.screen_scale);
         let screen_size_w = size.x;
         let screen_size_h = size.y - padding_top - padding_bottom - workspace_selector_height;
@@ -1195,27 +1246,20 @@ impl Workspaces {
             screen_size_h - offset_y,
         );
         let dragging_window = self.expose_dragged_window.lock().unwrap().clone();
-        // Resolve the focused output OUTSIDE the with_model closure —
-        // focused_output() takes the model read lock and nesting it inside
-        // with_model deadlocks the main thread once a writer contends.
-        let focused_name = self.focused_output().map(|o| o.name());
         let origin = self
-            .focused_output()
+            .outputs
+            .iter()
+            .find(|o| o.name() == output_name)
             .map(|o| o.current_location())
             .unwrap_or_default();
-        let mut windows = self.with_model(|model| {
-            if let Some(workspace_model) = model.workspaces.get(workspace_index) {
-                let windows_list = workspace_model.windows_list.read().unwrap();
+        let mut windows = {
+            {
+                let windows_list = workspace.windows_list.read().unwrap();
                 tracing::debug!(target: "otto::expose",
-                    "layout ws={} focused={:?} list_len={}",
-                    workspace_index, focused_name, windows_list.len());
-                let Some(space) = focused_name
-                    .as_ref()
-                    .and_then(|n| self.output_workspaces.get(n))
-                    .and_then(|ows| ows.spaces.get(workspace_index))
-                else {
-                    tracing::debug!(target: "otto::expose", "layout: no space");
-                    return Vec::new();
+                    "layout out={} ws={} list_len={}",
+                    output_name, workspace_index, windows_list.len());
+                let Some(space) = ows.spaces.get(workspace_index) else {
+                    return false;
                 };
                 // Space geometry is global; the selector containers live in
                 // the output's local scene space.
@@ -1251,10 +1295,8 @@ impl Workspaces {
                 }
 
                 windows
-            } else {
-                Vec::new()
             }
-        });
+        };
 
         // Snapshot the pre-expose stacking order the first time layout runs
         // while expose is active (or the gesture is starting).  This avoids
@@ -1361,11 +1403,6 @@ impl Workspaces {
             );
             return;
         };
-        let bin = workspace_view
-            .window_selector_view
-            .expose_bin
-            .read()
-            .unwrap();
         let dragged_window = self.expose_dragged_window.lock().unwrap().clone();
 
         // window_selector_root (.layer) must be visible during gesture and animation.
@@ -1396,87 +1433,99 @@ impl Workspaces {
             .as_ref()
             .map(|t| self.layers_engine.add_animation_from_transition(t, false));
 
-        // Animate window layers
-        // Focused-output lookups take the model read lock — resolve them
-        // BEFORE with_model to avoid nested-lock deadlock.
+        // Animate window layers on EVERY output: expose opens and closes on
+        // all outputs together, each showing its own current workspace.
+        // `workspace_index` addresses the focused output's workspace; other
+        // outputs animate their own current workspace.
         let focused_name = self.focused_output().map(|o| o.name());
-        let origin = self
-            .focused_output()
-            .map(|o| o.current_location())
-            .unwrap_or_default();
-        let current_workspace = self.with_model(|model| {
-            if let Some(workspace) = model.workspaces.get(workspace_index) {
-                let windows_list = workspace.windows_list.read().unwrap();
-                let window_selector = workspace.window_selector_view.clone();
-                let space = match focused_name
-                    .as_ref()
-                    .and_then(|n| self.output_workspaces.get(n))
-                    .and_then(|ows| ows.spaces.get(workspace_index))
-                {
-                    Some(s) => s,
-                    None => return model.workspaces.get(workspace_index).cloned(),
-                };
-
-                for window_id in windows_list.iter() {
-                    if dragged_window.as_ref() == Some(window_id) {
+        for (output_name, ows) in self.output_workspaces.iter() {
+            let is_focused_output = focused_name.as_deref() == Some(output_name.as_str());
+            let ws_idx = if is_focused_output {
+                workspace_index
+            } else {
+                ows.current_workspace
+            };
+            let Some(workspace) = ows.workspace_views.get(ws_idx) else {
+                continue;
+            };
+            let Some(space) = ows.spaces.get(ws_idx) else {
+                continue;
+            };
+            let origin = self
+                .outputs
+                .iter()
+                .find(|o| o.name() == *output_name)
+                .map(|o| o.current_location())
+                .unwrap_or_default();
+            let window_selector = workspace.window_selector_view.clone();
+            // The gesture path only unhides the focused output's views —
+            // secondary outputs need theirs visible too.
+            window_selector.window_selector_root.set_hidden(false);
+            window_selector
+                .window_selector_windows_container
+                .set_hidden(false);
+            let ws_bin = window_selector.expose_bin.read().unwrap();
+            let windows_list = workspace.windows_list.read().unwrap().clone();
+            // Focused output keeps the old semantics (animate only its
+            // current workspace); secondary outputs always animate theirs.
+            let animate_this =
+                transition.is_some() && (is_current_workspace || !is_focused_output);
+            for window_id in windows_list.iter() {
+                if dragged_window.as_ref() == Some(window_id) {
+                    continue;
+                }
+                if let Some(window) = self.get_window_for_surface(window_id) {
+                    if window.is_minimised() {
                         continue;
                     }
-                    if let Some(window) = self.get_window_for_surface(window_id) {
-                        if window.is_minimised() {
-                            continue;
-                        }
-                        if let Some(mut bbox) = space.element_geometry(window) {
-                            bbox.loc -= origin;
-                            let bbox = bbox.to_f64().to_physical(scale);
-                            if let Some(rect) = bin.get(window_id) {
-                                let to_x = rect.x;
-                                let to_y = rect.y + offset_y;
-                                let to_width = rect.width;
-                                let to_height = rect.height;
-                                let (window_width, window_height) =
-                                    (bbox.size.w as f32, bbox.size.h as f32);
+                    if let Some(mut bbox) = space.element_geometry(window) {
+                        bbox.loc -= origin;
+                        let bbox = bbox.to_f64().to_physical(scale);
+                        if let Some(rect) = ws_bin.get(window_id) {
+                            let to_x = rect.x;
+                            let to_y = rect.y + offset_y;
+                            let to_width = rect.width;
+                            let to_height = rect.height;
+                            let (window_width, window_height) =
+                                (bbox.size.w as f32, bbox.size.h as f32);
 
-                                let scale_x = to_width / window_width;
-                                let scale_y = to_height / window_height;
-                                let target_scale = scale_x.min(scale_y).min(1.0);
+                            let scale_x = to_width / window_width;
+                            let scale_y = to_height / window_height;
+                            let target_scale = scale_x.min(scale_y).min(1.0);
 
-                                // Interpolate between current and target positions
-                                let scale = 1.0.interpolate(&target_scale, delta);
-                                let delta_clamped = delta.clamp(0.0, 1.0);
-                                let window_x = bbox.loc.x as f32;
-                                let window_y = bbox.loc.y as f32;
-                                let x = window_x.interpolate(&to_x, delta_clamped);
-                                let y = window_y.interpolate(&to_y, delta_clamped);
+                            // Interpolate between current and target positions
+                            let scale = 1.0.interpolate(&target_scale, delta);
+                            let delta_clamped = delta.clamp(0.0, 1.0);
+                            let window_x = bbox.loc.x as f32;
+                            let window_y = bbox.loc.y as f32;
+                            let x = window_x.interpolate(&to_x, delta_clamped);
+                            let y = window_y.interpolate(&to_y, delta_clamped);
 
-                                if let Some(layer) = window_selector.layer_for_window(window_id) {
-                                    // Only animate if this is the current workspace AND a transition is provided
-                                    if transition.is_some() && is_current_workspace {
-                                        let translation =
-                                            layer.change_position(layers::types::Point { x, y });
-                                        let scale_change =
-                                            layer.change_scale(layers::types::Point {
-                                                x: scale,
-                                                y: scale,
-                                            });
-                                        changes.push(translation);
-                                        changes.push(scale_change);
-                                    } else {
-                                        // Non-current workspaces: instant update without animation
-                                        layer.set_position(layers::types::Point { x, y }, None);
-                                        layer.set_scale(
-                                            layers::types::Point { x: scale, y: scale },
-                                            None,
-                                        );
-                                    }
+                            if let Some(layer) = window_selector.layer_for_window(window_id) {
+                                if animate_this {
+                                    let translation =
+                                        layer.change_position(layers::types::Point { x, y });
+                                    let scale_change = layer.change_scale(layers::types::Point {
+                                        x: scale,
+                                        y: scale,
+                                    });
+                                    changes.push(translation);
+                                    changes.push(scale_change);
+                                } else {
+                                    // Non-current workspaces: instant update without animation
+                                    layer.set_position(layers::types::Point { x, y }, None);
+                                    layer.set_scale(
+                                        layers::types::Point { x: scale, y: scale },
+                                        None,
+                                    );
                                 }
                             }
                         }
                     }
                 }
             }
-
-            model.workspaces.get(workspace_index).cloned()
-        });
+        }
+        let current_workspace = self.get_workspace_at(workspace_index);
 
         // Schedule layer changes with animation
         if let Some(anim_ref) = animation {
@@ -1916,6 +1965,20 @@ impl Workspaces {
     }
     pub fn expose_update_if_needed_workspace(&self, workspace_index: usize) {
         let relayout = self.expose_show_all_layout(workspace_index);
+        // Keep secondary outputs' grids fresh too (window mapped/closed on
+        // another screen while expose is open).
+        {
+            let focused = self.focused_output().map(|o| o.name());
+            let others: Vec<(String, usize)> = self
+                .output_workspaces
+                .iter()
+                .filter(|(n, _)| focused.as_deref() != Some(n.as_str()))
+                .map(|(n, ows)| (n.clone(), ows.current_workspace))
+                .collect();
+            for (name, ws) in others {
+                self.expose_show_all_layout_for(&name, ws);
+            }
+        }
         let gesture_active = self
             .expose_gesture_active
             .load(std::sync::atomic::Ordering::Relaxed);
