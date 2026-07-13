@@ -572,9 +572,18 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
         }
 
         let (pos_x, pos_y) = pos.into();
-        let max_x = self.workspaces.outputs().fold(0, |acc, o| {
-            acc + self.workspaces.output_geometry(o).unwrap().size.w
-        });
+        // Virtual outputs are pointer-unreachable — exclude their extent.
+        let max_x = self
+            .workspaces
+            .outputs()
+            .filter(|o| !crate::virtual_output::is_virtual_output(o))
+            .fold(0, |acc, o| {
+                acc + self
+                    .workspaces
+                    .output_geometry(o)
+                    .map(|g| g.size.w)
+                    .unwrap_or(0)
+            });
         let clamped_x = pos_x.clamp(0.0, max_x as f64);
         let max_y = self
             .workspaces

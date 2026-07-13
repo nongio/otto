@@ -4665,7 +4665,12 @@ impl Workspaces {
         point: P,
     ) -> impl Iterator<Item = &Output> {
         let point = point.into();
-        self.outputs.iter().filter(move |o| {
+        // Virtual (headless PipeWire) outputs are pointer-unreachable by
+        // contract: never focusable, never a window-placement target.
+        self.outputs
+            .iter()
+            .filter(|o| !crate::virtual_output::is_virtual_output(o))
+            .filter(move |o| {
             if let Some(ows) = self.output_workspaces.get(&o.name()) {
                 ows.spaces
                     .first()
