@@ -192,13 +192,19 @@ vibrancy even though the content behind it lives on other planes.
   single-window containment cannot false-positive on partial visibility.
 - Otto maintains a session-wide adaptive plane budget on top of the
   per-output decomposition decision above: it follows the kernel log for
-  display FIFO underrun reports and sheds plane usage globally when one is
-  seen. A display FIFO underrun means the display engine failed to fetch
-  the currently-configured planes in time; the affected pipe scans out
-  solid garbage (bright green on Intel) from the point in the frame where
-  the fetch fell behind, even though every plane's buffer content is
-  perfectly valid — reducing plane count is the only fix, there is nothing
-  wrong with any individual buffer to repair. The first underrun disables
+  display-engine underrun reports and sheds plane usage globally when one
+  is seen. There is no standard KMS event for this, so detection matches
+  per-driver log phrasing — i915 reports "FIFO underrun", amdgpu/DC
+  reports "underflow" (HUBP/DCN) — and only when the line also carries a
+  display-context word (drm, i915, amdgpu, pipe, crtc, hubp, display), so
+  an unrelated "underrun"/"underflow" line from another subsystem (audio,
+  serial) can never trigger a plane-budget reduction. A display underrun
+  means the display engine failed to fetch the currently-configured planes
+  in time; the affected pipe scans out solid garbage (bright green on
+  Intel) from the point in the frame where the fetch fell behind, even
+  though every plane's buffer content is perfectly valid — reducing plane
+  count is the only fix, there is nothing wrong with any individual buffer
+  to repair. The first underrun disables
   direct-scanout window promotion on every output (candidates fall back to
   compositing into the windows buffer instead); a second underrun disables
   the plane decomposition entirely on every output (full GPU composite,
@@ -215,6 +221,14 @@ vibrancy even though the content behind it lives on other planes.
   real underrun — useful for confirming a fallback configuration renders
   correctly. It fires once per file creation; remove and re-touch the file
   to trigger it again.
+- A separate debug trigger (`echo ActionName > /tmp/otto-action`) executes
+  a builtin shortcut action (e.g. an expose or workspace-switch action) as
+  if its key had been pressed, then requests a redraw so the resulting
+  scheduled scene changes apply on the next frame. This exists because
+  virtual-keyboard/virtual-pointer input used by test harnesses bypasses
+  the libinput shortcut layer entirely, so there is otherwise no way to
+  drive compositor shortcuts remotely; an unresolvable or backend-specific
+  action name is logged and ignored rather than crashing the session.
 
 ## Constraints & Edge Cases
 
