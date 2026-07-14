@@ -576,7 +576,7 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
         let max_x = self
             .workspaces
             .outputs()
-            .filter(|o| !crate::virtual_output::is_virtual_output(o))
+            .filter(|o| !crate::virtual_output::is_unreachable_virtual_output(o))
             .fold(0, |acc, o| {
                 acc + self
                     .workspaces
