@@ -592,9 +592,13 @@ pub fn run_udev() {
             }
         }
 
-        // Add a calloop timer to drive virtual output rendering independently of physical VBlanks.
-        // This ensures frames keep flowing even when physical outputs are idle.
-        if !state.virtual_outputs.is_empty() {
+        // Calloop timer driving off-VBlank rendering: virtual outputs (which
+        // have no physical VBlank) and physical outputs with an active
+        // screencast (which would otherwise only render on damage, starving
+        // the capture when the desktop is idle). Always scheduled — both
+        // kicks no-op when there's nothing to do, so it also covers a
+        // screencast started at runtime with no virtual outputs configured.
+        {
             let refresh_hz = state
                 .virtual_outputs
                 .iter()
@@ -604,7 +608,7 @@ pub fn run_udev() {
             let refresh_hz = if refresh_hz.is_finite() {
                 refresh_hz
             } else {
-                60.0
+                30.0
             };
             let interval = std::time::Duration::from_micros((1_000_000.0 / refresh_hz) as u64);
 
@@ -614,14 +618,12 @@ pub fn run_udev() {
                     smithay::reexports::calloop::timer::Timer::from_duration(interval),
                     move |_, _, data: &mut Otto<super::types::UdevData>| {
                         data.render_virtual_outputs();
+                        data.kick_screencast_outputs();
                         smithay::reexports::calloop::timer::TimeoutAction::ToDuration(interval)
                     },
                 )
-                .expect("failed to schedule virtual output render timer");
-            tracing::info!(
-                "Virtual output render timer started at {:.1} Hz",
-                refresh_hz
-            );
+                .expect("failed to schedule off-vblank render timer");
+            tracing::info!("Off-VBlank render timer started at {:.1} Hz", refresh_hz);
         }
     }
 

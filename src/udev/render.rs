@@ -48,6 +48,7 @@ use smithay::{
 use tracing::{debug, trace, warn};
 
 use super::types::{FrameMode, RenderOutcome, SurfaceData, UdevData, UdevOutputId, UdevRenderer};
+use crate::state::Backend;
 use crate::state::Otto;
 
 // Type alias for the framebuffer returned when binding a Dmabuf with UdevRenderer
@@ -712,10 +713,22 @@ impl Otto<UdevData> {
         // `windows_dmabuf_element`, while the client buffer is pushed directly as
         // a `ScanoutCandidate` element (zero GPU copy). Ordering by the workspace
         // windows_list (bottom→top) picks the topmost window at index rev().next().
-        let screencopy_pending = self
-            .pending_screencopy_frames
-            .iter()
-            .any(|p| p.output == output);
+        // An active screencast of this output is treated exactly like a
+        // pending screencopy: it forces a full GPU composite (no scanout) and,
+        // crucially, forces `should_draw` so an idle desktop still renders —
+        // otherwise the screenshare tap (and any RDP bridge on top) is starved
+        // of frames and the remote client spins forever. The off-VBlank timer
+        // (`kick_screencast_outputs`) supplies the render trigger when idle;
+        // this makes that trigger actually paint.
+        let screencast_active = self
+            .screenshare_sessions
+            .values()
+            .any(|s| s.streams.contains_key(&output.name()));
+        let screencopy_pending = screencast_active
+            || self
+                .pending_screencopy_frames
+                .iter()
+                .any(|p| p.output == output);
 
         // Apply the scanout set (selection + content_layer transitions were
         // done in `set_scanout_windows`, before the `surface` borrow).
@@ -921,7 +934,19 @@ impl Otto<UdevData> {
                         }
                         _ => false,
                     },
-                    SwapBuffersError::ContextLost(err) => panic!("Rendering loop lost: {}", err),
+                    // A ContextLost here is nearly always spurious — a stray
+                    // EGL BAD_PARAMETER from the screenshare blit leaving the
+                    // context in an odd state, not a genuinely lost GL context.
+                    // Panicking took the WHOLE compositor (every window, the
+                    // user's session) down over one bad auxiliary frame. Drop
+                    // this frame and reschedule instead; the next frame rebinds
+                    // the primary from scratch. If the context really is gone
+                    // the next frame fails the same way and just logs again —
+                    // still far better than killing the session.
+                    SwapBuffersError::ContextLost(err) => {
+                        warn!("Rendering context lost ({err}); dropping frame and continuing");
+                        true
+                    }
                 }
             }
         };
@@ -1256,6 +1281,52 @@ impl Otto<UdevData> {
     /// 2. Bind it as the render target.
     /// 3. Call `render_output()` directly into the PipeWire buffer.
     /// 4. Queue the buffer back and trigger PipeWire.
+    /// Keep physical outputs that have an active screencast rendering, even
+    /// when their desktop is idle. A physical output only renders on damage,
+    /// so a static screen would starve the screenshare tap (and any RDP
+    /// bridge on top of it) of frames — the remote client would sit on a
+    /// blank "loading" screen until something happened to move. Forcing a
+    /// full frame per tick (via `reset_buffers`) mirrors how virtual outputs
+    /// already stream continuously. No-op when nothing is being cast.
+    pub(super) fn kick_screencast_outputs(&mut self) {
+        if self.screenshare_sessions.is_empty() {
+            return;
+        }
+        // Collect the connectors with an active cast (dedup across sessions).
+        let mut connectors: Vec<String> = Vec::new();
+        for session in self.screenshare_sessions.values() {
+            for connector in session.streams.keys() {
+                if !connectors.contains(connector) {
+                    connectors.push(connector.clone());
+                }
+            }
+        }
+        for connector in connectors {
+            let Some(output) = self
+                .workspaces
+                .outputs()
+                .find(|o| o.name() == connector)
+                .cloned()
+            else {
+                continue;
+            };
+            // Virtual outputs render via `render_virtual_outputs`; skip them.
+            if crate::virtual_output::is_virtual_output(&output) {
+                continue;
+            }
+            let Some((node, crtc)) = output
+                .user_data()
+                .get::<super::types::UdevOutputId>()
+                .map(|id| (id.device_id, id.crtc))
+            else {
+                continue;
+            };
+            // Force a full frame so the screenshare blit runs without damage.
+            self.backend_data.reset_buffers(&output);
+            self.render(node, Some(crtc));
+        }
+    }
+
     pub(super) fn render_virtual_outputs(&mut self) {
         if self.virtual_outputs.is_empty() {
             return;
@@ -1278,13 +1349,37 @@ impl Otto<UdevData> {
             let output_clone = self.virtual_outputs[i].output.clone();
             let output_name = output_clone.name();
 
-            // Per-output scene element — renders only this output's sub-tree
-            let output_scene_element = self
+            // Composite this output the way the KMS plane path decomposes it:
+            // one isolated subtree per plane, stacked in z-order. A single
+            // `for_output_layer(output_layer)` re-render is NOT equivalent —
+            // plane subtrees ignore ancestor visibility (the hidden
+            // `workspaces_layer` while expose is shown), so the tree render
+            // went black during expose and expose gestures.
+            // Top→bottom, matching the physical push order in
+            // `render_output_frame`; the windows subtree is dropped while
+            // expose is up, exactly like the windows plane.
+            let expose_active =
+                self.workspaces.is_expose_transitioning() || self.workspaces.get_show_all();
+            let scene_stack: Vec<crate::render_elements::scene_element::SceneElement> = self
                 .workspaces
                 .output_workspaces
                 .get(&output_name)
-                .map(|ows| scene_element.for_output_layer(&ows.output_layer))
-                .unwrap_or_else(|| scene_element.clone());
+                .map(|ows| {
+                    let pos = ows.output_layer.render_position();
+                    let origin = (pos.x, pos.y);
+                    let mut stack = vec![
+                        scene_element.for_plane_subtree(&ows.dock_plane, origin),
+                        scene_element.for_plane_subtree(&ows.switcher_plane, origin),
+                        scene_element.for_plane_subtree(&ows.overlay_plane, origin),
+                        scene_element.for_plane_subtree(&ows.expose_layer, origin),
+                    ];
+                    if !expose_active {
+                        stack.push(scene_element.for_plane_subtree(&ows.windows_plane, origin));
+                    }
+                    stack.push(scene_element.for_plane_subtree(&ows.background_plane, origin));
+                    stack
+                })
+                .unwrap_or_else(|| vec![scene_element.clone()]);
 
             // Build cursor elements if pointer is over this output
             let scale = Scale::from(output_clone.current_scale().fractional_scale());
@@ -1387,8 +1482,12 @@ impl Otto<UdevData> {
                     match renderer.bind(&mut dmabuf) {
                         Ok(mut framebuffer) => {
                             let mut elements = build_cursor_elements(&mut renderer);
-                            elements
-                                .push(WorkspaceRenderElements::Scene(output_scene_element.clone()));
+                            elements.extend(
+                                scene_stack
+                                    .iter()
+                                    .cloned()
+                                    .map(WorkspaceRenderElements::Scene),
+                            );
                             let _ = crate::render::render_output(
                                 &output_clone,
                                 &all_window_elements,
@@ -1428,9 +1527,12 @@ impl Otto<UdevData> {
                             match renderer.bind(&mut ss_dmabuf) {
                                 Ok(mut fb) => {
                                     let mut ss_elements = build_cursor_elements(&mut renderer);
-                                    ss_elements.push(WorkspaceRenderElements::Scene(
-                                        output_scene_element.clone(),
-                                    ));
+                                    ss_elements.extend(
+                                        scene_stack
+                                            .iter()
+                                            .cloned()
+                                            .map(WorkspaceRenderElements::Scene),
+                                    );
                                     let _ = crate::render::render_output(
                                         &output_clone,
                                         &all_window_elements,

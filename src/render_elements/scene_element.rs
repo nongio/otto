@@ -31,6 +31,12 @@ pub struct SceneElement {
     /// When set, render from this node instead of the global scene root.
     /// Used to render only a specific output's sub-tree (coordinates are output-local).
     pub output_root: Option<NodeRef>,
+    /// When set, `output_root` is a plane subtree (background / windows /
+    /// expose / overlay …) rendered in isolation — exactly like the KMS
+    /// plane path: ancestor visibility is ignored and the dynamic part of
+    /// the root's scene position (workspace scroll) is re-applied, minus
+    /// the output's static origin. See `SceneDmabufElement` for the model.
+    pub subtree_origin: Option<(f32, f32)>,
     #[cfg(feature = "perf-counters")]
     perf_stats: Rc<RefCell<ScenePerfStats>>,
 }
@@ -45,6 +51,7 @@ impl SceneElement {
             size: (0.0, 0.0),
             damage: Rc::new(RefCell::new(DamageBag::new(5))),
             output_root: None,
+            subtree_origin: None,
             #[cfg(feature = "perf-counters")]
             perf_stats: Rc::new(RefCell::new(ScenePerfStats::new())),
         }
@@ -54,6 +61,23 @@ impl SceneElement {
     pub fn for_output_layer(&self, layer: &Layer) -> Self {
         let mut clone = self.clone();
         clone.output_root = Some(layer.id);
+        clone
+    }
+
+    /// Return a clone of this element that renders one plane subtree of an
+    /// output (background_plane / windows_plane / expose / overlay …) in
+    /// isolation, mirroring the KMS plane path: ancestor visibility (e.g. the
+    /// hidden `workspaces_layer` while expose is shown) does not apply, and
+    /// the dynamic part of the root's scene position (workspace scroll) is
+    /// re-applied minus the output's static `origin`. Several of these are
+    /// stacked in z-order to composite a full output frame without planes.
+    /// Gets a fresh element `Id` so multiple subtrees can coexist in one
+    /// `render_output` call.
+    pub fn for_plane_subtree(&self, layer: &Layer, origin: (f32, f32)) -> Self {
+        let mut clone = self.clone();
+        clone.id = Id::new();
+        clone.output_root = Some(layer.id);
+        clone.subtree_origin = Some(origin);
         clone
     }
     #[profiling::function]
@@ -213,7 +237,13 @@ impl Element for SceneElement {
                 .engine
                 .get_layer(&oid)
                 .map(|l| {
-                    let b = l.render_bounds_transformed();
+                    // Plane subtrees (windows_plane, background_plane) have
+                    // auto size — their extent is defined by their children.
+                    let b = if self.subtree_origin.is_some() {
+                        l.render_bounds_with_children_transformed()
+                    } else {
+                        l.render_bounds_transformed()
+                    };
                     (b.width() as i32, b.height() as i32).into()
                 })
                 .unwrap_or_default();
@@ -335,14 +365,27 @@ impl RenderElement<SkiaRenderer> for SceneElement {
         if let Some(oid) = self.output_root {
             if let Some(layer) = self.engine.get_layer(&oid) {
                 let pos = layer.render_position();
-                if pos.x != 0.0 || pos.y != 0.0 {
+                if let Some((ox, oy)) = self.subtree_origin {
+                    // Plane subtree: the tree renders root-local, which loses
+                    // the ancestor scroll offset — re-apply the dynamic part
+                    // of the root's global position, minus the output's
+                    // static origin (same correction as SceneDmabufElement).
+                    let (dx, dy) = (pos.x - ox, pos.y - oy);
+                    if dx != 0.0 || dy != 0.0 {
+                        canvas.translate((dx, dy));
+                    }
+                } else if pos.x != 0.0 || pos.y != 0.0 {
                     canvas.translate((-pos.x, -pos.y));
                 }
             }
         }
 
         // Compute occlusion for this output's root and retrieve the occluded set.
-        let occluded_set = if crate::config::Config::with(|c| c.occlusion_culling) {
+        // Skipped for plane subtrees — they mirror the KMS plane path, which
+        // renders without occlusion culling (`SceneDmabufElement` passes None).
+        let occluded_set = if self.subtree_origin.is_none()
+            && crate::config::Config::with(|c| c.occlusion_culling)
+        {
             if let Some(root_id) = root_id {
                 self.engine.compute_occlusion(root_id);
                 scene.occlusion_map().and_then(|m| m.get(&root_id).cloned())
