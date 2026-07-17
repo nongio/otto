@@ -77,6 +77,11 @@ impl VirtualPointerManagerState {
 #[derive(Debug, Default)]
 pub struct VirtualPointerUserData {
     pending: Mutex<PendingFrame>,
+    /// Output bound at creation (`create_virtual_pointer_with_output`).
+    /// Absolute motion maps into this output's geometry; without it the
+    /// first output is used. Lets a driver target a specific output (e.g.
+    /// an interactive virtual output) instead of whichever enumerates first.
+    output: Option<smithay::output::Output>,
 }
 
 #[derive(Debug, Default)]
@@ -131,10 +136,19 @@ where
             }
             zwlr_virtual_pointer_manager_v1::Request::CreateVirtualPointerWithOutput {
                 seat: _,
-                output: _,
+                output,
                 id,
             } => {
-                data_init.init(id, VirtualPointerUserData::default());
+                let output = output
+                    .as_ref()
+                    .and_then(smithay::output::Output::from_resource);
+                data_init.init(
+                    id,
+                    VirtualPointerUserData {
+                        output,
+                        ..Default::default()
+                    },
+                );
             }
             zwlr_virtual_pointer_manager_v1::Request::Destroy => {}
             _ => {}
@@ -172,12 +186,18 @@ where
                 y_extent,
             } => {
                 // Map the normalized absolute position into logical-pixel
-                // coordinates using the first output's geometry. If we have
-                // no outputs (shouldn't happen in practice), drop the event.
+                // coordinates using the bound output's geometry (see
+                // `VirtualPointerUserData::output`), falling back to the
+                // first output. If we have no outputs (shouldn't happen in
+                // practice), drop the event.
                 if x_extent == 0 || y_extent == 0 {
                     return;
                 }
-                let Some(output) = state.workspaces.outputs().next().cloned() else {
+                let Some(output) = data
+                    .output
+                    .clone()
+                    .or_else(|| state.workspaces.outputs().next().cloned())
+                else {
                     return;
                 };
                 let Some(geo) = state.workspaces.output_geometry(&output) else {
