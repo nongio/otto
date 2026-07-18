@@ -1,0 +1,10 @@
+[package]
+name = "deadlock-test"
+version = "0.1.0"
+edition = "2021"
+description = "X11 client that reproduces Unity/Proton game deadlock on Otto compositor"
+license = "MIT"
+publish = false
+
+[dependencies]
+x11rb = { version = "0.13", features = ["allow-unsafe-code"] }

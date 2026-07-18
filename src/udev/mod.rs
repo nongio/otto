@@ -117,12 +117,14 @@ impl Backend for UdevData {
     }
 
     fn early_import(&mut self, surface: &wl_surface::WlSurface) {
-        if let Err(err) = self.gpus.early_import(self.primary_gpu, surface) {
+        let early = self.gpus.early_import(self.primary_gpu, surface);
+        if let Err(ref err) = early {
             tracing::warn!("Early buffer import failed: {}", err);
         }
         let mut r = self.gpus.single_renderer(&self.primary_gpu).unwrap();
         compositor::with_states(surface, |states| {
-            if let Err(err) = import_surface(&mut r, states) {
+            let import_res = import_surface(&mut r, states);
+            if let Err(ref err) = import_res {
                 tracing::warn!("Early buffer import surface failed: {}", err);
             }
         });

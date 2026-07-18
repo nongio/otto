@@ -229,6 +229,25 @@ impl WindowElement {
         self.0.window.underlying_surface()
     }
 
+    /// True for X11 clients that manage their own input focus per ICCCM —
+    /// Globally-Active (`input=False` + `WM_TAKE_FOCUS`) and No-Input. These are
+    /// Proton/Unity games (e.g. Cuphead) that freeze their render loop when the
+    /// compositor pushes focus/activation/visibility state at them. We suppress
+    /// those signals (focus, `_NET_WM_STATE_FOCUSED`, `wl_output.leave`) for such
+    /// windows and only route raw keyboard events.
+    #[cfg(feature = "xwayland")]
+    pub fn x11_self_manages_focus(&self) -> bool {
+        use smithay::xwayland::xwm::WmInputModel;
+        matches!(
+            self.underlying_surface(),
+            WindowSurface::X11(x)
+                if matches!(
+                    x.input_model(),
+                    WmInputModel::GloballyActive | WmInputModel::None
+                )
+        )
+    }
+
     pub fn geometry(&self) -> Rectangle<i32, Logical> {
         self.0.window.geometry()
     }
@@ -485,12 +504,33 @@ impl SpaceElement for WindowElement {
     }
 
     fn set_activate(&self, activated: bool) {
+        // Never toggle `_NET_WM_STATE_FOCUSED` on self-managing X11 windows
+        // (Globally-Active / No-Input clients — Proton/Unity games such as
+        // Cuphead). `set_activated` emits a `PropertyNotify` on `_NET_WM_STATE`
+        // whenever FOCUSED changes; the off→on flap on a workspace switch makes
+        // their winex11/Wine layer stall the render loop (black screen). These
+        // clients manage their own focus per ICCCM, so we leave their X11 state
+        // untouched and only route keyboard events (see src/focus.rs).
+        #[cfg(feature = "xwayland")]
+        if self.x11_self_manages_focus() {
+            return;
+        }
         SpaceElement::set_activate(&self.0.window, activated);
     }
     fn output_enter(&self, output: &Output, overlap: Rectangle<i32, Logical>) {
         SpaceElement::output_enter(&self.0.window, output, overlap);
     }
     fn output_leave(&self, output: &Output) {
+        // Never send `wl_surface.leave(output)` to a self-managing X11 game.
+        // When its workspace scrolls off-screen the smithay Space would call this,
+        // and XWayland turns the output-leave into an X11 visibility signal that
+        // Cuphead/Wine reacts to by freezing its render loop (the workspace-switch
+        // freeze). Keeping the surface on the output leaves its visibility state
+        // unchanged. Frame callbacks/focus are handled separately (see src/focus.rs).
+        #[cfg(feature = "xwayland")]
+        if self.x11_self_manages_focus() {
+            return;
+        }
         SpaceElement::output_leave(&self.0.window, output);
     }
     #[profiling::function]

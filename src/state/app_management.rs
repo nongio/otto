@@ -121,6 +121,21 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// keyboard focus when the workspace is empty.  Used by every code-path that
     /// lands on a workspace (gesture swipe, selector click, expose close, …).
     pub fn focus_top_window_or_clear(&mut self, workspace_index: usize) {
+        // While a self-managing X11 game (Cuphead) is fullscreen, keep keyboard
+        // focus ON IT across workspace switches. Moving focus to another window —
+        // or clearing it to None on an empty workspace — makes XWayland send the
+        // game an X11 `FocusOut`, and Unity games with "Run In Background = false"
+        // PAUSE rendering on FocusOut (the workspace-switch freeze). Holding focus
+        // on the game means it never sees FocusOut. Released once it unfullscreens.
+        #[cfg(feature = "xwayland")]
+        if self
+            .workspaces
+            .windows_map
+            .values()
+            .any(|w| w.is_fullscreen() && w.x11_self_manages_focus())
+        {
+            return;
+        }
         if let Some(top_wid) = self.workspaces.get_top_window_of_workspace(workspace_index) {
             self.set_keyboard_focus_on_surface(&top_wid);
         } else {
@@ -244,6 +259,21 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// Centralized keyboard focus change: deactivates old window, activates new one,
     /// sends xdg configure and foreign-toplevel state for both.
     pub fn set_keyboard_focus_on_window(&mut self, window: &crate::shell::WindowElement) {
+        // While a self-managing X11 game (Cuphead) is fullscreen, never move focus
+        // to a DIFFERENT window (pointer, dock, self-activation by Steam Big
+        // Picture, …). XWayland would send the game an X11 `FocusOut` and Unity
+        // ("Run In Background = false") pauses rendering on it. Focusing the game
+        // itself is allowed (target == game).
+        #[cfg(feature = "xwayland")]
+        {
+            let target_id = window.id();
+            if self.workspaces.windows_map.values().any(|w| {
+                w.is_fullscreen() && w.x11_self_manages_focus() && w.id() != target_id
+            }) {
+                return;
+            }
+        }
+
         let keyboard = self.seat.get_keyboard().unwrap();
         let serial = SERIAL_COUNTER.next_serial();
 
@@ -274,7 +304,57 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
         let wid = window.id();
         self.send_foreign_toplevel_state(&wid, true);
+
+        // Always give the window the seat keyboard focus, so its keys are routed.
+        // The ICCCM input model is honoured one level down, in
+        // `KeyboardFocusTarget`'s `KeyboardTarget` impl (src/focus.rs): for
+        // self-managing X11 clients (Globally-Active / No-Input) we deliver the
+        // wl_keyboard events straight to the underlying wl_surface and SKIP the X11
+        // focus protocol (set_input_focus / WM_TAKE_FOCUS). Forcing that protocol
+        // stalls the render loop of Globally-Active Proton/Unity games (e.g.
+        // Cuphead) — but they still need to receive keys, hence focus-but-no-X11-
+        // state. set_activate above sets _NET_WM_STATE_FOCUSED and the call below
+        // sets _NET_ACTIVE_WINDOW, which is what they actually poll for.
         keyboard.set_focus(self, Some(window.clone().into()), serial);
+        self.set_x11_active_window(window);
+    }
+
+    /// Mirror keyboard focus to the X11 world by setting `_NET_ACTIVE_WINDOW`.
+    ///
+    /// XWayland clients with a Globally Active input model (e.g. Unity games via
+    /// Proton, which set `input=False` and list `WM_TAKE_FOCUS`) block their
+    /// render loop until they observe activation. `WM_TAKE_FOCUS` + `_NET_WM_STATE_FOCUSED`
+    /// alone are not enough — they also poll `_NET_ACTIVE_WINDOW` on the root window.
+    /// Without this the window stays black with no frames (the Cuphead startup deadlock).
+    pub fn set_x11_active_window(&mut self, window: &crate::shell::WindowElement) {
+        use smithay::desktop::WindowSurface;
+
+        // Never hand `_NET_ACTIVE_WINDOW` to another window while a self-managing
+        // X11 game is fullscreen. Unity/Proton games (Cuphead) QUIT when they lose
+        // active-window status while fullscreen — losing it to Steam Big Picture on
+        // a focus flap, or to another workspace's top window on swipe, makes Cuphead
+        // tear down its X11 window (observed: unmap + ReparentWindow BadWindow).
+        // Keep the game `_NET_ACTIVE_WINDOW` until it's unfullscreened/closed.
+        #[cfg(feature = "xwayland")]
+        {
+            let target_id = window.id();
+            let game_is_fullscreen = self.workspaces.windows_map.values().any(|w| {
+                w.is_fullscreen() && w.x11_self_manages_focus() && w.id() != target_id
+            });
+            if game_is_fullscreen {
+                return;
+            }
+        }
+
+        let WindowSurface::X11(surface) = window.underlying_surface() else {
+            return;
+        };
+        let window_id = surface.window_id();
+        if let Some(xwm) = self.xwm.as_mut() {
+            if let Err(err) = xwm.set_active_window(window_id) {
+                tracing::warn!(?err, "failed to set _NET_ACTIVE_WINDOW for X11 window");
+            }
+        }
     }
 
     pub fn clear_keyboard_focus(&mut self) {

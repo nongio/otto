@@ -127,6 +127,11 @@ vibrancy even though the content behind it lives on other planes.
   chrome planes dropped; frames always render (client commits produce no
   scene damage) and only the fullscreen window receives frame callbacks.
   The compositor swapchain resets on scanout-mode transitions.
+  XWayland fullscreen windows use the same path — this needs the
+  clear-color CCS modifiers stripped from advertised dmabuf formats and
+  the explicit-sync acquire blocker (both in place); routing them through
+  the composite/promotion path instead freezes the output on the first
+  promoted frame.
 - The 3-finger workspace swipe (finger-drag, before any animation) gates
   all direct scanout: the drag moves content with no animation flag, and a
   fixed plane would not follow it.

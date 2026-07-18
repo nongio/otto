@@ -106,7 +106,7 @@ use smithay::{
     utils::{Point, Size},
     wayland::xwayland_keyboard_grab::XWaylandKeyboardGrabState,
     wayland::xwayland_shell,
-    xwayland::{X11Wm, XWayland, XWaylandEvent},
+    xwayland::{X11Wm, XWayland, XWaylandClientData, XWaylandEvent},
 };
 
 pub struct CalloopData<BackendData: Backend + 'static> {
@@ -250,6 +250,10 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub xwm: Option<X11Wm>,
     #[cfg(feature = "xwayland")]
     pub xdisplay: Option<u32>,
+    /// The XWayland client connection, kept so its `client_scale` can be updated
+    /// when the output scale changes (see `update_xwayland_scale`).
+    #[cfg(feature = "xwayland")]
+    pub xwayland_client: Option<smithay::reexports::wayland_server::Client>,
 
     #[cfg(feature = "debug")]
     pub renderdoc: Option<renderdoc::RenderDoc<renderdoc::V141>>,
@@ -759,6 +763,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             xwm: None,
             #[cfg(feature = "xwayland")]
             xdisplay: None,
+            #[cfg(feature = "xwayland")]
+            xwayland_client: None,
             #[cfg(feature = "debug")]
             renderdoc: renderdoc::RenderDoc::new().ok(),
 
@@ -924,6 +930,19 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         )
         .expect("failed to start XWayland");
 
+        // Seed the XWayland client's `client_scale` from the primary output's
+        // integer scale, BEFORE XWayland binds wl_output. smithay sends
+        // `wl_output.scale = integer_scale / client_scale`, so with
+        // client_scale == integer_scale XWayland receives scale 1 and builds an
+        // X screen at the native PHYSICAL resolution (e.g. 2880x1920) instead of
+        // the downscaled logical size (1440x960). This makes XRandR report the
+        // correct native modes to X11 clients (Unity/Proton games query these to
+        // pick a fullscreen resolution); smithay transparently scales the X11
+        // surfaces back into logical space. Without this the game reads back a
+        // half-size screen and bails out of fullscreen.
+        self.set_xwayland_client_scale(&client);
+        self.xwayland_client = Some(client.clone());
+
         let ret = self
             .handle
             .insert_source(xwayland, move |event, _, data| match event {
@@ -949,6 +968,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     .expect("Failed to set xwayland default cursor");
                     data.xwm = Some(wm);
                     data.xdisplay = Some(display_number);
+                    // The native-resolution X screen (see client_scale above)
+                    // leaves X11 apps rendering at scale 1 — publish the scale
+                    // via XSETTINGS so toolkits (GTK, Chromium/CEF — e.g. the
+                    // Steam UI) scale themselves. Games ignore XSETTINGS and
+                    // keep the native resolution.
+                    data.apply_xwayland_xsettings();
                 }
                 XWaylandEvent::Error => {
                     warn!("XWayland crashed on startup");
@@ -961,6 +986,74 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             );
         }
     }
+
+    /// The integer scale XWayland should run its X screen at — taken from the
+    /// primary (first) output. XWayland's `client_scale` is a single global
+    /// value, so multi-output mixed-DPI is a known compromise (as in mutter).
+    #[cfg(feature = "xwayland")]
+    fn xwayland_target_scale(&self) -> f64 {
+        self.workspaces
+            .outputs()
+            .next()
+            .map(|o| o.current_scale().integer_scale() as f64)
+            .unwrap_or(1.0)
+    }
+
+    /// Apply the primary output's integer scale to the given XWayland client's
+    /// `client_scale`. See `start_xwayland` for why this yields a native-resolution
+    /// X screen.
+    #[cfg(feature = "xwayland")]
+    fn set_xwayland_client_scale(&self, client: &smithay::reexports::wayland_server::Client) {
+        let scale = self.xwayland_target_scale();
+        if let Some(data) = client.get_data::<XWaylandClientData>() {
+            data.compositor_state.set_client_scale(scale);
+            tracing::info!(scale, "set XWayland client_scale (native-resolution X screen)");
+        }
+    }
+
+    /// Re-apply the XWayland `client_scale` after the output scale changes at
+    /// runtime, so the X screen tracks the new native resolution.
+    #[cfg(feature = "xwayland")]
+    pub fn update_xwayland_scale(&mut self) {
+        if let Some(client) = self.xwayland_client.clone() {
+            self.set_xwayland_client_scale(&client);
+        }
+        self.apply_xwayland_xsettings();
+    }
+
+    /// Publish the primary output's scale to X11 clients via XSETTINGS.
+    ///
+    /// The native-resolution X screen (`client_scale`, see `start_xwayland`)
+    /// makes X11 apps render at scale 1; well-behaved toolkits (GTK,
+    /// Chromium/CEF — e.g. the Steam UI) read `Gdk/WindowScalingFactor` and
+    /// `Xft/DPI` from XSETTINGS and scale themselves back up. Games ignore
+    /// XSETTINGS and keep rendering at the native resolution. Same approach
+    /// as mutter's xwayland-native-scaling.
+    #[cfg(feature = "xwayland")]
+    pub fn apply_xwayland_xsettings(&mut self) {
+        use smithay::xwayland::xwm::settings::Value;
+        let scale = self.xwayland_target_scale();
+        let Some(wm) = self.xwm.as_mut() else { return };
+        let settings = [
+            (
+                "Gdk/WindowScalingFactor".to_string(),
+                Value::Integer(scale as i32),
+            ),
+            // Base DPI before the window scaling factor (96 in 1024ths).
+            ("Gdk/UnscaledDPI".to_string(), Value::Integer(96 * 1024)),
+            // Effective DPI (in 1024ths) for toolkits without integer-scale
+            // support (Xft consumers, Chromium/CEF).
+            (
+                "Xft/DPI".to_string(),
+                Value::Integer((96.0 * scale * 1024.0) as i32),
+            ),
+        ];
+        match wm.set_xsettings(settings.into_iter()) {
+            Ok(()) => tracing::info!(scale, "published XWayland XSETTINGS scale"),
+            Err(err) => tracing::warn!(?err, "failed to set XWayland XSETTINGS"),
+        }
+    }
+
     pub fn set_cursor(&mut self, image: &CursorImageStatus) {
         *self.cursor_status.lock().unwrap() = image.clone();
         self.cursor_manager.set_cursor_image(image.clone());

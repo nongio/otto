@@ -9,7 +9,6 @@ use smithay::{
     delegate_xwayland_keyboard_grab, delegate_xwayland_shell,
     desktop::{Window, WindowSurface},
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::SERIAL_COUNTER,
     wayland::xwayland_keyboard_grab::XWaylandKeyboardGrabHandler,
     wayland::xwayland_shell::{XWaylandShellHandler, XWaylandShellState},
     xwayland::xwm::XwmId,
@@ -83,21 +82,42 @@ impl<BackendData: Backend + 'static> XWaylandShellHandler for Otto<BackendData> 
         // Override-redirect popups must not steal focus (activate=false).
         self.workspaces
             .map_window(&window_element, location, !is_override_redirect, None);
-        let bbox = self
-            .workspaces
-            .space()
-            .and_then(|s| s.element_bbox(&window_element));
-        if let WindowSurface::X11(xsurface) = window_element.underlying_surface() {
-            let _ = xsurface.configure(bbox);
+
+        // A client may map with an initial _NET_WM_STATE_FULLSCREEN (Unity/Proton
+        // games set it via XChangeProperty before mapping). In that case fullscreen
+        // owns the geometry: sending the windowed-placement configure here would race
+        // the fullscreen configure and leave the window mis-sized at the windowed
+        // spawn point (collapsed -> black). Skip the windowed configure and let
+        // apply_x11_fullscreen be the sole authority on the X11 geometry.
+        let wants_fullscreen = !is_override_redirect && window.is_fullscreen();
+
+        if !wants_fullscreen {
+            let bbox = self
+                .workspaces
+                .space()
+                .and_then(|s| s.element_bbox(&window_element));
+            if let WindowSurface::X11(xsurface) = window_element.underlying_surface() {
+                let _ = xsurface.configure(bbox);
+            }
         }
 
         if !is_override_redirect {
-            let keyboard = self.seat.get_keyboard().unwrap();
-            keyboard.set_focus(
-                self,
-                Some(window_element.into()),
-                SERIAL_COUNTER.next_serial(),
-            );
+            // Focus the window at map. For self-managing X11 games this routes
+            // keyboard delivery to the `wl_surface` (see src/focus.rs) — the game
+            // gets wl_keyboard focus (so XWayland can deliver keys) WITHOUT a
+            // WM_TAKE_FOCUS, which would break its render loop. Activation
+            // (_NET_ACTIVE_WINDOW) is set inside the helper too.
+            self.set_keyboard_focus_on_window(&window_element);
+
+            // Replay a fullscreen request that arrived before the element was
+            // mapped. Otto defers X11 mapping to here, so a client that maps and
+            // immediately sets _NET_WM_STATE_FULLSCREEN (Unity/Proton games) had
+            // its fullscreen_request dropped — the initial _NET_WM_STATE property is
+            // seeded into the X11Surface (smithay update_net_wm_state at MapRequest),
+            // and we apply it now that the element exists.
+            if window.is_fullscreen() && !window_element.is_fullscreen() {
+                self.apply_x11_fullscreen(&window_element, &window);
+            }
         }
     }
 }
