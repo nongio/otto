@@ -685,12 +685,15 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             Workspaces::new(layers_engine.clone(), dh.clone());
         handle
             .insert_source(remove_workspace_receiver, |event, _, otto| {
-                if let ChannelEvent::Msg(index) = event {
-                    let pos = otto
-                        .workspaces
-                        .with_model(|m| m.workspaces.iter().position(|w| w.index == index));
-                    if let Some(pos) = pos {
-                        otto.workspaces.remove_workspace_at(pos);
+                // Channel carries (Option<output_name>, position). Some(name)
+                // = per-output removal (a selector's remove button, workspaces
+                // being independent per output); None = lockstep removal across
+                // all outputs (fullscreen-close, whose workspace is created
+                // lockstep).
+                if let ChannelEvent::Msg((output_name, pos)) = event {
+                    match output_name {
+                        Some(name) => otto.workspaces.remove_workspace_from_output(&name, pos),
+                        None => otto.workspaces.remove_workspace_at(pos),
                     }
                 }
             })
@@ -1007,7 +1010,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let scale = self.xwayland_target_scale();
         if let Some(data) = client.get_data::<XWaylandClientData>() {
             data.compositor_state.set_client_scale(scale);
-            tracing::info!(scale, "set XWayland client_scale (native-resolution X screen)");
+            tracing::info!(
+                scale,
+                "set XWayland client_scale (native-resolution X screen)"
+            );
         }
     }
 

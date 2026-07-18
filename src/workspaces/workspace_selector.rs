@@ -13,16 +13,15 @@ use smithay::{
 };
 
 use crate::{
-    config::Config,
     interactive_view::ViewInteractions,
     theme::{self, theme_colors},
     utils::{
         button_press_filter, button_press_scale, button_release_filter, button_release_scale,
-        draw_named_icon, draw_text_content, Observer,
+        draw_named_icon, draw_text_content,
     },
 };
 
-use super::WorkspacesModel;
+use super::workspace::WorkspaceView;
 
 pub const WORKSPACE_SELECTOR_PREVIEW_WIDTH: f32 = 300.0;
 const WORKSPACE_SELECTOR_GAP: f32 = 50.0;
@@ -63,6 +62,9 @@ pub struct WorkspaceSelectorViewState {
     workspaces: Vec<WorkspaceViewState>,
     current: usize,
     drop_hover_index: Option<usize>,
+    /// Fractional scale of the output this selector renders on. Drives label
+    /// sizing and pointer hit-test coordinate conversion (per-output).
+    scale: f32,
 }
 
 impl Hash for WorkspaceSelectorViewState {
@@ -70,6 +72,7 @@ impl Hash for WorkspaceSelectorViewState {
         self.workspaces.hash(state);
         self.current.hash(state);
         self.drop_hover_index.hash(state);
+        self.scale.to_bits().hash(state);
     }
 }
 
@@ -82,7 +85,19 @@ pub struct WorkspaceSelectorView {
     pub drop_hover_index: Arc<RwLock<Option<usize>>>,
     known_indices: Arc<RwLock<HashSet<usize>>>,
     pressed_action: Arc<RwLock<Option<String>>>,
-    remove_sender: CalloopSender<usize>,
+    /// Carries `(Some(output_name), workspace_position)` — removal is scoped to
+    /// the output this selector belongs to (workspaces are independent per
+    /// output). The `Option` lets the fullscreen-close path share the channel
+    /// with `None` for a lockstep removal.
+    remove_sender: CalloopSender<(Option<String>, usize)>,
+    /// Global logical origin of the output this selector lives on. Pointer
+    /// events arrive in global logical space; subtracting this yields
+    /// output-local coordinates for hit-testing (all output subtrees render
+    /// at scene origin).
+    output_origin: Arc<RwLock<(f64, f64)>>,
+    /// Name of the output this selector belongs to. Add/remove act on this
+    /// output only, so each display manages its own independent workspaces.
+    output_name: Arc<RwLock<String>>,
 }
 
 /// # WorkspaceSelectorView Layer Structure
@@ -105,12 +120,13 @@ impl WorkspaceSelectorView {
     pub fn new(
         _layers_engine: Arc<Engine>,
         layer: Layer,
-        remove_sender: CalloopSender<usize>,
+        remove_sender: CalloopSender<(Option<String>, usize)>,
     ) -> Self {
         let state = WorkspaceSelectorViewState {
             workspaces: Vec::new(),
             current: 0,
             drop_hover_index: None,
+            scale: 1.0,
         };
         let view = View::new(
             "workspace_selector_view",
@@ -197,6 +213,61 @@ impl WorkspaceSelectorView {
             known_indices,
             pressed_action,
             remove_sender,
+            output_origin: Arc::new(RwLock::new((0.0, 0.0))),
+            output_name: Arc::new(RwLock::new(String::new())),
+        }
+    }
+
+    /// Populate this selector from a single output's workspace set. Each
+    /// output drives its own selector so previews reflect that output's
+    /// content at that output's physical resolution.
+    pub fn set_workspaces(
+        &self,
+        workspaces: &[Arc<WorkspaceView>],
+        current: usize,
+        width: f32,
+        height: f32,
+        scale: f32,
+    ) {
+        let mut state = self.view.get_state();
+        {
+            let mut known = self.known_indices.write().unwrap();
+            state.workspaces = workspaces
+                .iter()
+                .enumerate()
+                .map(|(i, w)| WorkspaceViewState {
+                    name: w
+                        .get_name()
+                        .unwrap_or_else(|| format!("Workspace {}", i + 1)),
+                    index: w.index,
+                    workspace_node: Some(w.windows_layer.id()),
+                    background_node: Some(w.workspace_background.id()),
+                    workspace_width: width,
+                    workspace_height: height,
+                    fullscreen: w.get_fullscreen_mode(),
+                    window_count: w.windows_list.read().unwrap().len(),
+                })
+                .collect();
+            known.retain(|idx| state.workspaces.iter().any(|w| w.index == *idx));
+        }
+        state.current = current;
+        state.scale = scale;
+        self.view.update_state(&state);
+    }
+
+    /// Set the global logical origin of the output hosting this selector, so
+    /// pointer events (delivered in global logical space) can be converted to
+    /// output-local coordinates for hit-testing.
+    pub fn set_output_origin(&self, origin: (f64, f64)) {
+        *self.output_origin.write().unwrap() = origin;
+    }
+
+    /// Set the name of the output this selector belongs to. Add/remove use it
+    /// to scope the operation to this output.
+    pub fn set_output_name(&self, name: &str) {
+        let mut n = self.output_name.write().unwrap();
+        if *n != name {
+            *n = name.to_owned();
         }
     }
 
@@ -233,7 +304,7 @@ fn render_workspace_selector_view(
         let preview_width = WORKSPACE_SELECTOR_PREVIEW_WIDTH;
         let scale = preview_width / workspace_width;
         let preview_height = workspace_height * scale;
-        let label_height = 30.0 * Config::with(|config| config.screen_scale) as f32;
+        let label_height = 30.0 * state.scale;
         (
             max_w.max(preview_width + WORKSPACE_SELECTOR_GAP),
             max_h.max(preview_height + label_height),
@@ -263,13 +334,12 @@ fn render_workspace_selector_view(
                 let add = layers::skia::Color::from_argb(0, 0, 0, 0);
                 color_filter = layers::skia::color_filters::lighting(darken_color, add);
             }
-            let screen_scale = Config::with(|config| config.screen_scale);
             let workspace_width = w.workspace_width.max(1.0);
             let workspace_height = w.workspace_height.max(1.0);
             let preview_width = WORKSPACE_SELECTOR_PREVIEW_WIDTH;
             let scale = preview_width / workspace_width;
             let preview_height = workspace_height * scale;
-            let label_height = 30.0 * screen_scale as f32;
+            let label_height = 30.0 * state.scale;
 
             LayerTreeBuilder::with_key(format!(
                 "workspace_selector_desktop_{}",
@@ -566,35 +636,6 @@ fn render_workspace_selector_view(
         .unwrap()
 }
 
-impl Observer<WorkspacesModel> for WorkspaceSelectorView {
-    fn notify(&self, model: &WorkspacesModel) {
-        let mut state = self.view.get_state();
-        {
-            let mut known = self.known_indices.write().unwrap();
-            state.workspaces = model
-                .workspaces
-                .iter()
-                .enumerate()
-                .map(|(i, w)| WorkspaceViewState {
-                    name: w
-                        .get_name()
-                        .unwrap_or_else(|| format!("Workspace {}", i + 1)),
-                    index: w.index,
-                    workspace_node: Some(w.windows_layer.id()),
-                    background_node: Some(w.workspace_background.id()),
-                    workspace_width: model.width as f32,
-                    workspace_height: model.height as f32,
-                    fullscreen: w.get_fullscreen_mode(),
-                    window_count: w.windows_list.read().unwrap().len(),
-                })
-                .collect();
-            known.retain(|idx| state.workspaces.iter().any(|w| w.index == *idx));
-        }
-        state.current = model.current_workspace;
-        self.view.update_state(&state);
-    }
-}
-
 impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSelectorView {
     fn id(&self) -> Option<usize> {
         self.view
@@ -622,9 +663,11 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
         event: &smithay::input::pointer::MotionEvent,
     ) {
         let state = self.view.get_state().clone();
-        let screen_scale = Config::with(|config| config.screen_scale);
-        let location = event.location.to_physical(screen_scale);
-        let location = layers::types::Point::new(location.x as f32, location.y as f32);
+        let origin = *self.output_origin.read().unwrap();
+        let local = (event.location.x - origin.0, event.location.y - origin.1);
+        let scale = state.scale as f64;
+        let location =
+            layers::types::Point::new((local.0 * scale) as f32, (local.1 * scale) as f32);
         let mut hover = false;
         if self
             .view
@@ -701,16 +744,23 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
                 if let (Some(pressed_key), Some(release_key)) = (pressed.clone(), release_key) {
                     if pressed_key == release_key {
                         if release_key == "workspace_selector_desktop_add" {
-                            // Add new workspace
-                            otto.workspaces.add_workspace();
+                            // Add a workspace to THIS output only (workspaces are
+                            // independent per output).
+                            let name = self.output_name.read().unwrap().clone();
+                            otto.workspaces.add_workspace_to_output(&name);
                         } else if let Some(index) = release_key
                             .strip_prefix("workspace_selector_desktop_remove_")
                             .and_then(|idx| idx.parse::<usize>().ok())
                         {
-                            // remove workspace with animation, then notify Otto to remove it from state
+                            // remove workspace with animation, then notify Otto to remove it from state.
+                            // The channel carries a POSITION (lockstep index across outputs); layer
+                            // keys use the workspace's global index, so map back before sending.
+                            let remove_pos = get_position_worspace_by_index(index);
+                            let output_name = self.output_name.read().unwrap().clone();
                             let parent_key = format!("workspace_selector_desktop_{}", index);
                             let wrap_key = format!("workspace_selector_desktop_wrap_{}", index);
-                            if let Some(parent_layer) = self.view.layer_by_key(parent_key.as_str())
+                            if let (Some(parent_layer), Some(remove_pos)) =
+                                (self.view.layer_by_key(parent_key.as_str()), remove_pos)
                             {
                                 let current_size = parent_layer.render_size();
                                 let remove_sender = self.remove_sender.clone();
@@ -720,7 +770,8 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
                                         Transition::spring(0.6, 0.1),
                                     )
                                     .then(move |_layer: &Layer, _| {
-                                        let _ = remove_sender.send(index);
+                                        let _ = remove_sender
+                                            .send((Some(output_name.clone()), remove_pos));
                                     });
                             }
                             if let Some(wrap_layer) = self.view.layer_by_key(wrap_key.as_str()) {

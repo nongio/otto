@@ -96,6 +96,10 @@ pub struct OutputWorkspaces {
     /// with normal layout) rendered through a bottom-strip viewport onto its
     /// own KMS plane. Topmost.
     pub dock_plane: Layer,
+    /// Per-output workspace selector strip (expose UI). Each output shows its
+    /// own selector so previews reflect that output's content at its own
+    /// resolution. Lives in `overlay_plane`.
+    pub workspace_selector: Arc<WorkspaceSelectorView>,
 }
 
 impl OutputWorkspaces {
@@ -149,7 +153,6 @@ pub struct Workspaces {
 
     pub windows_map: HashMap<ObjectId, WindowElement>,
     // views
-    pub workspace_selector_view: Arc<WorkspaceSelectorView>,
     pub dock: Arc<DockView>,
     pub app_switcher: Arc<AppSwitcherView>,
     pub window_views: Arc<RwLock<HashMap<ObjectId, WindowView>>>,
@@ -192,7 +195,7 @@ pub struct Workspaces {
     expose_layer: Layer,
     observers: Vec<Weak<dyn Observer<WorkspacesModel>>>,
     expose_dragged_window: Arc<std::sync::Mutex<Option<ObjectId>>>,
-    remove_workspace_sender: CalloopSender<usize>,
+    remove_workspace_sender: CalloopSender<(Option<String>, usize)>,
 }
 
 /// # Workspaces Layer Structure
@@ -229,19 +232,18 @@ pub struct Workspaces {
 /// │   ├── popup_overlay (primary only)
 /// │   ├── layer_shell_overlay (primary only)
 /// │   ├── overlay (primary only)
-/// │
-/// ├── workspace_selector_view (primary only)
-/// │   ├── workspace_selector_view_content
-/// │   │   ├── workspace_selector_desktop_1
-/// │   │   │   ├── workspace_selector_desktop_content_1
-/// │   │   │   │   ├── workspace_selector_desktop_content_1 (mirror: workspace_view_1)
-/// │   │   │   │   ├── workspace_selector_desktop_border_1
-/// │   │   │   │   ├── workspace_selector_desktop_remove_1
-/// │   │   │   ├── workspace_selector_desktop_label_1
-/// │   │   ├── workspace_selector_desktop_2
-/// │   │   │   ├── ...
-/// │   │   ...
-/// │   ├── workspace_selector_workspace_add
+/// │   ├── workspace_selector_{output} (per output, in overlay_plane)
+/// │   │   ├── workspace_selector_view_content
+/// │   │   │   ├── workspace_selector_desktop_1
+/// │   │   │   │   ├── workspace_selector_desktop_content_1
+/// │   │   │   │   │   ├── workspace_selector_desktop_content_1 (mirror: workspace_view_1)
+/// │   │   │   │   │   ├── workspace_selector_desktop_border_1
+/// │   │   │   │   │   ├── workspace_selector_desktop_remove_1
+/// │   │   │   │   ├── workspace_selector_desktop_label_1
+/// │   │   │   ├── workspace_selector_desktop_2
+/// │   │   │   │   ├── ...
+/// │   │   │   ...
+/// │   │   ├── workspace_selector_workspace_add
 /// ```
 ///
 impl Workspaces {
@@ -279,7 +281,10 @@ impl Workspaces {
     pub fn new(
         layers_engine: Arc<Engine>,
         display_handle: DisplayHandle,
-    ) -> (Self, smithay::reexports::calloop::channel::Channel<usize>) {
+    ) -> (
+        Self,
+        smithay::reexports::calloop::channel::Channel<(Option<String>, usize)>,
+    ) {
         let model = WorkspacesModel::default();
 
         let expose_layer = layers_engine.new_layer();
@@ -336,10 +341,6 @@ impl Workspaces {
         let app_switcher = AppSwitcherView::new(layers_engine.clone(), app_icons_manager.clone());
         let app_switcher = Arc::new(app_switcher);
 
-        let workspace_selector_layer = layers_engine.new_layer();
-        workspace_selector_layer.set_pointer_events(false);
-        // workspace_selector_layer, overlay_layer attached to output_layer in map_output_with_primary
-
         // Layer shell overlay layer (z-order: above overlay_layer, below popups)
         let layer_shell_overlay = layers_engine.new_layer();
         layer_shell_overlay.set_key("layer_shell_overlay");
@@ -355,13 +356,7 @@ impl Workspaces {
         layer_shell_overlay.set_hidden(true);
         // attached to output_layer in map_output_with_primary
 
-        let (remove_workspace_sender, remove_receiver) = channel::<usize>();
-        let workspace_selector_view = WorkspaceSelectorView::new(
-            layers_engine.clone(),
-            workspace_selector_layer.clone(),
-            remove_workspace_sender.clone(),
-        );
-        let workspace_selector_view = Arc::new(workspace_selector_view);
+        let (remove_workspace_sender, remove_receiver) = channel::<(Option<String>, usize)>();
 
         // Create OSD view; attach it to overlay_layer in map_output_with_primary
         let osd = OsdView::new(layers_engine.clone());
@@ -378,7 +373,6 @@ impl Workspaces {
             windows_map: HashMap::new(),
             expose_layer,
             app_switcher: app_switcher.clone(),
-            workspace_selector_view: workspace_selector_view.clone(),
             dock: dock.clone(),
             dnd_view,
             popup_overlay,
@@ -407,7 +401,6 @@ impl Workspaces {
 
         workspaces.add_listener(dock.clone());
         workspaces.add_listener(app_switcher.clone());
-        workspaces.add_listener(workspace_selector_view.clone());
         (workspaces, remove_receiver)
     }
 
@@ -434,6 +427,52 @@ impl Workspaces {
         self.focused_output()
             .map(|o| o.name())
             .and_then(|n| self.output_workspaces.get(&n))
+    }
+
+    /// The workspace selector belonging to a given output.
+    pub fn output_selector(&self, output_name: &str) -> Option<&Arc<WorkspaceSelectorView>> {
+        self.output_workspaces
+            .get(output_name)
+            .map(|ows| &ows.workspace_selector)
+    }
+
+    /// The workspace selector on the focused (pointer) output — the one the
+    /// user is interacting with (e.g. during an expose window drag).
+    pub fn focused_output_selector(&self) -> Option<&Arc<WorkspaceSelectorView>> {
+        self.focused_output_workspaces()
+            .map(|ows| &ows.workspace_selector)
+    }
+
+    /// Repopulate every output's selector from its own workspace set, sized to
+    /// that output's physical resolution. Called whenever workspaces, the
+    /// current index, or output geometry change.
+    fn refresh_output_selectors(&self) {
+        let (fallback_w, fallback_h) = self.with_model(|m| (m.width as f32, m.height as f32));
+        for (name, ows) in self.output_workspaces.iter() {
+            let output = self.outputs.iter().find(|o| o.name() == *name);
+            let (w, h) = output
+                .and_then(|o| o.current_mode())
+                .map(|m| (m.size.w as f32, m.size.h as f32))
+                .unwrap_or((fallback_w, fallback_h));
+            let scale = output
+                .map(|o| o.current_scale().fractional_scale() as f32)
+                .unwrap_or(1.0);
+            let origin = output
+                .map(|o| {
+                    let loc = o.current_location();
+                    (loc.x as f64, loc.y as f64)
+                })
+                .unwrap_or((0.0, 0.0));
+            ows.workspace_selector.set_output_origin(origin);
+            ows.workspace_selector.set_output_name(name);
+            ows.workspace_selector.set_workspaces(
+                &ows.workspace_views,
+                ows.current_workspace,
+                w,
+                h,
+                scale,
+            );
+        }
     }
 
     /// Get all spaces across all outputs and all workspaces (for window search)
@@ -611,6 +650,10 @@ impl Workspaces {
                     .set_position((logical_index as f32 * (w + workspace_gap_px), 0.0), None);
             }
         }
+
+        // Keep every output's selector previews in sync with the new sizes and
+        // workspace set.
+        self.refresh_output_selectors();
     }
 
     pub fn with_model_mut<T>(&self, f: impl FnOnce(&mut WorkspacesModel) -> T) -> T {
@@ -859,17 +902,11 @@ impl Workspaces {
             }
         }
 
-        // The selector strip is a singleton — bring it to the focused
-        // output's overlay so expose UI appears on the screen it opens on.
-        if let Some(ows) = self.focused_output_workspaces() {
-            let _ = ows
-                .overlay_plane
-                .add_sublayer(&self.workspace_selector_view.layer.clone());
+        // Each output owns its selector (already parented to its overlay
+        // plane). Only visible if expose was already open.
+        for ows in self.output_workspaces.values() {
+            ows.workspace_selector.layer.set_hidden(!current_show_all);
         }
-        // Workspace selector: only visible if expose was already open
-        self.workspace_selector_view
-            .layer
-            .set_hidden(!current_show_all);
 
         // Suppress popups during gesture
         self.popup_overlay.set_hidden(true);
@@ -1117,15 +1154,6 @@ impl Workspaces {
                 .collect();
             for (name, ws) in layouts {
                 self.expose_show_all_layout_for(&name, ws);
-            }
-        }
-        // Singleton selector strip follows the focused output (see the
-        // gesture-start path for rationale).
-        if show {
-            if let Some(ows) = self.focused_output_workspaces() {
-                let _ = ows
-                    .overlay_plane
-                    .add_sublayer(&self.workspace_selector_view.layer.clone());
             }
         }
         // When showing expose via keyboard, hide workspace content layers now (mirrors take over).
@@ -1468,8 +1496,7 @@ impl Workspaces {
             let windows_list = workspace.windows_list.read().unwrap().clone();
             // Focused output keeps the old semantics (animate only its
             // current workspace); secondary outputs always animate theirs.
-            let animate_this =
-                transition.is_some() && (is_current_workspace || !is_focused_output);
+            let animate_this = transition.is_some() && (is_current_workspace || !is_focused_output);
             for window_id in windows_list.iter() {
                 if dragged_window.as_ref() == Some(window_id) {
                     continue;
@@ -1505,10 +1532,8 @@ impl Workspaces {
                                 if animate_this {
                                     let translation =
                                         layer.change_position(layers::types::Point { x, y });
-                                    let scale_change = layer.change_scale(layers::types::Point {
-                                        x: scale,
-                                        y: scale,
-                                    });
+                                    let scale_change = layer
+                                        .change_scale(layers::types::Point { x: scale, y: scale });
                                     changes.push(translation);
                                     changes.push(scale_change);
                                 } else {
@@ -1555,7 +1580,6 @@ impl Workspaces {
 
             let window_selector_view_ref = window_selector_view.clone();
             let expose_layer = self.expose_layer.clone();
-            let workspace_selector_view_layer = self.workspace_selector_view.layer.clone();
             let layer_shell_overlay_ref = self.layer_shell_overlay.clone();
             let layer_shell_top_ref = self.layer_shell_top.clone();
             let show_all_ref = self.show_all.clone();
@@ -1595,16 +1619,29 @@ impl Workspaces {
             for wl in &all_workspaces_layers {
                 wl.set_hidden(show_expose);
             }
-            workspace_selector_view_layer.set_hidden(false);
 
-            let transaction = self.workspace_selector_view.layer.set_position(
-                layers::types::Point {
-                    x: 0.0,
-                    y: workspace_selector_y,
-                },
-                transition.clone(),
-            );
-            if transition.is_some() {
+            // Slide every output's selector strip into place together. Capture
+            // one representative transaction to attach the shared on_finish to.
+            let selector_layers: Vec<Layer> = self
+                .output_workspaces
+                .values()
+                .map(|ows| ows.workspace_selector.layer.clone())
+                .collect();
+            let mut selector_transaction = None;
+            for layer in &selector_layers {
+                layer.set_hidden(false);
+                let tr = layer.set_position(
+                    layers::types::Point {
+                        x: 0.0,
+                        y: workspace_selector_y,
+                    },
+                    transition.clone(),
+                );
+                if selector_transaction.is_none() {
+                    selector_transaction = Some(tr);
+                }
+            }
+            if let (true, Some(transaction)) = (transition.is_some(), selector_transaction) {
                 window_selector_view_ref.set_position((0.0, 0.0), None);
                 let is_animating_ref = self.is_animating.clone();
                 transaction.on_finish(
@@ -1688,7 +1725,9 @@ impl Workspaces {
                     true,
                 );
             }
-            let _tr = self.workspace_selector_view.layer.set_opacity(1.0, None);
+            for layer in &selector_layers {
+                layer.set_opacity(1.0, None);
+            }
 
             // Animate layer shell overlay and top opacity (fade out when entering expose)
             if layer_shell_fade_opacity > 0.0 {
@@ -2152,9 +2191,7 @@ impl Workspaces {
                         if let Err(e) = layers_engine
                             .add_layer_to_positioned(view.window_layer.clone(), Some(inner.id))
                         {
-                            tracing::warn!(
-                                "minimize: failed to reparent window into drawer: {e}"
-                            );
+                            tracing::warn!("minimize: failed to reparent window into drawer: {e}");
                         }
                         view.set_is_minimizing(false);
                         let bounds = inner.render_bounds_transformed();
@@ -2188,6 +2225,7 @@ impl Workspaces {
 
             self.notify_observers(model);
         });
+        self.refresh_output_selectors();
 
         // Find the next topmost non-minimized window for focus.
         let index = self.with_model(|m| m.current_workspace);
@@ -3146,6 +3184,8 @@ impl Workspaces {
         let event = model.clone();
 
         self.notify_observers(&event);
+        drop(model);
+        self.refresh_output_selectors();
     }
 
     /// Returns all the window elements from all the spaces
@@ -3326,7 +3366,6 @@ impl Workspaces {
         windows_plane.set_pointer_events(false);
         let _ = workspaces_layer.add_sublayer(&windows_plane);
 
-
         // Attach layers to output_layer in z-order (bottom to top):
         // workspaces (background_plane, windows_plane, expose_layer) →
         // dock (primary) → overlay_plane (layer_shell_top, workspace_selector,
@@ -3356,6 +3395,27 @@ impl Workspaces {
         });
         overlay_plane.set_size(layers::types::Size::points(phys_w, phys_h), None);
         overlay_plane.set_pointer_events(false);
+
+        // Per-output workspace selector strip. Each output owns its own so the
+        // expose UI appears on every screen with correctly-sized previews of
+        // that output's own workspaces. Lives in this output's overlay_plane.
+        let selector_layer = self.layers_engine.new_layer();
+        selector_layer.set_key(format!("workspace_selector_{}", output.name()));
+        selector_layer.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            size: taffy::Size {
+                width: taffy::Dimension::Percent(1.0),
+                height: taffy::Dimension::Percent(1.0),
+            },
+            ..Default::default()
+        });
+        selector_layer.set_pointer_events(false);
+        let workspace_selector = Arc::new(WorkspaceSelectorView::new(
+            self.layers_engine.clone(),
+            selector_layer.clone(),
+            self.remove_workspace_sender.clone(),
+        ));
+        let _ = overlay_plane.add_sublayer(&selector_layer);
 
         let switcher_plane = self.layers_engine.new_layer();
         switcher_plane.set_key(format!("switcher_plane_{}", output.name()));
@@ -3397,7 +3457,6 @@ impl Workspaces {
             // Group overlay UI into the overlay_plane node (single KMS plane),
             // including popups which sit above other overlay content.
             let _ = overlay_plane.add_sublayer(&self.layer_shell_top);
-            let _ = overlay_plane.add_sublayer(&self.workspace_selector_view.layer.clone());
             let _ = overlay_plane.add_sublayer(&self.layer_shell_overlay);
             let _ = overlay_plane.add_sublayer(&self.overlay_layer);
             let _ = overlay_plane.add_sublayer(&self.popup_overlay.layer.clone());
@@ -3458,6 +3517,7 @@ impl Workspaces {
             overlay_plane,
             switcher_plane,
             dock_plane,
+            workspace_selector,
         };
         self.output_workspaces.insert(output.name(), ows);
         self.sync_model_from_primary();
@@ -3568,6 +3628,191 @@ impl Workspaces {
         })
     }
 
+    /// Add a workspace to a SINGLE output only. Workspaces are independent per
+    /// output, so this leaves other outputs' workspace sets untouched. Returns
+    /// the new workspace's position index on that output and its view.
+    pub fn add_workspace_to_output(
+        &mut self,
+        output_name: &str,
+    ) -> Option<(usize, Arc<WorkspaceView>)> {
+        if !self.output_workspaces.contains_key(output_name) {
+            return None;
+        }
+        let counter = self.with_model_mut(|m| {
+            m.workspace_counter += 1;
+            m.workspace_counter
+        });
+        let layers_engine = self.layers_engine.clone();
+        let overlay_layer = self.overlay_layer.clone();
+        let output = self
+            .outputs
+            .iter()
+            .find(|o| o.name() == output_name)
+            .cloned();
+
+        let result = {
+            let ows = self.output_workspaces.get_mut(output_name)?;
+
+            let mut new_space = Space::default();
+            if let Some(ref o) = output {
+                if let Some(existing_space) = ows.spaces.first() {
+                    let geo = existing_space.output_geometry(o).unwrap_or_default();
+                    new_space.map_output(o, geo.loc);
+                } else {
+                    new_space.map_output(o, (0, 0));
+                }
+            }
+            ows.spaces.push(new_space);
+
+            let workspace = Arc::new(WorkspaceView::new(
+                counter,
+                layers_engine.clone(),
+                &ows.workspaces_layer,
+                overlay_layer.clone(),
+                &ows.layer_shell_background,
+            ));
+            // Wire the new workspace into this output's planes exactly like
+            // map_output_with_primary does, so its background/windows actually
+            // render when scrolled to (not only in the selector preview).
+            let _ = ows
+                .expose_layer
+                .add_sublayer(&workspace.window_selector_view.window_selector_root);
+            let _ = ows
+                .background_plane
+                .add_sublayer(&workspace.workspace_background);
+            let _ = ows.windows_plane.add_sublayer(&workspace.windows_layer);
+
+            let index = ows.workspace_views.len();
+            ows.workspace_views.push(workspace.clone());
+            (index, workspace)
+        };
+
+        self.sync_model_from_primary();
+        self.with_model(|m| self.notify_observers(m));
+        self.update_workspaces_layout();
+        Some(result)
+    }
+
+    /// Remove the workspace at `pos` from a SINGLE output only. Windows on the
+    /// removed workspace are moved to that output's current workspace. No-op if
+    /// the output has one workspace, `pos` is invalid, or the target is a
+    /// fullscreen workspace that still has windows.
+    pub fn remove_workspace_from_output(&mut self, output_name: &str, pos: usize) {
+        let num_spaces = self
+            .output_workspaces
+            .get(output_name)
+            .map(|ows| ows.spaces.len())
+            .unwrap_or(0);
+        if num_spaces <= 1 || pos >= num_spaces {
+            return;
+        }
+
+        // Never remove a fullscreen workspace that still has windows.
+        let blocked = self
+            .output_workspaces
+            .get(output_name)
+            .map(|ows| {
+                let fullscreen = ows
+                    .workspace_views
+                    .get(pos)
+                    .map(|w| w.get_fullscreen_mode())
+                    .unwrap_or(false);
+                let count = ows
+                    .spaces
+                    .get(pos)
+                    .map(|s| s.elements().count())
+                    .unwrap_or(0);
+                fullscreen && count > 0
+            })
+            .unwrap_or(false);
+        if blocked {
+            return;
+        }
+
+        // Destination = the output's current workspace, adjusted for the removal
+        // shift (a workspace at/after `pos` moves down by one).
+        let cur = self
+            .output_workspaces
+            .get(output_name)
+            .map(|ows| ows.current_workspace)
+            .unwrap_or(0);
+        let dest_after = if cur > pos { cur - 1 } else { cur.min(num_spaces - 2) };
+
+        // Collect windows to relocate off the removed workspace.
+        let windows_to_move: Vec<(
+            WindowElement,
+            smithay::utils::Point<i32, smithay::utils::Logical>,
+        )> = self
+            .output_workspaces
+            .get(output_name)
+            .and_then(|ows| ows.spaces.get(pos))
+            .map(|space| {
+                space
+                    .elements()
+                    .map(|e| (e.clone(), space.element_location(e).unwrap_or_default()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Remove the space + view at `pos` and its scene sublayers.
+        if let Some(ows) = self.output_workspaces.get_mut(output_name) {
+            if pos < ows.workspace_views.len() {
+                let view = ows.workspace_views.remove(pos);
+                view.workspace_background.remove();
+                view.windows_layer.remove();
+                view.window_selector_view.window_selector_root.remove();
+            }
+            if pos < ows.spaces.len() {
+                ows.spaces.remove(pos);
+            }
+            if !ows.spaces.is_empty() && ows.current_workspace >= ows.spaces.len() {
+                ows.current_workspace = ows.spaces.len() - 1;
+            }
+        }
+
+        // Re-home the removed workspace's windows onto the destination workspace
+        // of THIS output, keeping the move scoped to one output.
+        for (window, location) in windows_to_move {
+            if window.is_fullscreen() {
+                window.set_fullscreen(false, dest_after);
+            }
+            if let Some(ows) = self.output_workspaces.get_mut(output_name) {
+                if let Some(space) = ows.spaces.get_mut(dest_after) {
+                    space.map_element(window.clone(), location, false);
+                }
+            }
+            if let Some(view) = self
+                .output_workspaces
+                .get(output_name)
+                .and_then(|ows| ows.workspace_views.get(dest_after))
+                .cloned()
+            {
+                if let Some(w) = self.windows_map.get(&window.id()) {
+                    view.map_window(w, location, None);
+                }
+            }
+        }
+
+        self.sync_model_from_primary();
+        self.update_workspaces_layout();
+        if let Some(output) = self.outputs.iter().find(|o| o.name() == output_name).cloned() {
+            let dest = self
+                .output_workspaces
+                .get(output_name)
+                .map(|ows| ows.current_workspace)
+                .unwrap_or(0);
+            self.set_workspace_for_output(
+                &output,
+                dest,
+                Some(Transition {
+                    delay: 0.0,
+                    timing: TimingFunction::linear(0.0),
+                }),
+            );
+        }
+        self.with_model(|m| self.notify_observers(m));
+    }
+
     pub fn get_next_free_workspace(&mut self) -> (usize, Arc<WorkspaceView>) {
         let current_workspace = self.get_current_workspace_index();
         let num_spaces = self
@@ -3591,17 +3836,18 @@ impl Workspaces {
 
     /// Schedule workspace removal after an animation completes.
     /// The workspace at position `n` will be removed when `transaction` finishes.
+    /// Schedule removal of the workspace at position `n` across ALL outputs
+    /// (lockstep) once `transaction` finishes. Used by the fullscreen-close
+    /// path, whose dedicated workspace is created lockstep. Per-output removal
+    /// (from a selector) goes through `remove_workspace_from_output`.
     pub fn defer_remove_workspace_at(&self, n: usize, transaction: &TransactionRef) {
-        let ws_model_index = self.with_model(|m| m.workspaces.get(n).map(|w| w.index));
-        if let Some(index) = ws_model_index {
-            let sender = self.remove_workspace_sender.clone();
-            transaction.on_finish(
-                move |_: &Layer, _: f32| {
-                    let _ = sender.send(index);
-                },
-                true,
-            );
-        }
+        let sender = self.remove_workspace_sender.clone();
+        transaction.on_finish(
+            move |_: &Layer, _: f32| {
+                let _ = sender.send((None, n));
+            },
+            true,
+        );
     }
 
     pub fn remove_workspace_at(&mut self, n: usize) {
@@ -3833,7 +4079,12 @@ impl Workspaces {
             let local = location - output.current_location();
             let rect = Rectangle::new(
                 local.to_f64().to_physical(scale).to_i32_round(),
-                window.geometry().size.to_f64().to_physical(scale).to_i32_round(),
+                window
+                    .geometry()
+                    .size
+                    .to_f64()
+                    .to_physical(scale)
+                    .to_i32_round(),
             );
             let overlaps_above = covered.iter().any(|c| c.overlaps(rect));
             // Occupies space for everything below it, promoted or not.
@@ -3862,14 +4113,13 @@ impl Workspaces {
                     smithay::wayland::compositor::with_states(&s, |states| {
                         states
                             .data_map
-                            .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>()
+                            .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>(
+                            )
                             .map(|data| {
                                 data.lock()
                                     .unwrap()
                                     .buffer()
-                                    .map(|b| {
-                                        smithay::wayland::dmabuf::get_dmabuf(b).is_ok()
-                                    })
+                                    .map(|b| smithay::wayland::dmabuf::get_dmabuf(b).is_ok())
                                     .unwrap_or(false)
                             })
                             .unwrap_or(false)
@@ -4671,15 +4921,15 @@ impl Workspaces {
             .iter()
             .filter(|o| !crate::virtual_output::is_unreachable_virtual_output(o))
             .filter(move |o| {
-            if let Some(ows) = self.output_workspaces.get(&o.name()) {
-                ows.spaces
-                    .first()
-                    .map(|s| s.output_under(point).any(|_| true))
-                    .unwrap_or(false)
-            } else {
-                false
-            }
-        })
+                if let Some(ows) = self.output_workspaces.get(&o.name()) {
+                    ows.spaces
+                        .first()
+                        .map(|s| s.output_under(point).any(|_| true))
+                        .unwrap_or(false)
+                } else {
+                    false
+                }
+            })
     }
 
     pub fn element_geometry(
@@ -4914,7 +5164,9 @@ impl Observable<WorkspacesModel> for Workspaces {
 /// enough: GTK keeps a popover's xdg_popup surface alive after popdown for
 /// reuse, so an aliveness check would block scanout promotion forever after
 /// the first menu. A popup only occludes when it has a committed buffer.
-fn surface_has_mapped_popup(surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface) -> bool {
+fn surface_has_mapped_popup(
+    surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+) -> bool {
     smithay::desktop::PopupManager::popups_for_surface(surface).any(|(popup, _)| {
         smithay::backend::renderer::utils::with_renderer_surface_state(
             popup.wl_surface(),
