@@ -267,9 +267,12 @@ impl<BackendData: Backend> Otto<BackendData> {
         #[cfg(feature = "xwayland")]
         {
             let target_id = window.id();
-            if self.workspaces.windows_map.values().any(|w| {
-                w.is_fullscreen() && w.x11_self_manages_focus() && w.id() != target_id
-            }) {
+            if self
+                .workspaces
+                .windows_map
+                .values()
+                .any(|w| w.is_fullscreen() && w.x11_self_manages_focus() && w.id() != target_id)
+            {
                 return;
             }
         }
@@ -338,9 +341,10 @@ impl<BackendData: Backend> Otto<BackendData> {
         #[cfg(feature = "xwayland")]
         {
             let target_id = window.id();
-            let game_is_fullscreen = self.workspaces.windows_map.values().any(|w| {
-                w.is_fullscreen() && w.x11_self_manages_focus() && w.id() != target_id
-            });
+            let game_is_fullscreen =
+                self.workspaces.windows_map.values().any(|w| {
+                    w.is_fullscreen() && w.x11_self_manages_focus() && w.id() != target_id
+                });
             if game_is_fullscreen {
                 return;
             }

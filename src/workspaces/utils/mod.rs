@@ -373,8 +373,7 @@ pub fn configure_surface_layer(
             layers::skia::SamplingOptions::from(layers::skia::CubicResampler::catmull_rom())
         } else {
             let is_normal_transform = matches!(draw_wvs.transform, Transform::Normal);
-            let is_identity_scale =
-                (scale_x - 1.0).abs() < 1e-4 && (scale_y - 1.0).abs() < 1e-4;
+            let is_identity_scale = (scale_x - 1.0).abs() < 1e-4 && (scale_y - 1.0).abs() < 1e-4;
             let tx_total = -draw_wvs.phy_src_x + tx / scale_x;
             let ty_total = -draw_wvs.phy_src_y + ty / scale_y;
             let is_pixel_aligned = (tx_total - tx_total.round()).abs() < 1e-4

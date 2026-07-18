@@ -148,11 +148,8 @@ impl WorkspaceView {
         }
         let background_view = Arc::new(background_view);
 
-        let window_selector_view = WindowSelectorView::new(
-            index,
-            layers_engine.clone(),
-            overlay_layer,
-        );
+        let window_selector_view =
+            WindowSelectorView::new(index, layers_engine.clone(), overlay_layer);
 
         let window_selector_view = Arc::new(window_selector_view);
 
