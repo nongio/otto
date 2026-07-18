@@ -331,11 +331,7 @@ where
                     // Mirror the real-input path: track which output the
                     // pointer is on so focused-output consumers (expose,
                     // selector, window routing) see harness-driven moves.
-                    let focused = state
-                        .workspaces
-                        .output_under(new_location)
-                        .next()
-                        .cloned();
+                    let focused = state.workspaces.output_under(new_location).next().cloned();
                     state.workspaces.set_focused_output(focused.as_ref());
 
                     // Also mirror the lay-rs side of the real-input path:
@@ -397,6 +393,18 @@ where
                 }
 
                 pointer.frame(state);
+
+                // Request a redraw so remote (RDP / wlr-virtual-pointer) input
+                // actually becomes visible. Setting `render_requested` makes the
+                // event loop run a render cycle, which *ticks the scheduled
+                // lay-rs transactions* (hover highlights, workspace scroll,
+                // click feedback) — without it those transactions never advance
+                // and the change stays invisible until unrelated input (e.g. the
+                // physical trackpad) drives a render. This is the same thing the
+                // synthetic-action path does (see `init.rs`, request_redraw after
+                // a debug action). It is one-shot per input event, so it stays
+                // event/damage-driven rather than continuously rendering.
+                state.backend_data.request_redraw();
             }
             zwlr_virtual_pointer_v1::Request::Destroy => {}
             _ => {}
