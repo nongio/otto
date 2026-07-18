@@ -337,6 +337,31 @@ To avoid two parallel readback paths, wlr-screencopy reuses the same
 - `wf-recorder` default (SHM, libx264): ~30% Otto CPU during capture
 - No active capture: 7% (no overhead)
 
+### DMA-BUF Modifier Negotiation
+
+`build_format_params` (`src/screenshare/pipewire_stream.rs`) advertises `Argb8888` as one
+`EnumFormat` pod per modifier (LINEAR first, then every EGL-reported modifier that survives a
+real GBM allocation test and comes back single-plane — Intel CCS aux-plane modifiers are
+excluded here), each pod fixing that modifier as a `MANDATORY` `Long` rather than offering a
+single `DONT_FIXATE` choice pod. This is required because `gst-plugin-pipewire` >= 1.2 only
+negotiates dmabuf via explicit DMA_DRM caps, and Intel's `vapostproc` importer only lists
+Y-tiled RGB formats — a LINEAR-only offer fails with "no more input formats". On the
+consuming side, `parse_negotiated_format` reads a fixed `Long` modifier directly, or the
+default (first) value of a `Choice` pod; an unreadable modifier is a hard error, never a
+silent fallback to LINEAR (that previously caused tiled-read-as-linear corrupted frames). No
+SHM fallback pods are offered alongside DMA-BUF today, so non-DMA_DRM gst pipelines can't
+currently negotiate. Full behavior and rationale: `specs/screenshare.md`.
+
+### Screencast Output Selection
+
+`xdg-desktop-portal-otto`'s `SelectSources` (`components/xdg-desktop-portal-otto/src/portal/interface.rs`)
+defaults to the first output from the compositor's `ListOutputs`, but checks
+`$XDG_CONFIG_HOME/otto/screencast-output` (falling back to `~/.config/otto/screencast-output`)
+for a one-line connector-name override, re-read on every call so it can be changed between
+sessions with no restart. An override naming an output not currently present falls back to
+the first output with a warning. This is a stopgap until a real source-picker UI exists. Full
+behavior: `specs/screenshare.md`.
+
 ### Known Issues and Fixes
 
 #### Framerate Compatibility (January 2026)
