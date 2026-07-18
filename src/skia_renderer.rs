@@ -56,6 +56,9 @@ pub struct SkiaRenderer {
     pub context: Option<skia::gpu::DirectContext>,
 
     dmabuf_cache: std::collections::HashMap<WeakDmabuf, SkiaTexture>,
+    /// Companion resources for `SkiaTarget::Dmabuf` entries in `buffers`,
+    /// released together with them on eviction.
+    dmabuf_target_aux: HashMap<WeakDmabuf, DmabufTargetAux>,
     smithay_context_id: ContextId<SkiaTexture>,
 }
 
@@ -88,6 +91,7 @@ impl From<GlesRenderer> for SkiaRenderer {
             current_target: None,
             context,
             dmabuf_cache: std::collections::HashMap::new(),
+            dmabuf_target_aux: HashMap::new(),
             smithay_context_id: ContextId::new(),
         }
     }
@@ -100,8 +104,20 @@ pub enum SkiaTarget {
     EGLSurface(EGLSurfaceWrapper),
     Texture(ffi::types::GLuint),
     Renderbuffer(*const GlesRenderbuffer),
-    Dmabuf(Dmabuf),
+    // Weak so the cache never keeps a dropped dmabuf alive: a strong key
+    // would retain its fds (and the EGLImage's Mesa-internal dups) forever.
+    // Dead entries are evicted on the next `Bind<Dmabuf>::bind`.
+    Dmabuf(WeakDmabuf),
     Fbo(SkiaGLesFbo),
+}
+
+/// GL/EGL resources backing a bound dmabuf render target. Tracked separately
+/// from [`SkiaGLesFbo`] so eviction can release them — the EGLImage is what
+/// holds the dmabuf's fds inside Mesa.
+struct DmabufTargetAux {
+    image: smithay::backend::egl::ffi::egl::types::EGLImage,
+    rbo: u32,
+    depth_rbo: u32,
 }
 impl std::fmt::Debug for SkiaRenderer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -214,6 +230,7 @@ impl SkiaRenderer {
             current_target: None,
             context,
             dmabuf_cache: std::collections::HashMap::new(),
+            dmabuf_target_aux: HashMap::new(),
             smithay_context_id: ContextId::new(),
         })
     }
@@ -1267,13 +1284,47 @@ impl Bind<GlesRenderbuffer> for SkiaRenderer {
 
 impl Bind<Dmabuf> for SkiaRenderer {
     fn bind(&mut self, dmabuf: &mut Dmabuf) -> Result<SkiaGLesFbo, <Self as RendererSuper>::Error> {
-        let target = SkiaTarget::Dmabuf(dmabuf.clone());
-        self.current_target = Some(target.clone());
         let egl_display = self.egl_context().display().clone();
+
+        // Evict targets whose dmabuf has been dropped everywhere else. Must
+        // run before the lookup below: a new allocation can reuse a dead
+        // Arc's address, which would otherwise alias a stale cache entry.
+        #[allow(clippy::mutable_key_type)]
+        let dead: Vec<WeakDmabuf> = self
+            .buffers
+            .keys()
+            .filter_map(|k| match k {
+                SkiaTarget::Dmabuf(weak) if weak.upgrade().is_none() => Some(weak.clone()),
+                _ => None,
+            })
+            .collect();
+        for weak in dead {
+            let key = SkiaTarget::Dmabuf(weak.clone());
+            self.target_renderer.remove(&key);
+            if let Some(fbo) = self.buffers.remove(&key) {
+                unsafe {
+                    self.gl.DeleteFramebuffers(1, &fbo.fbo);
+                    self.gl.DeleteTextures(1, &fbo.tex_id);
+                }
+            }
+            if let Some(aux) = self.dmabuf_target_aux.remove(&weak) {
+                unsafe {
+                    self.gl.DeleteRenderbuffers(2, [aux.rbo, aux.depth_rbo].as_ptr());
+                    smithay::backend::egl::ffi::egl::DestroyImageKHR(
+                        **egl_display.get_display_handle(),
+                        aux.image,
+                    );
+                }
+            }
+        }
+
+        let target = SkiaTarget::Dmabuf(dmabuf.weak());
+        self.current_target = Some(target.clone());
         #[allow(clippy::mutable_key_type)]
         let buffers = self.buffers.borrow_mut();
+        let mut new_aux = None;
         let fbo = buffers
-            .entry(SkiaTarget::Dmabuf(dmabuf.clone()))
+            .entry(target)
             .or_insert_with(|| {
                 let image = egl_display.create_image_from_dmabuf(dmabuf).unwrap();
                 let mut texture = 0;
@@ -1332,6 +1383,11 @@ impl Bind<Dmabuf> for SkiaRenderer {
                     }
 
                     self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
+                    new_aux = Some(DmabufTargetAux {
+                        image,
+                        rbo,
+                        depth_rbo,
+                    });
                     SkiaGLesFbo {
                         fbo,
                         tex_id: texture,
@@ -1343,6 +1399,9 @@ impl Bind<Dmabuf> for SkiaRenderer {
                 }
             })
             .clone();
+        if let Some(aux) = new_aux {
+            self.dmabuf_target_aux.insert(dmabuf.weak(), aux);
+        }
         Ok(fbo)
     }
 }

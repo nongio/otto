@@ -283,6 +283,8 @@ pub fn run_udev() {
         render_requested: AtomicBool::new(false),
         damage_generation: 0,
         underrun_penalty: 0,
+        last_screencast_kick: None,
+        last_kick_cursor_pos: None,
     };
     let mut state = Otto::init(display, event_loop.handle(), data, true);
 

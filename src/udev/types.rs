@@ -96,6 +96,18 @@ pub struct UdevData {
     /// decomposition (full GPU composite). Sticky for the session:
     /// display bandwidth is shared, so the reduction applies globally.
     pub(super) underrun_penalty: u8,
+    /// Last time `kick_screencast_outputs` forced a frame. Damage-driven
+    /// rendering already feeds the screenshare blit during activity; the
+    /// kick only keeps a *static* screen's stream alive, so it is
+    /// rate-limited hard — each kick drops the primary swapchain, and at
+    /// tick rate that reallocates a full-screen buffer per tick.
+    pub(super) last_screencast_kick: Option<std::time::Instant>,
+    /// Cursor position at the last kick. Cursor motion moves a hardware
+    /// plane without damaging the scene, so it produces no renders — and
+    /// with cursor_mode=embedded the remote feed only shows the cursor
+    /// where a blit drew it. A moved cursor therefore bypasses the kick
+    /// rate limit or the remote pointer visibly staggers.
+    pub(super) last_kick_cursor_pos: Option<smithay::utils::Point<f64, smithay::utils::Logical>>,
 }
 
 /// Per-device backend data

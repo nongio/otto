@@ -150,6 +150,7 @@ wayland-client = "0.31"
 members = [
     "components/xdg-desktop-portal-otto",
     "components/apps-manager",
+    "components/otto-rdp",
     "components/otto-kit",
     "components/otto-bar",
     "components/otto-islands",

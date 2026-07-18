@@ -77,7 +77,7 @@ impl crate::renderer::BlitCurrentFrame for SkiaRenderer {
 
         // Bind the destination dmabuf to get its FBO
         self.bind(dst_dmabuf)?;
-        let dst_target = SkiaTarget::Dmabuf(dst_dmabuf.clone());
+        let dst_target = SkiaTarget::Dmabuf(dst_dmabuf.weak());
 
         let dst_fbo = self
             .buffers

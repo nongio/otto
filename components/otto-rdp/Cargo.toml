@@ -1,0 +1,28 @@
+[package]
+name = "otto-rdp"
+version = "0.1.0"
+edition = "2021"
+description = "RDP bridge for Otto virtual outputs: serves a virtual output's PipeWire stream over RDP and injects remote input"
+
+[dependencies]
+ironrdp-server = "0.13"
+bytes = "1"
+async-trait = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "signal", "time"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+pipewire = "0.9"
+zbus = { version = "4", default-features = false, features = ["tokio"] }
+libc = "0.2"
+memfd = "0.6"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+wayland-protocols-misc = { version = "0.3", features = ["client"] }
+xkbcommon = "0.6"
+# TLS acceptor (--tls): rustls/tokio-rustls are already in the tree via
+# ironrdp-server; rcgen generates the self-signed certificate.
+rustls = "0.23"
+tokio-rustls = "0.26"
+rcgen = "0.13"

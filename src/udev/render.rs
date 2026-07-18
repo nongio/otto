@@ -1292,6 +1292,26 @@ impl Otto<UdevData> {
         if self.screenshare_sessions.is_empty() {
             return;
         }
+        // Rate-limit hard: each kick drops the primary swapchain (a
+        // full-screen buffer reallocation on the next frame). Content
+        // activity damages and renders at full rate on its own; the kick
+        // only refreshes a static screen. Exception: cursor motion — the
+        // cursor moves on a hardware plane without damaging the scene, but
+        // the remote feed only shows it where a blit embedded it, so a
+        // moved cursor kicks immediately.
+        const KICK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+        let cursor_pos = self.pointer.current_location();
+        let cursor_moved = self.backend_data.last_kick_cursor_pos != Some(cursor_pos);
+        if !cursor_moved
+            && self
+                .backend_data
+                .last_screencast_kick
+                .is_some_and(|t| t.elapsed() < KICK_INTERVAL)
+        {
+            return;
+        }
+        self.backend_data.last_screencast_kick = Some(std::time::Instant::now());
+        self.backend_data.last_kick_cursor_pos = Some(cursor_pos);
         // Collect the connectors with an active cast (dedup across sessions).
         let mut connectors: Vec<String> = Vec::new();
         for session in self.screenshare_sessions.values() {
