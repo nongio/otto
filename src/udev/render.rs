@@ -1518,7 +1518,7 @@ impl Otto<UdevData> {
                                     .cloned()
                                     .map(WorkspaceRenderElements::Scene),
                             );
-                            let _ = crate::render::render_output(
+                            match crate::render::render_output(
                                 &output_clone,
                                 &all_window_elements,
                                 elements,
@@ -1527,7 +1527,23 @@ impl Otto<UdevData> {
                                 &mut framebuffer,
                                 damage_tracker,
                                 0,
-                            );
+                            ) {
+                                // Block until the GPU has finished drawing this
+                                // frame before the dmabuf is queued to PipeWire
+                                // (trigger_frame below). Without this the consumer
+                                // (otto-rdp / screencast) can sample a
+                                // partially-rendered buffer — a black/torn band at
+                                // the top of the frame. Mirrors the physical KMS
+                                // path's GPU fence wait.
+                                Ok(result) => {
+                                    if let Err(err) = result.sync.wait() {
+                                        warn!("render_virtual_outputs: GPU fence wait failed for '{output_name}': {err:?}");
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("render_virtual_outputs: render failed for '{output_name}': {e}");
+                                }
+                            }
                         }
                         Err(e) => {
                             warn!("render_virtual_outputs: bind failed for '{output_name}': {e}");
@@ -1563,7 +1579,7 @@ impl Otto<UdevData> {
                                             .cloned()
                                             .map(WorkspaceRenderElements::Scene),
                                     );
-                                    let _ = crate::render::render_output(
+                                    match crate::render::render_output(
                                         &output_clone,
                                         &all_window_elements,
                                         ss_elements,
@@ -1572,7 +1588,20 @@ impl Otto<UdevData> {
                                         &mut fb,
                                         &mut temp_tracker,
                                         0,
-                                    );
+                                    ) {
+                                        // Same GPU fence wait as the virtual
+                                        // stream above: don't queue the dmabuf to
+                                        // the screencast consumer until the GPU
+                                        // has finished rendering it.
+                                        Ok(result) => {
+                                            if let Err(err) = result.sync.wait() {
+                                                warn!("render_virtual_outputs: screenshare GPU fence wait failed for '{output_name}': {err:?}");
+                                            }
+                                        }
+                                        Err(e) => {
+                                            warn!("render_virtual_outputs: screenshare render failed for '{output_name}': {e}");
+                                        }
+                                    }
                                     stream.pipewire_stream.increment_frame_sequence();
                                 }
                                 Err(e) => {
