@@ -33,6 +33,8 @@ const BAR_HEIGHT: f32 = 36.0;
 const GAP: f32 = 6.0;
 /// Seconds of inactivity before the focused island shrinks to Mini.
 const FOCUS_TIMEOUT_SECS: f64 = 4.0;
+/// Seconds a destroyed surface is kept alive so its exit animation can play.
+const DESTROY_DELAY_SECS: f64 = 0.8;
 
 // ---------------------------------------------------------------------------
 // Island — one notification group or music activity
@@ -48,6 +50,26 @@ enum IslandMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IslandKind {
     Notification,
+}
+
+/// Signature of what a pill buffer currently shows — redraw only on change.
+#[derive(Clone, PartialEq)]
+struct PillContent {
+    mode: IslandMode,
+    icon: String,
+    title: String,
+    count: usize,
+    w: f32,
+    h: f32,
+}
+
+/// Signature of what a card buffer currently shows.
+#[derive(Clone, PartialEq)]
+struct CardContent {
+    title: String,
+    body: String,
+    icon: String,
+    time_label: String,
 }
 
 /// An island represents one group (notification app_id or music).
@@ -74,11 +96,15 @@ struct Island {
     peek_until: Option<std::time::Instant>,
     /// Last layout target (w, h, x, y) — skip animation when unchanged.
     last_layout: (f32, f32, f32, f32),
+    /// Last drawn pill content — skip redraw when unchanged.
+    last_content: Option<PillContent>,
 }
 
 struct CardSurface {
     surface: SubsurfaceSurface,
     activity_id: u64,
+    /// Last drawn card content — skip redraw when unchanged.
+    last_content: Option<CardContent>,
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +124,10 @@ struct IslandApp {
     pending_destroy: Vec<(SubsurfaceSurface, std::time::Instant)>,
     /// Last time the user interacted (pointer event). Used for focus timeout.
     last_interaction: std::time::Instant,
+    /// Last applied layer size — skip set_size/commit when unchanged.
+    last_layer_size: Option<(u32, u32)>,
+    /// Last applied input region rects — skip region set/commit when unchanged.
+    last_input_region: Option<Vec<(i32, i32, i32, i32)>>,
 }
 
 impl IslandApp {
@@ -111,6 +141,8 @@ impl IslandApp {
             hovered_app: None,
             pending_destroy: Vec::new(),
             last_interaction: std::time::Instant::now(),
+            last_layer_size: None,
+            last_input_region: None,
         }
     }
 
@@ -155,9 +187,9 @@ impl IslandApp {
             .push((surface, std::time::Instant::now()));
     }
 
-    /// Destroy surfaces whose animations have had time to complete (>0.8s).
+    /// Destroy surfaces whose animations have had time to complete.
     fn flush_pending_destroy(&mut self) {
-        let cutoff = std::time::Instant::now() - Duration::from_secs_f64(0.8);
+        let cutoff = std::time::Instant::now() - Duration::from_secs_f64(DESTROY_DELAY_SECS);
         self.pending_destroy.retain_mut(|(surface, queued_at)| {
             if *queued_at <= cutoff {
                 surface.destroy();
@@ -240,6 +272,7 @@ impl IslandApp {
                         last_activity_id: 0,
                         peek_until: None,
                         last_layout: (0.0, 0.0, 0.0, 0.0),
+                        last_content: None,
                     });
                     // Auto-focus only if no island is currently Expanded.
                     let any_expanded = self.islands.iter().any(|i| i.mode == IslandMode::Expanded);
@@ -310,8 +343,8 @@ impl IslandApp {
 
     fn layout(&mut self, grouped: &[(Activity, usize)], reposition_delay: bool) {
         if self.islands.is_empty() {
-            self.update_layer_size();
-            self.update_input_region();
+            let size_changed = self.update_layer_size();
+            self.update_input_region(size_changed);
             return;
         }
 
@@ -348,6 +381,7 @@ impl IslandApp {
         let mut expanded_layouts: Vec<(usize, f32, f32, f32, f32)> = Vec::new();
         let mut pulse_targets: Vec<(usize, f32, f32, f32, f32)> = Vec::new();
         let mut layout_targets: Vec<(usize, f32, f32, f32, f32)> = Vec::new(); // (idx, w, h, x, y)
+        let mut content_updates: Vec<(usize, PillContent)> = Vec::new();
 
         for (idx, island) in self.islands.iter().enumerate() {
             let count = grouped
@@ -400,9 +434,20 @@ impl IslandApp {
 
             match island.mode {
                 IslandMode::Mini => {
-                    draw_centered(&island.surface, w, h, |canvas| {
-                        renderer::draw_mini(canvas, icon, count, w, h);
-                    });
+                    let content = PillContent {
+                        mode: island.mode,
+                        icon: icon.to_string(),
+                        title: String::new(),
+                        count,
+                        w,
+                        h,
+                    };
+                    if island.last_content.as_ref() != Some(&content) {
+                        draw_centered(&island.surface, w, h, |canvas| {
+                            renderer::draw_mini(canvas, icon, count, w, h);
+                        });
+                        content_updates.push((idx, content));
+                    }
                     if should_pulse {
                         pulse_targets.push((idx, w, h, cx, cy));
                     } else {
@@ -416,18 +461,29 @@ impl IslandApp {
                         .map(|(a, _)| a.title.as_str())
                         .unwrap_or("");
                     let expanded = island.mode == IslandMode::Expanded;
-                    draw_centered(&island.surface, w, h, |canvas| {
-                        renderer::draw_pill(
-                            canvas,
-                            &island.app_id,
-                            icon,
-                            title,
-                            count,
-                            expanded,
-                            w,
-                            h,
-                        );
-                    });
+                    let content = PillContent {
+                        mode: island.mode,
+                        icon: icon.to_string(),
+                        title: title.to_string(),
+                        count,
+                        w,
+                        h,
+                    };
+                    if island.last_content.as_ref() != Some(&content) {
+                        draw_centered(&island.surface, w, h, |canvas| {
+                            renderer::draw_pill(
+                                canvas,
+                                &island.app_id,
+                                icon,
+                                title,
+                                count,
+                                expanded,
+                                w,
+                                h,
+                            );
+                        });
+                        content_updates.push((idx, content));
+                    }
                     if should_pulse {
                         pulse_targets.push((idx, w, h, cx, cy));
                     } else {
@@ -442,6 +498,10 @@ impl IslandApp {
             }
 
             x += w + GAP;
+        }
+
+        for (idx, content) in content_updates {
+            self.islands[idx].last_content = Some(content);
         }
 
         // Apply layout animations only when target changed.
@@ -527,6 +587,8 @@ impl IslandApp {
         drop(state);
 
         let mut dismissed_card_surfaces: Vec<SubsurfaceSurface> = Vec::new();
+        // place_above on a new card only takes effect on a parent commit — force one.
+        let mut card_created = false;
 
         // Capture wl_surface before mutable borrow of islands.
         let wl = self.wl_surface();
@@ -554,6 +616,16 @@ impl IslandApp {
                 // Start position: center of card at pill bottom.
                 let start_cy = pill_bottom + card_h / 2.0;
 
+                let content = CardContent {
+                    title: notif.title.clone(),
+                    body: notif.body.clone(),
+                    icon: if notif.icon.is_empty() {
+                        group_icon.clone()
+                    } else {
+                        notif.icon.clone()
+                    },
+                    time_label: renderer::elapsed_label(notif.created_at),
+                };
                 let existing = island.cards.iter().position(|c| c.activity_id == notif.id);
                 let is_new = existing.is_none();
                 let cidx = if let Some(ci) = existing {
@@ -583,14 +655,19 @@ impl IslandApp {
                     island.cards.push(CardSurface {
                         surface,
                         activity_id: notif.id,
+                        last_content: Some(content.clone()),
                     });
+                    card_created = true;
                     island.cards.len() - 1
                 };
 
-                // Redraw content for existing cards (count/time may have changed).
-                draw_centered(&island.cards[cidx].surface, card_w, card_h, |canvas| {
-                    renderer::draw_card(canvas, notif, group_icon, card_w, card_h);
-                });
+                // Redraw only when the card's content actually changed.
+                if island.cards[cidx].last_content.as_ref() != Some(&content) {
+                    draw_centered(&island.cards[cidx].surface, card_w, card_h, |canvas| {
+                        renderer::draw_card(canvas, notif, group_icon, card_w, card_h);
+                    });
+                    island.cards[cidx].last_content = Some(content);
+                }
 
                 if is_new {
                     // New card: start at pill bottom, invisible, slide down + fade in.
@@ -650,17 +727,19 @@ impl IslandApp {
             self.defer_destroy(s);
         }
 
-        self.update_layer_size();
-        self.update_input_region();
+        let size_changed = self.update_layer_size();
+        self.update_input_region(size_changed || card_created);
     }
 
     // -----------------------------------------------------------------------
     // Layer size & input region
     // -----------------------------------------------------------------------
 
-    fn update_layer_size(&self) {
+    /// Returns true when the layer size changed (a wl_surface commit is needed
+    /// to apply the pending zwlr set_size).
+    fn update_layer_size(&mut self) -> bool {
         let Some(layer) = &self.layer_surface else {
-            return;
+            return false;
         };
 
         // Compute the minimum height needed for current layout.
@@ -688,18 +767,23 @@ impl IslandApp {
             + (self.islands.len().saturating_sub(1)) as f32 * GAP;
         let needed_w = (total_w + 40.0).max(LAYER_W as f32); // padding + minimum
 
-        layer.set_size(needed_w.ceil() as u32, max_h.ceil() as u32);
+        let size = (needed_w.ceil() as u32, max_h.ceil() as u32);
+        if self.last_layer_size == Some(size) {
+            return false;
+        }
+        layer.set_size(size.0, size.1);
+        self.last_layer_size = Some(size);
+        true
     }
 
-    fn update_input_region(&self) {
+    fn update_input_region(&mut self, force_commit: bool) {
         let Some(layer) = &self.layer_surface else {
             return;
         };
-        let cs = AppContext::compositor_state();
-        let Ok(region) = Region::new(cs) else { return };
 
-        // Add input rects when there are visible islands.
+        // Collect input rects when there are visible islands.
         // Empty region = zero input area (clicks pass through).
+        let mut rects: Vec<(i32, i32, i32, i32)> = Vec::new();
         if !self.islands.is_empty() {
             // One rect per island, derived from last_layout (center coords).
             for island in &self.islands {
@@ -714,12 +798,12 @@ impl IslandApp {
                 };
                 let x = cx - pill_w / 2.0;
                 let y = (BAR_HEIGHT - pill_h) / 2.0;
-                region.add(
+                rects.push((
                     x.max(0.0) as i32,
                     y as i32,
                     pill_w.ceil() as i32,
                     pill_h.ceil() as i32,
-                );
+                ));
             }
 
             // Card stack region — one rect per expanded island, positioned under its pill.
@@ -739,17 +823,30 @@ impl IslandApp {
                 let stack_top = pill_bottom + card_gap;
                 let stack_h = card_count * card_h + (card_count - 1.0) * card_gap;
                 let card_region_x = pill_left + (pill_w - card_w) / 2.0;
-                region.add(
+                rects.push((
                     card_region_x.max(0.0) as i32,
                     stack_top as i32,
                     card_w.ceil() as i32,
                     stack_h.ceil() as i32,
-                );
+                ));
             }
         }
 
+        let region_changed = self.last_input_region.as_ref() != Some(&rects);
+        if !region_changed && !force_commit {
+            return;
+        }
+
         let wl_surface = layer.base_surface().wl_surface();
-        wl_surface.set_input_region(Some(region.wl_region()));
+        if region_changed {
+            let cs = AppContext::compositor_state();
+            let Ok(region) = Region::new(cs) else { return };
+            for &(x, y, w, h) in &rects {
+                region.add(x, y, w, h);
+            }
+            wl_surface.set_input_region(Some(region.wl_region()));
+            self.last_input_region = Some(rects);
+        }
         wl_surface.commit();
     }
 
@@ -935,11 +1032,10 @@ impl App for IslandApp {
                 layer.draw(|canvas| {
                     canvas.clear(skia_safe::Color::TRANSPARENT);
                 });
-                layer.base_surface().on_frame(|| {});
             }
             self.surfaces_ready = true;
             // Set empty input region so clicks pass through until islands appear.
-            self.update_input_region();
+            self.update_input_region(false);
         }
     }
 
@@ -1011,8 +1107,46 @@ impl App for IslandApp {
         }
     }
 
+    /// Wake only for the earliest pending deadline; block indefinitely when idle.
+    /// D-Bus events wake the loop via `AppContext::request_wakeup()`, pointer and
+    /// configure events via the Wayland fd — no periodic polling needed.
     fn idle_timeout(&self) -> Option<Duration> {
-        Some(Duration::from_millis(200))
+        let now = std::time::Instant::now();
+        let mut deadlines: Vec<std::time::Instant> = Vec::new();
+
+        for (_, queued_at) in &self.pending_destroy {
+            deadlines.push(*queued_at + Duration::from_secs_f64(DESTROY_DELAY_SECS));
+        }
+        for island in &self.islands {
+            if let Some(until) = island.peek_until {
+                deadlines.push(until);
+            }
+        }
+        // Focus timeout only counts down when it can actually fire (see on_update).
+        if self.focused_app.is_some()
+            && !self.islands.iter().any(|i| i.mode == IslandMode::Expanded)
+        {
+            deadlines.push(self.last_interaction + Duration::from_secs_f64(FOCUS_TIMEOUT_SECS));
+        }
+        if let Ok(state) = self.state.lock() {
+            // Dirty work queued during this iteration (e.g. pulse relayout) —
+            // re-enter on_update immediately.
+            if state.dirty {
+                return Some(Duration::ZERO);
+            }
+            for a in &state.activities {
+                if a.timeout_ms > 0 && !a.expired {
+                    deadlines.push(a.created_at + Duration::from_millis(a.timeout_ms as u64));
+                }
+            }
+        }
+
+        // +1ms so poll's millisecond truncation can't wake us just before the
+        // deadline and spin.
+        deadlines
+            .into_iter()
+            .min()
+            .map(|d| d.saturating_duration_since(now) + Duration::from_millis(1))
     }
 
     fn on_keyboard_leave(
