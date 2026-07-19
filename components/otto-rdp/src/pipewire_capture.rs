@@ -98,26 +98,24 @@ impl TargetSize {
 }
 
 /// Spawn the PipeWire main-loop thread, connecting to `node_id`.
-/// Frames are published on the returned broadcast channel, already scaled to
-/// `target` (see `TargetSize`) so the big native frame is never allocated.
+/// Frames are published on `tx`, already scaled to `target` (see `TargetSize`)
+/// so the big native frame is never allocated. The caller owns the channel so
+/// the same one can be shared with a display handler (and started lazily, e.g.
+/// only when a client falls back from the H.264 path).
 pub fn spawn(
     node_id: u32,
     expected: (u32, u32),
     target: TargetSize,
-) -> broadcast::Sender<Arc<Frame>> {
-    let (tx, _) = broadcast::channel::<Arc<Frame>>(4);
-    let sender = tx.clone();
-
+    tx: broadcast::Sender<Arc<Frame>>,
+) {
     std::thread::Builder::new()
         .name("pw-capture".into())
         .spawn(move || {
-            if let Err(e) = run(node_id, expected, sender, target) {
+            if let Err(e) = run(node_id, expected, tx, target) {
                 tracing::error!("pipewire capture terminated: {e:#}");
             }
         })
         .expect("failed to spawn pipewire capture thread");
-
-    tx
 }
 
 /// Cap the delivered frame rate. A remote desktop does not need the output's

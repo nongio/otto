@@ -26,7 +26,13 @@ pub async fn node_for_connector(connector: &str) -> anyhow::Result<u32> {
     let mut session_props: HashMap<&str, Value> = HashMap::new();
     session_props.insert("cursor-mode", Value::U32(2));
     let session: OwnedObjectPath = conn
-        .call_method(Some(SERVICE), ROOT, Some(SERVICE), "CreateSession", &(session_props,))
+        .call_method(
+            Some(SERVICE),
+            ROOT,
+            Some(SERVICE),
+            "CreateSession",
+            &(session_props,),
+        )
         .await
         .context("CreateSession — is Otto running with screenshare?")?
         .body()

@@ -27,6 +27,8 @@
 //! trusted network. Connect with e.g.:
 //! `xfreerdp /v:host:3389 /sec:rdp -clipboard`
 
+mod egfx;
+mod h264;
 mod pipewire_capture;
 mod rdp;
 mod screencast;
@@ -53,7 +55,14 @@ fn usage() -> ! {
          --tls        Accept TLS-security connections with a self-signed\n\
                       certificate (persisted in ~/.local/state/otto-rdp).\n\
                       Required by mstsc and Microsoft's mobile clients;\n\
-                      plain-RDP clients (xfreerdp /sec:rdp) then can't connect"
+                      plain-RDP clients (xfreerdp /sec:rdp) then can't connect\n\
+         --bitmap     Use the legacy raw-bitmap path (RemoteFX/RLE, software)\n\
+                      instead of the default hardware H.264 (EGFX/AVC420).\n\
+                      Needed for clients that don't support AVC420 graphics.\n\
+                      \n\
+         Env: OTTO_RDP_FPS (default 30 for H.264, 12 for bitmap),\n\
+              OTTO_RDP_BITRATE (kbps, H.264 only),\n\
+              OTTO_RDP_H264_ENCODER (default vah264enc; e.g. vah264lpenc)"
     );
     std::process::exit(2);
 }
@@ -65,6 +74,8 @@ struct Args {
     listen: std::net::SocketAddr,
     desktop: Option<(u32, u32)>,
     tls: bool,
+    /// Force the legacy raw-bitmap path instead of hardware H.264 (EGFX).
+    bitmap: bool,
 }
 
 fn parse_size(v: &str) -> Option<(u32, u32)> {
@@ -78,6 +89,7 @@ fn parse_args() -> Args {
     let mut output = None;
     let mut desktop = None;
     let mut tls = false;
+    let mut bitmap = false;
     let mut listen = "0.0.0.0:3389".parse().unwrap();
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -103,6 +115,7 @@ fn parse_args() -> Args {
                 None => usage(),
             },
             "--tls" => tls = true,
+            "--bitmap" => bitmap = true,
             _ => usage(),
         }
     }
@@ -117,6 +130,7 @@ fn parse_args() -> Args {
         listen,
         desktop,
         tls,
+        bitmap,
     }
 }
 
@@ -124,8 +138,7 @@ fn parse_args() -> Args {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -169,10 +182,80 @@ async fn main() -> anyhow::Result<()> {
         .recv_timeout(std::time::Duration::from_secs(10))
         .context("timed out discovering the target output on the Wayland socket")?;
 
-    // Frame capture from the resolved PipeWire node. The target starts at
-    // native and narrows once a client negotiates its desktop size.
+    // Two paths: default hardware H.264 (GStreamer → EGFX/AVC420), or the
+    // legacy raw-bitmap path (RemoteFX/RLE via ironrdp). They are mutually
+    // exclusive per run — chosen here, before any client connects.
+    let egfx_mode = !args.bitmap;
+
+    // The input target maps client coordinates back to native pixels. The
+    // bitmap path fills it from the letterbox layout at negotiation time; the
+    // EGFX path serves native size, so the identity mapping is correct.
     let target = pipewire_capture::TargetSize::native();
-    let frames = pipewire_capture::spawn(node, size, target.clone());
+
+    // The bitmap path streams raw frames over this channel; the EGFX path
+    // captures directly in GStreamer, so the display handler gets an idle
+    // (parked) channel and video flows over the graphics pipeline instead.
+    let mut gfx_factory: Option<Box<dyn ironrdp_server::GfxServerFactory>> = None;
+    let mut egfx_shared: Option<std::sync::Arc<egfx::GfxShared>> = None;
+    let frames = if egfx_mode {
+        let shared = std::sync::Arc::new(egfx::GfxShared::new());
+        // The display subscribes to this either way; the raw capture only feeds
+        // it if the client falls back from H.264 (started lazily below).
+        let (frames_tx, _) =
+            tokio::sync::broadcast::channel::<std::sync::Arc<pipewire_capture::Frame>>(4);
+        let (enc_tx, enc_rx) = tokio::sync::mpsc::unbounded_channel::<h264::EncodedFrame>();
+
+        // The EGFX driver runs from startup so its readiness poll is already
+        // live when the graphics channel opens — the client drops within ~25ms
+        // of the capability confirm if the first graphics PDU (ResetGraphics)
+        // doesn't follow promptly, and the encoder can take ~150ms to spin up.
+        // It only acts for AVC clients (its ensure_surface gates on the codec).
+        tokio::spawn(egfx::drive(std::sync::Arc::clone(&shared), enc_rx));
+
+        // Encoder coordinator: build the hardware H.264 pipeline only for an
+        // AVC client, once its desktop size is negotiated. The GStreamer init
+        // is blocking, so it runs on the blocking pool to avoid starving the
+        // async workers the driver and RDP server need to respond in time.
+        let shared_enc = std::sync::Arc::clone(&shared);
+        tokio::spawn(async move {
+            let (w, h) = shared_enc.wait_desktop().await;
+            if shared_enc.wait_codec().await != egfx::Codec::Avc {
+                return; // client disabled AVC → bitmap fallback, no encoder
+            }
+            let cfg = h264::Config::from_env(node, w as u32, h as u32);
+            tokio::task::spawn_blocking(move || {
+                if let Err(e) = h264::spawn(cfg, enc_tx) {
+                    tracing::error!("failed to start hardware H.264 encoder: {e:#}");
+                }
+            });
+        });
+
+        // Bitmap fallback coordinator: if the client disabled AVC, start the
+        // raw capture feeding the display's channel. Lazy, so an AVC client
+        // never pays for the CPU capture/scale.
+        let shared_bmp = std::sync::Arc::clone(&shared);
+        let frames_bmp = frames_tx.clone();
+        let target_bmp = target.clone();
+        tokio::spawn(async move {
+            if shared_bmp.wait_codec().await == egfx::Codec::Bitmap {
+                tracing::info!("auto-fallback: starting bitmap capture for a non-AVC client");
+                pipewire_capture::spawn(node, size, target_bmp, frames_bmp);
+            }
+        });
+
+        gfx_factory = Some(Box::new(egfx::OttoGfxFactory::new(std::sync::Arc::clone(
+            &shared,
+        ))));
+        egfx_shared = Some(shared);
+        frames_tx
+    } else {
+        // Frame capture from the resolved PipeWire node. The target starts at
+        // native and narrows once a client negotiates its desktop size.
+        let (frames_tx, _) =
+            tokio::sync::broadcast::channel::<std::sync::Arc<pipewire_capture::Frame>>(4);
+        pipewire_capture::spawn(node, size, target.clone(), frames_tx.clone());
+        frames_tx
+    };
 
     let display = rdp::VirtualOutputDisplay {
         size,
@@ -180,6 +263,8 @@ async fn main() -> anyhow::Result<()> {
         target: target.clone(),
         served: size,
         desktop_override: args.desktop,
+        egfx_mode,
+        gfx_shared: egfx_shared,
     };
     let input = rdp::InputForwarder {
         tx: input_tx,
@@ -188,12 +273,17 @@ async fn main() -> anyhow::Result<()> {
     };
 
     tracing::info!(
-        "serving RDP on {} for output '{}' ({}x{}, PipeWire node {})",
+        "serving RDP on {} for output '{}' ({}x{}, PipeWire node {}, {} codec)",
         args.listen,
         output,
         size.0,
         size.1,
-        node
+        node,
+        if egfx_mode {
+            "hardware H.264 / AVC420"
+        } else {
+            "bitmap / RemoteFX"
+        }
     );
 
     let builder = RdpServer::builder().with_addr(args.listen);
@@ -203,10 +293,14 @@ async fn main() -> anyhow::Result<()> {
     } else {
         builder.with_no_security()
     };
-    let mut server = builder
+    let builder = builder
         .with_input_handler(input)
-        .with_display_handler(display)
-        .build();
+        .with_display_handler(display);
+    let builder = match gfx_factory {
+        Some(factory) => builder.with_gfx_factory(Some(factory)),
+        None => builder,
+    };
+    let mut server = builder.build();
 
     server.run().await
 }

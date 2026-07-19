@@ -31,18 +31,36 @@ use wayland_protocols_wlr::virtual_pointer::v1::client::{
 /// Commands from the RDP input handler, in output-local pixel coordinates.
 #[derive(Debug)]
 pub enum InputCommand {
-    Move { x: u32, y: u32 },
+    Move {
+        x: u32,
+        y: u32,
+    },
     /// Relative motion (touchpad-mode mobile clients send this).
-    MoveRel { dx: f64, dy: f64 },
-    Button { button: u32, pressed: bool },
+    MoveRel {
+        dx: f64,
+        dy: f64,
+    },
+    Button {
+        button: u32,
+        pressed: bool,
+    },
     /// Wayland axis units (positive = down/right).
-    Scroll { vertical: f64, horizontal: f64 },
+    Scroll {
+        vertical: f64,
+        horizontal: f64,
+    },
     /// Evdev keycode (wl_keyboard semantics) press/release.
-    Key { key: u32, pressed: bool },
+    Key {
+        key: u32,
+        pressed: bool,
+    },
     /// A Unicode codepoint from an on-screen/mobile keyboard. Injected by
     /// swapping in a one-key keymap and tapping it (see `type_unicode`);
     /// `pressed == false` is ignored (the press already taps down+up).
-    Unicode { c: u16, pressed: bool },
+    Unicode {
+        c: u16,
+        pressed: bool,
+    },
 }
 
 pub const BTN_LEFT: u32 = 0x110;
@@ -183,7 +201,32 @@ pub fn run(
     rx: Receiver<InputCommand>,
     size_tx: Sender<(u32, u32)>,
 ) -> anyhow::Result<()> {
-    let conn = Connection::connect_to_env()?;
+    // The bridge is launched as soon as Otto's D-Bus service appears, which can
+    // be a moment before its Wayland socket is accepting connections. Retry for
+    // a few seconds instead of exiting on the first failure — a hard exit here
+    // tears the whole bridge down (and run-rdp.sh then stops Otto).
+    let conn = {
+        let mut attempt = 0u32;
+        loop {
+            match Connection::connect_to_env() {
+                Ok(conn) => break conn,
+                Err(e) => {
+                    attempt += 1;
+                    if attempt >= 25 {
+                        return Err(anyhow::anyhow!(
+                            "could not connect to the Wayland compositor \
+                             (WAYLAND_DISPLAY={:?}) after {attempt} attempts: {e}",
+                            std::env::var("WAYLAND_DISPLAY").ok()
+                        ));
+                    }
+                    if attempt == 1 {
+                        tracing::info!("waiting for Otto's Wayland socket…");
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+            }
+        }
+    };
     let mut queue = conn.new_event_queue::<State>();
     let qh = queue.handle();
     let display = conn.display();
@@ -222,7 +265,11 @@ pub fn run(
         .iter()
         .find(|o| o.name.as_deref() == Some(output_name))
         .ok_or_else(|| {
-            let names: Vec<_> = state.outputs.iter().filter_map(|o| o.name.clone()).collect();
+            let names: Vec<_> = state
+                .outputs
+                .iter()
+                .filter_map(|o| o.name.clone())
+                .collect();
             anyhow::anyhow!("output '{output_name}' not found (available: {names:?})")
         })?;
     let size = target
@@ -369,16 +416,56 @@ fn ascii_to_keycode(ch: char) -> Option<(u32, bool)> {
     // Unshifted keycodes for letters, digits, and symbols.
     let base = |c: char| -> Option<u32> {
         Some(match c {
-            'a' => 30, 'b' => 48, 'c' => 46, 'd' => 32, 'e' => 18, 'f' => 33,
-            'g' => 34, 'h' => 35, 'i' => 23, 'j' => 36, 'k' => 37, 'l' => 38,
-            'm' => 50, 'n' => 49, 'o' => 24, 'p' => 25, 'q' => 16, 'r' => 19,
-            's' => 31, 't' => 20, 'u' => 22, 'v' => 47, 'w' => 17, 'x' => 45,
-            'y' => 21, 'z' => 44,
-            '1' => 2, '2' => 3, '3' => 4, '4' => 5, '5' => 6, '6' => 7,
-            '7' => 8, '8' => 9, '9' => 10, '0' => 11,
-            ' ' => 57, '\t' => 15, '\n' | '\r' => 28,
-            '`' => 41, '-' => 12, '=' => 13, '[' => 26, ']' => 27, '\\' => 43,
-            ';' => 39, '\'' => 40, ',' => 51, '.' => 52, '/' => 53,
+            'a' => 30,
+            'b' => 48,
+            'c' => 46,
+            'd' => 32,
+            'e' => 18,
+            'f' => 33,
+            'g' => 34,
+            'h' => 35,
+            'i' => 23,
+            'j' => 36,
+            'k' => 37,
+            'l' => 38,
+            'm' => 50,
+            'n' => 49,
+            'o' => 24,
+            'p' => 25,
+            'q' => 16,
+            'r' => 19,
+            's' => 31,
+            't' => 20,
+            'u' => 22,
+            'v' => 47,
+            'w' => 17,
+            'x' => 45,
+            'y' => 21,
+            'z' => 44,
+            '1' => 2,
+            '2' => 3,
+            '3' => 4,
+            '4' => 5,
+            '5' => 6,
+            '6' => 7,
+            '7' => 8,
+            '8' => 9,
+            '9' => 10,
+            '0' => 11,
+            ' ' => 57,
+            '\t' => 15,
+            '\n' | '\r' => 28,
+            '`' => 41,
+            '-' => 12,
+            '=' => 13,
+            '[' => 26,
+            ']' => 27,
+            '\\' => 43,
+            ';' => 39,
+            '\'' => 40,
+            ',' => 51,
+            '.' => 52,
+            '/' => 53,
             _ => return None,
         })
     };
@@ -391,11 +478,26 @@ fn ascii_to_keycode(ch: char) -> Option<(u32, bool)> {
     }
     // Shifted symbols share their unshifted key.
     let (unshifted, _) = match ch {
-        '!' => ('1', ()), '@' => ('2', ()), '#' => ('3', ()), '$' => ('4', ()),
-        '%' => ('5', ()), '^' => ('6', ()), '&' => ('7', ()), '*' => ('8', ()),
-        '(' => ('9', ()), ')' => ('0', ()), '~' => ('`', ()), '_' => ('-', ()),
-        '+' => ('=', ()), '{' => ('[', ()), '}' => (']', ()), '|' => ('\\', ()),
-        ':' => (';', ()), '"' => ('\'', ()), '<' => (',', ()), '>' => ('.', ()),
+        '!' => ('1', ()),
+        '@' => ('2', ()),
+        '#' => ('3', ()),
+        '$' => ('4', ()),
+        '%' => ('5', ()),
+        '^' => ('6', ()),
+        '&' => ('7', ()),
+        '*' => ('8', ()),
+        '(' => ('9', ()),
+        ')' => ('0', ()),
+        '~' => ('`', ()),
+        '_' => ('-', ()),
+        '+' => ('=', ()),
+        '{' => ('[', ()),
+        '}' => (']', ()),
+        '|' => ('\\', ()),
+        ':' => (';', ()),
+        '"' => ('\'', ()),
+        '<' => (',', ()),
+        '>' => ('.', ()),
         '?' => ('/', ()),
         _ => return None,
     };

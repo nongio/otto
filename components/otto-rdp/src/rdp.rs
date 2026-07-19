@@ -31,10 +31,24 @@ pub struct VirtualOutputDisplay {
     /// physical pixels but report their box in logical points: set it to
     /// the device's physical screen resolution to fill the screen.
     pub desktop_override: Option<(u32, u32)>,
+    /// Hardware H.264 path: video flows over EGFX/AVC420 (see `egfx.rs`), not
+    /// through this handler. `next_update` parks — the legacy bitmap path is
+    /// bypassed entirely — but size negotiation and the letterbox layout are
+    /// shared with the bitmap path so input mapping stays correct.
+    pub egfx_mode: bool,
+    /// EGFX only: shared state with the graphics driver. The negotiated desktop
+    /// size is recorded here (synchronously, before the channel is ready) so the
+    /// driver can size its surface and the encoder can letterbox native into it.
+    pub gfx_shared: Option<std::sync::Arc<crate::egfx::GfxShared>>,
 }
 
 pub struct Updates {
     rx: broadcast::Receiver<Arc<Frame>>,
+    /// EGFX mode: the codec decision for this client. `None` on the pure bitmap
+    /// path, or once we've committed to serving bitmaps. While `Some`, the first
+    /// `next_update` waits for the decision — AVC parks here (video flows over
+    /// the graphics pipeline), everything else falls through to bitmaps.
+    codec_rx: Option<tokio::sync::watch::Receiver<crate::egfx::Codec>>,
 }
 
 #[async_trait::async_trait]
@@ -75,6 +89,13 @@ impl RdpServerDisplay for VirtualOutputDisplay {
         // uniformly when the desktop's aspect matches the view's — the
         // override should therefore be the device's screen resolution.
         let (dw, dh) = self.desktop_override.unwrap_or(box_size);
+        // The H.264 encoder (and AVC420 macroblocks) need even dimensions;
+        // round the desktop down so the encoded picture matches it exactly.
+        let (dw, dh) = if self.egfx_mode {
+            (dw & !1, dh & !1)
+        } else {
+            (dw, dh)
+        };
         let scale = (dw as f64 / nw).min(dh as f64 / nh).min(1.0);
         let iw = (((nw * scale).round() as u32).max(1)).min(dw);
         let ih = (((nh * scale).round() as u32).max(1)).min(dh);
@@ -91,13 +112,21 @@ impl RdpServerDisplay for VirtualOutputDisplay {
         // connection's layout.
         self.target.set(layout);
         tracing::info!(
-            "client box {}x{}; serving {dw}x{dh} with {iw}x{ih} picture at {:?} (native {}x{})",
+            "client box {}x{}; serving {dw}x{dh} with {iw}x{ih} picture at {:?} (native {}x{}){}",
             client_size.width,
             client_size.height,
             layout.img_off,
             self.size.0,
-            self.size.1
+            self.size.1,
+            if self.egfx_mode { " over AVC420" } else { "" }
         );
+        // EGFX: record the negotiated desktop (synchronously, before the
+        // graphics channel is ready) so the driver can size its surface and the
+        // encoder can letterbox native into it. The picture the encoder produces
+        // then matches the `layout` the input path maps through.
+        if let Some(shared) = &self.gfx_shared {
+            shared.set_desktop(dw as u16, dh as u16);
+        }
         DesktopSize {
             width: dw as u16,
             height: dh as u16,
@@ -105,9 +134,16 @@ impl RdpServerDisplay for VirtualOutputDisplay {
     }
 
     async fn updates(&mut self) -> Result<Box<dyn RdpServerDisplayUpdates>> {
-        tracing::info!("RDP client requested display updates — subscribing to frames");
+        if self.egfx_mode {
+            tracing::info!(
+                "RDP client requested display updates — EGFX mode (AVC or bitmap fallback)"
+            );
+        } else {
+            tracing::info!("RDP client requested display updates — subscribing to frames");
+        }
         Ok(Box::new(Updates {
             rx: self.frames.subscribe(),
+            codec_rx: self.gfx_shared.as_ref().map(|s| s.codec_rx()),
         }))
     }
 }
@@ -115,17 +151,52 @@ impl RdpServerDisplay for VirtualOutputDisplay {
 #[async_trait::async_trait]
 impl RdpServerDisplayUpdates for Updates {
     async fn next_update(&mut self) -> Result<Option<DisplayUpdate>> {
+        // EGFX mode: resolve the codec decision before touching the bitmap path.
+        // An AVC client gets video over the graphics pipeline, so this main-
+        // channel path parks forever; a client that disabled AVC (or one that
+        // never opens EGFX) falls through to bitmap delivery below.
+        if let Some(codec_rx) = &mut self.codec_rx {
+            loop {
+                let codec = *codec_rx.borrow_and_update();
+                match codec {
+                    crate::egfx::Codec::Avc => std::future::pending::<()>().await,
+                    crate::egfx::Codec::Bitmap => break,
+                    crate::egfx::Codec::Unknown => {
+                        // No EGFX caps yet; if none arrive (client without EGFX),
+                        // default to bitmaps after a short grace period.
+                        let changed = tokio::time::timeout(
+                            std::time::Duration::from_secs(3),
+                            codec_rx.changed(),
+                        )
+                        .await;
+                        if !matches!(changed, Ok(Ok(()))) {
+                            break; // timed out or sender gone → serve bitmaps
+                        }
+                    }
+                }
+            }
+            // Committed to bitmaps — don't re-wait on subsequent calls.
+            self.codec_rx = None;
+        }
         loop {
             match self.rx.recv().await {
                 Ok(frame) => {
                     let Some(update) = frame_to_bitmap(&frame) else {
-                        tracing::warn!("frame {}x{} rejected by frame_to_bitmap", frame.width, frame.height);
+                        tracing::warn!(
+                            "frame {}x{} rejected by frame_to_bitmap",
+                            frame.width,
+                            frame.height
+                        );
                         continue;
                     };
                     static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     if n < 3 || n % 60 == 0 {
-                        tracing::info!("sending bitmap #{n} to RDP client ({}x{})", frame.width, frame.height);
+                        tracing::info!(
+                            "sending bitmap #{n} to RDP client ({}x{})",
+                            frame.width,
+                            frame.height
+                        );
                     }
                     return Ok(Some(DisplayUpdate::Bitmap(update)));
                 }
@@ -211,19 +282,19 @@ impl RdpServerInputHandler for InputForwarder {
     fn keyboard(&mut self, event: KeyboardEvent) {
         tracing::debug!("RDP keyboard event: {event:?}");
         let cmd = match event {
-            KeyboardEvent::Pressed { code, extended } => wl_input::scancode_to_evdev(code, extended)
-                .map(|key| InputCommand::Key { key, pressed: true }),
-            KeyboardEvent::Released { code, extended } => {
+            KeyboardEvent::Pressed { code, extended } => {
                 wl_input::scancode_to_evdev(code, extended)
-                    .map(|key| InputCommand::Key { key, pressed: false })
+                    .map(|key| InputCommand::Key { key, pressed: true })
+            }
+            KeyboardEvent::Released { code, extended } => {
+                wl_input::scancode_to_evdev(code, extended).map(|key| InputCommand::Key {
+                    key,
+                    pressed: false,
+                })
             }
             // Mobile / on-screen keyboards send Unicode instead of scancodes.
-            KeyboardEvent::UnicodePressed(c) => {
-                Some(InputCommand::Unicode { c, pressed: true })
-            }
-            KeyboardEvent::UnicodeReleased(c) => {
-                Some(InputCommand::Unicode { c, pressed: false })
-            }
+            KeyboardEvent::UnicodePressed(c) => Some(InputCommand::Unicode { c, pressed: true }),
+            KeyboardEvent::UnicodeReleased(c) => Some(InputCommand::Unicode { c, pressed: false }),
             other => {
                 tracing::debug!("unhandled keyboard event: {other:?}");
                 None
