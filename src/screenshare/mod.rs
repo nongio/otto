@@ -69,6 +69,10 @@ pub struct ActiveStream {
     pub output_connector: String,
     /// PipeWire stream instance.
     pub pipewire_stream: PipeWireStream,
+    /// Frame rendered last cycle, awaiting its GPU fence before the dmabuf is
+    /// queued to PipeWire. Resolved (non-blocking) at the next render tick so
+    /// the screenshare fence wait never blocks the main loop / input dispatch.
+    pub pending_frame: Option<smithay::backend::renderer::sync::SyncPoint>,
 }
 
 /// Commands sent from the D-Bus service to the compositor main loop.
@@ -374,6 +378,7 @@ fn handle_screenshare_command<B: crate::state::Backend + 'static>(
                 ActiveStream {
                     output_connector,
                     pipewire_stream,
+                    pending_frame: None,
                 },
             );
 

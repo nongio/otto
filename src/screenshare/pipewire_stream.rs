@@ -34,6 +34,10 @@ pub struct BufferPool {
     pub available: VecDeque<AvailableBuffer>,
     /// Raw PW buffer pointers to queue back (keyed by fd)
     pub to_queue: HashMap<i64, *mut pipewire::sys::pw_buffer>,
+    /// Rendered buffers whose GPU fence has not yet signaled. Held here (NOT in
+    /// `to_queue`) so the async process callback can't hand a still-rendering
+    /// buffer to the consumer. Moved into `to_queue` once the fence is reached.
+    pub pending: HashMap<i64, *mut pipewire::sys::pw_buffer>,
     /// Track last rendered buffer FD to detect buffer changes
     pub last_rendered_fd: Option<i64>,
 }
@@ -694,10 +698,14 @@ fn send_buffer_params(
             SPA_PARAM_BUFFERS_buffers,
             pod::Value::Choice(ChoiceValue::Int(Choice(
                 ChoiceFlags::empty(),
+                // At least 2 buffers so a new frame can render into a spare
+                // while the previous frame's GPU fence drains off the main
+                // loop (deferred trigger in render_virtual_outputs). A single
+                // buffer would serialize render and hand-off, halving fps.
                 ChoiceEnum::Range {
-                    default: 1,
-                    min: 1,
-                    max: 1
+                    default: 2,
+                    min: 2,
+                    max: 3
                 }
             ))),
         ),

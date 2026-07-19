@@ -46,6 +46,11 @@ pub struct VirtualOutputState {
     pub pipewire_stream: PipeWireStream,
     /// Damage tracker for this output (always renders full frames, age=0).
     pub damage_tracker: OutputDamageTracker,
+    /// Frame rendered last cycle, awaiting its GPU fence before the dmabuf is
+    /// queued to PipeWire. Resolved (non-blocking `is_reached()`) at the start
+    /// of the next `render_virtual_outputs` tick so the fence wait never blocks
+    /// the main loop / input dispatch.
+    pub pending_frame: Option<smithay::backend::renderer::sync::SyncPoint>,
 }
 
 impl VirtualOutputState {
@@ -135,6 +140,7 @@ impl VirtualOutputState {
             _global: global,
             pipewire_stream,
             damage_tracker,
+            pending_frame: None,
         };
 
         Ok((state, node_id))

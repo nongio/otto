@@ -1497,15 +1497,53 @@ impl Otto<UdevData> {
             };
 
             // --- Render into this virtual output's own PipeWire stream ---
+            //
+            // Deferred-fence model: keep the GPU fence wait off the main loop so
+            // it never stalls input dispatch (calloop is single-threaded).
+            //  1. Resolve the frame rendered last cycle: if its GPU fence has
+            //     signaled (non-blocking `is_reached()`), move its buffer from
+            //     the pool's `pending` holding area into `to_queue` so
+            //     `trigger_frame()` hands it to the consumer. If not signaled,
+            //     keep it pending — never block.
+            //  2. `trigger_frame()` every cycle queues fence-ready buffers and
+            //     pumps buffer dequeues back into `available`.
+            //  3. Render a new frame only when nothing is pending, into a spare
+            //     buffer, and stash its `SyncPoint` for next cycle. The buffer
+            //     enters `pending` (NOT `to_queue`) only after a successful
+            //     render, so the async process callback can't queue a
+            //     still-rendering buffer (the black/torn band 757a6f7 fixed).
             let pool_arc = self.virtual_outputs[i].pipewire_stream.buffer_pool();
-            let maybe_buf = {
+
+            if let Some(sync) = self.virtual_outputs[i].pending_frame.take() {
+                if sync.is_reached() {
+                    {
+                        let mut pool = pool_arc.lock().unwrap();
+                        let ready: Vec<_> = pool.pending.drain().collect();
+                        for (fd, buf) in ready {
+                            pool.to_queue.insert(fd, buf);
+                        }
+                    }
+                    self.virtual_outputs[i]
+                        .pipewire_stream
+                        .increment_frame_sequence();
+                } else {
+                    // GPU still drawing last cycle's frame — keep it pending.
+                    self.virtual_outputs[i].pending_frame = Some(sync);
+                }
+            }
+            self.virtual_outputs[i].pipewire_stream.trigger_frame();
+
+            let maybe_buf = if self.virtual_outputs[i].pending_frame.is_none() {
                 let mut pool = pool_arc.lock().unwrap();
-                pool.available.pop_front().inspect(|buf| {
-                    pool.to_queue.insert(buf.fd, buf.pw_buffer);
-                })
+                pool.available.pop_front()
+            } else {
+                None
             };
             if let Some(available) = maybe_buf {
+                let fd = available.fd;
+                let pw_buffer = available.pw_buffer;
                 let mut dmabuf = available.dmabuf.clone();
+                let mut rendered_sync = None;
                 {
                     // Scope the damage_tracker borrow so it ends before pipewire_stream access
                     let damage_tracker = &mut self.virtual_outputs[i].damage_tracker;
@@ -1528,17 +1566,11 @@ impl Otto<UdevData> {
                                 damage_tracker,
                                 0,
                             ) {
-                                // Block until the GPU has finished drawing this
-                                // frame before the dmabuf is queued to PipeWire
-                                // (trigger_frame below). Without this the consumer
-                                // (otto-rdp / screencast) can sample a
-                                // partially-rendered buffer — a black/torn band at
-                                // the top of the frame. Mirrors the physical KMS
-                                // path's GPU fence wait.
+                                // Don't block on the fence — stash it; next
+                                // cycle's resolve step hands off the buffer once
+                                // the GPU has finished.
                                 Ok(result) => {
-                                    if let Err(err) = result.sync.wait() {
-                                        warn!("render_virtual_outputs: GPU fence wait failed for '{output_name}': {err:?}");
-                                    }
+                                    rendered_sync = Some(result.sync.clone());
                                 }
                                 Err(e) => {
                                     warn!("render_virtual_outputs: render failed for '{output_name}': {e}");
@@ -1550,70 +1582,96 @@ impl Otto<UdevData> {
                         }
                     }
                 }
-                self.virtual_outputs[i]
-                    .pipewire_stream
-                    .increment_frame_sequence();
+                match rendered_sync {
+                    Some(sync) => {
+                        pool_arc.lock().unwrap().pending.insert(fd, pw_buffer);
+                        self.virtual_outputs[i].pending_frame = Some(sync);
+                    }
+                    // Render failed — return the buffer so it isn't leaked.
+                    None => {
+                        pool_arc.lock().unwrap().available.push_back(available);
+                    }
+                }
             }
-            self.virtual_outputs[i].pipewire_stream.trigger_frame();
 
             // --- Tap screenshare sessions targeting this virtual output ---
-            for session in self.screenshare_sessions.values() {
-                for (connector, stream) in &session.streams {
-                    if *connector == output_name {
-                        let ss_pool = stream.pipewire_stream.buffer_pool();
-                        let maybe_ss_buf = {
-                            let mut pool = ss_pool.lock().unwrap();
-                            pool.available.pop_front().inspect(|buf| {
-                                pool.to_queue.insert(buf.fd, buf.pw_buffer);
-                            })
-                        };
-                        if let Some(ss_buf) = maybe_ss_buf {
-                            let mut ss_dmabuf = ss_buf.dmabuf.clone();
-                            let mut temp_tracker = OutputDamageTracker::from_output(&output_clone);
-                            match renderer.bind(&mut ss_dmabuf) {
-                                Ok(mut fb) => {
-                                    let mut ss_elements = build_cursor_elements(&mut renderer);
-                                    ss_elements.extend(
-                                        scene_stack
-                                            .iter()
-                                            .cloned()
-                                            .map(WorkspaceRenderElements::Scene),
-                                    );
-                                    match crate::render::render_output(
-                                        &output_clone,
-                                        &all_window_elements,
-                                        ss_elements,
-                                        None,
-                                        &mut renderer,
-                                        &mut fb,
-                                        &mut temp_tracker,
-                                        0,
-                                    ) {
-                                        // Same GPU fence wait as the virtual
-                                        // stream above: don't queue the dmabuf to
-                                        // the screencast consumer until the GPU
-                                        // has finished rendering it.
-                                        Ok(result) => {
-                                            if let Err(err) = result.sync.wait() {
-                                                warn!("render_virtual_outputs: screenshare GPU fence wait failed for '{output_name}': {err:?}");
-                                            }
-                                        }
-                                        Err(e) => {
-                                            warn!("render_virtual_outputs: screenshare render failed for '{output_name}': {e}");
-                                        }
-                                    }
-                                    stream.pipewire_stream.increment_frame_sequence();
-                                }
-                                Err(e) => {
-                                    warn!("render_virtual_outputs: screenshare bind failed for '{output_name}': {e}");
+            // Same deferred-fence model as the virtual-output stream above.
+            for session in self.screenshare_sessions.values_mut() {
+                for stream in session.streams.values_mut() {
+                    if stream.output_connector != output_name {
+                        continue;
+                    }
+                    let ss_pool = stream.pipewire_stream.buffer_pool();
+
+                    // 1. Resolve last cycle's frame without blocking.
+                    if let Some(sync) = stream.pending_frame.take() {
+                        if sync.is_reached() {
+                            {
+                                let mut pool = ss_pool.lock().unwrap();
+                                let ready: Vec<_> = pool.pending.drain().collect();
+                                for (fd, buf) in ready {
+                                    pool.to_queue.insert(fd, buf);
                                 }
                             }
-                            stream.pipewire_stream.trigger_frame();
+                            stream.pipewire_stream.increment_frame_sequence();
                         } else {
-                            stream.pipewire_stream.trigger_frame();
-                            trace!(
-                                "render_virtual_outputs: no screenshare buffer for '{output_name}'"
-                            );
+                            stream.pending_frame = Some(sync);
+                        }
+                    }
+                    // 2. Queue fence-ready buffers + pump dequeues.
+                    stream.pipewire_stream.trigger_frame();
+
+                    // 3. Render a new frame only when nothing is pending.
+                    let maybe_ss_buf = if stream.pending_frame.is_none() {
+                        ss_pool.lock().unwrap().available.pop_front()
+                    } else {
+                        None
+                    };
+                    if let Some(ss_buf) = maybe_ss_buf {
+                        let fd = ss_buf.fd;
+                        let pw_buffer = ss_buf.pw_buffer;
+                        let mut ss_dmabuf = ss_buf.dmabuf.clone();
+                        let mut temp_tracker = OutputDamageTracker::from_output(&output_clone);
+                        let mut rendered_sync = None;
+                        match renderer.bind(&mut ss_dmabuf) {
+                            Ok(mut fb) => {
+                                let mut ss_elements = build_cursor_elements(&mut renderer);
+                                ss_elements.extend(
+                                    scene_stack
+                                        .iter()
+                                        .cloned()
+                                        .map(WorkspaceRenderElements::Scene),
+                                );
+                                match crate::render::render_output(
+                                    &output_clone,
+                                    &all_window_elements,
+                                    ss_elements,
+                                    None,
+                                    &mut renderer,
+                                    &mut fb,
+                                    &mut temp_tracker,
+                                    0,
+                                ) {
+                                    Ok(result) => {
+                                        rendered_sync = Some(result.sync.clone());
+                                    }
+                                    Err(e) => {
+                                        warn!("render_virtual_outputs: screenshare render failed for '{output_name}': {e}");
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                warn!("render_virtual_outputs: screenshare bind failed for '{output_name}': {e}");
+                            }
+                        }
+                        match rendered_sync {
+                            Some(sync) => {
+                                ss_pool.lock().unwrap().pending.insert(fd, pw_buffer);
+                                stream.pending_frame = Some(sync);
+                            }
+                            None => {
+                                ss_pool.lock().unwrap().available.push_back(ss_buf);
+                            }
                         }
                     }
                 }
