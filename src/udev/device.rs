@@ -792,32 +792,32 @@ impl Otto<UdevData> {
             }
         };
 
-        if disable_laptop_panels && self.is_lid_closed {
-            // Check if any external monitor is connected (for logging purposes)
-            let mut has_external_monitor = false;
-            for device in self.backend_data.backends.values() {
-                for (connector, _crtc) in device.drm_scanner.crtcs() {
-                    let connector_name = format!(
-                        "{}-{}",
-                        connector.interface().as_str(),
-                        connector.interface_id()
-                    );
-                    if !crate::utils::is_laptop_panel(&connector_name) {
-                        has_external_monitor = true;
-                        break;
-                    }
-                }
-                if has_external_monitor {
+        // Check if any external monitor is connected (clamshell mode blocks suspend)
+        let mut has_external_monitor = false;
+        for device in self.backend_data.backends.values() {
+            for (connector, _crtc) in device.drm_scanner.crtcs() {
+                let connector_name = format!(
+                    "{}-{}",
+                    connector.interface().as_str(),
+                    connector.interface_id()
+                );
+                if !crate::utils::is_laptop_panel(&connector_name) {
+                    has_external_monitor = true;
                     break;
                 }
             }
+            if has_external_monitor {
+                break;
+            }
+        }
 
+        if disable_laptop_panels && self.is_lid_closed {
             if has_external_monitor {
                 tracing::info!(
                     "Lid closed with external monitor - disabling laptop panel (clamshell mode)"
                 );
             } else {
-                tracing::info!("Lid closed without external monitor - disabling laptop panel (system will suspend via systemd-logind)");
+                tracing::info!("Lid closed without external monitor - disabling laptop panel");
             }
         }
 
@@ -874,6 +874,7 @@ impl Otto<UdevData> {
         // Unlike a real connector disconnect, we only tear down the DRM surface
         // (stops rendering and drops the Wayland global) but keep all workspace
         // data intact so windows survive the lid-close/reopen cycle.
+        let suspended_any_panel = !to_disconnect.is_empty();
         for (node, crtc) in to_disconnect {
             let device = match self.backend_data.backends.get_mut(&node) {
                 Some(d) => d,
@@ -902,6 +903,41 @@ impl Otto<UdevData> {
         // Reconnect laptop panels that should be re-enabled
         for (node, connector, crtc) in to_reconnect {
             self.connector_connected(node, connector, crtc);
+        }
+
+        // Lid closed on a plain laptop ("auto" mode, no external monitor):
+        // Otto owns the suspend decision — logind's lid handling is expected
+        // to be `ignore` so we can gate it. Skip while a remote client is
+        // consuming frames (RDP bridge / screenshare), so closing the lid
+        // during a remote session keeps serving instead of going to sleep.
+        // Edge-triggered on the panel teardown so a repeated call (or a
+        // wake-up with the lid still closed) doesn't immediately re-suspend.
+        if suspended_any_panel
+            && self.is_lid_closed
+            && matches!(lid_action, LidCloseAction::Auto)
+            && !has_external_monitor
+        {
+            let screenshare_active = !self.screenshare_sessions.is_empty();
+            let remote_streaming = self
+                .virtual_outputs
+                .iter()
+                .any(|v| v.pipewire_stream.is_streaming());
+
+            if screenshare_active || remote_streaming {
+                tracing::info!(
+                    screenshare_active,
+                    remote_streaming,
+                    "Lid closed - NOT suspending, remote session active"
+                );
+            } else {
+                tracing::info!("Lid closed - suspending via logind (systemctl suspend)");
+                if let Err(err) = std::process::Command::new("systemctl")
+                    .arg("suspend")
+                    .spawn()
+                {
+                    tracing::error!("Failed to invoke systemctl suspend: {err}");
+                }
+            }
         }
     }
 }

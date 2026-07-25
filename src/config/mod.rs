@@ -414,8 +414,11 @@ pub struct PowerManagementConfig {
 
     /// What to do when laptop lid closes (default: "auto")
     /// Options:
-    ///   "auto" - Normal laptop: disable screen, allow suspend if no external monitor
-    ///   "disable_internal_screen" - Always disable screen but stay running (for display managers/kiosks)
+    ///   "auto" - Normal laptop: disable screen, then suspend via logind —
+    ///     unless an external monitor is connected or a remote client (RDP
+    ///     bridge / screenshare) is actively consuming frames
+    ///   "disable_internal_screen" - Always disable screen but stay running,
+    ///     never suspend (for display managers/kiosks)
     #[serde(default = "default_on_lid_close")]
     pub on_lid_close: LidCloseAction,
 }
@@ -425,10 +428,12 @@ pub struct PowerManagementConfig {
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
 pub enum LidCloseAction {
-    /// Normal laptop behavior: disable screen, allow suspend if no external monitor
+    /// Normal laptop behavior: disable screen, then suspend — unless an
+    /// external monitor is connected or a remote session is active
     #[default]
     Auto,
-    /// Always disable screen but keep running (for display managers/kiosks)
+    /// Always disable screen but keep running, never suspend (for display
+    /// managers/kiosks)
     DisableInternalScreen,
 }
 
