@@ -438,19 +438,29 @@ impl Otto<UdevData> {
 
         let global = output.create_global::<Otto<UdevData>>(&self.display_handle);
 
-        // Position from the config profile when set, otherwise auto-place to
-        // the right of the existing outputs (logical coordinates). There is
-        // no mirroring feature: a configured position that overlaps an
-        // existing output is rejected in favour of auto-placement.
+        // If this connector was suspended (lid close), restore its saved
+        // position and primary status: other outputs (e.g. virtual ones) kept
+        // running meanwhile, and auto-placement would pack the panel after
+        // them and leave primary — and the dock — on the wrong output.
+        let suspended = self.workspaces.take_suspended_output(output_name);
+
+        // Position: suspended restore first, then the config profile,
+        // otherwise auto-place to the right of the existing outputs (logical
+        // coordinates). There is no mirroring feature: a position that
+        // overlaps an existing output is rejected in favour of auto-placement.
         let screen_scale = Config::with(|c| c.screen_scale);
         let logical_size = smithay::utils::Size::<i32, smithay::utils::Logical>::from((
             (wl_mode.size.w as f64 / screen_scale) as i32,
             (wl_mode.size.h as f64 / screen_scale) as i32,
         ));
-        let position: smithay::utils::Point<i32, smithay::utils::Logical> = config_profile
-            .as_ref()
-            .and_then(|p| p.position)
-            .map(|p| smithay::utils::Point::from((p.x, p.y)))
+        let position: smithay::utils::Point<i32, smithay::utils::Logical> = suspended
+            .map(|(pos, _)| pos)
+            .or_else(|| {
+                config_profile
+                    .as_ref()
+                    .and_then(|p| p.position)
+                    .map(|p| smithay::utils::Point::from((p.x, p.y)))
+            })
             .filter(|&pos| {
                 let rect = smithay::utils::Rectangle::new(pos, logical_size);
                 let overlap = self.workspaces.outputs().any(|o| {
@@ -485,7 +495,9 @@ impl Otto<UdevData> {
             Some(position),
         );
 
-        let is_primary = config_profile.as_ref().map(|p| p.primary).unwrap_or(false);
+        let is_primary = suspended
+            .map(|(_, was_primary)| was_primary)
+            .unwrap_or_else(|| config_profile.as_ref().map(|p| p.primary).unwrap_or(false));
         self.workspaces
             .map_output_with_primary(&output, position, is_primary);
 

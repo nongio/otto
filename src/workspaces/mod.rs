@@ -149,6 +149,11 @@ pub struct Workspaces {
     pub output_workspaces: HashMap<String, OutputWorkspaces>,
     outputs: Vec<Output>,
     primary_output: Option<Output>,
+    /// Position and primary flag of outputs suspended via `suspend_output`
+    /// (lid close), keyed by output name. Consumed on reconnect so the panel
+    /// returns to its pre-suspend arrangement instead of being auto-placed
+    /// after outputs (e.g. virtual ones) that kept running meanwhile.
+    suspended_outputs: HashMap<String, (smithay::utils::Point<i32, smithay::utils::Logical>, bool)>,
     display_handle: DisplayHandle,
 
     pub windows_map: HashMap<ObjectId, WindowElement>,
@@ -369,6 +374,7 @@ impl Workspaces {
             output_workspaces: HashMap::new(),
             outputs: Vec::new(),
             primary_output: None,
+            suspended_outputs: HashMap::new(),
             model: Arc::new(RwLock::new(model)),
             windows_map: HashMap::new(),
             expose_layer,
@@ -3541,6 +3547,7 @@ impl Workspaces {
 
     /// Detach an output from every workspace
     pub fn unmap_output(&mut self, output: &Output) {
+        self.suspended_outputs.remove(&output.name());
         self.outputs.retain(|o| o != output);
         if self.primary_output.as_ref() == Some(output) {
             self.primary_output = self.outputs.first().cloned();
@@ -3556,12 +3563,32 @@ impl Workspaces {
     /// all workspaces, windows, and scene-graph layers are preserved so they
     /// can be instantly restored when the output comes back.
     pub fn suspend_output(&mut self, output: &Output) {
+        // Remember where the output was and whether it was primary, so a
+        // reconnect of the same connector restores the pre-suspend
+        // arrangement (position AND primary status).
+        let location = self
+            .output_geometry(output)
+            .map(|g| g.loc)
+            .unwrap_or_default();
+        let was_primary = self.primary_output.as_ref() == Some(output);
+        self.suspended_outputs
+            .insert(output.name(), (location, was_primary));
+
         self.outputs.retain(|o| o != output);
         if self.primary_output.as_ref() == Some(output) {
             self.primary_output = self.outputs.first().cloned();
         }
         // Intentionally do NOT remove from output_workspaces — keep windows alive.
         self.sync_model_from_primary();
+    }
+
+    /// Take (consume) the saved position/primary of a previously suspended
+    /// output, if any. Returns `(location, was_primary)`.
+    pub fn take_suspended_output(
+        &mut self,
+        output_name: &str,
+    ) -> Option<(smithay::utils::Point<i32, smithay::utils::Logical>, bool)> {
+        self.suspended_outputs.remove(output_name)
     }
 
     // Workspaces Management
