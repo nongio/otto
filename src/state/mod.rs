@@ -896,7 +896,13 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
         // When autohide is enabled the dock slides away, so tiled/maximized
         // windows can use the full height; otherwise stop above the dock.
-        if !self.workspaces.dock.is_autohide_enabled() {
+        // The dock is rendered on the primary output only — other outputs
+        // keep their full height.
+        let is_primary = self
+            .workspaces
+            .primary_output()
+            .is_some_and(|p| p.name() == output.name());
+        if is_primary && !self.workspaces.dock.is_autohide_enabled() {
             let dock_geom = self.workspaces.get_dock_geometry();
             if dock_geom.size.h > 0 {
                 let dock_top = dock_geom.loc.y;
@@ -1375,6 +1381,19 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             // demote lands inside the prefetch window).
             self.backend_data.invalidate_scene_prefetch();
             self.backend_data.request_redraw();
+        }
+    }
+
+    /// Demote every promoted window and re-import its buffer. Used when
+    /// entering the expose overview: mirrors draw the scene content, which is
+    /// blanked while a window sits on a scanout plane.
+    #[allow(clippy::mutable_key_type)]
+    pub fn demote_all_scanout_windows(&mut self) {
+        let ids: Vec<_> = self.workspaces.scanout_window_ids().into_iter().collect();
+        for id in ids {
+            if let Some(w) = self.workspaces.get_window_for_surface(&id).cloned() {
+                self.demote_scanout_window(&w);
+            }
         }
     }
 

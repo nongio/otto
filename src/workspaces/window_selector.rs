@@ -807,7 +807,14 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
         event: &smithay::input::pointer::MotionEvent,
     ) {
         let state = self.view.get_state().clone();
-        let screen_scale = Config::with(|config| config.screen_scale);
+        // `event.location` is output-local (see `point_under`): convert with
+        // the hovered output's own scale, not the global one — external
+        // outputs may run at a different scale than the primary.
+        let screen_scale = otto
+            .workspaces
+            .focused_output()
+            .map(|o| o.current_scale().fractional_scale())
+            .unwrap_or_else(|| Config::with(|config| config.screen_scale));
         let location = event.location.to_physical(screen_scale);
         let cursor_point = (location.x as f32, location.y as f32);
         self.record_cursor_location(cursor_point);

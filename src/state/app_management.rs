@@ -136,7 +136,24 @@ impl<BackendData: Backend> Otto<BackendData> {
         {
             return;
         }
-        if let Some(top_wid) = self.workspaces.get_top_window_of_workspace(workspace_index) {
+        // Read the focused output's space, not the primary output's — each
+        // output has its own workspace stack.
+        let top = self
+            .workspaces
+            .focused_output_workspaces()
+            .and_then(|ows| ows.spaces.get(workspace_index))
+            .and_then(|space| {
+                space.elements().rev().find_map(|e| {
+                    let id = e.id();
+                    if let Some(w) = self.workspaces.windows_map.get(&id) {
+                        if w.is_minimised() {
+                            return None;
+                        }
+                    }
+                    Some(id)
+                })
+            });
+        if let Some(top_wid) = top {
             self.set_keyboard_focus_on_surface(&top_wid);
         } else {
             self.clear_keyboard_focus();

@@ -146,20 +146,37 @@ pub fn classify_windows(
     occluded_ids: &HashSet<ObjectId>,
     expose_active: bool,
 ) -> HashMap<ObjectId, WindowThrottleState> {
-    let fullscreen_id = workspaces.get_fullscreen_window().map(|w| w.id());
-    let current_workspace_index = workspaces.with_model(|m| m.current_workspace);
-    let top_of_current = workspaces.get_top_window_of_workspace(current_workspace_index);
-
-    let ctx = ClassifierContext {
-        fullscreen_id: fullscreen_id.as_ref(),
-        top_of_current: top_of_current.as_ref(),
-        occluded_ids,
-        expose_active,
-    };
+    // Fullscreen and top-of-stack are per-output properties of each output's
+    // CURRENT workspace: a fullscreen window on one screen must not demote
+    // windows on another screen to the Occluded tier.
+    let per_output: Vec<(String, Option<ObjectId>, Option<ObjectId>)> = workspaces
+        .outputs()
+        .map(|output| {
+            (
+                output.name(),
+                workspaces
+                    .get_fullscreen_window_on_output(output)
+                    .map(|w| w.id()),
+                workspaces.get_top_window_of_workspace_on_output(output),
+            )
+        })
+        .collect();
 
     let mut result = HashMap::with_capacity(windows.len());
     for window in windows {
         let id = window.id();
+        let output_name = workspaces.output_for_window(window).map(|o| o.name());
+        let (fullscreen_id, top_of_current) = per_output
+            .iter()
+            .find(|(name, _, _)| Some(name) == output_name.as_ref())
+            .map(|(_, f, t)| (f.as_ref(), t.as_ref()))
+            .unwrap_or((None, None));
+        let ctx = ClassifierContext {
+            fullscreen_id,
+            top_of_current,
+            occluded_ids,
+            expose_active,
+        };
         let state = classify_one(&id, window.is_minimised(), &ctx);
         result.insert(id, state);
     }

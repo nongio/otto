@@ -372,12 +372,36 @@ impl Otto<UdevData> {
         // are dropped for those frames. Disabled during capture and the
         // 3-finger swipe (the finger-drag moves the workspace with no
         // animation flag, so a fixed plane would not follow it).
+        // Fullscreen is per-output: only THIS crtc's output may have a stable
+        // fullscreen workspace — other outputs keep compositing normally.
+        let this_device_id = self
+            .backend_data
+            .backends
+            .get(&node)
+            .and_then(|d| d.surfaces.get(&crtc))
+            .map(|s| s.device_id);
+        let this_output = this_device_id.and_then(|device_id| {
+            self.workspaces
+                .outputs()
+                .find(|o| {
+                    o.user_data()
+                        .get::<UdevOutputId>()
+                        .map(|id| id.device_id == device_id && id.crtc == crtc)
+                        .unwrap_or(false)
+                })
+                .cloned()
+        });
         let allow_fullscreen_scanout = std::env::var_os("DISABLE_DIRECT_SCANOUT").is_none()
-            && self.workspaces.is_fullscreen_and_stable()
+            && this_output
+                .as_ref()
+                .map(|o| self.workspaces.is_fullscreen_and_stable_on_output(o))
+                .unwrap_or(false)
             && !self.swipe_gesture.is_active()
             && !capture_active;
         let fullscreen_window = if allow_fullscreen_scanout {
-            self.workspaces.get_fullscreen_window()
+            this_output
+                .as_ref()
+                .and_then(|o| self.workspaces.get_fullscreen_window_on_output(o))
         } else {
             None
         };
@@ -452,7 +476,10 @@ impl Otto<UdevData> {
         // removals apply this frame, additions only after the candidate set
         // has been stable for the full window.
         const PROMOTE_STABLE: std::time::Duration = std::time::Duration::from_millis(500);
-        let current_scanout = self.workspaces.scanout_window_ids();
+        let current_scanout = scanout_output_name
+            .as_deref()
+            .map(|n| self.workspaces.scanout_window_ids_for_output(n))
+            .unwrap_or_default();
         let has_additions = raw_scanout_desired
             .iter()
             .any(|id| !current_scanout.contains(id));
@@ -492,12 +519,17 @@ impl Otto<UdevData> {
         let new_scanout_ids: std::collections::HashSet<
             smithay::reexports::wayland_server::backend::ObjectId,
         > = scanout_desired.iter().cloned().collect();
-        let prev_scanout_ids = self.workspaces.scanout_window_ids();
+        let prev_scanout_ids = scanout_output_name
+            .as_deref()
+            .map(|n| self.workspaces.scanout_window_ids_for_output(n))
+            .unwrap_or_default();
         // Resolve departures through windows_map, NOT the Space: a window that
         // starts minimizing is unmapped from every Space *before* this frame
         // (hit-test exclusion), so a Space lookup misses it and skips the
         // re-import — the genie animation would then run on the stale/blank
-        // content left over from promotion.
+        // content left over from promotion. Departures are computed against
+        // THIS output's previous scanout set, not the global union — a
+        // window promoted on another output is not a departure here.
         let mut departed_windows: Vec<WindowElement> = prev_scanout_ids
             .iter()
             .filter(|id| !new_scanout_ids.contains(id))

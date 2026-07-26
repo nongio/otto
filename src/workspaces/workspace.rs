@@ -267,6 +267,18 @@ impl WorkspaceView {
         }
     }
 
+    /// Unmap for a cross-output migration: detach the window from this view's
+    /// lists and selector bookkeeping but KEEP the mirror layer node alive —
+    /// the target output's view re-parents the same mirror. Deleting it here
+    /// (`Layer::remove` = mark_for_delete) would leave the window's fixed
+    /// mirror handle pointing at a freed node, permanently blanking its
+    /// expose preview.
+    pub fn unmap_window_keep_mirror(&self, window_id: &ObjectId) {
+        self.unmap_window_internal(window_id);
+        let _ = self.window_selector_view.unmap_window(window_id);
+        self.window_base_layers.write().unwrap().remove(window_id);
+    }
+
     /// Internal version of unmap_window that allows controlling whether to remove the mirror layer
     /// When remove_mirror is false, the mirror layer is not removed to avoid SlotMap key issues
     /// during drag-and-drop operations when expose_show_all will be called to rebuild the layout

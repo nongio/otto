@@ -77,6 +77,7 @@ impl crate::Otto<crate::udev::UdevData> {
                         self.dismiss_all_popups();
 
                         if !self.workspaces.get_show_all() {
+                            self.demote_all_scanout_windows();
                             self.workspaces.expose_gesture_start();
                         } else {
                             self.workspaces.expose_gesture_close_start();
@@ -308,6 +309,7 @@ impl<B: crate::state::Backend> crate::Otto<B> {
                     crate::state::SwipeDirection::Vertical(_) => {
                         self.dismiss_all_popups();
                         if !self.workspaces.get_show_all() {
+                            self.demote_all_scanout_windows();
                             self.workspaces.expose_gesture_start();
                         } else {
                             self.workspaces.expose_gesture_close_start();

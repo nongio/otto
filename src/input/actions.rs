@@ -427,6 +427,7 @@ impl<BackendData: Backend> Otto<BackendData> {
             // Dismiss all popups before entering expose mode
             // to release pointer grabs that would intercept events
             self.dismiss_all_popups();
+            self.demote_all_scanout_windows();
             self.workspaces.expose_set_visible(true);
         }
     }

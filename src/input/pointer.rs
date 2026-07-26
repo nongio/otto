@@ -217,9 +217,18 @@ impl<BackendData: Backend> Otto<BackendData> {
                 .unwrap_or(1.0);
             let position = self.pointer.current_location();
             let scaled_position = position.to_physical(scale);
-            if !self
-                .workspaces
-                .is_cursor_over_dock(scaled_position.x as f32, scaled_position.y as f32)
+            // The dock only exists on the primary output — its scene bounds
+            // are primary-local, so testing them from another output's
+            // coordinates can produce false hits.
+            let on_primary = output
+                .as_ref()
+                .zip(self.workspaces.primary_output())
+                .map(|(o, p)| o.name() == p.name())
+                .unwrap_or(false);
+            if !(on_primary
+                && self
+                    .workspaces
+                    .is_cursor_over_dock(scaled_position.x as f32, scaled_position.y as f32))
             {
                 let window_under = self
                     .workspaces
@@ -327,16 +336,24 @@ impl<BackendData: Backend> Otto<BackendData> {
                 }
             }
         }
-        // Window selector check
+        // Window selector check — use the selector of the output under the
+        // cursor (each output has its own expose grid showing its own
+        // current workspace).
         if self.workspaces.get_show_all() {
-            let workspace = self.workspaces.get_current_workspace()?;
+            let ows = self.workspaces.output_workspaces.get(&output.name())?;
+            let workspace = ows.workspace_views.get(ows.current_workspace)?;
             let focus = workspace.window_selector_view.as_ref().clone().into();
-            let position = workspace
-                .window_selector_view
-                .window_selector_root
-                .render_position();
+            // Return the output's global origin as the focus offset so motion
+            // events arrive output-local: the selector's hit rects live in the
+            // output's own scene space (every output subtree renders at the
+            // scene origin).
+            let origin = self
+                .workspaces
+                .output_geometry(output)
+                .map(|g| g.loc)
+                .unwrap_or_default();
 
-            return Some((focus, (position.x as f64, position.y as f64).into()));
+            return Some((focus, (origin.x as f64, origin.y as f64).into()));
         }
 
         // Check popup surfaces (layer shell popups) — they sit above everything
@@ -428,8 +445,12 @@ impl<BackendData: Backend> Otto<BackendData> {
             }
         }
 
-        // Check dock
+        // Check dock — primary output only (its scene bounds are primary-local)
         if under.is_none()
+            && self
+                .workspaces
+                .primary_output()
+                .is_some_and(|p| p.name() == output.name())
             && self
                 .workspaces
                 .is_cursor_over_dock(physical_pos.x as f32, physical_pos.y as f32)
