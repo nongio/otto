@@ -714,6 +714,11 @@ impl Workspaces {
             ows.overlay_plane.set_size(Size::points(w, h), None);
             ows.switcher_plane.set_size(Size::points(w, h), None);
             ows.dock_plane.set_size(Size::points(w, h), None);
+            // The switcher panel sizes itself from its host output — a mode or
+            // scale change under it must re-render it at the new geometry.
+            if self.app_switcher_output_name().as_deref() == Some(output_name.as_str()) {
+                self.app_switcher.set_host_metrics(w as i32, scale);
+            }
 
             for (logical_index, workspace) in ows.workspace_views.iter().enumerate() {
                 workspace.update_layout(logical_index, w, h, scale);

@@ -175,8 +175,23 @@ impl AppSwitcherView {
     /// Record the geometry of the output the panel is parented to. Layout is
     /// derived from these rather than from the shared model, which only ever
     /// describes the primary output.
+    ///
+    /// A change re-renders the panel immediately: every layout metric is
+    /// derived from these two numbers, and the panel may already be on screen
+    /// — moved to another output, or left in place while that output's mode
+    /// or scale changed under it.
     pub fn set_host_metrics(&self, width_px: i32, scale: f32) {
-        *self.host_metrics.write().unwrap() = (width_px, scale);
+        {
+            // Scoped: `build_model_with_stacks` reads this lock.
+            let mut metrics = self.host_metrics.write().unwrap();
+            if *metrics == (width_px, scale) {
+                return;
+            }
+            *metrics = (width_px, scale);
+        }
+        let state = self.view.get_state();
+        let fresh = self.build_model_with_stacks(state.apps, state.current_app, width_px);
+        self.view.update_state(&fresh);
     }
 
     fn build_model_with_stacks(
