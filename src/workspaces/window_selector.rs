@@ -714,6 +714,16 @@ impl WindowSelectorView {
 
         // Recalculate layout only when geometry changed
         if *stored_hash != layout_hash {
+            tracing::debug!(
+                target: "otto::expose",
+                "grid rebuild: hash {} -> {} windows={:?}",
+                *stored_hash,
+                layout_hash,
+                windows
+                    .iter()
+                    .map(|w| (w.title.as_str(), w.rect))
+                    .collect::<Vec<_>>()
+            );
             bin.clear();
             natural_layout(
                 &mut bin,
@@ -725,6 +735,18 @@ impl WindowSelectorView {
             );
             *stored_hash = layout_hash;
         }
+
+        // The grid is rebuilt whenever a window's geometry changes, which
+        // happens on ordinary client commits too. Remember what the pointer
+        // was hovering so the highlight and label don't blink away under a
+        // cursor that never moved.
+        let hovered_window = {
+            let previous = self.view.get_state();
+            previous
+                .current_selection
+                .and_then(|index| previous.rects.get(index).cloned())
+                .and_then(|rect| rect.window_id)
+        };
 
         let mut state = WindowSelectorState {
             rects: vec![],
@@ -747,6 +769,19 @@ impl WindowSelectorView {
                     window_id: Some(window.id.clone()),
                 });
             }
+        }
+
+        // Restore the hover, but only while the last known cursor position is
+        // still inside that window's (possibly moved) preview — a re-layout
+        // can slide the grid out from under the pointer.
+        if let Some(window_id) = hovered_window {
+            let cursor = *self.cursor_location.read().unwrap();
+            state.current_selection = state.rects.iter().position(|rect| {
+                rect.window_id.as_ref() == Some(&window_id)
+                    && cursor.is_none_or(|(x, y)| {
+                        x > rect.x && x < rect.x + rect.w && y > rect.y && y < rect.y + rect.h
+                    })
+            });
         }
 
         self.view.update_state(&state);

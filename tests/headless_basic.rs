@@ -513,6 +513,144 @@ mod headless_tests {
 
     #[test]
     #[serial]
+    fn expose_selection_survives_client_commit() {
+        let handle = start_compositor();
+        let mut client = connect_client(&handle);
+
+        let w1 = client.create_toplevel("window-1", 640, 480);
+        let _w2 = client.create_toplevel("window-2", 800, 600);
+        handle.wait(Duration::from_millis(200));
+        let _ = client.roundtrip();
+
+        // Enter expose
+        handle.swipe(&[(0.0, -10.0), (0.0, -50.0), (0.0, -80.0), (0.0, -80.0)]);
+        handle.settle(300);
+        assert!(handle.is_expose_active(), "Expose should be active");
+
+        let rects = handle.expose_window_rects();
+        let scale: f64 = handle.query(|state| {
+            state
+                .workspaces
+                .outputs()
+                .next()
+                .map(|o| o.current_scale().fractional_scale())
+                .unwrap_or(1.0)
+        });
+        let target = rects
+            .iter()
+            .find(|(title, _, _, _, _)| title == "window-2")
+            .expect("window-2 should have an expose rect");
+
+        // Establish pointer focus, then hover window-2
+        handle.pointer_move(5.0, 300.0);
+        handle.settle(2);
+        let cx = (target.1 + target.3 / 2.0) as f64 / scale;
+        let cy = (target.2 + target.4 / 2.0) as f64 / scale;
+        handle.pointer_move(cx, cy);
+        handle.settle(10);
+        assert_eq!(
+            handle.expose_selected_title().as_deref(),
+            Some("window-2"),
+            "window-2 should be selected while hovered"
+        );
+
+        // Another window redraws while the pointer stays put.
+        w1.lock().unwrap().commit_frame();
+        let _ = client.roundtrip();
+        handle.wait(Duration::from_millis(100));
+        handle.settle(30);
+
+        assert_eq!(
+            handle.expose_selected_title().as_deref(),
+            Some("window-2"),
+            "A client commit must not clear the expose hover selection"
+        );
+
+        // A relayout (window geometry changed under the grid) must also keep
+        // the hovered window selected.
+        handle.with_state(|state| {
+            let ws_index = state.workspaces.get_current_workspace_index();
+            if let Some(workspace) = state.workspaces.get_workspace_at(ws_index) {
+                workspace.window_selector_view.invalidate_layout();
+            }
+            state.workspaces.expose_update_if_needed();
+        });
+
+        assert_eq!(
+            handle.expose_selected_title().as_deref(),
+            Some("window-2"),
+            "An expose relayout must not clear the hover selection"
+        );
+
+        // ...and the overlay that draws the highlight must stay visible
+        // instead of being blanked for the length of the re-layout animation.
+        let overlay_opacity: f32 = handle.query(|state| {
+            let ws_index = state.workspaces.get_current_workspace_index();
+            state
+                .workspaces
+                .get_workspace_at(ws_index)
+                .map(|w| w.window_selector_view.window_selector_view.opacity())
+                .unwrap_or(-1.0)
+        });
+        assert_eq!(
+            overlay_opacity, 1.0,
+            "Selection overlay should stay visible across a re-layout"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn expose_preview_repaints_on_client_commit() {
+        let handle = start_compositor();
+        let mut client = connect_client(&handle);
+
+        let w1 = client.create_toplevel("window-1", 640, 480);
+        let _w2 = client.create_toplevel("window-2", 800, 600);
+        handle.wait(Duration::from_millis(200));
+        let _ = client.roundtrip();
+
+        // Enter expose and let everything come to rest.
+        handle.swipe(&[(0.0, -10.0), (0.0, -50.0), (0.0, -80.0), (0.0, -80.0)]);
+        handle.settle(300);
+        assert!(handle.is_expose_active(), "Expose should be active");
+        assert_eq!(
+            handle.settle(300),
+            0,
+            "Scene should be quiescent before the commit"
+        );
+
+        // A client redraws while expose is open: its preview mirror has to
+        // repaint, or the previews freeze on their last frame (a playing
+        // video looks stuck). The compositor loop ticks the engine on its
+        // own, so watch the accumulated damage rect rather than a tick's
+        // return value.
+        handle.with_state(|state| state.layers_engine.clear_damage());
+        w1.lock().unwrap().commit_frame();
+        let _ = client.roundtrip();
+        handle.wait(Duration::from_millis(200));
+        handle.settle(10);
+
+        let preview_damage = handle.query(|state| {
+            let mirror = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == "window-1")
+                .map(|w| w.mirror_layer().id)
+                .expect("window-1 should have a preview mirror");
+            state
+                .layers_engine
+                .subtree_damage(mirror)
+                .map(|r| (r.width(), r.height()))
+        });
+        assert!(
+            preview_damage.is_some_and(|(w, h)| w > 0.0 && h > 0.0),
+            "A client commit while expose is open must repaint that window's \
+             preview mirror (subtree damage was {preview_damage:?})"
+        );
+    }
+
+    #[test]
+    #[serial]
     fn expose_gesture_close_raises_hovered_window() {
         let handle = start_compositor();
         let mut client = connect_client(&handle);
@@ -624,9 +762,12 @@ mod headless_tests {
     /// Titles of the current scanout candidates, top-most first.
     fn scanout_candidate_titles(handle: &HeadlessHandle) -> Vec<String> {
         handle.query(|state| {
+            let Some(output) = state.workspaces.outputs().next().cloned() else {
+                return Vec::new();
+            };
             state
                 .workspaces
-                .get_scanout_candidates()
+                .get_scanout_candidates(&output)
                 .iter()
                 .filter_map(|id| {
                     state

@@ -1643,6 +1643,23 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                         .append_layer(root_layer, content_layer.id());
                 }
 
+                // Keep the expose preview live. The preview mirror is a
+                // *follower* of the window's base layer, and lay-rs only
+                // propagates NEEDS_PAINT from the leader node itself — this
+                // commit repaints a surface layer deeper in the tree, which
+                // never reaches the mirror. Report the new content on the
+                // leader so the follower repaints; otherwise the previews
+                // freeze on whatever was on screen when expose opened (a
+                // playing video looks stuck). Only while expose is up: the
+                // mirrors aren't rendered otherwise, and the real window layer
+                // repaints through the normal path.
+                if self.workspaces.get_show_all() || self.workspaces.is_expose_transitioning() {
+                    window.base_layer().add_damage(layers::skia::Rect::from_wh(
+                        window_geometry.size.w as f32,
+                        window_geometry.size.h as f32,
+                    ));
+                }
+
                 self.workspaces.expose_update_if_needed();
             }
         }

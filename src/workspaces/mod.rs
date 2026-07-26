@@ -2033,8 +2033,29 @@ impl Workspaces {
                 timing: TimingFunction::Spring(Spring::with_duration_and_bounce(0.3, 0.1)),
             };
             self.expose_show_all_end(workspace_index, 1.0, true, Some(transition));
+            // `expose_show_all_apply` blanks the selection overlay for the
+            // duration of the open animation. Expose is already open here —
+            // this is only a grid re-layout — so put it straight back, or the
+            // highlight and label blink out on every re-layout (any client
+            // commit that changes a window's geometry triggers one).
+            self.show_selection_overlays();
         }
     }
+
+    /// Make the per-workspace selection overlay (hover highlight + label)
+    /// visible again after a re-layout that ran while expose was already open.
+    fn show_selection_overlays(&self) {
+        if self.expose_dragged_window.lock().unwrap().is_some() {
+            return;
+        }
+        for workspace_view in self.with_model(|m| m.workspaces.clone()).iter() {
+            workspace_view
+                .window_selector_view
+                .window_selector_view
+                .set_opacity(1.0, None);
+        }
+    }
+
     /// Close all the windows of an app by its id
     pub fn quit_app(&self, app_id: &str) {
         for window_id in self.get_app_windows(app_id) {
