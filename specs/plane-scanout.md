@@ -82,16 +82,22 @@ vibrancy even though the content behind it lives on other planes.
   multi-output.md).
 - Direct-scanout promotion is evaluated independently per output: candidates
   are drawn only from that output's own current workspace, and the
-  promoted-window cap (see below) applies per output, not globally. Dock,
-  app-switcher, and OSD occluder rects are only applied on the primary
-  output — that chrome is primary-only and never occludes a secondary
-  output's candidates. The set of windows actually applied to plane state
+  promoted-window cap (see below) applies per output, not globally. Dock and
+  OSD occluder rects are only applied on the primary output — that chrome is
+  primary-only and never occludes a secondary output's candidates. The
+  app-switcher occluder rect is applied on whichever output currently hosts
+  the switcher panel, which need not be the primary (see multi-output.md).
+  The set of windows actually applied to plane state
   is the union of every output's per-output candidate set, so one output's
   promotion decision cannot demote a window promoted on another output.
+- Likewise, an app switcher shown on one output does not block fullscreen
+  direct scanout on another: the fullscreen-stability check consults the
+  switcher's host output, not its global visibility.
 - The dock and app-switcher strip planes themselves are pushed only to the
-  CRTC of the output that actually hosts that chrome (the primary output);
-  a secondary output never submits a plane for either role. This is both a
-  correctness fix (that chrome has no content on a secondary output) and a
+  CRTC of the output that actually hosts that chrome — always the primary
+  for the dock, the switcher's current host output for the switcher; every
+  other output never submits a plane for that role. This is both a
+  correctness fix (that chrome has no content on the other outputs) and a
   fetch-bandwidth saving — an otherwise-empty full-width strip plane on a
   secondary output still costs the display engine fetch budget to scan out.
 - The overlay plane is pushed on demand — an empty full-screen ARGB buffer

@@ -160,6 +160,11 @@ pub struct Workspaces {
     // views
     pub dock: Arc<DockView>,
     pub app_switcher: Arc<AppSwitcherView>,
+    /// Name of the output currently hosting the app switcher panel — its
+    /// `wrap_layer` is a sublayer of that output's `switcher_plane`. `None`
+    /// until first shown, which means "primary" (where it is parented at
+    /// output-add time). See `place_app_switcher`.
+    app_switcher_output: Arc<RwLock<Option<String>>>,
     pub window_views: Arc<RwLock<HashMap<ObjectId, WindowView>>>,
     pub dnd_view: DndView,
     pub popup_overlay: PopupOverlayView,
@@ -379,6 +384,7 @@ impl Workspaces {
             windows_map: HashMap::new(),
             expose_layer,
             app_switcher: app_switcher.clone(),
+            app_switcher_output: Arc::new(RwLock::new(None)),
             dock: dock.clone(),
             dnd_view,
             popup_overlay,
@@ -433,6 +439,68 @@ impl Workspaces {
         self.focused_output()
             .map(|o| o.name())
             .and_then(|n| self.output_workspaces.get(&n))
+    }
+
+    /// Name of the output currently hosting the app switcher panel, falling
+    /// back to primary (where it is parented until first placed).
+    pub fn app_switcher_output_name(&self) -> Option<String> {
+        self.app_switcher_output
+            .read()
+            .unwrap()
+            .clone()
+            .filter(|n| self.output_workspaces.contains_key(n))
+            .or_else(|| self.primary_output_name())
+    }
+
+    /// Whether this output is the one showing the app switcher panel. Only
+    /// that output pushes a switcher plane and counts the panel as an
+    /// occluder.
+    pub fn is_app_switcher_output(&self, output: &Output) -> bool {
+        self.app_switcher_output_name().as_deref() == Some(output.name().as_str())
+    }
+
+    /// Park the app switcher panel on the output it should appear on: the one
+    /// under the pointer when `appswitcher.follow_cursor` is set, else the
+    /// primary. Called just before the panel is shown, so a switcher already
+    /// on screen never jumps mid-cycle.
+    ///
+    /// Re-parents `wrap_layer` into the target output's `switcher_plane` (the
+    /// node the per-CRTC switcher plane element scans out) and hands the view
+    /// that output's physical width and fractional scale, so the panel is
+    /// sized for the screen it lands on rather than for the primary.
+    pub fn place_app_switcher(&self) {
+        let follow_cursor = Config::with(|c| c.appswitcher.follow_cursor);
+        let target = if follow_cursor {
+            self.focused_output().cloned()
+        } else {
+            self.primary_output.clone()
+        };
+        let Some(output) = target.or_else(|| self.primary_output.clone()) else {
+            return;
+        };
+        let name = output.name();
+        let Some(ows) = self.output_workspaces.get(&name) else {
+            return;
+        };
+        {
+            let mut host = self.app_switcher_output.write().unwrap();
+            if host.as_deref() != Some(name.as_str()) {
+                if let Err(err) = ows
+                    .switcher_plane
+                    .add_sublayer(&self.app_switcher.wrap_layer)
+                {
+                    tracing::warn!("app switcher re-parent to {name} failed: {err:?}");
+                    return;
+                }
+                *host = Some(name.clone());
+            }
+        }
+        let width_px = output
+            .current_mode()
+            .map(|m| m.size.w)
+            .unwrap_or_else(|| self.with_model(|m| m.width));
+        let scale = output.current_scale().fractional_scale() as f32;
+        self.app_switcher.set_host_metrics(width_px, scale);
     }
 
     /// The workspace selector belonging to a given output.
@@ -691,8 +759,9 @@ impl Workspaces {
             return false;
         }
 
-        // Check if app switcher is visible
-        if self.app_switcher.alive() {
+        // Check if the app switcher is visible on THIS output — the panel
+        // follows the pointer, so one on another screen is irrelevant here.
+        if self.app_switcher.alive() && self.is_app_switcher_output(output) {
             return false;
         }
 
@@ -3594,6 +3663,19 @@ impl Workspaces {
         }
         // Remove the output's workspace set (dropping workspaces_layer removes it from scene)
         self.output_workspaces.remove(&output.name());
+        // The app switcher may have been parented into the departing output's
+        // switcher plane — that node is gone now, so bring the panel home to
+        // the primary output instead of leaving it detached from the scene.
+        let hosted_here =
+            self.app_switcher_output.read().unwrap().as_deref() == Some(&output.name());
+        if hosted_here {
+            *self.app_switcher_output.write().unwrap() = None;
+            if let Some(ows) = self.primary_output_workspaces() {
+                let _ = ows
+                    .switcher_plane
+                    .add_sublayer(&self.app_switcher.wrap_layer);
+            }
+        }
         self.sync_model_from_primary();
     }
 
@@ -4221,19 +4303,20 @@ impl Workspaces {
         let mut occluders: Vec<Rectangle<i32, Physical>> = Vec::new();
         // Use the *visible* layers, not the wrap/positioning containers —
         // those can span the whole output and would demote every window.
-        // Dock / switcher / OSD chrome is attached to the primary output
-        // only — it never occludes windows on a secondary output.
+        // Dock / OSD chrome is attached to the primary output only — it never
+        // occludes windows on a secondary output.
         if is_primary {
             if !self.dock.is_hidden() {
                 occluders.extend(layer_rect(&self.dock.bar_layer));
             }
-            if self.app_switcher.alive() {
-                if let Some(layer) = self.app_switcher.view.layer.read().unwrap().as_ref() {
-                    occluders.extend(layer_rect(layer));
-                }
-            }
             if self.osd.is_visible() {
                 occluders.extend(layer_rect(&self.osd.view_layer));
+            }
+        }
+        // The switcher, unlike the dock, follows the pointer across outputs.
+        if self.app_switcher.alive() && self.is_app_switcher_output(output) {
+            if let Some(layer) = self.app_switcher.view.layer.read().unwrap().as_ref() {
+                occluders.extend(layer_rect(layer));
             }
         }
         {

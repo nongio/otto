@@ -23,13 +23,13 @@ Otto supports multiple workspaces across multiple outputs (physical monitors and
 
 - Drag-and-drop of workspaces between outputs.
 - Synchronised workspace counts across outputs (outputs may have different numbers of workspaces).
-- Per-output dock or app switcher (these remain shared/global, attached to the primary output).
+- Per-output dock (it remains shared/global, attached to the primary output). The app switcher is also a single shared panel, but it migrates to the output it should appear on rather than being duplicated.
 
 ## Behavior
 
 ### Output Types
 
-- **Primary output:** The first physical output mapped. Owns the shared dock, app switcher, and overlay layers.
+- **Primary output:** The first physical output mapped. Owns the shared dock and overlay layers, and hosts the app switcher whenever it is not following the pointer elsewhere.
 - **Secondary physical outputs:** Additional monitors. Each gets its own workspace set.
 - **Virtual outputs:** Outputs created for PipeWire screensharing. Identified by a virtual-output marker. Treated identically to secondary physical outputs for all workspace operations.
 
@@ -89,6 +89,16 @@ Otto supports multiple workspaces across multiple outputs (physical monitors and
 - Unfullscreen restores the window to its saved rect on the same output, switches only that output back, and removes the dedicated workspace from that output only (via the removal channel's named-output form).
 - Maximize similarly accounts for per-output chrome: the usable area subtracts the dock height only on the primary output; maximized windows on other outputs use the full height.
 
+### App Switcher (Output Placement)
+
+- The app switcher is a single panel, never duplicated: it is re-parented into the switcher plane of the one output that should show it.
+- With `appswitcher.follow_cursor` (default `true`) it appears on the output under the pointer — the focused output, the same one the workspace selector and window placement use. With the option off it always appears on the primary output.
+- The host output is resolved once, when the panel is about to be shown; a switcher already on screen never jumps to another output mid-cycle, however far the pointer travels while the modifier is held.
+- The panel is laid out from its host output's own physical width and fractional scale, not from the shared model's (primary) screen dimensions, so it is sized correctly on a screen of a different resolution or scale.
+- Only the host output pushes a switcher plane, counts the panel as a scanout occluder, and treats it as blocking fullscreen direct scanout; every other output is unaffected while the switcher is up.
+- The panel still lists windows from every output (it mirrors the global z-index app list); selecting one focuses it on the output that owns it, which may be a different output from the one showing the switcher.
+- If the host output is unplugged while hosting the panel, the panel returns to the primary output rather than being left detached from the scene.
+
 ### Expose Mode (Show All Workspaces)
 
 - When expose mode is activated (open or close), every output lays out and animates its own tile grid at the same time — a single global "show all" state drives every screen together, there is no per-output open/close.
@@ -122,7 +132,7 @@ Otto supports multiple workspaces across multiple outputs (physical monitors and
 - **Stale scroll offsets:** After workspace removal, the scroll position may reference a workspace that no longer exists. The scroll must be clamped to valid bounds before any animation.
 - **Workspace counter is global:** Workspace indices (used for view identification and the model) are assigned from a shared counter. This means workspace index values are unique across all outputs but non-contiguous within a single output.
 - **Model mirrors the focused output, falling back to primary:** The shared `WorkspacesModel` (used by observers like the dock, app switcher, and expose layout/animation) reflects the workspace list and current index of the focused output (see multi-output.md), or the primary output whenever no output has been focused yet. Non-focused outputs do not update the shared model directly; only the model's source output changes. The per-output workspace selectors do not read the shared model — each is fed directly from its own output's workspace views.
-- **Dock and app switcher are shared and primary-only regardless of focus:** These are attached to the primary output layer and respond to the shared model, but — unlike expose and the workspace selector — they do not follow focus to a secondary output; they are not duplicated on secondary outputs and stay visible only on the primary output's screen.
+- **The dock is shared and primary-only regardless of focus:** it is attached to the primary output layer and responds to the shared model, but — unlike expose, the workspace selector and the app switcher — it does not follow focus to a secondary output; it is not duplicated on secondary outputs and stays visible only on the primary output's screen.
 - **Layer engine pointer overlap is now the normal case, not an edge case:** every output's scene subtree lives at (0,0) and overlaps every other output's by design (see multi-output.md), so pointer hit-testing through the layer engine with a global root would hit layers belonging to whichever output's subtree happens to be on top, regardless of where the pointer actually is on screen. All pointer interactions (expose mode and otherwise) must resolve the target output first (from the pointer's global/logical position against each output's global geometry) and then hit-test only that output's subtree — never hit-test the shared scene root directly for input routing.
 
 ## Rationale

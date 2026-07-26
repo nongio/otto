@@ -4,6 +4,7 @@ use brightness::blocking::Brightness;
 use freedesktop_desktop_entry::DesktopEntry;
 use smithay::{
     reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1,
+    utils::IsAlive,
     wayland::{compositor::with_states, shell::xdg::XdgToplevelSurfaceData},
 };
 use tracing::{error, info, warn};
@@ -368,12 +369,18 @@ impl<BackendData: Backend> Otto<BackendData> {
         if self.workspaces.get_show_all() {
             self.close_expose_show_all_and_focus_top();
         }
+        if !self.workspaces.app_switcher.alive() {
+            self.workspaces.place_app_switcher();
+        }
         self.workspaces.app_switcher.next();
     }
 
     pub(crate) fn handle_app_switcher_prev(&mut self) {
         if self.workspaces.get_show_all() {
             self.close_expose_show_all_and_focus_top();
+        }
+        if !self.workspaces.app_switcher.alive() {
+            self.workspaces.place_app_switcher();
         }
         self.workspaces.app_switcher.previous();
     }

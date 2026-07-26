@@ -782,7 +782,10 @@ impl Otto<UdevData> {
             .primary_output()
             .map(|p| p.name() == output.name())
             .unwrap_or(false);
-        let switcher_active = chrome_output && self.workspaces.app_switcher.alive();
+        // The switcher, unlike the dock, can be shown on any output (see
+        // `appswitcher.follow_cursor`) — only its host output pushes the plane.
+        let switcher_active =
+            self.workspaces.app_switcher.alive() && self.workspaces.is_app_switcher_output(&output);
         let overlay_active =
             self.workspaces.is_overlay_ui_active(&output) || self.dnd_icon.is_some();
         {

@@ -27,6 +27,8 @@ pub struct Config {
     #[serde(default)]
     pub dock: DockConfig,
     #[serde(default)]
+    pub appswitcher: AppSwitcherConfig,
+    #[serde(default)]
     pub layer_shell: LayerShellConfig,
     #[serde(default)]
     pub power_management: PowerManagementConfig,
@@ -72,6 +74,7 @@ impl Default for Config {
             cursor_size: 24,
             input: InputConfig::default(),
             dock: DockConfig::default(),
+            appswitcher: AppSwitcherConfig::default(),
             layer_shell: LayerShellConfig::default(),
             power_management: PowerManagementConfig::default(),
             audio: AudioConfig::default(),
@@ -330,6 +333,27 @@ pub struct DockConfig {
         deserialize_with = "deserialize_dock_bookmarks"
     )]
     pub bookmarks: Vec<DockBookmark>,
+}
+
+/// App switcher (cmd-tab panel) configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppSwitcherConfig {
+    /// Show the switcher on the output the pointer is on (default: true).
+    /// When false it always appears on the primary output.
+    #[serde(default = "default_appswitcher_follow_cursor")]
+    pub follow_cursor: bool,
+}
+
+impl Default for AppSwitcherConfig {
+    fn default() -> Self {
+        Self {
+            follow_cursor: default_appswitcher_follow_cursor(),
+        }
+    }
+}
+
+fn default_appswitcher_follow_cursor() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

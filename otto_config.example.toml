@@ -223,3 +223,7 @@ bookmarks = [
   { desktop_id = "org.gnome.Terminal.desktop" }
 ]
 
+[appswitcher]
+# Show the app switcher (cmd-tab panel) on the output the pointer is on
+# (default: true). When false it always appears on the primary output.
+follow_cursor = true
