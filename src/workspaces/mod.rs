@@ -2364,7 +2364,7 @@ impl Workspaces {
         let output = self
             .output_under(pointer_location)
             .next()
-            .or_else(|| self.outputs().next())
+            .or_else(|| self.default_client_output())
             .cloned();
         let output_geometry = output
             .and_then(|o| {
@@ -2477,7 +2477,6 @@ impl Workspaces {
         transition: Option<Transition>,
     ) {
         let location: smithay::utils::Point<i32, smithay::utils::Logical> = location.into();
-        let owning = self.output_for_window(window_element);
 
         // Route by the window's center: a drag that crosses into another
         // output's region MIGRATES the window there (space + scene subtree).
@@ -2491,7 +2490,7 @@ impl Workspaces {
             .output_under(center)
             .next()
             .cloned()
-            .or_else(|| owning.clone())
+            .or_else(|| self.output_for_window(window_element))
             .or_else(|| {
                 self.with_model(|m| m.focused_output_name.clone())
                     .and_then(|n| self.outputs.iter().find(|o| o.name() == n).cloned())
@@ -2501,11 +2500,34 @@ impl Workspaces {
             return;
         };
 
-        if let Some(owning) = owning {
-            if owning.name() != target.name() {
+        self.map_window_on_output(&target, window_element, location, activate, transition);
+    }
+
+    /// Map a window at `location` onto an explicit `output`, migrating it off
+    /// its previous owner when that changes.
+    ///
+    /// Use this instead of [`Self::map_window`] whenever `location` was derived
+    /// from a known output's geometry (tile, maximize). The center-based routing
+    /// in `map_window` measures the window's CURRENT size, which is still the
+    /// pre-resize one while the resize animates: a maximized window snapped to
+    /// the right half puts that stale center on the output's right edge, so it
+    /// would migrate onto the output next to it and land at a negative
+    /// output-local x — flying off-screen to the left.
+    pub fn map_window_on_output(
+        &mut self,
+        output: &Output,
+        window_element: &WindowElement,
+        location: impl Into<smithay::utils::Point<i32, smithay::utils::Logical>>,
+        activate: bool,
+        transition: Option<Transition>,
+    ) {
+        let location: smithay::utils::Point<i32, smithay::utils::Logical> = location.into();
+
+        if let Some(owning) = self.output_for_window(window_element) {
+            if owning.name() != output.name() {
                 // Migrate: drop the window from the old output's spaces and
                 // views. The base layer is re-parented into the target
-                // output's workspace view by `map_window` below.
+                // output's workspace view by `map_window_for_output` below.
                 if let Some(old) = self.output_workspaces.get_mut(&owning.name()) {
                     for space in old.spaces.iter_mut() {
                         space.unmap_elem(window_element);
@@ -2517,7 +2539,7 @@ impl Workspaces {
             }
         }
 
-        self.map_window_for_output(&target, window_element, location, activate, transition);
+        self.map_window_for_output(output, window_element, location, activate, transition);
     }
 
     /// Map a window onto a specific output's current workspace.
@@ -3545,6 +3567,20 @@ impl Workspaces {
             .or(self.primary_output.as_ref())
     }
 
+    /// The output to use for a client that did not name one (layer-shell
+    /// surfaces with a NULL `wl_output`, fullscreen requests without an
+    /// output). Never a virtual output: those exist for remote/mirror
+    /// consumers and carry none of the primary output's chrome, so a surface
+    /// assigned to one is effectively invisible on the physical screen.
+    pub fn default_client_output(&self) -> Option<&Output> {
+        let real = |o: &&Output| !crate::virtual_output::is_virtual_output(o);
+        self.focused_output()
+            .filter(real)
+            .or_else(|| self.primary_output.as_ref().filter(real))
+            .or_else(|| self.outputs.iter().find(real))
+            .or_else(|| self.outputs.first())
+    }
+
     /// Detach an output from every workspace
     pub fn unmap_output(&mut self, output: &Output) {
         self.suspended_outputs.remove(&output.name());
@@ -3763,7 +3799,11 @@ impl Workspaces {
             .get(output_name)
             .map(|ows| ows.current_workspace)
             .unwrap_or(0);
-        let dest_after = if cur > pos { cur - 1 } else { cur.min(num_spaces - 2) };
+        let dest_after = if cur > pos {
+            cur - 1
+        } else {
+            cur.min(num_spaces - 2)
+        };
 
         // Collect windows to relocate off the removed workspace.
         let windows_to_move: Vec<(
@@ -3822,7 +3862,12 @@ impl Workspaces {
 
         self.sync_model_from_primary();
         self.update_workspaces_layout();
-        if let Some(output) = self.outputs.iter().find(|o| o.name() == output_name).cloned() {
+        if let Some(output) = self
+            .outputs
+            .iter()
+            .find(|o| o.name() == output_name)
+            .cloned()
+        {
             let dest = self
                 .output_workspaces
                 .get(output_name)
@@ -4192,9 +4237,21 @@ impl Workspaces {
     pub fn is_overlay_ui_active(&self, output: &Output) -> bool {
         use smithay::desktop::layer_map_for_output;
         use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
-        let layer_shell_active = layer_map_for_output(output)
-            .layers()
-            .any(|l| matches!(l.layer(), WlrLayer::Top | WlrLayer::Overlay));
+        let has_chrome_layer = |o: &Output| {
+            layer_map_for_output(o)
+                .layers()
+                .any(|l| matches!(l.layer(), WlrLayer::Top | WlrLayer::Overlay))
+        };
+        // `layer_shell_top`/`layer_shell_overlay` are attached to the PRIMARY
+        // output's overlay plane no matter which output a surface was mapped
+        // to, so the primary must count surfaces on every output — otherwise a
+        // layer surface assigned elsewhere renders into a plane that is never
+        // pushed and stays invisible.
+        let layer_shell_active = if self.primary_output().is_some_and(|p| p == output) {
+            self.outputs().any(has_chrome_layer)
+        } else {
+            has_chrome_layer(output)
+        };
         let popups = !self.popup_overlay.layer.children().is_empty();
         // Selector and DnD layers are never `hidden()` — they are
         // empty containers until used, so check content/state instead.

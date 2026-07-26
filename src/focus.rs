@@ -408,7 +408,10 @@ impl<B: Backend> KeyboardTarget<Otto<B>> for KeyboardFocusTarget<B> {
                         // never reach it. WM_TAKE_FOCUS would deliver them too but
                         // breaks the game's render loop; bare set_input_focus does not.
                         if let Err(err) = s.set_input_focus() {
-                            tracing::warn!(?err, "failed to set X11 input focus for self-managing game");
+                            tracing::warn!(
+                                ?err,
+                                "failed to set X11 input focus for self-managing game"
+                            );
                         }
                         KeyboardTarget::enter(&surface, seat, data, keys, serial)
                     }

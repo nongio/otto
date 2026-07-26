@@ -550,10 +550,15 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             let geometry = fullscreen_output_geometry(wl_output.as_ref(), &self.workspaces);
 
             // if let Some(geometry) = output_geometry {
-            let output = wl_output
+            // No output named by the client: pick a real one (never a virtual
+            // RDP/mirror output — see `default_client_output`).
+            let Some(output) = wl_output
                 .as_ref()
                 .and_then(Output::from_resource)
-                .unwrap_or_else(|| self.workspaces.outputs().next().unwrap().clone());
+                .or_else(|| self.workspaces.default_client_output().cloned())
+            else {
+                return;
+            };
             let client = self.display_handle.get_client(wl_surface.id()).unwrap();
             for output in output.client_outputs(&client) {
                 wl_output = Some(output);
@@ -917,8 +922,13 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             );
             self.layers_engine.start_animation(animation, 0.0);
 
-            self.workspaces
-                .map_window(&window, new_geometry.loc, true, Some(transition));
+            self.workspaces.map_window_on_output(
+                &output,
+                &window,
+                new_geometry.loc,
+                true,
+                Some(transition),
+            );
         }
     }
 
@@ -1376,13 +1386,20 @@ impl<BackendData: Backend> Otto<BackendData> {
                 );
                 self.layers_engine.start_animation(animation, 0.0);
 
-                self.workspaces
-                    .map_window(window, target.loc, true, Some(transition));
+                // Pin the destination output: `target` comes from this output's
+                // usable zone, and the window still has its pre-tile size here.
+                self.workspaces.map_window_on_output(
+                    &output,
+                    window,
+                    target.loc,
+                    true,
+                    Some(transition),
+                );
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11) => {
                 let x11 = x11.clone();
-                self.apply_tile_x11(&x11, target, matches!(zone, TileZone::Maximize));
+                self.apply_tile_x11(&x11, &output, target, matches!(zone, TileZone::Maximize));
             }
             #[cfg(not(feature = "xwayland"))]
             _ => {}

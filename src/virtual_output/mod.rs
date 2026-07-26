@@ -92,9 +92,11 @@ impl VirtualOutputState {
             Some(Scale::Fractional(screen_scale)),
             Some(position),
         );
-        output.user_data().insert_if_missing(|| VirtualOutputMarker {
-            interactive: config.interactive,
-        });
+        output
+            .user_data()
+            .insert_if_missing(|| VirtualOutputMarker {
+                interactive: config.interactive,
+            });
 
         output
     }

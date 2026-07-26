@@ -4,6 +4,7 @@ use layers::prelude::Transition;
 use smithay::{
     desktop::WindowSurface,
     input::pointer::Focus,
+    output::Output,
     reexports::wayland_server::Resource,
     utils::{Logical, Rectangle, SERIAL_COUNTER},
     wayland::{
@@ -588,8 +589,13 @@ impl<BackendData: Backend> Otto<BackendData> {
             .get::<OldGeometry>()
             .unwrap()
             .save(old_geo);
-        self.workspaces
-            .map_window(&elem, geometry.loc, false, Some(Transition::ease_out(0.3)));
+        self.workspaces.map_window_on_output(
+            &output,
+            &elem,
+            geometry.loc,
+            false,
+            Some(Transition::ease_out(0.3)),
+        );
     }
 
     /// Snap an X11 window into a tiling target rectangle (logical pixels).
@@ -601,6 +607,7 @@ impl<BackendData: Backend> Otto<BackendData> {
     pub fn apply_tile_x11(
         &mut self,
         window: &X11Surface,
+        output: &Output,
         target: Rectangle<i32, Logical>,
         maximize: bool,
     ) {
@@ -626,8 +633,15 @@ impl<BackendData: Backend> Otto<BackendData> {
 
         let _ = window.set_maximized(maximize);
         let _ = window.configure(target);
-        self.workspaces
-            .map_window(&elem, target.loc, false, Some(Transition::ease_out(0.3)));
+        // `target` belongs to `output`: pin it, or center-based routing would
+        // send a still-full-width window onto the neighbouring output.
+        self.workspaces.map_window_on_output(
+            output,
+            &elem,
+            target.loc,
+            false,
+            Some(Transition::ease_out(0.3)),
+        );
     }
 
     pub fn unmaximize_request_x11(&mut self, window: &X11Surface) {

@@ -16,11 +16,9 @@ use crate::{config::Config, state::Backend, Otto};
 // ── Debug plane PNG dumps (debug-kms feature only) ───────────────────────────
 // Shift+6/7/8/9 — save the bg / windows / expose / overlay plane to PNG.
 #[cfg(feature = "debug-kms")]
-pub static DBG_SAVE_BG: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+pub static DBG_SAVE_BG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 #[cfg(feature = "debug-kms")]
-pub static DBG_SAVE_WIN: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+pub static DBG_SAVE_WIN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 #[cfg(feature = "debug-kms")]
 pub static DBG_SAVE_EXPOSE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -94,7 +92,6 @@ pub fn process_keyboard_shortcut(
         ));
     }
 
-
     let result = config
         .shortcut_bindings()
         .iter()
@@ -167,14 +164,28 @@ impl<BackendData: Backend> Otto<BackendData> {
                     #[cfg(feature = "debug-kms")]
                     if matches!(state, KeyState::Pressed)
                         && modifiers.shift
-                        && !modifiers.ctrl && !modifiers.alt && !modifiers.logo
+                        && !modifiers.ctrl
+                        && !modifiers.alt
+                        && !modifiers.logo
                     {
                         use std::sync::atomic::Ordering;
                         let toggled = match keysym {
-                            Keysym::_6 | Keysym::asciicircum => { DBG_SAVE_BG.store(true, Ordering::Relaxed); Some("save bg") }
-                            Keysym::_7 | Keysym::ampersand => { DBG_SAVE_WIN.store(true, Ordering::Relaxed); Some("save win") }
-                            Keysym::_8 | Keysym::asterisk => { DBG_SAVE_EXPOSE.store(true, Ordering::Relaxed); Some("save expose") }
-                            Keysym::_9 | Keysym::parenleft => { DBG_SAVE_OVERLAY.store(true, Ordering::Relaxed); Some("save overlay") }
+                            Keysym::_6 | Keysym::asciicircum => {
+                                DBG_SAVE_BG.store(true, Ordering::Relaxed);
+                                Some("save bg")
+                            }
+                            Keysym::_7 | Keysym::ampersand => {
+                                DBG_SAVE_WIN.store(true, Ordering::Relaxed);
+                                Some("save win")
+                            }
+                            Keysym::_8 | Keysym::asterisk => {
+                                DBG_SAVE_EXPOSE.store(true, Ordering::Relaxed);
+                                Some("save expose")
+                            }
+                            Keysym::_9 | Keysym::parenleft => {
+                                DBG_SAVE_OVERLAY.store(true, Ordering::Relaxed);
+                                Some("save overlay")
+                            }
                             _ => None,
                         };
                         if let Some(msg) = toggled {

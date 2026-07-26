@@ -330,8 +330,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                 if let Some(picture) = recorder.finish_recording_as_picture(None) {
                     let data = picture.serialize();
                     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-                    let dir =
-                        std::path::PathBuf::from(&home).join("Pictures/Screenshots");
+                    let dir = std::path::PathBuf::from(&home).join("Pictures/Screenshots");
                     let _ = fs::create_dir_all(&dir);
                     let secs = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)

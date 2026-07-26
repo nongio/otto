@@ -10,7 +10,9 @@ use tracing_subscriber::EnvFilter;
 use zbus::ConnectionBuilder;
 
 use xdg_desktop_portal_otto::otto_client::OttoClient;
-use xdg_desktop_portal_otto::portal::{desktop_path, ScreenCastPortal, SettingsPortal};
+use xdg_desktop_portal_otto::portal::{
+    desktop_path, AccessPortal, ScreenCastPortal, SettingsPortal,
+};
 
 /// Well-known D-Bus name for the Otto portal backend.
 const DBUS_NAME: &str = "org.freedesktop.impl.portal.desktop.otto";
@@ -33,15 +35,21 @@ async fn main() -> Result<()> {
         .at(desktop_path(), screencast_portal)
         .await?;
 
-    let settings_portal = SettingsPortal::new(sc_client);
+    let settings_portal = SettingsPortal::new(sc_client.clone());
     connection
         .object_server()
         .at(desktop_path(), settings_portal)
         .await?;
 
+    let access_portal = AccessPortal::new(sc_client);
+    connection
+        .object_server()
+        .at(desktop_path(), access_portal)
+        .await?;
+
     info!(
         name = DBUS_NAME,
-        "ScreenCast and Settings portal backends running"
+        "ScreenCast, Settings and Access portal backends running"
     );
 
     // Wait for shutdown signal

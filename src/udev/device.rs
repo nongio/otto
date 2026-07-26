@@ -64,7 +64,6 @@ fn sync_scene_size_to_outputs(
 }
 
 impl Otto<UdevData> {
-
     /// Handles addition of a new DRM device
     pub(super) fn device_added(
         &mut self,
@@ -601,6 +600,7 @@ impl Otto<UdevData> {
                 scene_dmabuf_element: None,
                 backdrop_surface: None,
                 backdrop_image: None,
+                backdrop_overlay_image: None,
                 backdrop_preblurred: false,
                 backdrop_dirty: false,
                 last_fullscreen_scanout: None,
@@ -684,11 +684,19 @@ impl Otto<UdevData> {
         );
         // Log supported formats/modifiers for primary and overlay planes.
         for (i, p) in planes.primary.iter().enumerate() {
-            let fmts: Vec<_> = p.formats.iter().map(|f| format!("{:?}+{:?}", f.code, f.modifier)).collect();
+            let fmts: Vec<_> = p
+                .formats
+                .iter()
+                .map(|f| format!("{:?}+{:?}", f.code, f.modifier))
+                .collect();
             tracing::debug!(target: "otto::planes", "primary[{i}] formats: {fmts:?}");
         }
         for (i, p) in planes.overlay.iter().enumerate() {
-            let fmts: Vec<_> = p.formats.iter().map(|f| format!("{:?}+{:?}", f.code, f.modifier)).collect();
+            let fmts: Vec<_> = p
+                .formats
+                .iter()
+                .map(|f| format!("{:?}+{:?}", f.code, f.modifier))
+                .collect();
             tracing::debug!(target: "otto::planes", "overlay[{i}] formats: {fmts:?}");
         }
 

@@ -909,7 +909,10 @@ fn build_format_params(config: &StreamConfig) -> Result<Vec<Vec<u8>>, PipeWireEr
                 let bytes =
                     PodSerializer::serialize(Cursor::new(Vec::new()), &Value::Object(format))
                         .map_err(|e| {
-                            PipeWireError::InitFailed(format!("Failed to serialize format: {:?}", e))
+                            PipeWireError::InitFailed(format!(
+                                "Failed to serialize format: {:?}",
+                                e
+                            ))
                         })?
                         .0
                         .into_inner();
@@ -1031,8 +1034,8 @@ fn parse_negotiated_format(
                     let choice = value.as_raw_ptr() as *const spa_pod_choice;
                     let child = &(*choice).body.child as *const spa_pod;
                     if (*child).type_ == SPA_TYPE_Long {
-                        let first = (child as *const u8).add(std::mem::size_of::<spa_pod>())
-                            as *const i64;
+                        let first =
+                            (child as *const u8).add(std::mem::size_of::<spa_pod>()) as *const i64;
                         Some(first.read_unaligned())
                     } else {
                         None

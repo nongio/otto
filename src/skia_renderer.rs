@@ -1309,7 +1309,8 @@ impl Bind<Dmabuf> for SkiaRenderer {
             }
             if let Some(aux) = self.dmabuf_target_aux.remove(&weak) {
                 unsafe {
-                    self.gl.DeleteRenderbuffers(2, [aux.rbo, aux.depth_rbo].as_ptr());
+                    self.gl
+                        .DeleteRenderbuffers(2, [aux.rbo, aux.depth_rbo].as_ptr());
                     smithay::backend::egl::ffi::egl::DestroyImageKHR(
                         **egl_display.get_display_handle(),
                         aux.image,

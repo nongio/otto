@@ -55,7 +55,6 @@ pub static NO_SCANOUT: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 /// (`touch /tmp/otto-dump-planes`; polled at 1 Hz, consumed by the renderer).
 pub static DUMP_PLANES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-
 struct SlotSurface {
     surface: UnsafeCell<SkiaSurface>,
     /// Element commit this slot's content was last rendered at. Swapchain
@@ -151,11 +150,13 @@ struct Inner {
     /// DRM render node — tagged onto each exported dmabuf so Smithay's
     /// GbmFramebufferExporter accepts it.
     render_node: Option<DrmNode>,
-    /// Composite of the planes BELOW this one (global scene coordinates) plus
-    /// its resolution relative to the scene (1.0 = full, 0.25 = quarter).
-    /// Passed to `render_node_tree` so `BackgroundBlur` layers in the subtree
-    /// sample the real content behind the plane (cross-buffer vibrancy).
-    backdrop: Option<(layers::skia::Image, f32, bool)>,
+    /// Composite of the planes BELOW this one (global scene coordinates), its
+    /// resolution relative to the scene (1.0 = full, 0.25 = quarter), whether
+    /// that image is pre-blurred, and an optional *raw* (unblurred) copy at the
+    /// same scale for `blur_include_content` layers (stacked popups). Passed to
+    /// `render_node_tree` so `BackgroundBlur` layers in the subtree sample the
+    /// real content behind the plane (cross-buffer vibrancy).
+    backdrop: Option<(layers::skia::Image, f32, bool, Option<layers::skia::Image>)>,
     /// `unique_id()` of the backdrop the current buffer was rendered with —
     /// a backdrop swap forces a re-render even when the subtree is clean.
     last_backdrop_id: Option<u32>,
@@ -216,6 +217,11 @@ impl SceneDmabufElement {
         self.inner.lock().unwrap().scene_origin = origin;
     }
 
+    /// The output's static scene position (physical px) — see `Inner::scene_origin`.
+    pub fn scene_origin(&self) -> (i32, i32) {
+        self.inner.lock().unwrap().scene_origin
+    }
+
     /// Set the lay-rs subtree this element renders.
     pub fn set_node_ref(&self, node: NodeRef) {
         self.inner.lock().unwrap().node_ref = Some(node);
@@ -234,8 +240,12 @@ impl SceneDmabufElement {
     /// (different `unique_id`) triggers a re-render on the next `render()`.
     /// The `bool` is whether `image` is already blurred — if so the consuming
     /// `BackgroundBlur` layer seeds it directly and skips its own (shape-clipped)
-    /// blur pass, avoiding a faded rim at the layer edge.
-    pub fn set_backdrop(&self, backdrop: Option<(layers::skia::Image, f32, bool)>) {
+    /// blur pass, avoiding a faded rim at the layer edge. The trailing optional
+    /// image is a raw (unblurred) copy for `blur_include_content` layers.
+    pub fn set_backdrop(
+        &self,
+        backdrop: Option<(layers::skia::Image, f32, bool, Option<layers::skia::Image>)>,
+    ) {
         self.inner.lock().unwrap().backdrop = backdrop;
     }
 
@@ -314,7 +324,10 @@ impl SceneDmabufElement {
         // A backdrop swap (new unique_id) means the content behind this
         // plane changed under a blur region — re-render even when the
         // subtree itself is clean so vibrancy tracks the planes below.
-        let backdrop_id = inner.backdrop.as_ref().map(|(img, _, _)| img.unique_id());
+        let backdrop_id = inner
+            .backdrop
+            .as_ref()
+            .map(|(img, _, _, _)| img.unique_id());
         let backdrop_changed = backdrop_id != inner.last_backdrop_id;
         let force_full = std::mem::take(&mut inner.force_full);
         let has_dmabuf = self.current_dmabuf.lock().unwrap().is_some();
@@ -337,14 +350,20 @@ impl SceneDmabufElement {
             None => return false,
         };
 
+        // Bailing after this point drops this frame's dirty_rect while the
+        // engine damage still gets cleared at end of frame — the region would
+        // never repaint. force_full makes the next successful render redraw
+        // everything instead.
         let slot = match swapchain.acquire() {
             Ok(Some(s)) => s,
             Ok(None) => {
                 tracing::warn!(target: "otto::planes", "SceneDmabufElement: no free swapchain slot");
+                inner.force_full = true;
                 return false;
             }
             Err(e) => {
                 tracing::warn!(target: "otto::planes", "SceneDmabufElement: acquire error: {e:?}");
+                inner.force_full = true;
                 return false;
             }
         };
@@ -354,6 +373,7 @@ impl SceneDmabufElement {
             Ok(d) => d,
             Err(e) => {
                 tracing::warn!(target: "otto::planes", "SceneDmabufElement: export error: {e:?}");
+                inner.force_full = true;
                 return false;
             }
         };
@@ -373,6 +393,7 @@ impl SceneDmabufElement {
                 }
                 Err(e) => {
                     tracing::warn!(target: "otto::planes", "SceneDmabufElement: surface error: {e:?}");
+                    inner.force_full = true;
                     return false;
                 }
             }
@@ -415,23 +436,21 @@ impl SceneDmabufElement {
             // when the backdrop changed (blur can repaint anywhere), on a
             // slot's first use, or when the damage history no longer reaches
             // back to the slot's commit.
-            let clip: Option<Rectangle<i32, Physical>> = if backdrop_changed
-                || !has_dmabuf
-                || force_full
-            {
-                None
-            } else {
-                match inner.damage.damage_since(slot_surface.last_commit.get()) {
-                    Some(rects) => {
-                        let mut acc = damage_rect;
-                        for r in rects.iter() {
-                            acc = acc.merge(*r);
+            let clip: Option<Rectangle<i32, Physical>> =
+                if backdrop_changed || !has_dmabuf || force_full {
+                    None
+                } else {
+                    match inner.damage.damage_since(slot_surface.last_commit.get()) {
+                        Some(rects) => {
+                            let mut acc = damage_rect;
+                            for r in rects.iter() {
+                                acc = acc.merge(*r);
+                            }
+                            Some(acc)
                         }
-                        Some(acc)
+                        None => None,
                     }
-                    None => None,
-                }
-            };
+                };
 
             let canvas = skia_surface.canvas();
             let save_point = canvas.save();
@@ -476,15 +495,14 @@ impl SceneDmabufElement {
                         canvas.translate((dx, dy));
                     }
                 }
-                let external_backdrop =
-                    inner
-                        .backdrop
-                        .as_ref()
-                        .map(|(img, s, blurred)| layers::drawing::ExternalBackdrop {
-                            image: img,
-                            scale: *s,
-                            blurred: *blurred,
-                        });
+                let external_backdrop = inner.backdrop.as_ref().map(|(img, s, blurred, raw)| {
+                    layers::drawing::ExternalBackdrop {
+                        image: img,
+                        scale: *s,
+                        blurred: *blurred,
+                        raw_image: raw.as_ref(),
+                    }
+                });
                 scene.with_arena(|arena| {
                     scene.with_renderable_arena(|renderable_arena| {
                         render_node_tree(
@@ -564,27 +582,42 @@ impl SceneDmabufElement {
         }
         let slot = match inner.current_slot.as_ref() {
             Some(s) => s,
-            None => { tracing::warn!(target: "otto::planes", "save_to_png: no current slot"); return; }
+            None => {
+                tracing::warn!(target: "otto::planes", "save_to_png: no current slot");
+                return;
+            }
         };
         let slot_surface = match slot.userdata().get::<SlotSurface>() {
             Some(s) => s,
-            None => { tracing::warn!(target: "otto::planes", "save_to_png: no surface on slot"); return; }
+            None => {
+                tracing::warn!(target: "otto::planes", "save_to_png: no surface on slot");
+                return;
+            }
         };
         // SAFETY: single render thread, same safety invariant as render().
         let skia_surface = unsafe { &mut *slot_surface.surface.get() };
-        skia_surface.gr_context.flush_and_submit_surface(
-            &mut skia_surface.surface,
-            layers::skia::gpu::SyncCpu::Yes,
-        );
+        skia_surface
+            .gr_context
+            .flush_and_submit_surface(&mut skia_surface.surface, layers::skia::gpu::SyncCpu::Yes);
         let image = skia_surface.surface.image_snapshot();
         let data = image
-            .encode(Some(&mut skia_surface.gr_context), layers::skia::EncodedImageFormat::PNG, None)
+            .encode(
+                Some(&mut skia_surface.gr_context),
+                layers::skia::EncodedImageFormat::PNG,
+                None,
+            )
             .or_else(|| {
                 // Fallback: read pixels to CPU then encode.
                 let info = image.image_info();
                 let mut pixels = vec![0u8; (info.width() * info.height() * 4) as usize];
                 let row_bytes = (info.width() * 4) as usize;
-                if image.read_pixels(&info, &mut pixels, row_bytes, layers::skia::IPoint::new(0, 0), layers::skia::image::CachingHint::Disallow) {
+                if image.read_pixels(
+                    &info,
+                    &mut pixels,
+                    row_bytes,
+                    layers::skia::IPoint::new(0, 0),
+                    layers::skia::image::CachingHint::Disallow,
+                ) {
                     let raster = layers::skia::images::raster_from_data(
                         &info,
                         layers::skia::Data::new_copy(&pixels),
@@ -758,10 +791,7 @@ impl RenderElement<SkiaRenderer> for SceneDmabufElement {
             canvas.clip_rect(clip, layers::skia::ClipOp::Intersect, Some(false));
             canvas.draw_image_rect_with_sampling_options(
                 &image,
-                Some((
-                    &src_rect,
-                    layers::skia::canvas::SrcRectConstraint::Fast,
-                )),
+                Some((&src_rect, layers::skia::canvas::SrcRectConstraint::Fast)),
                 dst_rect,
                 sampling,
                 &paint,

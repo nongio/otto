@@ -651,8 +651,11 @@ impl App for TopBarApp {
     }
 
     fn idle_timeout(&self) -> Option<std::time::Duration> {
-        // Wake once per second to update the clock.
-        Some(std::time::Duration::from_secs(1))
+        // Wake when the clock text next changes (minute boundary for the
+        // default format, second boundary when the format shows seconds).
+        // Everything else (tray, focus, app menus) wakes the loop via
+        // request_wakeup or Wayland events.
+        Some(crate::clock::Clock::until_next_change())
     }
 
     fn on_pointer_event(&mut self, _ctx: &AppContext, events: &[PointerEvent]) {

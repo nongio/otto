@@ -120,6 +120,12 @@ No opacity manipulation. All elements are always fully visible.
 
 Content is drawn with Skia into each subsurface's buffer. The buffer is larger than needed (460x100) so content can be drawn at target size before the compositor spring-animates the visual bounds.
 
+Rendering is fully retained-mode — the client never pushes frames continuously:
+
+- Each pill/card stores a content signature (mode, icon, title, count, size / title, body, icon, time label). A buffer is redrawn and committed only when its signature changes; all motion (springs, fades, resizes) runs compositor-side via the surface-style protocol against the retained buffer.
+- The parent layer surface is committed only when its size, input region, or subsurface stacking actually changed.
+- The event loop sleeps until the next real deadline (peek expiry, focus timeout, deferred destroy, notification timeout) or an external wakeup (Wayland event, D-Bus via `request_wakeup`). With no pending deadlines the process is fully idle — no periodic tick, no frame callbacks.
+
 ### Group pill (Compact)
 
 - App icon (rounded, left)
