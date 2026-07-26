@@ -57,17 +57,17 @@ branch = "feat/subtree-buffer-render"
 features = ["export-taffy"]
 
 [dependencies.smithay-drm-extras]
-# local fork: includes dmabuf-scanout + xwm focus (set_input_focus/set_active_window)
-path = "../smithay/smithay-drm-extras"
-# git = "https://github.com/nongio/smithay"
-# branch = "feat/dmabuf-scanout"
+# fork: includes dmabuf-scanout + xwm focus (set_input_focus/set_active_window)
+git = "https://github.com/nongio/smithay"
+branch = "feat/dmabuf-scanout"
+# local development: path = "../smithay/smithay-drm-extras"
 optional = true
 
 [dependencies.smithay]
-# local fork: includes dmabuf-scanout + xwm focus (set_input_focus/set_active_window)
-path = "../smithay"
-# git = "https://github.com/nongio/smithay"
-# branch = "feat/dmabuf-scanout"
+# fork: includes dmabuf-scanout + xwm focus (set_input_focus/set_active_window)
+git = "https://github.com/nongio/smithay"
+branch = "feat/dmabuf-scanout"
+# local development: path = "../smithay"
 default-features = false
 features = [
     "backend_winit",
@@ -251,7 +251,3 @@ files = [
     ["components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service", "/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.service", "644"],
     ["components/xdg-desktop-portal-otto/portals.conf.example", "/usr/share/doc/otto/portals.conf.example", "644"],
 ]
-
-# Local override for lay-rs ghost-blur fix testing — remove once pushed upstream.
-[patch."https://github.com/nongio/layers"]
-laye-rs = { path = "../layers" }
