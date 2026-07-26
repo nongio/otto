@@ -4389,6 +4389,15 @@ impl Workspaces {
             // to have its element GPU-composite anyway — and a composited
             // element in front demotes every plane below it (z-order), a net
             // loss over leaving the window in the windows plane.
+            //
+            // The headless test harness has no GPU, so its clients can only
+            // attach SHM: requiring a dmabuf there would make every candidate
+            // test vacuous. Under `headless` the buffer type is not part of
+            // eligibility, leaving the occlusion/animation/popup/cap rules —
+            // the logic those tests actually cover — under test.
+            #[cfg(feature = "headless")]
+            let has_dmabuf_buffer = true;
+            #[cfg(not(feature = "headless"))]
             let has_dmabuf_buffer = window
                 .wl_surface()
                 .map(|s| {

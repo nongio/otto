@@ -840,7 +840,10 @@ mod headless_tests {
         let handle = start_compositor();
         let mut client = connect_client(&handle);
 
-        let _w = client.create_toplevel("scanout-only-window", 800, 600);
+        // Sized to fit above the dock: the dock bar is a scanout occluder, so
+        // a window tall enough to reach the bottom-centre strip of the
+        // 960x540-logical headless desktop is legitimately not promotable.
+        let _w = client.create_toplevel("scanout-only-window", 400, 300);
         handle.wait(Duration::from_millis(200));
         let _ = client.roundtrip();
         settle_animations(&handle);
@@ -861,9 +864,11 @@ mod headless_tests {
         let handle = start_compositor();
         let mut client = connect_client(&handle);
 
-        let _w1 = client.create_toplevel("bottom-window", 640, 480);
-        let _w2 = client.create_toplevel("middle-window", 800, 600);
-        let _w3 = client.create_toplevel("top-window", 400, 300);
+        // All three must clear the dock strip — whichever is on top has to be
+        // promotable for the assertions below to mean anything.
+        let _w1 = client.create_toplevel("bottom-window", 400, 300);
+        let _w2 = client.create_toplevel("middle-window", 360, 240);
+        let _w3 = client.create_toplevel("top-window", 320, 200);
         handle.wait(Duration::from_millis(200));
         let _ = client.roundtrip();
         settle_animations(&handle);
@@ -900,7 +905,7 @@ mod headless_tests {
         let handle = start_compositor();
         let mut client = connect_client(&handle);
 
-        let _w = client.create_toplevel("hidden-by-expose", 800, 600);
+        let _w = client.create_toplevel("hidden-by-expose", 400, 300);
         handle.wait(Duration::from_millis(200));
         let _ = client.roundtrip();
         settle_animations(&handle);
