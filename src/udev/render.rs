@@ -476,6 +476,7 @@ impl Otto<UdevData> {
         // removals apply this frame, additions only after the candidate set
         // has been stable for the full window.
         const PROMOTE_STABLE: std::time::Duration = std::time::Duration::from_millis(500);
+        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let current_scanout = scanout_output_name
             .as_deref()
             .map(|n| self.workspaces.scanout_window_ids_for_output(n))
@@ -516,9 +517,11 @@ impl Otto<UdevData> {
         // lay-rs content import while promoted; re-import them now (after the
         // set update unhides their content_layer) so the first composited
         // frame shows the current buffer, not a stale one.
+        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let new_scanout_ids: std::collections::HashSet<
             smithay::reexports::wayland_server::backend::ObjectId,
         > = scanout_desired.iter().cloned().collect();
+        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let prev_scanout_ids = scanout_output_name
             .as_deref()
             .map(|n| self.workspaces.scanout_window_ids_for_output(n))
@@ -612,10 +615,11 @@ impl Otto<UdevData> {
                 &surface.scene_dmabuf_element,
                 &surface.windows_dmabuf_element,
                 &surface.expose_dmabuf_element,
-            ] {
-                if let Some(el) = el {
-                    el.request_full_render();
-                }
+            ]
+            .into_iter()
+            .flatten()
+            {
+                el.request_full_render();
             }
         }
 
@@ -735,7 +739,9 @@ impl Otto<UdevData> {
                 .load(std::sync::atomic::Ordering::Relaxed),
         );
 
+        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let occluded_ids = self.workspaces.occluded_window_ids();
+        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let window_throttle_states = crate::state::window_throttle::classify_windows(
             &self.workspaces,
             &all_window_elements,
@@ -1322,13 +1328,6 @@ impl Otto<UdevData> {
         }
     }
 
-    /// Render all virtual outputs into their PipeWire buffers.
-    ///
-    /// Called once per primary GPU render cycle. For each virtual output we:
-    /// 1. Pop an available DMA-BUF buffer from the PipeWire pool.
-    /// 2. Bind it as the render target.
-    /// 3. Call `render_output()` directly into the PipeWire buffer.
-    /// 4. Queue the buffer back and trigger PipeWire.
     /// Keep physical outputs that have an active screencast rendering, even
     /// when their desktop is idle. A physical output only renders on damage,
     /// so a static screen would starve the screenshare tap (and any RDP
@@ -1395,6 +1394,13 @@ impl Otto<UdevData> {
         }
     }
 
+    /// Render all virtual outputs into their PipeWire buffers.
+    ///
+    /// Called once per primary GPU render cycle. For each virtual output we:
+    /// 1. Pop an available DMA-BUF buffer from the PipeWire pool.
+    /// 2. Bind it as the render target.
+    /// 3. Call `render_output()` directly into the PipeWire buffer.
+    /// 4. Queue the buffer back and trigger PipeWire.
     pub(super) fn render_virtual_outputs(&mut self) {
         if self.virtual_outputs.is_empty() {
             return;

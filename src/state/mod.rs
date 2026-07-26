@@ -1368,6 +1368,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// on stale or empty content until the next frame demotes the window.
     pub fn demote_scanout_window(&mut self, window: &WindowElement) {
         let id = window.id();
+        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let ids = self.workspaces.scanout_window_ids();
         if ids.contains(&id) {
             tracing::info!(target: "otto::planes", "demoting {:?} from scanout (pre-animation)", id);
@@ -1444,6 +1445,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 smithay::desktop::PopupKind,
                 smithay::utils::Point<i32, smithay::utils::Logical>,
             )> = PopupManager::popups_for_surface(&window_surface).collect();
+            #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
             let popup_offsets: std::collections::HashMap<
                 smithay::reexports::wayland_server::backend::ObjectId,
                 smithay::utils::Point<i32, smithay::utils::Logical>,
@@ -1469,7 +1471,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 };
                 let degenerate_nested = parent_surface
                     .and_then(|p| popup_offsets.get(&p.id()).copied())
-                    .map_or(false, |parent_off| parent_off == popup_offset);
+                    .is_some_and(|parent_off| parent_off == popup_offset);
                 if degenerate_nested {
                     continue;
                 }

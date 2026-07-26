@@ -4568,6 +4568,7 @@ impl Workspaces {
     /// Remove one window from every output's scanout set (pre-animation
     /// demotion) and apply the new union.
     pub fn remove_scanout_window(&self, id: &ObjectId) {
+        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let union: HashSet<ObjectId> = {
             let mut per_output = self.scanout_windows_per_output.write().unwrap();
             for set in per_output.values_mut() {
@@ -4580,7 +4581,9 @@ impl Workspaces {
     }
 
     fn set_scanout_windows(&self, ids: &[ObjectId]) {
+        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let new_ids: HashSet<ObjectId> = ids.iter().cloned().collect();
+        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let prev_ids = self.scanout_windows.read().unwrap().clone();
         if prev_ids == new_ids {
             return;

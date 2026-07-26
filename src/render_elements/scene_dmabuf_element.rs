@@ -612,14 +612,14 @@ impl SceneDmabufElement {
                 let mut pixels = vec![0u8; (info.width() * info.height() * 4) as usize];
                 let row_bytes = (info.width() * 4) as usize;
                 if image.read_pixels(
-                    &info,
+                    info,
                     &mut pixels,
                     row_bytes,
                     layers::skia::IPoint::new(0, 0),
                     layers::skia::image::CachingHint::Disallow,
                 ) {
                     let raster = layers::skia::images::raster_from_data(
-                        &info,
+                        info,
                         layers::skia::Data::new_copy(&pixels),
                         row_bytes,
                     )?;

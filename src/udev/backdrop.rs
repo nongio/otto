@@ -125,6 +125,7 @@ fn draw_popups(
 /// upper planes (overlay, switcher, dock), rendering the active ones. The
 /// overlay composite also folds in the popup subtree (see `draw_popups`). The
 /// bg plane must already be rendered by the caller.
+#[allow(clippy::too_many_arguments)] // plane-state plumbing, all of it per-frame
 pub(super) fn update_backdrop_and_upper_planes(
     surface: &mut SurfaceData,
     renderer: &mut UdevRenderer<'_>,
@@ -208,7 +209,7 @@ pub(super) fn update_backdrop_and_upper_planes(
                 && r.bottom() > i.top()
         })
     };
-    let hits_interest = |d: &Option<layers::skia::Rect>| d.map_or(false, |r| intersects(&r));
+    let hits_interest = |d: &Option<layers::skia::Rect>| d.is_some_and(|r| intersects(&r));
     // Promoted rects are global scene coords; interest rects are output-local.
     let promoted_hits = promoted_commit
         && promoted.iter().any(|(_, r)| {
@@ -363,7 +364,7 @@ pub(super) fn update_backdrop_and_upper_planes(
                 // desktop blur so islands keep their usual vibrancy.
                 let has_popups = popup_root
                     .and_then(|r| engine.get_layer(&r))
-                    .map_or(false, |l| !l.children().is_empty());
+                    .is_some_and(|l| !l.children().is_empty());
                 let overlay_src = if has_popups {
                     draw_popups(bs, engine, popup_root.unwrap(), scene_origin);
                     bs.context.flush_and_submit();
