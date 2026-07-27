@@ -115,6 +115,16 @@ impl<BackendData: Backend> Otto<BackendData> {
     }
 
     pub fn autostart(&mut self) {
+        // In login mode the greeter is the only client we start. User-session
+        // autostart (exec_once, XDG autostart) belongs to the session greetd
+        // execs after authentication, not to the greeter.
+        if crate::login::is_login_mode() {
+            let (cmd, args) = crate::login::greeter_command();
+            info!(greeter = %cmd, "Login mode: launching greeter");
+            self.launch_program(cmd, args);
+            return;
+        }
+
         let entries = Config::with(|c| c.exec_once.clone());
         for entry in entries {
             self.launch_program(entry.cmd, entry.args);

@@ -328,7 +328,10 @@ impl Workspaces {
 
         let dock = DockView::new(layers_engine.clone(), app_icons_manager.clone());
         let dock = Arc::new(dock);
-        dock.show(None);
+        // The greeter owns the whole screen: no dock, no switcher, no expose.
+        if !crate::login::is_login_mode() {
+            dock.show(None);
+        }
 
         // Layer shell top layer (z-order: above workspaces)
         let layer_shell_top = layers_engine.new_layer();
@@ -3579,6 +3582,15 @@ impl Workspaces {
             let _ = output_layer.add_sublayer(&overlay_plane.clone());
             let _ = output_layer.add_sublayer(&switcher_plane.clone());
             let _ = output_layer.add_sublayer(&dock_plane.clone());
+        }
+
+        // Login mode keeps the scene shape identical (so nothing downstream has
+        // to special-case a missing node) but never lets session chrome become
+        // visible: the greeter is the only thing on screen.
+        if crate::login::is_login_mode() {
+            dock_plane.set_hidden(true);
+            switcher_plane.set_hidden(true);
+            selector_layer.set_hidden(true);
         }
 
         let workspace_counter_start = self.with_model(|m| m.workspace_counter);

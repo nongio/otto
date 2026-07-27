@@ -52,6 +52,8 @@ pub struct Config {
     #[serde(default)]
     pub occlusion_culling: bool,
     #[serde(default)]
+    pub login: LoginConfig,
+    #[serde(default)]
     pub exec_once: Vec<RunCommandConfig>,
     #[serde(default)]
     pub xdg_autostart: bool,
@@ -92,6 +94,7 @@ impl Default for Config {
             shortcut_bindings: Vec::new(),
             virtual_outputs: Vec::new(),
             occlusion_culling: false,
+            login: LoginConfig::default(),
             exec_once: Vec::new(),
             xdg_autostart: false,
             systemd_notify: false,
@@ -354,6 +357,27 @@ impl Default for AppSwitcherConfig {
 
 fn default_appswitcher_follow_cursor() -> bool {
     true
+}
+
+/// Settings that only apply when Otto runs as a greeter host (`otto --login`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LoginConfig {
+    /// The greeter client to launch. It is the only client Otto starts in
+    /// login mode, and its first toplevel is forced fullscreen on the primary
+    /// output.
+    pub greeter_command: String,
+    /// Arguments passed to `greeter_command`.
+    pub greeter_args: Vec<String>,
+}
+
+impl Default for LoginConfig {
+    fn default() -> Self {
+        Self {
+            greeter_command: "otto-greeter".to_string(),
+            greeter_args: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

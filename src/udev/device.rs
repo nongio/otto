@@ -247,6 +247,18 @@ impl Otto<UdevData> {
         );
         info!(?crtc, "Trying to setup connector {}", output_name,);
 
+        // Login mode drives a single screen. The first desktop connector to
+        // come up becomes primary and every other one is left alone — no
+        // modeset, no output global, so the greeter cannot be mirrored or
+        // dragged onto an untrusted external display.
+        if crate::login::is_login_mode() && self.workspaces.primary_output().is_some() {
+            info!(
+                "Login mode: ignoring secondary connector {} (primary already set up)",
+                output_name
+            );
+            return;
+        }
+
         let non_desktop = device
             .drm
             .get_properties(connector.handle())

@@ -49,6 +49,16 @@ keyboard_repeat_rate = 30
 # Disabled by default.
 # xdg_autostart = true
 
+# Login mode — only used when Otto is started with `--login`, where it acts as
+# the host compositor for a greeter (the role `cage` plays for gtkgreet).
+# In this mode Otto drives the primary output only, shows no dock, app switcher
+# or expose, and launches the greeter below instead of the autostart entries.
+# Authentication is delegated to greetd; Otto never touches PAM.
+#
+# [login]
+# greeter_command = "otto-greeter"
+# greeter_args = []
+
 # Systemd integration — send READY=1 via sd_notify and activate graphical-session.target
 # when the Wayland socket is ready. Enable this when running Otto as a systemd user service
 # (Type=notify in the unit file). Can also be triggered with the --systemd-notify CLI flag.
