@@ -80,6 +80,53 @@ PLAYER=ffplay ./scripts/test-screenshare.sh eDP-1
 PLAYER=none ./scripts/test-screenshare.sh eDP-1
 ```
 
+### `test-login-mode.sh`
+Test Otto's login mode (`otto --login`) and the otto-greeter client.
+See [`specs/login-mode.md`](../specs/login-mode.md).
+
+Tests are grouped by what they need from the environment — most of the feature
+can be exercised without root or a spare VT, using a bundled fake greetd daemon
+that speaks the real wire protocol.
+
+**Usage:**
+```bash
+# Everything that runs headlessly: fmt, clippy, unit tests, build, IPC conversation
+./scripts/test-login-mode.sh
+
+# Individual groups
+./scripts/test-login-mode.sh check     # static checks + unit tests
+./scripts/test-login-mode.sh ipc       # greetd wire protocol, no display needed
+./scripts/test-login-mode.sh mock      # greeter UI, built-in mock backend
+./scripts/test-login-mode.sh greeter   # greeter UI against a fake greetd
+./scripts/test-login-mode.sh nested    # full login mode inside a window
+./scripts/test-login-mode.sh tty       # full login mode on the console
+./scripts/test-login-mode.sh greetd    # generate a real greetd config
+
+# Exercise a different PAM conversation shape
+FAKE_GREETD_SCENARIO=two-factor ./scripts/test-login-mode.sh greeter
+FAKE_GREETD_SCENARIO=locked ./scripts/test-login-mode.sh greeter
+```
+
+Scenarios: `simple`, `fingerprint` (default — sends an unanswerable info message
+first, as `pam_fprintd` does), `two-factor`, `locked`.
+
+### `otto-session`
+Wrapper for the `Exec` line of a `wayland-sessions` entry, so Otto can be
+launched by a display manager without printing to the console.
+
+greetd hands the session the VT as its stdio, and the VT is in text mode until
+Otto modesets — a compositor logging at `info` therefore flashes a terminal
+between the greeter and the desktop. This redirects the log to
+`$XDG_STATE_HOME/otto/session.log` (one generation kept) instead.
+
+```bash
+sudo install -Dm755 scripts/otto-session /usr/local/bin/otto-session
+# then point Exec= at it:
+#   /usr/share/wayland-sessions/otto-current.desktop
+```
+
+`$OTTO_BIN` overrides which binary is run (default `/usr/local/bin/otto`).
+
 ### Session helper scripts
 - `dbus.sh` - D-Bus session management
 - `pipewire.sh` - PipeWire audio setup
