@@ -101,6 +101,28 @@ pub fn process_keyboard_shortcut(
     result
 }
 
+/// Map a raw evdev function-key code to the VT it switches to.
+///
+/// Read from raw keycodes rather than keysyms so the mapping holds regardless
+/// of the active layout, and so it can be checked without consuming the event
+/// through the xkb state.
+fn function_key_vt(keycode: u32) -> Option<i32> {
+    // Keycodes arrive in the xkb convention (evdev + 8), as produced by
+    // `KeyboardKeyEvent::key_code`. KEY_F1..KEY_F10 are contiguous; F11 and
+    // F12 sit elsewhere in the evdev table.
+    const KEY_F1: u32 = 59 + 8;
+    const KEY_F10: u32 = 68 + 8;
+    const KEY_F11: u32 = 87 + 8;
+    const KEY_F12: u32 = 88 + 8;
+
+    match keycode {
+        KEY_F1..=KEY_F10 => Some((keycode - KEY_F1 + 1) as i32),
+        KEY_F11 => Some(11),
+        KEY_F12 => Some(12),
+        _ => None,
+    }
+}
+
 impl<BackendData: Backend> Otto<BackendData> {
     pub fn keyboard_key_to_action<B: InputBackend>(
         &mut self,
@@ -113,6 +135,20 @@ impl<BackendData: Backend> Otto<BackendData> {
         let mut suppressed_keys = self.suppressed_keys.clone();
         let keyboard = self.seat.get_keyboard().unwrap();
         let mut updated_modifiers: Option<ModifiersState> = None;
+
+        // VT switching must never be swallowable. An exclusive layer surface
+        // (a greeter, a lock screen) otherwise receives every key including
+        // Ctrl+Alt+F<n> and Ctrl+Alt+Backspace, leaving no way off the session
+        // short of cutting the power. Checked against raw keycodes before the
+        // grab below, since the grab forwards unconditionally and returns.
+        if matches!(state, KeyState::Pressed) {
+            let mods = keyboard.modifier_state();
+            if mods.ctrl && mods.alt {
+                if let Some(vt) = function_key_vt(keycode.raw()) {
+                    return KeyAction::VtSwitch(vt);
+                }
+            }
+        }
 
         for layer in self.layer_shell_state.layer_surfaces().rev() {
             let data = with_states(layer.wl_surface(), |states| {
@@ -325,5 +361,28 @@ mod tests {
         hold.ctrl = true;
         let current = ModifiersState::default();
         assert!(!app_switcher_hold_is_active(Some(hold), current));
+    }
+
+    /// Ctrl+Alt+F<n> is the only guaranteed way off a session that an exclusive
+    /// layer surface (greeter, lock screen) has grabbed the keyboard on. An
+    /// off-by-8 here silently switches to the wrong VT, so pin the mapping.
+    #[test]
+    fn function_keys_map_to_their_vt() {
+        // Keycodes are xkb-style: evdev code + 8.
+        assert_eq!(function_key_vt(59 + 8), Some(1), "F1 -> vt1");
+        assert_eq!(function_key_vt(60 + 8), Some(2), "F2 -> vt2");
+        assert_eq!(function_key_vt(68 + 8), Some(10), "F10 -> vt10");
+        assert_eq!(function_key_vt(87 + 8), Some(11), "F11 -> vt11");
+        assert_eq!(function_key_vt(88 + 8), Some(12), "F12 -> vt12");
+    }
+
+    #[test]
+    fn other_keys_do_not_switch_vt() {
+        // Raw evdev values (without the +8) must not be mistaken for F-keys,
+        // nor should ordinary letters.
+        assert_eq!(function_key_vt(59), None, "raw evdev F1 is not a keycode");
+        assert_eq!(function_key_vt(30 + 8), None, "'a' must not switch VT");
+        assert_eq!(function_key_vt(1 + 8), None, "Escape must not switch VT");
+        assert_eq!(function_key_vt(0), None);
     }
 }
