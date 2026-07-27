@@ -58,6 +58,8 @@ pub enum KeyAction {
     MediaNext,
     MediaPrev,
     MediaStop,
+    /// Lock the session by launching the configured locker
+    LockSession,
     /// Do nothing more
     None,
 }
@@ -223,6 +225,19 @@ impl<BackendData: Backend> Otto<BackendData> {
             }
 
             KeyAction::Run((cmd, args)) => {
+                self.launch_program(cmd, args);
+            }
+
+            // Locking is launching the locker: it binds
+            // `ext_session_lock_manager_v1` and asks for the lock itself, so
+            // an idle daemon or a suspend hook running the same command takes
+            // exactly the same path. See `src/lock.rs`.
+            KeyAction::LockSession => {
+                if self.is_session_locked() {
+                    return;
+                }
+                let (cmd, args) = crate::lock::locker_command();
+                info!(locker = %cmd, "Locking session");
                 self.launch_program(cmd, args);
             }
 
@@ -607,6 +622,7 @@ pub fn resolve_shortcut_action(config: &Config, action: &ShortcutAction) -> Opti
             BuiltinAction::MediaNext => Some(KeyAction::MediaNext),
             BuiltinAction::MediaPrev => Some(KeyAction::MediaPrev),
             BuiltinAction::MediaStop => Some(KeyAction::MediaStop),
+            BuiltinAction::LockSession => Some(KeyAction::LockSession),
         },
         ShortcutAction::RunCommand(run) => {
             Some(KeyAction::Run((run.cmd.clone(), run.args.clone())))

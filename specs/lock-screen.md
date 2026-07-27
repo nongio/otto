@@ -1,0 +1,203 @@
+# Lock Screen
+
+**Status:** draft
+**Related specs:** [login-mode](./login-mode.md), [multi-output](./multi-output.md),
+[lid-power](./lid-power.md)
+
+## Summary
+
+Otto can lock the running session: the desktop is hidden behind an opaque
+surface on every output, input goes only to the locking client, and the session
+is restored unchanged once the user authenticates. The protocol is
+[`ext-session-lock-v1`], which is designed for exactly this and gives the
+guarantee layer-shell cannot — if the locker crashes, the screen stays blank
+rather than revealing what is behind it.
+
+Otto ships `otto-lock` as its locker. It draws the same panel as the greeter
+(`components/otto-auth-ui`) and authenticates against PAM as the session's own
+user. Any other `ext-session-lock-v1` client works too.
+
+[`ext-session-lock-v1`]: https://wayland.app/protocols/ext-session-lock-v1
+
+## Goals
+
+- A locked session shows no window, dock, panel, notification or cursor content
+  from the session on any output, and none of it is recoverable by input.
+- The session outlives the lock: windows, workspaces, focus and running clients
+  are exactly as they were once it is unlocked.
+- The screen is blank on every output *before* the client is told the session is
+  locked, so nothing is visible in the gap between the request and the first
+  lock frame.
+- A locker that crashes or exits without unlocking leaves the session locked and
+  the outputs blank.
+- Outputs that appear, disappear or change mode while locked are covered too.
+- `Ctrl+Alt+F<n>` still switches VT while locked.
+- The locker is an ordinary Wayland client, replaceable via configuration, and
+  Otto itself performs no authentication.
+
+## Non-Goals
+
+- **Logging in.** A greeter authenticates a user who has no session yet and is
+  bound to greetd's process model; see [login-mode](./login-mode.md).
+- **Idle detection.** What decides *when* to lock — an idle timer, the lid, a
+  suspend hook, a keybinding — is separate from the lock itself. This spec
+  covers only the mechanism and the explicit triggers below.
+- **Owning authentication.** The locker calls PAM; the compositor does not.
+- **Hiding the session from a privileged attacker.** A lock screen protects
+  against someone at the keyboard, not against root or physical memory access.
+
+## Behavior
+
+### Locking
+
+- A locker binds `ext_session_lock_manager_v1` and requests a lock. Otto accepts
+  it, hides the whole session — windows, dock, app switcher, expose, workspace
+  selector, layer-shell panels, drag surfaces and popups — behind an opaque
+  black surface on every output, and cancels any interactive grab in progress.
+- Otto sends the `locked` event only after a frame with the session hidden has
+  been presented on every output it drives. If it cannot reach that state the
+  lock request is refused with `finished` and the session is untouched.
+- Only one lock may be active. A second lock request while locked is refused.
+- Locking is idempotent from the user's side: triggering a lock while already
+  locked does nothing.
+
+### Lock surfaces
+
+- The locker creates one surface per `wl_output`. Otto configures each with the
+  output's size in logical points and the output's scale, and the surface must
+  commit a buffer of the configured size before it is shown.
+- Lock surfaces are drawn above everything, including fullscreen windows and
+  overlay-layer panels, and are never subject to workspace scrolling,
+  animations, or expose.
+- Until a lock surface commits its first buffer, its output shows the blank.
+  An output whose lock surface is destroyed reverts to the blank.
+- Keyboard focus goes to the lock surface of the output that has pointer focus,
+  and follows the pointer between outputs. Pointer and touch events go only to
+  lock surfaces.
+- The cursor is drawn from the locker's own cursor surface, or Otto's default if
+  it sets none.
+
+### While locked
+
+- Compositor keybindings are inert with two exceptions: VT switching, and
+  volume/brightness/media keys, which continue to work.
+- Session clients receive no input and no keyboard focus; their frame callbacks
+  are throttled as they are for occluded windows, and their surfaces are not
+  rendered.
+- Screencopy, screenshare and any other capture of a locked output is refused
+  for the duration.
+- An output hotplugged while locked is blanked immediately and offered to the
+  locker, which may create a surface for it. Removing an output destroys its
+  lock surface without ending the lock.
+- Suspending and resuming, or switching VT away and back, leaves the session
+  locked.
+
+### Unlocking
+
+- The locker authenticates the user itself and then requests unlock. Otto
+  destroys the lock surfaces and the blank, restores the session's rendering and
+  input, and gives keyboard focus back to the window that had it when the lock
+  began, if it still exists.
+- A locker that exits, crashes or is killed **without** requesting unlock leaves
+  the session locked and blank. There is no compositor-side escape hatch; the
+  ways out are authenticating through a new locker (which Otto respawns) or
+  switching VT.
+- If the locker dies while locked, Otto restarts it, rate-limited, so a crash is
+  recoverable without a VT switch.
+
+### Triggers
+
+- The `lock` action requests a lock by launching the configured locker. It is
+  bound to `Ctrl+Alt+Escape` by default and is rebindable like any other
+  shortcut.
+- `lock.locker_command` and `lock.locker_args` name that client, defaulting to
+  `otto-lock`. `$OTTO_LOCKER_COMMAND` overrides both as a whitespace-separated
+  argv, for testing uninstalled builds.
+- Launching the locker is the only trigger Otto implements; anything else that
+  wants to lock (an idle daemon, a suspend hook) runs the same command.
+
+### The locker
+
+- `otto-lock` presents `components/otto-auth-ui`'s panel: the same frosted card,
+  avatar, field and Touch ID mark the greeter shows, with no session picker —
+  a lock screen passes no session name.
+- Appearance comes from Otto's config, including the user's, so the lock screen
+  matches the running session.
+- Authentication is a PAM conversation on a dedicated service (`otto-lock`),
+  run as the session user. Prompts, info and error messages map onto the panel
+  exactly as greetd's `auth_message`s do in the greeter, so a fingerprint reader
+  configured through `pam_fprintd` works with no locker-specific code.
+- PAM's conversation is blocking, so it runs off the main thread; the panel must
+  stay animating while a reader waits for a finger.
+- A failed attempt returns to the field with the error shown, and repeated
+  failures are rate-limited by PAM's own stack rather than by the locker.
+- On success the locker requests unlock and only then exits, so the session is
+  never left with a destroyed locker and no unlock.
+
+## Constraints & Edge Cases
+
+- **The blank must be real, not "no content".** Damage tracking that skips an
+  unchanged output would leave the previous frame — the unlocked desktop — on
+  screen. The blank is a surface that is drawn, and every output is damaged in
+  full when the lock begins.
+- **`locked` is a promise.** Once sent, the client is entitled to assume nothing
+  of the session is visible. Sending it before the blank has actually reached
+  the screen on every output is the classic lock-screen race and is what the
+  present-then-confirm ordering above exists to prevent.
+- **Direct scanout must be dropped at lock time.** A promoted client buffer on a
+  hardware plane is scanned out independently of the composited frame; a plane
+  left active would keep showing the window under the blank. All promotions are
+  released when the lock begins, and only lock surfaces may be promoted while
+  locked.
+- **Rendering must not be skipped while locked.** A lock surface that animates
+  (the Touch ID mark) needs frame callbacks even though no session client does.
+- **The lock outlives the client.** Compositor state, not the client's presence,
+  is what "locked" means. Every path that tears down a client — crash, kill,
+  protocol error — must leave the lock intact.
+- **A locker started by hand must not be able to unlock what it did not lock.**
+  The protocol enforces this: unlock is a request on the `ext_session_lock_v1`
+  object, and Otto ignores it from any other lock.
+- **Multi-output timing.** Lockers create their surfaces one output at a time.
+  Otto must not wait for all of them before sending `locked`; the blank is what
+  the promise is about, not the locker's content.
+- **XWayland.** X11 clients can neither see nor grab input while locked, since
+  focus and input routing are compositor-side, but an X client that already
+  holds a pointer grab must have it broken when the lock begins.
+- **PAM in the client, not the compositor.** `otto-lock` runs as the user, so it
+  can authenticate that user without privilege — but a PAM stack that needs a
+  privileged helper (fingerprint, smartcard) reaches it through the usual
+  daemons, not through Otto.
+
+## Rationale
+
+- **`ext-session-lock-v1` rather than an overlay layer surface.** The crash
+  guarantee is the whole point: with layer-shell, a locker that dies takes the
+  lock with it and exposes the session. The protocol also makes the
+  present-before-`locked` ordering explicit, and every serious locker in the
+  ecosystem now speaks it.
+- **A separate client rather than locking inside the compositor.** A crash in
+  the panel, the Lottie renderer or the PAM stack must not take the compositor
+  down with the session inside it. It also keeps PAM out of Otto, as login mode
+  keeps it out.
+- **The panel is shared with the greeter.** `otto-auth-ui` was written for two
+  clients; a lock screen that looks like the login screen is the point, and the
+  session picker is the only element that differs.
+- **Otto respawns a dead locker.** The protocol's guarantee is that the session
+  stays hidden, not that the user stays locked out. Without a respawn the only
+  recovery is a VT switch, which a laptop lid or a tablet may not offer.
+- **Locking is triggered by launching the locker, not by an internal action.**
+  It keeps a single path into the locked state, and lets idle daemons, suspend
+  hooks and the keybinding all use the same mechanism.
+
+## Open Questions
+
+- Should locking be forced before suspend, and if so, does Otto do it or does a
+  systemd sleep hook?
+- Should the blank be black, the wallpaper, or a blurred capture of the desktop?
+  A blurred capture is what the panel's frost is designed against, but it is
+  also a partial disclosure of what was on screen.
+- Does the greeter's "hold the accepted fingerprint mark before proceeding"
+  pause apply here? Nothing kills the locker at unlock time, so it can simply
+  animate and then unlock.
+- Should Otto refuse to lock when no locker is installed, or fall back to a
+  built-in blank with no way in except a VT switch?

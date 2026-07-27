@@ -101,6 +101,12 @@ pub fn process_keyboard_shortcut(
     result
 }
 
+/// Escape, in the xkb keycode convention (evdev code + 8). Ctrl+Alt+Escape
+/// locks the session, and is read from the raw code for the same reason VT
+/// switching is: it must work whatever the layout, and whatever has the
+/// keyboard.
+const KEY_ESC: u32 = 1 + 8;
+
 /// Map a raw evdev function-key code to the VT it switches to.
 ///
 /// Read from raw keycodes rather than keysyms so the mapping holds regardless
@@ -147,7 +153,21 @@ impl<BackendData: Backend> Otto<BackendData> {
                 if let Some(vt) = function_key_vt(keycode.raw()) {
                     return KeyAction::VtSwitch(vt);
                 }
+                if keycode.raw() == KEY_ESC {
+                    return KeyAction::LockSession;
+                }
             }
+        }
+
+        // A locked session has no shortcuts: every key belongs to the locker,
+        // which owns keyboard focus. VT switching above is the exception, and
+        // is checked before this. The key still has to go through
+        // `keyboard.input` so the focused lock surface receives it.
+        if self.is_session_locked() {
+            keyboard.input::<(), _>(self, keycode, state, serial, time, |_, _, _| {
+                FilterResult::Forward
+            });
+            return KeyAction::None;
         }
 
         for layer in self.layer_shell_state.layer_surfaces().rev() {

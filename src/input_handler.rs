@@ -169,7 +169,8 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
                     | KeyAction::Run(_)
                     | KeyAction::ToggleDecorations
                     | KeyAction::SceneSnapshot
-                    | KeyAction::SkpSnapshot => self.process_common_key_action(action),
+                    | KeyAction::SkpSnapshot
+                    | KeyAction::LockSession => self.process_common_key_action(action),
 
                     _ => tracing::warn!(
                         ?action,
@@ -414,7 +415,8 @@ impl Otto<UdevData> {
                     | KeyAction::Run(_)
                     | KeyAction::ToggleDecorations
                     | KeyAction::SceneSnapshot
-                    | KeyAction::SkpSnapshot => self.process_common_key_action(action),
+                    | KeyAction::SkpSnapshot
+                    | KeyAction::LockSession => self.process_common_key_action(action),
 
                     _ => unreachable!(),
                 },

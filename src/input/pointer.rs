@@ -306,6 +306,22 @@ impl<BackendData: Backend> Otto<BackendData> {
         let physical_pos = pos.to_physical(scale);
         let mut under = None;
 
+        // A locked session sees nothing below the lock surface. Returning None
+        // when this output has no lock surface is deliberate: the click must
+        // land nowhere rather than fall through to the desktop.
+        if self.is_session_locked() {
+            let origin = self
+                .workspaces
+                .output_geometry(output)
+                .map(|g| g.loc)
+                .unwrap_or_default();
+            let local =
+                Point::<f64, Logical>::from((pos.x - origin.x as f64, pos.y - origin.y as f64));
+            return self
+                .lock_surface_for_output(output)
+                .map(|surface| (PointerFocusTarget::from(surface), local));
+        }
+
         // App switcher check
         if self.workspaces.app_switcher.alive() {
             let focus = self.workspaces.app_switcher.as_ref().clone().into();

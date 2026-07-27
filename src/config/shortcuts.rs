@@ -134,6 +134,7 @@ pub enum BuiltinAction {
     MediaNext,
     MediaPrev,
     MediaStop,
+    LockSession,
 }
 
 #[derive(Debug, Error)]
@@ -251,6 +252,7 @@ fn parse_builtin(name: &str, index: Option<usize>) -> Result<BuiltinAction, Shor
         "MediaNext" => BuiltinAction::MediaNext,
         "MediaPrev" => BuiltinAction::MediaPrev,
         "MediaStop" => BuiltinAction::MediaStop,
+        "LockSession" => BuiltinAction::LockSession,
         "Screen" => {
             let index = index.ok_or_else(|| ShortcutError::MissingIndex(name.to_string()))?;
             BuiltinAction::Screen { index }

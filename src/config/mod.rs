@@ -54,6 +54,8 @@ pub struct Config {
     #[serde(default)]
     pub login: LoginConfig,
     #[serde(default)]
+    pub lock: LockConfig,
+    #[serde(default)]
     pub exec_once: Vec<RunCommandConfig>,
     #[serde(default)]
     pub xdg_autostart: bool,
@@ -95,6 +97,7 @@ impl Default for Config {
             virtual_outputs: Vec::new(),
             occlusion_culling: false,
             login: LoginConfig::default(),
+            lock: LockConfig::default(),
             exec_once: Vec::new(),
             xdg_autostart: false,
             systemd_notify: false,
@@ -376,6 +379,26 @@ impl Default for LoginConfig {
         Self {
             greeter_command: "otto-greeter".to_string(),
             greeter_args: Vec::new(),
+        }
+    }
+}
+
+/// Settings for locking the running session (`ext-session-lock-v1`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LockConfig {
+    /// The locker to launch for the `lock` action. It authenticates the user
+    /// itself; Otto only hides the session behind it.
+    pub locker_command: String,
+    /// Arguments passed to `locker_command`.
+    pub locker_args: Vec<String>,
+}
+
+impl Default for LockConfig {
+    fn default() -> Self {
+        Self {
+            locker_command: "otto-lock".to_string(),
+            locker_args: Vec::new(),
         }
     }
 }

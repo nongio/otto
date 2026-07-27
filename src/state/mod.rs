@@ -172,12 +172,26 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub layer_surfaces: HashMap<ObjectId, LayerShellSurface>,
     /// Tracked exclusive zones per output (reserved space on each edge)
     pub exclusive_zones: HashMap<String, ExclusiveZones>,
+    /// Session lock state — see `src/lock.rs`. Locked-ness lives here rather
+    /// than with the client, so a locker that dies leaves the session locked.
+    pub lock_state: crate::lock::LockState,
+    /// The locker's surfaces, keyed by output name.
+    pub lock_surfaces: crate::lock::LockSurfaces,
+    /// Keyboard focus at the moment the lock began, restored on unlock.
+    pub lock_previous_focus: Option<crate::focus::KeyboardFocusTarget<BackendData>>,
+    /// Set once the locker has mapped a surface. Losing every surface after
+    /// that means the locker died, which is what a respawn keys off.
+    pub lock_locker_seen: bool,
+    /// When the locker was last (re)launched, so a locker that crashes on
+    /// startup cannot be respawned in a tight loop.
+    pub lock_last_spawn: Option<std::time::Instant>,
     pub workspaces: Workspaces,
 
     // smithay state
     pub compositor_state: CompositorState,
     pub data_device_state: DataDeviceState,
     pub layer_shell_state: WlrLayerShellState,
+    pub session_lock_manager_state: smithay::wayland::session_lock::SessionLockManagerState,
     pub output_manager_state: OutputManagerState,
     pub primary_selection_state: PrimarySelectionState,
     pub data_control_state: DataControlState,
@@ -317,6 +331,7 @@ pub mod screencopy;
 pub mod seat_handler;
 pub mod security_context_handler;
 pub mod selection_handler;
+pub mod session_lock_handler;
 pub mod virtual_keyboard_handler;
 pub mod virtual_pointer;
 pub mod window_throttle;
@@ -440,6 +455,7 @@ delegate_relative_pointer!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_viewporter!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_xdg_shell!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_layer_shell!(@<BackendData: Backend + 'static> Otto<BackendData>);
+smithay::delegate_session_lock!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_presentation!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_xdg_foreign!(@<BackendData: Backend + 'static> Otto<BackendData>);
 
@@ -578,6 +594,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let compositor_state = CompositorState::new::<Self>(&dh);
         let data_device_state = DataDeviceState::new::<Self>(&dh);
         let layer_shell_state = WlrLayerShellState::new::<Self>(&dh);
+        let session_lock_manager_state =
+            smithay::wayland::session_lock::SessionLockManagerState::new::<Self, _>(&dh, |_| true);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
         let data_control_state =
@@ -722,6 +740,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             compositor_state,
             data_device_state,
             layer_shell_state,
+            session_lock_manager_state,
+            lock_state: crate::lock::LockState::Unlocked,
+            lock_surfaces: Default::default(),
+            lock_previous_focus: None,
+            lock_locker_seen: false,
+            lock_last_spawn: None,
             output_manager_state,
             primary_selection_state,
             data_control_state,

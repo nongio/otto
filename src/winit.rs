@@ -438,6 +438,7 @@ pub fn run_winit() {
 
         let scene_has_damage = state.scene_element.update();
         let mut needs_redraw_soon;
+        let mut lock_frame_presented = false;
         let pointer_active;
         // drawing logic
         {
@@ -656,6 +657,7 @@ pub fn run_winit() {
                         }
 
                         record_frame_result(has_rendered, frame_submitted);
+                        lock_frame_presented = frame_submitted;
                         if has_rendered || frame_submitted {
                             needs_redraw_soon = true;
                         }
@@ -712,6 +714,14 @@ pub fn run_winit() {
                 record_frame_result(false, false);
             }
         }
+        // See the same call in the udev backend: a lock is confirmed only once
+        // the blank has been presented. Out here, where the backend borrows
+        // have ended and all of `state` is reachable again.
+        if lock_frame_presented {
+            state.lock_surfaces_pruned();
+            state.lock_frame_presented(&output);
+        }
+
         log_frame_stats();
 
         // Log rendering metrics periodically

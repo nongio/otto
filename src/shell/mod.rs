@@ -195,6 +195,21 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
         let surface_id = surface.id();
 
         if !sync {
+            // A lock surface is not in any workspace, space or layer map: it
+            // belongs to the output's lock plane and is mirrored straight into
+            // the scene. Its subsurfaces reach here too, and are handled by the
+            // root's own sync below.
+            if let Some(output_name) = self.lock_surface_output(&surface_id).or_else(|| {
+                let mut root = surface.clone();
+                while let Some(parent) = get_parent(&root) {
+                    root = parent;
+                }
+                self.lock_surface_output(&root.id())
+            }) {
+                self.update_lock_surface(&output_name);
+                return;
+            }
+
             if let Some(_layer_shell_surf) = self.layer_surfaces.get(&surface_id) {
                 // Layer shells don't need build_cache_for_view - they use the workspace layer directly
                 self.update_layer_shell_surface(&surface_id);
@@ -374,6 +389,162 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
 }
 
 impl<BackendData: Backend> Otto<BackendData> {
+    /// Mirror a surface tree into lay-rs layers: one layer per surface,
+    /// configured from the committed buffer, with the subsurface parenting and
+    /// ordering reproduced. Shared by wlr-layer-shell and session-lock
+    /// surfaces, which differ only in the container they hang from.
+    pub(crate) fn sync_surface_tree_layers(
+        &mut self,
+        wl_surface: &WlSurface,
+        scale_factor: f64,
+        key_prefix: &str,
+    ) {
+        // Ensure all surfaces in the tree have rendering layers
+        self.ensure_surface_tree_layers(wl_surface);
+
+        // Collect render elements from the surface tree (same as update_window_view)
+        let mut render_elements = std::collections::VecDeque::new();
+        let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> =
+            (0.0, 0.0).into();
+        let initial_context = (initial_location, initial_location, None);
+
+        // Collect all surfaces and build parent-child map
+        #[allow(clippy::mutable_key_type, clippy::type_complexity)]
+        let mut surface_info: std::collections::HashMap<
+            smithay::reexports::wayland_server::backend::ObjectId,
+            (
+                WlSurface,
+                smithay::utils::Point<f64, smithay::utils::Physical>,
+                Option<smithay::reexports::wayland_server::backend::ObjectId>,
+            ),
+        > = std::collections::HashMap::new();
+
+        // Track per-parent child ordering as Smithay delivers it
+        // (respects wl_subsurface.place_above / place_below reordering)
+        #[allow(clippy::mutable_key_type)]
+        let mut children_order: std::collections::HashMap<
+            smithay::reexports::wayland_server::backend::ObjectId,
+            Vec<smithay::reexports::wayland_server::backend::ObjectId>,
+        > = std::collections::HashMap::new();
+
+        smithay::wayland::compositor::with_surface_tree_downward(
+            wl_surface,
+            initial_context,
+            |surface, states, (location, _parent_location, _parent_id)| {
+                let mut location = *location;
+                let data = states
+                    .data_map
+                    .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>(
+                );
+                let mut cached_state = states
+                    .cached_state
+                    .get::<smithay::wayland::shell::xdg::SurfaceCachedState>();
+                let cached_state = cached_state.current();
+                let surface_geometry = cached_state.geometry.unwrap_or_default();
+
+                if let Some(data) = data {
+                    let data = data.lock().unwrap();
+                    if let Some(view) = data.view() {
+                        location += view.offset.to_f64().to_physical(scale_factor);
+                        location -= surface_geometry.loc.to_f64().to_physical(scale_factor);
+                        smithay::wayland::compositor::TraversalAction::DoChildren((
+                            location,
+                            location,
+                            Some(surface.id()),
+                        ))
+                    } else {
+                        smithay::wayland::compositor::TraversalAction::SkipChildren
+                    }
+                } else {
+                    smithay::wayland::compositor::TraversalAction::SkipChildren
+                }
+            },
+            |surface, states, (location, parent_location, parent_id)| {
+                let relative_offset = if parent_id.is_some() {
+                    *location - *parent_location
+                } else {
+                    *location
+                };
+
+                if let Some(wvs) = self.window_view_for_surface(
+                    surface,
+                    states,
+                    &relative_offset,
+                    scale_factor,
+                    parent_id.clone(),
+                ) {
+                    render_elements.push_front(wvs.clone());
+                    let sid = surface.id();
+                    surface_info
+                        .insert(sid.clone(), (surface.clone(), *location, parent_id.clone()));
+                    // Record child ordering per parent for subsurface reordering
+                    if let Some(pid) = parent_id {
+                        children_order.entry(pid.clone()).or_default().push(sid);
+                    }
+                } else {
+                    // Null buffer — hide the layer so unmapped subsurfaces don't linger
+                    if let Some(layer) = self.surface_layers.get(&surface.id()) {
+                        layer.set_hidden(true);
+                    }
+                }
+            },
+            |_, _, _| true,
+        );
+
+        // Now sync the layer hierarchy to match the surface tree (same as windows)
+        for (surface_id, (_surface, _pos, parent_id)) in surface_info.iter() {
+            let surface_layer =
+                self.get_or_create_layer_for_surface(&surface_info.get(surface_id).unwrap().0);
+
+            // Set key for proper opacity inheritance (like window content layers)
+            surface_layer.set_key(format!("{key_prefix}_{:?}", surface_id));
+
+            if let Some(wvs) = render_elements.iter().find(|e| &e.id == surface_id) {
+                // Configure layer with all properties and draw callback
+                surface_layer.set_hidden(false);
+                let style = self
+                    .surfaces_style
+                    .get(surface_id)
+                    .and_then(|v: &Vec<_>| v.first());
+                let gravity = style.map(|s| s.contents_gravity).unwrap_or_default();
+                let client_owns_size = style.map(|s| s.client_owns_size).unwrap_or(false);
+                let shared_gravity = style.map(|s| s.shared_gravity.clone());
+                crate::workspaces::utils::configure_surface_layer(
+                    &surface_layer,
+                    wvs,
+                    gravity,
+                    client_owns_size,
+                    shared_gravity,
+                );
+
+                // Set up parent-child relationship
+                // Only append if there's a parent - root surface is handled separately below
+                if let Some(parent_id) = parent_id {
+                    if surface_id != parent_id {
+                        if let Some(parent_layer) = self.surface_layers.get(parent_id) {
+                            let _ = self
+                                .layers_engine
+                                .append_layer(&surface_layer, parent_layer.id());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Re-append children in Smithay's subsurface order so that
+        // place_above / place_below reordering is reflected in lay-rs.
+        for (parent_id, child_ids) in children_order.iter() {
+            if let Some(parent_layer) = self.surface_layers.get(parent_id) {
+                let parent_node = parent_layer.id();
+                for child_id in child_ids {
+                    if let Some(child_layer) = self.surface_layers.get(child_id) {
+                        let _ = self.layers_engine.append_layer(child_layer, parent_node);
+                    }
+                }
+            }
+        }
+    }
+
     fn update_layer_shell_surface(
         &mut self,
         surface_id: &smithay::reexports::wayland_server::backend::ObjectId,
@@ -445,150 +616,7 @@ impl<BackendData: Backend> Otto<BackendData> {
             // is shown on the first update that carries renderable content.
         });
 
-        // Ensure all surfaces in the tree have rendering layers
-        self.ensure_surface_tree_layers(&wl_surface);
-
-        // Collect render elements from the surface tree (same as update_window_view)
-        let mut render_elements = std::collections::VecDeque::new();
-        let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> =
-            (0.0, 0.0).into();
-        let initial_context = (initial_location, initial_location, None);
-
-        // Collect all surfaces and build parent-child map
-        #[allow(clippy::mutable_key_type, clippy::type_complexity)]
-        let mut surface_info: std::collections::HashMap<
-            smithay::reexports::wayland_server::backend::ObjectId,
-            (
-                WlSurface,
-                smithay::utils::Point<f64, smithay::utils::Physical>,
-                Option<smithay::reexports::wayland_server::backend::ObjectId>,
-            ),
-        > = std::collections::HashMap::new();
-
-        // Track per-parent child ordering as Smithay delivers it
-        // (respects wl_subsurface.place_above / place_below reordering)
-        #[allow(clippy::mutable_key_type)]
-        let mut children_order: std::collections::HashMap<
-            smithay::reexports::wayland_server::backend::ObjectId,
-            Vec<smithay::reexports::wayland_server::backend::ObjectId>,
-        > = std::collections::HashMap::new();
-
-        smithay::wayland::compositor::with_surface_tree_downward(
-            &wl_surface,
-            initial_context,
-            |surface, states, (location, _parent_location, _parent_id)| {
-                let mut location = *location;
-                let data = states
-                    .data_map
-                    .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>(
-                );
-                let mut cached_state = states
-                    .cached_state
-                    .get::<smithay::wayland::shell::xdg::SurfaceCachedState>();
-                let cached_state = cached_state.current();
-                let surface_geometry = cached_state.geometry.unwrap_or_default();
-
-                if let Some(data) = data {
-                    let data = data.lock().unwrap();
-                    if let Some(view) = data.view() {
-                        location += view.offset.to_f64().to_physical(scale_factor);
-                        location -= surface_geometry.loc.to_f64().to_physical(scale_factor);
-                        smithay::wayland::compositor::TraversalAction::DoChildren((
-                            location,
-                            location,
-                            Some(surface.id()),
-                        ))
-                    } else {
-                        smithay::wayland::compositor::TraversalAction::SkipChildren
-                    }
-                } else {
-                    smithay::wayland::compositor::TraversalAction::SkipChildren
-                }
-            },
-            |surface, states, (location, parent_location, parent_id)| {
-                let relative_offset = if parent_id.is_some() {
-                    *location - *parent_location
-                } else {
-                    *location
-                };
-
-                if let Some(wvs) = self.window_view_for_surface(
-                    surface,
-                    states,
-                    &relative_offset,
-                    scale_factor,
-                    parent_id.clone(),
-                ) {
-                    render_elements.push_front(wvs.clone());
-                    let sid = surface.id();
-                    surface_info
-                        .insert(sid.clone(), (surface.clone(), *location, parent_id.clone()));
-                    // Record child ordering per parent for subsurface reordering
-                    if let Some(pid) = parent_id {
-                        children_order.entry(pid.clone()).or_default().push(sid);
-                    }
-                } else {
-                    // Null buffer — hide the layer so unmapped subsurfaces don't linger
-                    if let Some(layer) = self.surface_layers.get(&surface.id()) {
-                        layer.set_hidden(true);
-                    }
-                }
-            },
-            |_, _, _| true,
-        );
-
-        // Now sync the layer hierarchy to match the surface tree (same as windows)
-        for (surface_id, (_surface, _pos, parent_id)) in surface_info.iter() {
-            let surface_layer =
-                self.get_or_create_layer_for_surface(&surface_info.get(surface_id).unwrap().0);
-
-            // Set key for proper opacity inheritance (like window content layers)
-            surface_layer.set_key(format!("layer_shell_surface_{:?}", surface_id));
-
-            if let Some(wvs) = render_elements.iter().find(|e| &e.id == surface_id) {
-                // Configure layer with all properties and draw callback
-                surface_layer.set_hidden(false);
-                let style = self
-                    .surfaces_style
-                    .get(surface_id)
-                    .and_then(|v: &Vec<_>| v.first());
-                let gravity = style.map(|s| s.contents_gravity).unwrap_or_default();
-                let client_owns_size = style.map(|s| s.client_owns_size).unwrap_or(false);
-                let shared_gravity = style.map(|s| s.shared_gravity.clone());
-                crate::workspaces::utils::configure_surface_layer(
-                    &surface_layer,
-                    wvs,
-                    gravity,
-                    client_owns_size,
-                    shared_gravity,
-                );
-
-                // Set up parent-child relationship
-                // Only append if there's a parent - root surface is handled separately below
-                if let Some(parent_id) = parent_id {
-                    if surface_id != parent_id {
-                        if let Some(parent_layer) = self.surface_layers.get(parent_id) {
-                            let _ = self
-                                .layers_engine
-                                .append_layer(&surface_layer, parent_layer.id());
-                        }
-                    }
-                }
-            }
-        }
-
-        // Re-append children in Smithay's subsurface order so that
-        // place_above / place_below reordering is reflected in lay-rs.
-        for (parent_id, child_ids) in children_order.iter() {
-            if let Some(parent_layer) = self.surface_layers.get(parent_id) {
-                let parent_node = parent_layer.id();
-                for child_id in child_ids {
-                    if let Some(child_layer) = self.surface_layers.get(child_id) {
-                        let _ = self.layers_engine.append_layer(child_layer, parent_node);
-                    }
-                }
-            }
-        }
+        self.sync_surface_tree_layers(&wl_surface, scale_factor, "layer_shell_surface");
 
         // Update the container layer's Taffy layout style from anchors/margins/size.
         // This lets the layout engine position the layer automatically — including

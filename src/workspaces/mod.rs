@@ -96,6 +96,10 @@ pub struct OutputWorkspaces {
     /// with normal layout) rendered through a bottom-strip viewport onto its
     /// own KMS plane. Topmost.
     pub dock_plane: Layer,
+    /// Session-lock plane: the blank and the locker's surface for this output.
+    /// Above everything else, including the dock and fullscreen windows, and
+    /// hidden whenever the session is unlocked. See `src/lock.rs`.
+    pub lock_plane: Layer,
     /// Per-output workspace selector strip (expose UI). Each output shows its
     /// own selector so previews reflect that output's content at its own
     /// resolution. Lives in `overlay_plane`.
@@ -717,6 +721,7 @@ impl Workspaces {
             ows.overlay_plane.set_size(Size::points(w, h), None);
             ows.switcher_plane.set_size(Size::points(w, h), None);
             ows.dock_plane.set_size(Size::points(w, h), None);
+            ows.lock_plane.set_size(Size::points(w, h), None);
             // The switcher panel sizes itself from its host output — a mode or
             // scale change under it must re-render it at the new geometry.
             if self.app_switcher_output_name().as_deref() == Some(output_name.as_str()) {
@@ -3544,6 +3549,27 @@ impl Workspaces {
         dock_plane.set_size(layers::types::Size::points(phys_w, phys_h), None);
         dock_plane.set_pointer_events(false);
 
+        // The lock plane covers this output whole while the session is locked.
+        // It is created for every output up front so a lock can blank a screen
+        // that no locker has drawn on yet, and hotplug needs no extra wiring.
+        let lock_plane = self.layers_engine.new_layer();
+        lock_plane.set_key(format!("lock_plane_{}", output.name()));
+        lock_plane.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        lock_plane.set_size(layers::types::Size::points(phys_w, phys_h), None);
+        lock_plane.set_background_color(
+            layers::types::PaintColor::Solid {
+                color: layers::types::Color::new_rgba(0.0, 0.0, 0.0, 1.0),
+            },
+            None,
+        );
+        // Pointer events on, so a click while locked cannot reach the session
+        // underneath even before the locker has mapped a surface.
+        lock_plane.set_pointer_events(true);
+        lock_plane.set_hidden(true);
+
         if is_this_primary {
             // Wire the primary output's expose layer into self.expose_layer so all
             // existing show/hide logic works unchanged.
@@ -3583,6 +3609,8 @@ impl Workspaces {
             let _ = output_layer.add_sublayer(&switcher_plane.clone());
             let _ = output_layer.add_sublayer(&dock_plane.clone());
         }
+        // Added last on every output: nothing may draw above a locked screen.
+        let _ = output_layer.add_sublayer(&lock_plane.clone());
 
         // Login mode keeps the scene shape identical (so nothing downstream has
         // to special-case a missing node) but never lets session chrome become
@@ -3635,6 +3663,7 @@ impl Workspaces {
             overlay_plane,
             switcher_plane,
             dock_plane,
+            lock_plane,
             workspace_selector,
         };
         self.output_workspaces.insert(output.name(), ows);

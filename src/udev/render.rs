@@ -465,6 +465,10 @@ impl Otto<UdevData> {
                 || minimize_active
                 || self.swipe_gesture.is_active()
                 || fullscreen_window.is_some()
+                // A promoted window is scanned out from its own KMS plane,
+                // independently of the composited frame the blank is drawn
+                // into — it would keep showing through a locked screen.
+                || self.is_session_locked()
             {
                 Vec::new()
             } else if let Some(output) = scanout_output {
@@ -1005,9 +1009,15 @@ impl Otto<UdevData> {
             }
         };
 
-        // Render to screenshare buffers if rendering succeeded
+        let rendered_this_frame = matches!(&result, Ok(outcome) if outcome.rendered);
+        let session_locked = self.lock_state.is_active();
+
+        // Render to screenshare buffers if rendering succeeded. A locked
+        // screen is not capturable, so the stream freezes for the duration
+        // rather than carrying the lock screen — or what is behind it — to a
+        // remote viewer.
         if let Ok(outcome) = &result {
-            if outcome.rendered && !self.screenshare_sessions.is_empty() {
+            if outcome.rendered && !self.screenshare_sessions.is_empty() && !session_locked {
                 let scale = Scale::from(output.current_scale().fractional_scale());
 
                 // Get the source framebuffer that was just rendered to
@@ -1284,6 +1294,15 @@ impl Otto<UdevData> {
                     })
                     .expect("failed to schedule lagging-output render");
             }
+        }
+
+        // A locked session confirms itself frame by frame: the client is told
+        // the session is locked only once every output has actually put the
+        // blank on screen. Done here, after the device and renderer borrows
+        // have ended, because it needs all of `self`.
+        if rendered_this_frame {
+            self.lock_surfaces_pruned();
+            self.lock_frame_presented(&output);
         }
 
         profiling::finish_frame!();

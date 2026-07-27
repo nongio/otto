@@ -59,6 +59,15 @@ keyboard_repeat_rate = 30
 # greeter_command = "otto-greeter"
 # greeter_args = []
 
+# Screen locking — the client launched by the `LockSession` action
+# (Ctrl+Alt+Escape by default). It speaks ext-session-lock-v1 and authenticates
+# the user itself; Otto only hides the session behind it and never touches PAM.
+# Any ext-session-lock-v1 locker works here.
+#
+# [lock]
+# locker_command = "otto-lock"
+# locker_args = []
+
 # Systemd integration — send READY=1 via sd_notify and activate graphical-session.target
 # when the Wayland socket is ready. Enable this when running Otto as a systemd user service
 # (Type=notify in the unit file). Can also be triggered with the --systemd-notify CLI flag.

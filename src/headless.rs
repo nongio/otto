@@ -570,6 +570,17 @@ fn run_headless_loop(
         // Update the scene graph (layout computation, no GPU)
         state.scene_element.update();
 
+        // Headless has no screen, so the blank a lock waits on is trivially
+        // "presented" — confirming here is what makes the lock lifecycle
+        // exercisable without a GPU.
+        if state.is_session_locked() {
+            let outputs: Vec<_> = state.workspaces.outputs().cloned().collect();
+            state.lock_surfaces_pruned();
+            for output in outputs {
+                state.lock_frame_presented(&output);
+            }
+        }
+
         // Dispatch Wayland clients and calloop sources
         let result = event_loop.dispatch(Some(Duration::from_millis(16)), &mut state);
         if result.is_err() {
