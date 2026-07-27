@@ -19,7 +19,7 @@ use smithay_client_toolkit::{
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{
-        keyboard::{KeyboardHandler, Keysym, Modifiers},
+        keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers},
         pointer::{PointerEvent, PointerHandler},
         Capability, SeatHandler, SeatState,
     },
@@ -81,6 +81,20 @@ pub trait App {
         &mut self,
         _ctx: &AppContext,
         _key: u32,
+        _state: wl_keyboard::KeyState,
+        _serial: u32,
+    ) {
+        // Default: do nothing
+    }
+
+    /// Called for the same events as [`App::on_keyboard_event`], but with the
+    /// full `KeyEvent` — including `keysym` and the `utf8` text produced by the
+    /// active keymap. Implement this instead when you need text entry rather
+    /// than raw evdev codes.
+    fn on_key_event(
+        &mut self,
+        _ctx: &AppContext,
+        _event: &KeyEvent,
         _state: wl_keyboard::KeyState,
         _serial: u32,
     ) {
@@ -165,6 +179,16 @@ impl App for DefaultApp {
         serial: u32,
     ) {
         self.inner.on_keyboard_event(ctx, key, state, serial)
+    }
+
+    fn on_key_event(
+        &mut self,
+        ctx: &AppContext,
+        event: &KeyEvent,
+        state: wl_keyboard::KeyState,
+        serial: u32,
+    ) {
+        self.inner.on_key_event(ctx, event, state, serial)
     }
 
     fn on_keyboard_leave(&mut self, ctx: &AppContext, surface: &wl_surface::WlSurface) {
@@ -643,6 +667,8 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
         let ctx = AppContext::new(&self.context_data);
         self.app
             .on_keyboard_event(&ctx, event.raw_code, wl_keyboard::KeyState::Pressed, serial);
+        self.app
+            .on_key_event(&ctx, &event, wl_keyboard::KeyState::Pressed, serial);
     }
 
     fn release_key(
@@ -660,6 +686,8 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
             wl_keyboard::KeyState::Released,
             serial,
         );
+        self.app
+            .on_key_event(&ctx, &event, wl_keyboard::KeyState::Released, serial);
     }
 
     fn update_modifiers(
