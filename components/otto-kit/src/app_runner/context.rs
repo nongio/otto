@@ -11,7 +11,7 @@ use smithay_client_toolkit::{
 };
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, RwLock};
 use wayland_client::backend::ObjectId;
 use wayland_client::{protocol::wl_surface, QueueHandle};
@@ -39,11 +39,18 @@ thread_local! {
     #[allow(clippy::type_complexity)]
     static POINTER_CALLBACKS: RefCell<Vec<Box<dyn FnMut(&[smithay_client_toolkit::seat::pointer::PointerEvent])>>> = const { RefCell::new(Vec::new()) };
     static FRAME_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnMut()>>> = RefCell::new(HashMap::new());
+    /// Surfaces that have committed a frame the compositor has not yet said it
+    /// presented. See [`AppContext::frame_in_flight`].
+    static FRAMES_IN_FLIGHT: RefCell<HashSet<ObjectId>> = RefCell::new(HashSet::new());
     #[allow(clippy::type_complexity)]
     static POPUP_CONFIGURE_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnOnce(u32)>>> = RefCell::new(HashMap::new());
     static POPUP_DONE_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnOnce()>>> = RefCell::new(HashMap::new());
     #[allow(clippy::type_complexity)]
     static LAYER_SHELL_CONFIGURE_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnMut(i32, i32, u32)>>> = RefCell::new(HashMap::new());
+    /// Keyed by `ext_session_lock_surface_v1` object, not by the `wl_surface`:
+    /// the configure arrives on the lock surface, and the callback acks it.
+    #[allow(clippy::type_complexity)]
+    static LOCK_SURFACE_CONFIGURE_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnMut(i32, i32, u32)>>> = RefCell::new(HashMap::new());
     static TRANSACTION_COMPLETION_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnOnce()>>> = RefCell::new(HashMap::new());
 }
 
@@ -71,6 +78,10 @@ static RENDERER_THREAD: LazyLock<std::sync::Mutex<Option<std::thread::JoinHandle
     LazyLock::new(|| std::sync::Mutex::new(None));
 static RENDERER_EXIT_FLAG: LazyLock<std::sync::atomic::AtomicBool> =
     LazyLock::new(|| std::sync::atomic::AtomicBool::new(false));
+
+/// Set by [`AppContext::request_exit`]; the run loop stops at the next
+/// iteration, after flushing whatever the app asked for last.
+static EXIT_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 // -- Display scale factor (updated by compositor, default 1) --
 
@@ -108,6 +119,9 @@ fn init_wakeup_pipe() -> &'static (std::os::fd::OwnedFd, std::os::fd::OwnedFd) {
 /// Internal storage for app context - owns the Wayland states
 /// This is owned by AppRunner and accessed via AppContext references
 pub struct AppContextData {
+    /// The connection itself, so a request that must not wait for the run
+    /// loop's next flush can be pushed out where it is made.
+    pub connection: wayland_client::Connection,
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShell,
     pub shm_state: Shm,
@@ -117,6 +131,7 @@ pub struct AppContextData {
     pub wlr_layer_shell: Option<ZwlrLayerShellV1>,
     pub subcompositor: Option<wayland_client::protocol::wl_subcompositor::WlSubcompositor>,
     pub otto_dock_manager: Option<crate::protocols::otto_dock_manager_v1::OttoDockManagerV1>,
+    pub session_lock_manager: Option<wayland_protocols::ext::session_lock::v1::client::ext_session_lock_manager_v1::ExtSessionLockManagerV1>,
     pub cursor_shape_manager: Option<wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
     pub display_ptr: *mut std::ffi::c_void,
 }
@@ -207,6 +222,28 @@ impl<'a> AppContext<'a> {
         })
     }
 
+    pub fn session_lock_manager() -> Option<
+        &'static wayland_protocols::ext::session_lock::v1::client::ext_session_lock_manager_v1::ExtSessionLockManagerV1,
+    >{
+        Self::with_global(|ctx| unsafe {
+            ctx.session_lock_manager_ref().map(|r| &*(r as *const _))
+        })
+    }
+
+    /// Push everything queued out to the compositor now.
+    ///
+    /// The run loop flushes once per iteration, which is right for anything
+    /// whose effect the client will still be around to see. A request the
+    /// client is about to exit on — a locker handing the session back — has to
+    /// go out where it is made.
+    pub fn flush() {
+        Self::with_global(|ctx| {
+            if let Err(err) = ctx.data.connection.flush() {
+                tracing::error!(%err, "could not flush the Wayland connection");
+            }
+        });
+    }
+
     pub fn display_ptr() -> *mut std::ffi::c_void {
         Self::with_global(|ctx| ctx.display_ptr_ref())
     }
@@ -247,6 +284,22 @@ impl<'a> AppContext<'a> {
         &self,
     ) -> Option<&crate::protocols::otto_dock_manager_v1::OttoDockManagerV1> {
         self.data.otto_dock_manager.as_ref()
+    }
+
+    pub fn session_lock_manager_ref(
+        &self,
+    ) -> Option<
+        &wayland_protocols::ext::session_lock::v1::client::ext_session_lock_manager_v1::ExtSessionLockManagerV1,
+    >{
+        self.data.session_lock_manager.as_ref()
+    }
+
+    /// The outputs the compositor has announced.
+    ///
+    /// A client that must cover every screen — a screen locker — reconciles
+    /// its surfaces against this rather than tracking hotplug itself.
+    pub fn output_state_ref(&self) -> &OutputState {
+        &self.data.output_state
     }
 
     pub fn display_ptr_ref(&self) -> *mut std::ffi::c_void {
@@ -518,6 +571,25 @@ impl<'a> AppContext<'a> {
         Self::register_layer_shell_configure_callback(surface_id, callback);
     }
 
+    /// Called when the compositor configures a session lock surface. Keyed by
+    /// the `ext_session_lock_surface_v1` object.
+    pub fn register_lock_surface_configure_callback<F>(lock_surface_id: ObjectId, callback: F)
+    where
+        F: FnMut(i32, i32, u32) + 'static,
+    {
+        LOCK_SURFACE_CONFIGURE_CALLBACKS.with(|callbacks| {
+            callbacks
+                .borrow_mut()
+                .insert(lock_surface_id, Box::new(callback));
+        });
+    }
+
+    pub fn unregister_lock_surface_configure_callback(lock_surface_id: &ObjectId) {
+        let _ = LOCK_SURFACE_CONFIGURE_CALLBACKS.try_with(|callbacks| {
+            callbacks.borrow_mut().remove(lock_surface_id);
+        });
+    }
+
     pub fn register_frame_callback<F>(surface_id: ObjectId, callback: F)
     where
         F: FnMut() + 'static,
@@ -550,6 +622,31 @@ impl<'a> AppContext<'a> {
         Self::request_frame(surface);
     }
 
+    /// Ask for a frame callback and remember that one is outstanding.
+    ///
+    /// Painting again before that callback arrives only queues work the
+    /// compositor has not asked for, so a client with continuous content
+    /// should hold off while [`AppContext::frame_in_flight`] is true.
+    pub fn request_throttled_frame(surface: &wl_surface::WlSurface) {
+        use wayland_client::Proxy;
+
+        Self::request_frame(surface);
+        FRAMES_IN_FLIGHT.with(|surfaces| {
+            surfaces.borrow_mut().insert(surface.id());
+        });
+    }
+
+    /// Whether a frame committed on this surface has yet to be presented.
+    pub fn frame_in_flight(surface_id: &ObjectId) -> bool {
+        FRAMES_IN_FLIGHT.with(|surfaces| surfaces.borrow().contains(surface_id))
+    }
+
+    pub(crate) fn clear_frame_in_flight(surface_id: &ObjectId) {
+        FRAMES_IN_FLIGHT.with(|surfaces| {
+            surfaces.borrow_mut().remove(surface_id);
+        });
+    }
+
     /// Wake the main event loop from any thread.
     ///
     /// Background tasks (tokio, threads) should call this after updating
@@ -560,6 +657,20 @@ impl<'a> AppContext<'a> {
         let (_, write_fd) = init_wakeup_pipe();
         // Best-effort write; EAGAIN/EPIPE are fine (pipe already has data).
         unsafe { libc::write(write_fd.as_raw_fd(), b"w".as_ptr() as *const _, 1) };
+    }
+
+    /// Ask the run loop to stop.
+    ///
+    /// The loop finishes the current iteration and flushes first, so a request
+    /// made just before this — a screen locker's `unlock` — reaches the
+    /// compositor rather than dying with the connection.
+    pub fn request_exit() {
+        EXIT_REQUESTED.store(true, std::sync::atomic::Ordering::Relaxed);
+        Self::request_wakeup();
+    }
+
+    pub(crate) fn exit_requested() -> bool {
+        EXIT_REQUESTED.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Return the raw read fd for the wakeup pipe (for poll integration).
@@ -658,6 +769,19 @@ impl<'a> AppContext<'a> {
         });
     }
 
+    pub(crate) fn dispatch_lock_surface_configure(
+        lock_surface_id: &ObjectId,
+        width: i32,
+        height: i32,
+        serial: u32,
+    ) {
+        LOCK_SURFACE_CONFIGURE_CALLBACKS.with(|callbacks| {
+            if let Some(callback) = callbacks.borrow_mut().get_mut(lock_surface_id) {
+                callback(width, height, serial);
+            }
+        });
+    }
+
     pub(crate) fn dispatch_transaction_completed(transaction_id: &ObjectId) {
         TRANSACTION_COMPLETION_CALLBACKS.with(|callbacks| {
             if let Some(callback) = callbacks.borrow_mut().remove(transaction_id) {
@@ -710,6 +834,7 @@ impl<'a> AppContext<'a> {
         POPUP_CONFIGURE_CALLBACKS.with(|c| c.borrow_mut().clear());
         POPUP_DONE_CALLBACKS.with(|c| c.borrow_mut().clear());
         LAYER_SHELL_CONFIGURE_CALLBACKS.with(|c| c.borrow_mut().clear());
+        LOCK_SURFACE_CONFIGURE_CALLBACKS.with(|c| c.borrow_mut().clear());
         TRANSACTION_COMPLETION_CALLBACKS.with(|c| c.borrow_mut().clear());
 
         // Clean up EGL state

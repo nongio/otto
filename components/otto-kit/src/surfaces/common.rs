@@ -182,10 +182,32 @@ impl BaseWaylandSurface {
                 draw_fn(canvas);
             });
 
-            // Present the frame
+            // Ask to be told when this frame reaches the screen. `wl_surface
+            // .frame` is double-buffered state, so the request has to be made
+            // before the commit that carries it — and that commit is the one
+            // eglSwapBuffers makes below, not one of ours. Surfaces already
+            // driving their own frame loop through `on_frame` are left alone:
+            // the runner re-requests for those, and a second callback would
+            // run their loop twice per frame.
+            if !AppContext::has_frame_callback(&self.wl_surface.id()) {
+                AppContext::request_throttled_frame(&self.wl_surface);
+            }
+
+            // Present the frame. eglSwapBuffers attaches the buffer, damages it
+            // and commits, so committing again here would only ask the
+            // compositor to recomposite the output for a surface that has
+            // nothing new on it.
             surface.swap_buffers(ctx);
-            surface.commit();
         });
+    }
+
+    /// Whether a frame committed on this surface has yet to reach the screen.
+    ///
+    /// Content that redraws continuously — an animation reading the clock —
+    /// should paint only when this is false, so it runs at the compositor's
+    /// pace rather than as fast as it can submit.
+    pub fn frame_in_flight(&self) -> bool {
+        AppContext::frame_in_flight(&self.wl_surface.id())
     }
 
     /// Render the layer node if one is assigned
