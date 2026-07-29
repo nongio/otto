@@ -18,7 +18,10 @@ use smithay::{
     output::Output,
     reexports::{
         calloop::channel::{channel, Sender as CalloopSender},
-        wayland_server::{backend::ObjectId, Resource},
+        wayland_server::{
+            backend::{GlobalId, ObjectId},
+            Resource,
+        },
     },
     utils::{IsAlive, Rectangle},
 };
@@ -148,16 +151,28 @@ pub struct WorkspacesModel {
     pub scale: f64,
 }
 
+/// An output whose DRM surface was torn down but whose `Output` is kept alive
+/// for the reconnect — see [`Workspaces::suspend_output`].
+pub struct SuspendedOutput {
+    pub output: Output,
+    pub location: smithay::utils::Point<i32, smithay::utils::Logical>,
+    pub was_primary: bool,
+    /// The output's `wl_output`. Dropping this is what withdraws the global,
+    /// so it is held here for as long as the output may come back.
+    pub global: Option<GlobalId>,
+}
+
 pub struct Workspaces {
     model: Arc<RwLock<WorkspacesModel>>,
     pub output_workspaces: HashMap<String, OutputWorkspaces>,
     outputs: Vec<Output>,
     primary_output: Option<Output>,
-    /// Position and primary flag of outputs suspended via `suspend_output`
-    /// (lid close), keyed by output name. Consumed on reconnect so the panel
-    /// returns to its pre-suspend arrangement instead of being auto-placed
-    /// after outputs (e.g. virtual ones) that kept running meanwhile.
-    suspended_outputs: HashMap<String, (smithay::utils::Point<i32, smithay::utils::Logical>, bool)>,
+    /// Outputs suspended via `suspend_output` (lid close), keyed by name.
+    /// Consumed on reconnect so the panel returns with the same `Output` — and
+    /// the same `wl_output` — it went away with, in its pre-suspend
+    /// arrangement rather than auto-placed after outputs (e.g. virtual ones)
+    /// that kept running meanwhile.
+    suspended_outputs: HashMap<String, SuspendedOutput>,
     display_handle: DisplayHandle,
 
     pub windows_map: HashMap<ObjectId, WindowElement>,
@@ -3730,7 +3745,12 @@ impl Workspaces {
     /// Used for lid-close: the DRM surface is torn down (no rendering) but
     /// all workspaces, windows, and scene-graph layers are preserved so they
     /// can be instantly restored when the output comes back.
-    pub fn suspend_output(&mut self, output: &Output) {
+    /// `global` is the output's `wl_output`, handed over so it outlives the
+    /// DRM surface the caller is about to drop: everything that holds an
+    /// `Output` — layer surfaces and their layer map, lock surfaces, window
+    /// assignments — keys off the object, and a client that watched its
+    /// output go away has no reason to come back on its own.
+    pub fn suspend_output(&mut self, output: &Output, global: Option<GlobalId>) {
         // Remember where the output was and whether it was primary, so a
         // reconnect of the same connector restores the pre-suspend
         // arrangement (position AND primary status).
@@ -3739,8 +3759,15 @@ impl Workspaces {
             .map(|g| g.loc)
             .unwrap_or_default();
         let was_primary = self.primary_output.as_ref() == Some(output);
-        self.suspended_outputs
-            .insert(output.name(), (location, was_primary));
+        self.suspended_outputs.insert(
+            output.name(),
+            SuspendedOutput {
+                output: output.clone(),
+                location,
+                was_primary,
+                global,
+            },
+        );
 
         self.outputs.retain(|o| o != output);
         if self.primary_output.as_ref() == Some(output) {
@@ -3750,12 +3777,8 @@ impl Workspaces {
         self.sync_model_from_primary();
     }
 
-    /// Take (consume) the saved position/primary of a previously suspended
-    /// output, if any. Returns `(location, was_primary)`.
-    pub fn take_suspended_output(
-        &mut self,
-        output_name: &str,
-    ) -> Option<(smithay::utils::Point<i32, smithay::utils::Logical>, bool)> {
+    /// Take (consume) a previously suspended output, if any.
+    pub fn take_suspended_output(&mut self, output_name: &str) -> Option<SuspendedOutput> {
         self.suspended_outputs.remove(output_name)
     }
 

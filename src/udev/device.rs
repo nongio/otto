@@ -436,24 +436,58 @@ impl Otto<UdevData> {
             _ => Subpixel::Unknown,
         };
         let (phys_w, phys_h) = connector.size().unwrap_or((0, 0));
-        let output = Output::new(
-            output_name.to_string(),
-            PhysicalProperties {
-                size: (phys_w as i32, phys_h as i32).into(),
-                subpixel,
-                make: make.to_string(),
-                model: model.to_string(),
-                serial_number: String::new(),
-            },
-        );
 
-        let global = output.create_global::<Otto<UdevData>>(&self.display_handle);
+        // If this connector was suspended (lid close), it comes back as the
+        // very same `Output`, keeping its `wl_output`, its layer map and every
+        // reference held elsewhere (layer-shell surfaces, lock surfaces,
+        // window assignments). A fresh `Output` would orphan all of them: the
+        // greeter's panel and the lock screen stayed registered on an output
+        // nothing renders any more, leaving the bare background on screen.
+        // Only the same pipe qualifies — `UdevOutputId` is fixed when the
+        // output is built and routes every frame.
+        let suspended = self
+            .workspaces
+            .take_suspended_output(output_name)
+            .filter(|suspended| {
+                suspended
+                    .output
+                    .user_data()
+                    .get::<UdevOutputId>()
+                    .is_some_and(|id| id.device_id == node && id.crtc == crtc)
+            });
 
-        // If this connector was suspended (lid close), restore its saved
-        // position and primary status: other outputs (e.g. virtual ones) kept
-        // running meanwhile, and auto-placement would pack the panel after
-        // them and leave primary — and the dock — on the wrong output.
-        let suspended = self.workspaces.take_suspended_output(output_name);
+        // Its saved position and primary status come back with it: other
+        // outputs (e.g. virtual ones) kept running meanwhile, and
+        // auto-placement would pack the panel after them and leave primary —
+        // and the dock — on the wrong output.
+        let restored = suspended
+            .as_ref()
+            .map(|suspended| (suspended.location, suspended.was_primary));
+
+        let (output, global) = match suspended {
+            Some(suspended) => {
+                let global = suspended.global.unwrap_or_else(|| {
+                    suspended
+                        .output
+                        .create_global::<Otto<UdevData>>(&self.display_handle)
+                });
+                (suspended.output, global)
+            }
+            None => {
+                let output = Output::new(
+                    output_name.to_string(),
+                    PhysicalProperties {
+                        size: (phys_w as i32, phys_h as i32).into(),
+                        subpixel,
+                        make: make.to_string(),
+                        model: model.to_string(),
+                        serial_number: String::new(),
+                    },
+                );
+                let global = output.create_global::<Otto<UdevData>>(&self.display_handle);
+                (output, global)
+            }
+        };
 
         // Position: suspended restore first, then the config profile,
         // otherwise auto-place to the right of the existing outputs (logical
@@ -464,7 +498,7 @@ impl Otto<UdevData> {
             (wl_mode.size.w as f64 / screen_scale) as i32,
             (wl_mode.size.h as f64 / screen_scale) as i32,
         ));
-        let position: smithay::utils::Point<i32, smithay::utils::Logical> = suspended
+        let position: smithay::utils::Point<i32, smithay::utils::Logical> = restored
             .map(|(pos, _)| pos)
             .or_else(|| {
                 config_profile
@@ -506,7 +540,7 @@ impl Otto<UdevData> {
             Some(position),
         );
 
-        let is_primary = suspended
+        let is_primary = restored
             .map(|(_, was_primary)| was_primary)
             .unwrap_or_else(|| config_profile.as_ref().map(|p| p.primary).unwrap_or(false));
         self.workspaces
@@ -534,6 +568,14 @@ impl Otto<UdevData> {
             device_id: node,
             is_laptop_panel: crate::utils::is_laptop_panel(output_name),
         });
+
+        // A restored output brings its layer map and its lock surface back
+        // with it, but the mode or the scale may have moved under them while
+        // it was away. Re-arrange and re-configure so both return at the
+        // geometry the screen actually has.
+        if restored.is_some() {
+            smithay::desktop::layer_map_for_output(&output).arrange();
+        }
 
         #[cfg(feature = "fps_ticker")]
         let fps_element = self
@@ -642,6 +684,12 @@ impl Otto<UdevData> {
             device.surfaces.insert(crtc, surface_data);
 
             self.schedule_initial_render(node, crtc, self.handle.clone());
+        }
+
+        // A restored output brings its lock surface back with it, and the mode
+        // or the scale may have moved under it while it was away.
+        if restored.is_some() {
+            self.reconfigure_lock_surface(&output);
         }
     }
 
@@ -757,6 +805,22 @@ impl Otto<UdevData> {
             }
         } else {
             device.surfaces.remove(&crtc);
+
+            // The connector is gone for real, so a suspended output waiting on
+            // it is not coming back and the `wl_output` it kept alive across
+            // the suspend has to be withdrawn now.
+            let output_name = format!(
+                "{}-{}",
+                connector.interface().as_str(),
+                connector.interface_id()
+            );
+            if let Some(global) = self
+                .workspaces
+                .take_suspended_output(&output_name)
+                .and_then(|suspended| suspended.global)
+            {
+                self.display_handle.remove_global::<Otto<UdevData>>(global);
+            }
 
             let output = self
                 .workspaces
@@ -913,10 +977,17 @@ impl Otto<UdevData> {
                 })
                 .cloned();
 
+            // Take the global out of the surface before dropping it: the
+            // surface's `Drop` is what withdraws the `wl_output`, and a
+            // suspended output has to keep its own — see `suspend_output`.
+            let global = device
+                .surfaces
+                .get_mut(&crtc)
+                .and_then(|surface| surface.global.take());
             device.surfaces.remove(&crtc);
 
             if let Some(output) = output {
-                self.workspaces.suspend_output(&output);
+                self.workspaces.suspend_output(&output, global);
             }
         }
 
