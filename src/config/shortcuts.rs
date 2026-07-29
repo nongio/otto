@@ -310,6 +310,9 @@ fn parse_keysym(key: &str) -> Result<xkb::Keysym, ShortcutError> {
         "ArrowDown" => Some("Down"),
         "ArrowLeft" => Some("Left"),
         "ArrowRight" => Some("Right"),
+        // What people write, rather than what X11 called it. `Ctrl+Esc` is the
+        // shipped quit binding, and without this it is silently skipped.
+        "Esc" => Some("Escape"),
         _ => None,
     };
 
@@ -374,6 +377,27 @@ pub fn default_shortcut_map() -> ShortcutMap {
 mod tests {
     use super::*;
     use smithay::input::keyboard::ModifiersState;
+
+    /// The names a config file uses are not always the names xkb uses. Every
+    /// alias here appears in a shipped config, and an unrecognised one is
+    /// skipped with a warning — which for `Ctrl+Esc` meant a compositor with no
+    /// way to quit.
+    #[test]
+    fn friendly_key_names_resolve_to_keysyms() {
+        for (written, xkb_name) in [
+            ("Esc", "Escape"),
+            ("ArrowUp", "Up"),
+            ("ArrowDown", "Down"),
+            ("ArrowLeft", "Left"),
+            ("ArrowRight", "Right"),
+        ] {
+            assert_eq!(
+                parse_keysym(written).expect("a shipped config uses this name"),
+                xkb::keysym_from_name(xkb_name, xkb::KEYSYM_NO_FLAGS),
+                "{written} should mean {xkb_name}"
+            );
+        }
+    }
 
     #[test]
     fn parses_basic_shortcuts() {

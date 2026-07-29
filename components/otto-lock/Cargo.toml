@@ -1,0 +1,25 @@
+[package]
+name = "otto-lock"
+version = "0.1.0"
+edition = "2021"
+description = "Screen locker for Otto, backed by PAM"
+
+[dependencies]
+otto-kit = { path = "../otto-kit" }
+otto-auth-ui = { path = "../otto-auth-ui" }
+smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+chrono = "0.4"
+libc = "0.2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dependencies.skia-safe]
+version = "=0.93"
+features = ["gl", "textlayout", "svg", "skottie"]
+
+# Locks and unlocks with no PAM in the way, to exercise the protocol lifecycle.
+[[example]]
+name = "lock_cycle"
+path = "examples/lock_cycle.rs"

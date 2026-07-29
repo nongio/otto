@@ -588,11 +588,39 @@ fn run_headless_loop(
         } else {
             state.workspaces.refresh_space();
             state.popups.cleanup();
+            send_frames(&mut state);
             display_handle.flush_clients().unwrap();
         }
     }
 
     info!("Headless compositor stopped");
+}
+
+/// Tell every mapped surface that its last frame has been shown.
+///
+/// There is no screen here and nothing is rendered, but a client that paces
+/// itself by frame callbacks — the correct way to animate — would otherwise
+/// draw one frame and wait for a callback that never comes. The dispatch loop
+/// runs at 16ms, so that is the rate they are given.
+fn send_frames(state: &mut Otto<HeadlessData>) {
+    use smithay::desktop::layer_map_for_output;
+
+    let time = state.clock.now();
+    let outputs: Vec<Output> = state.workspaces.outputs().cloned().collect();
+    let windows: Vec<_> = state.workspaces.spaces_elements().cloned().collect();
+
+    for output in outputs {
+        for window in &windows {
+            window.send_frame(&output, time, Some(Duration::ZERO), |_, _| {
+                Some(output.clone())
+            });
+        }
+        for layer_surface in layer_map_for_output(&output).layers() {
+            layer_surface.send_frame(&output, time, Some(Duration::ZERO), |_, _| {
+                Some(output.clone())
+            });
+        }
+    }
 }
 
 /// Convenience entry point for running headless from the CLI (mainly for

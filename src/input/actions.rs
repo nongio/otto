@@ -111,8 +111,23 @@ impl<BackendData: Backend> Otto<BackendData> {
             });
         }
 
-        if let Err(e) = command.spawn() {
-            error!(program = %cmd, err = %e, "Failed to start program");
+        match command.spawn() {
+            // Nothing in the compositor waits on a launched program, so
+            // without a reaper every one of them leaves a zombie behind for as
+            // long as Otto runs. It goes unnoticed for apps, which are
+            // launched by hand and outlive their launch — but a screen locker
+            // exits on every unlock, so locking the session a dozen times
+            // leaves a dozen of them. A thread per child rather than a
+            // SIGCHLD handler: that signal is process-wide, and XWayland's
+            // own child management waits on its children.
+            Ok(mut child) => {
+                let _ = std::thread::Builder::new()
+                    .name(format!("reap {cmd}"))
+                    .spawn(move || {
+                        let _ = child.wait();
+                    });
+            }
+            Err(e) => error!(program = %cmd, err = %e, "Failed to start program"),
         }
     }
 

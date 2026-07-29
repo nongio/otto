@@ -423,22 +423,33 @@ impl Otto<UdevData> {
             .map(|s| s.planes_enabled)
             .unwrap_or(false)
             && self.backend_data.underrun_penalty < 2;
-        // Any running minimize/unminimize genie forces the full-GPU scene
-        // composite for the frame (and drops scanout promotion): the genie's
+        // Two things force the full-GPU scene composite for a frame (and drop
+        // scanout promotion with it).
+        //
+        // Any running minimize/unminimize genie: the genie's
         // image filter paints far outside the per-plane damage rects, so the
         // plane pipeline's partial redraws corrupt the animation. The mode is
         // held ~150ms past the animation: the settle work (reparent into the
         // drawer, rescale, unhide) lands from an async task across several
         // engine updates, and flipping back to planes mid-settle scans out a
         // stale frame.
-        let minimize_now = self.workspaces.has_minimizing_window();
-        let minimize_active = if let Some(surf) = self
+        // A locked session, for a different reason entirely: the plane
+        // decomposition renders one fixed set of
+        // subtrees — background, windows, expose, overlay, switcher, dock —
+        // and the lock plane is in none of them. Left to the planes, the blank
+        // and the locker's surface are drawn nowhere at all while the desktop's
+        // own planes keep scanning out, so a locked screen shows the session.
+        // Compositing the whole output subtree is what puts the lock plane on
+        // screen, and it costs nothing worth counting on a screen whose only
+        // job is to wait for a password.
+        let composite_now = self.workspaces.has_minimizing_window() || self.is_session_locked();
+        let composite_active = if let Some(surf) = self
             .backend_data
             .backends
             .get_mut(&node)
             .and_then(|d| d.surfaces.get_mut(&crtc))
         {
-            if minimize_now {
+            if composite_now {
                 surf.composite_hold_until =
                     Some(Instant::now() + std::time::Duration::from_millis(150));
                 true
@@ -447,7 +458,7 @@ impl Otto<UdevData> {
                     .is_some_and(|t| Instant::now() < t)
             }
         } else {
-            minimize_now
+            composite_now
         };
         // Promotion candidates are per-output — resolve this CRTC's output
         // before the surface borrow below.
@@ -462,7 +473,7 @@ impl Otto<UdevData> {
             if !planes_enabled
                 || self.backend_data.underrun_penalty >= 1
                 || capture_active
-                || minimize_active
+                || composite_active
                 || self.swipe_gesture.is_active()
                 || fullscreen_window.is_some()
                 // A promoted window is scanned out from its own KMS plane,
@@ -867,7 +878,7 @@ impl Otto<UdevData> {
         // while the plane buffers sat idle. Without a full redraw the first
         // planes frame scans out the stale pre-composite content (ghost of
         // the just-minimized window).
-        if surface.was_force_composite && !minimize_active {
+        if surface.was_force_composite && !composite_active {
             for el in [
                 &surface.scene_dmabuf_element,
                 &surface.windows_dmabuf_element,
@@ -885,7 +896,7 @@ impl Otto<UdevData> {
                 surface.transition_dump_left = 8;
             }
         }
-        surface.was_force_composite = minimize_active;
+        surface.was_force_composite = composite_active;
 
         let output_scene_element = self
             .workspaces
@@ -944,7 +955,7 @@ impl Otto<UdevData> {
                 .scanout_commit_pending
                 .swap(false, std::sync::atomic::Ordering::Relaxed),
             planes_enabled,
-            minimize_active,
+            composite_active,
             output_scene_element,
             &self.layers_engine,
             // Popups live in the primary output's overlay plane only.
@@ -1426,6 +1437,7 @@ impl Otto<UdevData> {
         }
 
         let primary_gpu = self.backend_data.primary_gpu;
+        let locked = self.is_session_locked();
         let all_window_elements: Vec<&WindowElement> = self.workspaces.spaces_elements().collect();
         let scene_element = self.scene_element.clone();
 
@@ -1460,6 +1472,12 @@ impl Otto<UdevData> {
                 .map(|ows| {
                     let pos = ows.output_layer.render_position();
                     let origin = (pos.x, pos.y);
+                    // A locked session is hidden from a stream as thoroughly
+                    // as from the screen: only the lock plane is composited,
+                    // so no subtree that could hold a window is even consulted.
+                    if locked {
+                        return vec![scene_element.for_plane_subtree(&ows.lock_plane, origin)];
+                    }
                     let mut stack = vec![
                         scene_element.for_plane_subtree(&ows.dock_plane, origin),
                         scene_element.for_plane_subtree(&ows.switcher_plane, origin),

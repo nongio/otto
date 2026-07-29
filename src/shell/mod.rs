@@ -207,6 +207,18 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
                 self.lock_surface_output(&root.id())
             }) {
                 self.update_lock_surface(&output_name);
+                // A lock surface's commit has to ask for a frame like any
+                // other surface's. Returning without this updates the scene and
+                // then tells nobody to draw it: the panel freezes on whichever
+                // frame some other redraw happened to carry, and — because the
+                // frame callback is sent from the presentation path — the
+                // client never learns its frame arrived either. It then paints
+                // on its own timeout, at a tenth of the rate, into a screen
+                // that is not being redrawn. Nothing on a lock screen animates
+                // if this is missed, and nothing else redraws while locked.
+                self.backend_data.invalidate_scene_prefetch();
+                self.backend_data.request_redraw();
+                self.schedule_event_loop_dispatch();
                 return;
             }
 

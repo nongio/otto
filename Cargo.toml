@@ -156,6 +156,7 @@ members = [
     "components/otto-kit",
     "components/otto-auth-ui",
     "components/otto-greeter",
+    "components/otto-lock",
     "components/otto-bar",
     "components/otto-islands",
     "sample-clients/client-rainbow",

@@ -31,6 +31,35 @@ use tracing::{debug, info, warn};
 
 use crate::state::{Backend, Otto};
 
+/// How long an output has to present the blank before the lock is given up on.
+///
+/// The alternative to giving up is a session that stays hidden with no locker
+/// able to authenticate — the client is waiting on `locked`, which is waiting
+/// on a frame that is not coming — and no way out but a VT switch, which a
+/// tablet or a closed lid may not offer. Generous, because the cost of
+/// tripping it on a slow first frame is a lock that did not happen.
+const LOCK_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How long the blank takes to come down from the top of the screen, and how
+/// much it bounces when it lands.
+///
+/// The session is visible underneath while it falls, which is what a shade
+/// coming down is — but nothing of the session is reachable: input is cut off
+/// the moment the lock is requested, and the client is not told the session is
+/// hidden until the blank has landed and been presented.
+const SLIDE: f32 = 0.45;
+const SLIDE_BOUNCE: f32 = 0.3;
+
+/// Extra height the blank carries above the screen, as a fraction of it.
+///
+/// A spring overshoots and rebounds, and a shade that rebounded past its
+/// resting place would lift a strip of itself off the top of the screen and
+/// show the desktop through the gap — after landing, which is exactly when the
+/// session is supposed to be hidden. The blank is therefore taller than the
+/// output it covers, and rests with the excess off-screen above, so the whole
+/// rebound happens in slack rather than in view.
+const SLIDE_OVERSHOOT: f32 = 0.25;
+
 /// Where the session sits between unlocked and locked.
 pub enum LockState {
     /// Ordinary operation.
@@ -47,6 +76,13 @@ pub enum LockState {
         locker: SessionLocker,
         /// Outputs that have yet to present the blank.
         pending: HashSet<String>,
+        /// When the lock was requested, so a confirmation that never comes
+        /// can be given up on. See [`LOCK_CONFIRM_TIMEOUT`].
+        since: std::time::Instant,
+        /// When the blank finishes falling. No output counts as blanked before
+        /// this: a frame presented mid-slide still has the desktop under it,
+        /// and `locked` is a promise that it does not.
+        landed: std::time::Instant,
     },
     /// The client has been told the session is locked.
     Locked,
@@ -64,8 +100,13 @@ impl LockState {
 /// A locker's surface for one output, and the scene layer it draws into.
 pub struct LockSurfaceEntry {
     pub surface: LockSurface,
-    /// Container layer, a child of that output's `lock_plane`.
+    /// The client's layer, registered in `surface_layers` — so the commit path
+    /// owns its size and position, and nothing here may hold state in it.
     pub layer: Layer,
+    /// What holds [`LockSurfaceEntry::layer`], a child of that output's
+    /// `lock_plane`, carrying the offset past the blank's slack. Removing this
+    /// removes both.
+    pub shade: Layer,
     pub output: Output,
 }
 
@@ -102,24 +143,122 @@ impl<BackendData: Backend> Otto<BackendData> {
 
         info!("Locking session");
 
-        // Every output goes opaque now, before the client has drawn anything.
-        // An output with no locker surface stays this way for the whole lock.
+        // What `locked` is a promise about is screens someone can see. A
+        // virtual output composites only when something is consuming it, so a
+        // PipeWire output with no stream attached never presents a frame — and
+        // waiting for one would mean the promise is never made, the locker
+        // never authenticates, and the session cannot be unlocked at all,
+        // short of a VT switch. Nothing of the session is visible on one
+        // either way: its blank goes up with all the others below, and a
+        // stream that starts later finds it there.
         let pending: HashSet<String> = self
             .workspaces
-            .output_workspaces
-            .iter()
-            .map(|(name, ows)| {
-                ows.lock_plane.set_hidden(false);
-                name.clone()
+            .outputs()
+            .filter(|output| !crate::virtual_output::is_virtual_output(output))
+            .map(|output| output.name())
+            .filter(|name| self.workspaces.output_workspaces.contains_key(name))
+            .collect();
+
+        // Nothing would ever confirm the blank, so the promise could not be
+        // kept. Returning drops the locker, which sends `finished`: the
+        // request is refused and the session is untouched.
+        if pending.is_empty() {
+            warn!("no output can present the blank; refusing to lock");
+            return;
+        }
+
+        // Every output's blank starts just above its screen and falls into
+        // place. An output with no locker surface keeps the bare blank for the
+        // whole lock; one that gets a surface has the panel fall with it,
+        // since the surface hangs off this layer.
+        let geometries: Vec<(String, f32, f32)> = self
+            .workspaces
+            .outputs()
+            .filter_map(|output| {
+                let geometry = self.workspaces.output_geometry(&output)?;
+                let scale = output.current_scale().fractional_scale() as f32;
+                Some((
+                    output.name(),
+                    geometry.size.w as f32 * scale,
+                    geometry.size.h as f32 * scale,
+                ))
             })
             .collect();
+
+        for (name, width_px, height_px) in geometries {
+            let Some(ows) = self.workspaces.output_workspaces.get(&name) else {
+                continue;
+            };
+            let margin = height_px * SLIDE_OVERSHOOT;
+            ows.lock_plane
+                .set_size(Size::points(width_px, height_px + margin), None);
+            // Fully above the screen, then down to rest with only the slack
+            // off-screen.
+            ows.lock_plane.set_position(
+                Point {
+                    x: 0.0,
+                    y: -(height_px + margin),
+                },
+                None,
+            );
+            ows.lock_plane.set_hidden(false);
+            ows.lock_plane.set_position(
+                Point { x: 0.0, y: -margin },
+                Some(Transition::spring(SLIDE, SLIDE_BOUNCE)),
+            );
+        }
 
         // Drop any interactive grab (move, resize, drag) and take keyboard
         // focus off the session. Focus moves to a lock surface as soon as one
         // is mapped; until then nothing has it, so nothing receives keys.
         self.cancel_session_interaction();
 
-        self.lock_state = LockState::Locking { locker, pending };
+        self.lock_state = LockState::Locking {
+            locker,
+            pending,
+            since: std::time::Instant::now(),
+            // The blank covers the screen at the end of its travel; the
+            // rebound after that happens in the slack above and uncovers
+            // nothing, so there is no need to wait for the spring to settle.
+            landed: std::time::Instant::now() + std::time::Duration::from_secs_f32(SLIDE),
+        };
+
+        // The blank has to reach the screen for the lock to be confirmed at
+        // all, and nothing else will ask for that frame. It happens to work
+        // when a keypress triggered the lock — input requests a redraw of its
+        // own — but an idle timer or a lid switch has no keypress behind it.
+        self.request_lock_redraw();
+    }
+
+    /// Ask the backend to draw a frame after the lock state has changed.
+    ///
+    /// Raising the blank and taking it down are scene changes like any other,
+    /// and like any other they are only visible once something draws them.
+    /// Nothing else is asking while locked — the session is hidden and its
+    /// clients throttled — so without this the screen keeps whatever frame it
+    /// last presented until some unrelated redraw happens along. Moving the
+    /// pointer is one, which is why a missing request looks like "it appears
+    /// when I touch the mouse" rather than like nothing working at all.
+    fn request_lock_redraw(&mut self) {
+        self.backend_data.invalidate_scene_prefetch();
+        self.backend_data.request_redraw();
+        self.schedule_event_loop_dispatch();
+    }
+
+    /// Give up on a lock that cannot be confirmed: put the session back and
+    /// tell the client the request failed.
+    ///
+    /// Dropping the [`SessionLocker`] is what sends `finished`, so taking the
+    /// state apart is all this has to do.
+    fn abandon_lock(&mut self) {
+        for ows in self.workspaces.output_workspaces.values() {
+            ows.lock_plane.set_hidden(true);
+        }
+        self.lock_state = LockState::Unlocked;
+        self.lock_locker_seen = false;
+        self.lock_last_spawn = None;
+        self.restore_session_focus();
+        self.request_lock_redraw();
     }
 
     /// A frame has been presented on `output`. Sends frame callbacks to that
@@ -141,13 +280,40 @@ impl<BackendData: Backend> Otto<BackendData> {
 
         self.refresh_lock_focus();
 
-        let confirmed = match &mut self.lock_state {
-            LockState::Locking { pending, .. } => {
+        let (confirmed, stalled) = match &mut self.lock_state {
+            LockState::Locking {
+                pending,
+                since,
+                landed,
+                ..
+            } => {
+                // A frame presented while the blank is still falling has the
+                // desktop under it, so it does not blank anything yet. The
+                // slide keeps producing damage, so more frames are coming.
+                if std::time::Instant::now() < *landed {
+                    return;
+                }
                 pending.remove(&output.name());
-                pending.is_empty()
+                let stalled = !pending.is_empty() && since.elapsed() >= LOCK_CONFIRM_TIMEOUT;
+                if stalled {
+                    warn!(
+                        outputs = ?pending,
+                        "outputs never presented the blank; abandoning the lock"
+                    );
+                }
+                (pending.is_empty(), stalled)
             }
-            _ => false,
+            _ => (false, false),
         };
+
+        // An output that cannot present cannot be part of a promise that the
+        // session is hidden — and a lock that is never confirmed is one no
+        // locker can ever unlock, because the client is waiting for `locked`
+        // before it authenticates.
+        if stalled {
+            self.abandon_lock();
+            return;
+        }
 
         if confirmed {
             // Take the locker out of the state to consume it; `lock()` is what
@@ -170,7 +336,7 @@ impl<BackendData: Backend> Otto<BackendData> {
 
         for entry in self.lock_surfaces.values() {
             self.surface_layers.remove(&entry.surface.wl_surface().id());
-            entry.layer.remove();
+            entry.shade.remove();
         }
         self.lock_surfaces.clear();
 
@@ -182,6 +348,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         self.lock_locker_seen = false;
         self.lock_last_spawn = None;
         self.restore_session_focus();
+        self.request_lock_redraw();
     }
 
     /// Drop lock surfaces whose client has gone. The lock itself survives: the
@@ -200,7 +367,7 @@ impl<BackendData: Backend> Otto<BackendData> {
             if let Some(entry) = self.lock_surfaces.remove(&name) {
                 debug!(output = %name, "lock surface gone; falling back to the blank");
                 self.surface_layers.remove(&entry.surface.wl_surface().id());
-                entry.layer.remove();
+                entry.shade.remove();
             }
         }
 
@@ -253,6 +420,29 @@ impl<BackendData: Backend> Otto<BackendData> {
         let width_px = geometry.size.w as f32 * scale;
         let height_px = geometry.size.h as f32 * scale;
 
+        // A layer of our own between the blank and the client's, holding the
+        // offset that puts the panel on the screen rather than up in the slack
+        // the blank carries above it. It cannot be the client's own layer:
+        // that one is registered in `surface_layers`, so every commit runs it
+        // through `configure_surface_layer`, which sets the position from the
+        // surface's geometry — and would drop this offset on the floor, taking
+        // the panel a quarter-screen up and showing the blank below it.
+        let shade = self.layers_engine.new_layer();
+        shade.set_key(format!("lock_shade_{name}"));
+        shade.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        shade.set_size(Size::points(width_px, height_px), None);
+        shade.set_position(
+            Point {
+                x: 0.0,
+                y: height_px * SLIDE_OVERSHOOT,
+            },
+            None,
+        );
+        let _ = ows.lock_plane.add_sublayer(&shade);
+
         let layer = self.layers_engine.new_layer();
         layer.set_key(format!("lock_surface_{name}"));
         layer.set_layout_style(taffy::Style {
@@ -261,7 +451,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         });
         layer.set_size(Size::points(width_px, height_px), None);
         layer.set_pointer_events(true);
-        let _ = ows.lock_plane.add_sublayer(&layer);
+        let _ = shade.add_sublayer(&layer);
 
         let surface_id = surface.wl_surface().id();
         self.surface_layers.insert(surface_id, layer.clone());
@@ -280,6 +470,7 @@ impl<BackendData: Backend> Otto<BackendData> {
             LockSurfaceEntry {
                 surface,
                 layer,
+                shade,
                 output,
             },
         );
@@ -308,6 +499,12 @@ impl<BackendData: Backend> Otto<BackendData> {
 
         self.sync_surface_tree_layers(&wl_surface, scale, "lock_surface");
         layer.set_hidden(false);
+        debug!(
+            output = %output_name,
+            size = ?layer.render_size(),
+            children = layer.children().len(),
+            "lock surface committed"
+        );
     }
 
     /// Resize the lock surface on `output` after a mode or scale change.
@@ -322,13 +519,25 @@ impl<BackendData: Backend> Otto<BackendData> {
             return;
         };
         let scale = output.current_scale().fractional_scale() as f32;
-        entry.layer.set_size(
-            Size::points(
-                geometry.size.w as f32 * scale,
-                geometry.size.h as f32 * scale,
-            ),
-            None,
-        );
+        let width_px = geometry.size.w as f32 * scale;
+        let height_px = geometry.size.h as f32 * scale;
+        let margin = height_px * SLIDE_OVERSHOOT;
+        entry
+            .shade
+            .set_size(Size::points(width_px, height_px), None);
+        entry.shade.set_position(Point { x: 0.0, y: margin }, None);
+        entry
+            .layer
+            .set_size(Size::points(width_px, height_px), None);
+        // The blank keeps its slack across a mode change, and stays at rest:
+        // this is a resize, not a second arrival, and re-running the slide
+        // would drop the screen back to the desktop mid-lock.
+        if let Some(ows) = self.workspaces.output_workspaces.get(&output.name()) {
+            ows.lock_plane
+                .set_size(Size::points(width_px, height_px + margin), None);
+            ows.lock_plane
+                .set_position(Point { x: 0.0, y: -margin }, None);
+        }
         entry.surface.with_pending_state(|state| {
             state.size = Some((geometry.size.w as u32, geometry.size.h as u32).into());
         });

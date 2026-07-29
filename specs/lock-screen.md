@@ -57,6 +57,14 @@ user. Any other `ext-session-lock-v1` client works too.
 - Otto sends the `locked` event only after a frame with the session hidden has
   been presented on every output it drives. If it cannot reach that state the
   lock request is refused with `finished` and the session is untouched.
+- "Every output it drives" means every output someone can see. A virtual
+  (PipeWire) output composites only while something is consuming it, so one
+  with no stream attached never presents and is not waited for — its blank goes
+  up with the rest, and a stream that starts later finds it there.
+- A confirmation that has not arrived within five seconds is given up on: the
+  blank comes down, the session comes back, and the request is refused. The
+  state being avoided is a session hidden behind a lock no locker can unlock,
+  because the client is waiting for `locked` before it authenticates.
 - Only one lock may be active. A second lock request while locked is refused.
 - Locking is idempotent from the user's side: triggering a lock while already
   locked does nothing.
@@ -90,7 +98,9 @@ user. Any other `ext-session-lock-v1` client works too.
   locker, which may create a surface for it. Removing an output destroys its
   lock surface without ending the lock.
 - Suspending and resuming, or switching VT away and back, leaves the session
-  locked.
+  locked. Coming back from another VT redraws in full: the primary plane has no
+  content and nothing in the scene changed while Otto was away, so damage
+  tracking alone would present an empty frame over an empty plane.
 
 ### Unlocking
 
@@ -127,6 +137,19 @@ user. Any other `ext-session-lock-v1` client works too.
   run as the session user. Prompts, info and error messages map onto the panel
   exactly as greetd's `auth_message`s do in the greeter, so a fingerprint reader
   configured through `pam_fprintd` works with no locker-specific code.
+- The service file is `components/otto-lock/otto-lock.pam`, installed as
+  `/etc/pam.d/otto-lock`. Without it PAM falls through to `other`, which denies
+  everything, so a missing file would lock the user out of their own session;
+  the locker notices and falls back to `system-auth`, then `login`, saying so.
+  `$OTTO_LOCK_PAM_SERVICE` names a different service, for exercising the lock
+  against a stack whose answer is known.
+- A refused attempt is followed by another, so there is always a field — or a
+  reader — to try again with. The delay between them is PAM's; the locker
+  imposes only a floor, so a stack that cannot run at all (no service file, a
+  broken module) fails fast without spinning.
+- The clock keeps time. A session can be locked for hours, and the panel's
+  clock draws from a closure the scene engine otherwise records once and
+  replays — so the locker damages it when the minute turns.
 - PAM's conversation is blocking, so it runs off the main thread; the panel must
   stay animating while a reader waits for a finger.
 - A failed attempt returns to the field with the error shown, and repeated
@@ -149,11 +172,44 @@ user. Any other `ext-session-lock-v1` client works too.
   left active would keep showing the window under the blank. All promotions are
   released when the lock begins, and only lock surfaces may be promoted while
   locked.
+- **The plane decomposition has no lock plane, so locking leaves it.** On the
+  DRM backend the scene is not composited in one pass: it is split into a fixed
+  set of subtrees — background, windows, expose, overlay, switcher, dock — each
+  rendered to its own KMS plane. The lock plane is in none of them, so a locked
+  session that stayed on that path would draw the blank and the locker nowhere
+  while the desktop's planes kept scanning out their last buffers — a lock
+  screen showing the whole desktop. Locking therefore forces the full-scene
+  composite (the path the minimize genie already uses), whose subtree is the
+  output layer and so includes the lock plane. Nested backends composite in one
+  pass and never showed this, which is why it has to be said here.
+- **A stream is not a screen, and is hidden the same way.** Screencopy is
+  refused while locked, but a virtual (PipeWire) output composites its own
+  plane stack for a consumer that is still attached — and that stack was built
+  from the same subtrees, none of which is the lock plane. While locked a
+  virtual output composites the lock plane and nothing else, so no subtree that
+  could hold a window is even consulted.
 - **Rendering must not be skipped while locked.** A lock surface that animates
   (the Touch ID mark) needs frame callbacks even though no session client does.
+- **A lock surface's commit must request a redraw like any other surface's.**
+  Nothing else is redrawing while locked — the session is hidden and its
+  clients are throttled — so the locker's own commits are the only thing left
+  asking for frames. A commit path that updates the scene and returns without
+  requesting one leaves the panel frozen on whichever frame some unrelated
+  redraw happened to carry, and, because frame callbacks are sent from the
+  presentation path, the client never learns its frame arrived: it falls back
+  to painting on its own timeout, an order of magnitude slower, into a screen
+  nobody is drawing. The tell is that moving the pointer — which requests a
+  redraw for its own reasons — makes the lock screen come alive.
 - **The lock outlives the client.** Compositor state, not the client's presence,
   is what "locked" means. Every path that tears down a client — crash, kill,
   protocol error — must leave the lock intact.
+- **The unlock request must be flushed before the locker exits.** A locker
+  unlocks in order to leave, and a request still sitting in its client-side
+  buffer when the connection closes is one the compositor never sees. What it
+  sees instead is a locker that died while locked — which by design leaves the
+  session locked, the screen blank, and a respawned locker as the only way
+  back. The request is therefore pushed out where it is made, not left for the
+  event loop's next flush.
 - **A locker started by hand must not be able to unlock what it did not lock.**
   The protocol enforces this: unlock is a request on the `ext_session_lock_v1`
   object, and Otto ignores it from any other lock.
@@ -196,8 +252,9 @@ user. Any other `ext-session-lock-v1` client works too.
 - Should the blank be black, the wallpaper, or a blurred capture of the desktop?
   A blurred capture is what the panel's frost is designed against, but it is
   also a partial disclosure of what was on screen.
-- Does the greeter's "hold the accepted fingerprint mark before proceeding"
-  pause apply here? Nothing kills the locker at unlock time, so it can simply
-  animate and then unlock.
+- Should the panel offer suspend / restart / shut down from a locked screen, as
+  it does from the greeter? It does today, on the grounds that the session
+  picker is the only element meant to differ — but a "Restart" button on a lock
+  screen is a data-loss button for a session that is still running.
 - Should Otto refuse to lock when no locker is installed, or fall back to a
   built-in blank with no way in except a VT switch?
