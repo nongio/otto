@@ -1,3 +1,4 @@
+use layers::prelude::taffy;
 use layers::types::Size;
 use std::fmt;
 use std::rc::Rc;
@@ -40,7 +41,21 @@ impl BaseWaylandSurface {
     ) -> Self {
         let layer_node = AppContext::layers_engine().map(|engine| {
             let l = engine.new_layer();
+            // Every surface's root node is its own origin: it is drawn into
+            // that surface's canvas alone, and `draw_scene` concatenates the
+            // node's transform before rendering it. Left in the engine root's
+            // flow, a second surface would be laid out beside the first and
+            // paint its content off to the right of its own buffer — which is
+            // what an app with a surface per output (the lock screen, the
+            // greeter) gets the moment it has more than one, and what a
+            // surface recreated after an output comes back gets even with one
+            // on screen, since it is appended after the survivors.
+            l.set_layout_style(taffy::Style {
+                position: taffy::Position::Absolute,
+                ..Default::default()
+            });
             l.set_size(Size::points(width as f32, height as f32), None);
+            l.set_position((0.0, 0.0), None);
             let _ = engine.add_layer(&l);
             l
         });
