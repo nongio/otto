@@ -60,6 +60,7 @@ fn main() {
                 session: Some("Otto (current build)"),
                 busy: None,
                 power: true,
+                offer_password: false,
             },
         ),
         (
@@ -72,13 +73,17 @@ fn main() {
                 session: Some("Otto (current build)"),
                 busy: None,
                 power: true,
+                offer_password: false,
             },
         ),
         (
             "fingerprint",
             View {
                 user: Some(&user),
-                prompt: "Password",
+                // What the greeter shows here: greetd has taken the username
+                // and asked nothing yet, so there is no field and nothing to
+                // label but the wait itself.
+                prompt: "Authenticating\u{2026}",
                 field: Field::Secret(0),
                 status: Some(Status::Fingerprint(
                     "Place your finger on the reader",
@@ -87,18 +92,36 @@ fn main() {
                 session: Some("Otto (current build)"),
                 busy: None,
                 power: true,
+                offer_password: true,
+            },
+        ),
+        // Having taken the way out of it: the reader is still holding the PAM
+        // stack, but the panel is asking for a password and keeping it until
+        // there is a prompt to send it to.
+        (
+            "fingerprint-password",
+            View {
+                user: Some(&user),
+                prompt: "Password",
+                field: Field::Secret(8),
+                status: Some(Status::Info("Waiting for the fingerprint reader…")),
+                session: Some("Otto (current build)"),
+                busy: None,
+                power: true,
+                offer_password: false,
             },
         ),
         (
             "accepted",
             View {
                 user: Some(&user),
-                prompt: "Password",
+                prompt: "Authenticating\u{2026}",
                 field: Field::Secret(0),
                 status: Some(Status::Fingerprint("Authenticated", Finger::Accepted)),
                 session: Some("Otto (current build)"),
                 busy: None,
                 power: false,
+                offer_password: false,
             },
         ),
         (
@@ -111,6 +134,7 @@ fn main() {
                 session: Some("Otto (current build)"),
                 busy: None,
                 power: true,
+                offer_password: false,
             },
         ),
         (
@@ -123,6 +147,7 @@ fn main() {
                 session: Some("Otto (current build)"),
                 busy: Some("Starting session…"),
                 power: false,
+                offer_password: false,
             },
         ),
         // What a lock screen shows: no session picker, and the subject is
@@ -137,6 +162,7 @@ fn main() {
                 session: None,
                 busy: None,
                 power: true,
+                offer_password: false,
             },
         ),
     ];

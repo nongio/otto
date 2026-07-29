@@ -37,7 +37,40 @@ const SESSION_START_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 /// `start_session` succeeds, so the mark's result has to be shown *before* the
 /// request goes out — and a panel that never stopped asking for frames would
 /// otherwise hold up the login for good.
-const MARK_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+///
+/// It is a safety net, not a deadline: the panel finishes well inside it, and
+/// it only has to stay clear of however long the mark takes to settle.
+const MARK_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// How long a painted frame is given to reach the screen before the greeter
+/// paints regardless. Frames are paced by the compositor's frame callbacks —
+/// that is what keeps an animating panel from painting faster than anyone can
+/// see — and this is the bound on trusting it to send them.
+const FRAME_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// What greetd was asked, remembered until it answers.
+///
+/// greetd replies to every request with the same three responses, so the reply
+/// alone does not say what it is a reply to — and `Success` means "the user is
+/// authenticated" after one request and "the conversation you abandoned is
+/// gone" after another. Reading a cancellation as an authentication is how
+/// Escape used to start a session nobody had logged into, and, once greetd
+/// refused that, do it again for as long as anyone watched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Asked {
+    /// `create_session` or `post_auth_message_response`: the two requests that
+    /// carry the conversation forward, and the only ones whose `Success` means
+    /// the user is through.
+    Auth,
+    /// `start_session`.
+    Start,
+    /// `cancel_session`.
+    Cancel,
+    /// A request whose conversation was abandoned before it was answered —
+    /// Escape pressed while a PAM module was still thinking. Its answer is
+    /// about a login that no longer exists, so nothing acts on it.
+    Abandoned,
+}
 
 /// Where the greeter is in the greetd conversation.
 enum Stage {
@@ -61,9 +94,18 @@ struct Greeter {
     /// Repaint until this instant, so the panel's transitions are seen through
     /// rather than left frozen at their first step.
     animating_until: Option<std::time::Instant>,
-    /// A request is outstanding. The panel stays live meanwhile — this only
-    /// says that Enter would have nothing to answer.
-    awaiting_reply: bool,
+    /// When the last frame was painted, which with the surface's frame callback
+    /// is what paces the panel. `None` before anything has been drawn.
+    painted_at: Option<std::time::Instant>,
+    /// Requests sent and not yet answered, oldest first. greetd answers in
+    /// order, so the front of this is what the next response is about. Usually
+    /// at most one — a second joins it when the conversation is cancelled from
+    /// under a PAM module that has yet to reply.
+    outstanding: std::collections::VecDeque<Asked>,
+    /// greetd is holding a session for us: `create_session` was accepted and
+    /// nothing has cancelled it since. It has to be cancelled before another
+    /// can be created, and cancelling one that does not exist is an error.
+    conversation: bool,
     client: Client,
     stage: Stage,
     /// The username being authenticated.
@@ -79,8 +121,26 @@ struct Greeter {
     error: Option<String>,
     /// Informational message from the PAM stack (fingerprint hints, etc.).
     info: Option<String>,
+    /// A fingerprint reader is what the PAM stack is waiting on. Set by the
+    /// info message that announces it and cleared by the prompt that
+    /// supersedes it — kept as a fact of its own rather than re-read from the
+    /// message, because a failed match replaces that message with an error and
+    /// the reader is still waiting.
+    finger_pending: bool,
+    /// The user would rather type a password than wait for the reader. PAM is
+    /// serialised and cannot be told so — `pam_fprintd` holds the stack until
+    /// it times out or gives up — so the panel switches to the field at once
+    /// and the answer is kept until PAM asks for it.
+    password_requested: bool,
+    /// A password was typed and submitted before PAM asked for one. It goes
+    /// out with the first `secret` prompt to arrive.
+    submit_when_asked: bool,
     sessions: Vec<Session>,
     session_index: usize,
+    /// The minute the clock was last drawn showing. A login screen left up
+    /// overnight otherwise keeps the time it appeared at — the clock draws
+    /// from a closure the engine records once and replays.
+    clock_minute: Option<i64>,
 }
 
 impl Greeter {
@@ -96,7 +156,9 @@ impl Greeter {
             surface: None,
             panel: None,
             animating_until: None,
-            awaiting_reply: false,
+            painted_at: None,
+            outstanding: std::collections::VecDeque::new(),
+            conversation: false,
             client,
             stage: Stage::Username,
             username: String::new(),
@@ -105,8 +167,12 @@ impl Greeter {
             prompt: "Username".to_string(),
             error: None,
             info: None,
+            finger_pending: false,
+            password_requested: false,
+            submit_when_asked: false,
             sessions,
             session_index,
+            clock_minute: None,
         }
     }
 
@@ -114,34 +180,57 @@ impl Greeter {
         &self.sessions[self.session_index]
     }
 
+    /// Whether a request is outstanding. The panel stays live meanwhile — this
+    /// only says that Enter would have nothing to answer.
+    fn awaiting_reply(&self) -> bool {
+        !self.outstanding.is_empty()
+    }
+
+    /// Whether greetd has asked something that Enter could answer right now.
+    fn has_a_question_pending(&self) -> bool {
+        matches!(self.stage, Stage::Prompt { .. }) && !self.awaiting_reply()
+    }
+
     /// Reset back to the username field, cancelling any half-finished
     /// conversation so greetd is ready for a new `create_session`.
     fn reset(&mut self, error: Option<String>) {
-        if !matches!(self.stage, Stage::Username) {
+        if self.conversation {
+            // Anything still in flight belongs to the conversation being
+            // abandoned — a PAM module that has not answered yet, typically —
+            // and its reply must not be read as this one's.
+            for asked in self.outstanding.iter_mut() {
+                *asked = Asked::Abandoned;
+            }
             // greetd will not accept a new `create_session` while one is in
             // flight. The acknowledgement of this comes back through `pump`
-            // like any other response.
-            let _ = self.client.send(Request::CancelSession);
+            // like any other response. Sent directly rather than through
+            // `send`, whose failure path is this function.
+            if self.client.send(Request::CancelSession).is_ok() {
+                self.outstanding.push_back(Asked::Cancel);
+            }
+            self.conversation = false;
         }
-        self.awaiting_reply = false;
         self.stage = Stage::Username;
         self.input.clear();
         self.username.clear();
         self.user = None;
         self.prompt = "Username".to_string();
         self.info = None;
+        self.finger_pending = false;
+        self.password_requested = false;
+        self.submit_when_asked = false;
         self.error = error;
     }
 
     /// Send `request` and return to the event loop; the reply is picked up by
-    /// [`Greeter::pump`].
-    fn send(&mut self, request: Request) {
+    /// [`Greeter::pump`] and read in the light of `asked`.
+    fn send(&mut self, asked: Asked, request: Request) {
         if let Err(err) = self.client.send(request) {
             tracing::error!(error = %err, "greetd IPC failed");
             self.reset(Some(format!("Login service unavailable: {err}")));
             return;
         }
-        self.awaiting_reply = true;
+        self.outstanding.push_back(asked);
     }
 
     /// Collect whatever greetd has answered, if anything.
@@ -155,8 +244,15 @@ impl Greeter {
         loop {
             match self.client.poll() {
                 Ok(Some(response)) => {
-                    self.awaiting_reply = false;
-                    self.handle(response);
+                    match self.outstanding.pop_front() {
+                        Some(asked) => self.handle(asked, response),
+                        // greetd only ever speaks when spoken to, so this is
+                        // either a protocol violation or a bug here; either
+                        // way, acting on it would be guessing.
+                        None => {
+                            tracing::warn!(?response, "greetd answered a question we did not ask")
+                        }
+                    }
                     changed = true;
                 }
                 Ok(None) => return changed,
@@ -171,12 +267,14 @@ impl Greeter {
                         self.reset(Some("Login service went away".to_string()));
                         changed = true;
                     }
-                    self.awaiting_reply = false;
+                    // Nothing will answer the rest, and a queue that never
+                    // drains would leave Enter dead for good.
+                    self.outstanding.clear();
                     return changed;
                 }
                 Err(err) => {
                     tracing::error!(error = %err, "greetd IPC failed");
-                    self.awaiting_reply = false;
+                    self.outstanding.clear();
                     self.reset(Some(format!("Login service unavailable: {err}")));
                     return true;
                 }
@@ -185,41 +283,70 @@ impl Greeter {
     }
 
     /// Act on one response from greetd, sending a follow-up where the protocol
-    /// asks for one.
-    fn handle(&mut self, response: Response) {
+    /// asks for one. `asked` is what this is a reply to — see [`Asked`].
+    fn handle(&mut self, asked: Asked, response: Response) {
+        // The conversation this belongs to was abandoned. Answering an auth
+        // message for it would revive a login the user walked away from, and
+        // its errors are about that login, not the one on screen.
+        if asked == Asked::Abandoned {
+            tracing::debug!(?response, "ignoring the reply to an abandoned request");
+            return;
+        }
+
         match response {
             Response::AuthMessage {
                 auth_message_type,
                 auth_message,
             } => match auth_message_type {
                 AuthMessageType::Secret | AuthMessageType::Visible => {
+                    let secret = auth_message_type == AuthMessageType::Secret;
                     self.prompt = auth_message.trim_end_matches(':').to_string();
-                    self.stage = Stage::Prompt {
-                        secret: auth_message_type == AuthMessageType::Secret,
-                    };
-                    self.input.clear();
+                    self.stage = Stage::Prompt { secret };
                     // A prompt supersedes whatever hint preceded it: the reader
                     // is no longer what is being waited on.
                     self.info = None;
+                    self.finger_pending = false;
+
+                    // The question the user answered ahead of time has arrived.
+                    // Only a secret one, though: a password typed for a
+                    // password prompt must not be handed to a one-time-code
+                    // prompt that happens to come first.
+                    if self.password_requested && secret {
+                        self.password_requested = false;
+                        if std::mem::take(&mut self.submit_when_asked) {
+                            self.submit();
+                        }
+                    } else {
+                        self.password_requested = false;
+                        self.submit_when_asked = false;
+                        self.input.clear();
+                    }
                 }
                 // Info and error messages expect no input, only an empty
                 // acknowledgement — which is also what lets the PAM module
                 // carry on, so the message is on screen before that happens.
                 AuthMessageType::Info => {
+                    self.finger_pending |= mentions_fingerprint(&auth_message);
                     self.info = Some(auth_message);
-                    self.send(Request::PostAuthMessageResponse { response: None });
+                    self.send(
+                        Asked::Auth,
+                        Request::PostAuthMessageResponse { response: None },
+                    );
                 }
                 AuthMessageType::Error => {
                     self.error = Some(auth_message);
-                    self.send(Request::PostAuthMessageResponse { response: None });
+                    self.send(
+                        Asked::Auth,
+                        Request::PostAuthMessageResponse { response: None },
+                    );
                 }
             },
-            Response::Success => match self.stage {
+            Response::Success => match asked {
                 // The conversation is done. If it ended on a fingerprint, the
                 // mark in the field is mid-animation and cutting it off here is
                 // the last thing anyone sees of the login; give it its moment
                 // first and start the session in `tick`.
-                Stage::Username | Stage::Prompt { .. } => {
+                Asked::Auth => {
                     self.error = None;
                     if self.awaiting_finger() {
                         self.stage = Stage::Accepted {
@@ -228,30 +355,61 @@ impl Greeter {
                         return;
                     }
                     self.info = None;
+                    self.finger_pending = false;
                     self.start_session();
                 }
-                Stage::Accepted { .. } => {}
-                // StartSession acknowledged. A real greetd is about to kill this
-                // process and exec the session in its place, so there is nothing
-                // left to do but wait — `tick` gives up if that never happens.
-                Stage::Starting { .. } => {
-                    tracing::info!("Session started, waiting to be replaced");
-                }
+                // A real greetd is about to kill this process and exec the
+                // session in its place, so there is nothing left to do but
+                // wait — `tick` gives up if that never happens.
+                Asked::Start => tracing::info!("Session started, waiting to be replaced"),
+                // The conversation is gone, which is what was asked for. The
+                // panel is already back at the username field.
+                Asked::Cancel => tracing::debug!("Conversation cancelled"),
+                Asked::Abandoned => unreachable!("returned above"),
             },
             Response::Error {
                 error_type,
                 description,
             } => {
                 tracing::warn!(?error_type, %description, "greetd rejected the request");
+                // A cancellation that failed leaves nothing to cancel, which is
+                // where it was trying to get to. Resetting here would send
+                // another one and answer it the same way, for ever.
+                if asked == Asked::Cancel {
+                    return;
+                }
                 self.reset(Some(description));
             }
         }
     }
 
     /// Whether a fingerprint is what the panel is currently illustrating — the
-    /// PAM stack announced a reader and nothing has superseded the hint.
+    /// PAM stack announced a reader, and the user has not asked to type a
+    /// password instead.
+    ///
+    /// A failed match does not end this: `pam_fprintd` reports it and then
+    /// asks for another finger, so the mark stays up under the error.
     fn awaiting_finger(&self) -> bool {
-        self.error.is_none() && self.info.as_deref().is_some_and(mentions_fingerprint)
+        self.finger_pending && !self.password_requested
+    }
+
+    /// Stop waiting for a finger and ask for a password instead.
+    ///
+    /// Nothing is sent: PAM is serialised, and the module holding the stack
+    /// will not be hurried by anything the greeter says. What changes is who
+    /// the panel is asking — the field comes back, and whatever is typed into
+    /// it waits for the prompt that arrives when the reader gives up.
+    fn use_password(&mut self) {
+        if !self.awaiting_finger() {
+            return;
+        }
+        self.password_requested = true;
+        self.input.clear();
+        self.prompt = "Password".to_string();
+        // The hint was about the reader, which is no longer what is being
+        // asked for; the error, if any, was about a finger that missed.
+        self.info = None;
+        self.error = None;
     }
 
     /// Ask greetd to exec the session. From here greetd owns what happens next.
@@ -261,10 +419,13 @@ impl Greeter {
         };
         let session = self.selected_session().clone();
         tracing::info!(session = %session.name, cmd = ?session.command, "Starting session");
-        self.send(Request::StartSession {
-            cmd: session.command,
-            env: Vec::new(),
-        });
+        self.send(
+            Asked::Start,
+            Request::StartSession {
+                cmd: session.command,
+                env: Vec::new(),
+            },
+        );
     }
 
     /// Move the two waits along: letting an accepted fingerprint be seen, and
@@ -282,6 +443,7 @@ impl Greeter {
                     return false;
                 }
                 self.info = None;
+                self.finger_pending = false;
                 self.start_session();
                 true
             }
@@ -295,12 +457,39 @@ impl Greeter {
         }
     }
 
+    /// Whether there is anything for a keystroke to go into.
+    ///
+    /// Between `create_session` and the first prompt greetd has asked nothing:
+    /// with `pam_fprintd` that gap lasts as long as the reader waits. Anything
+    /// typed into it would be echoed in the clear — the field is only masked
+    /// once a `secret` prompt says so — and then wiped when that prompt
+    /// arrived and cleared the buffer. Better to take nothing than to take it
+    /// and lose it.
+    fn accepts_input(&self) -> bool {
+        match self.stage {
+            // Once the password has been asked for there is somewhere for
+            // keystrokes to go, even though greetd has not asked yet: the
+            // field is masked, and the answer is held until the prompt comes.
+            Stage::Username => !self.conversation || self.password_requested,
+            Stage::Prompt { .. } => true,
+            Stage::Accepted { .. } | Stage::Starting { .. } => false,
+        }
+    }
+
     /// Handle Enter for the current stage.
     fn submit(&mut self) {
+        // A password typed ahead of the prompt for it. There is no question to
+        // attach it to yet — `pam_fprintd` is still holding the conversation —
+        // so it is remembered and sent when one arrives.
+        if self.password_requested && !self.has_a_question_pending() {
+            self.submit_when_asked = true;
+            return;
+        }
+
         // Answering before greetd has asked would desynchronise the
         // conversation — it happens when someone types ahead while a PAM
         // module is still thinking.
-        if self.awaiting_reply {
+        if self.awaiting_reply() {
             return;
         }
 
@@ -313,14 +502,31 @@ impl Greeter {
                 self.username = username.clone();
                 self.user = Some(User::lookup(&username));
                 self.error = None;
-                self.send(Request::CreateSession { username });
+                // The name has been taken; who it is now shows as the avatar
+                // and the name on the card. Leaving it in the field as well
+                // makes the wait that follows — `pam_fprintd` can hold it for
+                // as long as nobody touches the reader — look like the step
+                // before it, as though Enter had done nothing.
+                self.input.clear();
+                self.prompt = "Authenticating\u{2026}".to_string();
+                // From here greetd is holding a session that has to be
+                // cancelled before another can be created — including when the
+                // reply to this is an error.
+                self.conversation = true;
+                self.send(Asked::Auth, Request::CreateSession { username });
             }
             Stage::Prompt { .. } => {
                 let answer = std::mem::take(&mut self.input);
                 self.error = None;
-                self.send(Request::PostAuthMessageResponse {
-                    response: Some(answer),
-                });
+                // Whatever was queued has now gone out as this answer.
+                self.password_requested = false;
+                self.submit_when_asked = false;
+                self.send(
+                    Asked::Auth,
+                    Request::PostAuthMessageResponse {
+                        response: Some(answer),
+                    },
+                );
             }
             Stage::Accepted { .. } | Stage::Starting { .. } => {}
         }
@@ -331,6 +537,9 @@ impl Greeter {
         let field = match self.stage {
             // The panel is given only the length of a secret, never the secret.
             Stage::Prompt { secret: true } => Field::Secret(self.input.chars().count()),
+            // A password typed before PAM has asked for it is a secret too,
+            // and must not be echoed while it waits.
+            _ if self.password_requested => Field::Secret(self.input.chars().count()),
             _ => Field::Text(&self.input),
         };
 
@@ -340,12 +549,23 @@ impl Greeter {
             (Stage::Accepted { .. }, ..) => {
                 Some(Status::Fingerprint("Authenticated", Finger::Accepted))
             }
-            (_, Some(error), _) => Some(Status::Error(error)),
-            // A PAM stack announcing a fingerprint reader is the one info
-            // message worth illustrating; the rest are shown as plain text.
-            (_, None, Some(info)) if mentions_fingerprint(info) => {
-                Some(Status::Fingerprint(info, Finger::Awaited))
+            // The reader is still what is being waited on, whatever it last
+            // said — a missed finger is reported and then asked for again, and
+            // taking the mark away for that would say the reader was done.
+            _ if self.awaiting_finger() => Some(Status::Fingerprint(
+                self.error
+                    .as_deref()
+                    .or(self.info.as_deref())
+                    .unwrap_or("Place your finger on the reader"),
+                Finger::Awaited,
+            )),
+            // Waiting on a reader that is holding up a password nobody can
+            // send yet. Saying so is the difference between a slow login and a
+            // broken one.
+            _ if self.submit_when_asked => {
+                Some(Status::Info("Waiting for the fingerprint reader\u{2026}"))
             }
+            (_, Some(error), _) => Some(Status::Error(error)),
             (_, None, Some(info)) => Some(Status::Info(info)),
             (_, None, None) => None,
         };
@@ -362,6 +582,9 @@ impl Greeter {
                 .then_some("Starting session\u{2026}"),
             // Offering to power off mid-handoff would race greetd's exec.
             power: matches!(self.stage, Stage::Username | Stage::Prompt { .. }),
+            // Only while a finger is what is being asked for: everywhere else
+            // the field is already there to type into.
+            offer_password: self.awaiting_finger(),
         }
     }
 
@@ -384,12 +607,45 @@ impl Greeter {
         self.paint();
     }
 
+    /// Whether the last painted frame is still on its way to the screen, in
+    /// which case there is nothing to gain by painting another one yet.
+    ///
+    /// Only until [`FRAME_TIMEOUT`], though: a compositor that stops answering
+    /// with frame callbacks must not be able to freeze the login screen, which
+    /// is not something anyone can close and reopen.
+    fn frame_in_flight(&self) -> bool {
+        self.painted_at
+            .is_some_and(|at| at.elapsed() < FRAME_TIMEOUT)
+            && self
+                .surface
+                .as_ref()
+                .is_some_and(|surface| surface.base_surface().frame_in_flight())
+    }
+
+    /// Whether the minute has turned since the clock was last drawn.
+    fn clock_stale(&self) -> bool {
+        self.clock_minute != Some(chrono::Local::now().timestamp() / 60)
+    }
+
     /// Paint the scene as it currently stands, without touching its state.
     /// This is what an in-flight transition needs on every frame.
-    fn paint(&self) {
-        let Some(surface) = self.surface.as_ref() else {
+    fn paint(&mut self) {
+        if self.surface.is_none() {
             return;
-        };
+        }
+        self.painted_at = Some(std::time::Instant::now());
+
+        if self.clock_stale() {
+            self.clock_minute = Some(chrono::Local::now().timestamp() / 60);
+            if let Some(panel) = self.panel.as_ref() {
+                panel.refresh_clock();
+            }
+            // The engine advances on its own thread, so this frame may still
+            // carry the old picture; keep painting for a moment.
+            self.animating_until =
+                Some(std::time::Instant::now() + std::time::Duration::from_millis(150));
+        }
+
         // Continuous animation has to say so before every frame, or the engine
         // replays the picture it recorded for the last one.
         if let Some(panel) = self.panel.as_ref() {
@@ -397,6 +653,7 @@ impl Greeter {
         }
         // otto-kit hands over a canvas with the buffer scale already applied,
         // so the scene is laid out in logical points and nothing scales twice.
+        let surface = self.surface.as_ref().expect("checked just above");
         let base = surface.base_surface();
         surface.draw(|canvas| base.render_layer_node(canvas));
     }
@@ -406,6 +663,7 @@ impl Greeter {
         match action {
             Action::CycleSession => self.cycle_session(),
             Action::Power(power) => self.power(power),
+            Action::UsePassword => self.use_password(),
         }
     }
 
@@ -490,47 +748,76 @@ impl App for Greeter {
     }
 
     fn on_update(&mut self, _ctx: &AppContext) {
-        // Collect anything greetd has said since the last pass. This is what
-        // replaces blocking on the socket.
+        // Collect anything greetd has said since the last pass. The socket is
+        // in the loop's poll set, so this runs when it has something to say.
         if self.pump() || self.tick() {
             self.draw();
             return;
         }
 
-        // Keep painting while a transition is in flight. The engine advances
-        // the animation on its own thread; this is what puts the result on
-        // screen.
-        if self.panel.as_ref().is_some_and(Panel::wants_frames) {
+        // The last frame has not reached the screen yet. Painting another one
+        // now would only queue work the compositor has not asked for — and it
+        // is the frame callback that wakes the loop for the next one.
+        if self.frame_in_flight() {
+            return;
+        }
+
+        // Keep painting while a transition is in flight, and while the Touch ID
+        // mark has a frame due. The engine advances transitions on its own
+        // thread; this is what puts the result on screen.
+        let animating = self
+            .animating_until
+            .is_some_and(|deadline| std::time::Instant::now() < deadline);
+        if animating || self.panel.as_ref().is_some_and(Panel::frame_due) || self.clock_stale() {
             self.paint();
             return;
         }
 
-        match self.animating_until {
-            Some(deadline) if std::time::Instant::now() < deadline => self.paint(),
-            Some(_) => {
-                // One last frame at the settled values, then go quiet.
-                self.animating_until = None;
-                self.paint();
-            }
-            None => {}
+        if self.animating_until.take().is_some() {
+            // One last frame at the settled values, then go quiet.
+            self.paint();
         }
     }
 
     /// Tick while the panel is animating, and while waiting for the session to
     /// take over. Otherwise the loop can sleep until the next key press.
     fn idle_timeout(&self) -> Option<std::time::Duration> {
-        // The Touch ID mark animates for as long as a finger is expected, so
-        // the panel asks for frames directly rather than through a deadline.
-        if self.panel.as_ref().is_some_and(Panel::wants_frames) || self.animating_until.is_some() {
-            return Some(std::time::Duration::from_millis(16));
+        // A frame is in flight: the compositor's callback is what wakes the
+        // loop for the next one. The timer is only the way out of a callback
+        // that never comes — see `frame_in_flight`.
+        if self.frame_in_flight() {
+            return Some(FRAME_TIMEOUT);
         }
-        // While a reply is outstanding the socket has to be checked; nothing
-        // else wakes the loop, because greetd's fd is not one of the two the
-        // runner polls.
-        if self.awaiting_reply {
-            return Some(std::time::Duration::from_millis(16));
-        }
-        matches!(self.stage, Stage::Starting { .. }).then(|| std::time::Duration::from_millis(250))
+
+        // The Touch ID mark paces itself; sleep exactly up to its next frame.
+        let mark = self.panel.as_ref().and_then(Panel::next_frame_in);
+        // A transition needs frames until it settles, and unlike the mark it is
+        // the engine that advances it, so ask at the rate we can present.
+        let transition = self
+            .animating_until
+            .map(|_| std::time::Duration::from_millis(16));
+        // greetd replaces this process on a successful login; if that never
+        // happens, `tick` has to be reached to say so.
+        let session = matches!(self.stage, Stage::Starting { .. })
+            .then(|| std::time::Duration::from_millis(250));
+
+        // The clock only changes on the minute, and nothing else needs the
+        // loop awake in between.
+        let clock = Some(std::time::Duration::from_secs(
+            60 - (chrono::Local::now().timestamp() % 60).unsigned_abs(),
+        ));
+
+        [mark, transition, session, clock]
+            .into_iter()
+            .flatten()
+            .min()
+    }
+
+    /// Wake the loop when greetd speaks. Without this the conversation would
+    /// have to be polled, which for a fingerprint reader means polling for as
+    /// long as nobody touches it.
+    fn poll_fds(&self) -> Vec<std::os::fd::RawFd> {
+        self.client.as_raw_fd().into_iter().collect()
     }
 
     fn on_pointer_event(&mut self, _ctx: &AppContext, events: &[PointerEvent]) {
@@ -582,21 +869,36 @@ impl App for Greeter {
 
         match event.keysym {
             Keysym::Return | Keysym::KP_Enter => self.submit(),
-            Keysym::BackSpace => {
+            Keysym::BackSpace if self.accepts_input() => {
                 self.input.pop();
                 self.error = None;
             }
+            // Escape is exempt: a login waiting on a finger nobody is going to
+            // give it is exactly when there has to be a way out.
             Keysym::Escape => self.reset(None),
             Keysym::Tab => self.cycle_session(),
             _ => {
                 // Anything the keymap turned into text goes into the buffer;
                 // control characters (Enter, Tab, …) are handled above.
-                if let Some(text) = event.utf8.as_deref() {
-                    let printable: String = text.chars().filter(|c| !c.is_control()).collect();
-                    if !printable.is_empty() {
-                        self.input.push_str(&printable);
-                        self.error = None;
-                    }
+                let printable: String = event
+                    .utf8
+                    .as_deref()
+                    .unwrap_or_default()
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .collect();
+                if printable.is_empty() {
+                    return;
+                }
+                // Typing at a fingerprint prompt is a decision: someone who
+                // reaches for the keyboard has stopped waiting for the reader,
+                // and having to find the button first would be in the way.
+                if self.awaiting_finger() {
+                    self.use_password();
+                }
+                if self.accepts_input() {
+                    self.input.push_str(&printable);
+                    self.error = None;
                 }
             }
         }
@@ -621,6 +923,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use greetd::ErrorType;
     use std::time::{Duration, Instant};
 
     fn greeter() -> Greeter {
@@ -680,8 +983,9 @@ mod tests {
         let mut greeter = greeter();
         greeter.stage = Stage::Prompt { secret: true };
         greeter.info = Some("Place your finger on the reader".to_string());
+        greeter.finger_pending = true;
 
-        greeter.handle(Response::Success);
+        greeter.handle(Asked::Auth, Response::Success);
         assert!(
             matches!(greeter.stage, Stage::Accepted { .. }),
             "should hold on the accepted mark rather than start straight away"
@@ -713,23 +1017,317 @@ mod tests {
         let mut greeter = greeter();
         greeter.stage = Stage::Prompt { secret: true };
 
-        greeter.handle(Response::Success);
+        greeter.handle(Asked::Auth, Response::Success);
         assert!(
             matches!(greeter.stage, Stage::Starting { .. }),
             "nothing to show, so nothing to wait for"
         );
     }
 
-    /// The event loop should only wake up on a timer while it is waiting to be
-    /// replaced; at rest it can sleep until the next key press.
+    /// `pam_fprintd` can leave the greeter with nothing to do for as long as
+    /// nobody touches the reader. The panel has to show that the login moved
+    /// on — a field still holding the name under a "Username" label, with the
+    /// mark pulsing away below it, reads as an Enter that did nothing — and it
+    /// must not take keystrokes it would echo in the clear and then lose to
+    /// the prompt that eventually clears the buffer.
+    #[test]
+    fn the_username_step_ends_when_the_username_is_taken() {
+        let mut greeter = greeter();
+        greeter.input = "riccardo".to_string();
+
+        greeter.submit();
+        assert!(greeter.conversation, "greetd is holding a session now");
+        assert!(
+            greeter.input.is_empty(),
+            "the field should not still be showing the name"
+        );
+        assert!(
+            !greeter.accepts_input(),
+            "greetd has not asked for anything yet"
+        );
+
+        // The prompt that eventually arrives is what reopens the field.
+        greeter.outstanding.pop_front();
+        greeter.handle(
+            Asked::Auth,
+            Response::AuthMessage {
+                auth_message_type: AuthMessageType::Secret,
+                auth_message: "Password:".to_string(),
+            },
+        );
+        assert!(greeter.accepts_input(), "there is a question to answer now");
+        assert_eq!(greeter.prompt, "Password");
+    }
+
+    /// Escape cancels the conversation, and greetd acknowledges a cancellation
+    /// with the same `Success` it uses for a completed authentication. Reading
+    /// the one as the other started a session nobody had logged into; greetd
+    /// answered "no session active", which reset the greeter, which cancelled
+    /// again — thousands of times a second, with "Starting session…" on screen
+    /// throughout. The reply has to be read as an answer to what was asked.
+    #[test]
+    fn cancelling_does_not_start_a_session() {
+        let mut greeter = greeter();
+        greeter.conversation = true;
+        greeter.stage = Stage::Prompt { secret: true };
+
+        greeter.reset(None);
+        assert_eq!(
+            greeter.outstanding.pop_front(),
+            Some(Asked::Cancel),
+            "the half-finished conversation should have been cancelled"
+        );
+
+        greeter.handle(Asked::Cancel, Response::Success);
+        assert!(
+            matches!(greeter.stage, Stage::Username),
+            "cancelling leaves the panel at the username field, not logging in"
+        );
+        assert!(greeter.outstanding.is_empty(), "nothing more was asked");
+    }
+
+    /// The other half of the loop: greetd refusing a cancellation used to reset
+    /// the greeter, which cancelled again. There is nothing to recover from —
+    /// a cancellation that failed leaves no conversation, which is the point.
+    #[test]
+    fn a_refused_cancellation_is_not_cancelled_again() {
+        let mut greeter = greeter();
+        greeter.handle(
+            Asked::Cancel,
+            Response::Error {
+                error_type: ErrorType::Error,
+                description: "no session active".to_string(),
+            },
+        );
+
+        assert!(greeter.outstanding.is_empty(), "must not ask again");
+        assert!(matches!(greeter.stage, Stage::Username));
+        assert!(
+            greeter.error.is_none(),
+            "the user cancelled; there is nothing to tell them"
+        );
+    }
+
+    /// `pam_fprintd` leaves a request outstanding for as long as nobody touches
+    /// the reader, so Escape is pressed *while* one is in flight. The reply,
+    /// when it comes, is about the login that was walked away from.
+    #[test]
+    fn a_reply_to_an_abandoned_request_changes_nothing() {
+        let mut greeter = greeter();
+        greeter.conversation = true;
+        greeter.username = "riccardo".to_string();
+        greeter.info = Some("Place your finger on the reader".to_string());
+        greeter.finger_pending = true;
+        greeter.outstanding.push_back(Asked::Auth);
+
+        greeter.reset(None);
+        assert_eq!(
+            greeter.outstanding.pop_front(),
+            Some(Asked::Abandoned),
+            "the in-flight request belongs to the cancelled conversation"
+        );
+
+        // The finger that arrived after Escape must not log anyone in.
+        greeter.handle(Asked::Abandoned, Response::Success);
+        assert!(matches!(greeter.stage, Stage::Username));
+
+        // Nor should the error PAM reports for the interrupted conversation be
+        // shown, or acted on.
+        greeter.handle(
+            Asked::Abandoned,
+            Response::Error {
+                error_type: ErrorType::AuthError,
+                description: "pam_authenticate: conversation failed".to_string(),
+            },
+        );
+        assert!(greeter.error.is_none(), "not this login's error");
+        assert_eq!(
+            greeter.outstanding.pop_front(),
+            Some(Asked::Cancel),
+            "only the cancellation is still owed an answer"
+        );
+    }
+
+    /// A greeter where `create_session` has been answered with a fingerprint
+    /// hint and `pam_fprintd` is now holding the conversation: the username is
+    /// taken, a request is outstanding, and nothing is being asked.
+    fn waiting_for_a_finger() -> Greeter {
+        let mut greeter = greeter();
+        greeter.username = "riccardo".to_string();
+        greeter.conversation = true;
+        greeter.finger_pending = true;
+        greeter.info = Some("Place your finger on the reader".to_string());
+        greeter.prompt = "Authenticating\u{2026}".to_string();
+        // The acknowledgement of the info message; `pam_fprintd` will not
+        // answer it until a finger arrives or it gives up.
+        greeter.outstanding.push_back(Asked::Auth);
+        greeter
+    }
+
+    /// The reader is not the only way in. A finger that is never going to be
+    /// offered — the wrong hand, a hand holding something, no enrolled print —
+    /// used to leave nothing to do but wait for PAM to time out, with no way
+    /// to say so and no field to type into.
+    #[test]
+    fn the_reader_can_be_traded_for_the_password_field() {
+        let mut greeter = waiting_for_a_finger();
+        assert!(
+            greeter.view().offer_password,
+            "the way out should be on the card while the reader is waiting"
+        );
+        assert!(!greeter.accepts_input(), "nothing to type into yet");
+
+        greeter.use_password();
+        assert!(!greeter.view().offer_password, "already taken");
+        assert!(greeter.accepts_input(), "the field is what is being asked");
+        assert!(
+            matches!(greeter.view().field, Field::Secret(0)),
+            "a password is masked from the first keystroke, prompt or no prompt"
+        );
+        assert!(
+            !matches!(greeter.view().status, Some(Status::Fingerprint(..))),
+            "the mark should go with the request for a finger"
+        );
+    }
+
+    /// PAM is serialised: the password prompt does not exist until the reader
+    /// gives up. Typing has to be possible before then anyway, or the way out
+    /// is only a way of waiting differently.
+    #[test]
+    fn a_password_typed_before_the_prompt_is_sent_when_it_arrives() {
+        let mut greeter = waiting_for_a_finger();
+        greeter.use_password();
+        greeter.input = "hunter2".to_string();
+
+        greeter.submit();
+        assert!(greeter.submit_when_asked, "Enter should be remembered");
+        assert_eq!(
+            greeter.outstanding.len(),
+            1,
+            "nothing may be sent while the reader still owns the conversation"
+        );
+        assert_eq!(greeter.input, "hunter2", "the answer must not be lost");
+        assert!(matches!(greeter.view().status, Some(Status::Info(_))));
+
+        // The reader gives up and `pam_unix` asks its question.
+        greeter.outstanding.pop_front();
+        greeter.handle(
+            Asked::Auth,
+            Response::AuthMessage {
+                auth_message_type: AuthMessageType::Secret,
+                auth_message: "Password:".to_string(),
+            },
+        );
+        assert_eq!(
+            greeter.outstanding.pop_front(),
+            Some(Asked::Auth),
+            "the answer should have gone out with the prompt that asked for it"
+        );
+        assert!(greeter.input.is_empty(), "the buffer went with it");
+        assert!(!greeter.password_requested && !greeter.submit_when_asked);
+    }
+
+    /// The answer was typed for a password prompt. A stack that asks for a
+    /// one-time code first must not be handed it.
+    #[test]
+    fn a_queued_password_is_not_given_to_a_visible_prompt() {
+        let mut greeter = waiting_for_a_finger();
+        greeter.use_password();
+        greeter.input = "hunter2".to_string();
+        greeter.submit();
+
+        greeter.outstanding.pop_front();
+        greeter.handle(
+            Asked::Auth,
+            Response::AuthMessage {
+                auth_message_type: AuthMessageType::Visible,
+                auth_message: "Verification code:".to_string(),
+            },
+        );
+        assert!(
+            greeter.outstanding.is_empty(),
+            "nothing should have been sent"
+        );
+        assert!(greeter.input.is_empty(), "the password should be dropped");
+        assert!(!greeter.submit_when_asked);
+    }
+
+    /// `pam_fprintd` reports a missed finger and then asks for another one.
+    /// Taking the mark down for that says the reader is finished when it is
+    /// still the thing being waited on — and takes the way out down with it.
+    #[test]
+    fn a_missed_finger_still_leaves_the_reader_up() {
+        let mut greeter = waiting_for_a_finger();
+        greeter.outstanding.pop_front();
+        greeter.handle(
+            Asked::Auth,
+            Response::AuthMessage {
+                auth_message_type: AuthMessageType::Error,
+                auth_message: "Failed to match fingerprint".to_string(),
+            },
+        );
+
+        assert!(greeter.awaiting_finger(), "the reader is still waiting");
+        assert!(greeter.view().offer_password, "and so is the way out of it");
+        assert!(
+            matches!(
+                greeter.view().status,
+                Some(Status::Fingerprint(
+                    "Failed to match fingerprint",
+                    Finger::Awaited
+                ))
+            ),
+            "the miss should be reported without retiring the mark"
+        );
+    }
+
+    /// At rest the loop sleeps until the next key press, give or take the
+    /// clock: the panel shows the time, so it wakes on the minute and not a
+    /// moment sooner. While waiting to be replaced it polls far more often,
+    /// because `tick` has to be reached to give up on a session that never
+    /// took over.
     #[test]
     fn only_polls_while_starting() {
         let mut greeter = greeter();
-        assert!(greeter.idle_timeout().is_none());
+        let at_rest = greeter.idle_timeout().expect("the clock needs a wake-up");
+        assert!(
+            at_rest > Duration::from_secs(1),
+            "nothing but the clock should be waking an idle login screen"
+        );
 
         greeter.stage = Stage::Starting {
             since: Instant::now(),
         };
-        assert!(greeter.idle_timeout().is_some());
+        assert!(greeter.idle_timeout().expect("waiting to be replaced") < at_rest);
+    }
+
+    /// An outstanding request used to be waited on with a 16ms timer, because
+    /// greetd's socket was not one of the descriptors the loop polled. It is
+    /// one now — and `pam_fprintd` leaves a request outstanding for as long as
+    /// nobody touches the reader, so this is the difference between an idle
+    /// login screen and one waking sixty times a second to read nothing.
+    #[test]
+    fn an_outstanding_request_is_waited_on_not_polled() {
+        let (greeter_end, _greetd_end) =
+            std::os::unix::net::UnixStream::pair().expect("socketpair");
+        greeter_end.set_nonblocking(true).expect("non-blocking");
+        let mut greeter = Greeter::new(Client::Real {
+            stream: greeter_end,
+            inbox: Vec::new(),
+            closed: false,
+        });
+        greeter.outstanding.push_back(Asked::Auth);
+
+        assert!(
+            greeter
+                .idle_timeout()
+                .is_none_or(|timeout| timeout > Duration::from_secs(1)),
+            "the socket is polled, so nothing but the clock needs a timer"
+        );
+        assert_eq!(
+            greeter.poll_fds().len(),
+            1,
+            "the loop has to wait on greetd's socket"
+        );
     }
 }

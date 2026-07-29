@@ -34,44 +34,51 @@ use crate::{Appearance, User};
 /// island in otto-islands, which is where it was drawn.
 static TOUCH_ID: &[u8] = include_bytes!("../assets/touch_id.json");
 
-/// How long one pass of the Touch ID animation takes, in seconds. The asset's
-/// own duration is a single draw-in; looping it at that rate reads as frantic.
-const TOUCH_ID_PERIOD: f64 = 2.4;
+/// Where in the asset's timeline the mark is finished. Just short of the end:
+/// the ridges complete before the timeline does, and the tail past this is not
+/// worth playing. Both the resting mark and the end of the draw-in stop here,
+/// so the two always agree about what "complete" looks like.
+///
+/// A mark that is only waiting is held here and never played: an animation is
+/// what the panel says when something has happened, and waiting for a finger is
+/// precisely nothing happening.
+const MARK_DRAWN: f64 = 0.95;
 
-/// Size of the mark inside the field. The box is what the *ridges* fill, not
-/// the asset's canvas — `render_fit` discards the padding the export carries
-/// around them — and they are drawn very nearly square.
-const TOUCH_ID_H: f32 = 30.0;
-const TOUCH_ID_W: f32 = 30.0;
+/// How often the mark is redrawn while it has something to show — the answer
+/// drawing itself in, and nothing else. Every one of those frames costs a full
+/// repaint of a fullscreen surface, and a draw-in taking [`TOUCH_ID_FINISH`]
+/// seconds does not need the display's full rate to read as smooth.
+const MARK_FPS: f64 = 30.0;
 
-/// The animation draws itself in from nothing, so a cycle starting at zero
-/// blinks out at every loop. Starting a little way in keeps the ridges present
-/// and just re-draws them.
-const TOUCH_ID_START: f64 = 0.15;
+/// Size of the mark. The box is what the *ridges* fill, not the asset's canvas
+/// — `render_fit` discards the padding the export carries around them — and
+/// they are drawn very nearly square. It stands where the field would be
+/// rather than inside it, so it is sized to be looked at and touched, not to
+/// fit in a corner.
+const TOUCH_ID_H: f32 = 56.0;
+const TOUCH_ID_W: f32 = 56.0;
 
-/// How long the mark takes to run from wherever it had got to up to a finished
-/// fingerprint, once the finger is recognised. Cutting the animation dead at
-/// the moment of success is what it did before, and it read as a glitch; taking
-/// the rest of the cycle at its own pace would put up to [`TOUCH_ID_PERIOD`] in
-/// front of every login. Finishing early at a fixed cost is the compromise.
-const TOUCH_ID_FINISH: f64 = 0.45;
+/// How long the asset's draw-in takes once the finger is recognised — the one
+/// place the animation is played, and the only thing anyone sees of a
+/// fingerprint login, since greetd replaces this process a moment later. Taken
+/// at half a second it was over before it registered.
+const TOUCH_ID_FINISH: f64 = 1.4;
 
 /// How long the finished mark is held in [`ACCEPTED`] before the panel says it
 /// has nothing left to show. Without it the result is drawn and replaced in the
 /// same breath and nobody sees it.
-const TOUCH_ID_HOLD: f64 = 0.4;
+const TOUCH_ID_HOLD: f64 = 0.6;
 
-/// What a recognised finger turns the mark. Green rather than the accent,
-/// because at this point the mark has stopped being a prompt and become an
-/// answer — the same reading the fingerprint island gives it.
-const ACCEPTED: Color = Color::from_argb(255, 92, 208, 132);
+/// What a recognised finger draws the mark in: the system blue macOS lights
+/// the same thing with. It goes down over the resting grey as the asset plays,
+/// so it has to be the one thing on the card that is unmistakably *on*.
+const ACCEPTED: Color = Color::from_argb(255, 10, 132, 255);
 
-/// Where in the draw-in a point `cycle` of the way through a loop sits. The
-/// animation draws itself in from nothing, so replaying its empty first
-/// instants blinks the mark out once per loop; the loop starts past them.
-fn loop_progress(cycle: f64) -> f64 {
-    TOUCH_ID_START + cycle * (1.0 - TOUCH_ID_START)
-}
+/// What an expected finger draws the mark in. Grey, because waiting is the
+/// resting state: the mark is there to show where a finger goes, not to claim
+/// anything has happened, and leaving colour to [`ACCEPTED`] is what makes the
+/// answer read as one.
+const AWAITED: Color = Color::from_argb(255, 200, 200, 208);
 
 /// Width of the card.
 const PANEL_W: f32 = 380.0;
@@ -84,6 +91,14 @@ const AVATAR: f32 = 96.0;
 const FIELD_H: f32 = 46.0;
 const FIELD_W: f32 = PANEL_W - 2.0 * 40.0;
 const POWER_BUTTON: f32 = 40.0;
+/// The "Enter Password" button — the way out of a fingerprint the reader is
+/// never going to be given. It sits under the card rather than on it: the card
+/// is laid out so that nothing inside it ever moves, and a row reserved for a
+/// button that is absent for most of a login would be a hole in every other
+/// state.
+const PASSWORD_BUTTON_H: f32 = 32.0;
+const PASSWORD_BUTTON_GAP: f32 = 18.0;
+const PASSWORD_BUTTON_LABEL: &str = "Enter Password";
 const SCREEN_MARGIN: f32 = 40.0;
 /// How far the card sits above the vertical centre. A panel centred exactly
 /// looks low, because the eye reads the clock above it as part of the group.
@@ -92,6 +107,9 @@ const PANEL_RISE: f32 = 40.0;
 const FIELD_TEXT_INSET: f32 = 20.0;
 /// Spacing between the dots of a masked secret.
 const DOT_SPACING: f32 = 14.0;
+/// The clock in the top-left corner: the time over the date.
+const CLOCK_W: f32 = 360.0;
+const CLOCK_H: f32 = 80.0;
 
 /// What the panel should show. Neither greetd nor PAM appears here; a client
 /// translates its own conversation into this.
@@ -111,6 +129,11 @@ pub struct View<'a> {
     pub busy: Option<&'a str>,
     /// Whether to offer suspend / restart / shut down.
     pub power: bool,
+    /// Whether to offer a way out of the fingerprint into the password field.
+    /// A reader nobody is going to touch — the wrong finger, the wrong hand,
+    /// a hand holding something — must not be the only way in, and waiting for
+    /// it to give up on its own is not an answer anyone can see coming.
+    pub offer_password: bool,
 }
 
 /// The input field's contents.
@@ -126,7 +149,7 @@ pub enum Field<'a> {
 pub enum Status<'a> {
     Info(&'a str),
     Error(&'a str),
-    /// A fingerprint reader is in play, and the mark in the field illustrates
+    /// A fingerprint reader is in play, and the mark on the card illustrates
     /// it. What the mark does is [`Finger`].
     Fingerprint(&'a str, Finger),
 }
@@ -134,10 +157,12 @@ pub enum Status<'a> {
 /// How far a fingerprint has got.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Finger {
-    /// Waiting for one. The mark loops for as long as this lasts.
+    /// Waiting for one. The mark stands still for as long as this lasts, in
+    /// place of the field: there is nothing to type while a finger is what is
+    /// being asked for.
     Awaited,
-    /// Recognised. The mark finishes its draw-in, settles into the accepted
-    /// colour and holds there long enough to be read — a client should let
+    /// Recognised. The mark draws itself in in the accepted colour and holds
+    /// there long enough to be read — a client should let
     /// [`Panel::wants_frames`] fall before it moves on.
     Accepted,
 }
@@ -154,6 +179,8 @@ pub enum PowerAction {
 pub enum Action {
     CycleSession,
     Power(PowerAction),
+    /// Stop waiting for a finger and ask for a password instead.
+    UsePassword,
 }
 
 /// The panel's scene.
@@ -174,6 +201,8 @@ pub struct Panel {
     /// The Touch ID mark, shown inside the field while a finger is expected.
     fingerprint: Layer,
     status: Layer,
+    /// The "Enter Password" button, shown only while a finger is expected.
+    use_password: Layer,
     busy: Layer,
     clock: Layer,
     session: Layer,
@@ -188,21 +217,29 @@ pub struct Panel {
     /// and nothing else. Untinted — the colour says which state the finger is
     /// in, so it is applied per draw rather than baked in.
     touch_id: Option<Arc<LottiePlayer>>,
-    /// What the mark is doing, and when it started doing it. Kept so that an
-    /// update which changes something else — a keystroke, an error — does not
-    /// restart the animation, and so that finishing it can pick up from
-    /// wherever the loop had got to.
+    /// What the mark is doing, and when it was put up. Kept so that an update
+    /// which changes something else — a keystroke, an error — does not
+    /// reinstall the mark's draw closure under whoever is looking at it.
     finger: Option<Finger>,
     mark_started: Option<std::time::Instant>,
     /// When an accepted mark has been on show long enough. `None` unless the
     /// finger was accepted.
     mark_settles_at: Option<std::time::Instant>,
+    /// When the mark was last redrawn, so it can be held to [`MARK_FPS`]
+    /// instead of to whatever rate the client's loop happens to run at. A
+    /// `Cell` because painting takes the panel by shared reference.
+    mark_drawn_at: std::cell::Cell<Option<std::time::Instant>>,
 
     size: (f32, f32),
     /// Where the clickable chrome ended up, in the same space as pointer
     /// events. Kept beside the layers because hit testing wants rectangles.
     session_hitbox: Option<Rect>,
     power_hitboxes: Vec<(PowerAction, Rect)>,
+    /// The button's rectangle, and whether it is currently on offer. An
+    /// invisible button must not be clickable, and it is invisible for most of
+    /// the panel's life.
+    password_hitbox: Option<Rect>,
+    password_offered: bool,
 }
 
 impl Panel {
@@ -239,6 +276,7 @@ impl Panel {
         let caret = new_layer("auth-caret");
         let fingerprint = new_layer("auth-fingerprint");
         let status = new_layer("auth-status");
+        let use_password = new_layer("auth-use-password");
         let busy = new_layer("auth-busy");
         let clock = new_layer("auth-clock");
         let session = new_layer("auth-session");
@@ -253,8 +291,12 @@ impl Panel {
         let _ = card.add_sublayer(&field);
         let _ = card.add_sublayer(&status);
         let _ = card.add_sublayer(&busy);
+        // Under the card, not on it — see [`PASSWORD_BUTTON_H`].
+        let _ = root.add_sublayer(&use_password);
         let _ = field.add_sublayer(&caret);
-        let _ = field.add_sublayer(&fingerprint);
+        // On the card, not in the field: the mark stands in place of the field
+        // rather than inside it, and a hidden field must not take it along.
+        let _ = card.add_sublayer(&fingerprint);
 
         let power = [
             PowerAction::Suspend,
@@ -282,6 +324,7 @@ impl Panel {
             caret,
             fingerprint,
             status,
+            use_password,
             busy,
             clock,
             session,
@@ -292,9 +335,12 @@ impl Panel {
             finger: None,
             mark_started: None,
             mark_settles_at: None,
+            mark_drawn_at: std::cell::Cell::new(None),
             size: (0.0, 0.0),
             session_hitbox: None,
             power_hitboxes: Vec::new(),
+            password_hitbox: None,
+            password_offered: false,
         };
         panel.style();
         panel
@@ -398,6 +444,18 @@ impl Panel {
         self.session
             .set_border_corner_radius(BorderRadius::new_single(17.0), None);
 
+        // Quieter than the field it leads to: this is the way out of the
+        // fingerprint, not the thing being asked for.
+        self.use_password.set_background_color(
+            PaintColor::Solid {
+                color: lay_color(Color::from_argb(36, 255, 255, 255)),
+            },
+            None,
+        );
+        self.use_password
+            .set_border_corner_radius(BorderRadius::new_single(PASSWORD_BUTTON_H / 2.0), None);
+        self.use_password.set_opacity(0.0, None);
+
         for (action, layer) in &self.power {
             layer.set_background_color(
                 PaintColor::Solid {
@@ -478,13 +536,13 @@ impl Panel {
             None,
         );
 
-        // At the trailing end of the field, where a Touch ID prompt sits on
-        // other systems: it reads as "or use this instead", right where the
-        // password would otherwise be typed.
+        // Centred on the field's row, which is where the field would have been:
+        // while a finger is expected there is nothing to type, so the mark has
+        // the row to itself and the status line below it does not move.
         self.fingerprint.set_position(
             LayerPoint {
-                x: FIELD_W - TOUCH_ID_W - 14.0,
-                y: (FIELD_H - TOUCH_ID_H) / 2.0,
+                x: center - TOUCH_ID_W / 2.0,
+                y: 208.0 + (FIELD_H - TOUCH_ID_H) / 2.0,
             },
             None,
         );
@@ -492,6 +550,35 @@ impl Panel {
         self.status
             .set_position(LayerPoint { x: 0.0, y: 266.0 }, None);
         self.status.set_size(LayerSize::points(PANEL_W, 20.0), None);
+
+        // Under the card, so the reason for it — "place your finger" — is read
+        // before the way out of it. Its position is in surface coordinates,
+        // like the rest of the chrome outside the card.
+        let font = self.font(13.0, FontStyle::normal());
+        let password_w = font.measure_str(PASSWORD_BUTTON_LABEL, None).0 + 36.0;
+        let password_x = (width - password_w) / 2.0;
+        let password_y = card_y + PANEL_H + PASSWORD_BUTTON_GAP;
+        self.use_password.set_position(
+            LayerPoint {
+                x: password_x,
+                y: password_y,
+            },
+            None,
+        );
+        self.use_password
+            .set_size(LayerSize::points(password_w, PASSWORD_BUTTON_H), None);
+        self.use_password.set_draw_content(draw_centered_text(
+            PASSWORD_BUTTON_LABEL.to_string(),
+            font,
+            Color::from_argb(230, 255, 255, 255),
+            PASSWORD_BUTTON_H / 2.0 + 4.5,
+        ));
+        self.password_hitbox = Some(Rect::from_xywh(
+            password_x,
+            password_y,
+            password_w,
+            PASSWORD_BUTTON_H,
+        ));
 
         self.busy
             .set_position(LayerPoint { x: 0.0, y: 214.0 }, None);
@@ -504,7 +591,8 @@ impl Panel {
             },
             None,
         );
-        self.clock.set_size(LayerSize::points(360.0, 80.0), None);
+        self.clock
+            .set_size(LayerSize::points(CLOCK_W, CLOCK_H), None);
         self.clock.set_draw_content(draw_clock(&self.appearance));
 
         // Chrome along the bottom. The hitboxes are the same rectangles, in
@@ -558,8 +646,19 @@ impl Panel {
         // Busy replaces the field wholesale: the conversation is over and there
         // is nothing left to type into.
         let busy = view.busy.is_some();
-        self.field
-            .set_opacity(if busy { 0.0 } else { 1.0 }, Some(fade()));
+        // The mark shows only while a finger is in play. A busy panel is past
+        // the conversation, so it takes the mark with the rest of the field.
+        let finger = match view.status {
+            Some(Status::Fingerprint(_, finger)) if !busy => Some(finger),
+            _ => None,
+        };
+        // A finger is asked for instead of a password, not as well as one: the
+        // mark stands in the field's place and an empty box beside it would
+        // only invite typing that goes nowhere.
+        self.field.set_opacity(
+            if busy || finger.is_some() { 0.0 } else { 1.0 },
+            Some(fade()),
+        );
         self.prompt
             .set_opacity(if busy { 0.0 } else { 1.0 }, Some(fade()));
         self.busy
@@ -580,13 +679,6 @@ impl Panel {
         ));
 
         self.update_field(&view.field);
-
-        // The mark shows only while a finger is in play. A busy panel is past
-        // the conversation, so it takes the mark with the rest of the field.
-        let finger = match view.status {
-            Some(Status::Fingerprint(_, finger)) if !busy => Some(finger),
-            _ => None,
-        };
         self.update_fingerprint(finger, fade());
 
         match &view.status {
@@ -638,6 +730,12 @@ impl Panel {
         for (_, layer) in &self.power {
             layer.set_opacity(if view.power { 1.0 } else { 0.0 }, Some(fade()));
         }
+
+        // A busy panel is past the conversation: there is nothing left to
+        // choose between.
+        self.password_offered = view.offer_password && !busy;
+        self.use_password
+            .set_opacity(if self.password_offered { 1.0 } else { 0.0 }, Some(fade()));
     }
 
     fn update_avatar(&mut self, user: Option<&User>) {
@@ -705,63 +803,57 @@ impl Panel {
             return;
         }
         self.finger = finger;
+        // A new mark starts from a clean slate: its first frame is due at once,
+        // not one interval after the last frame of whatever preceded it.
+        self.mark_drawn_at.set(None);
         self.fingerprint
             .set_opacity(if finger.is_some() { 1.0 } else { 0.0 }, Some(fade));
 
         let Some(player) = self.touch_id.clone() else {
             return;
         };
-        let accent = self.appearance.accent;
 
         match finger {
+            // Waiting is not an event. The mark is put up whole and left
+            // alone: it is there to say where to put a finger, and a login
+            // screen that pulses at someone who has not touched anything reads
+            // as something happening when nothing is.
             Some(Finger::Awaited) => {
-                let started = std::time::Instant::now();
-                self.mark_started = Some(started);
+                self.mark_started = Some(std::time::Instant::now());
                 self.mark_settles_at = None;
                 self.fingerprint
                     .set_draw_content(move |canvas: &Canvas, w, h| {
-                        let cycle =
-                            (started.elapsed().as_secs_f64() % TOUCH_ID_PERIOD) / TOUCH_ID_PERIOD;
                         player.render_fit_with_color(
                             canvas,
-                            loop_progress(cycle),
+                            MARK_DRAWN,
                             Rect::from_wh(w, h),
-                            accent,
+                            AWAITED,
                         );
                         Rect::from_wh(w, h)
                     });
             }
+            // The answer is the one thing that moves: the asset's draw-in,
+            // played once, in [`ACCEPTED`] over the resting mark. Drawing it
+            // over rather than instead of the grey one is what makes it read
+            // as this mark filling in rather than a second one arriving.
             Some(Finger::Accepted) => {
-                // Pick up from wherever the loop had got to rather than from
-                // the start, so the ridges already on screen stay on screen and
-                // simply complete.
                 let accepted_at = std::time::Instant::now();
-                let from = self
-                    .mark_started
-                    .map(|started| {
-                        let elapsed = accepted_at.duration_since(started).as_secs_f64();
-                        loop_progress((elapsed % TOUCH_ID_PERIOD) / TOUCH_ID_PERIOD)
-                    })
-                    .unwrap_or(TOUCH_ID_START);
                 self.mark_settles_at = Some(
                     accepted_at
                         + std::time::Duration::from_secs_f64(TOUCH_ID_FINISH + TOUCH_ID_HOLD),
                 );
                 self.fingerprint
                     .set_draw_content(move |canvas: &Canvas, w, h| {
-                        let elapsed = accepted_at.elapsed().as_secs_f64();
-                        let progress = if elapsed >= TOUCH_ID_FINISH {
-                            1.0
-                        } else {
-                            from + (1.0 - from) * (elapsed / TOUCH_ID_FINISH)
-                        };
-                        player.render_fit_with_color(
-                            canvas,
-                            progress,
-                            Rect::from_wh(w, h),
-                            ACCEPTED,
-                        );
-                        Rect::from_wh(w, h)
+                        let box_ = Rect::from_wh(w, h);
+                        // The mark that was waiting stays underneath, so the
+                        // ridges the blue has not reached yet are still there
+                        // rather than missing.
+                        player.render_fit_with_color(canvas, MARK_DRAWN, box_, AWAITED);
+
+                        let progress =
+                            (accepted_at.elapsed().as_secs_f64() / TOUCH_ID_FINISH).clamp(0.0, 1.0);
+                        player.render_fit_with_color(canvas, progress * MARK_DRAWN, box_, ACCEPTED);
+                        box_
                     });
             }
             None => {
@@ -772,15 +864,18 @@ impl Panel {
     }
 
     /// Whether the panel still has something to show that only more frames can
-    /// show: the Touch ID mark looping while a finger is awaited, or finishing
-    /// and holding its result. Transitions settle on their own and are not
-    /// counted here.
+    /// show: the Touch ID mark turning to its accepted colour, and holding it.
+    /// Transitions settle on their own and are not counted here.
+    ///
+    /// A mark merely waiting for a finger does not move, so it does not ask
+    /// for anything — which is what lets a login screen with the reader up
+    /// cost nothing at all until someone touches it.
     ///
     /// A client waiting to move on after a successful fingerprint should wait
     /// for this to fall, which is what gives the accepted mark its moment.
     pub fn wants_frames(&self) -> bool {
         match self.finger {
-            Some(Finger::Awaited) => true,
+            Some(Finger::Awaited) => false,
             Some(Finger::Accepted) => self
                 .mark_settles_at
                 .is_some_and(|at| std::time::Instant::now() < at),
@@ -788,8 +883,32 @@ impl Panel {
         }
     }
 
+    /// How long until the mark's next frame is due, or `None` when the panel
+    /// has nothing to animate and the client can sleep until something happens.
+    ///
+    /// [`Panel::wants_frames`] says whether the mark is moving at all; this
+    /// says how often it needs to be drawn while it is. A client that paints
+    /// whenever `wants_frames` is true paints as fast as its loop goes, which
+    /// for a mark that changes [`MARK_FPS`] times a second is mostly waste.
+    pub fn next_frame_in(&self) -> Option<std::time::Duration> {
+        if !self.wants_frames() {
+            return None;
+        }
+        let interval = std::time::Duration::from_secs_f64(1.0 / MARK_FPS);
+        Some(match self.mark_drawn_at.get() {
+            Some(drawn) => interval.saturating_sub(drawn.elapsed()),
+            // Nothing drawn yet at this rate — the first frame is due now.
+            None => std::time::Duration::ZERO,
+        })
+    }
+
+    /// Whether the mark has a new frame due right now.
+    pub fn frame_due(&self) -> bool {
+        self.next_frame_in() == Some(std::time::Duration::ZERO)
+    }
+
     /// Advance whatever draws itself differently on every frame. A client that
-    /// paints because [`Panel::wants_frames`] said so must call this first.
+    /// paints because [`Panel::frame_due`] said so must call this first.
     ///
     /// The engine records a layer's draw closure into a picture and replays
     /// *that* until something damages the layer, which is exactly right for
@@ -801,12 +920,43 @@ impl Panel {
         if self.wants_frames() {
             self.fingerprint
                 .set_damage(Rect::from_wh(TOUCH_ID_W, TOUCH_ID_H));
+            self.mark_drawn_at.set(Some(std::time::Instant::now()));
         }
+    }
+
+    /// Redraw the clock at the current time.
+    ///
+    /// Like the Touch ID mark, the clock draws from something no property of
+    /// the layer describes — the engine records the closure into a picture and
+    /// replays it until something says otherwise, so a panel left up over a
+    /// turning minute would keep showing the time it went up. A client that
+    /// outlives a minute (a lock screen does; a login screen usually does not)
+    /// calls this and paints.
+    ///
+    /// The closure is re-installed rather than only damaged. Damage set from
+    /// here is a single flag racing the engine's own update, which runs on its
+    /// own thread and clears what it consumes — the mark gets away with
+    /// declaring damage because it declares it thirty times a second, so a lost
+    /// one costs a frame. The clock declares it once a minute, and a lost one
+    /// costs the whole minute. Replacing the content is a recorded change, so
+    /// the engine cannot miss it.
+    pub fn refresh_clock(&self) {
+        self.clock.set_draw_content(draw_clock(&self.appearance));
+        self.clock.set_damage(Rect::from_wh(CLOCK_W, CLOCK_H));
     }
 
     /// Which control, if any, is under a pointer at surface coordinates.
     pub fn action_at(&self, x: f32, y: f32) -> Option<Action> {
         let point = Point::new(x, y);
+        // Only while it is on show: for most of the panel's life the button is
+        // a transparent rectangle in the middle of the card.
+        if self.password_offered
+            && self
+                .password_hitbox
+                .is_some_and(|rect| skia_safe::Contains::contains(&rect, point))
+        {
+            return Some(Action::UsePassword);
+        }
         if self
             .session_hitbox
             .is_some_and(|rect| skia_safe::Contains::contains(&rect, point))
@@ -1285,6 +1435,7 @@ mod tests {
             session: Some("Otto"),
             busy: None,
             power: true,
+            offer_password: false,
         });
 
         assert_eq!(
@@ -1302,14 +1453,55 @@ mod tests {
         );
     }
 
-    /// The Touch ID mark must actually reach the screen and actually move:
-    /// it has to be visible in a render of the whole scene, and two frames a
-    /// beat apart have to differ. Both have failed before — the mark was drawn
-    /// at a third of its box because the asset's canvas is mostly padding, and
-    /// it was frozen on its first frame because the engine replays a recorded
-    /// picture of a layer's content until something damages the layer.
+    /// The way out of a fingerprint is only there while there is a fingerprint
+    /// to get out of. The rest of the time it is a transparent rectangle in the
+    /// middle of the card, and clicking where it would have been must do
+    /// nothing at all.
     #[test]
-    fn the_touch_id_mark_animates_while_a_finger_is_expected() {
+    fn the_password_button_is_clickable_only_while_it_is_offered() {
+        let mut panel = panel();
+        let view = |offer_password| View {
+            user: None,
+            prompt: "Authenticating…",
+            field: Field::Secret(0),
+            status: Some(Status::Fingerprint(
+                "Place your finger on the reader",
+                Finger::Awaited,
+            )),
+            session: None,
+            busy: None,
+            power: true,
+            offer_password,
+        };
+
+        let center = panel
+            .password_hitbox
+            .expect("the button is laid out with everything else");
+        let point = (center.center_x(), center.center_y());
+
+        panel.update(&view(false));
+        assert_eq!(panel.action_at(point.0, point.1), None);
+
+        panel.update(&view(true));
+        assert_eq!(
+            panel.action_at(point.0, point.1),
+            Some(Action::UsePassword),
+            "the button should answer where it is drawn"
+        );
+
+        // Just outside it is the card, which is not a control.
+        assert_eq!(panel.action_at(point.0, center.top - 4.0), None);
+    }
+
+    /// The Touch ID mark must reach the screen whole and then stay put: it has
+    /// to be visible in a render of the whole scene, fill its box, and look
+    /// the same a beat later. Filling the box has failed before — the mark was
+    /// drawn at a third of it because the asset's canvas is mostly padding —
+    /// and holding still is the point of the waiting state: a login screen
+    /// that animates at someone who has not touched anything is saying
+    /// something is happening when nothing is.
+    #[test]
+    fn the_touch_id_mark_waits_without_moving() {
         let mut panel = panel();
         let view = |status| View {
             user: None,
@@ -1319,6 +1511,7 @@ mod tests {
             session: None,
             busy: None,
             power: false,
+            offer_password: false,
         };
 
         panel.update(&view(None));
@@ -1341,26 +1534,35 @@ mod tests {
             "Place your finger on the reader",
             Finger::Awaited,
         ))));
-        assert!(panel.wants_frames(), "the mark needs a frame clock to run");
+        assert!(
+            !panel.wants_frames(),
+            "a mark that is only waiting has nothing to redraw"
+        );
 
         assert!(
             panel.touch_id.is_some(),
             "the Touch ID asset should parse; without it there is nothing to animate"
         );
 
-        // The mark has to land at the trailing end of the field, not on top of
-        // the dots — a layout call that silently fails to apply leaves it at
-        // the parent's origin, which is exactly what happened once.
+        // The mark stands in the field's place: centred on the card, on the
+        // row the field occupies. A layout call that silently fails to apply
+        // leaves it at its parent's origin, which is exactly what happened
+        // once — and the field is hidden here, so nothing else would show it.
         settle(&panel);
         let mark = panel.fingerprint.render_bounds_transformed();
+        let card = panel.card.render_bounds_transformed();
         let field = panel.field.render_bounds_transformed();
         assert!(
-            mark.left() > field.left() + field.width() / 2.0,
-            "the mark should sit in the field's trailing half ({mark:?} in {field:?})"
+            (mark.center_x() - card.center_x()).abs() < 1.0,
+            "the mark should be centred on the card ({mark:?} in {card:?})"
         );
         assert!(
-            mark.right() <= field.right(),
-            "the mark should stay inside the field ({mark:?} in {field:?})"
+            (mark.center_y() - field.center_y()).abs() < 1.0,
+            "the mark should sit on the field's row ({mark:?} against {field:?})"
+        );
+        assert!(
+            panel.field.opacity() == 0.0,
+            "the field should give way to the mark, not sit empty beside it"
         );
 
         let first = mark_pixels(&panel);
@@ -1368,7 +1570,9 @@ mod tests {
         // The ridges are thin strokes, so they touch about a fifth of the box
         // they span. Scaling the asset's canvas instead of its artwork puts
         // them across a third of each axis — a ninth of the area, well under
-        // this — which is the failure this catches.
+        // this — which is the failure this catches. The baseline also has the
+        // field in it, since the mark is what replaces it, so this is a floor
+        // on the change and not a measurement of the ridges alone.
         let covered = differing(&without_mark, &first) as f32 / (first.len() / 4) as f32;
         assert!(
             covered > 0.10,
@@ -1381,7 +1585,70 @@ mod tests {
         settle(&panel);
         let second = mark_pixels(&panel);
 
-        assert_ne!(first, second, "the mark rendered identically 400ms apart");
+        assert_eq!(
+            first, second,
+            "the waiting mark moved; it should be drawn once and left alone"
+        );
+    }
+
+    /// The mark asks for frames while its answer is crossing, and not one more
+    /// than that. A panel that only said "still animating" left the greeter
+    /// repainting a fullscreen surface as fast as its loop went round, which
+    /// cost a core for a change nobody could see more of.
+    #[test]
+    fn the_mark_paces_its_own_frames() {
+        let mut panel = panel();
+        let view = |status| View {
+            user: None,
+            prompt: "Password",
+            field: Field::Secret(0),
+            status,
+            session: None,
+            busy: None,
+            power: false,
+            offer_password: false,
+        };
+
+        panel.update(&view(None));
+        assert_eq!(
+            panel.next_frame_in(),
+            None,
+            "a still panel has no frame to wait for"
+        );
+
+        // Waiting for a finger is still, however long it lasts. This is the
+        // state a login screen sits in, so it is the one that must cost
+        // nothing.
+        panel.update(&view(Some(Status::Fingerprint("Waiting", Finger::Awaited))));
+        assert_eq!(
+            panel.next_frame_in(),
+            None,
+            "a mark that only waits should let the client sleep"
+        );
+
+        panel.update(&view(Some(Status::Fingerprint(
+            "Authenticated",
+            Finger::Accepted,
+        ))));
+        assert!(
+            panel.frame_due(),
+            "the first frame of the answer is due now"
+        );
+
+        panel.animate();
+        assert!(
+            !panel.frame_due(),
+            "a mark drawn this instant does not need drawing again"
+        );
+        let wait = panel.next_frame_in().expect("the mark is still animating");
+        assert!(
+            wait > std::time::Duration::ZERO
+                && wait <= std::time::Duration::from_secs_f64(1.0 / MARK_FPS),
+            "the next frame should be under a mark interval away, not {wait:?}"
+        );
+
+        std::thread::sleep(std::time::Duration::from_secs_f64(1.0 / MARK_FPS));
+        assert!(panel.frame_due(), "an interval later the mark moves on");
     }
 
     /// A recognised finger must be *seen*: the mark has to finish its draw-in,
@@ -1399,6 +1666,7 @@ mod tests {
             session: None,
             busy: None,
             power: false,
+            offer_password: false,
         };
         let frame = |panel: &Panel| {
             panel.animate();
@@ -1423,14 +1691,20 @@ mod tests {
             "an accepted mark still has its finish to draw"
         );
 
-        // Part-way through the finish it must differ from the looping mark —
-        // both because it is further into the draw-in and because it has
-        // changed colour.
-        std::thread::sleep(std::time::Duration::from_secs_f64(TOUCH_ID_FINISH / 2.0));
+        // Early in the draw-in it already differs from the waiting mark: the
+        // blue has started going down over it.
+        std::thread::sleep(std::time::Duration::from_secs_f64(TOUCH_ID_FINISH / 4.0));
+        let early = frame(&panel);
+        assert_ne!(awaited, early, "the accepted mark should look different");
+
+        // And it keeps drawing. This is the one animation the panel plays, and
+        // holding the asset at its last frame instead of running it is exactly
+        // what left a login with nothing to see but a colour appearing.
+        std::thread::sleep(std::time::Duration::from_secs_f64(TOUCH_ID_FINISH / 4.0));
         let finishing = frame(&panel);
         assert_ne!(
-            awaited, finishing,
-            "the accepted mark should look different"
+            early, finishing,
+            "the mark should be drawing itself in, not sitting still in a new colour"
         );
         assert!(
             panel.wants_frames(),
@@ -1468,6 +1742,7 @@ mod tests {
             session: None,
             busy: None,
             power: false,
+            offer_password: false,
         };
 
         panel.update(&view(Field::Secret(0)));
@@ -1528,6 +1803,7 @@ mod tests {
             session: None,
             busy: None,
             power: false,
+            offer_password: false,
         });
 
         assert_eq!(
@@ -1549,6 +1825,7 @@ mod tests {
             session: None,
             busy: None,
             power: false,
+            offer_password: false,
         };
 
         // The caret's position is animated, so it only reaches its target once

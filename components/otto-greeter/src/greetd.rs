@@ -125,6 +125,22 @@ impl Client {
         }
     }
 
+    /// The socket to wait on, so the greeter learns that greetd has answered
+    /// instead of asking it on a timer. The mock backend answers in `send` and
+    /// has nothing to wait for.
+    ///
+    /// A closed socket is readable for good — waiting on that one would spin
+    /// the loop rather than let it sleep — so it is withdrawn once the peer has
+    /// hung up and the greeter has been told about it.
+    pub fn as_raw_fd(&self) -> Option<std::os::fd::RawFd> {
+        use std::os::fd::AsRawFd;
+
+        match self {
+            Client::Real { stream, closed, .. } => (!closed).then(|| stream.as_raw_fd()),
+            Client::Mock { .. } => None,
+        }
+    }
+
     /// Send `request`. The answer arrives through [`Client::poll`].
     pub fn send(&mut self, request: Request) -> std::io::Result<()> {
         match self {

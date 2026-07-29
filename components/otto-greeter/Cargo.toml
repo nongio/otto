@@ -10,6 +10,7 @@ otto-auth-ui = { path = "../otto-auth-ui" }
 smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
 wayland-client = "0.31"
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+chrono = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"

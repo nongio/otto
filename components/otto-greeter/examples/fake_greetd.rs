@@ -15,7 +15,10 @@
 //!
 //! * `simple` — straight to the password prompt
 //! * `fingerprint` — an unanswerable info message first, as `pam_fprintd`
-//!   sends (the default; exercises the auto-acknowledge path)
+//!   sends, and then silence until `FAKE_GREETD_READER_WAIT` seconds have
+//!   passed (default 15), as `pam_fprintd` also does: the default scenario,
+//!   and the one that exercises reaching the password through a reader that is
+//!   holding the conversation
 //! * `two-factor` — password, then a visible one-time-code prompt
 //! * `locked` — always rejects, whatever the password
 
@@ -28,6 +31,15 @@ fn main() -> std::io::Result<()> {
         .unwrap_or_else(|| "/tmp/fake-greetd.sock".to_string());
     let password = std::env::var("FAKE_GREETD_PASSWORD").unwrap_or_else(|_| "otto".to_string());
     let scenario = std::env::var("FAKE_GREETD_SCENARIO").unwrap_or_else(|_| "fingerprint".into());
+    // How long the `fingerprint` scenario holds the conversation before
+    // reporting a miss — `pam_fprintd`'s own default is 30 seconds, which is a
+    // long time to sit through while working on the panel.
+    let reader_wait = std::time::Duration::from_secs(
+        std::env::var("FAKE_GREETD_READER_WAIT")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(15),
+    );
 
     let _ = std::fs::remove_file(&path);
     let listener = UnixListener::bind(&path)?;
@@ -39,7 +51,7 @@ fn main() -> std::io::Result<()> {
     for stream in listener.incoming() {
         let stream = stream?;
         println!("\n-- greeter connected --");
-        if let Err(e) = serve(stream, &password, &scenario) {
+        if let Err(e) = serve(stream, &password, &scenario, reader_wait) {
             println!("connection ended: {e}");
         }
     }
@@ -47,7 +59,12 @@ fn main() -> std::io::Result<()> {
 }
 
 /// One greeter connection. State lives here, so a reconnect starts clean.
-fn serve(mut stream: UnixStream, password: &str, scenario: &str) -> std::io::Result<()> {
+fn serve(
+    mut stream: UnixStream,
+    password: &str,
+    scenario: &str,
+    reader_wait: std::time::Duration,
+) -> std::io::Result<()> {
     // Which prompt the greeter is currently answering.
     let mut stage = Stage::NoSession;
 
@@ -87,7 +104,21 @@ fn serve(mut stream: UnixStream, password: &str, scenario: &str) -> std::io::Res
             "post_auth_message_response" => {
                 let answer = request.get("response").and_then(|r| r.as_str());
                 match stage {
+                    // What `pam_fprintd` does with the acknowledgement: nothing,
+                    // for as long as nobody touches the reader. Holding the
+                    // reply here holds the whole conversation, which is the
+                    // thing worth reproducing — it is what the greeter has to
+                    // stay usable through.
                     Stage::AfterInfo => {
+                        println!(
+                            "   (holding the conversation for {reader_wait:?}, as a reader would)"
+                        );
+                        std::thread::sleep(reader_wait);
+                        stage = Stage::AfterMiss;
+                        auth_message("error", "Failed to match fingerprint")
+                    }
+                    // The reader gave up; the password stack takes over.
+                    Stage::AfterMiss => {
                         stage = Stage::Password;
                         auth_message("secret", "Password:")
                     }
@@ -146,6 +177,7 @@ fn serve(mut stream: UnixStream, password: &str, scenario: &str) -> std::io::Res
 enum Stage {
     NoSession,
     AfterInfo,
+    AfterMiss,
     Password,
     OneTimeCode,
     Authenticated,

@@ -108,16 +108,59 @@ plays for SDDM's Qt greeter.
 - Because the panel animates, the client must keep painting while a transition
   runs. The engine advances animations on its own thread, but only the client
   can put the result on screen.
-- While a fingerprint is expected the field carries an animated Touch ID mark,
-  and `Panel::wants_frames` says so. Such content is not driven by a property
-  changing, so the client calls `Panel::animate` before each paint: the engine
-  records a layer's draw closure into a picture and replays it until something
-  damages the layer, and a closure that reads the clock has to declare that
-  damage itself or it is painted once and frozen.
+- While a fingerprint is expected the Touch ID mark takes the field's place —
+  centred on the card and large enough to be the thing being asked for. The
+  field goes with it: a finger is asked for *instead* of a password, and an
+  empty box beside the mark would only invite typing that goes nowhere.
+- A finger is never the only way in. An "Enter Password" button sits under the
+  card while the mark is up, and typing does the same thing without it: someone
+  who reaches for the keyboard has stopped waiting for the reader. The button is
+  under the card rather than on it because the card's layout is fixed — a row
+  reserved for a button that is absent for most of a login would be a hole in
+  every other state.
+- The mark is drawn complete and left completely still. Waiting for a finger is
+  not an event, and a mark that loops at someone who has not touched anything
+  says something is happening when nothing is. Motion belongs to the answer.
+- The mark therefore asks for frames only while it is answering, which is what
+  `Panel::wants_frames` reports; `Panel::frame_due` and `Panel::next_frame_in`
+  say how often, and the panel holds it to 30fps. That matters because there is
+  no such thing as a cheap frame here: the mark costs a repaint of the whole
+  fullscreen surface, blurred card included.
+- Content that draws from the clock rather than from a property is not damaged
+  by anything the engine knows about, so the client calls `Panel::animate`
+  before each such paint: the engine records a layer's draw closure into a
+  picture and replays it until something damages the layer, and a closure that
+  reads the clock has to declare that damage itself or it is painted once and
+  frozen.
+- Frames are paced by the compositor as well as by the panel. Every paint asks
+  for a `wl_surface.frame` callback and the next one waits for it, so the
+  greeter never runs ahead of what the screen can show. A callback that never
+  comes must not be able to freeze the login screen, so the wait is bounded and
+  the greeter paints anyway once it expires.
+- Nothing about an untouched login screen should cost anything — including one
+  sitting at the fingerprint reader, which is where it spends most of its life.
+  With no transition running, the greeter paints nothing and
+  waits: the Wayland connection and greetd's socket are both in the event loop's
+  poll set, and neither a repaint timer nor an IPC poll wakes it. That is what
+  `App::poll_fds` is for — `pam_fprintd` leaves a request outstanding for as
+  long as nobody touches the reader, and polling for it was waking the loop
+  sixty times a second to read nothing.
+- The asset is never played to the end of its timeline, at rest or in motion:
+  the ridges are complete before it is, and the tail past that point adds
+  nothing. Both states stop at the same place, so "complete" means one thing.
+- Recognition is where the asset's draw-in is played, and the only place: the
+  ridges draw themselves in in the system blue macOS uses for the same thing,
+  over the grey resting mark rather than in place of it, so the ridges the blue
+  has not reached yet are still there. Size and position never change, so it
+  reads as this mark filling in rather than a second one arriving.
+- That draw-in is deliberately unhurried. It is the only thing anyone sees of a
+  fingerprint login, and greetd replaces the greeter a moment after it ends, so
+  it is worth about a second rather than the half a second that read as a
+  flicker.
 - A recognised fingerprint must be *seen*. greetd kills the greeter as soon as
   `start_session` succeeds, so the pause belongs before the request, not after:
-  on `success` the greeter enters an `Accepted` stage, the panel finishes the
-  mark's draw-in early, settles it into the accepted colour and holds it, and
+  on `success` the greeter enters an `Accepted` stage, the panel carries the
+  mark from grey to the accepted blue and holds it there, and
   `start_session` follows once `Panel::wants_frames` falls. A timeout bounds the
   wait so a panel that never settles cannot strand the login, and input is
   ignored throughout — an Escape in that window would otherwise cancel a session
@@ -129,7 +172,11 @@ plays for SDDM's Qt greeter.
 The greeter drives greetd's IPC (`greetd-ipc(7)`): a native-endian `u32` length
 prefix followed by a JSON payload, in both directions.
 
-- On submitting a username, the greeter sends `create_session`.
+- On submitting a username, the greeter sends `create_session`. The name leaves
+  the field at that point — the card shows who is logging in — and keystrokes
+  are ignored until greetd asks a question, *unless* the user has asked for the
+  password field: anything typed into that gap would otherwise be echoed
+  unmasked and then lost when the prompt arrived.
 - greetd replies with `auth_message`, `success`, or `error`:
   - `auth_message` of type `secret` — prompt, input masked.
   - `auth_message` of type `visible` — prompt, input echoed.
@@ -140,6 +187,37 @@ prefix followed by a JSON payload, in both directions.
     `start_session` with the selected session's argv.
   - `error` — displayed; the greeter sends `cancel_session` and returns to the
     username field.
+- Every response is read as an answer to a specific request. The greeter keeps
+  the requests it has sent and not yet had answered, in order, because greetd's
+  three responses carry nothing that says which request they are about:
+  - `success` means the user is authenticated only after `create_session` or
+    `post_auth_message_response`. After `cancel_session` it means the
+    conversation is gone, and must not start anything.
+  - `error` after `cancel_session` means there was no conversation to cancel,
+    which is where the greeter was heading anyway: it is logged and nothing
+    else. Cancelling again in response would not terminate.
+  - Escape while a PAM module is still thinking leaves that module's request
+    outstanding across the cancellation. Its answer, whenever it arrives, is
+    about a login that no longer exists: neither its success nor its error
+    reaches the panel.
+- Reaching the password past a fingerprint reader is the greeter's problem
+  alone: PAM is serialised by design, and a module holding the stack will not be
+  hurried by anything the greeter says. `cancel_session` would end the whole
+  conversation, and the `create_session` after it would run the same module
+  again.
+  - So nothing is sent. Asking for the password puts the field back at once,
+    masks what is typed into it, and holds the answer until a `secret` prompt
+    arrives — which is what `pam_fprintd` produces when it times out or runs out
+    of tries, on a stack where it is `sufficient` rather than `required`.
+  - Enter before then is remembered, not sent, and the panel says what is being
+    waited for. Sending it early would desynchronise the conversation.
+  - A held answer is only ever given to a `secret` prompt. A `visible` one —
+    a one-time code — discards it: it was typed for a password prompt, and
+    handing a password to something else is worse than asking again.
+  - A missed finger is reported by `pam_fprintd` as an `error` message, and the
+    reader then asks for another one. The mark and the button stay up under the
+    error: taking them down would say the reader was finished when it is still
+    the thing being waited on.
 - After `start_session` succeeds, greetd terminates the greeter and execs the
   session. The greeter shows that the session is starting and stops accepting
   input.
@@ -203,6 +281,10 @@ prefix followed by a JSON payload, in both directions.
 - **A failed conversation must be cancelled.** greetd will not accept a second
   `create_session` while one is in flight; the greeter sends `cancel_session`
   before returning to the username field.
+- **Responses are not self-describing.** greetd answers every request with one
+  of the same three responses and no correlation identifier, so the only way to
+  read one is to remember what was asked. A greeter that does not is one
+  `cancel_session` away from logging someone in who pressed Escape.
 - **Chatty PAM stacks.** A stack may emit several `info`/`error` messages in a
   row, each needing an acknowledgement. The greeter follows them through with a
   bounded loop so a misbehaving stack cannot spin it forever.
