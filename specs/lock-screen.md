@@ -68,6 +68,14 @@ user. Any other `ext-session-lock-v1` client works too.
 - Only one lock may be active. A second lock request while locked is refused.
 - Locking is idempotent from the user's side: triggering a lock while already
   locked does nothing.
+- The blank comes down from the top of the screen like a shade and springs into
+  place. The session is visible under it while it falls but is already
+  unreachable: input is cut off when the lock is requested, and no output counts
+  as blanked before the shade has landed.
+- Locking plays the sound theme's `desktop-screen-lock` event, through the same
+  XDG sound-theme lookup as every other UI sound and subject to the same
+  `audio.sound_enabled`. Themes that ship no such event — `freedesktop` is one —
+  lock silently.
 
 ### Lock surfaces
 
@@ -105,9 +113,17 @@ user. Any other `ext-session-lock-v1` client works too.
 ### Unlocking
 
 - The locker authenticates the user itself and then requests unlock. Otto
-  destroys the lock surfaces and the blank, restores the session's rendering and
-  input, and gives keyboard focus back to the window that had it when the lock
-  began, if it still exists.
+  restores the session's rendering and input at once, gives keyboard focus back
+  to the window that had it when the lock began, if it still exists, and takes
+  the blank back up off the top of the screen.
+- The shade rises with no bounce — a rebound would drop it back over a session
+  the user already has back — and the lock surfaces are destroyed when it is
+  off-screen. The locker exits as soon as it has asked for the session back, so
+  its panel rides up on scene layers that outlive the client rather than
+  vanishing on the first frame.
+- The full-scene composite and the ban on direct scanout hold until the shade is
+  gone, not until the unlock request arrives: the plane path has nothing to draw
+  it with, and a promoted window would scan out straight through it.
 - A locker that exits, crashes or is killed **without** requesting unlock leaves
   the session locked and blank. There is no compositor-side escape hatch; the
   ways out are authenticating through a new locker (which Otto respawns) or

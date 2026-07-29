@@ -441,8 +441,9 @@ impl Otto<UdevData> {
         // own planes keep scanning out, so a locked screen shows the session.
         // Compositing the whole output subtree is what puts the lock plane on
         // screen, and it costs nothing worth counting on a screen whose only
-        // job is to wait for a password.
-        let composite_now = self.workspaces.has_minimizing_window() || self.is_session_locked();
+        // job is to wait for a password. It holds a little past the unlock
+        // too, while the blank slides back off the top.
+        let composite_now = self.workspaces.has_minimizing_window() || self.lock_blank_on_screen();
         let composite_active = if let Some(surf) = self
             .backend_data
             .backends
@@ -478,8 +479,9 @@ impl Otto<UdevData> {
                 || fullscreen_window.is_some()
                 // A promoted window is scanned out from its own KMS plane,
                 // independently of the composited frame the blank is drawn
-                // into — it would keep showing through a locked screen.
-                || self.is_session_locked()
+                // into — it would keep showing through a locked screen, and
+                // through the blank on its way back up after an unlock.
+                || self.lock_blank_on_screen()
             {
                 Vec::new()
             } else if let Some(output) = scanout_output {

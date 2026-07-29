@@ -158,6 +158,16 @@ impl SoundPlayer {
     pub fn play_volume_sound(&self) {
         self.play_event("audio-volume-change");
     }
+
+    /// Play the session-lock sound.
+    ///
+    /// `desktop-screen-lock` is the sound-naming spec's event for it. Not every
+    /// theme ships one — `freedesktop` does not — in which case the lookup
+    /// falls through the other installed themes and, finding nothing, the lock
+    /// is simply silent.
+    pub fn play_lock_sound(&self) {
+        self.play_event("desktop-screen-lock");
+    }
 }
 
 /// Find a sound file for a given event name
@@ -216,7 +226,8 @@ fn find_sound_for_event(event_name: &str) -> Option<PathBuf> {
 /// - /usr/local/share/sounds/{theme}/stereo/{event}.{oga,ogg,wav}
 /// - ~/.local/share/sounds/{theme}/stereo/{event}.{oga,ogg,wav}
 ///
-/// Also handles theme-specific directories (e.g., Pop uses stereo/action/)
+/// Also handles theme-specific directories (e.g., Pop uses stereo/action/,
+/// stereo/alert/ and stereo/notification/)
 fn find_sound_in_theme(event_name: &str, theme_name: &str) -> Option<PathBuf> {
     let base_dirs = [
         PathBuf::from("/usr/share/sounds"),
@@ -234,8 +245,15 @@ fn find_sound_in_theme(event_name: &str, theme_name: &str) -> Option<PathBuf> {
     for base_dir in search_dirs {
         let theme_dir = base_dir.join(theme_name);
 
-        // Try multiple subdirectories (some themes organize differently)
-        let subdirs = ["stereo", "stereo/action", ""];
+        // Try multiple subdirectories (some themes organize differently:
+        // Pop, for one, files its events under action/alert/notification)
+        let subdirs = [
+            "stereo",
+            "stereo/action",
+            "stereo/alert",
+            "stereo/notification",
+            "",
+        ];
 
         for subdir in &subdirs {
             let search_dir = if subdir.is_empty() {

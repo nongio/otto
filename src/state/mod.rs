@@ -185,6 +185,11 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// When the locker was last (re)launched, so a locker that crashes on
     /// startup cannot be respawned in a tight loop.
     pub lock_last_spawn: Option<std::time::Instant>,
+    /// When the blank finishes going back up after an unlock. The session is
+    /// unlocked for every other purpose from the moment the request arrives,
+    /// but the shade is still on screen until this passes and the frame has to
+    /// be composited as a whole to carry it — see `Otto::lock_blank_on_screen`.
+    pub lock_shade_until: Option<std::time::Instant>,
     pub workspaces: Workspaces,
 
     // smithay state
@@ -746,6 +751,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             lock_previous_focus: None,
             lock_locker_seen: false,
             lock_last_spawn: None,
+            lock_shade_until: None,
             output_manager_state,
             primary_selection_state,
             data_control_state,

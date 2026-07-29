@@ -50,6 +50,14 @@ const LOCK_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 const SLIDE: f32 = 0.45;
 const SLIDE_BOUNCE: f32 = 0.3;
 
+/// How long the blank takes to go back up on unlock.
+///
+/// No spring on the way out: a bounce here would drop the shade back over a
+/// session the user has already been given back. It accelerates away instead,
+/// and the session is interactive from the moment the unlock is accepted —
+/// the shade rising is a curtain, not a modal.
+const SLIDE_OUT: f32 = 0.4;
+
 /// Extra height the blank carries above the screen, as a fraction of it.
 ///
 /// A spring overshoots and rebounds, and a shade that rebounded past its
@@ -131,6 +139,21 @@ impl<BackendData: Backend> Otto<BackendData> {
         self.lock_state.is_active()
     }
 
+    /// Whether the blank is anywhere on screen — locked, locking, or on its
+    /// way back up after an unlock.
+    ///
+    /// The renderer needs this rather than [`Otto::is_session_locked`]: the
+    /// KMS plane decomposition has no plane for the lock, so a frame that
+    /// carries the blank has to be composited whole, and a window promoted to
+    /// its own plane would scan out straight through it. Both stay off until
+    /// the shade is gone, not until the session is nominally unlocked.
+    pub fn lock_blank_on_screen(&self) -> bool {
+        self.lock_state.is_active()
+            || self
+                .lock_shade_until
+                .is_some_and(|until| std::time::Instant::now() < until)
+    }
+
     /// Accept a lock request: raise the blank on every output and wait for it
     /// to reach the screen.
     pub fn begin_lock(&mut self, locker: SessionLocker) {
@@ -142,6 +165,11 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
 
         info!("Locking session");
+
+        // A lock that arrives while the previous one's shade is still going up
+        // takes the screen back over; the deadline it left behind would let the
+        // plane path resume mid-lock.
+        self.lock_shade_until = None;
 
         // What `locked` is a promise about is screens someone can see. A
         // virtual output composites only when something is consuming it, so a
@@ -208,6 +236,13 @@ impl<BackendData: Backend> Otto<BackendData> {
             );
         }
 
+        // The shade is falling; the sound goes with it. Nothing depends on it
+        // being heard — a theme without a `desktop-screen-lock` event locks
+        // silently.
+        if let Some(sound_player) = &self.sound_player {
+            sound_player.play_lock_sound();
+        }
+
         // Drop any interactive grab (move, resize, drag) and take keyboard
         // focus off the session. Focus moves to a lock surface as soon as one
         // is mapped; until then nothing has it, so nothing receives keys.
@@ -257,6 +292,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         self.lock_state = LockState::Unlocked;
         self.lock_locker_seen = false;
         self.lock_last_spawn = None;
+        self.lock_shade_until = None;
         self.restore_session_focus();
         self.request_lock_redraw();
     }
@@ -327,21 +363,75 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
     }
 
-    /// The locker has authenticated the user and asked for the session back.
+    /// The locker has authenticated the user and asked for the session back:
+    /// the blank goes back up the way it came down, and the session is under it
+    /// again immediately.
     pub fn finish_unlock(&mut self) {
         if !self.lock_state.is_active() {
             return;
         }
         info!("Unlocking session");
 
-        for entry in self.lock_surfaces.values() {
-            self.surface_layers.remove(&entry.surface.wl_surface().id());
-            entry.shade.remove();
-        }
-        self.lock_surfaces.clear();
+        // A little past the slide, so the last frame of it is still composited
+        // whole rather than handed back to the planes with the shade mid-air.
+        self.lock_shade_until = Some(
+            std::time::Instant::now()
+                + std::time::Duration::from_secs_f32(SLIDE_OUT)
+                + std::time::Duration::from_millis(50),
+        );
 
-        for ows in self.workspaces.output_workspaces.values() {
-            ows.lock_plane.set_hidden(true);
+        // The locker asks for the session back and exits, so the panel is
+        // already a dead client by the time the shade starts moving. Its
+        // wl_surface goes with it — nothing here may touch it again — but the
+        // scene layers and the textures behind them are ours, so the panel
+        // rides the shade up rather than vanishing at the first frame. The
+        // layers are handed to the animation, which removes them once the
+        // shade is off-screen; keeping them past that would leave the next
+        // lock stacking a second panel on top of this one.
+        let mut retiring: HashMap<String, Layer> = HashMap::new();
+        for (name, entry) in self.lock_surfaces.drain() {
+            self.surface_layers.remove(&entry.surface.wl_surface().id());
+            retiring.insert(name, entry.shade);
+        }
+
+        for (name, ows) in self.workspaces.output_workspaces.iter() {
+            let plane = ows.lock_plane.clone();
+            let shade = retiring.remove(name);
+            // Back to where the slide started: fully above the screen, slack
+            // and all. A plane with no laid-out size has nowhere to go, so it
+            // is taken down at once rather than waiting on an animation that
+            // will not run.
+            let height_px = plane.render_size().y;
+            if height_px <= 0.0 {
+                plane.set_hidden(true);
+                if let Some(shade) = shade {
+                    shade.remove();
+                }
+                continue;
+            }
+            plane
+                .set_position(
+                    Point {
+                        x: 0.0,
+                        y: -height_px,
+                    },
+                    Some(Transition::ease_in_quad(SLIDE_OUT)),
+                )
+                .on_finish(
+                    move |l: &Layer, _| {
+                        l.set_hidden(true);
+                        if let Some(shade) = &shade {
+                            shade.remove();
+                        }
+                    },
+                    true,
+                );
+        }
+
+        // Outputs that had a lock surface but no workspace entry (an output
+        // taken away mid-lock) have no plane to ride up on.
+        for shade in retiring.into_values() {
+            shade.remove();
         }
 
         self.lock_state = LockState::Unlocked;
