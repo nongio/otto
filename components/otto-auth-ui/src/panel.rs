@@ -34,20 +34,22 @@ use crate::{Appearance, User};
 /// island in otto-islands, which is where it was drawn.
 static TOUCH_ID: &[u8] = include_bytes!("../assets/touch_id.json");
 
-/// Where in the asset's timeline the mark is finished. Just short of the end:
+/// Where in the asset's timeline the mark is finished. Well short of the end:
 /// the ridges complete before the timeline does, and the tail past this is not
-/// worth playing. Both the resting mark and the end of the draw-in stop here,
-/// so the two always agree about what "complete" looks like.
+/// worth playing — least of all after a recognised finger, where every frame
+/// of it is spent between the answer and the session coming back. Both the
+/// resting mark and the end of the draw-in stop here, so the two always agree
+/// about what "complete" looks like.
 ///
 /// A mark that is only waiting is held here and never played: an animation is
 /// what the panel says when something has happened, and waiting for a finger is
 /// precisely nothing happening.
-const MARK_DRAWN: f64 = 0.95;
+const MARK_DRAWN: f64 = 0.8;
 
 /// How often the mark is redrawn while it has something to show — the answer
 /// drawing itself in, and nothing else. Every one of those frames costs a full
-/// repaint of a fullscreen surface, and a draw-in taking [`TOUCH_ID_FINISH`]
-/// seconds does not need the display's full rate to read as smooth.
+/// repaint of a fullscreen surface, and a draw-in played at [`MARK_SPEED`]
+/// does not need the display's full rate to read as smooth.
 const MARK_FPS: f64 = 30.0;
 
 /// Size of the mark. The box is what the *ridges* fill, not the asset's canvas
@@ -58,16 +60,35 @@ const MARK_FPS: f64 = 30.0;
 const TOUCH_ID_H: f32 = 56.0;
 const TOUCH_ID_W: f32 = 56.0;
 
-/// How long the asset's draw-in takes once the finger is recognised — the one
-/// place the animation is played, and the only thing anyone sees of a
-/// fingerprint login, since greetd replaces this process a moment later. Taken
-/// at half a second it was over before it registered.
-const TOUCH_ID_FINISH: f64 = 1.4;
+/// How fast the draw-in is played, as a multiple of the asset's own speed.
+///
+/// A rate rather than a duration, because a duration says nothing about how
+/// the motion will look: the wall-clock time the draw-in takes is whatever
+/// playing [`MARK_DRAWN`] of the timeline at this speed comes to, and it
+/// follows the asset if the asset is ever re-exported. Above 1.0 because
+/// everything between a recognised finger and the session coming back is time
+/// the user is waiting on a machine that already knows who they are — but not
+/// far above it, since the mark is sampled at [`MARK_FPS`] and speed is what
+/// decides how much motion falls between two of those samples.
+const MARK_SPEED: f64 = 1.5;
 
-/// How long the finished mark is held in [`ACCEPTED`] before the panel says it
-/// has nothing left to show. Without it the result is drawn and replaced in the
-/// same breath and nobody sees it.
-const TOUCH_ID_HOLD: f64 = 0.6;
+/// How long the draw-in takes on the clock: the played span of `player`'s
+/// timeline, at [`MARK_SPEED`]. This is the one place the animation is played,
+/// and the only thing anyone sees of a fingerprint login, since greetd
+/// replaces this process a moment later.
+fn mark_finish_secs(player: &LottiePlayer) -> f64 {
+    player.duration() * MARK_DRAWN / MARK_SPEED
+}
+
+/// How long the finished mark is held in [`ACCEPTED`] after the draw-in, before
+/// the panel says it has nothing left to show.
+///
+/// Nothing: the mark does not need holding here. The lock screen does not
+/// vanish on unlock, it rides up off the top of the screen with the finished
+/// mark on it the whole way, so the result is looked at for as long as that
+/// takes. A hold on top of it is dead time between a machine that already knows
+/// who you are and a session you cannot use yet.
+const TOUCH_ID_HOLD: f64 = 0.0;
 
 /// What a recognised finger draws the mark in: the system blue macOS lights
 /// the same thing with. It goes down over the resting grey as the asset plays,
@@ -838,10 +859,9 @@ impl Panel {
             // as this mark filling in rather than a second one arriving.
             Some(Finger::Accepted) => {
                 let accepted_at = std::time::Instant::now();
-                self.mark_settles_at = Some(
-                    accepted_at
-                        + std::time::Duration::from_secs_f64(TOUCH_ID_FINISH + TOUCH_ID_HOLD),
-                );
+                let finish = mark_finish_secs(&player);
+                self.mark_settles_at =
+                    Some(accepted_at + std::time::Duration::from_secs_f64(finish + TOUCH_ID_HOLD));
                 self.fingerprint
                     .set_draw_content(move |canvas: &Canvas, w, h| {
                         let box_ = Rect::from_wh(w, h);
@@ -851,7 +871,7 @@ impl Panel {
                         player.render_fit_with_color(canvas, MARK_DRAWN, box_, AWAITED);
 
                         let progress =
-                            (accepted_at.elapsed().as_secs_f64() / TOUCH_ID_FINISH).clamp(0.0, 1.0);
+                            (accepted_at.elapsed().as_secs_f64() / finish).clamp(0.0, 1.0);
                         player.render_fit_with_color(canvas, progress * MARK_DRAWN, box_, ACCEPTED);
                         box_
                     });
@@ -1691,16 +1711,25 @@ mod tests {
             "an accepted mark still has its finish to draw"
         );
 
+        // How long this build's draw-in takes: the played span of the asset at
+        // MARK_SPEED, which is what the panel itself timed the finish from.
+        let finish = mark_finish_secs(
+            panel
+                .touch_id
+                .as_ref()
+                .expect("the mark's asset should have loaded"),
+        );
+
         // Early in the draw-in it already differs from the waiting mark: the
         // blue has started going down over it.
-        std::thread::sleep(std::time::Duration::from_secs_f64(TOUCH_ID_FINISH / 4.0));
+        std::thread::sleep(std::time::Duration::from_secs_f64(finish / 4.0));
         let early = frame(&panel);
         assert_ne!(awaited, early, "the accepted mark should look different");
 
         // And it keeps drawing. This is the one animation the panel plays, and
         // holding the asset at its last frame instead of running it is exactly
         // what left a login with nothing to see but a colour appearing.
-        std::thread::sleep(std::time::Duration::from_secs_f64(TOUCH_ID_FINISH / 4.0));
+        std::thread::sleep(std::time::Duration::from_secs_f64(finish / 4.0));
         let finishing = frame(&panel);
         assert_ne!(
             early, finishing,
@@ -1708,23 +1737,27 @@ mod tests {
         );
         assert!(
             panel.wants_frames(),
-            "the finish is not over yet ({TOUCH_ID_FINISH}s)"
+            "the finish is not over yet ({finish}s)"
         );
 
-        // Once finished it holds, so the result is on screen for long enough to
-        // register rather than being drawn and replaced in the same breath.
-        std::thread::sleep(std::time::Duration::from_secs_f64(
-            TOUCH_ID_FINISH / 2.0 + 0.05,
-        ));
+        // Still drawing on the approach to the end: the mark must not be
+        // dropped part-way through and left half filled in.
+        std::thread::sleep(std::time::Duration::from_secs_f64(finish / 4.0));
         assert!(
             panel.wants_frames(),
-            "the finished mark should be held, not dropped the moment it completes"
+            "the finish is not over yet ({finish}s)"
         );
 
-        std::thread::sleep(std::time::Duration::from_secs_f64(TOUCH_ID_HOLD));
+        // And once the draw-in is done — plus whatever hold follows it — the
+        // panel has nothing left to show and says so. The locker unlocks on
+        // exactly that, so a panel that never goes quiet is a session that
+        // stays shut.
+        std::thread::sleep(std::time::Duration::from_secs_f64(
+            finish / 4.0 + TOUCH_ID_HOLD + 0.05,
+        ));
         assert!(
             !panel.wants_frames(),
-            "the panel should go quiet once the result has been held"
+            "the panel should go quiet once the mark is finished"
         );
     }
 
