@@ -115,6 +115,12 @@ struct Greeter {
     user: Option<User>,
     /// The current input buffer — username or auth answer depending on stage.
     input: String,
+    /// The buffer holds a suggested username nobody has typed, so the first
+    /// edit replaces it rather than adding to it. A field cannot show a
+    /// selection, so this stands in for one: the offer is either taken with
+    /// Enter or typed straight over, and it is never possible to end up
+    /// submitting the default with a stray character on the end of it.
+    input_is_a_suggestion: bool,
     /// Label shown above the input, from greetd's auth message.
     prompt: String,
     /// Last error, cleared on the next keystroke.
@@ -152,6 +158,15 @@ impl Greeter {
             available = sessions.len(),
             "Sessions discovered"
         );
+        // Most logins are the same person on the same machine, and typing a
+        // name you have typed a thousand times is work the login screen can do
+        // for you. The suggestion is in the field, not applied behind it: it is
+        // the same field, editable, and Escape empties it (see `reset`).
+        let suggested = User::default_login();
+        if let Some(user) = &suggested {
+            tracing::info!(user = %user.name, "Offering the default account");
+        }
+
         Self {
             surface: None,
             panel: None,
@@ -162,8 +177,12 @@ impl Greeter {
             client,
             stage: Stage::Username,
             username: String::new(),
-            user: None,
-            input: String::new(),
+            input: suggested
+                .as_ref()
+                .map(|user| user.name.clone())
+                .unwrap_or_default(),
+            input_is_a_suggestion: suggested.is_some(),
+            user: suggested,
             prompt: "Username".to_string(),
             error: None,
             info: None,
@@ -211,7 +230,11 @@ impl Greeter {
             self.conversation = false;
         }
         self.stage = Stage::Username;
+        // Emptied, not re-offered. Escape out of a login is how someone says
+        // they are not the person the screen assumed they were, and putting
+        // that name straight back would be answering a different question.
         self.input.clear();
+        self.input_is_a_suggestion = false;
         self.username.clear();
         self.user = None;
         self.prompt = "Username".to_string();
@@ -476,6 +499,20 @@ impl Greeter {
         }
     }
 
+    /// Clear a suggested username the moment it is edited, and say whether
+    /// there was one. The card goes back to nobody with it: the avatar and
+    /// name on it belong to the account being offered, and the next keystroke
+    /// is somebody saying it is not theirs.
+    fn take_over_the_suggestion(&mut self) -> bool {
+        if !self.input_is_a_suggestion {
+            return false;
+        }
+        self.input.clear();
+        self.input_is_a_suggestion = false;
+        self.user = None;
+        true
+    }
+
     /// Handle Enter for the current stage.
     fn submit(&mut self) {
         // A password typed ahead of the prompt for it. There is no question to
@@ -508,6 +545,7 @@ impl Greeter {
                 // as long as nobody touches the reader — look like the step
                 // before it, as though Enter had done nothing.
                 self.input.clear();
+                self.input_is_a_suggestion = false;
                 self.prompt = "Authenticating\u{2026}".to_string();
                 // From here greetd is holding a session that has to be
                 // cancelled before another can be created — including when the
@@ -870,7 +908,14 @@ impl App for Greeter {
         match event.keysym {
             Keysym::Return | Keysym::KP_Enter => self.submit(),
             Keysym::BackSpace if self.accepts_input() => {
-                self.input.pop();
+                if self.take_over_the_suggestion() {
+                    // Backspace over a suggestion clears all of it, the way it
+                    // would over a selection. Rubbing out a name character by
+                    // character to type another one is not an edit anybody
+                    // wants to make.
+                } else {
+                    self.input.pop();
+                }
                 self.error = None;
             }
             // Escape is exempt: a login waiting on a finger nobody is going to
@@ -897,6 +942,7 @@ impl App for Greeter {
                     self.use_password();
                 }
                 if self.accepts_input() {
+                    self.take_over_the_suggestion();
                     self.input.push_str(&printable);
                     self.error = None;
                 }
@@ -931,6 +977,81 @@ mod tests {
             awaiting_password: false,
             pending: None,
         })
+    }
+
+    /// A greeter that is offering a default account, whatever the password
+    /// database of the machine running the test happens to hold.
+    fn greeter_offering(name: &str) -> Greeter {
+        let mut greeter = greeter();
+        greeter.input = name.to_string();
+        greeter.input_is_a_suggestion = true;
+        greeter.user = Some(User::lookup(name));
+        greeter
+    }
+
+    /// The offered name is a suggestion, not a prefix. Typing over it has to
+    /// replace it — a field cannot show a selection, so the first keystroke is
+    /// what stands in for one, and appending would silently build a username
+    /// nobody meant to type.
+    #[test]
+    fn typing_replaces_the_suggested_name() {
+        let mut greeter = greeter_offering("riccardo");
+
+        assert!(greeter.take_over_the_suggestion());
+        greeter.input.push('a');
+        assert_eq!(greeter.input, "a");
+        assert!(
+            greeter.user.is_none(),
+            "the card must stop showing an account that is being typed over"
+        );
+
+        // Only the first edit; after that the field is an ordinary one.
+        assert!(!greeter.take_over_the_suggestion());
+        greeter.input.push_str("da");
+        assert_eq!(greeter.input, "ada");
+    }
+
+    /// Backspace over a suggestion clears the whole thing, as it would over a
+    /// selection — rubbing a name out letter by letter to type another is not
+    /// an edit anyone wants to make.
+    #[test]
+    fn backspace_clears_the_whole_suggested_name() {
+        let mut greeter = greeter_offering("riccardo");
+
+        assert!(greeter.take_over_the_suggestion());
+        assert!(greeter.input.is_empty());
+    }
+
+    /// Enter takes the suggestion as typed, and it stops being one: the name
+    /// has been submitted, and the field it came from is cleared behind it.
+    #[test]
+    fn the_suggested_name_can_be_submitted_as_it_stands() {
+        let mut greeter = greeter_offering("riccardo");
+
+        greeter.submit();
+        assert_eq!(greeter.username, "riccardo");
+        assert!(greeter.conversation);
+        assert!(!greeter.input_is_a_suggestion);
+        assert!(greeter.input.is_empty());
+    }
+
+    /// Escape out of a login is somebody saying they are not who the screen
+    /// assumed. Putting the same name straight back would answer a different
+    /// question — the field is emptied and left ready to type into.
+    #[test]
+    fn escape_empties_the_suggested_name_rather_than_re_offering_it() {
+        let mut greeter = greeter_offering("riccardo");
+        greeter.submit();
+
+        greeter.reset(None);
+        assert!(matches!(greeter.stage, Stage::Username));
+        assert!(greeter.input.is_empty(), "nothing to type over");
+        assert!(!greeter.input_is_a_suggestion);
+        assert!(greeter.user.is_none());
+        assert!(
+            greeter.accepts_input(),
+            "the field has to take a name straight away"
+        );
     }
 
     #[test]

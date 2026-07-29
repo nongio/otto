@@ -172,6 +172,21 @@ plays for SDDM's Qt greeter.
 The greeter drives greetd's IPC (`greetd-ipc(7)`): a native-endian `u32` length
 prefix followed by a JSON payload, in both directions.
 
+- The field starts with a username already in it: the machine's primary user,
+  taken as the login account with the lowest UID (`User::default_login` — the
+  human UID range, minus the accounts whose shell says nobody logs into them).
+  greetd exposes no user list and there is no unprivileged record of who logged
+  in last, so this is the closest thing to "whoever this machine is for". On the
+  single-user machines Otto is built for it is the only candidate; elsewhere it
+  is a suggestion, and Enter is all a login costs.
+  - It is a suggestion, not a prefix. A field cannot show a selection, so the
+    first edit stands in for one: any character replaces the whole name and
+    Backspace clears it, rather than appending to or nibbling at a name nobody
+    typed. The card's avatar goes with it — it belonged to the account being
+    offered, and editing the field is somebody saying it is not theirs.
+  - Escape empties the field rather than re-offering the name. Escaping out of a
+    login is saying you are not who the screen assumed; putting the same name
+    straight back would answer a different question.
 - On submitting a username, the greeter sends `create_session`. The name leaves
   the field at that point — the card shows who is logging in — and keystrokes
   are ignored until greetd asks a question, *unless* the user has asked for the

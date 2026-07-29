@@ -15,6 +15,13 @@ const AVATAR_PATHS: [&str; 1] = ["/var/lib/AccountsService/icons"];
 /// Avatar filenames looked for inside the user's home directory.
 const HOME_AVATARS: [&str; 3] = [".face", ".face.icon", ".local/share/avatar"];
 
+/// The UID range distributions hand out to people rather than to daemons.
+/// `nobody` sits at 65534, above the top of it.
+const HUMAN_UIDS: std::ops::RangeInclusive<u32> = 1000..=60000;
+
+/// Shells that mean the account is not one anybody logs into.
+const NON_LOGIN_SHELLS: [&str; 3] = ["/usr/sbin/nologin", "/sbin/nologin", "/bin/false"];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct User {
     /// Login name.
@@ -54,6 +61,30 @@ impl User {
         (!name.is_empty()).then(|| Self::lookup(&name))
     }
 
+    /// The account a login screen should offer before anyone has said who they
+    /// are — the machine's primary user.
+    ///
+    /// greetd has no notion of one, and there is no record of who logged in
+    /// last that a greeter can read without privileges, so it is taken from the
+    /// password database: of the accounts a person could log into, the one
+    /// created first. On the single-user machines this is for, that is the only
+    /// one. On a shared machine it is a starting point, not an assertion —
+    /// which is why the greeter lets it be typed over.
+    pub fn default_login() -> Option<Self> {
+        let passwd = std::fs::read_to_string("/etc/passwd").ok()?;
+        let entry = passwd
+            .lines()
+            .filter_map(parse_passwd_line)
+            .filter(PasswdEntry::is_human)
+            .min_by_key(|entry| entry.uid)?;
+
+        Some(Self {
+            display_name: entry.real_name().unwrap_or_else(|| entry.name.clone()),
+            avatar: find_avatar(&entry.name, Some(Path::new(&entry.home))),
+            name: entry.name,
+        })
+    }
+
     /// Up to two initials, for when there is no avatar to draw.
     pub fn initials(&self) -> String {
         let mut initials: String = self
@@ -77,8 +108,11 @@ impl User {
 }
 
 struct PasswdEntry {
+    name: String,
+    uid: u32,
     gecos: String,
     home: String,
+    shell: String,
 }
 
 impl PasswdEntry {
@@ -89,20 +123,44 @@ impl PasswdEntry {
         let name = self.gecos.split(',').next()?.trim();
         (!name.is_empty()).then(|| name.to_string())
     }
+
+    /// Whether this is an account a person logs into, as opposed to one a
+    /// daemon runs as. Both halves matter: system accounts are kept out of the
+    /// UID range, and accounts that have been retired keep their UID but lose
+    /// their shell.
+    fn is_human(&self) -> bool {
+        HUMAN_UIDS.contains(&self.uid)
+            && !self.shell.is_empty()
+            && !NON_LOGIN_SHELLS.contains(&self.shell.as_str())
+    }
+}
+
+/// `name:password:uid:gid:gecos:home:shell`. A line missing a field, or with a
+/// UID that is not a number, is not an entry — malformed lines are skipped
+/// rather than guessed at.
+fn parse_passwd_line(line: &str) -> Option<PasswdEntry> {
+    let mut fields = line.split(':');
+    let name = fields.next()?.to_string();
+    let _password = fields.next()?;
+    let uid = fields.next()?.parse().ok()?;
+    let _gid = fields.next()?;
+
+    Some(PasswdEntry {
+        name,
+        uid,
+        gecos: fields.next()?.to_string(),
+        home: fields.next()?.to_string(),
+        shell: fields.next().unwrap_or_default().to_string(),
+    })
 }
 
 fn passwd_entry(name: &str) -> Option<PasswdEntry> {
     let passwd = std::fs::read_to_string("/etc/passwd").ok()?;
 
-    passwd.lines().find_map(|line| {
-        let mut fields = line.split(':');
-        (fields.next()? == name).then_some(())?;
-        let mut fields = fields.skip(3); // password, uid, gid
-        Some(PasswdEntry {
-            gecos: fields.next()?.to_string(),
-            home: fields.next()?.to_string(),
-        })
-    })
+    passwd
+        .lines()
+        .filter_map(parse_passwd_line)
+        .find(|entry| entry.name == name)
 }
 
 fn find_avatar(name: &str, home: Option<&Path>) -> Option<PathBuf> {
@@ -177,16 +235,37 @@ mod tests {
     /// and a `gecos` with extra comma fields must yield only the name.
     #[test]
     fn passwd_parsing_picks_the_right_fields() {
-        let entry = PasswdEntry {
-            gecos: "Riccardo Canalicchio,,,".into(),
-            home: "/home/riccardo".into(),
-        };
+        let entry = parse_passwd_line(
+            "riccardo:x:1000:1000:Riccardo Canalicchio,,,:/home/riccardo:/bin/zsh",
+        )
+        .expect("a well-formed line parses");
+        assert_eq!(entry.name, "riccardo");
+        assert_eq!(entry.uid, 1000);
+        assert_eq!(entry.home, "/home/riccardo");
+        assert_eq!(entry.shell, "/bin/zsh");
         assert_eq!(entry.real_name().as_deref(), Some("Riccardo Canalicchio"));
 
-        let system = PasswdEntry {
-            gecos: "".into(),
-            home: "/".into(),
-        };
+        let system = parse_passwd_line("bin:x:1:1::/:/usr/bin/nologin").expect("parses");
         assert_eq!(system.real_name(), None);
+
+        assert!(parse_passwd_line("").is_none());
+        assert!(parse_passwd_line("broken:x:not-a-number:1::/:/bin/sh").is_none());
+    }
+
+    /// What separates the account a greeter should offer from the dozens it
+    /// should not: the UID range, and a shell that can actually be logged into.
+    #[test]
+    fn only_login_accounts_count_as_human() {
+        let human = |line| parse_passwd_line(line).expect("parses").is_human();
+
+        assert!(human("riccardo:x:1000:1000::/home/riccardo:/bin/zsh"));
+        assert!(!human("root:x:0:0::/root:/bin/bash"));
+        assert!(!human("bin:x:1:1::/:/usr/bin/nologin"));
+        assert!(!human("nobody:x:65534:65534::/:/usr/bin/nologin"));
+        // Kept for its files, but nobody logs into it any more.
+        assert!(!human("retired:x:1001:1001::/home/retired:/bin/false"));
+        // greetd's own account is in the human range on some distributions;
+        // its shell is what keeps it out.
+        assert!(!human("greeter:x:985:985::/var/lib/greetd:/sbin/nologin"));
     }
 }
