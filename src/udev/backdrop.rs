@@ -294,10 +294,17 @@ pub(super) fn update_backdrop_and_upper_planes(
                         bs.context.flush_and_submit();
                         let bg_small = bs.surface.image_snapshot();
                         // Pre-blur so expose seeds it and skips its own blur.
+                        // The raw copy goes along too: the hover label sits on
+                        // top of the window previews painted in this same pass
+                        // and carries `blur_include_content`, so it seeds the
+                        // raw image and blurs the preview underneath in.
                         match blur_image(&bg_small, &mut bs.context, BACKDROP_BLUR_SIGMA) {
-                            Some(blurred) => {
-                                expose.set_backdrop(Some((blurred, BACKDROP_SCALE, true, None)))
-                            }
+                            Some(blurred) => expose.set_backdrop(Some((
+                                blurred,
+                                BACKDROP_SCALE,
+                                true,
+                                Some(bg_small),
+                            ))),
                             None => {
                                 expose.set_backdrop(Some((bg_small, BACKDROP_SCALE, false, None)))
                             }

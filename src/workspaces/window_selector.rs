@@ -157,6 +157,17 @@ impl WindowSelectorView {
         );
         view.mount_layer(window_selector_view.clone());
 
+        // The hover label floats above the window previews, which are painted
+        // earlier in the SAME plane pass. Seeding the plane's pre-blurred
+        // backdrop would put the (bg-only) blur behind those previews, so the
+        // label reads as a flat panel with no vibrancy. Opt into the raw
+        // backdrop plus a real blur so the preview underneath is blurred in.
+        view.add_post_render_hook(|_state, view, _layer| {
+            if let Some(label) = view.layer_by_key("window_selector_label") {
+                label.set_blur_include_content(true);
+            }
+        });
+
         let window_selector_windows_container = layers_engine.new_layer();
         window_selector_windows_container
             .set_key(format!("window_selector_windows_container_{}", index));
