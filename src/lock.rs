@@ -301,7 +301,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             .workspaces
             .outputs()
             .filter_map(|output| {
-                let geometry = self.workspaces.output_geometry(&output)?;
+                let geometry = self.workspaces.output_geometry(output)?;
                 let scale = output.current_scale().fractional_scale() as f32;
                 Some((
                     output.name(),
