@@ -68,6 +68,13 @@ impl crate::renderer::BlitCurrentFrame for SkiaRenderer {
         // Get the currently bound source FBO
         let src_fbo = self.get_current_fbo()?.fbo;
 
+        // Remember the caller's bound target: `bind(dst_dmabuf)` below switches
+        // the renderer to the screencast buffer, and if we leave it there the
+        // next DRM atomic commit exports its in-fence with the wrong target
+        // current — EGL returns BAD_PARAMETER (`eglDupNativeFenceFDANDROID`),
+        // which surfaces as ContextLost and used to crash the compositor.
+        let prev_target = self.current_target.clone();
+
         // Bind the destination dmabuf to get its FBO
         self.bind(dst_dmabuf)?;
         let dst_target = SkiaTarget::Dmabuf(dst_dmabuf.clone());
@@ -99,6 +106,10 @@ impl crate::renderer::BlitCurrentFrame for SkiaRenderer {
             self.gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, 0);
             self.gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, 0);
         }
+
+        // Restore the caller's target so the renderer is left exactly as we
+        // found it (see `prev_target` above).
+        self.current_target = prev_target;
 
         Ok(())
     }

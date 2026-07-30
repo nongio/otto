@@ -83,6 +83,19 @@ pub struct UdevData {
     pub context_id: Option<ContextId<MultiTexture>>,
     /// Flag set by `request_redraw` to trigger a render on next loop iteration.
     pub(super) render_requested: AtomicBool,
+    /// Monotonic count of scene ticks that reported damage. The lay-rs
+    /// damage flag is consumed by whichever output ticks first; surfaces
+    /// compare `SurfaceData::rendered_damage_gen` against this to know a
+    /// damage event happened that they haven't drawn yet. Engine damage is
+    /// cleared only once every surface has caught up.
+    pub(super) damage_generation: u64,
+    /// Adaptive plane budget: bumped when the kernel reports a display
+    /// FIFO underrun (the display engine starving on plane fetch — the
+    /// affected pipe scans out solid garbage from mid-frame down).
+    /// 0 = full plane use, 1 = no window promotion, 2 = no plane
+    /// decomposition (full GPU composite). Sticky for the session:
+    /// display bandwidth is shared, so the reduction applies globally.
+    pub(super) underrun_penalty: u8,
 }
 
 /// Per-device backend data
@@ -121,6 +134,24 @@ pub struct SurfaceData {
     /// each no-damage frame so animations that briefly report zero pending
     /// transactions aren't cut short.
     pub(super) idle_countdown: u32,
+    /// Whether this surface has ever submitted a frame. An output must
+    /// always draw its first frame: the global scene-damage flag may have
+    /// been consumed by another output's render before this surface gets
+    /// its turn, and skipping here would leave the display black.
+    pub(super) has_rendered_once: bool,
+    /// Debug: whether this surface already honoured the current
+    /// `/tmp/otto-full-redraw` trigger (reset when the file is removed).
+    pub(super) full_redraw_done: bool,
+    /// The damage generation this surface last rendered (see
+    /// `UdevData::damage_generation`). A surface behind the global counter
+    /// must render even when its own tick reports no damage — the damage
+    /// was produced (and the flag consumed) on another output's tick.
+    pub(super) rendered_damage_gen: u64,
+    /// Whether the pointer was inside this output on the last drawn frame.
+    /// When it leaves, one farewell frame must render without the cursor
+    /// element — otherwise the hardware cursor plane keeps scanning out the
+    /// stale cursor image at its last position on this output.
+    pub(super) cursor_was_in_output: bool,
     /// Pre-computed scene-graph damage state for the upcoming draw phase.
     ///
     /// Frame pipelining splits each render cycle into two phases:
@@ -234,6 +265,12 @@ pub struct SurfaceData {
     /// `ScanoutCandidate` render element on the plane above.
     pub(super) shadow_only_windows:
         Vec<smithay::reexports::wayland_server::backend::ObjectId>,
+    /// Window that was fullscreen direct-scanned-out on the previous frame.
+    /// Fullscreen scanout never renders the window into the scene, so when it
+    /// ends (e.g. an expose gesture) the window is re-imported like a demotion
+    /// so the composited scene / expose mirror have real content to show.
+    pub(super) last_fullscreen_scanout:
+        Option<smithay::reexports::wayland_server::backend::ObjectId>,
     /// Deferred GPU sync point from the previous frame.
     ///
     /// Instead of blocking immediately after `render_frame()`, we store the

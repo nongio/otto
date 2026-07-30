@@ -54,13 +54,24 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
         // While the grab is active, no client has pointer focus
         handle.motion(state, None, event);
 
-        let scale = state
+        // The layer lives under the OWNING output's subtree — use that
+        // output for both the scale and the global→output-local rebase.
+        // (outputs_for_element can be empty mid-drag near output edges.)
+        let Some(output) = state
             .workspaces
-            .outputs_for_element(&self.window)
-            .first()
-            .unwrap()
-            .current_scale()
-            .fractional_scale();
+            .output_for_window(&self.window)
+            .or_else(|| {
+                state
+                    .workspaces
+                    .outputs_for_element(&self.window)
+                    .first()
+                    .cloned()
+            })
+            .or_else(|| state.workspaces.primary_output().cloned())
+        else {
+            return;
+        };
+        let scale = output.current_scale().fractional_scale();
         let delta = event.location - self.start_data.location;
         let new_location = self.initial_window_location.to_f64() + delta;
 
@@ -69,7 +80,8 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
             .map_window(&self.window, new_location.to_i32_round(), true, None);
 
         if let Some(view) = state.workspaces.get_window_view(&self.window.id()) {
-            let location = new_location.to_physical(scale);
+            let local = new_location - output.current_location().to_f64();
+            let location = local.to_physical(scale);
             view.window_layer.set_position(
                 layers::types::Point {
                     x: location.x as f32,

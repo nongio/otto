@@ -771,6 +771,11 @@ pub struct VirtualOutputConfig {
     /// Output position in the compositor layout.
     #[serde(default)]
     pub position: Option<DisplayPosition>,
+    /// When true the pointer can enter this output and windows can be
+    /// placed/focused on it, like a physical screen. Default false:
+    /// headless outputs are invisible, so reaching them loses content.
+    #[serde(default)]
+    pub interactive: bool,
 }
 
 fn default_virtual_refresh_hz() -> f64 {

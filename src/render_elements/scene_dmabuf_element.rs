@@ -166,6 +166,13 @@ struct Inner {
     /// plane sat out of the frame, so pushing the stale buffer would flash
     /// ghost content.
     force_full: bool,
+    /// The output's static position in scene coordinates (physical px).
+    /// The root node's `render_position()` includes this offset, but the
+    /// buffer is scanned out on the output's own CRTC where (0,0) is the
+    /// output's top-left — so the render translate must re-apply only the
+    /// dynamic part of the root position (workspace scroll), not the
+    /// output placement. Always (0,0) for the leftmost output.
+    scene_origin: (i32, i32),
 }
 
 impl SceneDmabufElement {
@@ -186,6 +193,7 @@ impl SceneDmabufElement {
                 backdrop: None,
                 last_backdrop_id: None,
                 force_full: false,
+                scene_origin: (0, 0),
             })),
             position: (0, 0),
             plane_alpha: 1.0,
@@ -200,6 +208,12 @@ impl SceneDmabufElement {
     /// buffer's content was cropped from.
     pub fn set_viewport(&self, origin: (i32, i32)) {
         self.inner.lock().unwrap().viewport = origin;
+    }
+
+    /// Set the output's static scene position (physical px) — see
+    /// `Inner::scene_origin`. Must be called for any output not at (0,0).
+    pub fn set_scene_origin(&self, origin: (i32, i32)) {
+        self.inner.lock().unwrap().scene_origin = origin;
     }
 
     /// Set the lay-rs subtree this element renders.
@@ -450,14 +464,16 @@ impl SceneDmabufElement {
                 }
                 if let Some(layer) = inner.engine.get_layer(&root_id) {
                     let pos = layer.render_position();
-                    // render_position() returns global scene coords.
-                    // We apply the global offset as the initial canvas transform so
-                    // that each child's accumulated local_transforms bring it to the
-                    // correct output-space position. (Positive translate shifts the
-                    // canvas origin to the node's global position, cancelling the
-                    // parent-chain scroll encoded in local_transforms above the root.)
-                    if pos.x != 0.0 || pos.y != 0.0 {
-                        canvas.translate((pos.x, pos.y));
+                    // render_position() returns global scene coords. Re-apply the
+                    // dynamic part (workspace scroll) so swipes appear in the
+                    // buffer, but not the output's static scene placement — the
+                    // buffer scans out on this output's CRTC where (0,0) is the
+                    // output's own top-left.
+                    let (ox, oy) = inner.scene_origin;
+                    let dx = pos.x - ox as f32;
+                    let dy = pos.y - oy as f32;
+                    if dx != 0.0 || dy != 0.0 {
+                        canvas.translate((dx, dy));
                     }
                 }
                 let external_backdrop =

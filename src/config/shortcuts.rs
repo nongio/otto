@@ -217,6 +217,12 @@ fn parse_action(cfg: &ShortcutActionConfig) -> Result<ShortcutAction, ShortcutEr
     }
 }
 
+/// Parse a bare builtin action name — used by the `/tmp/otto-action`
+/// debug trigger to execute shortcut actions remotely.
+pub fn parse_builtin_name(name: &str) -> Option<BuiltinAction> {
+    parse_builtin(name, None).ok()
+}
+
 fn parse_builtin(name: &str, index: Option<usize>) -> Result<BuiltinAction, ShortcutError> {
     Ok(match name {
         "Quit" => BuiltinAction::Quit,

@@ -41,7 +41,30 @@ use super::{
 #[cfg(feature = "renderer_sync")]
 use smithay::backend::renderer::sync::SyncPoint;
 
+/// Size the fallback composite scene element to fit the largest mapped
+/// output (output subtrees overlap at scene (0,0), so the scene never
+/// needs to be wider than the biggest output — matches the scene-root
+/// sizing in the workspaces layout pass). Free function over the two
+/// fields so callers can invoke it while other fields of `Otto` are
+/// mutably borrowed.
+fn sync_scene_size_to_outputs(
+    workspaces: &crate::workspaces::Workspaces,
+    scene_element: &mut crate::render_elements::scene_element::SceneElement,
+) {
+    let (mut max_w, mut max_h) = (0f32, 0f32);
+    for o in workspaces.outputs() {
+        if let Some(mode) = o.current_mode() {
+            max_w = max_w.max(mode.size.w as f32);
+            max_h = max_h.max(mode.size.h as f32);
+        }
+    }
+    if max_w > 0.0 && max_h > 0.0 {
+        scene_element.set_size(max_w, max_h);
+    }
+}
+
 impl Otto<UdevData> {
+
     /// Handles addition of a new DRM device
     pub(super) fn device_added(
         &mut self,
@@ -308,33 +331,48 @@ impl Otto<UdevData> {
         });
 
         let mode_id = if let Some(ref profile) = config_profile {
-            // Try to find matching resolution from config
-            if let Some(desired_res) = profile.resolution {
-                connector
-                    .modes()
-                    .iter()
-                    .position(|mode| {
-                        let size = mode.size();
-                        size.0 as u32 == desired_res.width && size.1 as u32 == desired_res.height
+            let modes = connector.modes();
+            // A refresh-only profile pins the display's preferred resolution;
+            // an explicit `resolution` overrides it.
+            let preferred_size = modes
+                .iter()
+                .find(|m| m.mode_type().contains(ModeTypeFlags::PREFERRED))
+                .map(|m| m.size());
+            let res_matches = |mode: &smithay::reexports::drm::control::Mode| {
+                let size = mode.size();
+                match profile.resolution {
+                    Some(r) => size.0 as u32 == r.width && size.1 as u32 == r.height,
+                    None => preferred_size.is_none_or(|p| size == p),
+                }
+            };
+            // Most specific first: resolution + refresh, then resolution
+            // alone, then the connector's preferred mode. The advertised
+            // refresh always comes from the mode actually selected.
+            profile
+                .refresh_hz
+                .and_then(|hz| {
+                    modes
+                        .iter()
+                        .position(|m| res_matches(m) && (m.vrefresh() as f64 - hz).abs() <= 1.0)
+                })
+                .or_else(|| {
+                    profile.resolution.and_then(|desired_res| {
+                        let idx = modes.iter().position(res_matches);
+                        if idx.is_none() {
+                            warn!(
+                                "Requested resolution {}x{} not available for {}, using preferred mode",
+                                desired_res.width, desired_res.height, output_name
+                            );
+                        }
+                        idx
                     })
-                    .or_else(|| {
-                        warn!(
-                            "Requested resolution {}x{} not available for {}, using preferred mode",
-                            desired_res.width, desired_res.height, output_name
-                        );
-                        connector
-                            .modes()
-                            .iter()
-                            .position(|mode| mode.mode_type().contains(ModeTypeFlags::PREFERRED))
-                    })
-                    .unwrap_or(0)
-            } else {
-                connector
-                    .modes()
-                    .iter()
-                    .position(|mode| mode.mode_type().contains(ModeTypeFlags::PREFERRED))
-                    .unwrap_or(0)
-            }
+                })
+                .or_else(|| {
+                    modes
+                        .iter()
+                        .position(|mode| mode.mode_type().contains(ModeTypeFlags::PREFERRED))
+                })
+                .unwrap_or(0)
         } else {
             connector
                 .modes()
@@ -353,13 +391,9 @@ impl Otto<UdevData> {
         );
 
         let mut wl_mode = WlMode::from(drm_mode);
-        // Use config refresh rate, or use DRM mode's refresh rate, or fallback to 60Hz
-        if let Some(ref profile) = config_profile {
-            if let Some(refresh_hz) = profile.refresh_hz {
-                wl_mode.refresh = (refresh_hz * 1000.0) as i32;
-            }
-        }
-        // If still zero after config check, use DRM mode's refresh or 60Hz fallback
+        // Advertise the selected mode's real refresh — config refresh_hz only
+        // influences mode selection above, it must never make clients see a
+        // rate the hardware isn't running.
         if wl_mode.refresh == 0 {
             let drm_refresh_mhz = drm_mode.vrefresh() as i32 * 1000;
             wl_mode.refresh = if drm_refresh_mhz > 0 {
@@ -402,25 +436,48 @@ impl Otto<UdevData> {
             },
         );
 
-        // FIXME handle multimonitor setup
-        let root = self.scene_element.root_layer().unwrap();
-        let w = wl_mode.size.w as f32;
-        let h = wl_mode.size.h as f32;
-        self.workspaces
-            .set_screen_dimension(wl_mode.size.w, wl_mode.size.h);
-        let scene_size = layers::types::Size::points(w, h);
-        root.set_size(scene_size, None);
-        self.scene_element.set_size(w, h);
-        self.layers_engine.scene_set_size(w, h);
-
         let global = output.create_global::<Otto<UdevData>>(&self.display_handle);
 
-        let x = self.workspaces.outputs().fold(0, |acc, o| {
-            acc + self.workspaces.output_geometry(o).unwrap().size.w
-        });
-        let position = (x, 0).into();
-        output.set_preferred(wl_mode);
+        // Position from the config profile when set, otherwise auto-place to
+        // the right of the existing outputs (logical coordinates). There is
+        // no mirroring feature: a configured position that overlaps an
+        // existing output is rejected in favour of auto-placement.
         let screen_scale = Config::with(|c| c.screen_scale);
+        let logical_size = smithay::utils::Size::<i32, smithay::utils::Logical>::from((
+            (wl_mode.size.w as f64 / screen_scale) as i32,
+            (wl_mode.size.h as f64 / screen_scale) as i32,
+        ));
+        let position: smithay::utils::Point<i32, smithay::utils::Logical> = config_profile
+            .as_ref()
+            .and_then(|p| p.position)
+            .map(|p| smithay::utils::Point::from((p.x, p.y)))
+            .filter(|&pos| {
+                let rect = smithay::utils::Rectangle::new(pos, logical_size);
+                let overlap = self.workspaces.outputs().any(|o| {
+                    self.workspaces
+                        .output_geometry(o)
+                        .is_some_and(|g| g.overlaps(rect))
+                });
+                if overlap {
+                    warn!(
+                        "Configured position {:?} for {} overlaps an existing output; \
+                         falling back to auto placement (outputs cannot overlap)",
+                        pos, output_name
+                    );
+                }
+                !overlap
+            })
+            .unwrap_or_else(|| {
+                let x = self.workspaces.outputs().fold(0, |acc, o| {
+                    acc + self
+                        .workspaces
+                        .output_geometry(o)
+                        .map(|g| g.size.w)
+                        .unwrap_or(0)
+                });
+                (x, 0).into()
+            });
+        output.set_preferred(wl_mode);
         output.change_current_state(
             Some(wl_mode),
             None,
@@ -431,6 +488,23 @@ impl Otto<UdevData> {
         let is_primary = config_profile.as_ref().map(|p| p.primary).unwrap_or(false);
         self.workspaces
             .map_output_with_primary(&output, position, is_primary);
+
+        // The flattened model's width/height describe the PRIMARY output
+        // (dock sizing, layout fallbacks) — never overwrite them from a
+        // secondary connector. The scene root is sized to the union of all
+        // outputs by the layout pass in either branch.
+        let is_model_source = self
+            .workspaces
+            .primary_output()
+            .map(|o| o.name() == output_name)
+            .unwrap_or(true);
+        if is_model_source {
+            self.workspaces
+                .set_screen_dimension(wl_mode.size.w, wl_mode.size.h);
+        } else {
+            self.workspaces.relayout_outputs();
+        }
+        sync_scene_size_to_outputs(&self.workspaces, &mut self.scene_element);
 
         output.user_data().insert_if_missing(|| UdevOutputId {
             crtc,
@@ -507,12 +581,17 @@ impl Otto<UdevData> {
                 render_metrics: Some(self.render_metrics.clone()),
                 avg_render_time_us: 2000.0, // start with 2ms estimate
                 idle_countdown: 0,
+                has_rendered_once: false,
+                full_redraw_done: false,
+                rendered_damage_gen: 0,
+                cursor_was_in_output: false,
                 prefetched_scene_damage: None,
                 scene_dmabuf_element: None,
                 backdrop_surface: None,
                 backdrop_image: None,
                 backdrop_preblurred: false,
                 backdrop_dirty: false,
+                last_fullscreen_scanout: None,
                 expose_last_active: None,
                 switcher_last_active: None,
                 overlay_last_active: None,
@@ -660,6 +739,10 @@ impl Otto<UdevData> {
 
             if let Some(output) = output {
                 self.workspaces.unmap_output(&output);
+                // Re-pack the remaining outputs and shrink the scene root /
+                // fallback composite back to their union.
+                self.workspaces.relayout_outputs();
+                sync_scene_size_to_outputs(&self.workspaces, &mut self.scene_element);
             }
         }
     }

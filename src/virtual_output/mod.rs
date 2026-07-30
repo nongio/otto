@@ -1,10 +1,23 @@
 /// Marker stored in `Output::user_data()` to identify virtual outputs.
 /// Used to exclude them from window placement, maximize, and output-under-cursor queries.
-pub struct VirtualOutputMarker;
+pub struct VirtualOutputMarker {
+    /// When true the output participates in pointer reach / focus /
+    /// window placement like a physical screen (config `interactive`).
+    pub interactive: bool,
+}
 
 /// Returns true if the output is a virtual (PipeWire) output.
 pub fn is_virtual_output(output: &smithay::output::Output) -> bool {
     output.user_data().get::<VirtualOutputMarker>().is_some()
+}
+
+/// A virtual output the pointer must NOT reach (non-interactive).
+pub fn is_unreachable_virtual_output(output: &smithay::output::Output) -> bool {
+    output
+        .user_data()
+        .get::<VirtualOutputMarker>()
+        .map(|m| !m.interactive)
+        .unwrap_or(false)
 }
 
 use smithay::{
@@ -74,7 +87,9 @@ impl VirtualOutputState {
             Some(Scale::Fractional(screen_scale)),
             Some(position),
         );
-        output.user_data().insert_if_missing(|| VirtualOutputMarker);
+        output.user_data().insert_if_missing(|| VirtualOutputMarker {
+            interactive: config.interactive,
+        });
 
         output
     }

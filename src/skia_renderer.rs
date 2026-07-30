@@ -48,7 +48,10 @@ pub struct SkiaRenderer {
     pub(crate) gl: ffi::Gles2,
 
     target_renderer: HashMap<SkiaTarget, SkiaSurface>,
-    current_target: Option<SkiaTarget>,
+    /// Public so the screenshare blit (`renderer/mod.rs`) can snapshot and
+    /// restore it — leaving it pointed at the screencast dmabuf corrupts the
+    /// next DRM fence export.
+    pub current_target: Option<SkiaTarget>,
     pub buffers: HashMap<SkiaTarget, SkiaGLesFbo>,
     pub context: Option<skia::gpu::DirectContext>,
 

@@ -36,6 +36,23 @@ use super::{
     types::{DeviceAddError, UdevData},
 };
 
+/// Whether a kernel log line reports a display-engine underrun. There is
+/// no standard KMS event for this, so detection is per-driver log
+/// phrasing: i915 says "FIFO underrun", amdgpu/DC says "underflow"
+/// (HUBP/DCN), smaller drivers vary. The context words guard against
+/// unrelated "underrun" sources (audio, serial).
+fn looks_like_display_underrun(line: &str) -> bool {
+    let l = line.to_ascii_lowercase();
+    (l.contains("underrun") || l.contains("underflow"))
+        && (l.contains("drm")
+            || l.contains("i915")
+            || l.contains("amdgpu")
+            || l.contains("pipe")
+            || l.contains("crtc")
+            || l.contains("hubp")
+            || l.contains("display"))
+}
+
 /// Configures all libinput devices based on Otto's configuration
 fn configure_libinput_devices(libinput: &mut Libinput, config: &Config) {
     use smithay::reexports::input::{
@@ -264,6 +281,8 @@ pub fn run_udev() {
 
         context_id: None, // Will be set after device initialization
         render_requested: AtomicBool::new(false),
+        damage_generation: 0,
+        underrun_penalty: 0,
     };
     let mut state = Otto::init(display, event_loop.handle(), data, true);
 
@@ -573,9 +592,13 @@ pub fn run_udev() {
             }
         }
 
-        // Add a calloop timer to drive virtual output rendering independently of physical VBlanks.
-        // This ensures frames keep flowing even when physical outputs are idle.
-        if !state.virtual_outputs.is_empty() {
+        // Calloop timer driving off-VBlank rendering: virtual outputs (which
+        // have no physical VBlank) and physical outputs with an active
+        // screencast (which would otherwise only render on damage, starving
+        // the capture when the desktop is idle). Always scheduled — both
+        // kicks no-op when there's nothing to do, so it also covers a
+        // screencast started at runtime with no virtual outputs configured.
+        {
             let refresh_hz = state
                 .virtual_outputs
                 .iter()
@@ -585,7 +608,7 @@ pub fn run_udev() {
             let refresh_hz = if refresh_hz.is_finite() {
                 refresh_hz
             } else {
-                60.0
+                30.0
             };
             let interval = std::time::Duration::from_micros((1_000_000.0 / refresh_hz) as u64);
 
@@ -595,20 +618,84 @@ pub fn run_udev() {
                     smithay::reexports::calloop::timer::Timer::from_duration(interval),
                     move |_, _, data: &mut Otto<super::types::UdevData>| {
                         data.render_virtual_outputs();
+                        data.kick_screencast_outputs();
                         smithay::reexports::calloop::timer::TimeoutAction::ToDuration(interval)
                     },
                 )
-                .expect("failed to schedule virtual output render timer");
-            tracing::info!(
-                "Virtual output render timer started at {:.1} Hz",
-                refresh_hz
-            );
+                .expect("failed to schedule off-vblank render timer");
+            tracing::info!("Off-VBlank render timer started at {:.1} Hz", refresh_hz);
         }
     }
 
     /*
      * And run our loop
      */
+
+    // ── Adaptive plane budget: kernel underrun monitor ────────────────────
+    // i915 logs "CPU pipe X FIFO underrun" once per episode when the display
+    // engine starves fetching planes (the affected pipe scans out solid
+    // garbage from mid-frame down — bright green on Intel). Follow the
+    // kernel journal and shed plane usage when it happens: level 1 drops
+    // window promotion, level 2 the whole plane decomposition. Display
+    // bandwidth is shared across pipes, so the penalty is global.
+    {
+        use smithay::reexports::calloop::{
+            generic::Generic, Interest, Mode as CalloopMode, PostAction,
+        };
+        use std::io::Read as _;
+        use std::os::fd::AsRawFd;
+        match std::process::Command::new("journalctl")
+            .args(["-kf", "-o", "cat", "-n", "0"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(mut child) => {
+                let stdout = child.stdout.take().unwrap();
+                // Non-blocking: the source fires on readiness; drain fully.
+                unsafe {
+                    let fd = stdout.as_raw_fd();
+                    let flags = libc::fcntl(fd, libc::F_GETFL);
+                    libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+                }
+                event_loop
+                    .handle()
+                    .insert_source(
+                        Generic::new(stdout, Interest::READ, CalloopMode::Level),
+                        move |_, stdout, data: &mut Otto<UdevData>| {
+                            let mut buf = [0u8; 4096];
+                            let mut hit = false;
+                            loop {
+                                // Safety: the fd stays owned by the source.
+                                match unsafe { stdout.get_mut() }.read(&mut buf) {
+                                    Ok(0) => break,
+                                    Ok(n) => {
+                                        if String::from_utf8_lossy(&buf[..n])
+                                            .lines()
+                                            .any(looks_like_display_underrun)
+                                        {
+                                            hit = true;
+                                        }
+                                    }
+                                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                                    Err(_) => break,
+                                }
+                            }
+                            if hit {
+                                data.raise_underrun_penalty();
+                            }
+                            Ok(PostAction::Continue)
+                        },
+                    )
+                    .expect("failed to insert underrun monitor");
+                // The follower lives for the whole session.
+                std::mem::forget(child);
+            }
+            Err(e) => {
+                warn!("underrun monitor unavailable (journalctl spawn failed): {e}");
+            }
+        }
+    }
 
     // Perform an initial dispatch so that backends (including XWayland) can
     // finish asynchronous setup (e.g. setting DISPLAY) before autostart.
@@ -653,14 +740,24 @@ pub fn run_udev() {
                 .render_requested
                 .swap(false, Ordering::AcqRel);
             if was_requested {
-                let was_idle = state
-                    .backend_data
-                    .backends
-                    .values()
-                    .flat_map(|d| d.surfaces.values())
-                    .all(|s| s.idle_countdown == 0);
-                for device in state.backend_data.backends.values_mut() {
-                    for surface in device.surfaces.values_mut() {
+                // Idle is a PER-SURFACE property: with multiple outputs one
+                // can be idle (no timer, no VBlank pending) while another is
+                // mid-loop. Kick exactly the idle ones — resetting a busy
+                // surface's countdown is enough, its pending timer/VBlank
+                // consumes it. (Kicking only when ALL surfaces were idle
+                // wedged multi-output: an idle surface's countdown got reset
+                // to 3 with no render scheduled, nothing ever decremented it,
+                // so `all(== 0)` never held again and input stopped waking
+                // the render loop entirely.)
+                let mut kick: Vec<(
+                    smithay::backend::drm::DrmNode,
+                    smithay::reexports::drm::control::crtc::Handle,
+                )> = Vec::new();
+                for (node, device) in state.backend_data.backends.iter_mut() {
+                    for (crtc, surface) in device.surfaces.iter_mut() {
+                        if surface.idle_countdown == 0 {
+                            kick.push((*node, *crtc));
+                        }
                         // Short tail after the last input/commit — enough to absorb
                         // one missed event gap without flapping fast/slow dispatch.
                         // (Was 30 ≈ 500 ms which kept the 1 kHz poll loop hot
@@ -668,12 +765,38 @@ pub fn run_udev() {
                         surface.idle_countdown = 3;
                     }
                 }
-                if was_idle {
-                    let device_nodes: Vec<_> =
-                        state.backend_data.backends.keys().copied().collect();
-                    for node in device_nodes {
-                        state.render(node, None);
+                for (node, crtc) in kick {
+                    state.render(node, Some(crtc));
+                }
+            }
+            // Debug: `echo ActionName > /tmp/otto-action` executes a builtin
+            // shortcut action (e.g. ExposeShowAll) as if its key was pressed.
+            // Virtual-keyboard input bypasses the libinput shortcut layer, so
+            // test harnesses need this to drive compositor UI remotely.
+            if let Ok(name) = std::fs::read_to_string("/tmp/otto-action") {
+                let _ = std::fs::remove_file("/tmp/otto-action");
+                let name = name.trim();
+                let resolved = crate::config::shortcuts::parse_builtin_name(name)
+                    .map(crate::config::shortcuts::ShortcutAction::Builtin)
+                    .and_then(|a| {
+                        Config::with(|c| crate::input::actions::resolve_shortcut_action(c, &a))
+                    });
+                match resolved {
+                    Some(action) => {
+                        info!("executing debug action: {name}");
+                        use crate::input::actions::KeyAction;
+                        match action {
+                            KeyAction::ExposeShowAll => state.handle_expose_show_all(),
+                            KeyAction::ExposeShowDesktop => state.handle_expose_show_desktop(),
+                            KeyAction::WorkspaceNum(i) => state.handle_workspace_num(i),
+                            other => state.process_common_key_action(other),
+                        }
+                        // Real key events request a redraw as a side effect;
+                        // without it the scheduled lay-rs transactions never
+                        // tick and the action stays invisible.
+                        state.backend_data.request_redraw();
                     }
+                    None => warn!("unknown debug action: {name}"),
                 }
             }
             display_handle.flush_clients().unwrap();

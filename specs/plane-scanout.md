@@ -1,7 +1,7 @@
 # KMS Plane Scanout & Cross-Plane Backdrop Blur
 
 **Status:** draft
-**Related specs:** workspaces-multi-output.md
+**Related specs:** workspaces-multi-output.md, multi-output.md
 
 ## Summary
 
@@ -50,13 +50,33 @@ vibrancy even though the content behind it lives on other planes.
 
 - Including direct-scanout client buffers in the blur composite (windows
   under the blur region are demoted to the windows buffer instead).
-- Multi-output correctness of the blur composite (assumes the output's
-  subtree origin is scene origin; multi-output is untested).
 - Tier probing via TEST_ONLY commits — plane acceptance is delegated to
   Smithay's per-frame assignment and fallback.
 
 ## Behavior
 
+- Every plane buffer's rendered content — background, windows, expose,
+  overlay UI, dock, switcher, and the cross-plane backdrop composite used
+  for blur — is anchored to its own output's top-left corner. This is
+  inherent rather than corrected for: every output's scene subtree lives at
+  scene coordinate (0,0) and a CRTC's plane elements only ever walk that
+  output's own subtree, so an output's placement in the shared (global)
+  multi-output layout never affects what its plane buffers render (see
+  multi-output.md).
+- Direct-scanout promotion is evaluated independently per output: candidates
+  are drawn only from that output's own current workspace, and the
+  promoted-window cap (see below) applies per output, not globally. Dock,
+  app-switcher, and OSD occluder rects are only applied on the primary
+  output — that chrome is primary-only and never occludes a secondary
+  output's candidates. The set of windows actually applied to plane state
+  is the union of every output's per-output candidate set, so one output's
+  promotion decision cannot demote a window promoted on another output.
+- The dock and app-switcher strip planes themselves are pushed only to the
+  CRTC of the output that actually hosts that chrome (the primary output);
+  a secondary output never submits a plane for either role. This is both a
+  correctness fix (that chrome has no content on a secondary output) and a
+  fetch-bandwidth saving — an otherwise-empty full-width strip plane on a
+  secondary output still costs the display engine fetch budget to scan out.
 - The decomposition is enabled per output at surface creation, only when
   the driver is atomic, at least 3 overlay planes exist after
   driver-specific filtering (NVIDIA's are vetoed), and the output renders
@@ -170,6 +190,45 @@ vibrancy even though the content behind it lives on other planes.
   never zero (Chromium's buffer-eviction heuristic blanks canvases when
   callbacks stop entirely). Union coverage is deliberately not computed;
   single-window containment cannot false-positive on partial visibility.
+- Otto maintains a session-wide adaptive plane budget on top of the
+  per-output decomposition decision above: it follows the kernel log for
+  display-engine underrun reports and sheds plane usage globally when one
+  is seen. There is no standard KMS event for this, so detection matches
+  per-driver log phrasing — i915 reports "FIFO underrun", amdgpu/DC
+  reports "underflow" (HUBP/DCN) — and only when the line also carries a
+  display-context word (drm, i915, amdgpu, pipe, crtc, hubp, display), so
+  an unrelated "underrun"/"underflow" line from another subsystem (audio,
+  serial) can never trigger a plane-budget reduction. A display underrun
+  means the display engine failed to fetch the currently-configured planes
+  in time; the affected pipe scans out solid garbage (bright green on
+  Intel) from the point in the frame where the fetch fell behind, even
+  though every plane's buffer content is perfectly valid — reducing plane
+  count is the only fix, there is nothing wrong with any individual buffer
+  to repair. The first underrun disables
+  direct-scanout window promotion on every output (candidates fall back to
+  compositing into the windows buffer instead); a second underrun disables
+  the plane decomposition entirely on every output (full GPU composite,
+  the same path used when decomposition isn't supported at all). Both
+  steps are applied globally rather than per output, because display fetch
+  bandwidth is shared across pipes rather than partitioned per output.
+- The adaptive plane budget is sticky for the running session: once shed,
+  plane usage is not restored until Otto restarts. Shedding immediately
+  forces a full re-render of every plane element on every output, so the
+  lighter configuration is visible on the very next frame rather than only
+  once each region happens to redraw on its own.
+- A debug trigger (`touch /tmp/otto-full-redraw`) forces that same full
+  re-render of every plane element on every output on demand, without a
+  real underrun — useful for confirming a fallback configuration renders
+  correctly. It fires once per file creation; remove and re-touch the file
+  to trigger it again.
+- A separate debug trigger (`echo ActionName > /tmp/otto-action`) executes
+  a builtin shortcut action (e.g. an expose or workspace-switch action) as
+  if its key had been pressed, then requests a redraw so the resulting
+  scheduled scene changes apply on the next frame. This exists because
+  virtual-keyboard/virtual-pointer input used by test harnesses bypasses
+  the libinput shortcut layer entirely, so there is otherwise no way to
+  drive compositor shortcuts remotely; an unresolvable or backend-specific
+  action name is logged and ignored rather than crashing the session.
 
 ## Constraints & Edge Cases
 
@@ -187,6 +246,14 @@ vibrancy even though the content behind it lives on other planes.
   old parent: the workspace-selector previews replicate `windows_layer` and
   `workspace_background` as two separate mirrors because the wallpaper no
   longer lives under the workspace view.
+- On the i915 driver, an underrun is reported once per affected pipe until
+  that pipe's next modeset — a second underrun on the same pipe with no
+  intervening modeset produces no further kernel report. Escalating the
+  adaptive plane budget from level 1 to level 2 therefore typically needs a
+  modeset (e.g. DPMS cycle, mode change, hotplug) to happen in between the
+  two underrun episodes; a session that underruns repeatedly without any
+  modeset can stay stuck at level 1 even though the underlying overcommit
+  is still occurring.
 
 ## Rationale
 
@@ -201,12 +268,42 @@ vibrancy even though the content behind it lives on other planes.
   importing client dmabufs into the composite for simplicity; fullscreen
   (dock hidden → empty blur region) still gets direct scanout, which is the
   case that matters most.
+- Plane buffers originally assumed every output's subtree sat at the shared
+  scene origin, so an output placed elsewhere by the (then side-by-side)
+  scene layout rendered its content shifted — mostly black except for a
+  strip. The fix went through two stages: first, each plane buffer's render
+  translate explicitly subtracted the output's own static scene placement;
+  later this was superseded by making every output's subtree live at scene
+  (0,0) and overlap, so a CRTC's plane elements are output-local simply by
+  only ever walking their own output's subtree — no placement subtraction
+  is needed at all (see multi-output.md). Since the backdrop composite is
+  built per output surface from those same buffers, this also makes
+  cross-plane blur correct per output with no separate fix needed.
+- Direct-scanout promotion originally computed one global candidate set
+  from the primary output's topmost window and applied it to every CRTC,
+  which painted the primary's window on every screen and scanned out
+  garbage buffers on secondary outputs. Candidates are now sourced from
+  each output's own space, and the applied set is the union of every
+  output's candidates (rather than each output's promotion overwriting the
+  shared set) so outputs stop demoting each other's promoted windows every
+  frame.
+- The adaptive plane budget follows the live kernel journal rather than
+  pre-computing a plane budget from mode/format math, because the actual
+  fetch-bandwidth ceiling is driver- and GPU-specific and impractical to
+  model up front (diagnosed in practice on an eDP 2.8K@120 + DP 4K@60 dual
+  setup with the full plane stack on both outputs) — the same reasoning
+  that already ruled out TEST_ONLY tier probing above. The kernel's own
+  underrun report is also the only reliable signal available: the failure
+  mode leaves every buffer valid, so there is no compositor-side state to
+  detect it from directly. The reduction is sticky for the session, rather
+  than probing back up, because the overcommit that caused the underrun is
+  a property of the current output configuration and content and would
+  simply recur.
 
 ## Open Questions
 
 - Should direct-scanout client buffers be imported into the blur composite
   (restoring scanout for windows under the dock)?
-- Multi-output: composite and blur-region coordinates per output subtree.
 - Whether hidden (shadow-only) window content still counts damage into the
   windows buffer, causing unnecessary re-renders while direct scanout is
   active.

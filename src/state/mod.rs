@@ -1266,8 +1266,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let ids = self.workspaces.scanout_window_ids();
         if ids.contains(&id) {
             tracing::info!(target: "otto::planes", "demoting {:?} from scanout (pre-animation)", id);
-            let remaining: Vec<_> = ids.into_iter().filter(|i| *i != id).collect();
-            self.workspaces.set_scanout_windows(&remaining);
+            self.workspaces.remove_scanout_window(&id);
             self.update_window_view(window);
             // The unhide + re-import above mutated the scene AFTER this
             // frame's vblank-prefetched engine update. Drawing from the

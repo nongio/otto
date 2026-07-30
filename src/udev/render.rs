@@ -48,6 +48,7 @@ use smithay::{
 use tracing::{debug, trace, warn};
 
 use super::types::{FrameMode, RenderOutcome, SurfaceData, UdevData, UdevOutputId, UdevRenderer};
+use crate::state::Backend;
 use crate::state::Otto;
 
 // Type alias for the framebuffer returned when binding a Dmabuf with UdevRenderer
@@ -209,6 +210,12 @@ impl Otto<UdevData> {
             // `scene_element` and `backend_data` are distinct fields of `self`,
             // so Rust's field-projection rules allow concurrent access here.
             let scene_has_damage = self.scene_element.update();
+            if scene_has_damage {
+                // Damage ticks are counted globally: the flag is consumed by
+                // whichever output ticks first, so other surfaces detect the
+                // event by lagging behind `damage_generation`.
+                self.backend_data.damage_generation += 1;
+            }
             surface.prefetched_scene_damage = Some(scene_has_damage);
 
             // ── Frame-pipeline Phase 2: schedule the draw at the deadline ─────
@@ -276,6 +283,51 @@ impl Otto<UdevData> {
     }
 
     #[allow(clippy::mutable_key_type)] // ObjectId as HashMap key — see window_throttle.rs
+    /// Kernel reported a display FIFO underrun: the display engine could
+    /// not fetch the currently-configured planes. Reduce the plane budget
+    /// one step (1 = no window promotion, 2 = full GPU composite) and
+    /// re-render everything so the lighter configuration flips in now.
+    /// Sticky for the session — underruns tend to recur under the same
+    /// plane load, and each occurrence corrupts a visible frame.
+    pub(super) fn raise_underrun_penalty(&mut self) {
+        if self.backend_data.underrun_penalty >= 2 {
+            return;
+        }
+        self.backend_data.underrun_penalty += 1;
+        let level = self.backend_data.underrun_penalty;
+        tracing::warn!(
+            "display FIFO underrun — reducing plane budget to level {} ({})",
+            level,
+            if level == 1 {
+                "window promotion disabled"
+            } else {
+                "plane decomposition disabled, full GPU composite"
+            }
+        );
+        for device in self.backend_data.backends.values_mut() {
+            for surface in device.surfaces.values_mut() {
+                for el in [
+                    &surface.scene_dmabuf_element,
+                    &surface.windows_dmabuf_element,
+                    &surface.expose_dmabuf_element,
+                    &surface.overlay_dmabuf_element,
+                    &surface.switcher_dmabuf_element,
+                    &surface.dock_dmabuf_element,
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    el.request_full_render();
+                }
+                surface.idle_countdown = 3;
+            }
+        }
+        let nodes: Vec<_> = self.backend_data.backends.keys().copied().collect();
+        for node in nodes {
+            self.render(node, None);
+        }
+    }
+
     pub(super) fn render_surface(&mut self, node: DrmNode, crtc: crtc::Handle) {
         profiling::scope!("render_surface", &format!("{crtc:?}"));
 
@@ -330,13 +382,17 @@ impl Otto<UdevData> {
         };
         // Whether this output uses the plane decomposition at all (set once at
         // surface creation from overlay count / atomic / GPU identity).
+        // Underrun penalty level 2 fully disables the plane decomposition:
+        // the display engine proved it cannot fetch this many planes
+        // (see `UdevData::underrun_penalty`).
         let planes_enabled = self
             .backend_data
             .backends
             .get(&node)
             .and_then(|d| d.surfaces.get(&crtc))
             .map(|s| s.planes_enabled)
-            .unwrap_or(false);
+            .unwrap_or(false)
+            && self.backend_data.underrun_penalty < 2;
         // Any running minimize/unminimize genie forces the full-GPU scene
         // composite for the frame (and drops scanout promotion): the genie's
         // image filter paints far outside the per-plane damage rects, so the
@@ -363,16 +419,28 @@ impl Otto<UdevData> {
         } else {
             minimize_now
         };
+        // Promotion candidates are per-output — resolve this CRTC's output
+        // before the surface borrow below.
+        let scanout_output = self.workspaces.outputs().find(|o| {
+            o.user_data()
+                .get::<UdevOutputId>()
+                .map(|id| id.device_id == node && id.crtc == crtc)
+                .unwrap_or(false)
+        });
+        let scanout_output_name = scanout_output.map(|o| o.name());
         let raw_scanout_desired: Vec<smithay::reexports::wayland_server::backend::ObjectId> =
             if !planes_enabled
+                || self.backend_data.underrun_penalty >= 1
                 || capture_active
                 || minimize_active
                 || self.swipe_gesture.is_active()
                 || fullscreen_window.is_some()
             {
                 Vec::new()
+            } else if let Some(output) = scanout_output {
+                self.workspaces.get_scanout_candidates(output)
             } else {
-                self.workspaces.get_scanout_candidates()
+                Vec::new()
             };
         // Promotion hysteresis (see `SurfaceData::promote_candidates`):
         // removals apply this frame, additions only after the candidate set
@@ -424,15 +492,53 @@ impl Otto<UdevData> {
         // (hit-test exclusion), so a Space lookup misses it and skips the
         // re-import — the genie animation would then run on the stale/blank
         // content left over from promotion.
-        let departed_windows: Vec<WindowElement> = prev_scanout_ids
+        let mut departed_windows: Vec<WindowElement> = prev_scanout_ids
             .iter()
             .filter(|id| !new_scanout_ids.contains(id))
             .filter_map(|id| self.workspaces.get_window_for_surface(id).cloned())
             .collect();
-        self.workspaces.set_scanout_windows(&scanout_desired);
+        // Fullscreen direct scanout never renders the window into the scene, so
+        // when it ends (e.g. an expose gesture switches to render-all) the
+        // composited scene and the expose mirror have no texture for it. Treat
+        // the window leaving fullscreen scanout like a demotion: re-import +
+        // scene damage so its content is drawn before it's shown.
+        let fullscreen_now_id = fullscreen_window.as_ref().map(|w| w.id());
+        let fullscreen_departed = self
+            .backend_data
+            .backends
+            .get_mut(&node)
+            .and_then(|d| d.surfaces.get_mut(&crtc))
+            .and_then(|surf| {
+                let prev = surf.last_fullscreen_scanout.take();
+                surf.last_fullscreen_scanout = fullscreen_now_id.clone();
+                prev.filter(|p| fullscreen_now_id.as_ref() != Some(p))
+            });
+        if let Some(fid) = fullscreen_departed {
+            if let Some(w) = self.workspaces.get_window_for_surface(&fid).cloned() {
+                if !departed_windows.iter().any(|d| d.id() == w.id()) {
+                    departed_windows.push(w);
+                }
+            }
+        }
+        if let Some(name) = scanout_output_name.as_deref() {
+            self.workspaces
+                .set_scanout_windows_for_output(name, &scanout_desired);
+        }
         for w in &departed_windows {
             self.update_window_view(w);
         }
+
+        // A workspace swipe — and the settle/snap animation after the finger
+        // lifts — scrolls the scene content across the output without producing
+        // per-plane subtree damage, so the plane pipeline keeps scanning out a
+        // stale frame (a visible flicker, most obvious with a single full-output
+        // window). Force the scrolling planes to redraw every frame while either
+        // the gesture or the follow-up animation is running.
+        let swipe_active = self.swipe_gesture.is_active()
+            || self
+                .workspaces
+                .is_animating
+                .load(std::sync::atomic::Ordering::Relaxed);
 
         let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {
             device
@@ -459,6 +565,19 @@ impl Otto<UdevData> {
         if !departed_windows.is_empty() {
             if let Some(el) = &surface.windows_dmabuf_element {
                 el.request_full_render();
+            }
+        }
+
+        // Swipe: redraw the scrolling planes every frame (see note above).
+        if swipe_active {
+            for el in [
+                &surface.scene_dmabuf_element,
+                &surface.windows_dmabuf_element,
+                &surface.expose_dmabuf_element,
+            ] {
+                if let Some(el) = el {
+                    el.request_full_render();
+                }
             }
         }
 
@@ -521,10 +640,21 @@ impl Otto<UdevData> {
             // now to apply it before compositing, and force a draw — otherwise
             // the first composited frame after demotion shows the stale,
             // shadow-only scene (a one-frame flicker).
-            self.scene_element.update();
+            if self.scene_element.update() {
+                self.backend_data.damage_generation += 1;
+            }
             true
         } else {
-            prefetched_scene_damage.unwrap_or_else(|| self.scene_element.update())
+            match prefetched_scene_damage {
+                Some(damage) => damage,
+                None => {
+                    let damage = self.scene_element.update();
+                    if damage {
+                        self.backend_data.damage_generation += 1;
+                    }
+                    damage
+                }
+            }
         };
         let all_window_elements: Vec<&WindowElement> = self.workspaces.spaces_elements().collect();
 
@@ -583,16 +713,38 @@ impl Otto<UdevData> {
         // `windows_dmabuf_element`, while the client buffer is pushed directly as
         // a `ScanoutCandidate` element (zero GPU copy). Ordering by the workspace
         // windows_list (bottom→top) picks the topmost window at index rev().next().
-        let screencopy_pending = self
-            .pending_screencopy_frames
-            .iter()
-            .any(|p| p.output == output);
+        // An active screencast of this output is treated exactly like a
+        // pending screencopy: it forces a full GPU composite (no scanout) and,
+        // crucially, forces `should_draw` so an idle desktop still renders —
+        // otherwise the screenshare tap (and any RDP bridge on top) is starved
+        // of frames and the remote client spins forever. The off-VBlank timer
+        // (`kick_screencast_outputs`) supplies the render trigger when idle;
+        // this makes that trigger actually paint.
+        let screencast_active = self
+            .screenshare_sessions
+            .values()
+            .any(|s| s.streams.contains_key(&output.name()));
+        let screencopy_pending = screencast_active
+            || self
+                .pending_screencopy_frames
+                .iter()
+                .any(|p| p.output == output);
 
         // Apply the scanout set (selection + content_layer transitions were
         // done in `set_scanout_windows`, before the `surface` borrow).
         surface.shadow_only_windows = scanout_desired.clone();
 
-        let switcher_active = self.workspaces.app_switcher.alive();
+        // Dock/switcher chrome exists only on the primary output. Beyond
+        // correctness, NOT pushing these strip planes on secondary outputs
+        // matters for display bandwidth: extra full-width planes on a 4K
+        // output can exceed the display engine's fetch budget and cause
+        // pipe FIFO underruns (bottom of the frame scans out as garbage).
+        let chrome_output = self
+            .workspaces
+            .primary_output()
+            .map(|p| p.name() == output.name())
+            .unwrap_or(false);
+        let switcher_active = chrome_output && self.workspaces.app_switcher.alive();
         let overlay_active =
             self.workspaces.is_overlay_ui_active(&output) || self.dnd_icon.is_some();
         {
@@ -633,6 +785,32 @@ impl Otto<UdevData> {
             }
         }
         surface.switcher_was_active = switcher_active;
+        // Debug: `touch /tmp/otto-full-redraw` forces every plane element on
+        // every output to fully re-render and flip a fresh buffer on its
+        // next frame (needs a frame trigger, e.g. moving the cursor).
+        // Remove the file and touch it again to re-trigger.
+        {
+            let want = std::path::Path::new("/tmp/otto-full-redraw").exists();
+            if want && !surface.full_redraw_done {
+                surface.full_redraw_done = true;
+                tracing::info!(target: "otto::planes", "debug full redraw requested");
+                for el in [
+                    &surface.scene_dmabuf_element,
+                    &surface.windows_dmabuf_element,
+                    &surface.expose_dmabuf_element,
+                    &surface.overlay_dmabuf_element,
+                    &surface.switcher_dmabuf_element,
+                    &surface.dock_dmabuf_element,
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    el.request_full_render();
+                }
+            } else if !want {
+                surface.full_redraw_done = false;
+            }
+        }
         // Composite→planes edge: the genie frames rendered through the
         // full-scene element, which consumed and cleared all engine damage
         // while the plane buffers sat idle. Without a full redraw the first
@@ -665,6 +843,12 @@ impl Otto<UdevData> {
             .map(|ows| self.scene_element.for_output_layer(&ows.output_layer))
             .unwrap_or_else(|| self.scene_element.clone());
 
+        // A surface lagging the global damage generation must render even if
+        // its own tick reported no damage — the damage flag was consumed on
+        // another output's tick (see `UdevData::damage_generation`).
+        let frame_gen = self.backend_data.damage_generation;
+        let scene_has_damage = scene_has_damage || surface.rendered_damage_gen < frame_gen;
+
         let result = render_output_frame(
             surface,
             &mut renderer,
@@ -681,7 +865,7 @@ impl Otto<UdevData> {
             expose_active,
             fullscreen_window.as_ref(),
             switcher_active,
-            !self.workspaces.dock.is_hidden(),
+            chrome_output && !self.workspaces.dock.is_hidden(),
             overlay_active,
             {
                 // The windows plane must stay up while a workspace switch is
@@ -750,7 +934,19 @@ impl Otto<UdevData> {
                         }
                         _ => false,
                     },
-                    SwapBuffersError::ContextLost(err) => panic!("Rendering loop lost: {}", err),
+                    // A ContextLost here is nearly always spurious — a stray
+                    // EGL BAD_PARAMETER from the screenshare blit leaving the
+                    // context in an odd state, not a genuinely lost GL context.
+                    // Panicking took the WHOLE compositor (every window, the
+                    // user's session) down over one bad auxiliary frame. Drop
+                    // this frame and reschedule instead; the next frame rebinds
+                    // the primary from scratch. If the context really is gone
+                    // the next frame fails the same way and just logs again —
+                    // still far better than killing the session.
+                    SwapBuffersError::ContextLost(err) => {
+                        warn!("Rendering context lost ({err}); dropping frame and continuing");
+                        true
+                    }
                 }
             }
         };
@@ -782,7 +978,10 @@ impl Otto<UdevData> {
                         let output_geometry =
                             Rectangle::new((0, 0).into(), output.current_mode().unwrap().size);
                         let output_scale = output.current_scale().fractional_scale();
-                        let pointer_location = self.pointer.current_location();
+                        // Rebase the global pointer to this output's space —
+                        // same correction as in render_output_frame.
+                        let pointer_location =
+                            self.pointer.current_location() - output.current_location().to_f64();
 
                         let pointer_in_output = output_geometry
                             .to_f64()
@@ -939,6 +1138,12 @@ impl Otto<UdevData> {
                 if has_animations || was_rendered {
                     surface.idle_countdown = 3;
                 }
+                if was_rendered {
+                    surface.has_rendered_once = true;
+                }
+                if result.is_ok() {
+                    surface.rendered_damage_gen = frame_gen;
+                }
             }
         }
 
@@ -993,6 +1198,40 @@ impl Otto<UdevData> {
             //tracing::trace!(?elapsed, "rendered surface");
         }
 
+        // Multi-output damage lifecycle: engine damage can only be cleared
+        // once EVERY surface has rendered the current damage generation —
+        // clearing earlier starves the other outputs' plane renders (windows
+        // frozen on their first frame). Surfaces that are behind and idle get
+        // scheduled here; busy ones consume the lag via their own loop.
+        let gen = self.backend_data.damage_generation;
+        let mut lagging: Vec<(DrmNode, crtc::Handle)> = Vec::new();
+        let mut all_caught_up = true;
+        for (n, d) in self.backend_data.backends.iter_mut() {
+            for (c, s) in d.surfaces.iter_mut() {
+                if s.rendered_damage_gen < gen {
+                    all_caught_up = false;
+                    if s.idle_countdown == 0 {
+                        // Marks the surface as scheduled — the same invariant
+                        // the input kick in init.rs relies on.
+                        s.idle_countdown = 3;
+                        lagging.push((*n, *c));
+                    }
+                }
+            }
+        }
+        if all_caught_up {
+            self.layers_engine.clear_damage();
+        } else {
+            for (n, c) in lagging {
+                self.handle
+                    .insert_source(Timer::immediate(), move |_, _, data| {
+                        data.render(n, Some(c));
+                        TimeoutAction::Drop
+                    })
+                    .expect("failed to schedule lagging-output render");
+            }
+        }
+
         profiling::finish_frame!();
     }
 
@@ -1042,6 +1281,52 @@ impl Otto<UdevData> {
     /// 2. Bind it as the render target.
     /// 3. Call `render_output()` directly into the PipeWire buffer.
     /// 4. Queue the buffer back and trigger PipeWire.
+    /// Keep physical outputs that have an active screencast rendering, even
+    /// when their desktop is idle. A physical output only renders on damage,
+    /// so a static screen would starve the screenshare tap (and any RDP
+    /// bridge on top of it) of frames — the remote client would sit on a
+    /// blank "loading" screen until something happened to move. Forcing a
+    /// full frame per tick (via `reset_buffers`) mirrors how virtual outputs
+    /// already stream continuously. No-op when nothing is being cast.
+    pub(super) fn kick_screencast_outputs(&mut self) {
+        if self.screenshare_sessions.is_empty() {
+            return;
+        }
+        // Collect the connectors with an active cast (dedup across sessions).
+        let mut connectors: Vec<String> = Vec::new();
+        for session in self.screenshare_sessions.values() {
+            for connector in session.streams.keys() {
+                if !connectors.contains(connector) {
+                    connectors.push(connector.clone());
+                }
+            }
+        }
+        for connector in connectors {
+            let Some(output) = self
+                .workspaces
+                .outputs()
+                .find(|o| o.name() == connector)
+                .cloned()
+            else {
+                continue;
+            };
+            // Virtual outputs render via `render_virtual_outputs`; skip them.
+            if crate::virtual_output::is_virtual_output(&output) {
+                continue;
+            }
+            let Some((node, crtc)) = output
+                .user_data()
+                .get::<super::types::UdevOutputId>()
+                .map(|id| (id.device_id, id.crtc))
+            else {
+                continue;
+            };
+            // Force a full frame so the screenshare blit runs without damage.
+            self.backend_data.reset_buffers(&output);
+            self.render(node, Some(crtc));
+        }
+    }
+
     pub(super) fn render_virtual_outputs(&mut self) {
         if self.virtual_outputs.is_empty() {
             return;
@@ -1064,13 +1349,37 @@ impl Otto<UdevData> {
             let output_clone = self.virtual_outputs[i].output.clone();
             let output_name = output_clone.name();
 
-            // Per-output scene element — renders only this output's sub-tree
-            let output_scene_element = self
+            // Composite this output the way the KMS plane path decomposes it:
+            // one isolated subtree per plane, stacked in z-order. A single
+            // `for_output_layer(output_layer)` re-render is NOT equivalent —
+            // plane subtrees ignore ancestor visibility (the hidden
+            // `workspaces_layer` while expose is shown), so the tree render
+            // went black during expose and expose gestures.
+            // Top→bottom, matching the physical push order in
+            // `render_output_frame`; the windows subtree is dropped while
+            // expose is up, exactly like the windows plane.
+            let expose_active =
+                self.workspaces.is_expose_transitioning() || self.workspaces.get_show_all();
+            let scene_stack: Vec<crate::render_elements::scene_element::SceneElement> = self
                 .workspaces
                 .output_workspaces
                 .get(&output_name)
-                .map(|ows| scene_element.for_output_layer(&ows.output_layer))
-                .unwrap_or_else(|| scene_element.clone());
+                .map(|ows| {
+                    let pos = ows.output_layer.render_position();
+                    let origin = (pos.x, pos.y);
+                    let mut stack = vec![
+                        scene_element.for_plane_subtree(&ows.dock_plane, origin),
+                        scene_element.for_plane_subtree(&ows.switcher_plane, origin),
+                        scene_element.for_plane_subtree(&ows.overlay_plane, origin),
+                        scene_element.for_plane_subtree(&ows.expose_layer, origin),
+                    ];
+                    if !expose_active {
+                        stack.push(scene_element.for_plane_subtree(&ows.windows_plane, origin));
+                    }
+                    stack.push(scene_element.for_plane_subtree(&ows.background_plane, origin));
+                    stack
+                })
+                .unwrap_or_else(|| vec![scene_element.clone()]);
 
             // Build cursor elements if pointer is over this output
             let scale = Scale::from(output_clone.current_scale().fractional_scale());
@@ -1173,8 +1482,12 @@ impl Otto<UdevData> {
                     match renderer.bind(&mut dmabuf) {
                         Ok(mut framebuffer) => {
                             let mut elements = build_cursor_elements(&mut renderer);
-                            elements
-                                .push(WorkspaceRenderElements::Scene(output_scene_element.clone()));
+                            elements.extend(
+                                scene_stack
+                                    .iter()
+                                    .cloned()
+                                    .map(WorkspaceRenderElements::Scene),
+                            );
                             let _ = crate::render::render_output(
                                 &output_clone,
                                 &all_window_elements,
@@ -1214,9 +1527,12 @@ impl Otto<UdevData> {
                             match renderer.bind(&mut ss_dmabuf) {
                                 Ok(mut fb) => {
                                     let mut ss_elements = build_cursor_elements(&mut renderer);
-                                    ss_elements.push(WorkspaceRenderElements::Scene(
-                                        output_scene_element.clone(),
-                                    ));
+                                    ss_elements.extend(
+                                        scene_stack
+                                            .iter()
+                                            .cloned()
+                                            .map(WorkspaceRenderElements::Scene),
+                                    );
                                     let _ = crate::render::render_output(
                                         &output_clone,
                                         &all_window_elements,
@@ -1292,9 +1608,19 @@ pub(super) fn render_output_frame<'a>(
     let output_scale = output.current_scale().fractional_scale();
     let dnd_needs_draw = dnd_icon.map(|surface| surface.alive()).unwrap_or(false);
 
+    // The pointer location is global (multi-output space) but this frame's
+    // coordinates are output-local — rebase so the in-output test and the
+    // cursor element position are relative to this output's top-left.
+    let pointer_location = pointer_location - output.current_location().to_f64();
+
     let pointer_in_output = output_geometry
         .to_f64()
         .contains(pointer_location.to_physical(scale));
+    // One farewell frame when the pointer crosses to another output: render
+    // without the cursor element so the cursor plane is cleared — otherwise
+    // this output keeps scanning out the stale cursor at its last position.
+    let cursor_left_output = surface.cursor_was_in_output && !pointer_in_output;
+    surface.cursor_was_in_output = pointer_in_output;
 
     if pointer_in_output {
         use crate::cursor::RenderCursor;
@@ -1352,12 +1678,16 @@ pub(super) fn render_output_frame<'a>(
     }
 
     let (output_elements, clear_color, should_draw) = {
-        let cursor_needs_draw = pointer_in_output;
+        let cursor_needs_draw = pointer_in_output || cursor_left_output;
             // Fullscreen scanout must always draw: the promoted buffer's
             // commits produce no scene damage, and gating on it would drop
             // video frames. `scanout_commit` is the same signal for promoted
             // (non-fullscreen) windows, set per-commit by the shell.
+            // A surface that has never rendered must always draw: the global
+            // scene-damage flag may already have been consumed by another
+            // output's render, and skipping would leave this display black.
             let should_draw = scene_has_damage
+                || !surface.has_rendered_once
                 || dnd_needs_draw
                 || cursor_needs_draw
                 || screencopy_pending
@@ -1598,19 +1928,11 @@ pub(super) fn render_output_frame<'a>(
 
             } // end planes branch
 
-            // Clear engine damage after all plane renders so `subtree_damage()`
-            // returns `None` next frame when nothing has changed. Without this
-            // call `per_node_damage` is never cleared and every plane redraws
-            // every frame even on an otherwise idle desktop. Skipped when the
-            // full-scene element is in the frame — its draw() both consumes
-            // the damage region and clears it (clearing here would blank its
-            // subtree culling); likewise scene-mode outputs have no plane
-            // elements and rely on draw() entirely.
-            if !scene_element_pushed {
-                if let Some(el) = &surface.scene_dmabuf_element {
-                    el.clear_engine_damage();
-                }
-            }
+            // Engine damage is NOT cleared here: with multiple outputs the
+            // other surfaces still need this frame's damage rects for their
+            // own plane renders. The caller (`render_surface`) clears it once
+            // every surface has caught up to the current damage generation.
+            let _ = scene_element_pushed;
 
             let output_render_elements: Vec<OutputRenderElements<'a, _, WindowRenderElement<_>>> =
                 workspace_render_elements

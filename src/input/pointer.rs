@@ -76,6 +76,26 @@ impl<BackendData: Backend> Otto<BackendData> {
             let (cx, cy) = self.cursor_physical_position;
             self.layers_engine
                 .pointer_move(&(cx as f32, cy as f32).into(), None);
+
+            // Re-resolve the Wayland pointer focus against live surface
+            // positions before dispatching the button. Smithay's pointer focus
+            // is otherwise only refreshed on motion, so a window that animated,
+            // relayouted, or appeared under a stationary cursor (no motion event
+            // in between) would leave a stale focus and the press would land on
+            // the wrong surface — or none — and be silently dropped. This is the
+            // Wayland-side counterpart to the lay-rs hover refresh above.
+            let location = self.pointer.current_location();
+            let under = self.surface_under(location);
+            pointer.motion(
+                self,
+                under,
+                &MotionEvent {
+                    location,
+                    serial,
+                    time: evt.time_msec(),
+                },
+            );
+            pointer.frame(self);
         }
 
         pointer.button(
@@ -546,6 +566,41 @@ impl<BackendData: Backend> Otto<BackendData> {
 
 #[cfg(any(feature = "winit", feature = "x11"))]
 impl<Backend: crate::state::Backend> Otto<Backend> {
+    pub(crate) fn clamp_coords(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
+        if self.workspaces.outputs().next().is_none() {
+            return pos;
+        }
+
+        let (pos_x, pos_y) = pos.into();
+        // Virtual outputs are pointer-unreachable — exclude their extent.
+        let max_x = self
+            .workspaces
+            .outputs()
+            .filter(|o| !crate::virtual_output::is_unreachable_virtual_output(o))
+            .fold(0, |acc, o| {
+                acc + self
+                    .workspaces
+                    .output_geometry(o)
+                    .map(|g| g.size.w)
+                    .unwrap_or(0)
+            });
+        let clamped_x = pos_x.clamp(0.0, max_x as f64);
+        let max_y = self
+            .workspaces
+            .outputs()
+            .find(|o| {
+                let geo = self.workspaces.output_geometry(o).unwrap();
+                geo.contains((clamped_x as i32, 0))
+            })
+            .map(|o| self.workspaces.output_geometry(o).unwrap().size.h);
+
+        if let Some(max_y) = max_y {
+            let clamped_y = pos_y.clamp(0.0, max_y as f64);
+            (clamped_x, clamped_y).into()
+        } else {
+            (clamped_x, pos_y).into()
+        }
+    }
     pub(crate) fn on_pointer_move_absolute_windowed<B: InputBackend>(
         &mut self,
         evt: B::PointerMotionAbsoluteEvent,
@@ -705,8 +760,24 @@ impl crate::Otto<crate::udev::UdevData> {
         // Cache pointer location for use in button events
         self.last_pointer_location = (pointer_location.x, pointer_location.y);
 
+        // Track which output the pointer is on — drives the flattened model
+        // (expose, workspace selector, new-window routing). Cheap: no-op
+        // when unchanged.
+        {
+            let focused = self.workspaces.output_under(pointer_location).next().cloned();
+            self.workspaces.set_focused_output(focused.as_ref());
+        }
+
         let scale = Config::with(|c| c.screen_scale);
-        let pos = pointer_location.to_physical(scale);
+        // lay-rs scene coordinates are OUTPUT-LOCAL (output subtrees overlap
+        // at (0,0)) — rebase the global pointer to the focused output before
+        // hit-testing, or hover/interaction never lands on secondary outputs.
+        let origin = self
+            .workspaces
+            .focused_output()
+            .map(|o| o.current_location())
+            .unwrap_or_default();
+        let pos = (pointer_location - origin.to_f64()).to_physical(scale);
         self.cursor_physical_position = (pos.x, pos.y);
 
         self.layers_engine
@@ -770,6 +841,12 @@ impl crate::Otto<crate::udev::UdevData> {
         // Cache pointer location for use in button events
         self.last_pointer_location = (pointer_location.x, pointer_location.y);
 
+        // Track which output the pointer is on (see on_pointer_move).
+        {
+            let focused = self.workspaces.output_under(pointer_location).next().cloned();
+            self.workspaces.set_focused_output(focused.as_ref());
+        }
+
         pointer.motion(
             self,
             under,
@@ -782,7 +859,15 @@ impl crate::Otto<crate::udev::UdevData> {
         pointer.frame(self);
 
         let scale = Config::with(|c| c.screen_scale);
-        let pos = pointer_location.to_physical(scale);
+        // lay-rs scene coordinates are OUTPUT-LOCAL (output subtrees overlap
+        // at (0,0)) — rebase the global pointer to the focused output before
+        // hit-testing, or hover/interaction never lands on secondary outputs.
+        let origin = self
+            .workspaces
+            .focused_output()
+            .map(|o| o.current_location())
+            .unwrap_or_default();
+        let pos = (pointer_location - origin.to_f64()).to_physical(scale);
         self.cursor_physical_position = (pos.x, pos.y);
 
         self.layers_engine
@@ -794,32 +879,6 @@ impl crate::Otto<crate::udev::UdevData> {
         self.schedule_event_loop_dispatch();
     }
 
-    pub(crate) fn clamp_coords(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
-        if self.workspaces.outputs().next().is_none() {
-            return pos;
-        }
-
-        let (pos_x, pos_y) = pos.into();
-        let max_x = self.workspaces.outputs().fold(0, |acc, o| {
-            acc + self.workspaces.output_geometry(o).unwrap().size.w
-        });
-        let clamped_x = pos_x.clamp(0.0, max_x as f64);
-        let max_y = self
-            .workspaces
-            .outputs()
-            .find(|o| {
-                let geo = self.workspaces.output_geometry(o).unwrap();
-                geo.contains((clamped_x as i32, 0))
-            })
-            .map(|o| self.workspaces.output_geometry(o).unwrap().size.h);
-
-        if let Some(max_y) = max_y {
-            let clamped_y = pos_y.clamp(0.0, max_y as f64);
-            (clamped_x, clamped_y).into()
-        } else {
-            (clamped_x, pos_y).into()
-        }
-    }
 }
 
 #[cfg(test)]
