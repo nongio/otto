@@ -55,6 +55,22 @@ pub fn validate_persist_mode(mode: u32) -> Result<u32, fdo::Error> {
     }
 }
 
+/// Reads the user's preferred screencast output from
+/// `$XDG_CONFIG_HOME/otto/screencast-output` (one connector name, e.g.
+/// `virtual-1`). Read per SelectSources call so it can be changed between
+/// sessions without restarting the portal. Stopgap until a proper source
+/// picker exists.
+fn preferred_output_override() -> Option<String> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".config"))
+        })?;
+    let content = std::fs::read_to_string(base.join("otto/screencast-output")).ok()?;
+    let name = content.trim().to_string();
+    (!name.is_empty()).then_some(name)
+}
+
 #[derive(Clone)]
 pub struct ScreenCastPortal {
     state: Arc<Mutex<PortalState>>,
@@ -235,10 +251,22 @@ impl ScreenCastPortal {
                 );
             }
 
-            let chosen_output = available_outputs
-                .first()
-                .cloned()
-                .unwrap_or_else(|| "".to_string());
+            let chosen_output = match preferred_output_override() {
+                Some(preferred) if available_outputs.contains(&preferred) => {
+                    info!(session = %session_handle, output = %preferred, "Using screencast-output override");
+                    preferred
+                }
+                Some(preferred) => {
+                    warn!(
+                        session = %session_handle,
+                        output = %preferred,
+                        ?available_outputs,
+                        "screencast-output override not among available outputs; using first"
+                    );
+                    available_outputs.first().cloned().unwrap_or_default()
+                }
+                None => available_outputs.first().cloned().unwrap_or_default(),
+            };
 
             {
                 let mut state = self.state.lock().await;

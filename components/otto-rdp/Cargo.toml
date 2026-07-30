@@ -1,0 +1,39 @@
+[package]
+name = "otto-rdp"
+version = "0.1.0"
+edition = "2021"
+description = "RDP bridge for Otto virtual outputs: serves a virtual output's PipeWire stream over RDP and injects remote input"
+
+[dependencies]
+ironrdp-server = { version = "0.13", features = ["egfx"] }
+# EGFX / H.264 (AVC420) hardware path: the graphics-pipeline server, the DVC
+# framing for its output, and the SVC channel flags. Versions must match the
+# ones ironrdp-server 0.13 pulls in (egfx 0.3, dvc/svc 0.8).
+ironrdp-egfx = "0.3"
+ironrdp-dvc = "0.8"
+ironrdp-svc = "0.8"
+# Hardware H.264 encode via the PipeWire→VA-API GStreamer graph
+# (pipewiresrc ! vapostproc ! vah264enc). Built from a launch string, so only
+# core + app (appsink) bindings are needed.
+gstreamer = "0.25"
+gstreamer-app = "0.25"
+bytes = "1"
+async-trait = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "signal", "time"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+pipewire = "0.9"
+zbus = { version = "4", default-features = false, features = ["tokio"] }
+libc = "0.2"
+memfd = "0.6"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+wayland-protocols-misc = { version = "0.3", features = ["client"] }
+xkbcommon = "0.6"
+# TLS acceptor (--tls): rustls/tokio-rustls are already in the tree via
+# ironrdp-server; rcgen generates the self-signed certificate.
+rustls = "0.23"
+tokio-rustls = "0.26"
+rcgen = "0.13"

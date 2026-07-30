@@ -365,6 +365,26 @@ impl<B: Backend> PointerTarget<Otto<B>> for PointerFocusTarget<B> {
     }
 }
 
+/// For a self-managing X11 client (Globally-Active / No-Input — Proton/Unity
+/// games like Cuphead), return its `wl_surface` so keyboard events are delivered
+/// straight to it, bypassing smithay's `X11Surface` focus protocol.
+///
+/// smithay's `X11Surface::enter` bundles the X11 focus protocol
+/// (`WM_TAKE_FOCUS` for Globally-Active) with `wl_keyboard` delivery. But
+/// `WM_TAKE_FOCUS` BREAKS Cuphead's render loop whenever it's sent (at map OR on
+/// a later click — confirmed). So for these clients we deliver `wl_keyboard`
+/// events directly to the surface (giving XWayland the keys + focus) WITHOUT
+/// sending `WM_TAKE_FOCUS`. Returns `None` for Passive/Local clients, which use
+/// the normal `X11Surface` path (they need `set_input_focus`).
+#[cfg(feature = "xwayland")]
+fn x11_self_managed_surface(s: &X11Surface) -> Option<WlSurface> {
+    use smithay::xwayland::xwm::WmInputModel;
+    match s.input_model() {
+        WmInputModel::GloballyActive | WmInputModel::None => s.wl_surface(),
+        WmInputModel::Passive | WmInputModel::LocallyActive => None,
+    }
+}
+
 impl<B: Backend> KeyboardTarget<Otto<B>> for KeyboardFocusTarget<B> {
     fn enter(
         &self,
@@ -379,7 +399,21 @@ impl<B: Backend> KeyboardTarget<Otto<B>> for KeyboardFocusTarget<B> {
                     KeyboardTarget::enter(w.wl_surface(), seat, data, keys, serial)
                 }
                 #[cfg(feature = "xwayland")]
-                WindowSurface::X11(s) => KeyboardTarget::enter(s, seat, data, keys, serial),
+                WindowSurface::X11(s) => match x11_self_managed_surface(s) {
+                    Some(surface) => {
+                        // gamescope model: force the X11 INPUT FOCUS to the game
+                        // (RevertToNone, no WM_TAKE_FOCUS). Without this the game has
+                        // wl_keyboard focus but XWayland — under a rootless WM —
+                        // delivers keys only to the X-input-focused window, so keys
+                        // never reach it. WM_TAKE_FOCUS would deliver them too but
+                        // breaks the game's render loop; bare set_input_focus does not.
+                        if let Err(err) = s.set_input_focus() {
+                            tracing::warn!(?err, "failed to set X11 input focus for self-managing game");
+                        }
+                        KeyboardTarget::enter(&surface, seat, data, keys, serial)
+                    }
+                    None => KeyboardTarget::enter(s, seat, data, keys, serial),
+                },
             },
             KeyboardFocusTarget::LayerSurface(l) => {
                 KeyboardTarget::enter(l.wl_surface(), seat, data, keys, serial)
@@ -412,7 +446,13 @@ impl<B: Backend> KeyboardTarget<Otto<B>> for KeyboardFocusTarget<B> {
                     KeyboardTarget::leave(w.wl_surface(), seat, data, serial)
                 }
                 #[cfg(feature = "xwayland")]
-                WindowSurface::X11(s) => KeyboardTarget::leave(s, seat, data, serial),
+                WindowSurface::X11(s) => match x11_self_managed_surface(s) {
+                    // Self-managing X11 game: never send wl_keyboard.leave (XWayland
+                    // turns it into an X11 FocusOut, which Unity "Run In Background
+                    // = false" games pause on). Focus retention keeps these focused.
+                    Some(_) => {}
+                    None => KeyboardTarget::leave(s, seat, data, serial),
+                },
             },
             KeyboardFocusTarget::LayerSurface(l) => {
                 KeyboardTarget::leave(l.wl_surface(), seat, data, serial)
@@ -438,9 +478,12 @@ impl<B: Backend> KeyboardTarget<Otto<B>> for KeyboardFocusTarget<B> {
                     KeyboardTarget::key(w.wl_surface(), seat, data, key, state, serial, time)
                 }
                 #[cfg(feature = "xwayland")]
-                WindowSurface::X11(s) => {
-                    KeyboardTarget::key(s, seat, data, key, state, serial, time)
-                }
+                WindowSurface::X11(s) => match x11_self_managed_surface(s) {
+                    Some(surface) => {
+                        KeyboardTarget::key(&surface, seat, data, key, state, serial, time)
+                    }
+                    None => KeyboardTarget::key(s, seat, data, key, state, serial, time),
+                },
             },
             KeyboardFocusTarget::LayerSurface(l) => {
                 KeyboardTarget::key(l.wl_surface(), seat, data, key, state, serial, time)
@@ -467,9 +510,12 @@ impl<B: Backend> KeyboardTarget<Otto<B>> for KeyboardFocusTarget<B> {
                     KeyboardTarget::modifiers(w.wl_surface(), seat, data, modifiers, serial)
                 }
                 #[cfg(feature = "xwayland")]
-                WindowSurface::X11(s) => {
-                    KeyboardTarget::modifiers(s, seat, data, modifiers, serial)
-                }
+                WindowSurface::X11(s) => match x11_self_managed_surface(s) {
+                    Some(surface) => {
+                        KeyboardTarget::modifiers(&surface, seat, data, modifiers, serial)
+                    }
+                    None => KeyboardTarget::modifiers(s, seat, data, modifiers, serial),
+                },
             },
             KeyboardFocusTarget::LayerSurface(l) => {
                 KeyboardTarget::modifiers(l.wl_surface(), seat, data, modifiers, serial)

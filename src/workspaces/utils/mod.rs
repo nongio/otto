@@ -3,12 +3,27 @@ pub use context_menu_view::ContextMenuView;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use layers::prelude::{taffy, Layer};
 use layers::types::{Point, Size};
 use smithay::utils::Transform;
 
 use super::WindowViewSurface;
+
+/// `OTTO_ADAPTIVE_SAMPLING=0` forces bicubic for every per-window draw (the
+/// pre-change baseline). Anything else (unset, `1`, `true`, ...) keeps the
+/// adaptive path that picks nearest/linear/bicubic from the matrix. Read once
+/// at startup so the per-frame cost is a single atomic load.
+fn adaptive_sampling_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        !matches!(
+            std::env::var("OTTO_ADAPTIVE_SAMPLING").as_deref(),
+            Ok("0") | Ok("false") | Ok("off")
+        )
+    })
+}
 
 #[allow(unused)]
 pub struct FontCache {
@@ -350,8 +365,35 @@ pub fn configure_surface_layer(
             Transform::Flipped270 => {}
         }
 
-        let sampling =
-            layers::skia::SamplingOptions::from(layers::skia::CubicResampler::catmull_rom());
+        // Pick the cheapest filter the matrix allows. Bicubic is ~12-16× the
+        // fragment-shader cost of nearest; the dominant desktop case (static
+        // window at native scale) maps every output pixel to one source pixel
+        // and gets identical results from any filter.
+        let sampling = if !adaptive_sampling_enabled() {
+            layers::skia::SamplingOptions::from(layers::skia::CubicResampler::catmull_rom())
+        } else {
+            let is_normal_transform = matches!(draw_wvs.transform, Transform::Normal);
+            let is_identity_scale = (scale_x - 1.0).abs() < 1e-4 && (scale_y - 1.0).abs() < 1e-4;
+            let tx_total = -draw_wvs.phy_src_x + tx / scale_x;
+            let ty_total = -draw_wvs.phy_src_y + ty / scale_y;
+            let is_pixel_aligned = (tx_total - tx_total.round()).abs() < 1e-4
+                && (ty_total - ty_total.round()).abs() < 1e-4;
+
+            if is_normal_transform && is_identity_scale && is_pixel_aligned {
+                layers::skia::SamplingOptions::default()
+            } else if is_normal_transform
+                && (scale_x - 1.0).abs() < 0.05
+                && (scale_y - 1.0).abs() < 0.05
+            {
+                layers::skia::SamplingOptions::new(
+                    layers::skia::FilterMode::Linear,
+                    layers::skia::MipmapMode::None,
+                )
+            } else {
+                layers::skia::SamplingOptions::from(layers::skia::CubicResampler::catmull_rom())
+            }
+        };
+
         let mut paint =
             layers::skia::Paint::new(layers::skia::Color4f::new(1.0, 1.0, 1.0, 1.0), None);
         paint.set_shader(tex.image.to_shader(

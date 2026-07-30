@@ -69,6 +69,10 @@ pub struct ActiveStream {
     pub output_connector: String,
     /// PipeWire stream instance.
     pub pipewire_stream: PipeWireStream,
+    /// Frame rendered last cycle, awaiting its GPU fence before the dmabuf is
+    /// queued to PipeWire. Resolved (non-blocking) at the next render tick so
+    /// the screenshare fence wait never blocks the main loop / input dispatch.
+    pub pending_frame: Option<smithay::backend::renderer::sync::SyncPoint>,
 }
 
 /// Commands sent from the D-Bus service to the compositor main loop.
@@ -278,20 +282,50 @@ fn handle_screenshare_command<B: crate::state::Backend + 'static>(
 
             // Build backend capabilities
             let gbm_device = state.backend_data.gbm_device();
-            let capabilities = if let Some(ref _gbm) = gbm_device {
+            let capabilities = if let Some(ref gbm) = gbm_device {
                 use smithay::backend::allocator::Fourcc;
 
-                // For now, advertise ARGB8888 with common modifiers
-                // In production, we'd query the actual supported formats from the backend
                 let formats = vec![Fourcc::Argb8888];
 
-                // Common DRM modifiers - LINEAR and INVALID (for implicit modifier)
-                const DRM_FORMAT_MOD_LINEAR: i64 = 0;
-                const DRM_FORMAT_MOD_INVALID: i64 = 0x00ffffffffffffff_u64 as i64;
-                let modifiers = vec![DRM_FORMAT_MOD_INVALID, DRM_FORMAT_MOD_LINEAR];
+                const DRM_FORMAT_MOD_LINEAR: u64 = 0;
+                const DRM_FORMAT_MOD_INVALID: u64 = 0x00ff_ffff_ffff_ffff;
+
+                // Every modifier we advertise must be allocatable AND
+                // single-plane: `send_buffer_params`/`add_buffer` describe one
+                // plane per buffer, so aux-plane modifiers (Intel CCS) cannot
+                // be represented even though EGL reports them.
+                let mut modifiers: Vec<i64> = Vec::new();
+                let mut probe = |modifier: u64| {
+                    if modifiers.contains(&(modifier as i64)) {
+                        return;
+                    }
+                    let ok = gbm
+                        .create_buffer_object_with_modifiers2::<()>(
+                            width,
+                            height,
+                            Fourcc::Argb8888,
+                            std::iter::once(modifier.into()),
+                            smithay::backend::allocator::gbm::GbmBufferFlags::RENDERING,
+                        )
+                        .map(|bo| bo.plane_count() == 1)
+                        .unwrap_or(false);
+                    if ok {
+                        modifiers.push(modifier as i64);
+                    }
+                };
+                // LINEAR first: keeps existing clients (OBS) negotiating
+                // exactly what they did before; tiled modifiers follow for
+                // clients whose importer cannot map linear (gst vapostproc).
+                probe(DRM_FORMAT_MOD_LINEAR);
+                for format in state.backend_data.get_format_modifiers(Fourcc::Argb8888) {
+                    if format != DRM_FORMAT_MOD_INVALID {
+                        probe(format);
+                    }
+                }
+                tracing::info!("Screenshare dmabuf modifiers offered: {:x?}", modifiers);
 
                 pipewire_stream::BackendCapabilities {
-                    supports_dmabuf: true,
+                    supports_dmabuf: !modifiers.is_empty(),
                     formats,
                     modifiers,
                 }
@@ -344,6 +378,7 @@ fn handle_screenshare_command<B: crate::state::Backend + 'static>(
                 ActiveStream {
                     output_connector,
                     pipewire_stream,
+                    pending_frame: None,
                 },
             );
 

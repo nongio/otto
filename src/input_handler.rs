@@ -53,6 +53,8 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
 
                     crate::shell::fixup_positions(&mut self.workspaces, current_location);
                     self.backend_data.reset_buffers(&output);
+                    #[cfg(feature = "xwayland")]
+                    self.update_xwayland_scale();
                 }
 
                 KeyAction::ScaleDown => {
@@ -74,6 +76,8 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
                     let current_location = self.pointer.current_location();
                     crate::shell::fixup_positions(&mut self.workspaces, current_location);
                     self.backend_data.reset_buffers(&output);
+                    #[cfg(feature = "xwayland")]
+                    self.update_xwayland_scale();
                 }
 
                 KeyAction::RotateOutput => {

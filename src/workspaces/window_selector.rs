@@ -118,11 +118,7 @@ pub struct WindowSelectorView {
 /// - `window_selector_view`: draw the window selection and text
 /// - `window_selector_label`: text layer for the window title
 impl WindowSelectorView {
-    pub fn new(
-        index: usize,
-        layers_engine: Arc<Engine>,
-        drag_overlay_layer: Layer,
-    ) -> Self {
+    pub fn new(index: usize, layers_engine: Arc<Engine>, drag_overlay_layer: Layer) -> Self {
         let window_selector_root = layers_engine.new_layer();
         window_selector_root.set_layout_style(taffy::Style {
             position: taffy::Position::Absolute,
@@ -786,8 +782,13 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
         if is_dragging {
             self.update_drag_position(cursor_point);
 
-            // Check if dragged window intersects with any workspace preview drop target
-            let drop_targets = otto.workspaces.workspace_selector_view.get_drop_targets();
+            // Check if dragged window intersects with any workspace preview drop target.
+            // Drag happens on the focused output — use that output's selector.
+            let drop_targets = otto
+                .workspaces
+                .focused_output_selector()
+                .map(|s| s.get_drop_targets())
+                .unwrap_or_default();
             let mut new_drop_target = None;
 
             // Get the dragged window's bounds
@@ -834,9 +835,9 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
                 if let Some(drag_state) = self.drag_state.write().unwrap().as_mut() {
                     drag_state.current_drop_target = new_drop_target;
                 }
-                otto.workspaces
-                    .workspace_selector_view
-                    .set_drop_hover(new_drop_target);
+                if let Some(selector) = otto.workspaces.focused_output_selector() {
+                    selector.set_drop_hover(new_drop_target);
+                }
             }
 
             return;
@@ -942,7 +943,9 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
                         let drop_target = drag_state.current_drop_target;
 
                         // Clear drop hover visual feedback
-                        otto.workspaces.workspace_selector_view.set_drop_hover(None);
+                        if let Some(selector) = otto.workspaces.focused_output_selector() {
+                            selector.set_drop_hover(None);
+                        }
 
                         if let Some(target_workspace) = drop_target {
                             // Valid drop target: move the real window to the target workspace,

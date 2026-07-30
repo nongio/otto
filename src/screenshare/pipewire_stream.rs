@@ -34,6 +34,10 @@ pub struct BufferPool {
     pub available: VecDeque<AvailableBuffer>,
     /// Raw PW buffer pointers to queue back (keyed by fd)
     pub to_queue: HashMap<i64, *mut pipewire::sys::pw_buffer>,
+    /// Rendered buffers whose GPU fence has not yet signaled. Held here (NOT in
+    /// `to_queue`) so the async process callback can't hand a still-rendering
+    /// buffer to the consumer. Moved into `to_queue` once the fence is reached.
+    pub pending: HashMap<i64, *mut pipewire::sys::pw_buffer>,
     /// Track last rendered buffer FD to detect buffer changes
     pub last_rendered_fd: Option<i64>,
 }
@@ -694,10 +698,14 @@ fn send_buffer_params(
             SPA_PARAM_BUFFERS_buffers,
             pod::Value::Choice(ChoiceValue::Int(Choice(
                 ChoiceFlags::empty(),
+                // At least 2 buffers so a new frame can render into a spare
+                // while the previous frame's GPU fence drains off the main
+                // loop (deferred trigger in render_virtual_outputs). A single
+                // buffer would serialize render and hand-off, halving fps.
                 ChoiceEnum::Range {
-                    default: 1,
-                    min: 1,
-                    max: 1
+                    default: 2,
+                    min: 2,
+                    max: 3
                 }
             ))),
         ),
@@ -820,80 +828,76 @@ fn build_format_params(config: &StreamConfig) -> Result<Vec<Vec<u8>>, PipeWireEr
 
         // Build format with or without modifiers based on backend capabilities
         if caps.supports_dmabuf && !caps.modifiers.is_empty() {
-            // DMA-BUF path: advertise format with modifiers as an enum choice
+            // DMA-BUF path: one pod per modifier, each with a single fixed
+            // value. Separate fixed pods sidestep the DONT_FIXATE fixation
+            // dance while still letting clients whose importer only takes
+            // tiled layouts (gst vapostproc) find a match beyond LINEAR.
+            // Pod order is the preference order (LINEAR first, see caller).
             tracing::debug!(
-                "Advertising DMA-BUF format {:?} with {} modifiers: {:?}",
+                "Advertising DMA-BUF format {:?} with {} modifiers: {:x?}",
                 video_format,
                 caps.modifiers.len(),
                 &caps.modifiers
             );
 
-            use pipewire::spa::pod::{ChoiceValue, Property, PropertyFlags, Value as PodValue};
-            use pipewire::spa::utils::{Choice, ChoiceEnum, ChoiceFlags, Id};
+            use pipewire::spa::pod::{Property, PropertyFlags, Value as PodValue};
+            use pipewire::spa::utils::Id;
 
-            // For simplicity, only offer LINEAR modifier (0x0) to avoid DONT_FIXATE complexity
-            // This matches what OBS negotiates anyway
-            let modifier_to_offer = vec![0i64]; // LINEAR modifier
+            for &modifier in &caps.modifiers {
+                let properties = vec![
+                    Property {
+                        key: FormatProperties::MediaType.as_raw(),
+                        flags: PropertyFlags::empty(),
+                        value: PodValue::Id(Id(MediaType::Video.as_raw())),
+                    },
+                    Property {
+                        key: FormatProperties::MediaSubtype.as_raw(),
+                        flags: PropertyFlags::empty(),
+                        value: PodValue::Id(Id(MediaSubtype::Raw.as_raw())),
+                    },
+                    Property {
+                        key: FormatProperties::VideoFormat.as_raw(),
+                        flags: PropertyFlags::empty(),
+                        value: PodValue::Id(Id(video_format.as_raw())),
+                    },
+                    Property {
+                        key: FormatProperties::VideoModifier.as_raw(),
+                        flags: PropertyFlags::MANDATORY,
+                        value: PodValue::Long(modifier),
+                    },
+                    Property {
+                        key: FormatProperties::VideoSize.as_raw(),
+                        flags: PropertyFlags::empty(),
+                        value: PodValue::Rectangle(Rectangle {
+                            width: config.width,
+                            height: config.height,
+                        }),
+                    },
+                    Property {
+                        key: FormatProperties::VideoFramerate.as_raw(),
+                        flags: PropertyFlags::empty(),
+                        value: PodValue::Fraction(Fraction {
+                            num: config.framerate_num,
+                            denom: config.framerate_denom,
+                        }),
+                    },
+                ];
 
-            // Create properties vector manually to include modifier choice
-            let properties = vec![
-                Property {
-                    key: FormatProperties::MediaType.as_raw(),
-                    flags: PropertyFlags::empty(),
-                    value: PodValue::Id(Id(MediaType::Video.as_raw())),
-                },
-                Property {
-                    key: FormatProperties::MediaSubtype.as_raw(),
-                    flags: PropertyFlags::empty(),
-                    value: PodValue::Id(Id(MediaSubtype::Raw.as_raw())),
-                },
-                Property {
-                    key: FormatProperties::VideoFormat.as_raw(),
-                    flags: PropertyFlags::empty(),
-                    value: PodValue::Id(Id(video_format.as_raw())),
-                },
-                Property {
-                    key: FormatProperties::VideoModifier.as_raw(),
-                    flags: PropertyFlags::MANDATORY,
-                    value: PodValue::Choice(ChoiceValue::Long(Choice(
-                        ChoiceFlags::empty(),
-                        ChoiceEnum::Enum {
-                            default: modifier_to_offer[0],
-                            alternatives: modifier_to_offer,
-                        },
-                    ))),
-                },
-                Property {
-                    key: FormatProperties::VideoSize.as_raw(),
-                    flags: PropertyFlags::empty(),
-                    value: PodValue::Rectangle(Rectangle {
-                        width: config.width,
-                        height: config.height,
-                    }),
-                },
-                Property {
-                    key: FormatProperties::VideoFramerate.as_raw(),
-                    flags: PropertyFlags::empty(),
-                    value: PodValue::Fraction(Fraction {
-                        num: config.framerate_num,
-                        denom: config.framerate_denom,
-                    }),
-                },
-            ];
+                let format = pipewire::spa::pod::Object {
+                    type_: SpaTypes::ObjectParamFormat.as_raw(),
+                    id: ParamType::EnumFormat.as_raw(),
+                    properties,
+                };
 
-            let format = pipewire::spa::pod::Object {
-                type_: SpaTypes::ObjectParamFormat.as_raw(),
-                id: ParamType::EnumFormat.as_raw(),
-                properties,
-            };
-
-            let bytes = PodSerializer::serialize(Cursor::new(Vec::new()), &Value::Object(format))
-                .map_err(|e| {
-                    PipeWireError::InitFailed(format!("Failed to serialize format: {:?}", e))
-                })?
-                .0
-                .into_inner();
-            params.push(bytes);
+                let bytes =
+                    PodSerializer::serialize(Cursor::new(Vec::new()), &Value::Object(format))
+                        .map_err(|e| {
+                            PipeWireError::InitFailed(format!("Failed to serialize format: {:?}", e))
+                        })?
+                        .0
+                        .into_inner();
+                params.push(bytes);
+            }
         } else {
             // SHM path: format without modifiers
             tracing::debug!("Advertising SHM format {:?}", video_format);
@@ -999,13 +1003,36 @@ fn parse_negotiated_format(
             let modifier_val = if let Ok(long_val) = value.get_long() {
                 tracing::debug!("Read modifier as Long: 0x{:x}", long_val);
                 Some(long_val)
+            } else if value.is_choice() {
+                // Choice pod (client proposal not yet fixated): the first
+                // value in the body is the default — the one the client will
+                // use. Guessing anything else here means we allocate one
+                // layout and the consumer reads another (tiled-vs-linear
+                // garbage on screen), so a wrong value is worse than failing.
+                let modifier = unsafe {
+                    use pipewire::spa::sys::{spa_pod, spa_pod_choice, SPA_TYPE_Long};
+                    let choice = value.as_raw_ptr() as *const spa_pod_choice;
+                    let child = &(*choice).body.child as *const spa_pod;
+                    if (*child).type_ == SPA_TYPE_Long {
+                        let first = (child as *const u8).add(std::mem::size_of::<spa_pod>())
+                            as *const i64;
+                        Some(first.read_unaligned())
+                    } else {
+                        None
+                    }
+                };
+                let Some(modifier) = modifier else {
+                    return Err(PipeWireError::InitFailed(
+                        "VideoModifier choice is not of type Long".to_string(),
+                    ));
+                };
+                tracing::debug!("Read modifier from Choice default: 0x{:x}", modifier);
+                Some(modifier)
             } else {
-                // Property exists but we can't read it (probably a Choice type)
-                // This still means dmabuf was negotiated
-                tracing::debug!(
-                    "VideoModifier exists but couldn't read value - dmabuf is still active"
-                );
-                Some(0) // Default to LINEAR modifier
+                return Err(PipeWireError::InitFailed(format!(
+                    "VideoModifier present but unreadable (pod type {:?})",
+                    value.type_()
+                )));
             };
 
             (true, modifier_val)

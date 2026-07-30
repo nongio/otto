@@ -303,25 +303,28 @@ impl<BackendData: Backend> Otto<BackendData> {
             return Some((focus, (0.0, 0.0).into()));
         }
 
-        // Workspace selector — skip when a window drag is active so the window selector
-        // keeps receiving motion events and the dragged window keeps following the pointer.
+        // Workspace selector — per output. Skip when a window drag is active so the window
+        // selector keeps receiving motion events and the dragged window keeps following the
+        // pointer.
         if self.workspaces.get_show_all() && !self.workspaces.is_window_selector_dragging() {
-            let focus = self
-                .workspaces
-                .workspace_selector_view
-                .as_ref()
-                .clone()
-                .into();
-
-            let layer = self.workspaces.workspace_selector_view.layer.clone();
-
-            if layer.cointains_point((physical_pos.x as f32, physical_pos.y as f32)) {
-                let position = self
+            if let Some(selector) = self.workspaces.output_selector(&output.name()) {
+                // Output subtrees render at the scene origin regardless of the output's global
+                // position, so hit-test in output-local physical coordinates.
+                let origin = self
                     .workspaces
-                    .workspace_selector_view
-                    .layer
-                    .render_position();
-                return Some((focus, (position.x as f64, position.y as f64).into()));
+                    .output_geometry(output)
+                    .map(|g| g.loc)
+                    .unwrap_or_default();
+                let local =
+                    Point::<f64, Logical>::from((pos.x - origin.x as f64, pos.y - origin.y as f64));
+                let local_phys = local.to_physical(scale);
+                let layer = selector.layer.clone();
+
+                if layer.cointains_point((local_phys.x as f32, local_phys.y as f32)) {
+                    let focus = selector.as_ref().clone().into();
+                    let position = layer.render_position();
+                    return Some((focus, (position.x as f64, position.y as f64).into()));
+                }
             }
         }
         // Window selector check
@@ -764,7 +767,11 @@ impl crate::Otto<crate::udev::UdevData> {
         // (expose, workspace selector, new-window routing). Cheap: no-op
         // when unchanged.
         {
-            let focused = self.workspaces.output_under(pointer_location).next().cloned();
+            let focused = self
+                .workspaces
+                .output_under(pointer_location)
+                .next()
+                .cloned();
             self.workspaces.set_focused_output(focused.as_ref());
         }
 
@@ -843,7 +850,11 @@ impl crate::Otto<crate::udev::UdevData> {
 
         // Track which output the pointer is on (see on_pointer_move).
         {
-            let focused = self.workspaces.output_under(pointer_location).next().cloned();
+            let focused = self
+                .workspaces
+                .output_under(pointer_location)
+                .next()
+                .cloned();
             self.workspaces.set_focused_output(focused.as_ref());
         }
 
@@ -878,7 +889,6 @@ impl crate::Otto<crate::udev::UdevData> {
         // Schedule a redraw to update the cursor position
         self.schedule_event_loop_dispatch();
     }
-
 }
 
 #[cfg(test)]

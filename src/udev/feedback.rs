@@ -15,6 +15,27 @@ use crate::skia_renderer::SkiaRenderer;
 
 use super::types::{DrmSurfaceDmabufFeedback, GbmDrmCompositor};
 
+/// Intel "clear color" CCS modifiers (`RC_CCS_CC`) carry an extra clear-color
+/// value plane (3 planes total). Otto's Skia dmabuf import samples them as pure
+/// black (the 2-plane `RC_CCS` variants render fine). Dropping these from the
+/// formats we advertise makes clients fall back to the 2-plane modifiers Otto
+/// renders correctly — notably DXVK/Proton fullscreen swapchains (e.g. Cuphead),
+/// which otherwise pick `Y_TILED_GEN12_RC_CCS_CC` and show a black screen.
+const CLEAR_COLOR_MODIFIERS: &[u64] = &[
+    0x0100_0000_0000_0008, // I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS_CC
+    0x0100_0000_0000_000c, // I915_FORMAT_MOD_4_TILED_DG2_RC_CCS_CC
+    0x0100_0000_0000_000f, // I915_FORMAT_MOD_4_TILED_MTL_RC_CCS_CC
+];
+
+/// Removes the clear-color CCS modifiers (see [`CLEAR_COLOR_MODIFIERS`]) from a
+/// set of dmabuf formats before it is advertised to clients.
+pub fn strip_clear_color_modifiers(formats: FormatSet) -> FormatSet {
+    formats
+        .into_iter()
+        .filter(|f| !CLEAR_COLOR_MODIFIERS.contains(&u64::from(f.modifier)))
+        .collect()
+}
+
 /// Constructs dmabuf feedback for a surface
 ///
 /// Creates two feedback objects:
@@ -29,8 +50,10 @@ pub fn get_surface_dmabuf_feedback(
     gpus: &mut GpuManager<GbmGlesBackend<SkiaRenderer, smithay::backend::drm::DrmDeviceFd>>,
     composition: &GbmDrmCompositor,
 ) -> Option<DrmSurfaceDmabufFeedback> {
-    let primary_formats = gpus.single_renderer(&primary_gpu).ok()?.dmabuf_formats();
-    let render_formats = gpus.single_renderer(&render_node).ok()?.dmabuf_formats();
+    let primary_formats =
+        strip_clear_color_modifiers(gpus.single_renderer(&primary_gpu).ok()?.dmabuf_formats());
+    let render_formats =
+        strip_clear_color_modifiers(gpus.single_renderer(&render_node).ok()?.dmabuf_formats());
 
     let all_render_formats = primary_formats
         .iter()

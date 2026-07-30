@@ -150,12 +150,14 @@ wayland-client = "0.31"
 members = [
     "components/xdg-desktop-portal-otto",
     "components/apps-manager",
+    "components/otto-rdp",
     "components/otto-kit",
     "components/otto-bar",
     "components/otto-islands",
     "sample-clients/client-rainbow",
     "sample-clients/submenu",
     "sample-clients/submenu-gtk",
+    "sample-clients/deadlock-test",
 ]
 
 [package.metadata.deb]

@@ -119,6 +119,10 @@ impl Otto<UdevData> {
             return;
         };
 
+        // Debug (`/tmp/otto-slow`): a VBlank line proves page flips complete.
+        if std::path::Path::new("/tmp/otto-slow").exists() {
+            tracing::info!(target: "otto::planes", "SLOW vblank on {crtc:?}");
+        }
         let schedule_render =
             match surface.compositor.frame_submitted() {
                 Ok(user_data) => {
@@ -372,7 +376,8 @@ impl Otto<UdevData> {
         // are dropped for those frames. Disabled during capture and the
         // 3-finger swipe (the finger-drag moves the workspace with no
         // animation flag, so a fixed plane would not follow it).
-        let allow_fullscreen_scanout = self.workspaces.is_fullscreen_and_stable()
+        let allow_fullscreen_scanout = std::env::var_os("DISABLE_DIRECT_SCANOUT").is_none()
+            && self.workspaces.is_fullscreen_and_stable()
             && !self.swipe_gesture.is_active()
             && !capture_active;
         let fullscreen_window = if allow_fullscreen_scanout {
@@ -380,6 +385,11 @@ impl Otto<UdevData> {
         } else {
             None
         };
+        // XWayland fullscreen windows take the same direct-scanout path as
+        // native clients: the black-scanout they used to show was the
+        // clear-color CCS modifiers (stripped since — see
+        // feedback::strip_clear_color_modifiers) plus the missing
+        // explicit-sync acquire blocker (added in shell::new_surface).
         // Whether this output uses the plane decomposition at all (set once at
         // surface creation from overlay count / atomic / GPU identity).
         // Underrun penalty level 2 fully disables the plane decomposition:
@@ -1292,6 +1302,26 @@ impl Otto<UdevData> {
         if self.screenshare_sessions.is_empty() {
             return;
         }
+        // Rate-limit hard: each kick drops the primary swapchain (a
+        // full-screen buffer reallocation on the next frame). Content
+        // activity damages and renders at full rate on its own; the kick
+        // only refreshes a static screen. Exception: cursor motion — the
+        // cursor moves on a hardware plane without damaging the scene, but
+        // the remote feed only shows it where a blit embedded it, so a
+        // moved cursor kicks immediately.
+        const KICK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+        let cursor_pos = self.pointer.current_location();
+        let cursor_moved = self.backend_data.last_kick_cursor_pos != Some(cursor_pos);
+        if !cursor_moved
+            && self
+                .backend_data
+                .last_screencast_kick
+                .is_some_and(|t| t.elapsed() < KICK_INTERVAL)
+        {
+            return;
+        }
+        self.backend_data.last_screencast_kick = Some(std::time::Instant::now());
+        self.backend_data.last_kick_cursor_pos = Some(cursor_pos);
         // Collect the connectors with an active cast (dedup across sessions).
         let mut connectors: Vec<String> = Vec::new();
         for session in self.screenshare_sessions.values() {
@@ -1467,15 +1497,53 @@ impl Otto<UdevData> {
             };
 
             // --- Render into this virtual output's own PipeWire stream ---
+            //
+            // Deferred-fence model: keep the GPU fence wait off the main loop so
+            // it never stalls input dispatch (calloop is single-threaded).
+            //  1. Resolve the frame rendered last cycle: if its GPU fence has
+            //     signaled (non-blocking `is_reached()`), move its buffer from
+            //     the pool's `pending` holding area into `to_queue` so
+            //     `trigger_frame()` hands it to the consumer. If not signaled,
+            //     keep it pending — never block.
+            //  2. `trigger_frame()` every cycle queues fence-ready buffers and
+            //     pumps buffer dequeues back into `available`.
+            //  3. Render a new frame only when nothing is pending, into a spare
+            //     buffer, and stash its `SyncPoint` for next cycle. The buffer
+            //     enters `pending` (NOT `to_queue`) only after a successful
+            //     render, so the async process callback can't queue a
+            //     still-rendering buffer (the black/torn band 757a6f7 fixed).
             let pool_arc = self.virtual_outputs[i].pipewire_stream.buffer_pool();
-            let maybe_buf = {
+
+            if let Some(sync) = self.virtual_outputs[i].pending_frame.take() {
+                if sync.is_reached() {
+                    {
+                        let mut pool = pool_arc.lock().unwrap();
+                        let ready: Vec<_> = pool.pending.drain().collect();
+                        for (fd, buf) in ready {
+                            pool.to_queue.insert(fd, buf);
+                        }
+                    }
+                    self.virtual_outputs[i]
+                        .pipewire_stream
+                        .increment_frame_sequence();
+                } else {
+                    // GPU still drawing last cycle's frame — keep it pending.
+                    self.virtual_outputs[i].pending_frame = Some(sync);
+                }
+            }
+            self.virtual_outputs[i].pipewire_stream.trigger_frame();
+
+            let maybe_buf = if self.virtual_outputs[i].pending_frame.is_none() {
                 let mut pool = pool_arc.lock().unwrap();
-                pool.available.pop_front().inspect(|buf| {
-                    pool.to_queue.insert(buf.fd, buf.pw_buffer);
-                })
+                pool.available.pop_front()
+            } else {
+                None
             };
             if let Some(available) = maybe_buf {
+                let fd = available.fd;
+                let pw_buffer = available.pw_buffer;
                 let mut dmabuf = available.dmabuf.clone();
+                let mut rendered_sync = None;
                 {
                     // Scope the damage_tracker borrow so it ends before pipewire_stream access
                     let damage_tracker = &mut self.virtual_outputs[i].damage_tracker;
@@ -1488,7 +1556,7 @@ impl Otto<UdevData> {
                                     .cloned()
                                     .map(WorkspaceRenderElements::Scene),
                             );
-                            let _ = crate::render::render_output(
+                            match crate::render::render_output(
                                 &output_clone,
                                 &all_window_elements,
                                 elements,
@@ -1497,64 +1565,113 @@ impl Otto<UdevData> {
                                 &mut framebuffer,
                                 damage_tracker,
                                 0,
-                            );
+                            ) {
+                                // Don't block on the fence — stash it; next
+                                // cycle's resolve step hands off the buffer once
+                                // the GPU has finished.
+                                Ok(result) => {
+                                    rendered_sync = Some(result.sync.clone());
+                                }
+                                Err(e) => {
+                                    warn!("render_virtual_outputs: render failed for '{output_name}': {e}");
+                                }
+                            }
                         }
                         Err(e) => {
                             warn!("render_virtual_outputs: bind failed for '{output_name}': {e}");
                         }
                     }
                 }
-                self.virtual_outputs[i]
-                    .pipewire_stream
-                    .increment_frame_sequence();
+                match rendered_sync {
+                    Some(sync) => {
+                        pool_arc.lock().unwrap().pending.insert(fd, pw_buffer);
+                        self.virtual_outputs[i].pending_frame = Some(sync);
+                    }
+                    // Render failed — return the buffer so it isn't leaked.
+                    None => {
+                        pool_arc.lock().unwrap().available.push_back(available);
+                    }
+                }
             }
-            self.virtual_outputs[i].pipewire_stream.trigger_frame();
 
             // --- Tap screenshare sessions targeting this virtual output ---
-            for session in self.screenshare_sessions.values() {
-                for (connector, stream) in &session.streams {
-                    if *connector == output_name {
-                        let ss_pool = stream.pipewire_stream.buffer_pool();
-                        let maybe_ss_buf = {
-                            let mut pool = ss_pool.lock().unwrap();
-                            pool.available.pop_front().inspect(|buf| {
-                                pool.to_queue.insert(buf.fd, buf.pw_buffer);
-                            })
-                        };
-                        if let Some(ss_buf) = maybe_ss_buf {
-                            let mut ss_dmabuf = ss_buf.dmabuf.clone();
-                            let mut temp_tracker = OutputDamageTracker::from_output(&output_clone);
-                            match renderer.bind(&mut ss_dmabuf) {
-                                Ok(mut fb) => {
-                                    let mut ss_elements = build_cursor_elements(&mut renderer);
-                                    ss_elements.extend(
-                                        scene_stack
-                                            .iter()
-                                            .cloned()
-                                            .map(WorkspaceRenderElements::Scene),
-                                    );
-                                    let _ = crate::render::render_output(
-                                        &output_clone,
-                                        &all_window_elements,
-                                        ss_elements,
-                                        None,
-                                        &mut renderer,
-                                        &mut fb,
-                                        &mut temp_tracker,
-                                        0,
-                                    );
-                                    stream.pipewire_stream.increment_frame_sequence();
-                                }
-                                Err(e) => {
-                                    warn!("render_virtual_outputs: screenshare bind failed for '{output_name}': {e}");
+            // Same deferred-fence model as the virtual-output stream above.
+            for session in self.screenshare_sessions.values_mut() {
+                for stream in session.streams.values_mut() {
+                    if stream.output_connector != output_name {
+                        continue;
+                    }
+                    let ss_pool = stream.pipewire_stream.buffer_pool();
+
+                    // 1. Resolve last cycle's frame without blocking.
+                    if let Some(sync) = stream.pending_frame.take() {
+                        if sync.is_reached() {
+                            {
+                                let mut pool = ss_pool.lock().unwrap();
+                                let ready: Vec<_> = pool.pending.drain().collect();
+                                for (fd, buf) in ready {
+                                    pool.to_queue.insert(fd, buf);
                                 }
                             }
-                            stream.pipewire_stream.trigger_frame();
+                            stream.pipewire_stream.increment_frame_sequence();
                         } else {
-                            stream.pipewire_stream.trigger_frame();
-                            trace!(
-                                "render_virtual_outputs: no screenshare buffer for '{output_name}'"
-                            );
+                            stream.pending_frame = Some(sync);
+                        }
+                    }
+                    // 2. Queue fence-ready buffers + pump dequeues.
+                    stream.pipewire_stream.trigger_frame();
+
+                    // 3. Render a new frame only when nothing is pending.
+                    let maybe_ss_buf = if stream.pending_frame.is_none() {
+                        ss_pool.lock().unwrap().available.pop_front()
+                    } else {
+                        None
+                    };
+                    if let Some(ss_buf) = maybe_ss_buf {
+                        let fd = ss_buf.fd;
+                        let pw_buffer = ss_buf.pw_buffer;
+                        let mut ss_dmabuf = ss_buf.dmabuf.clone();
+                        let mut temp_tracker = OutputDamageTracker::from_output(&output_clone);
+                        let mut rendered_sync = None;
+                        match renderer.bind(&mut ss_dmabuf) {
+                            Ok(mut fb) => {
+                                let mut ss_elements = build_cursor_elements(&mut renderer);
+                                ss_elements.extend(
+                                    scene_stack
+                                        .iter()
+                                        .cloned()
+                                        .map(WorkspaceRenderElements::Scene),
+                                );
+                                match crate::render::render_output(
+                                    &output_clone,
+                                    &all_window_elements,
+                                    ss_elements,
+                                    None,
+                                    &mut renderer,
+                                    &mut fb,
+                                    &mut temp_tracker,
+                                    0,
+                                ) {
+                                    Ok(result) => {
+                                        rendered_sync = Some(result.sync.clone());
+                                    }
+                                    Err(e) => {
+                                        warn!("render_virtual_outputs: screenshare render failed for '{output_name}': {e}");
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                warn!("render_virtual_outputs: screenshare bind failed for '{output_name}': {e}");
+                            }
+                        }
+                        match rendered_sync {
+                            Some(sync) => {
+                                ss_pool.lock().unwrap().pending.insert(fd, pw_buffer);
+                                stream.pending_frame = Some(sync);
+                            }
+                            None => {
+                                ss_pool.lock().unwrap().available.push_back(ss_buf);
+                            }
                         }
                     }
                 }
@@ -1892,6 +2009,17 @@ pub(super) fn render_output_frame<'a>(
                                             e.geometry(scale),
                                             e.src(),
                                         );
+                                        // Debug (`/tmp/otto-slow`): commit counter must advance
+                                        // with every client frame — a constant value here means
+                                        // the surface's damage bag never ticks and the plane
+                                        // keeps scanning the first buffer forever.
+                                        if std::path::Path::new("/tmp/otto-slow").exists() {
+                                            tracing::info!(
+                                                target: "otto::planes",
+                                                "SLOW topwin {win_id:?} commit={:?}",
+                                                e.current_commit(),
+                                            );
+                                        }
                                     }
                                     workspace_render_elements
                                         .push(WorkspaceRenderElements::from(e));
@@ -2038,6 +2166,13 @@ pub(super) fn render_output_frame<'a>(
 
     let rendered = !render_frame_result.is_empty;
     let states = render_frame_result.states;
+
+    // Debug (`/tmp/otto-slow`): log the frame outcome — pairs with the
+    // pre-render SLOW frame line so a frozen screen can be attributed to
+    // either "no flip queued" (rendered=false) or a post-queue problem.
+    if std::path::Path::new("/tmp/otto-slow").exists() {
+        tracing::info!(target: "otto::planes", "SLOW result: rendered={rendered}");
+    }
 
     // 1 Hz: refresh /tmp debug toggles and log per-plane realization.
     super::debug::debug_tick(surface, &states, expose_active);
