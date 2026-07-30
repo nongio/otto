@@ -38,6 +38,8 @@ Configuration (`[power_management]`):
 - `manage_lid_switch` (default `true`) — when `false`, Otto ignores the lid
   switch entirely and all handling is delegated to systemd-logind.
 - `on_lid_close` — `"auto"` (default) or `"disable_internal_screen"`.
+- `on_power_button` — `"lock"` (default), `"suspend"`, `"shutdown"` or
+  `"ignore"`.
 
 On lid close (`manage_lid_switch = true`):
 
@@ -72,6 +74,22 @@ The suspend decision is edge-triggered on the panel teardown: a repeated
 power-state evaluation with the lid still closed (e.g. wake with the lid
 shut) does not immediately re-suspend.
 
+On power button press:
+
+- With `on_power_button = "ignore"` Otto does not touch the key: it goes
+  through the normal keyboard path and is delivered to the focused client as
+  `XF86PowerOff`, leaving the policy to systemd-logind's `HandlePowerKey`.
+- Otherwise — including the `"lock"` default — the key is intercepted from its
+  raw keycode (evdev `KEY_POWER`),
+  before lock-screen / greeter / exclusive-layer keyboard grabs, so it works
+  from a locked session or a fullscreen client — the same treatment VT
+  switching and Ctrl+Alt+Escape get. The key is then not delivered to any
+  client.
+- `"lock"` takes the same path as the `LockSession` action: it launches the
+  configured locker (no-op if the session is already locked).
+- `"suspend"` and `"shutdown"` delegate to logind (`systemctl suspend` /
+  `systemctl poweroff`).
+
 ## Constraints & Edge Cases
 
 - Suspending is delegated to logind (`systemctl suspend`); Otto does not
@@ -84,7 +102,9 @@ shut) does not immediately re-suspend.
   migrate (see Non-Goals) and simply reappears with the panel.
 - systemd-logind must be configured with `HandleLidSwitch=ignore` (and
   variants); otherwise logind suspends unconditionally before Otto can gate
-  the decision.
+  the decision. The same applies to `HandlePowerKey`, which must be `ignore`
+  for the default `on_power_button = "lock"` to be reached — otherwise logind
+  powers the machine off first.
 
 ## Rationale
 

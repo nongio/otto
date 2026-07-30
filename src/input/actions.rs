@@ -60,8 +60,20 @@ pub enum KeyAction {
     MediaStop,
     /// Lock the session by launching the configured locker
     LockSession,
+    /// The hardware power button was pressed; `[power_management].on_power_button`
+    /// decides what that means
+    PowerButton,
     /// Do nothing more
     None,
+}
+
+/// Hand a system power transition to logind, the way the lid-close path does.
+/// Otto never freezes or shuts itself down; it only asks.
+fn systemctl(verb: &str) {
+    info!(verb, "Requesting system power transition via logind");
+    if let Err(err) = Command::new("systemctl").arg(verb).spawn() {
+        error!("Failed to invoke systemctl {verb}: {err}");
+    }
 }
 
 impl<BackendData: Backend> Otto<BackendData> {
@@ -254,6 +266,23 @@ impl<BackendData: Backend> Otto<BackendData> {
                 let (cmd, args) = crate::lock::locker_command();
                 info!(locker = %cmd, "Locking session");
                 self.launch_program(cmd, args);
+            }
+
+            KeyAction::PowerButton => {
+                use crate::config::PowerButtonAction;
+
+                let action = Config::with(|c| c.power_management.on_power_button);
+                info!(?action, "Power button pressed");
+                match action {
+                    // Not reachable: the key is left alone in `ignore` mode
+                    // and never turns into this action.
+                    PowerButtonAction::Ignore => (),
+                    PowerButtonAction::Lock => {
+                        self.process_common_key_action(KeyAction::LockSession)
+                    }
+                    PowerButtonAction::Suspend => systemctl("suspend"),
+                    PowerButtonAction::Shutdown => systemctl("poweroff"),
+                }
             }
 
             KeyAction::ToggleDecorations => {

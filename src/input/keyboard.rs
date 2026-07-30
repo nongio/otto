@@ -107,6 +107,11 @@ pub fn process_keyboard_shortcut(
 /// keyboard.
 const KEY_ESC: u32 = 1 + 8;
 
+/// The hardware power button, in the xkb keycode convention. Read raw for the
+/// same reason as Escape above: on a laptop it is the one key that has to work
+/// whatever holds the keyboard — a lock screen, a greeter, a fullscreen game.
+const KEY_POWER: u32 = 116 + 8;
+
 /// Map a raw evdev function-key code to the VT it switches to.
 ///
 /// Read from raw keycodes rather than keysyms so the mapping holds regardless
@@ -155,6 +160,18 @@ impl<BackendData: Backend> Otto<BackendData> {
                 }
                 if keycode.raw() == KEY_ESC {
                     return KeyAction::LockSession;
+                }
+            }
+
+            // The power button, when Otto is configured to act on it. Checked
+            // here, before the lock/greeter grabs below, so it keeps working
+            // from a locked session — and left untouched (delivered as a plain
+            // keysym, logind's `HandlePowerKey` deciding) when the action is
+            // `ignore`.
+            if keycode.raw() == KEY_POWER {
+                let action = crate::config::Config::with(|c| c.power_management.on_power_button);
+                if action != crate::config::PowerButtonAction::Ignore {
+                    return KeyAction::PowerButton;
                 }
             }
         }
