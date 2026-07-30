@@ -456,7 +456,8 @@ impl Otto<UdevData> {
             SUPPORTED_FORMATS
         };
 
-        let compositor = self.create_surface_compositor(
+        let surface_is_legacy = surface.is_legacy();
+        let result = self.create_surface_compositor(
             node,
             surface,
             allocator,
@@ -465,7 +466,25 @@ impl Otto<UdevData> {
             &output,
         );
 
-        if let Some(compositor) = compositor {
+        if let Some((compositor, overlay_count)) = result {
+            // Plane decomposition needs an atomic driver (per-frame TEST_ONLY
+            // assignment), enough overlay planes for the per-purpose buffers,
+            // and the primary GPU (plane dmabufs are rendered with the primary
+            // GPU's EGL context; a cross-device import per plane per frame is
+            // unreliable). Anything else renders as a single scene element.
+            let planes_enabled = !surface_is_legacy
+                && overlay_count >= 3
+                && device_render_node == self.backend_data.primary_gpu;
+            if !planes_enabled {
+                tracing::info!(
+                    target: "otto::planes",
+                    "plane decomposition disabled for {}: legacy={} overlays={} primary_gpu={}",
+                    output.name(),
+                    surface_is_legacy,
+                    overlay_count,
+                    device_render_node == self.backend_data.primary_gpu,
+                );
+            }
             let dmabuf_feedback = get_surface_dmabuf_feedback(
                 self.backend_data.primary_gpu,
                 device_render_node,
@@ -484,12 +503,34 @@ impl Otto<UdevData> {
                 #[cfg(feature = "fps_ticker")]
                 fps_element,
                 dmabuf_feedback,
-                was_direct_scanout: false,
                 #[cfg(feature = "metrics")]
                 render_metrics: Some(self.render_metrics.clone()),
                 avg_render_time_us: 2000.0, // start with 2ms estimate
                 idle_countdown: 0,
                 prefetched_scene_damage: None,
+                scene_dmabuf_element: None,
+                backdrop_surface: None,
+                backdrop_image: None,
+                backdrop_preblurred: false,
+                backdrop_dirty: false,
+                expose_last_active: None,
+                switcher_last_active: None,
+                overlay_last_active: None,
+                overlay_was_active: false,
+                switcher_was_active: false,
+                promote_candidates: Vec::new(),
+                promote_since: None,
+                was_force_composite: false,
+                composite_hold_until: None,
+                transition_dump_left: 0,
+                windows_dmabuf_element: None,
+                expose_dmabuf_element: None,
+                overlay_dmabuf_element: None,
+                switcher_dmabuf_element: None,
+                dock_dmabuf_element: None,
+                last_frame_mode: super::types::FrameMode::Planes,
+                planes_enabled,
+                shadow_only_windows: Vec::new(),
                 #[cfg(feature = "renderer_sync")]
                 pending_gpu_fence: SyncPoint::signaled(),
             };
@@ -501,7 +542,10 @@ impl Otto<UdevData> {
         }
     }
 
-    /// Creates a surface compositor (either Surface or Compositor mode)
+    /// Creates a surface compositor and returns the available overlay plane
+    /// count (after driver-specific filtering). The caller uses the count to
+    /// decide whether the per-purpose plane decomposition is worth enabling
+    /// for this output (`SurfaceData::planes_enabled`).
     fn create_surface_compositor(
         &mut self,
         node: DrmNode,
@@ -510,7 +554,7 @@ impl Otto<UdevData> {
         color_formats: &[smithay::backend::allocator::Fourcc],
         render_formats: smithay::backend::allocator::format::FormatSet,
         output: &Output,
-    ) -> Option<GbmDrmCompositor> {
+    ) -> Option<(GbmDrmCompositor, usize)> {
         let device = self.backend_data.backends.get_mut(&node)?;
 
         let driver = match device.drm.get_driver() {
@@ -538,6 +582,25 @@ impl Otto<UdevData> {
             planes.overlay = vec![];
         }
 
+        let overlay_count = planes.overlay.len();
+        tracing::info!(
+            target: "otto::planes",
+            "DRM overlay planes available for {}: {} (primary={}, cursor={})",
+            output.name(),
+            overlay_count,
+            planes.primary.len(),
+            planes.cursor.len(),
+        );
+        // Log supported formats/modifiers for primary and overlay planes.
+        for (i, p) in planes.primary.iter().enumerate() {
+            let fmts: Vec<_> = p.formats.iter().map(|f| format!("{:?}+{:?}", f.code, f.modifier)).collect();
+            tracing::debug!(target: "otto::planes", "primary[{i}] formats: {fmts:?}");
+        }
+        for (i, p) in planes.overlay.iter().enumerate() {
+            let fmts: Vec<_> = p.formats.iter().map(|f| format!("{:?}+{:?}", f.code, f.modifier)).collect();
+            tracing::debug!(target: "otto::planes", "overlay[{i}] formats: {fmts:?}");
+        }
+
         tracing::debug!("Max cursor size: {:?}", device.drm.cursor_size());
         let compositor = match smithay::backend::drm::compositor::DrmCompositor::new(
             output,
@@ -556,7 +619,7 @@ impl Otto<UdevData> {
                 return None;
             }
         };
-        Some(compositor)
+        Some((compositor, overlay_count))
     }
 
     /// Handles connector disconnection events

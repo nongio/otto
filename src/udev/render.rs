@@ -17,7 +17,7 @@ use crate::{
     drawing::*,
     render::*,
     render_elements::workspace_render_elements::WorkspaceRenderElements,
-    render_elements::{output_render_elements::OutputRenderElements, scene_element::SceneElement},
+    render_elements::output_render_elements::OutputRenderElements,
     shell::{WindowElement, WindowRenderElement},
     state::{post_repaint, take_presentation_feedback, SurfaceDmabufFeedback},
 };
@@ -27,7 +27,7 @@ use smithay::{
         drm::{DrmAccessError, DrmError, DrmEventMetadata, DrmNode},
         renderer::{
             damage::OutputDamageTracker,
-            element::{AsRenderElements, Kind},
+            element::Kind,
             Bind,
         },
         SwapBuffersError,
@@ -47,7 +47,7 @@ use smithay::{
 };
 use tracing::{debug, trace, warn};
 
-use super::types::{RenderOutcome, SurfaceData, UdevData, UdevOutputId, UdevRenderer};
+use super::types::{FrameMode, RenderOutcome, SurfaceData, UdevData, UdevOutputId, UdevRenderer};
 use crate::state::Otto;
 
 // Type alias for the framebuffer returned when binding a Dmabuf with UdevRenderer
@@ -71,6 +71,24 @@ impl Otto<UdevData> {
         metadata: &mut Option<DrmEventMetadata>,
     ) {
         profiling::scope!("frame_finish", &format!("{crtc:?}"));
+        // P3 fps counter — log once per second
+        {
+            use std::sync::Mutex;
+            use std::sync::OnceLock;
+            static FPS: OnceLock<Mutex<(Instant, u32)>> = OnceLock::new();
+            let mut g = FPS
+                .get_or_init(|| Mutex::new((Instant::now(), 0)))
+                .lock()
+                .unwrap();
+            g.1 += 1;
+            let elapsed = g.0.elapsed();
+            if elapsed >= Duration::from_secs(1) {
+                let fps = g.1 as f64 / elapsed.as_secs_f64();
+                tracing::debug!(target: "otto::fps", "fps={fps:.1} ({} frames in {:.2}s)", g.1, elapsed.as_secs_f64());
+                g.0 = Instant::now();
+                g.1 = 0;
+            }
+        }
 
         let device_backend = match self.backend_data.backends.get_mut(&dev_id) {
             Some(backend) => backend,
@@ -289,8 +307,132 @@ impl Otto<UdevData> {
             .and_then(|d| d.surfaces.get_mut(&crtc))
             .and_then(|s| s.prefetched_scene_damage.take());
 
-        // Get screenshare sessions before borrowing backend_data
-        // let _has_screenshare = !self.screenshare_sessions.is_empty();
+        // ---- Topmost-window scanout selection ----
+        // Computed here, BEFORE the `device`/`surface` mutable borrow of
+        // `self.backend_data`, because the demotion re-import below calls
+        // `self.update_window_view` (full `&mut self`). Capture (screenshot
+        // via screencopy / recording via screenshare) must see a fully
+        // composited primary, so it disables scanout.
+        let capture_active =
+            !self.pending_screencopy_frames.is_empty() || !self.screenshare_sessions.is_empty();
+        // Fullscreen direct scanout: a stable single fullscreen window is
+        // scanned out on the primary plane on its own — all chrome planes
+        // are dropped for those frames. Disabled during capture and the
+        // 3-finger swipe (the finger-drag moves the workspace with no
+        // animation flag, so a fixed plane would not follow it).
+        let allow_fullscreen_scanout = self.workspaces.is_fullscreen_and_stable()
+            && !self.swipe_gesture.is_active()
+            && !capture_active;
+        let fullscreen_window = if allow_fullscreen_scanout {
+            self.workspaces.get_fullscreen_window()
+        } else {
+            None
+        };
+        // Whether this output uses the plane decomposition at all (set once at
+        // surface creation from overlay count / atomic / GPU identity).
+        let planes_enabled = self
+            .backend_data
+            .backends
+            .get(&node)
+            .and_then(|d| d.surfaces.get(&crtc))
+            .map(|s| s.planes_enabled)
+            .unwrap_or(false);
+        // Any running minimize/unminimize genie forces the full-GPU scene
+        // composite for the frame (and drops scanout promotion): the genie's
+        // image filter paints far outside the per-plane damage rects, so the
+        // plane pipeline's partial redraws corrupt the animation. The mode is
+        // held ~150ms past the animation: the settle work (reparent into the
+        // drawer, rescale, unhide) lands from an async task across several
+        // engine updates, and flipping back to planes mid-settle scans out a
+        // stale frame.
+        let minimize_now = self.workspaces.has_minimizing_window();
+        let minimize_active = if let Some(surf) = self
+            .backend_data
+            .backends
+            .get_mut(&node)
+            .and_then(|d| d.surfaces.get_mut(&crtc))
+        {
+            if minimize_now {
+                surf.composite_hold_until =
+                    Some(Instant::now() + std::time::Duration::from_millis(150));
+                true
+            } else {
+                surf.composite_hold_until
+                    .is_some_and(|t| Instant::now() < t)
+            }
+        } else {
+            minimize_now
+        };
+        let raw_scanout_desired: Vec<smithay::reexports::wayland_server::backend::ObjectId> =
+            if !planes_enabled
+                || capture_active
+                || minimize_active
+                || self.swipe_gesture.is_active()
+                || fullscreen_window.is_some()
+            {
+                Vec::new()
+            } else {
+                self.workspaces.get_scanout_candidates()
+            };
+        // Promotion hysteresis (see `SurfaceData::promote_candidates`):
+        // removals apply this frame, additions only after the candidate set
+        // has been stable for the full window.
+        const PROMOTE_STABLE: std::time::Duration = std::time::Duration::from_millis(500);
+        let current_scanout = self.workspaces.scanout_window_ids();
+        let has_additions = raw_scanout_desired
+            .iter()
+            .any(|id| !current_scanout.contains(id));
+        let scanout_desired: Vec<smithay::reexports::wayland_server::backend::ObjectId> =
+            if !has_additions {
+                raw_scanout_desired
+            } else if let Some(surf) = self
+                .backend_data
+                .backends
+                .get_mut(&node)
+                .and_then(|d| d.surfaces.get_mut(&crtc))
+            {
+                if surf.promote_candidates != raw_scanout_desired {
+                    surf.promote_candidates = raw_scanout_desired.clone();
+                    surf.promote_since = Some(Instant::now());
+                }
+                if surf
+                    .promote_since
+                    .is_some_and(|t| t.elapsed() >= PROMOTE_STABLE)
+                {
+                    raw_scanout_desired
+                } else {
+                    // Additions still settling — keep only the members that
+                    // are already promoted AND still eligible.
+                    raw_scanout_desired
+                        .into_iter()
+                        .filter(|id| current_scanout.contains(id))
+                        .collect()
+                }
+            } else {
+                raw_scanout_desired
+            };
+        // Demotion: windows that LEAVE the scanout set had a stale (or no)
+        // lay-rs content import while promoted; re-import them now (after the
+        // set update unhides their content_layer) so the first composited
+        // frame shows the current buffer, not a stale one.
+        let new_scanout_ids: std::collections::HashSet<
+            smithay::reexports::wayland_server::backend::ObjectId,
+        > = scanout_desired.iter().cloned().collect();
+        let prev_scanout_ids = self.workspaces.scanout_window_ids();
+        // Resolve departures through windows_map, NOT the Space: a window that
+        // starts minimizing is unmapped from every Space *before* this frame
+        // (hit-test exclusion), so a Space lookup misses it and skips the
+        // re-import — the genie animation would then run on the stale/blank
+        // content left over from promotion.
+        let departed_windows: Vec<WindowElement> = prev_scanout_ids
+            .iter()
+            .filter(|id| !new_scanout_ids.contains(id))
+            .filter_map(|id| self.workspaces.get_window_for_surface(id).cloned())
+            .collect();
+        self.workspaces.set_scanout_windows(&scanout_desired);
+        for w in &departed_windows {
+            self.update_window_view(w);
+        }
 
         let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {
             device
@@ -298,11 +440,27 @@ impl Otto<UdevData> {
             return;
         };
 
+        // Clone the GbmDevice handle (cheap — Arc-internal) before borrowing
+        // `device.surfaces` mutably. Used by the dmabuf-backed scene element
+        // setup below; needs to escape `device`'s mutable borrow.
+        let device_gbm = device.gbm.clone();
+
         let surface = if let Some(surface) = device.surfaces.get_mut(&crtc) {
             surface
         } else {
             return;
         };
+
+        // A demoted window's content was hidden/blanked in the windows plane
+        // while it was promoted; on demotion force a full-buffer redraw so the
+        // windows plane repaints the whole region with the re-imported content
+        // instead of trusting partial engine damage (which can miss the freshly
+        // unhidden layer and leave a hole where the scanned-out buffer was).
+        if !departed_windows.is_empty() {
+            if let Some(el) = &surface.windows_dmabuf_element {
+                el.request_full_render();
+            }
+        }
 
         // ── Deferred GPU fence: wait for the *previous* frame's GPU work ─────
         //
@@ -356,31 +514,39 @@ impl Otto<UdevData> {
         // distinct fields, so field-projection rules allow the mutable borrow
         // of `self.scene_element` here even though `surface` (derived from
         // `self.backend_data`) is also live.
-        let scene_has_damage =
-            prefetched_scene_damage.unwrap_or_else(|| self.scene_element.update());
+        let scene_has_damage = if !departed_windows.is_empty() {
+            // A window was demoted from scanout this frame: its buffer was
+            // re-imported (above) *after* the Phase-1 scene prefetch, so that
+            // content transaction is still unflushed. Re-run the engine update
+            // now to apply it before compositing, and force a draw — otherwise
+            // the first composited frame after demotion shows the stale,
+            // shadow-only scene (a one-frame flicker).
+            self.scene_element.update();
+            true
+        } else {
+            prefetched_scene_damage.unwrap_or_else(|| self.scene_element.update())
+        };
         let all_window_elements: Vec<&WindowElement> = self.workspaces.spaces_elements().collect();
 
-        // Determine if direct scanout should be allowed:
-        // - Current workspace must be in fullscreen mode and not animating
-        // - Disable during expose gesture
-        // - Disable during workspace swipe gesture
-        let allow_direct_scanout =
-            self.workspaces.is_fullscreen_and_stable() && !self.swipe_gesture.is_active();
+        // Lazily set up the dmabuf-backed scene elements for this surface.
+        // Uses `device_gbm` (cloned out of `device` before the surface
+        // mut-borrow) so we don't conflict with the existing mutable borrows.
+        // Skipped entirely when the plane decomposition is disabled for this
+        // output — the swapchains would only waste GPU memory.
+        if let (true, Some(mode)) = (planes_enabled, output.current_mode()) {
+            super::planes::ensure_plane_elements(
+                surface,
+                &self.layers_engine,
+                &device_gbm,
+                crtc,
+                (mode.size.w, mode.size.h),
+            );
+        }
 
-        // Only fetch the fullscreen window if direct scanout is allowed
-        let fullscreen_window = if allow_direct_scanout {
-            self.workspaces.get_fullscreen_window()
-        } else {
-            None
-        };
-
-        // Build a per-output scene element that renders from the output's own layer node
-        let output_scene_element = self
-            .workspaces
-            .output_workspaces
-            .get(&output.name())
-            .map(|ows| self.scene_element.for_output_layer(&ows.output_layer))
-            .unwrap_or_else(|| self.scene_element.clone());
+        // Every frame: point each plane element at its output's node.
+        if let Some(ows) = self.workspaces.output_workspaces.get(&output.name()) {
+            super::planes::wire_plane_nodes(surface, ows);
+        }
 
         // Classify every window into its visibility state so post_repaint can
         // pick a per-window frame-callback throttle. `occluded_ids` is empty
@@ -388,14 +554,118 @@ impl Otto<UdevData> {
         // for the main "background app behind a maximized window" case.
         let expose_active =
             self.workspaces.is_expose_transitioning() || self.workspaces.get_show_all();
+        tracing::debug!(
+            target: "otto::planes",
+            "expose inputs: transitioning={} show_all={} gesture={} animating={}",
+            self.workspaces.is_expose_transitioning(),
+            self.workspaces.get_show_all(),
+            self.workspaces
+                .show_all_gesture
+                .load(std::sync::atomic::Ordering::Relaxed),
+            self.workspaces
+                .is_animating
+                .load(std::sync::atomic::Ordering::Relaxed),
+        );
+
+        let occluded_ids = self.workspaces.occluded_window_ids();
         let window_throttle_states = crate::state::window_throttle::classify_windows(
             &self.workspaces,
             &all_window_elements,
-            &std::collections::HashSet::new(),
+            &occluded_ids,
             expose_active,
         );
 
-        let result = render_surface(
+        // ── Shadow-only / direct scanout window selection ─────────────────────
+        //
+        // When tier ≥ Tier3 and no overlay UI or expose is active, the topmost
+        // non-animating window(s) are put in "shadow-only" mode: their
+        // `content_layer` is hidden in lay-rs so the shadow still renders in
+        // `windows_dmabuf_element`, while the client buffer is pushed directly as
+        // a `ScanoutCandidate` element (zero GPU copy). Ordering by the workspace
+        // windows_list (bottom→top) picks the topmost window at index rev().next().
+        let screencopy_pending = self
+            .pending_screencopy_frames
+            .iter()
+            .any(|p| p.output == output);
+
+        // Apply the scanout set (selection + content_layer transitions were
+        // done in `set_scanout_windows`, before the `surface` borrow).
+        surface.shadow_only_windows = scanout_desired.clone();
+
+        let switcher_active = self.workspaces.app_switcher.alive();
+        let overlay_active =
+            self.workspaces.is_overlay_ui_active(&output) || self.dnd_icon.is_some();
+        {
+            use super::planes::maybe_release_plane;
+            maybe_release_plane(
+                &mut surface.expose_dmabuf_element,
+                expose_active,
+                &mut surface.expose_last_active,
+                "expose",
+            );
+            maybe_release_plane(
+                &mut surface.switcher_dmabuf_element,
+                switcher_active,
+                &mut surface.switcher_last_active,
+                "switcher",
+            );
+            maybe_release_plane(
+                &mut surface.overlay_dmabuf_element,
+                overlay_active,
+                &mut surface.overlay_last_active,
+                "overlay",
+            );
+        }
+        // Re-activation edge: the plane's buffer still shows whatever was
+        // rendered before it left the frame (a destroyed tooltip, a closed
+        // switcher) — the removal damage was cleared on frames where the
+        // plane didn't render. Force a full redraw so re-pushing the plane
+        // can't flash ghost content.
+        if overlay_active && !surface.overlay_was_active {
+            if let Some(el) = &surface.overlay_dmabuf_element {
+                el.request_full_render();
+            }
+        }
+        surface.overlay_was_active = overlay_active;
+        if switcher_active && !surface.switcher_was_active {
+            if let Some(el) = &surface.switcher_dmabuf_element {
+                el.request_full_render();
+            }
+        }
+        surface.switcher_was_active = switcher_active;
+        // Composite→planes edge: the genie frames rendered through the
+        // full-scene element, which consumed and cleared all engine damage
+        // while the plane buffers sat idle. Without a full redraw the first
+        // planes frame scans out the stale pre-composite content (ghost of
+        // the just-minimized window).
+        if surface.was_force_composite && !minimize_active {
+            for el in [
+                &surface.scene_dmabuf_element,
+                &surface.windows_dmabuf_element,
+                &surface.expose_dmabuf_element,
+                &surface.overlay_dmabuf_element,
+                &surface.switcher_dmabuf_element,
+                &surface.dock_dmabuf_element,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                el.request_full_render();
+            }
+            if std::path::Path::new("/tmp/otto-dump-transition").exists() {
+                surface.transition_dump_left = 8;
+            }
+        }
+        surface.was_force_composite = minimize_active;
+
+        let output_scene_element = self
+            .workspaces
+            .output_workspaces
+            .get(&output.name())
+            .map(|ows| self.scene_element.for_output_layer(&ows.output_layer))
+            .unwrap_or_else(|| self.scene_element.clone());
+
+        let result = render_output_frame(
             surface,
             &mut renderer,
             &all_window_elements,
@@ -405,11 +675,42 @@ impl Otto<UdevData> {
             &self.cursor_texture_cache,
             self.dnd_icon.as_ref(),
             &self.clock,
-            output_scene_element,
             scene_has_damage,
-            fullscreen_window.as_ref(),
             &window_throttle_states,
             &mut self.pending_screencopy_frames,
+            expose_active,
+            fullscreen_window.as_ref(),
+            switcher_active,
+            !self.workspaces.dock.is_hidden(),
+            overlay_active,
+            {
+                // The windows plane must stay up while a workspace switch is
+                // in flight: `current_workspace` flips to the TARGET workspace
+                // the moment the release animation starts, so gating on the
+                // current workspace alone drops the plane mid-transition when
+                // switching toward an empty workspace — the source windows
+                // vanish while still animating out. The swipe drag and the
+                // follow-up animation both keep it pushed.
+                let current_has_windows = self
+                    .workspaces
+                    .output_workspaces
+                    .get(&output.name())
+                    .map(|ows| ows.current_workspace_has_windows())
+                    .unwrap_or(false);
+                current_has_windows
+                    || self.swipe_gesture.is_active()
+                    || self
+                        .workspaces
+                        .is_animating
+                        .load(std::sync::atomic::Ordering::Relaxed)
+            },
+            screencopy_pending,
+            self.workspaces
+                .scanout_commit_pending
+                .swap(false, std::sync::atomic::Ordering::Relaxed),
+            planes_enabled,
+            minimize_active,
+            output_scene_element,
         );
 
         let reschedule = match &result {
@@ -948,7 +1249,7 @@ impl Otto<UdevData> {
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::mutable_key_type)] // ObjectId as HashMap key — see window_throttle.rs
-pub(super) fn render_surface<'a>(
+pub(super) fn render_output_frame<'a>(
     surface: &'a mut SurfaceData,
     renderer: &mut UdevRenderer<'a>,
     window_elements: &[&WindowElement],
@@ -958,14 +1259,23 @@ pub(super) fn render_surface<'a>(
     cursor_texture_cache: &CursorTextureCache,
     dnd_icon: Option<&wl_surface::WlSurface>,
     clock: &Clock<Monotonic>,
-    scene_element: SceneElement,
     scene_has_damage: bool,
-    fullscreen_window: Option<&WindowElement>,
     window_throttle_states: &std::collections::HashMap<
         smithay::reexports::wayland_server::backend::ObjectId,
         crate::state::window_throttle::WindowThrottleState,
     >,
     pending_screencopy: &mut Vec<crate::state::screencopy::PendingScreencopy>,
+    expose_active: bool,
+    fullscreen_window: Option<&WindowElement>,
+    switcher_active: bool,
+    dock_visible: bool,
+    overlay_active: bool,
+    windows_plane_has_content: bool,
+    screencopy_pending: bool,
+    scanout_commit: bool,
+    planes_enabled: bool,
+    force_composite: bool,
+    output_scene_element: crate::render_elements::scene_element::SceneElement,
 ) -> Result<RenderOutcome, SwapBuffersError> {
     // Start frame timing
     #[cfg(feature = "metrics")]
@@ -1041,60 +1351,265 @@ pub(super) fn render_surface<'a>(
         workspace_render_elements.push(WorkspaceRenderElements::Fps(element.clone()));
     }
 
-    // Track direct scanout mode transitions
-    let is_direct_scanout = fullscreen_window.is_some();
-    let mode_changed = is_direct_scanout != surface.was_direct_scanout;
-    surface.was_direct_scanout = is_direct_scanout;
-
-    // Reset buffers when transitioning between direct scanout and normal mode
-    // This ensures clean state when switching rendering paths
-    if mode_changed {
-        surface.compositor.reset_buffers();
-    }
-
-    // If fullscreen_window is Some, direct scanout is allowed (checked by caller)
-    let (output_elements, clear_color, should_draw) =
-        if let Some(fullscreen_win) = fullscreen_window {
-            // In fullscreen mode: render only the fullscreen window + cursor
-            // Skip the scene element entirely for direct scanout
-            let mut elements: Vec<OutputRenderElements<'a, _, WindowRenderElement<_>>> = Vec::new();
-
-            // Add pointer elements first (rendered at bottom, but cursor plane may handle separately)
-            elements.extend(
-                workspace_render_elements
-                    .into_iter()
-                    .map(OutputRenderElements::from),
-            );
-
-            // Add the fullscreen window's render elements wrapped in Wrap
-            use smithay::backend::renderer::element::Wrap;
-            let window_elements_rendered: Vec<WindowRenderElement<_>> =
-                fullscreen_win.render_elements(renderer, (0, 0).into(), scale, 1.0);
-            elements.extend(
-                window_elements_rendered
-                    .into_iter()
-                    .map(|e| OutputRenderElements::Window(Wrap::from(e))),
-            );
-
-            // Always render in fullscreen mode since the window surface may have damage
-            // Use black clear color - the window fills the screen anyway
-            (elements, CLEAR_COLOR, true)
-        } else {
-            // Normal mode: render the full scene
-            workspace_render_elements.push(WorkspaceRenderElements::Scene(scene_element));
-
-            // We still pass cursor elements to render_frame so the DRM compositor
-            // can manage the hardware cursor plane (ALLOW_CURSOR_PLANE_SCANOUT).
-            // When nothing actually changed, render_frame returns is_empty=true
-            // and no page flip occurs, so this is cheap in the idle case.
-            let cursor_needs_draw = pointer_in_output;
-            // Screencopy never forces a render: pending capture frames piggyback on
-            // the next render that happens for some other reason (scene damage,
-            // cursor, DND). This avoids a 120 Hz capture loop when a client keeps
-            // a frame request outstanding.
-            let should_draw = scene_has_damage || dnd_needs_draw || cursor_needs_draw;
+    let (output_elements, clear_color, should_draw) = {
+        let cursor_needs_draw = pointer_in_output;
+            // Fullscreen scanout must always draw: the promoted buffer's
+            // commits produce no scene damage, and gating on it would drop
+            // video frames. `scanout_commit` is the same signal for promoted
+            // (non-fullscreen) windows, set per-commit by the shell.
+            let should_draw = scene_has_damage
+                || dnd_needs_draw
+                || cursor_needs_draw
+                || screencopy_pending
+                || fullscreen_window.is_some()
+                || scanout_commit;
             if !should_draw {
                 return Ok(RenderOutcome::skipped());
+            }
+
+            // NOTE: when a screencopy client is waiting we still build the
+            // normal plane-element set — only the scanout FrameFlags are
+            // dropped (below) so every element GPU-composites into the
+            // primary swapchain and `blit_current_frame` captures exactly
+            // the on-screen stack. Re-rendering the scene tree as one
+            // `Scene` element is NOT equivalent: plane subtrees render in
+            // isolation and ignore ancestor visibility (e.g. the hidden
+            // workspaces_layer while expose is shown), so a tree re-render
+            // diverges from what the planes display.
+            // Render the bottom plane first (planes mode only) — the backdrop
+            // composite needs it, and its dmabuf's existence decides whether
+            // the plane stack has a floor at all.
+            let bg_plane_ready = if planes_enabled && fullscreen_window.is_none() && !force_composite {
+                if let Some(el) = &surface.scene_dmabuf_element {
+                    el.render(renderer.as_mut());
+                    el.current_dmabuf().is_some()
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            // Whether the full-scene element is part of this frame. It clears
+            // engine damage itself in draw(); clearing here as well would wipe
+            // the damage region its subtree culling depends on.
+            let mut scene_element_pushed = false;
+
+            if let Some(fs_win) = fullscreen_window {
+                // ── Fullscreen direct scanout ─────────────────────────────
+                // The client buffer IS the frame: push only the window's
+                // surface tree (cursor elements were pushed above) and skip
+                // every chrome plane — dock and topbar are hidden in
+                // fullscreen anyway. The buffer spans the output and is
+                // opaque, so Smithay direct-scans it on the primary plane
+                // (ALLOW_PRIMARY_PLANE_SCANOUT_ANY); if that fails it
+                // GPU-composites the same element, which stays z-correct.
+                use smithay::backend::renderer::element::surface::render_elements_from_surface_tree;
+                if let Some(wl_surface) = fs_win.wl_surface() {
+                    let geo_loc = fs_win.geometry().loc.to_f64().to_physical(scale);
+                    let pos: Point<i32, Physical> = (
+                        -(geo_loc.x.round() as i32),
+                        -(geo_loc.y.round() as i32),
+                    )
+                        .into();
+                    let elems: Vec<WorkspaceRenderElements<_>> =
+                        render_elements_from_surface_tree(
+                            renderer,
+                            &wl_surface,
+                            pos,
+                            scale,
+                            1.0,
+                            Kind::ScanoutCandidate,
+                        );
+                    workspace_render_elements.extend(elems);
+                }
+            } else if !planes_enabled || !bg_plane_ready {
+                // Single-element path: the plane decomposition is disabled for
+                // this output (plane-poor / non-atomic / secondary-GPU
+                // hardware), a full-GPU composite is explicitly forced (e.g.
+                // during the minimize genie, whose image filter paints far
+                // outside the per-plane damage rects), or the bg plane
+                // unexpectedly has no dmabuf (allocation or Skia-surface
+                // failure) — without a floor the plane stack would show only
+                // the clear color.
+                if planes_enabled && !force_composite {
+                    static WARNED: std::sync::atomic::AtomicBool =
+                        std::sync::atomic::AtomicBool::new(false);
+                    if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                        tracing::warn!(
+                            target: "otto::planes",
+                            "bg plane has no dmabuf — falling back to scene composite"
+                        );
+                    }
+                }
+                workspace_render_elements
+                    .push(WorkspaceRenderElements::Scene(output_scene_element.clone()));
+                scene_element_pushed = true;
+            } else {
+            // Push plane elements top→bottom. Smithay's `DrmCompositor::render_frame`
+            // assigns overlay planes front-first and tries every element tagged
+            // `Kind::ScanoutCandidate` on an overlay before falling back to
+            // GPU-compositing that element into the primary plane. Our
+            // `SceneDmabufElement` already reports `ScanoutCandidate`, so we just
+            // push in z-order and let Smithay do plane assignment + fallback.
+            // Push-only (`planes::push_ready`): planes are rendered
+            // explicitly bottom-up further down (the backdrop composite
+            // needs the lower planes rendered before the overlay), and
+            // engine damage is cleared only once per frame — a render
+            // inside the push would re-render planes a second time.
+            use super::planes::push_ready;
+
+            // Cross-plane backdrop (vibrancy): rebuild the downscaled
+            // composite when needed, render the middle plane, and hand the
+            // composite to the blur-bearing upper planes (see
+            // `udev::backdrop` for the full design notes).
+            super::backdrop::update_backdrop_and_upper_planes(
+                surface,
+                renderer,
+                output,
+                expose_active,
+                overlay_active,
+                switcher_active,
+                dock_visible,
+            );
+
+            // Push top→bottom: dock, switcher (only while alive — an empty
+            // transparent strip would waste a plane), then overlay chrome.
+            if dock_visible {
+                push_ready(&surface.dock_dmabuf_element, &mut workspace_render_elements);
+            }
+            if switcher_active {
+                push_ready(&surface.switcher_dmabuf_element, &mut workspace_render_elements);
+            }
+            if overlay_active {
+                push_ready(&surface.overlay_dmabuf_element, &mut workspace_render_elements);
+            }
+
+            if expose_active {
+                // Expose replaces the windows plane while it's visible.
+                push_ready(&surface.expose_dmabuf_element, &mut workspace_render_elements);
+                // Keep the windows swapchain warm for the expose→windows
+                // transition so closing expose doesn't flash a cold frame.
+                if let Some(el) = &surface.windows_dmabuf_element {
+                    el.render(renderer.as_mut());
+                }
+            } else {
+                // Top-window direct scanout: the client's Wayland buffer goes
+                // to Smithay as a `ScanoutCandidate`. Smithay tries to bind
+                // it to an overlay; if that fails it composites the client
+                // buffer into primary (one GPU blit — still cheaper than
+                // doubly-walking the scene graph).
+                //
+                // Only the ROOT surface is pushed. Decoration subsurfaces
+                // (SSD titlebar/buttons/borders) keep rendering in the
+                // windows plane — they never overlap the root surface's
+                // rect, so outside the client element the windows plane
+                // simply shows through. Pushing the whole tree instead made
+                // every promoted SSD window explode into many overlapping
+                // candidates that lost the plane auction and dragged the
+                // full stack into GPU composite.
+                use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
+                use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
+                for win_id in &surface.shadow_only_windows {
+                    if let Some(win) = window_elements.iter().find(|w| w.id() == *win_id) {
+                        if let Some(wl_surface) = win.wl_surface() {
+                            // render_position() is the visible-content origin
+                            // (physical px). The element expects the wl_surface
+                            // buffer origin, which for CSD windows is shifted
+                            // back by geometry.loc.
+                            let pos = win.base_layer().render_position();
+                            let geo_loc = win.geometry().loc.to_f64().to_physical(scale);
+                            let buf_x = pos.x as f64 - geo_loc.x;
+                            let buf_y = pos.y as f64 - geo_loc.y;
+                            let elem = smithay::wayland::compositor::with_states(
+                                &wl_surface,
+                                |states| {
+                                    // Same location math as the tree walk in
+                                    // render_elements_from_surface_tree: the
+                                    // root element sits at origin + its view
+                                    // offset.
+                                    let mut location: Point<f64, Physical> =
+                                        (buf_x, buf_y).into();
+                                    match states
+                                        .data_map
+                                        .get::<RendererSurfaceStateUserData>()
+                                        .and_then(|d| d.lock().unwrap().view())
+                                    {
+                                        Some(view) => {
+                                            location +=
+                                                view.offset.to_f64().to_physical(scale);
+                                        }
+                                        // Unmapped — nothing to scan out.
+                                        None => return Ok(None),
+                                    }
+                                    WaylandSurfaceRenderElement::from_surface(
+                                        renderer,
+                                        &wl_surface,
+                                        states,
+                                        location,
+                                        1.0,
+                                        Kind::ScanoutCandidate,
+                                    )
+                                },
+                            );
+                            match elem {
+                                Ok(Some(e)) => {
+                                    {
+                                        use smithay::backend::renderer::element::Element as _;
+                                        tracing::debug!(
+                                            target: "otto::planes",
+                                            "topwin scanout push at ({buf_x},{buf_y}) geo={:?} src={:?}",
+                                            e.geometry(scale),
+                                            e.src(),
+                                        );
+                                    }
+                                    workspace_render_elements
+                                        .push(WorkspaceRenderElements::from(e));
+                                }
+                                Ok(None) => {}
+                                Err(err) => {
+                                    tracing::warn!(
+                                        target: "otto::planes",
+                                        "topwin surface import failed: {err}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if windows_plane_has_content {
+                    push_ready(&surface.windows_dmabuf_element, &mut workspace_render_elements);
+                }
+            }
+
+            // Background on primary plane (bottom).
+            push_ready(&surface.scene_dmabuf_element, &mut workspace_render_elements);
+
+            #[cfg(feature = "debug-kms")]
+            super::debug::maybe_save_planes(surface);
+            super::debug::maybe_dump_planes(surface);
+
+            if surface.transition_dump_left > 0 {
+                let idx = 8 - surface.transition_dump_left;
+                surface.transition_dump_left -= 1;
+                super::debug::dump_transition_frame(surface, idx);
+            }
+
+            } // end planes branch
+
+            // Clear engine damage after all plane renders so `subtree_damage()`
+            // returns `None` next frame when nothing has changed. Without this
+            // call `per_node_damage` is never cleared and every plane redraws
+            // every frame even on an otherwise idle desktop. Skipped when the
+            // full-scene element is in the frame — its draw() both consumes
+            // the damage region and clears it (clearing here would blank its
+            // subtree culling); likewise scene-mode outputs have no plane
+            // elements and rely on draw() entirely.
+            if !scene_element_pushed {
+                if let Some(el) = &surface.scene_dmabuf_element {
+                    el.clear_engine_damage();
+                }
             }
 
             let output_render_elements: Vec<OutputRenderElements<'a, _, WindowRenderElement<_>>> =
@@ -1110,21 +1625,69 @@ pub(super) fn render_surface<'a>(
                 renderer,
             );
             (output_elements, clear_color, true)
-        };
+    };
 
     if !should_draw {
         return Ok(RenderOutcome::skipped());
     }
 
+    // Reset the swapchain when the element mode changes so the transition
+    // frame itself renders with full damage (see `FrameMode`).
+    let frame_mode = if screencopy_pending || force_composite {
+        FrameMode::Composite
+    } else if fullscreen_window.is_some() || !surface.shadow_only_windows.is_empty() {
+        FrameMode::DirectScanout
+    } else {
+        FrameMode::Planes
+    };
+    if frame_mode != surface.last_frame_mode {
+        surface.last_frame_mode = frame_mode;
+        surface.compositor.reset_buffers();
+    }
+
+    // Debug (`/tmp/otto-slow`): frame-by-frame slideshow — sleep 100ms per
+    // frame and log a frame counter with the mode and element set, so a
+    // human-visible glitch can be matched 1:1 to a logged frame.
+    if std::path::Path::new("/tmp/otto-slow").exists() {
+        static FRAME_NO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = FRAME_NO.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        use smithay::backend::renderer::element::Element as _;
+        let order: Vec<String> = output_elements.iter().map(|e| format!("{:?}", e.id())).collect();
+        tracing::info!(
+            target: "otto::planes",
+            "SLOW frame {n}: mode={frame_mode:?} shadow_only={:?} elements=[{}]",
+            surface.shadow_only_windows,
+            order.join(" | ")
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    // Debug: dump the final element order handed to render_frame (front→back).
+    // Level-checked first — the strings must not be built on every frame when
+    // the target is quiet.
+    if tracing::enabled!(target: "otto::planes", tracing::Level::DEBUG) && output_elements.len() > 4
+    {
+        use smithay::backend::renderer::element::Element as _;
+        let order: Vec<String> = output_elements
+            .iter()
+            .map(|e| format!("{:?}", e.id()))
+            .collect();
+        tracing::debug!(target: "otto::planes", "element order: {}", order.join(" | "));
+    }
+
+    // Screencopy frames composite everything into the primary swapchain so
+    // the capture blit sees the full image; the cursor keeps its own plane
+    // so captures exclude the pointer.
+    let frame_flags = if screencopy_pending {
+        smithay::backend::drm::compositor::FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT
+    } else {
+        smithay::backend::drm::compositor::FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT
+            | smithay::backend::drm::compositor::FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY
+            | smithay::backend::drm::compositor::FrameFlags::ALLOW_OVERLAY_PLANE_SCANOUT
+    };
     let render_frame_result = surface
         .compositor
-        .render_frame(
-            renderer,
-            &output_elements,
-            clear_color,
-            smithay::backend::drm::compositor::FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT
-                | smithay::backend::drm::compositor::FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY,
-        )
+        .render_frame(renderer, &output_elements, clear_color, frame_flags)
         .map_err(|err| match err {
             smithay::backend::drm::compositor::RenderFrameError::PrepareFrame(err) => err.into(),
             smithay::backend::drm::compositor::RenderFrameError::RenderFrame(
@@ -1153,6 +1716,10 @@ pub(super) fn render_surface<'a>(
 
     let rendered = !render_frame_result.is_empty;
     let states = render_frame_result.states;
+
+    // 1 Hz: refresh /tmp debug toggles and log per-plane realization.
+    super::debug::debug_tick(surface, &states, expose_active);
+
     let damage: Option<Vec<Rectangle<i32, Physical>>> = None; // DRM compositor doesn't provide damage info
 
     // Record damage metrics if available
@@ -1177,18 +1744,16 @@ pub(super) fn render_surface<'a>(
 
     let damage_for_return = damage.clone();
 
-    // In direct scanout mode, only send frame callbacks to the fullscreen window
-    // This prevents off-workspace windows from generating damage that causes glitches
-    let post_repaint_elements: Vec<&WindowElement> = if let Some(fs_win) = fullscreen_window {
-        vec![fs_win]
-    } else {
-        window_elements.to_vec()
-    };
-
+    // In fullscreen scanout only the fullscreen window gets frame callbacks —
+    // other windows generating damage would only cause pointless wakeups.
+    // All windows get callbacks, always: the throttle classifier already
+    // demotes everything behind a fullscreen window to the 2 Hz Occluded
+    // bucket, and dropping below that starves Chromium's buffer-eviction
+    // heuristic (blank canvas on restore).
     post_repaint(
         output,
         &states,
-        &post_repaint_elements,
+        window_elements,
         surface
             .dmabuf_feedback
             .as_ref()
@@ -1213,7 +1778,7 @@ pub(super) fn render_surface<'a>(
         }
 
         let output_presentation_feedback =
-            take_presentation_feedback(output, &post_repaint_elements, &states);
+            take_presentation_feedback(output, window_elements, &states);
         surface
             .compositor
             .queue_frame(Some(output_presentation_feedback))?;
@@ -1236,7 +1801,8 @@ pub(super) fn initial_render(
             &[],
             CLEAR_COLOR,
             smithay::backend::drm::compositor::FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT
-                | smithay::backend::drm::compositor::FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY,
+                | smithay::backend::drm::compositor::FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY
+                | smithay::backend::drm::compositor::FrameFlags::ALLOW_OVERLAY_PLANE_SCANOUT,
         )
         .map_err(|err| match err {
             smithay::backend::drm::compositor::RenderFrameError::PrepareFrame(err) => err.into(),

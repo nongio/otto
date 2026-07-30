@@ -31,8 +31,10 @@ pub struct WorkspaceView {
 
     // scene
     pub layers_engine: Arc<Engine>,
-    pub workspace_layer: Layer,
     pub windows_layer: Layer,
+    /// Container for background_view + layer_shell_bg_mirror.
+    /// NodeRef for the background KMS plane.
+    pub workspace_background: Layer,
 
     fullscreen_mode: Arc<AtomicBool>,
     is_fullscreen_animating: Arc<AtomicBool>,
@@ -75,23 +77,12 @@ impl WorkspaceView {
     pub fn new(
         index: usize,
         layers_engine: Arc<Engine>,
-        parent: &Layer,
+        _parent: &Layer,
         overlay_layer: Layer,
         layer_shell_background: &Layer,
     ) -> Self {
         println!("add_workspace {}", index);
 
-        let workspace_layer = layers_engine.new_layer();
-        workspace_layer.set_key(format!("workspace_view_{}", index));
-        workspace_layer.set_layout_style(taffy::Style {
-            position: taffy::Position::Absolute,
-            ..Default::default()
-        });
-        workspace_layer.set_clip_children(true, None);
-        workspace_layer.set_clip_content(true, None);
-        workspace_layer.set_size(layers::types::Size::auto(), None);
-        workspace_layer.set_position((0.0, 0.0), None);
-        workspace_layer.set_pointer_events(false);
         let background_layer = layers_engine.new_layer();
         background_layer.set_layout_style(taffy::Style {
             position: taffy::Position::Absolute,
@@ -101,19 +92,34 @@ impl WorkspaceView {
         // background_layer.set_opacity(0.0, None);
 
         let windows_layer = layers_engine.new_layer();
-        windows_layer.set_key(format!("workspace_windows_container_{}", index));
+        windows_layer.set_key(format!("workspace_windows_{}", index));
         windows_layer.set_layout_style(taffy::Style {
             position: taffy::Position::Absolute,
-            size: taffy::Size {
-                width: taffy::Dimension::Percent(1.0),
-                height: taffy::Dimension::Percent(1.0),
-            },
             ..Default::default()
         });
+        // Clipping is here (was on workspace_layer) so windows don't bleed across
+        // workspace boundaries when the windows_plane scrolls.
+        windows_layer.set_clip_children(true, None);
+        windows_layer.set_clip_content(true, None);
+        windows_layer.set_image_cached(false);
         windows_layer.set_pointer_events(false);
 
-        let _ = layers_engine.append_layer(&workspace_layer, parent.id);
-        let _ = layers_engine.append_layer(&background_layer, Some(workspace_layer.id));
+        // Container for all background content — used as the NodeRef for the
+        // background KMS plane (Phase 3). Groups background_view and the
+        // layer_shell_bg_mirror so they can be rendered independently.
+        let workspace_background = layers_engine.new_layer();
+        workspace_background.set_key(format!("workspace_background_{}", index));
+        workspace_background.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        workspace_background.set_size(layers::types::Size::percent(1.0, 1.0), None);
+        workspace_background.set_pointer_events(false);
+
+        // workspace_background is NOT attached here — the caller (Workspaces) places it
+        // into the shared backgrounds_root so all workspaces' backgrounds live in one
+        // layer tree that can be rendered as a single KMS plane.
+        let _ = layers_engine.append_layer(&background_layer, Some(workspace_background.id));
 
         // Mirror the per-output wlr-layer-shell background container into this workspace,
         // above the config-driven background_view and below windows.
@@ -128,9 +134,9 @@ impl WorkspaceView {
         layer_shell_bg_mirror.set_picture_cached(false);
         layer_shell_background.add_follower_node(&layer_shell_bg_mirror);
         layer_shell_bg_mirror.set_pointer_events(false);
-        let _ = layers_engine.append_layer(&layer_shell_bg_mirror, Some(workspace_layer.id));
+        let _ = layers_engine.append_layer(&layer_shell_bg_mirror, Some(workspace_background.id));
 
-        let _ = layers_engine.append_layer(&windows_layer, Some(workspace_layer.id));
+        // windows_layer is NOT attached here — the caller places it into windows_plane.
 
         // Parse background color from config
         let background_color = Config::with(|c| parse_hex_color(&c.background_color));
@@ -145,9 +151,7 @@ impl WorkspaceView {
         let window_selector_view = WindowSelectorView::new(
             index,
             layers_engine.clone(),
-            background_view.base_layer.clone(),
             overlay_layer,
-            layer_shell_background,
         );
 
         let window_selector_view = Arc::new(window_selector_view);
@@ -167,7 +171,7 @@ impl WorkspaceView {
             background_view,
             layers_engine,
             windows_layer,
-            workspace_layer,
+            workspace_background,
             fullscreen_mode: Arc::new(AtomicBool::new(false)),
             is_fullscreen_animating: Arc::new(AtomicBool::new(false)),
             name: Arc::new(RwLock::new(None)),
@@ -177,11 +181,15 @@ impl WorkspaceView {
     }
 
     pub fn update_layout(&self, logical_index: usize, width: f32, height: f32, scale: f32) {
-        self.workspace_layer
-            .set_size(layers::types::Size::points(width, height), None);
-        // Position workspaces with spacing between them (WORKSPACE_SPACING is logical, scale to physical)
         let x = logical_index as f32 * (width + WORKSPACE_SPACING * scale);
-        self.workspace_layer.set_position((x, 0.0), None);
+        // workspace_background mirrors the workspace position inside background_plane
+        self.workspace_background
+            .set_size(layers::types::Size::points(width, height), None);
+        self.workspace_background.set_position((x, 0.0), None);
+        // windows_layer mirrors the workspace position inside windows_plane
+        self.windows_layer
+            .set_size(layers::types::Size::points(width, height), None);
+        self.windows_layer.set_position((x, 0.0), None);
     }
 
     /// add a window layer to the workspace windows container
@@ -347,7 +355,6 @@ impl WorkspaceView {
 impl Drop for WorkspaceView {
     fn drop(&mut self) {
         self.windows_layer.remove();
-        self.workspace_layer.remove();
         self.window_selector_view.window_selector_root.remove();
     }
 }

@@ -111,9 +111,6 @@ pub struct SurfaceData {
     pub(super) fps_element:
         Option<crate::drawing::FpsElement<smithay::backend::renderer::multigpu::MultiTexture>>,
     pub(super) dmabuf_feedback: Option<DrmSurfaceDmabufFeedback>,
-    /// Track whether we were in direct scanout mode on the previous frame
-    /// Used to reset buffers when transitioning between modes
-    pub(super) was_direct_scanout: bool,
     /// Rendering metrics
     #[cfg(feature = "metrics")]
     pub(super) render_metrics: Option<Arc<crate::render_metrics::RenderMetrics>>,
@@ -143,6 +140,100 @@ pub struct SurfaceData {
     /// first frame or after an idle wakeup); the draw phase falls back to
     /// calling `update()` inline in that case.
     pub(super) prefetched_scene_damage: Option<bool>,
+    /// Background subtree rendered into its own dmabuf — the bottom of the
+    /// plane stack, direct-scanned on the PRIMARY plane via
+    /// `UnderlyingStorage::Dmabuf`. Allocated lazily on the first
+    /// planes-mode render of this surface.
+    pub(super) scene_dmabuf_element:
+        Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
+    /// KMS plane for all workspace windows (overlay plane above the background).
+    pub(super) windows_dmabuf_element:
+        Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
+    /// KMS plane for the expose / window-selector view (overlay plane, mutually
+    /// exclusive with windows_plane in practice — one is hidden when the other shows).
+    pub(super) expose_dmabuf_element:
+        Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
+    /// KMS plane for overlay UI: workspace selector, layer shell, OSD, DnD,
+    /// popups — chrome above windows that changes rarely.
+    pub(super) overlay_dmabuf_element:
+        Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
+    /// Strip-sized KMS plane for the app switcher (middle band), above the
+    /// overlay plane. Pushed only while the switcher is alive.
+    pub(super) switcher_dmabuf_element:
+        Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
+    /// Strip-sized KMS plane for the dock (bottom band). Topmost plane.
+    pub(super) dock_dmabuf_element:
+        Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
+    /// Downscaled composite of the planes below the overlay-UI plane
+    /// (bg + windows/expose), seeding cross-plane backdrop blur (dock
+    /// vibrancy). Rebuilt only when a lower plane changes under the
+    /// overlay's blur region.
+    pub(super) backdrop_surface: Option<BackdropSurface>,
+    /// Snapshot of `backdrop_surface` handed to the overlay element.
+    pub(super) backdrop_image: Option<layers::skia::Image>,
+    /// Whether `backdrop_image` is already blurred — consumers seed it directly
+    /// and skip their own shape-clipped blur (which would leave a faded rim).
+    pub(super) backdrop_preblurred: bool,
+    /// Lower-plane damage occurred while no blur consumer needed the
+    /// composite (or outside every active consumer's region); the next
+    /// frame with an active consumer must rebuild even without new damage.
+    pub(super) backdrop_dirty: bool,
+    /// Last frame the expose / switcher / overlay UI was active — drives
+    /// releasing their swapchains after prolonged inactivity
+    /// (see `planes::maybe_release_plane`).
+    pub(super) expose_last_active: Option<std::time::Instant>,
+    pub(super) switcher_last_active: Option<std::time::Instant>,
+    pub(super) overlay_last_active: Option<std::time::Instant>,
+    /// Whether the overlay / switcher UI was active on the previous frame.
+    /// On the inactive→active edge the plane's buffer still shows whatever
+    /// was rendered before it left the frame (removal damage was cleared
+    /// while it sat out), so the edge forces a full re-render instead of
+    /// flashing ghost content (`SceneDmabufElement::request_full_render`).
+    pub(super) overlay_was_active: bool,
+    pub(super) switcher_was_active: bool,
+    /// Promotion hysteresis: the candidate set currently waiting out its
+    /// stability window, and since when it has been produced unchanged.
+    /// Demotions apply instantly (compositing is always correct); adding a
+    /// window to the scanout set waits until the same candidates have been
+    /// requested continuously for `PROMOTE_STABLE` — a one-frame eligibility
+    /// pulse (activation animation, transient tooltip) otherwise thrashes
+    /// promote/demote, and every transition resets the primary swapchain
+    /// (a visible full-screen flicker).
+    pub(super) promote_candidates: Vec<smithay::reexports::wayland_server::backend::ObjectId>,
+    pub(super) promote_since: Option<std::time::Instant>,
+    /// Whether the previous frame rendered as a forced full-GPU composite
+    /// (minimize genie). Composite frames starve the plane buffers — the
+    /// scene element consumes and clears all engine damage — so on the
+    /// composite→planes edge every plane must redraw in full or the first
+    /// planes frame scans out pre-composite ghosts (e.g. the window that
+    /// was just minimized).
+    pub(super) was_force_composite: bool,
+    /// Keep rendering forced-composite frames until this instant even after
+    /// the trigger (minimize animation) ended: the settle work (reparent,
+    /// rescale, unhide) lands from an async task over several engine
+    /// updates, and returning to planes mid-settle scans out a stale frame.
+    pub(super) composite_hold_until: Option<std::time::Instant>,
+    /// Debug (`/tmp/otto-dump-transition`): dump every plane buffer for this
+    /// many frames after the composite→planes edge, to catch transition
+    /// ghosts frame-exactly.
+    pub(super) transition_dump_left: u8,
+    /// Which element set the previous frame was built from. The compositor
+    /// swapchain is reset on transitions so stale buffer ages don't leak
+    /// across the mode switch.
+    pub(super) last_frame_mode: FrameMode,
+    /// Whether this output uses the per-purpose plane decomposition.
+    /// Requires an atomic driver, enough overlay planes for the scene
+    /// buffers, and the primary GPU (cross-device EGL import of the plane
+    /// dmabufs is unreliable). When false the output renders as a single
+    /// scene element — the plane path would pay all its intermediate
+    /// renders and then GPU-composite every buffer anyway.
+    pub(super) planes_enabled: bool,
+    /// Windows currently in shadow-only mode for direct surface scanout.
+    /// Their `content_layer` is hidden in lay-rs so only the shadow renders in
+    /// `windows_dmabuf_element`. The client buffer is pushed directly as a
+    /// `ScanoutCandidate` render element on the plane above.
+    pub(super) shadow_only_windows:
+        Vec<smithay::reexports::wayland_server::backend::ObjectId>,
     /// Deferred GPU sync point from the previous frame.
     ///
     /// Instead of blocking immediately after `render_frame()`, we store the
@@ -181,6 +272,32 @@ pub enum DeviceAddError {
     DrmNode(smithay::backend::drm::CreateDrmNodeError),
     #[error("Failed to add device to GpuManager: {0}")]
     AddNode(smithay::backend::egl::Error),
+}
+
+/// Skia GPU surface + context for the cross-plane backdrop composite.
+/// Confined to the single render thread (same discipline as the slot
+/// surfaces inside `SceneDmabufElement`), hence the manual Send/Sync.
+pub(super) struct BackdropSurface {
+    pub(super) surface: layers::skia::Surface,
+    pub(super) context: layers::skia::gpu::DirectContext,
+}
+// SAFETY: accessed only from the render thread; never aliased across threads.
+unsafe impl Send for BackdropSurface {}
+unsafe impl Sync for BackdropSurface {}
+
+/// Which element set a frame is built from. Buffer ages recorded in one
+/// mode are meaningless in another: without a swapchain reset on
+/// transition, regions the damage tracker considers clean would show the
+/// other mode's stale content (e.g. a black background on the first
+/// screencopy composite after running on planes).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum FrameMode {
+    /// Per-purpose plane elements (normal desktop).
+    Planes,
+    /// Direct scanout of client buffers (fullscreen or promoted windows).
+    DirectScanout,
+    /// Single full-scene GPU composite (screencopy capture).
+    Composite,
 }
 
 /// Outcome of a render operation

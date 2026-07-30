@@ -78,11 +78,37 @@ pub struct OutputWorkspaces {
     /// Mirrored into each workspace view and expose window selector.
     pub layer_shell_background: Layer,
     pub workspace_views: Vec<Arc<WorkspaceView>>,
+    /// Single layer containing all workspace backgrounds, child of workspaces_layer.
+    /// Rendered as a single KMS background plane; scrolls in sync automatically.
+    pub background_plane: Layer,
+    /// Single layer containing all workspace window containers, child of workspaces_layer.
+    /// Rendered as a single KMS windows plane; scrolls in sync automatically.
+    pub windows_plane: Layer,
+    /// Overlay UI plane: workspace selector, layer_shell_top,
+    /// layer_shell_overlay, OSD, DnD and popups — chrome above windows that
+    /// changes rarely. Dock and app switcher have their own planes.
+    pub overlay_plane: Layer,
+    /// App-switcher plane: full-screen container (so the switcher centers
+    /// itself with normal layout) rendered through a strip-sized viewport
+    /// onto its own KMS plane. Above overlay_plane.
+    pub switcher_plane: Layer,
+    /// Dock plane: full-screen container (dock positions itself bottom-center
+    /// with normal layout) rendered through a bottom-strip viewport onto its
+    /// own KMS plane. Topmost.
+    pub dock_plane: Layer,
 }
 
 impl OutputWorkspaces {
     pub fn current_space(&self) -> &Space<WindowElement> {
         &self.spaces[self.current_workspace]
+    }
+    /// Whether the current workspace has any windows. Checked lookup — the
+    /// index can briefly trail workspace removal.
+    pub fn current_workspace_has_windows(&self) -> bool {
+        self.workspace_views
+            .get(self.current_workspace)
+            .map(|ws| !ws.windows_list.read().unwrap().is_empty())
+            .unwrap_or(false)
     }
     pub fn current_space_mut(&mut self) -> &mut Space<WindowElement> {
         &mut self.spaces[self.current_workspace]
@@ -140,6 +166,16 @@ pub struct Workspaces {
     pub show_desktop_gesture: Arc<AtomicI32>,
     /// Tracks whether the workspace is currently animating (e.g., scrolling between workspaces)
     pub is_animating: Arc<AtomicBool>,
+    /// Windows currently flagged for direct scanout (their `content_layer` is
+    /// hidden; the client buffer is pushed as a `ScanoutCandidate` element).
+    /// The render call-site diffs against this to re-import departing windows
+    /// before they are composited again.
+    scanout_windows: Arc<RwLock<HashSet<ObjectId>>>,
+    /// Set when a promoted (scanned-out) window commits: the commit skips the
+    /// scene import, so this flag is the only signal that a frame must render
+    /// to submit the client's new buffer to its plane. Consumed (swapped to
+    /// false) by the backend's should_draw check.
+    pub scanout_commit_pending: Arc<std::sync::atomic::AtomicBool>,
     /// True while a 3-finger expose gesture is physically in progress (fingers on trackpad).
     pub expose_gesture_active: Arc<AtomicBool>,
 
@@ -354,6 +390,8 @@ impl Workspaces {
             show_all_gesture: Arc::new(AtomicI32::new(0)),
             show_desktop_gesture: Arc::new(AtomicI32::new(0)),
             is_animating: Arc::new(AtomicBool::new(false)),
+            scanout_windows: Arc::new(RwLock::new(HashSet::new())),
+            scanout_commit_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             expose_gesture_active: Arc::new(AtomicBool::new(false)),
             window_views: Arc::new(RwLock::new(HashMap::new())),
             observers: Vec::new(),
@@ -542,6 +580,9 @@ impl Workspaces {
 
             ows.expose_layer.set_size(Size::points(w, h), None);
             ows.workspaces_layer.set_size(Size::points(w, h), None);
+            ows.overlay_plane.set_size(Size::points(w, h), None);
+            ows.switcher_plane.set_size(Size::points(w, h), None);
+            ows.dock_plane.set_size(Size::points(w, h), None);
 
             for (logical_index, workspace) in ows.workspace_views.iter().enumerate() {
                 workspace.update_layout(logical_index, w, h, scale);
@@ -606,11 +647,23 @@ impl Workspaces {
         // Check that the workspace has exactly one window (only the fullscreen window)
         // If there are additional windows (e.g., dialogs), disable direct scanout
         let current_index = self.get_current_workspace_index();
-        let window_count = self
-            .primary_output_workspaces()
-            .map(|ows| ows.spaces[current_index].elements().count())
-            .unwrap_or(0);
+        let Some(ows) = self.primary_output_workspaces() else {
+            return false;
+        };
+        let window_count = ows.spaces[current_index].elements().count();
         if window_count != 1 {
+            return false;
+        }
+
+        // An open popup (menu, tooltip) renders in the overlay plane, which
+        // fullscreen direct scanout drops entirely — the popup would be
+        // invisible. Composite normally while any popup is mapped.
+        let has_popups = ows.spaces[current_index].elements().any(|w| {
+            w.wl_surface()
+                .map(|s| surface_has_mapped_popup(&s))
+                .unwrap_or(false)
+        });
+        if has_popups {
             return false;
         }
 
@@ -1296,6 +1349,9 @@ impl Workspaces {
             .window_selector_view
             .window_selector_view
             .clone();
+        if is_starting_animation {
+            tracing::debug!(target: "otto::popups", "is_animating(true) site=selector-start");
+        }
         self.is_animating
             .store(is_starting_animation, std::sync::atomic::Ordering::Relaxed);
 
@@ -1458,8 +1514,17 @@ impl Workspaces {
             );
             if transition.is_some() {
                 window_selector_view_ref.set_position((0.0, 0.0), None);
+                let is_animating_ref = self.is_animating.clone();
                 transaction.on_finish(
                     move |_: &Layer, _: f32| {
+                        // The expose open/close animation is over. Clear the
+                        // flag BEFORE any early bail below — leaving it set
+                        // wedges `is_animating` true forever (line ~1333 sets
+                        // it for every animated apply and nothing else clears
+                        // it), permanently blocking scanout promotion. A
+                        // reversed gesture schedules a new animation which
+                        // sets the flag again, so clearing here is safe.
+                        is_animating_ref.store(false, std::sync::atomic::Ordering::Relaxed);
                         let is_dragging =
                             expose_dragged_window_ref.lock().unwrap().is_some();
                         // Re-read the current state at finish time — the gesture may have
@@ -1773,6 +1838,7 @@ impl Workspaces {
         // If there's a transition, set up a callback to finalize visibility after animation
         if let Some(trans) = transition {
             // Mark as animating when we have a transition
+            tracing::debug!(target: "otto::popups", "is_animating(true) site=show-desktop");
             self.is_animating
                 .store(true, std::sync::atomic::Ordering::Relaxed);
 
@@ -1903,19 +1969,20 @@ impl Workspaces {
                 let inner = inner.clone();
 
                 tokio::spawn(async move {
-                    // Reparent window into the drawer and start the genie
-                    // immediately — both run in parallel with dock slide-in
-                    // and drawer expansion.
-                    view.window_layer.set_layout_style(taffy::Style {
-                        position: taffy::Position::Absolute,
-                        ..Default::default()
-                    });
-                    if let Err(e) = layers_engine
-                        .add_layer_to_positioned(view.window_layer.clone(), Some(inner.id))
-                    {
-                        tracing::warn!("minimize: failed to reparent window into drawer: {e}");
-                    }
-
+                    // Run the genie while the window is STILL in the windows
+                    // plane subtree: the destination rect is global scene
+                    // coordinates, so the animation squeezes toward the dock
+                    // without moving the layer. Reparenting into the drawer
+                    // first put the whole animation under the strip-sized
+                    // dock plane (≤480px tall buffer) — the genie rendered
+                    // clipped into that band (i.e. invisible) while the
+                    // windows plane kept the stale window pixels.
+                    //
+                    // Capture the unscaled window size NOW — the layer is
+                    // hidden during the post-genie settle (display: none →
+                    // zero layout bounds), so it can't be read later.
+                    let base_bounds = view.window_layer.render_bounds_with_children();
+                    let base_size = (base_bounds.width(), base_bounds.height());
                     let inner_bounds = inner.render_bounds_transformed();
                     let minimize_tr = view.minimize(skia::Rect::from_xywh(
                         inner_bounds.x(),
@@ -1963,6 +2030,48 @@ impl Workspaces {
                         }
                     };
                     tokio::join!(minimize_tr, show_fut, layout_fut);
+
+                    // Genie done — NOW move the (effect-free, hidden) window
+                    // layer into the drawer and fit it. From here on it
+                    // renders in the dock plane as the mini-window.
+                    // is_minimizing is still TRUE (holding the backend in
+                    // forced-composite mode); it clears below once the layer
+                    // is settled so the planes return with one clean full
+                    // redraw.
+                    if !view.is_unmapped() {
+                        view.window_layer.set_layout_style(taffy::Style {
+                            position: taffy::Position::Absolute,
+                            ..Default::default()
+                        });
+                        if let Err(e) = layers_engine
+                            .add_layer_to_positioned(view.window_layer.clone(), Some(inner.id))
+                        {
+                            tracing::warn!(
+                                "minimize: failed to reparent window into drawer: {e}"
+                            );
+                        }
+                        view.set_is_minimizing(false);
+                        let bounds = inner.render_bounds_transformed();
+                        let scale_tr = view.apply_minimized_scale_with_base(base_size, bounds);
+                        view.window_layer
+                            .set_position(layers::types::Point { x: 0.0, y: 0.0 }, None);
+                        // scale/position are SCHEDULED engine changes while
+                        // set_hidden is IMMEDIATE: unhiding before they are
+                        // applied lets a render draw the window in the
+                        // drawer at FULL scale for one frame. Await the
+                        // scale transaction (applied by the engine on its
+                        // own thread — calling engine.update() from this
+                        // task instead panics the scene arena), THEN show.
+                        if let Some(tr) = scale_tr {
+                            tr.await;
+                        }
+                        // Hidden since the genie's on_finish (ghost-frame
+                        // guard) — safe to show now that it lives in the
+                        // drawer at mini scale.
+                        view.window_layer.set_hidden(false);
+                    } else {
+                        view.set_is_minimizing(false);
+                    }
 
                     // Re-hide the dock if we revealed it for this minimize.
                     if dock_was_hidden {
@@ -2470,6 +2579,19 @@ impl Workspaces {
         let window_views = self.window_views.read().unwrap();
 
         window_views.get(id).cloned()
+    }
+
+    /// Whether any window is currently running its minimize/unminimize
+    /// (genie) animation. The genie's image filter paints far outside the
+    /// layer's damage rects, so the per-plane partial-redraw pipeline
+    /// corrupts it — the backend switches to the full-GPU scene composite
+    /// for the duration (see `render_output_frame`'s `force_composite`).
+    pub fn has_minimizing_window(&self) -> bool {
+        self.window_views
+            .read()
+            .unwrap()
+            .values()
+            .any(|v| v.is_minimizing())
     }
 
     pub fn set_window_view(&self, id: &ObjectId, window_view: WindowView) {
@@ -3037,10 +3159,36 @@ impl Workspaces {
             let _ = root.add_sublayer(&layer_shell_background);
         }
 
+        // Single container for all workspace backgrounds, first child of workspaces_layer
+        // so it scrolls in sync automatically. The SceneDmabufElement for the background
+        // KMS plane renders this node.
+        let background_plane = self.layers_engine.new_layer();
+        background_plane.set_key(format!("background_plane_{}", output.name()));
+        background_plane.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        background_plane.set_size(layers::types::Size::auto(), None);
+        background_plane.set_pointer_events(false);
+        let _ = workspaces_layer.add_sublayer(&background_plane);
+
+        // Single container for all workspace window layers, child of workspaces_layer.
+        // Rendered as a single KMS windows plane; scrolls in sync automatically.
+        let windows_plane = self.layers_engine.new_layer();
+        windows_plane.set_key(format!("windows_plane_{}", output.name()));
+        windows_plane.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        windows_plane.set_size(layers::types::Size::auto(), None);
+        windows_plane.set_pointer_events(false);
+        let _ = workspaces_layer.add_sublayer(&windows_plane);
+
+
         // Attach layers to output_layer in z-order (bottom to top):
-        // workspaces → expose → overlay (dnd, osd) →
-        // dock (primary) → layer_shell_top → workspace_selector →
-        // layer_shell_overlay → app_switcher (primary) → popup_overlay (primary)
+        // workspaces (background_plane, windows_plane, expose_layer) →
+        // dock (primary) → overlay_plane (layer_shell_top, workspace_selector,
+        // app_switcher, layer_shell_overlay, dnd/osd, popups)
         let _ = output_layer.add_sublayer(&workspaces_layer);
 
         // Create a per-output expose layer
@@ -3054,13 +3202,42 @@ impl Workspaces {
         expose_layer.set_hidden(true);
         expose_layer.set_picture_cached(false);
         expose_layer.set_image_cached(false);
-        let _ = output_layer.add_sublayer(&expose_layer);
+        let _ = workspaces_layer.add_sublayer(&expose_layer);
+
+        // overlay_plane: workspace selector, app switcher, layer shell UI,
+        // OSD and DnD — above windows/expose, below popups and dock.
+        let overlay_plane = self.layers_engine.new_layer();
+        overlay_plane.set_key(format!("overlay_plane_{}", output.name()));
+        overlay_plane.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        overlay_plane.set_size(layers::types::Size::points(phys_w, phys_h), None);
+        overlay_plane.set_pointer_events(false);
+
+        let switcher_plane = self.layers_engine.new_layer();
+        switcher_plane.set_key(format!("switcher_plane_{}", output.name()));
+        switcher_plane.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        switcher_plane.set_size(layers::types::Size::points(phys_w, phys_h), None);
+        switcher_plane.set_pointer_events(false);
+
+        let dock_plane = self.layers_engine.new_layer();
+        dock_plane.set_key(format!("dock_plane_{}", output.name()));
+        dock_plane.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        dock_plane.set_size(layers::types::Size::points(phys_w, phys_h), None);
+        dock_plane.set_pointer_events(false);
 
         if is_this_primary {
             // Wire the primary output's expose layer into self.expose_layer so all
             // existing show/hide logic works unchanged.
             self.expose_layer = expose_layer.clone();
-            // overlay contains dnd and osd
+            // overlay_layer contains dnd and osd
             let _ = self.overlay_layer.add_sublayer(&self.dnd_view.layer);
             let _ = self
                 .overlay_layer
@@ -3075,13 +3252,26 @@ impl Workspaces {
             {
                 let _ = root.add_sublayer(&self.app_icons_manager.container);
             }
-            let _ = output_layer.add_sublayer(&self.dock.wrap_layer.clone());
-            let _ = output_layer.add_sublayer(&self.layer_shell_top);
-            let _ = output_layer.add_sublayer(&self.workspace_selector_view.layer.clone());
-            let _ = output_layer.add_sublayer(&self.app_switcher.wrap_layer.clone());
-            let _ = output_layer.add_sublayer(&self.popup_overlay.layer.clone());
-            let _ = output_layer.add_sublayer(&self.layer_shell_overlay);
-            let _ = output_layer.add_sublayer(&self.overlay_layer);
+            // Group overlay UI into the overlay_plane node (single KMS plane),
+            // including popups which sit above other overlay content.
+            let _ = overlay_plane.add_sublayer(&self.layer_shell_top);
+            let _ = overlay_plane.add_sublayer(&self.workspace_selector_view.layer.clone());
+            let _ = overlay_plane.add_sublayer(&self.layer_shell_overlay);
+            let _ = overlay_plane.add_sublayer(&self.overlay_layer);
+            let _ = overlay_plane.add_sublayer(&self.popup_overlay.layer.clone());
+            let _ = output_layer.add_sublayer(&overlay_plane.clone());
+            // App switcher and dock get their own full-screen containers (so
+            // their existing centering layout keeps working) rendered through
+            // strip viewports onto dedicated KMS planes — their animations no
+            // longer redraw the shared overlay buffer.
+            let _ = switcher_plane.add_sublayer(&self.app_switcher.wrap_layer.clone());
+            let _ = output_layer.add_sublayer(&switcher_plane.clone());
+            let _ = dock_plane.add_sublayer(&self.dock.wrap_layer.clone());
+            let _ = output_layer.add_sublayer(&dock_plane.clone());
+        } else {
+            let _ = output_layer.add_sublayer(&overlay_plane.clone());
+            let _ = output_layer.add_sublayer(&switcher_plane.clone());
+            let _ = output_layer.add_sublayer(&dock_plane.clone());
         }
 
         let workspace_counter_start = self.with_model(|m| m.workspace_counter);
@@ -3102,6 +3292,10 @@ impl Workspaces {
                 &layer_shell_background,
             ));
             let _ = expose_layer.add_sublayer(&workspace.window_selector_view.window_selector_root);
+            // Attach this workspace's background into the shared background_plane
+            // so all workspace backgrounds live under one node for the KMS plane.
+            let _ = background_plane.add_sublayer(&workspace.workspace_background);
+            let _ = windows_plane.add_sublayer(&workspace.windows_layer);
             workspace_views.push(workspace);
         }
 
@@ -3117,6 +3311,11 @@ impl Workspaces {
             expose_layer,
             layer_shell_background,
             workspace_views,
+            background_plane,
+            windows_plane,
+            overlay_plane,
+            switcher_plane,
+            dock_plane,
         };
         self.output_workspaces.insert(output.name(), ows);
         self.sync_model_from_primary();
@@ -3363,6 +3562,336 @@ impl Workspaces {
         self.with_model(|m| m.workspaces.get(i).cloned())
     }
 
+    /// Windows eligible for direct client-buffer scanout ("shadow-only" mode).
+    ///
+    /// Ported from the reference implementation in `../otto`
+    /// (feat/window-scanout-new) and adapted to the plane pipeline: the app
+    /// switcher, OSD and layer-shell panels render on the overlay plane, so
+    /// they do not gate scanout globally — only windows they geometrically
+    /// overlap are demoted (their pixels must be in the windows plane for the
+    /// overlay's backdrop blur to sample).
+    ///
+    /// Selection is intentionally based on *stable* geometry (dock bar,
+    /// switcher and OSD layer bounds, layer-shell rects), never on per-frame
+    /// scene state like bubbled blur regions — those are cleared and rebuilt
+    /// every engine update, so sampling them oscillates between promote and
+    /// demote and flickers the window content.
+    pub fn get_scanout_candidates(&self) -> Vec<ObjectId> {
+        use smithay::utils::{Physical, Rectangle};
+
+        // ---- global stable gates ----
+        // Debug: `touch /tmp/otto-no-scanout` disables promotion entirely so
+        // scanout-vs-composite cost can be A/B measured at runtime. The file
+        // is polled at 1 Hz by the renderer; this is just an atomic read.
+        if crate::render_elements::scene_dmabuf_element::NO_SCANOUT
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Vec::new();
+        }
+        if self.get_show_all() || self.is_expose_transitioning() {
+            return Vec::new();
+        }
+        if self.is_animating.load(std::sync::atomic::Ordering::Relaxed) {
+            return Vec::new();
+        }
+        let Some(current_workspace) = self.get_current_workspace() else {
+            return Vec::new();
+        };
+        // Fullscreen has its own dedicated direct-scanout path.
+        if current_workspace.get_fullscreen_mode() || current_workspace.get_fullscreen_animating() {
+            return Vec::new();
+        }
+        // The tiling drop-zone overlay composites above windows.
+        if self.tiling_overlay.is_visible() {
+            return Vec::new();
+        }
+        let Some(output) = self.primary_output.as_ref() else {
+            return Vec::new();
+        };
+        let scale = output.current_scale().fractional_scale();
+
+        // ---- occluders (physical px): overlay-plane UI compositing above
+        // windows. A window overlapping any of these must stay in the windows
+        // plane so the overlay's backdrop blur can sample its pixels.
+        fn layer_rect(layer: &layers::prelude::Layer) -> Option<Rectangle<i32, Physical>> {
+            let b = layer.render_bounds_with_children_transformed();
+            if b.width() <= 0.0 || b.height() <= 0.0 {
+                return None;
+            }
+            Some(Rectangle::new(
+                (b.x() as i32, b.y() as i32).into(),
+                (b.width() as i32, b.height() as i32).into(),
+            ))
+        }
+        let mut occluders: Vec<Rectangle<i32, Physical>> = Vec::new();
+        // Use the *visible* layers, not the wrap/positioning containers —
+        // those can span the whole output and would demote every window.
+        if !self.dock.is_hidden() {
+            occluders.extend(layer_rect(&self.dock.bar_layer));
+        }
+        if self.app_switcher.alive() {
+            if let Some(layer) = self.app_switcher.view.layer.read().unwrap().as_ref() {
+                occluders.extend(layer_rect(layer));
+            }
+        }
+        if self.osd.is_visible() {
+            occluders.extend(layer_rect(&self.osd.view_layer));
+        }
+        {
+            use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
+            let map = smithay::desktop::layer_map_for_output(output);
+            for l in map
+                .layers()
+                .filter(|l| matches!(l.layer(), WlrLayer::Top | WlrLayer::Overlay))
+            {
+                if let Some(geo) = map.layer_geometry(l) {
+                    occluders.push(Rectangle::new(
+                        geo.loc.to_f64().to_physical(scale).to_i32_round(),
+                        geo.size.to_f64().to_physical(scale).to_i32_round(),
+                    ));
+                }
+            }
+        }
+
+        // ---- per-window eligibility, top-to-bottom ----
+        let current_index = self.get_current_workspace_index();
+        let Some(space) = self
+            .primary_output_workspaces()
+            .and_then(|ows| ows.spaces.get(current_index))
+        else {
+            return Vec::new();
+        };
+
+        tracing::debug!(target: "otto::planes", "scanout occluders: {occluders:?}");
+        let mut promoted = Vec::new();
+        // Union of visible-window rects seen so far (everything above current).
+        let mut covered: Vec<Rectangle<i32, Physical>> = Vec::new();
+        // Space::elements yields bottom-to-top; rev() => top-to-bottom.
+        for window in space.elements().rev() {
+            if window.is_minimised() {
+                continue; // not visible — does not occlude
+            }
+            let view = self.get_window_view(&window.id());
+            if view.as_ref().map(|v| v.is_unmapped()).unwrap_or(true) {
+                continue; // gone — does not occlude
+            }
+            let Some(location) = space.element_location(window) else {
+                continue;
+            };
+            let rect = Rectangle::new(
+                location.to_f64().to_physical(scale).to_i32_round(),
+                window.geometry().size.to_f64().to_physical(scale).to_i32_round(),
+            );
+            let overlaps_above = covered.iter().any(|c| c.overlaps(rect));
+            // Occupies space for everything below it, promoted or not.
+            covered.push(rect);
+
+            // A minimizing window is still visible (animating to the dock) so
+            // it occludes, but cannot be promoted (it has a live transform).
+            let animating = view.as_ref().map(|v| v.is_minimizing()).unwrap_or(true);
+            // v1 does not scan out popups; a window with a MAPPED popup must
+            // composite normally or the (scene-drawn) popup would be hidden
+            // under the window's overlay plane. Mapped, not merely alive —
+            // GTK keeps closed popovers' surfaces around for reuse.
+            let has_popups = window
+                .wl_surface()
+                .map(|s| surface_has_mapped_popup(&s))
+                .unwrap_or(false);
+            let overlaps_occluder = occluders.iter().any(|r| r.overlaps(rect));
+            // Only dmabuf-backed buffers can scan out. An SHM client (e.g. a
+            // CPU-rendered terminal) would take the whole promotion path just
+            // to have its element GPU-composite anyway — and a composited
+            // element in front demotes every plane below it (z-order), a net
+            // loss over leaving the window in the windows plane.
+            let has_dmabuf_buffer = window
+                .wl_surface()
+                .map(|s| {
+                    smithay::wayland::compositor::with_states(&s, |states| {
+                        states
+                            .data_map
+                            .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>()
+                            .map(|data| {
+                                data.lock()
+                                    .unwrap()
+                                    .buffer()
+                                    .map(|b| {
+                                        smithay::wayland::dmabuf::get_dmabuf(b).is_ok()
+                                    })
+                                    .unwrap_or(false)
+                            })
+                            .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false);
+            // Cap the promoted set: the hardware admits ~5 simultaneous
+            // planes and bg/windows/dock/cursor already take four — a second
+            // client plane evicts the windows plane (measured), which costs
+            // more than compositing the extra window. Windows past the cap
+            // still occlude the ones below.
+            //
+            // Windows with subsurfaces (SSD decorations) are eligible too:
+            // only their ROOT surface goes to the plane, the decoration
+            // subsurfaces keep rendering in the windows plane
+            // (see `set_scanout_windows`).
+            // A subsurface overlapping the root (window content, e.g. Chrome's
+            // account panel) would be hidden behind the scanned-out root plane,
+            // so such a window must composite. Checked last — it only runs for
+            // an otherwise-eligible topmost candidate.
+            const MAX_PROMOTED: usize = 1;
+            if promoted.len() < MAX_PROMOTED
+                && !overlaps_above
+                && !animating
+                && !has_popups
+                && !overlaps_occluder
+                && has_dmabuf_buffer
+                && !window_has_overlapping_subsurface(window)
+            {
+                promoted.push(window.id());
+            }
+        }
+        promoted
+    }
+
+    /// Whether any overlay-UI chrome is visible on `output` — used by the
+    /// backend to decide if the overlay plane deserves a hardware plane
+    /// slot this frame. Overlay chrome is on demand: an empty full-screen
+    /// ARGB buffer must not waste a plane. Covers layer-shell Top/Overlay
+    /// surfaces, popups, the workspace selector (expose state), the OSD and
+    /// the tiling overlay. DnD is NOT included — the drag icon lives on
+    /// `Otto`, so the caller ORs it in.
+    pub fn is_overlay_ui_active(&self, output: &Output) -> bool {
+        use smithay::desktop::layer_map_for_output;
+        use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
+        let layer_shell_active = layer_map_for_output(output)
+            .layers()
+            .any(|l| matches!(l.layer(), WlrLayer::Top | WlrLayer::Overlay));
+        let popups = !self.popup_overlay.layer.children().is_empty();
+        // Selector and DnD layers are never `hidden()` — they are
+        // empty containers until used, so check content/state instead.
+        let selector = self.is_expose_transitioning()
+            || self.get_show_all()
+            || self.is_animating.load(std::sync::atomic::Ordering::Relaxed);
+        let osd = self.osd.is_visible();
+        let tiling = self.tiling_overlay.is_visible();
+        let active = layer_shell_active || popups || selector || osd || tiling;
+        if active {
+            tracing::debug!(
+                target: "otto::planes",
+                "overlay active: shell={layer_shell_active} popups={popups} selector={selector} osd={osd} tiling={tiling}",
+            );
+        }
+        active
+    }
+
+    /// Windows on the current workspace fully contained in a single
+    /// non-minimized window stacked above them. Feeds the frame-callback
+    /// throttle classifier's Occluded bucket. Union coverage is deliberately
+    /// not attempted: the single-cover case (a maximized or large window over
+    /// smaller ones) is the one that matters, and containment in one window
+    /// cannot false-positive on a partially visible window.
+    #[allow(clippy::mutable_key_type)]
+    pub fn occluded_window_ids(&self) -> HashSet<ObjectId> {
+        use smithay::utils::{Physical, Rectangle};
+        let mut occluded = HashSet::new();
+        let scale = Config::with(|c| c.screen_scale);
+        let current_index = self.get_current_workspace_index();
+        let Some(space) = self
+            .primary_output_workspaces()
+            .and_then(|ows| ows.spaces.get(current_index))
+        else {
+            return occluded;
+        };
+        let mut above: Vec<Rectangle<i32, Physical>> = Vec::new();
+        // Space::elements yields bottom-to-top; rev() => top-to-bottom.
+        for window in space.elements().rev() {
+            if window.is_minimised() {
+                continue;
+            }
+            let Some(location) = space.element_location(window) else {
+                continue;
+            };
+            let rect = Rectangle::new(
+                location.to_f64().to_physical(scale).to_i32_round(),
+                window
+                    .geometry()
+                    .size
+                    .to_f64()
+                    .to_physical(scale)
+                    .to_i32_round(),
+            );
+            if above.iter().any(|a| a.contains_rect(rect)) {
+                occluded.insert(window.id());
+            }
+            above.push(rect);
+        }
+        occluded
+    }
+
+    /// Snapshot of the windows currently flagged for scanout.
+    #[allow(clippy::mutable_key_type)]
+    pub fn scanout_window_ids(&self) -> HashSet<ObjectId> {
+        self.scanout_windows.read().unwrap().clone()
+    }
+
+    /// Replace the scanout window set: hides `content_layer` for new entrants,
+    /// unhides it for departures. Idempotent. The caller must re-import any
+    /// departing window's buffer (via `update_window_view`) *after* this call
+    /// so the unhidden `content_layer` shows the current frame, not a stale one.
+    #[allow(clippy::mutable_key_type)]
+    pub fn set_scanout_windows(&self, ids: &[ObjectId]) {
+        let new_ids: HashSet<ObjectId> = ids.iter().cloned().collect();
+        let prev_ids = self.scanout_windows.read().unwrap().clone();
+        if prev_ids == new_ids {
+            return;
+        }
+        tracing::info!(
+            target: "otto::planes",
+            "scanout window set changed: {:?} -> {:?}",
+            prev_ids,
+            new_ids
+        );
+        for prev in prev_ids.difference(&new_ids) {
+            if let Some(view) = self.get_window_view(prev) {
+                view.set_content_hidden(false);
+            }
+            if let Some(window) = self.get_window_for_surface(prev) {
+                window.set_scanned_out(false);
+            }
+        }
+        for new in new_ids.difference(&prev_ids) {
+            let base_only = self
+                .get_window_for_surface(new)
+                .map(window_has_subsurfaces)
+                .unwrap_or(false);
+            if let Some(view) = self.get_window_view(new) {
+                if base_only {
+                    // SSD window: only the root surface's client buffer goes
+                    // to a plane. Blank just the root surface layer's draw
+                    // content so the decoration subsurface layers (its
+                    // children: titlebar, buttons, borders) keep rendering
+                    // in the windows plane. Hiding the root layer instead
+                    // would hide the children with it. The no-op closure
+                    // reports full-bounds damage so the old pixels clear;
+                    // the demotion re-import (`update_window_view` →
+                    // `configure_surface_layer`) reinstalls the real draw
+                    // closure and the opaque flag.
+                    for root in view.content_layer.children() {
+                        root.set_content_opaque(false);
+                        root.set_draw_content(|_: &layers::skia::Canvas, w: f32, h: f32| {
+                            layers::skia::Rect::from_wh(w, h)
+                        });
+                    }
+                } else {
+                    view.set_content_hidden(true);
+                }
+            }
+            if let Some(window) = self.get_window_for_surface(new) {
+                window.set_scanned_out(true);
+            }
+        }
+        *self.scanout_windows.write().unwrap() = new_ids;
+    }
+
     pub fn get_current_workspace(&self) -> Option<Arc<WorkspaceView>> {
         // Go directly to the authoritative per-output data first
         let focused_name = self.with_model(|m| m.focused_output_name.clone());
@@ -3600,11 +4129,6 @@ impl Workspaces {
 
         // Compute per-output offset: each output slides by i * (own_phys_width + SPACING)
         let primary_width = self.with_model(|m| m.width as f32);
-        self.is_animating
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-        let animation = self
-            .layers_engine
-            .add_animation_from_transition(&transition, true);
         let mut changes = Vec::new();
         for (output_name, ows) in self.output_workspaces.iter() {
             let output = self.outputs.iter().find(|o| o.name() == *output_name);
@@ -3619,9 +4143,25 @@ impl Workspaces {
 
             let workspace_gap_px = WORKSPACE_SPACING * scale;
             let offset = i as f32 * (w + workspace_gap_px);
-            changes.push(ows.workspaces_layer.change_position((-offset, 0.0)));
-            changes.push(ows.expose_layer.change_position((-offset, 0.0)));
+            // Skip outputs already resting at the target offset. Activation
+            // paths re-request the CURRENT workspace on every focus change;
+            // scheduling the no-op spring anyway pulses `is_animating` for a
+            // frame, which demotes/re-promotes the scanout window and resets
+            // the compositor swapchain — a visible full-screen flicker per
+            // click (and per hover that re-activates).
+            if (ows.workspaces_layer.render_position().x - (-offset)).abs() > 0.5 {
+                changes.push(ows.workspaces_layer.change_position((-offset, 0.0)));
+            }
         }
+        if changes.is_empty() {
+            return None;
+        }
+        tracing::debug!(target: "otto::popups", "is_animating(true) site=scroll-workspace i={i}");
+        self.is_animating
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let animation = self
+            .layers_engine
+            .add_animation_from_transition(&transition, true);
         let tr = self
             .layers_engine
             .schedule_changes(&changes, animation)
@@ -3635,6 +4175,13 @@ impl Workspaces {
                 },
                 true,
             );
+        } else {
+            // No transaction was scheduled (e.g. no outputs yet), so no
+            // on_finish will ever fire — clear the flag here or it wedges
+            // `true` forever, permanently blocking scanout promotion and
+            // misreporting expose transitions.
+            self.is_animating
+                .store(false, std::sync::atomic::Ordering::Relaxed);
         }
         tr
     }
@@ -3686,9 +4233,7 @@ impl Workspaces {
             current_offset - physical_delta
         };
 
-        // Apply only to this output's layers (workspaces + expose in sync)
         ows.workspaces_layer.set_position((-new_offset, 0.0), None);
-        ows.expose_layer.set_position((-new_offset, 0.0), None);
 
         // Interpolate layer_shell_top opacity during swipe based on fullscreen state
         // of the two workspaces we're swiping between.
@@ -3831,6 +4376,7 @@ impl Workspaces {
         }
         if let Some(transition) = &transition {
             // Mark as animating
+            tracing::debug!(target: "otto::popups", "is_animating(true) site=apply-scroll offset={offset}");
             self.is_animating
                 .store(true, std::sync::atomic::Ordering::Relaxed);
 
@@ -3841,7 +4387,6 @@ impl Workspaces {
             for (name, ows) in self.output_workspaces.iter() {
                 if output_name.is_none() || output_name == Some(name.as_str()) {
                     changes.push(ows.workspaces_layer.change_position((-offset, 0.0)));
-                    changes.push(ows.expose_layer.change_position((-offset, 0.0)));
                 }
             }
             let tr = self
@@ -3859,6 +4404,11 @@ impl Workspaces {
                     },
                     true,
                 );
+            } else {
+                // See scroll variant above: without a transaction the flag
+                // would wedge `true` forever.
+                self.is_animating
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
             }
 
             return tr;
@@ -4095,6 +4645,19 @@ impl UnminimizeContext {
 
             let drawer_bounds = drawer.render_bounds_transformed();
             drawer.clear_on_change_size_handlers();
+            // Restore the window into the workspace tree NOW, inline. This
+            // used to ride on the drawer-shrink transaction's `on_start`,
+            // which silently never fires when another dock relayout replaces
+            // the transaction — the window then stays parented in the drawer
+            // forever and is drawn at full size inside the dock plane.
+            layer_ref.remove_draw_content();
+            if let Err(e) = windows_layer_ref.add_sublayer(&layer_ref) {
+                tracing::warn!("unminimize: failed to reparent window layer: {e}");
+            }
+            if let Err(e) = expose_windows_ref.add_sublayer(&mirror_ref) {
+                tracing::warn!("unminimize: failed to reparent mirror layer: {e}");
+            }
+            layer_ref.set_position(target_pos, None);
             drawer
                 .set_size(
                     Size::points(0.0, 130.0),
@@ -4102,19 +4665,6 @@ impl UnminimizeContext {
                         delay: 0.2,
                         timing: TimingFunction::ease_out_quad(0.3),
                     },
-                )
-                .on_start(
-                    move |_layer: &Layer, _| {
-                        layer_ref.remove_draw_content();
-                        if let Err(e) = windows_layer_ref.add_sublayer(&layer_ref) {
-                            tracing::warn!("unminimize: failed to reparent window layer: {e}");
-                        }
-                        if let Err(e) = expose_windows_ref.add_sublayer(&mirror_ref) {
-                            tracing::warn!("unminimize: failed to reparent mirror layer: {e}");
-                        }
-                        layer_ref.set_position(target_pos, None);
-                    },
-                    true,
                 )
                 .then(move |layer: &Layer, _| {
                     layer.remove();
@@ -4143,4 +4693,102 @@ impl Observable<WorkspacesModel> for Workspaces {
     ) -> Box<dyn Iterator<Item = std::sync::Weak<dyn Observer<WorkspacesModel>>> + 'a> {
         Box::new(self.observers.iter().cloned())
     }
+}
+
+/// Whether the window's surface tree contains subsurfaces (e.g. the SSD
+/// Whether `surface` has any MAPPED popup (menu, tooltip). "Alive" is not
+/// enough: GTK keeps a popover's xdg_popup surface alive after popdown for
+/// reuse, so an aliveness check would block scanout promotion forever after
+/// the first menu. A popup only occludes when it has a committed buffer.
+fn surface_has_mapped_popup(surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface) -> bool {
+    smithay::desktop::PopupManager::popups_for_surface(surface).any(|(popup, _)| {
+        smithay::backend::renderer::utils::with_renderer_surface_state(
+            popup.wl_surface(),
+            |state| state.buffer().is_some(),
+        )
+        .unwrap_or(false)
+    })
+}
+
+/// decoration strips: titlebar, buttons, borders). Such windows are
+/// promoted in "base-only" mode: the root surface scans out on a KMS
+/// plane while the decorations keep rendering in the windows plane.
+fn window_has_subsurfaces(window: &WindowElement) -> bool {
+    window
+        .wl_surface()
+        .map(|s| {
+            let mut count = 0u32;
+            smithay::wayland::compositor::with_surface_tree_downward(
+                &s,
+                (),
+                |_, _, _| smithay::wayland::compositor::TraversalAction::DoChildren(()),
+                |_, _, _| count += 1,
+                |_, _, _| true,
+            );
+            count > 1
+        })
+        .unwrap_or(false)
+}
+
+/// Whether the window has any subsurface that overlaps the root surface's own
+/// rect. Such a subsurface is window *content* (e.g. Chrome's account panel,
+/// which Chrome maps as a `wl_subsurface`), not an out-of-bounds SSD decoration.
+///
+/// A window like that must NOT be scanned out base-only: the scanout push only
+/// offers the root `wl_surface` (whose buffer does not contain the subsurface),
+/// and the subsurface renders in the windows dmabuf *below* the root's overlay
+/// plane — so an overlapping subsurface would be hidden behind the plane. Such a
+/// window is demoted to full compositing; a purely decorative (out-of-bounds)
+/// subsurface still qualifies for base-only promotion.
+fn window_has_overlapping_subsurface(window: &WindowElement) -> bool {
+    use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
+    use smithay::utils::{Logical, Point, Rectangle};
+    use smithay::wayland::compositor::{
+        with_states, with_surface_tree_downward, SubsurfaceCachedState, TraversalAction,
+    };
+
+    let Some(root) = window.wl_surface() else {
+        return false;
+    };
+
+    // Root rect in root-local logical coordinates.
+    let root_size = with_states(&root, |states| {
+        states
+            .data_map
+            .get::<RendererSurfaceStateUserData>()
+            .and_then(|d| d.lock().unwrap().surface_size())
+    });
+    let Some(root_size) = root_size else {
+        return false;
+    };
+    let root_rect: Rectangle<i32, Logical> = Rectangle::new((0, 0).into(), root_size);
+
+    let overlaps = std::cell::Cell::new(false);
+    with_surface_tree_downward(
+        &root,
+        Point::<i32, Logical>::from((0, 0)),
+        // Accumulate each surface's position (parent + its subsurface offset).
+        |_surface, states, parent_loc| {
+            let mut cs = states.cached_state.get::<SubsurfaceCachedState>();
+            TraversalAction::DoChildren(*parent_loc + cs.current().location)
+        },
+        |surface, states, parent_loc| {
+            if surface.id() == root.id() {
+                return;
+            }
+            let mut cs = states.cached_state.get::<SubsurfaceCachedState>();
+            let loc = *parent_loc + cs.current().location;
+            if let Some(size) = states
+                .data_map
+                .get::<RendererSurfaceStateUserData>()
+                .and_then(|d| d.lock().unwrap().surface_size())
+            {
+                if Rectangle::new(loc, size).overlaps(root_rect) {
+                    overlaps.set(true);
+                }
+            }
+        },
+        |_, _, _| !overlaps.get(),
+    );
+    overlaps.get()
 }

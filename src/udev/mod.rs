@@ -7,6 +7,9 @@ pub mod device;
 pub mod feedback;
 pub mod gamma;
 pub mod init;
+pub mod backdrop;
+pub mod debug;
+pub mod planes;
 pub mod render;
 pub mod types;
 
@@ -145,6 +148,17 @@ impl Backend for UdevData {
     fn request_redraw(&mut self) {
         self.render_requested
             .store(true, std::sync::atomic::Ordering::Release);
+    }
+    fn invalidate_scene_prefetch(&mut self) {
+        // Drop every surface's prefetched scene damage so the next draw runs
+        // the engine update inline, seeing whatever this commit changed.
+        // Costs the update/draw overlap only on commit-triggered frames;
+        // animation-driven frames keep the vblank prefetch.
+        for backend in self.backends.values_mut() {
+            for surface in backend.surfaces.values_mut() {
+                surface.prefetched_scene_damage = None;
+            }
+        }
     }
     fn renderer_context(&mut self) -> Option<layers::skia::gpu::DirectContext> {
         let r = self.gpus.single_renderer(&self.primary_gpu).unwrap();

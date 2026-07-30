@@ -226,6 +226,64 @@ impl SkiaRenderer {
         self.gl_renderer.egl_context()
     }
 
+    /// Create a Skia surface backed by the GL texture we import from
+    /// `dmabuf`. Used by [`SceneDmabufElement`](crate::render_elements::scene_dmabuf_element::SceneDmabufElement)
+    /// to render the lay-rs scene into a dmabuf the DRM compositor can
+    /// hand to a KMS plane via `UnderlyingStorage::Dmabuf`.
+    ///
+    /// The returned `SkiaSurface` shares its GPU context with this
+    /// renderer's other Skia surfaces (passed via `Some(context)` to
+    /// `new_with_texture`), so resources and shader caches are shared.
+    ///
+    /// Caller is responsible for keeping the dmabuf alive while the
+    /// returned surface is in use.
+    pub fn create_surface_from_dmabuf(
+        &mut self,
+        dmabuf: &smithay::backend::allocator::dmabuf::Dmabuf,
+    ) -> Result<SkiaSurface, GlesError> {
+        use smithay::backend::allocator::Buffer;
+
+        let is_external = !self
+            .egl_context()
+            .dmabuf_render_formats()
+            .contains(&dmabuf.format());
+        if is_external {
+            // External textures can be sampled but not rendered into via Skia's
+            // standard GPU surface path. The scene-as-dmabuf use case wants a
+            // render target, so reject external formats here.
+            return Err(GlesError::MappingError);
+        }
+
+        let egl_image = self
+            .egl_context()
+            .display()
+            .create_image_from_dmabuf(dmabuf)
+            .map_err(GlesError::BindBufferEGLError)?;
+
+        let tex_id = self.import_egl_image(egl_image, false, None)?;
+
+        let size = dmabuf.size();
+        let color_type = match dmabuf.format().code {
+            Fourcc::Argb8888 | Fourcc::Abgr8888 => skia::ColorType::RGBA8888,
+            Fourcc::Xrgb8888 | Fourcc::Xbgr8888 => skia::ColorType::RGB888x,
+            Fourcc::Abgr2101010 | Fourcc::Xbgr2101010 => skia::ColorType::RGBA1010102,
+            // A mistyped render target silently corrupts output — reject
+            // unmapped formats instead.
+            code => return Err(GlesError::UnsupportedPixelFormat(code)),
+        };
+
+        let context = self.context.as_ref();
+        Ok(SkiaSurface::new_with_texture(
+            size.w,
+            size.h,
+            0_usize,
+            tex_id,
+            color_type,
+            context,
+            skia::gpu::SurfaceOrigin::TopLeft,
+        ))
+    }
+
     pub fn current_skia_renderer(&mut self) -> Option<&SkiaSurface> {
         let renderer = self
             .current_target
@@ -239,11 +297,15 @@ impl SkiaRenderer {
         width: i32,
         height: i32,
         format: Fourcc,
-    ) -> SkiaGLesFbo {
+    ) -> Result<SkiaGLesFbo, GlesError> {
         let mut texture: GLuint = 0;
         let mut framebuffer: GLuint = 0;
 
-        let (internal_format, read_format, read_type) = fourcc_to_gl_formats(format).unwrap();
+        // Client dmabufs arrive with arbitrary fourccs (NV12/P010 from
+        // hw-decode paths) — an unmapped format must be a recoverable error,
+        // not a compositor abort.
+        let (internal_format, read_format, read_type) =
+            fourcc_to_gl_formats(format).ok_or(GlesError::UnsupportedPixelFormat(format))?;
         unsafe {
             // Generate and bind the texture
             self.gl.GenTextures(1, &mut texture);
@@ -299,21 +361,24 @@ impl SkiaRenderer {
 
             // Check that the framebuffer is complete
             if self.gl.CheckFramebufferStatus(ffi::FRAMEBUFFER) != ffi::FRAMEBUFFER_COMPLETE {
-                panic!("Failed to create complete framebuffer");
+                self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
+                self.gl.DeleteFramebuffers(1, &framebuffer);
+                self.gl.DeleteTextures(1, &texture);
+                return Err(GlesError::FramebufferBindingError);
             }
 
             // Unbind the framebuffer
             self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
         }
 
-        SkiaGLesFbo {
+        Ok(SkiaGLesFbo {
             fbo: framebuffer,
             tex_id: texture,
             format,
             origin: skia::gpu::SurfaceOrigin::TopLeft,
             width,
             height,
-        }
+        })
     }
 
     fn import_dmabuf_internal(
@@ -352,7 +417,7 @@ impl SkiaRenderer {
                         dmabuf.size().w,
                         dmabuf.size().h,
                         dmabuf.format().code,
-                    );
+                    )?;
                     self.blit_eglimage_to_2d_texture(egl_image, dst.tex_id, dmabuf.size())?;
                     (dst.tex_id, false)
                 } else {
@@ -1328,7 +1393,6 @@ impl Offscreen<SkiaGLesFbo> for SkiaRenderer {
         format: Fourcc,
         size: Size<i32, Buffer>,
     ) -> Result<SkiaGLesFbo, GlesError> {
-        let lfbo = self.create_texture_and_framebuffer(size.w, size.h, format);
-        Ok(lfbo)
+        self.create_texture_and_framebuffer(size.w, size.h, format)
     }
 }

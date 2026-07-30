@@ -1255,10 +1255,48 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         None
     }
 
+    /// Immediately demote `window` from direct scanout (if promoted) and
+    /// re-import its buffer so the scene shows current content. Call before
+    /// starting an animation that renders the window's scene content (e.g.
+    /// the minimize genie): while promoted, the content layer is blanked and
+    /// commits skip the scene import, so the animation would otherwise run
+    /// on stale or empty content until the next frame demotes the window.
+    pub fn demote_scanout_window(&mut self, window: &WindowElement) {
+        let id = window.id();
+        let ids = self.workspaces.scanout_window_ids();
+        if ids.contains(&id) {
+            tracing::info!(target: "otto::planes", "demoting {:?} from scanout (pre-animation)", id);
+            let remaining: Vec<_> = ids.into_iter().filter(|i| *i != id).collect();
+            self.workspaces.set_scanout_windows(&remaining);
+            self.update_window_view(window);
+            // The unhide + re-import above mutated the scene AFTER this
+            // frame's vblank-prefetched engine update. Drawing from the
+            // stale prefetch drops the client plane while the windows plane
+            // still shows the blanked pre-demotion state — a one-frame
+            // flash of missing/stale window content (racy: only when the
+            // demote lands inside the prefetch window).
+            self.backend_data.invalidate_scene_prefetch();
+            self.backend_data.request_redraw();
+        }
+    }
+
     pub fn update_window_view(&mut self, window: &WindowElement) {
         let scale_factor = Config::with(|c| c.screen_scale);
         if let Some(window_surface) = window.wl_surface() {
             let id = window_surface.id();
+
+            // The shadow's `active` look must track real keyboard focus. Rebuilding
+            // it as inactive unconditionally makes the shadow flick for one frame
+            // whenever this runs on a still-focused window (e.g. on scanout demote,
+            // where the window is demoted but keeps focus).
+            let is_focused = self
+                .seat
+                .get_keyboard()
+                .and_then(|k| k.current_focus())
+                .map(|focus| {
+                    matches!(&focus, crate::focus::KeyboardFocusTarget::Window(w) if w.id() == window.id())
+                })
+                .unwrap_or(false);
 
             // Ensure all surfaces in the tree have rendering layers before building render elements
             // This only creates layers for surfaces that don't already have them
@@ -1281,12 +1319,46 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
             let mut render_elements = VecDeque::new();
 
-            // Collect popup surfaces and send them to the popup overlay layer
-            PopupManager::popups_for_surface(&window_surface).for_each(|(popup, popup_offset)| {
-                let offset: smithay::utils::Point<f64, smithay::utils::Physical> =
-                    popup_offset.to_physical_precise_round(scale_factor);
+            // Collect popup surfaces and send them to the popup overlay layer.
+            // Two passes: `popups_for_surface` yields children BEFORE their
+            // parent, so gather every popup's accumulated offset first, then
+            // decide per popup whether its own position is resolved yet.
+            let popups: Vec<(
+                smithay::desktop::PopupKind,
+                smithay::utils::Point<i32, smithay::utils::Logical>,
+            )> = PopupManager::popups_for_surface(&window_surface).collect();
+            let popup_offsets: std::collections::HashMap<
+                smithay::reexports::wayland_server::backend::ObjectId,
+                smithay::utils::Point<i32, smithay::utils::Logical>,
+            > = popups
+                .iter()
+                .map(|(p, o)| (p.wl_surface().id(), *o))
+                .collect();
+            for (popup, popup_offset) in &popups {
+                let popup_offset = *popup_offset;
                 let popup_surface = popup.wl_surface();
                 let popup_id = popup_surface.id();
+
+                // A nested popup whose accumulated offset equals its parent
+                // popup's offset has an unresolved (0,0) own position: its
+                // committed geometry hasn't landed yet (the initial configure
+                // round-trip; `PopupKind::location()` reads committed state).
+                // Drawing it now places it on top of its parent — skip it; a
+                // later frame re-runs this with the real offset once its
+                // geometry commits.
+                let parent_surface = match popup {
+                    smithay::desktop::PopupKind::Xdg(s) => s.get_parent_surface(),
+                    _ => None,
+                };
+                let degenerate_nested = parent_surface
+                    .and_then(|p| popup_offsets.get(&p.id()).copied())
+                    .map_or(false, |parent_off| parent_off == popup_offset);
+                if degenerate_nested {
+                    continue;
+                }
+
+                let offset: smithay::utils::Point<f64, smithay::utils::Physical> =
+                    popup_offset.to_physical_precise_round(scale_factor);
 
                 // Calculate absolute popup position (window position + popup offset)
                 let popup_position = layers::types::Point {
@@ -1309,8 +1381,24 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                         None,
                     ) {
                         popup_surfaces.push(window_view);
+                    } else {
+                        tracing::debug!(
+                            target: "otto::popups",
+                            "popup surface {:?} produced no view (no buffer/texture?)",
+                            surface.id()
+                        );
                     }
                 });
+
+                tracing::debug!(
+                    target: "otto::popups",
+                    "update_popup {:?} root={:?} pos=({}, {}) surfaces={}",
+                    popup_id,
+                    id,
+                    popup_position.x,
+                    popup_position.y,
+                    popup_surfaces.len()
+                );
 
                 // Send popup to the overlay layer and register its surface layers
                 #[allow(clippy::mutable_key_type)]
@@ -1325,7 +1413,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 );
 
                 self.surface_layers.extend(popup_layers);
-            });
+            }
 
             let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> =
                 (0.0, 0.0).into();
@@ -1443,7 +1531,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     h: window_geometry.size.h as f32,
                     title,
                     fullscreen,
-                    active: false,
+                    active: is_focused,
                 };
                 window_view.view_base.update_state(&model);
 
@@ -1459,6 +1547,55 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
                 self.workspaces.expose_update_if_needed();
             }
+        }
+    }
+
+    /// Refresh only the window's shadow geometry (position + size), without
+    /// re-importing its surface tree.
+    ///
+    /// Used for scanned-out windows: their client buffer is pushed straight to
+    /// a KMS plane, so the full `update_window_view` import is skipped on every
+    /// root commit (see `shell::mod` commit handler). But the drop-shadow still
+    /// renders in the windows plane from the `WindowViewBaseModel`, so a
+    /// geometry change while promoted (tile, resize) must be reflected here or
+    /// the shadow ghosts at the pre-change size while the content tiles.
+    pub fn refresh_window_shadow_geometry(&mut self, window: &WindowElement) {
+        let scale_factor = Config::with(|c| c.screen_scale);
+        let Some(id) = window.wl_surface().map(|s| s.id()) else {
+            return;
+        };
+        let location = self
+            .workspaces
+            .element_location(window)
+            .unwrap_or((0, 0).into())
+            .to_f64()
+            .to_physical(scale_factor);
+        let window_geometry = self
+            .workspaces
+            .element_geometry(window)
+            .unwrap_or_default()
+            .to_f64()
+            .to_physical(scale_factor);
+        if let Some(window_view) = self.workspaces.get_window_view(&id) {
+            let current = window_view.view_base.get_state();
+            let (x, y) = (location.x as f32, location.y as f32);
+            let (w, h) = (window_geometry.size.w as f32, window_geometry.size.h as f32);
+            // Skip the state churn when nothing moved — most scanout commits
+            // are same-geometry buffer swaps (video, games) firing at display
+            // rate.
+            if current.x == x && current.y == y && current.w == w && current.h == h {
+                return;
+            }
+            let model = WindowViewBaseModel {
+                x,
+                y,
+                w,
+                h,
+                title: current.title.clone(),
+                fullscreen: current.fullscreen,
+                active: current.active,
+            };
+            window_view.view_base.update_state(&model);
         }
     }
     // Commented out - update_layer_surface is no longer used
@@ -2030,6 +2167,11 @@ pub trait Backend {
     fn set_cursor(&mut self, image: &CursorImageStatus); //, renderer: &mut SkiaRenderer);
     fn renderer_context(&mut self) -> Option<layers::skia::gpu::DirectContext>;
     fn request_redraw(&mut self) {}
+    /// Invalidate any pre-computed (vblank-prefetched) scene update. Called
+    /// on client commits: a commit can create scene layers (e.g. a popup)
+    /// AFTER the prefetch ran, and drawing from the stale prefetch renders
+    /// them without a layout pass — visibly flashing at (0,0) for a frame.
+    fn invalidate_scene_prefetch(&mut self) {}
     /// Get GBM device for DMA-BUF screenshare (None for backends without DMA-BUF support)
     fn gbm_device(
         &self,

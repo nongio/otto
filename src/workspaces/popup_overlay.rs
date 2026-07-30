@@ -170,6 +170,7 @@ impl PopupOverlayView {
     /// Remove a popup layer, returning surface IDs that need cleanup from surface_layers
     pub fn remove_popup(&mut self, popup_id: &ObjectId) -> Vec<ObjectId> {
         if let Some(popup) = self.popup_layers.remove(popup_id) {
+            tracing::debug!(target: "otto::popups", "remove_popup {:?}", popup_id);
             popup.layer.remove();
             popup.surface_ids
         } else {
@@ -217,6 +218,12 @@ impl PopupOverlayView {
     pub fn hide_popups_for_window(&self, root_window_id: &ObjectId) {
         for popup in self.popup_layers.values() {
             if &popup.root_window_id == root_window_id {
+                tracing::debug!(
+                    target: "otto::popups",
+                    "hide popup {:?} (root {:?})",
+                    popup.popup_id,
+                    root_window_id
+                );
                 popup.layer.set_hidden(true);
             }
         }
@@ -226,6 +233,12 @@ impl PopupOverlayView {
     pub fn show_popups_for_window(&self, root_window_id: &ObjectId) {
         for popup in self.popup_layers.values() {
             if &popup.root_window_id == root_window_id {
+                tracing::debug!(
+                    target: "otto::popups",
+                    "show popup {:?} (root {:?})",
+                    popup.popup_id,
+                    root_window_id
+                );
                 popup.layer.set_hidden(false);
             }
         }

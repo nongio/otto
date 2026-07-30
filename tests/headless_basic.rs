@@ -611,4 +611,219 @@ mod headless_tests {
 
         handle.stop();
     }
+
+    // ── Direct scanout candidate selection ───────────────────────────────
+    //
+    // These tests exercise `Workspaces::get_scanout_candidates()` — the
+    // selector the udev render path uses to decide which client windows are
+    // promoted to KMS plane scanout. A window is a candidate when no overlay
+    // UI (expose, app switcher, OSD, layer-shell chrome) overlaps it, it is
+    // not animating/minimizing, owns no popups, and is not covered by a
+    // higher window; the set is capped at the promotion limit.
+
+    /// Titles of the current scanout candidates, top-most first.
+    fn scanout_candidate_titles(handle: &HeadlessHandle) -> Vec<String> {
+        handle.query(|state| {
+            state
+                .workspaces
+                .get_scanout_candidates()
+                .iter()
+                .filter_map(|id| {
+                    state
+                        .workspaces
+                        .get_window_for_surface(id)
+                        .map(|w| w.xdg_title())
+                })
+                .collect()
+        })
+    }
+
+    /// Wait until animations from compositor startup have settled, so
+    /// `get_scanout_candidates()` reflects the steady state.
+    ///
+    /// Note: in headless mode the workspace `is_animating` flag isn't
+    /// reset by the udev render loop (which doesn't run), so we also
+    /// clear it explicitly to put the compositor into a stable state
+    /// the eligibility predicate can return true for.
+    fn settle_animations(handle: &HeadlessHandle) {
+        handle.settle(300);
+        handle.with_state(|state| {
+            state
+                .workspaces
+                .is_animating
+                .store(false, std::sync::atomic::Ordering::Relaxed);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn scanout_candidate_with_no_clients_is_none() {
+        let handle = start_compositor();
+        settle_animations(&handle);
+
+        // Diagnostic: query each global gate individually so a failure
+        // pinpoints which one is active.
+        let (show_all, app_switcher_alive, osd, animating): (bool, bool, bool, bool) = handle
+            .query(|state| {
+                (
+                    state.workspaces.get_show_all(),
+                    {
+                        use otto::focus::IsAlive;
+                        state.workspaces.app_switcher.alive()
+                    },
+                    state.workspaces.osd.is_visible(),
+                    state
+                        .workspaces
+                        .is_animating
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                )
+            });
+
+        eprintln!(
+            "show_all={show_all} app_switcher={app_switcher_alive} \
+             osd={osd} animating={animating}"
+        );
+
+        let candidates = scanout_candidate_titles(&handle);
+        assert!(
+            candidates.is_empty(),
+            "No candidates when no clients are connected, got {candidates:?}"
+        );
+
+        handle.stop();
+    }
+
+    #[test]
+    #[serial]
+    fn scanout_candidate_with_one_toplevel_returns_it() {
+        let handle = start_compositor();
+        let mut client = connect_client(&handle);
+
+        let _w = client.create_toplevel("scanout-only-window", 800, 600);
+        handle.wait(Duration::from_millis(200));
+        let _ = client.roundtrip();
+        settle_animations(&handle);
+
+        let candidates = scanout_candidate_titles(&handle);
+        assert_eq!(
+            candidates,
+            vec!["scanout-only-window".to_string()],
+            "One windowed toplevel + no overlays → it is the only candidate"
+        );
+
+        handle.stop();
+    }
+
+    #[test]
+    #[serial]
+    fn scanout_candidate_returns_topmost_after_raise() {
+        let handle = start_compositor();
+        let mut client = connect_client(&handle);
+
+        let _w1 = client.create_toplevel("bottom-window", 640, 480);
+        let _w2 = client.create_toplevel("middle-window", 800, 600);
+        let _w3 = client.create_toplevel("top-window", 400, 300);
+        handle.wait(Duration::from_millis(200));
+        let _ = client.roundtrip();
+        settle_animations(&handle);
+
+        // Last-created window is on top by default.
+        let top = scanout_candidate_titles(&handle);
+        assert_eq!(top.first().map(String::as_str), Some("top-window"));
+
+        // Raise bottom-window to the top.
+        handle.with_state(|state| {
+            let id = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == "bottom-window")
+                .map(|w| w.id())
+                .expect("bottom-window not found");
+            state.workspaces.raise_element(&id, true, true);
+        });
+        handle.settle(60);
+
+        let top_after = scanout_candidate_titles(&handle);
+        assert_eq!(
+            top_after.first().map(String::as_str),
+            Some("bottom-window"),
+            "After raising bottom-window, it should be the scanout candidate"
+        );
+
+        handle.stop();
+    }
+
+    #[test]
+    #[serial]
+    fn expose_blocks_scanout_eligibility() {
+        let handle = start_compositor();
+        let mut client = connect_client(&handle);
+
+        let _w = client.create_toplevel("hidden-by-expose", 800, 600);
+        handle.wait(Duration::from_millis(200));
+        let _ = client.roundtrip();
+        settle_animations(&handle);
+
+        // Sanity check: window is a candidate before expose.
+        let before = scanout_candidate_titles(&handle);
+        assert!(!before.is_empty(), "Candidate exists before expose opens");
+
+        // Open expose.
+        handle.toggle_expose();
+        handle.settle(300);
+        assert!(handle.is_expose_active(), "Expose should be active");
+
+        let during = scanout_candidate_titles(&handle);
+        assert!(
+            during.is_empty(),
+            "Expose mode must block scanout candidates (overlay UI visible), got {during:?}"
+        );
+
+        // Close expose — candidates return.
+        handle.toggle_expose();
+        settle_animations(&handle);
+        assert!(!handle.is_expose_active(), "Expose should be closed");
+
+        let after = scanout_candidate_titles(&handle);
+        assert!(
+            !after.is_empty(),
+            "Candidates should return after expose closes"
+        );
+
+        handle.stop();
+    }
+
+    #[test]
+    #[serial]
+    fn scanned_out_flag_default_is_false() {
+        let handle = start_compositor();
+        let mut client = connect_client(&handle);
+
+        let _w = client.create_toplevel("flag-test", 800, 600);
+        handle.wait(Duration::from_millis(200));
+        let _ = client.roundtrip();
+
+        // The is_scanned_out flag is set/cleared by the udev render path.
+        // In the headless backend the udev render does not run, so the flag
+        // stays at its default of `false`. This test pins down that default
+        // behavior so future changes can't accidentally change it (e.g., by
+        // initializing the flag to `true` or having some other code path
+        // toggle it from headless).
+        let scanned_out: bool = handle.query(|state| {
+            state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == "flag-test")
+                .map(|w| w.is_scanned_out())
+                .unwrap_or(false)
+        });
+
+        assert!(
+            !scanned_out,
+            "is_scanned_out should default to false; only the udev render path \
+             toggles it. Headless runs without the udev render so it must stay false."
+        );
+
+        handle.stop();
+    }
 }

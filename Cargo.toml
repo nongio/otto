@@ -32,7 +32,7 @@ libc = "0.2"
 shell-words = "1.1"
 tracing = { version = "0.1.37", features = [
     "max_level_trace",
-    "release_max_level_debug",
+    "release_max_level_trace",
 ] }
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 puffin_http = { version = "0.16", optional = true }
@@ -52,19 +52,20 @@ otto-kit = { path = "components/otto-kit" }
 
 [dependencies.laye-rs]
 git = "https://github.com/nongio/layers"
-tag = "v1.12.0"
+branch = "feat/subtree-buffer-render"
+# local development: path = "../layers"
 features = ["export-taffy"]
 
 [dependencies.smithay-drm-extras]
-# path = "../smithay/smithay-drm-extras"
-git = "https://github.com/Smithay/smithay"
-rev = "f9d4d7ffd82d743fb89737b3ffaed57505b477d1"
+git = "https://github.com/nongio/smithay"
+branch = "feat/dmabuf-scanout"
+# local development: path = "../smithay/smithay-drm-extras"
 optional = true
 
 [dependencies.smithay]
-# path = "../smithay"
-git = "https://github.com/Smithay/smithay"
-rev = "f9d4d7ffd82d743fb89737b3ffaed57505b477d1"
+git = "https://github.com/nongio/smithay"
+branch = "feat/dmabuf-scanout"
+# local development: path = "../smithay"
 default-features = false
 features = [
     "backend_winit",
@@ -90,7 +91,8 @@ version = "0.12.0"
 perf-counters = []
 default = ["egl", "winit", "udev", "renderer_sync", "xwayland"]
 dev = ["debug", "profile", "debugger"]
-debug = ["image/png", "renderdoc"] # "fps_ticker"
+debug = ["image/png", "renderdoc"] # "fps_ticker" — add debug-kms explicitly when needed
+debug-kms = []
 debugger = ["laye-rs/debugger"]
 profile = ["profile-with-puffin", "laye-rs/profile-with-puffin"]
 ticker = ["fps_ticker"]
