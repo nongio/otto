@@ -74,22 +74,24 @@ Testing and issue reports are welcome. Development follows a draft roadmap of pl
  - **Input polish:** scroll acceleration.
 
  ### Experimentation
-- **Scene graph protocol:** WIP protocol ([otto-scene-v1](protocols/otto-scene-v1.xml)) to expose the scene graph and animations to external clients for advanced UI customization and effects.
+- **Scene graph protocol:** WIP protocol ([otto-surface-style-unstable-v1](protocols/otto-surface-style-unstable-v1.xml)) exposing the scene graph and its animations to clients — size, position, corner radius, blur and shadow driven by compositor-side springs, a Core Animation-like model. The topbar and the dynamic island are built on it.
 
 ## Supported Wayland Protocols
 Otto implements a comprehensive set of Wayland protocols, including:
-- Core: `wl_compositor`, `wl_shm`, `wl_seat`, `wl_data_device_manager`
-- Shells: `xdg_wm_base` (XDG shell), `wlr_layer_shell_v1` (Layer shell 1.0)
-- Output management: `wl_output`, `xdg_output`, `wp_presentation`, `wp_fractional_scale_v1`
-- Rendering: `zwp_linux_dmabuf_v1`, `wp_viewporter`
-- Input: pointer gestures, relative pointer, keyboard shortcuts inhibit, text input, input method, `wp_cursor_shape_v1`, virtual keyboard, `wlr_virtual_pointer_v1`
+- Core: `wl_compositor`, `wl_subcompositor`, `wl_shm`, `wl_seat`, `wl_data_device_manager`
+- Shells: `xdg_wm_base` (XDG shell), `xdg_decoration_manager_v1`, `wlr_layer_shell_v1` (Layer shell 1.0), `xwayland_shell_v1`
+- Output management: `wl_output`, `xdg_output`, `wp_presentation`, `wp_fractional_scale_v1`, `wp_viewporter`
+- Rendering and DRM: `zwp_linux_dmabuf_v1`, `wp_linux_drm_syncobj_v1` (explicit sync), `wp_drm_lease_device_v1`
+- Input: pointer gestures, relative pointer, pointer constraints, tablet, `wp_cursor_shape_v1`, keyboard shortcuts inhibit, text input, input method, virtual keyboard, `zwlr_virtual_pointer_v1`, XWayland keyboard grab
 - Selection: primary selection, data control (wlr-data-control)
 - Session: `ext_session_lock_v1`, `zwp_idle_inhibit_manager_v1`, `xdg_activation_v1`, security context
-- Capture: `wlr_screencopy_v1`
+- Window listing: `ext_foreign_toplevel_list_v1`, `zwlr_foreign_toplevel_management_v1`
+- Capture: `zwlr_screencopy_v1`
 - XDG foreign: cross-client surface identification
-- Display control: `wlr_gamma_control_v1` (color temperature/night shift with hardware gamma tables)
+- Display control: `zwlr_gamma_control_v1` (color temperature/night shift with hardware gamma tables)
+- Otto extensions: [`otto-surface-style-unstable-v1`](protocols/otto-surface-style-unstable-v1.xml), [`otto-dock-v1`](protocols/otto-dock-v1.xml)
 
-For a complete and up-to-date list, see [docs/developer/wayland.md](./docs/developer/wayland.md).
+For where each one is implemented and how to trace it through the code, see [docs/developer/wayland.md](./docs/developer/wayland.md).
 
 ## Development
 
