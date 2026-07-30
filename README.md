@@ -49,41 +49,51 @@ Otto is in an early but functional state. You can install it from pre-built pack
 Testing and issue reports are welcome. Development follows a draft roadmap of planned features and improvements.
 
 ## Features and roadmap
-- **Window management:** move/resize, fullscreen/maximize (animated), minimize to the Dock (animated).
-- **Workspaces:** multiple workspaces, animated switching, drag windows between workspaces, configurable background.
-- **Dock (task manager):** shows running apps, minimized windows and pinned/bookmarked apps.
-- **App switcher** (default: `Ctrl+Tab`): searches app metadata/icons (XDG), can close apps, cycles between windows of the same app.
+- **Window management:** move/resize, fullscreen/maximize (animated), minimize to the Dock (animated), snap to left/right halves, new windows placed where they overlap the least.
+- **Workspaces:** multiple workspaces, animated switching, drag windows between workspaces, configurable background; each monitor has its own independent set.
+- **Multi-monitor:** per-output rendering, workspaces, fullscreen, Exposé and workspace selector; hotplug, display arrangement and modes from the config, and virtual outputs created on demand.
+- **Dock (task manager):** shows running apps, minimized windows and pinned/bookmarked apps, bounces an icon while a launch is in progress.
+- **App switcher** (default: `Ctrl+Tab`): searches app metadata/icons (XDG), can close apps, cycles between windows of the same app, appears on the monitor under the pointer.
 - **Exposé / overview** (default: `PageDown`, gesture: three-finger swipe up): shows all windows, shows window previews with names, includes “show desktop”.
-- **Input:** natural scrolling, two-finger scrolling, keyboard remapping.
+- **Topbar:** clock, system tray, and application menus exported over DBusMenu.
+- **Dynamic island:** notifications, ongoing activities, and system UI (brightness, volume, keyboard backlight) in a floating panel.
+- **Session lock:** `ext-session-lock-v1` locking with a PAM-backed locker (`otto-lock`), lock on `Ctrl+Alt+Escape`, on the power button, on lid close, or after an idle timeout — respecting `idle-inhibit` clients.
+- **Login greeter:** `otto --login` hosts a login screen (`otto-greeter`) against greetd, with password and fingerprint prompts.
+- **Power management:** Otto-owned lid-close suspend with clamshell and remote-session awareness, configurable power-button and lid actions.
+- **Input:** natural scrolling, two-finger scrolling, keyboard remapping, configurable shortcuts.
 - **Theming:** dark/light.
-- **Screen sharing:** works through an XDG Desktop Portal backend + PipeWire (full-screen capture via GPU blit + dmabuf).
-- **System UI:** brightness, volume, keyboard backlight
+- **Screen sharing:** XDG Desktop Portal backend + PipeWire, with a permission dialog, dmabuf modifier negotiation, and AirPlay receivers as a target.
+- **Remote desktop:** `otto-rdp` serves a virtual output over RDP with TLS, remote input, and hardware H.264 encoding where available.
+- **XWayland:** X11 apps including fullscreen games — keyboard focus for globally-active clients, output scale via XSETTINGS, direct scanout.
+- **Rendering:** Skia pipeline with KMS multi-plane scanout (dock, app switcher, popups and topmost windows on their own planes) and cross-plane backdrop blur.
+
+> **Note on KMS scanout:** on the tty-udev backend, Otto puts parts of the desktop on their own hardware planes instead of compositing everything into one buffer, keeping the number of overlapping planes small to limit GPU work. This has mostly been tested on Intel GPUs. Other drivers are expected to fall back to full composition when the atomic test rejects a plane configuration, but that path is untested — if you see missing, misplaced or flickering elements on AMD or NVIDIA, this is the first thing to suspect, and a report is welcome. See [docs/developer/drm_plane.md](./docs/developer/drm_plane.md).
 
 ### Still to come
- - **Multi-monitor:** multiple screens.
- - **Screen capture:** per-window capture, screenshots, and a permission dialog UI.
- - **Session management:** lockscreen / login with libseat integration.
- - **Topbar:** application menus and system integration.
+ - **Screen capture:** per-window capture and screenshots.
+ - **Multi-monitor:** display mirroring.
  - **Dock improvements:** favorite locations; move Dock code out of compositor core.
- - **System UI:** brightness, volume, keyboard backlight widgets; notifications.
  - **Input polish:** scroll acceleration.
 
  ### Experimentation
-- **Scene graph protocol:** WIP protocol ([otto-scene-v1](protocols/otto-scene-v1.xml)) to expose the scene graph and animations to external clients for advanced UI customization and effects.
-- **Ideas:** remote "virtual screens" (VNC/RDP).
+- **Scene graph protocol:** WIP protocol ([otto-surface-style-unstable-v1](protocols/otto-surface-style-unstable-v1.xml)) exposing the scene graph and its animations to clients — size, position, corner radius, blur and shadow driven by compositor-side springs, a Core Animation-like model. The topbar and the dynamic island are built on it.
 
 ## Supported Wayland Protocols
 Otto implements a comprehensive set of Wayland protocols, including:
-- Core: `wl_compositor`, `wl_shm`, `wl_seat`, `wl_data_device_manager`
-- Shells: `xdg_wm_base` (XDG shell), `wlr_layer_shell_v1` (Layer shell 1.0)
-- Output management: `wl_output`, `xdg_output`, `wp_presentation`
-- Rendering: `zwp_linux_dmabuf_v1`, `wp_viewporter`
-- Input: pointer gestures, relative pointer, keyboard shortcuts inhibit, text input, input method
+- Core: `wl_compositor`, `wl_subcompositor`, `wl_shm`, `wl_seat`, `wl_data_device_manager`
+- Shells: `xdg_wm_base` (XDG shell), `xdg_decoration_manager_v1`, `wlr_layer_shell_v1` (Layer shell 1.0), `xwayland_shell_v1`
+- Output management: `wl_output`, `xdg_output`, `wp_presentation`, `wp_fractional_scale_v1`, `wp_viewporter`
+- Rendering and DRM: `zwp_linux_dmabuf_v1`, `wp_linux_drm_syncobj_v1` (explicit sync), `wp_drm_lease_device_v1`
+- Input: pointer gestures, relative pointer, pointer constraints, tablet, `wp_cursor_shape_v1`, keyboard shortcuts inhibit, text input, input method, virtual keyboard, `zwlr_virtual_pointer_v1`, XWayland keyboard grab
 - Selection: primary selection, data control (wlr-data-control)
+- Session: `ext_session_lock_v1`, `zwp_idle_inhibit_manager_v1`, `xdg_activation_v1`, security context
+- Window listing: `ext_foreign_toplevel_list_v1`, `zwlr_foreign_toplevel_management_v1`
+- Capture: `zwlr_screencopy_v1`
 - XDG foreign: cross-client surface identification
-- Display control: `wlr_gamma_control_v1` (color temperature/night shift with hardware gamma tables)
+- Display control: `zwlr_gamma_control_v1` (color temperature/night shift with hardware gamma tables)
+- Otto extensions: [`otto-surface-style-unstable-v1`](protocols/otto-surface-style-unstable-v1.xml), [`otto-dock-v1`](protocols/otto-dock-v1.xml)
 
-For a complete and up-to-date list, see [docs/developer/wayland.md](./docs/developer/wayland.md).
+For where each one is implemented and how to trace it through the code, see [docs/developer/wayland.md](./docs/developer/wayland.md).
 
 ## Development
 
@@ -92,9 +102,17 @@ Otto consists of the main compositor and additional components:
 | Component | Description |
 |-----------|-------------|
 | `otto` | Main compositor binary |
+| `otto-bar` | Topbar: clock, tray and application menus |
+| `otto-islands` | Dynamic island: notifications, activities and dialogs |
+| `otto-lock` | PAM-backed screen locker (`ext-session-lock-v1`) |
+| `otto-greeter` | Login screen client speaking greetd's IPC |
+| `otto-auth-ui` | Authentication panel shared by the locker and the greeter |
+| `otto-rdp` | RDP bridge serving a virtual output to a remote client |
+| `otto-kit` | UI toolkit the Otto clients are built on |
+| `apps-manager` | Application launcher |
 | `xdg-desktop-portal-otto` | XDG Desktop Portal backend for screen sharing |
 
-The portal backend is located in `components/xdg-desktop-portal-otto/`.
+Each lives under `components/`, and can be built on its own with `cargo build -p <name>`.
 
 ## How can you contribute?
 Both this project and the LayersEngine are open to contributions. Contribute by testing the compositor, reporting bugs, implementing new features, or bringing new ideas. If you have any questions, open an issue on the repository.
@@ -144,6 +162,10 @@ makepkg -si
 Once installed, Otto will appear in your login manager (GDM, SDDM, LightDM, etc.) as "Otto" in the session selection menu. Simply select it and log in.
 
 **Note:** Screen sharing functionality requires `xdg-desktop-portal` to be installed on your system.
+
+**Note:** Using Otto as the login screen (`otto --login` with `otto-greeter`) requires `greetd`. On Debian/Ubuntu, copy the shipped `otto-lock.pam` example to `/etc/pam.d/otto-lock` before using the screen locker — the packages for Arch and Fedora install it for you.
+
+**Note:** Otto handles the lid switch and the power button itself. For those to work, set `HandleLidSwitch=ignore` and `HandlePowerKey=ignore` in `logind.conf`.
 
 ## Building Otto
 
