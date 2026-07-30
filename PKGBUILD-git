@@ -11,10 +11,10 @@ provides=("otto")
 conflicts=("otto" "otto-bin")
 depends=("libdrm" "systemd-libs" "mesa" "libxkbcommon" "wayland" "libinput" "dbus" "seatd" "pipewire" "freetype2" "fontconfig" "pixman" "noto-fonts")
 makedepends=("git" "rust" "cargo" "libdisplay-info" "clang")
-optdepends=("xdg-desktop-portal: Desktop integration")
+optdepends=("xdg-desktop-portal: Desktop integration" "fprintd: fingerprint unlock for otto-lock and otto-greeter" "greetd: login manager otto --login hosts a greeter for")
 source=()
 sha256sums=()
-backup=("etc/otto/config.toml")
+backup=("etc/otto/config.toml" "etc/pam.d/otto-lock")
 
 pkgver() {
     cd "$startdir"
@@ -28,6 +28,8 @@ build() {
     cargo build --release
     cargo build --release -p otto-bar
     cargo build --release -p otto-islands
+    cargo build --release -p otto-lock
+    cargo build --release -p otto-greeter
     cargo build --release -p xdg-desktop-portal-otto
 }
 
@@ -38,6 +40,8 @@ package() {
     install -Dm755 target/release/otto "$pkgdir/usr/bin/otto"
     install -Dm755 target/release/otto-bar "$pkgdir/usr/bin/otto-bar"
     install -Dm755 target/release/otto-islands "$pkgdir/usr/bin/otto-islands"
+    install -Dm755 target/release/otto-lock "$pkgdir/usr/bin/otto-lock"
+    install -Dm755 target/release/otto-greeter "$pkgdir/usr/bin/otto-greeter"
     install -Dm755 target/release/xdg-desktop-portal-otto "$pkgdir/usr/libexec/xdg-desktop-portal-otto"
 
     # Install documentation
@@ -47,6 +51,9 @@ package() {
 
     # Install configuration
     install -Dm644 otto_config.example.toml "$pkgdir/etc/otto/config.toml"
+    # PAM stack otto-lock authenticates against; without it PAM falls through
+    # to `other`, which denies everything.
+    install -Dm644 components/otto-lock/otto-lock.pam "$pkgdir/etc/pam.d/otto-lock"
 
     # Install desktop files
     install -Dm644 resources/otto.desktop "$pkgdir/usr/share/wayland-sessions/otto.desktop"
