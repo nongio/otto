@@ -133,7 +133,105 @@ pub fn locker_command() -> (String, Vec<String>) {
     crate::config::Config::with(|c| (c.lock.locker_command.clone(), c.lock.locker_args.clone()))
 }
 
-impl<BackendData: Backend> Otto<BackendData> {
+impl<BackendData: Backend + 'static> Otto<BackendData> {
+    /// Note that the user did something. Auto-lock measures from the last such
+    /// moment, so every input path has to call this — a session that only ever
+    /// sees mouse motion is not idle.
+    pub fn note_input_activity(&mut self) {
+        self.lock_last_activity = std::time::Instant::now();
+    }
+
+    /// Start the timer that locks the session after
+    /// [`crate::config::LockConfig::auto_lock_timeout`] seconds without input.
+    ///
+    /// Nothing is scheduled when the setting is off — config is read once at
+    /// startup, so a session that starts without auto-locking never gets it —
+    /// and each tick is scheduled from the time left rather than at a fixed
+    /// rate, so an idle session wakes once per timeout instead of once a second.
+    pub fn start_auto_lock_timer(handle: &smithay::reexports::calloop::LoopHandle<'static, Self>) {
+        use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+
+        let timeout = crate::config::Config::with(|c| c.lock.auto_lock_timeout);
+        if timeout == 0 {
+            return;
+        }
+        // In login mode the greeter *is* the screen: there is no session behind
+        // it to hide, and the locker would authenticate a user who has not
+        // logged in yet.
+        if crate::login::is_login_mode() {
+            return;
+        }
+        let timeout = std::time::Duration::from_secs(timeout);
+
+        if handle
+            .insert_source(Timer::from_duration(timeout), move |_, _, data| {
+                // A client asking not to be considered idle (a video playing)
+                // both holds the lock off and restarts the clock, so the
+                // countdown runs from when it stops, not from the last time
+                // the user touched anything.
+                if data.idle_inhibited() {
+                    debug!("Auto-lock held off by an idle inhibitor");
+                    data.note_input_activity();
+                    return TimeoutAction::ToDuration(timeout);
+                }
+                let idle_for = data.lock_last_activity.elapsed();
+                let left = timeout.saturating_sub(idle_for);
+                if left.is_zero() {
+                    data.auto_lock_now(timeout);
+                    return TimeoutAction::ToDuration(timeout);
+                }
+                TimeoutAction::ToDuration(left)
+            })
+            .is_err()
+        {
+            warn!("failed to schedule the auto-lock timer; auto-locking is off");
+        } else {
+            info!(idle_secs = timeout.as_secs(), "Auto-lock armed");
+        }
+    }
+
+    /// Whether a client is asking for the session not to be considered idle
+    /// (`idle-inhibit-unstable-v1`) — a video playing, a presentation.
+    ///
+    /// An inhibitor only counts while its surface is on screen. The protocol
+    /// leaves that to the compositor precisely because clients forget to drop
+    /// them: a dead or minimized window holding one would block auto-lock for
+    /// the rest of the session.
+    pub fn idle_inhibited(&self) -> bool {
+        self.idle_inhibitors.iter().any(|surface| {
+            if !surface.alive() {
+                return false;
+            }
+            // Inhibitors are usually taken on a subsurface (the video area),
+            // so a surface with no window of its own is one whose toplevel we
+            // can't check — count it rather than silently ignore it.
+            match self
+                .workspaces
+                .get_window_for_surface(&surface.id())
+                .map(|w| w.is_minimised())
+            {
+                Some(minimized) => !minimized,
+                None => true,
+            }
+        })
+    }
+
+    /// Lock the session because it has been idle for `timeout`.
+    fn auto_lock_now(&mut self, timeout: std::time::Duration) {
+        if self.is_session_locked() {
+            return;
+        }
+        let (cmd, args) = locker_command();
+        info!(locker = %cmd, idle_secs = timeout.as_secs(), "Auto-locking idle session");
+        // Same path as the `lock` action: launching the locker is what locks —
+        // it binds `ext_session_lock_manager_v1` and asks for the lock itself.
+        self.launch_program(cmd, args);
+        // Launching is not locking yet; the locker takes a moment to come up.
+        // Without this the next tick — still idle, still unlocked — would
+        // launch a second one.
+        self.note_input_activity();
+    }
+
     /// Whether the session is locked, or locking.
     pub fn is_session_locked(&self) -> bool {
         self.lock_state.is_active()
@@ -203,7 +301,7 @@ impl<BackendData: Backend> Otto<BackendData> {
             .workspaces
             .outputs()
             .filter_map(|output| {
-                let geometry = self.workspaces.output_geometry(&output)?;
+                let geometry = self.workspaces.output_geometry(output)?;
                 let scale = output.current_scale().fractional_scale() as f32;
                 Some((
                     output.name(),

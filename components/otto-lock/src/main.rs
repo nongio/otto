@@ -537,16 +537,28 @@ impl Locker {
             PowerAction::Restart => "reboot",
             PowerAction::Shutdown => "poweroff",
         };
+        tracing::info!(verb, "power action requested");
 
-        match std::process::Command::new("systemctl").arg(verb).status() {
-            Ok(status) if status.success() => {}
-            Ok(status) => {
-                tracing::warn!(verb, ?status, "systemctl refused");
-                self.session.error = Some(format!("Not permitted to {verb}"));
+        // Captured rather than inherited: what systemd has to say about a
+        // refusal is the whole diagnosis, and on a lock screen there is no
+        // terminal for it to land in.
+        match std::process::Command::new("systemctl").arg(verb).output() {
+            Ok(output) if output.status.success() => {
+                tracing::info!(verb, "systemctl accepted");
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let reason = stderr.lines().next().unwrap_or("").trim().to_string();
+                tracing::warn!(verb, status = ?output.status, %stderr, "systemctl refused");
+                self.session.error = Some(if reason.is_empty() {
+                    format!("Not permitted to {verb}")
+                } else {
+                    reason
+                });
             }
             Err(err) => {
                 tracing::warn!(verb, %err, "could not run systemctl");
-                self.session.error = Some(format!("Could not {verb}"));
+                self.session.error = Some(format!("Could not {verb}: {err}"));
             }
         }
     }
@@ -771,6 +783,7 @@ impl App for Locker {
                     screen.surface.base_surface().wl_surface().id() == event.surface.id()
                 })
                 .and_then(|screen| screen.panel.action_at(x as f32, y as f32));
+            tracing::info!(x, y, ?action, "press on the lock surface");
             if let Some(action) = action {
                 self.activate(action);
                 acted = true;

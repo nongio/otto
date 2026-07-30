@@ -868,7 +868,7 @@ impl Otto<UdevData> {
 
         // Determine if we should disable laptop panels based on lid state and config
         let disable_laptop_panels = match lid_action {
-            LidCloseAction::Auto => {
+            LidCloseAction::Auto | LidCloseAction::Lock => {
                 // Normal laptop behavior: only disable if lid is closed
                 self.is_lid_closed
             }
@@ -999,18 +999,13 @@ impl Otto<UdevData> {
             self.connector_connected(node, connector, crtc);
         }
 
-        // Lid closed on a plain laptop ("auto" mode, no external monitor):
-        // Otto owns the suspend decision — logind's lid handling is expected
-        // to be `ignore` so we can gate it. Skip while a remote client is
+        // Lid closed on a plain laptop (no external monitor): the session is
+        // out of reach, so Otto acts on it. Skip while a remote client is
         // consuming frames (RDP bridge / screenshare), so closing the lid
-        // during a remote session keeps serving instead of going to sleep.
-        // Edge-triggered on the panel teardown so a repeated call (or a
-        // wake-up with the lid still closed) doesn't immediately re-suspend.
-        if suspended_any_panel
-            && self.is_lid_closed
-            && matches!(lid_action, LidCloseAction::Auto)
-            && !has_external_monitor
-        {
+        // during a remote session keeps serving instead of locking or going to
+        // sleep. Edge-triggered on the panel teardown so a repeated call (or a
+        // wake-up with the lid still closed) doesn't immediately re-act.
+        if suspended_any_panel && self.is_lid_closed && !has_external_monitor {
             let screenshare_active = !self.screenshare_sessions.is_empty();
             let remote_streaming = self
                 .virtual_outputs
@@ -1021,9 +1016,23 @@ impl Otto<UdevData> {
                 tracing::info!(
                     screenshare_active,
                     remote_streaming,
-                    "Lid closed - NOT suspending, remote session active"
+                    "Lid closed - NOT acting, remote session active"
                 );
-            } else {
+                return;
+            }
+
+            // Lock first, so the blank is what the session comes back to. Same
+            // path as the power button's `lock`: launching the locker is what
+            // locks — it asks for the lock itself. See `src/lock.rs`.
+            if matches!(lid_action, LidCloseAction::Lock) && !self.is_session_locked() {
+                let (cmd, args) = crate::lock::locker_command();
+                tracing::info!(locker = %cmd, "Lid closed - locking session");
+                self.launch_program(cmd, args);
+            }
+
+            // Otto owns the suspend decision — logind's lid handling is
+            // expected to be `ignore` so we can gate it.
+            if matches!(lid_action, LidCloseAction::Auto | LidCloseAction::Lock) {
                 tracing::info!("Lid closed - suspending via logind (systemctl suspend)");
                 if let Err(err) = std::process::Command::new("systemctl")
                     .arg("suspend")

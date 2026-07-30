@@ -37,7 +37,9 @@ Configuration (`[power_management]`):
 
 - `manage_lid_switch` (default `true`) — when `false`, Otto ignores the lid
   switch entirely and all handling is delegated to systemd-logind.
-- `on_lid_close` — `"auto"` (default) or `"disable_internal_screen"`.
+- `on_lid_close` — `"auto"` (default), `"lock"` or `"disable_internal_screen"`.
+  `"lock"` is `"auto"` plus a session lock, the same lock
+  `on_power_button = "lock"` performs.
 - `on_power_button` — `"lock"` (default), `"suspend"`, `"shutdown"` or
   `"ignore"`.
 
@@ -47,11 +49,15 @@ On lid close (`manage_lid_switch = true`):
    Wayland output global are torn down, but workspaces, windows, and scene
    layers are kept intact. The output's position and primary status are
    recorded.
-2. In `"auto"` mode, if no external monitor is connected and no remote client
-   is actively consuming frames, Otto invokes a system suspend (via logind).
-   Otherwise the system keeps running.
-3. In `"disable_internal_screen"` mode the system never suspends (kiosk /
-   display-manager use); the panel is kept off even with the lid open.
+2. If no external monitor is connected and no remote client is actively
+   consuming frames — i.e. the session is out of reach — Otto acts on the
+   close: in `"lock"` mode it launches the locker first, and both `"auto"` and
+   `"lock"` then invoke a system suspend (via logind), so the machine wakes to
+   the lock screen. Otherwise the system keeps running, and does not lock: a
+   clamshell or remote session is still in use.
+3. In `"disable_internal_screen"` mode the system never suspends and never
+   locks (kiosk / display-manager use); the panel is kept off even with the
+   lid open.
 
 "Remote client actively consuming frames" means: at least one portal
 screenshare session exists, or at least one virtual output's PipeWire stream
@@ -70,7 +76,7 @@ On lid open:
 3. If the recorded position now overlaps another output, it falls back to
    auto-placement (outputs never overlap).
 
-The suspend decision is edge-triggered on the panel teardown: a repeated
+The lock and suspend decisions are edge-triggered on the panel teardown: a repeated
 power-state evaluation with the lid still closed (e.g. wake with the lid
 shut) does not immediately re-suspend.
 
@@ -95,6 +101,10 @@ On power button press:
 - Suspending is delegated to logind (`systemctl suspend`); Otto does not
   freeze itself. On resume the session pause/activate path revalidates DRM
   state.
+- Locking is launching the locker, which then asks for the lock — so in
+  `"lock"` mode the suspend request may go out before the lock is confirmed. That is harmless: the panel is already torn down, and the lock
+  raises the blank on the output that comes back on lid open. A locker that
+  fails to come up leaves the session unlocked, as everywhere else.
 - The saved suspend record is keyed by connector name and consumed on
   reconnect; a real disconnect (`unmap_output`) discards it.
 - While the panel is suspended, another output (often a virtual one) becomes

@@ -121,6 +121,14 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// Update the focus on the topmost surface under the cursor in the current workspace
     /// The window is raised and the keyboard focus is set to the window.
     pub(crate) fn focus_window_under_cursor(&mut self, serial: Serial) {
+        // A locked session has one keyboard focus, and the locker owns it. The
+        // desktop is still there under the lock surface, so without this a click
+        // anywhere on the lock screen would hand focus to whatever happens to be
+        // beneath the cursor — and the password typed next would go there.
+        if self.is_session_locked() {
+            return;
+        }
+
         let keyboard = self.seat.get_keyboard().unwrap();
         let input_method = self.seat.input_method();
 

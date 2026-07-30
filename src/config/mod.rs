@@ -392,6 +392,12 @@ pub struct LockConfig {
     pub locker_command: String,
     /// Arguments passed to `locker_command`.
     pub locker_args: Vec<String>,
+    /// Lock the session after this many seconds with no input from the user.
+    /// `0` (the default) never locks on its own.
+    ///
+    /// A client holding an `idle-inhibit-unstable-v1` inhibitor — a video
+    /// player, a presentation — holds the lock off while it plays.
+    pub auto_lock_timeout: u64,
 }
 
 impl Default for LockConfig {
@@ -399,6 +405,7 @@ impl Default for LockConfig {
         Self {
             locker_command: "otto-lock".to_string(),
             locker_args: Vec::new(),
+            auto_lock_timeout: 0,
         }
     }
 }
@@ -488,6 +495,8 @@ pub struct PowerManagementConfig {
     ///   "auto" - Normal laptop: disable screen, then suspend via logind —
     ///     unless an external monitor is connected or a remote client (RDP
     ///     bridge / screenshare) is actively consuming frames
+    ///   "lock" - Like "auto", but lock the session first, the way
+    ///     `on_power_button = "lock"` does, so the machine wakes to the locker
     ///   "disable_internal_screen" - Always disable screen but stay running,
     ///     never suspend (for display managers/kiosks)
     #[serde(default = "default_on_lid_close")]
@@ -508,6 +517,10 @@ pub enum LidCloseAction {
     /// external monitor is connected or a remote session is active
     #[default]
     Auto,
+    /// [`LidCloseAction::Auto`] plus a session lock, so the machine wakes to
+    /// the locker. Skipped in the same cases the suspend is: a clamshell or
+    /// remote session is still in use, and stays unlocked
+    Lock,
     /// Always disable screen but keep running, never suspend (for display
     /// managers/kiosks)
     DisableInternalScreen,

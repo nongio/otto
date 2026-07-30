@@ -362,7 +362,7 @@ pub fn run_udev() {
                 let extent = data
                     .workspaces
                     .outputs()
-                    .filter_map(|output| data.workspaces.output_geometry(&output))
+                    .filter_map(|output| data.workspaces.output_geometry(output))
                     .fold(
                         None::<smithay::utils::Rectangle<i32, smithay::utils::Logical>>,
                         |acc, geo| {

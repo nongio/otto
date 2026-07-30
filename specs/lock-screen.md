@@ -39,9 +39,9 @@ user. Any other `ext-session-lock-v1` client works too.
 
 - **Logging in.** A greeter authenticates a user who has no session yet and is
   bound to greetd's process model; see [login-mode](./login-mode.md).
-- **Idle detection.** What decides *when* to lock — an idle timer, the lid, a
-  suspend hook, a keybinding — is separate from the lock itself. This spec
-  covers only the mechanism and the explicit triggers below.
+- **Idle detection beyond input.** Auto-lock (below) measures the absence of
+  input, plus `idle-inhibit-unstable-v1` for clients that ask to be left alone.
+  A client that plays video without taking an inhibitor is not detected.
 - **Owning authentication.** The locker calls PAM; the compositor does not.
 - **Hiding the session from a privileged attacker.** A lock screen protects
   against someone at the keyboard, not against root or physical memory access.
@@ -139,8 +139,26 @@ user. Any other `ext-session-lock-v1` client works too.
 - `lock.locker_command` and `lock.locker_args` name that client, defaulting to
   `otto-lock`. `$OTTO_LOCKER_COMMAND` overrides both as a whitespace-separated
   argv, for testing uninstalled builds.
-- Launching the locker is the only trigger Otto implements; anything else that
-  wants to lock (an idle daemon, a suspend hook) runs the same command.
+- `lock.auto_lock_timeout` locks the session after that many seconds without
+  keyboard, pointer, touch or tablet input. `0`, the default, never locks on its
+  own. Every input event counts as activity, whatever the compositor goes on to
+  do with it; what a client does with the event does not.
+- A client holding an `idle-inhibit-unstable-v1` inhibitor (a video player, a
+  presentation) holds auto-lock off and restarts the countdown, so it runs from
+  when playback stops rather than from the last keypress. Inhibitors are honored
+  only while their surface is alive and its window is not minimized — the
+  protocol leaves that to the compositor because clients forget to drop them,
+  and a stale one would disable locking for the session.
+- The check runs on the timer's tick, so an inhibitor released just after a tick
+  delays the lock by up to one further timeout.
+- Auto-lock takes the same path as the action: it launches the locker, which
+  asks for the lock. Because launching is not locking yet, the idle clock is
+  reset when the locker is launched, so a slow-starting locker is not launched
+  twice.
+- Auto-lock is off in login mode: the greeter *is* the screen, and there is no
+  session behind it to hide.
+- Launching the locker is the only mechanism; anything else that wants to lock
+  (a suspend hook, an external idle daemon) runs the same command.
 
 ### The locker
 

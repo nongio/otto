@@ -1535,8 +1535,11 @@ impl Workspaces {
         let current_workspace_index = self.get_current_workspace_index();
         let is_current_workspace = workspace_index == current_workspace_index;
 
-        // Hide popup overlay when entering expose mode
-        self.popup_overlay.set_hidden(is_gesture_ongoing);
+        // Popups belong to the normal desktop: keep them hidden for the whole
+        // expose lifetime (gesture, open/close animation and while expose is
+        // open). The on_finish below restores them once expose is fully closed.
+        self.popup_overlay
+            .set_hidden(is_gesture_ongoing || show_expose);
         let scale = Config::with(|c| c.screen_scale);
 
         let offset_y = 200.0;
@@ -1703,6 +1706,7 @@ impl Workspaces {
             let show_all_gesture_ref = self.show_all_gesture.clone();
             let expose_gesture_active_ref = self.expose_gesture_active.clone();
             let expose_dragged_window_ref = self.expose_dragged_window.clone();
+            let popup_overlay_layer = self.popup_overlay.layer.clone();
             let model_ref = self.model.clone();
 
             // Collect secondary output expose layers to sync with primary
@@ -1811,6 +1815,8 @@ impl Workspaces {
                         for el in &secondary_expose_layers {
                             el.set_hidden(!show_all);
                         }
+                        // Popups only come back once expose is fully closed.
+                        popup_overlay_layer.set_hidden(show_all);
                         // workspace_selector_view stays visible (positioned off-screen when closed)
                         // Restore workspace content layers when closing expose
                         for wl in &all_workspaces_layers {

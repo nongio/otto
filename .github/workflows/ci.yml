@@ -46,7 +46,7 @@ jobs:
           shared-key: workspace-build
           cache-on-failure: true
       - name: System dependencies
-        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev hicolor-icon-theme fonts-dejavu-core
+        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev hicolor-icon-theme fonts-dejavu-core
       - name: Clippy
         run: cargo clippy --features "default" -- -D warnings
       - name: Run tests
@@ -72,11 +72,11 @@ jobs:
           shared-key: workspace-build
           cache-on-failure: true
       - name: System dependencies
-        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev hicolor-icon-theme
+        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev hicolor-icon-theme
       - name: Install cargo-deb
         run: cargo install cargo-deb
       - name: Build workspace binaries
-        run: cargo build --release -p otto -p otto-bar -p otto-islands -p xdg-desktop-portal-otto
+        run: cargo build --release -p otto -p otto-bar -p otto-islands -p otto-lock -p otto-greeter -p otto-rdp -p xdg-desktop-portal-otto
       - name: Build Debian package
         run: cargo deb --no-strip
       - name: Upload Debian package
@@ -101,11 +101,11 @@ jobs:
           shared-key: workspace-build
           cache-on-failure: true
       - name: System dependencies
-        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev hicolor-icon-theme
+        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev hicolor-icon-theme
       - name: Install cargo-generate-rpm
         run: cargo install cargo-generate-rpm
       - name: Build workspace binaries
-        run: cargo build --release -p otto -p otto-bar -p otto-islands -p xdg-desktop-portal-otto
+        run: cargo build --release -p otto -p otto-bar -p otto-islands -p otto-lock -p otto-greeter -p otto-rdp -p xdg-desktop-portal-otto
       - name: Build RPM package
         run: cargo generate-rpm
       - name: Upload RPM package
@@ -130,9 +130,9 @@ jobs:
           shared-key: workspace-build
           cache-on-failure: true
       - name: System dependencies
-        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev hicolor-icon-theme
+        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev hicolor-icon-theme
       - name: Build workspace binaries
-        run: cargo build --release -p otto -p otto-bar -p otto-islands -p xdg-desktop-portal-otto
+        run: cargo build --release -p otto -p otto-bar -p otto-islands -p otto-lock -p otto-greeter -p otto-rdp -p xdg-desktop-portal-otto
       - name: Build Arch tarball
         run: |
           PKGVER=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
@@ -142,6 +142,9 @@ jobs:
           install -Dm755 target/release/otto "$tmpdir/$PKGDIR/target/release/otto"
           install -Dm755 target/release/otto-bar "$tmpdir/$PKGDIR/target/release/otto-bar"
           install -Dm755 target/release/otto-islands "$tmpdir/$PKGDIR/target/release/otto-islands"
+          install -Dm755 target/release/otto-lock "$tmpdir/$PKGDIR/target/release/otto-lock"
+          install -Dm755 target/release/otto-greeter "$tmpdir/$PKGDIR/target/release/otto-greeter"
+          install -Dm755 target/release/otto-rdp "$tmpdir/$PKGDIR/target/release/otto-rdp"
           install -Dm755 target/release/xdg-desktop-portal-otto "$tmpdir/$PKGDIR/target/release/xdg-desktop-portal-otto"
           install -m644 LICENSE "$tmpdir/$PKGDIR/LICENSE"
           install -m644 README.md "$tmpdir/$PKGDIR/README.md"
@@ -150,6 +153,7 @@ jobs:
           install -Dm644 components/xdg-desktop-portal-otto/otto.portal "$tmpdir/$PKGDIR/components/xdg-desktop-portal-otto/otto.portal"
           install -Dm644 components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service "$tmpdir/$PKGDIR/components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service"
           install -Dm644 components/xdg-desktop-portal-otto/portals.conf.example "$tmpdir/$PKGDIR/components/xdg-desktop-portal-otto/portals.conf.example"
+          install -Dm644 components/otto-lock/otto-lock.pam "$tmpdir/$PKGDIR/components/otto-lock/otto-lock.pam"
           install -m644 PKGBUILD-git "$tmpdir/$PKGDIR/PKGBUILD-git"
           install -m644 PKGBUILD-nightly-bin "$tmpdir/$PKGDIR/PKGBUILD-nightly-bin"
           # VERSION file for PKGBUILD-nightly-bin pkgver()

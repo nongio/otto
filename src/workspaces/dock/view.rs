@@ -387,6 +387,21 @@ impl DockView {
     pub fn is_autohide_enabled(&self) -> bool {
         self.dock_config.read().unwrap().autohide
     }
+    /// Whether the dock still has to be composited this frame.
+    ///
+    /// `is_hidden()` flips as soon as a hide is *scheduled*, which is the right
+    /// signal for input (the hot zone must arm immediately) but the wrong one
+    /// for rendering: gating the dock plane on it drops the dock from the frame
+    /// before its slide-out has run, so it appears to vanish instead of sliding
+    /// away. The autohide slide-out ends by setting `hidden` on the layer, so
+    /// that flag is the accurate "nothing left to draw" signal.
+    pub fn is_hidden_for_render(&self) -> bool {
+        if self.is_autohide_enabled() {
+            self.view_layer.hidden()
+        } else {
+            self.is_hidden()
+        }
+    }
     pub fn set_active_flag(&self, active: bool) {
         self.active
             .store(active, std::sync::atomic::Ordering::Relaxed);

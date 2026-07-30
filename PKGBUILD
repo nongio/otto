@@ -9,8 +9,8 @@ license=("MIT")
 arch=("x86_64")
 provides=("otto")
 conflicts=("otto")
-depends=("libdrm" "systemd-libs" "mesa" "libxkbcommon" "wayland" "libinput" "dbus" "seatd" "pipewire" "freetype2" "fontconfig" "pixman" "noto-fonts")
-optdepends=("xdg-desktop-portal: Desktop integration")
+depends=("libdrm" "systemd-libs" "mesa" "libxkbcommon" "wayland" "libinput" "dbus" "seatd" "pipewire" "freetype2" "fontconfig" "pixman" "noto-fonts" "gstreamer" "gst-plugins-base-libs")
+optdepends=("xdg-desktop-portal: Desktop integration" "fprintd: fingerprint unlock for otto-lock and otto-greeter" "greetd: login manager otto --login hosts a greeter for" "gst-plugin-pipewire: otto-rdp video capture" "gst-plugins-bad: otto-rdp hardware H.264 (VA-API)")
 source=("https://github.com/nongio/otto/releases/download/v$pkgver/otto-$pkgver-x86_64.tar.gz")
 sha256sums=("SKIP")
 
@@ -21,6 +21,9 @@ package() {
     install -Dm755 target/release/otto "$pkgdir/usr/bin/otto"
     install -Dm755 target/release/otto-bar "$pkgdir/usr/bin/otto-bar"
     install -Dm755 target/release/otto-islands "$pkgdir/usr/bin/otto-islands"
+    install -Dm755 target/release/otto-lock "$pkgdir/usr/bin/otto-lock"
+    install -Dm755 target/release/otto-greeter "$pkgdir/usr/bin/otto-greeter"
+    install -Dm755 target/release/otto-rdp "$pkgdir/usr/bin/otto-rdp"
     install -Dm755 target/release/xdg-desktop-portal-otto "$pkgdir/usr/libexec/xdg-desktop-portal-otto"
     
     # Install documentation
@@ -30,6 +33,9 @@ package() {
     
     # Install configuration
     install -Dm644 otto_config.example.toml "$pkgdir/etc/otto/config.toml"
+    # PAM stack otto-lock authenticates against; without it PAM falls through
+    # to `other`, which denies everything.
+    install -Dm644 components/otto-lock/otto-lock.pam "$pkgdir/etc/pam.d/otto-lock"
     
     # Install desktop files
     install -Dm644 resources/otto.desktop "$pkgdir/usr/share/wayland-sessions/otto.desktop"
