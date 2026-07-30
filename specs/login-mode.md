@@ -221,6 +221,14 @@ prefix followed by a JSON payload, in both directions.
     outstanding across the cancellation. Its answer, whenever it arrives, is
     about a login that no longer exists: neither its success nor its error
     reaches the panel.
+  - Nor does the panel wait for it. What the abandoned conversation and the
+    cancellation are owed says nothing about the login now being typed, and
+    greetd reads nothing from the greeter — the cancellation included — until
+    the module that is holding the stack lets go. Treating those as "a reply is
+    pending" left Enter dead for as long as a fingerprint reader waits, with a
+    name typed and nothing happening. Only a request belonging to the
+    conversation on screen holds Enter; a new `create_session` is written behind
+    the cancellation, and greetd answers them in the order they were sent.
 - Reaching the password past a fingerprint reader is the greeter's problem
   alone: PAM is serialised by design, and a module holding the stack will not be
   hurried by anything the greeter says. `cancel_session` would end the whole

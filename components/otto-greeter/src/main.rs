@@ -199,10 +199,20 @@ impl Greeter {
         &self.sessions[self.session_index]
     }
 
-    /// Whether a request is outstanding. The panel stays live meanwhile — this
-    /// only says that Enter would have nothing to answer.
+    /// Whether greetd owes an answer to the conversation on screen. The panel
+    /// stays live meanwhile — this only says that Enter would have nothing to
+    /// answer.
+    ///
+    /// What is left over from a login somebody walked away from does not count.
+    /// Those replies are outstanding for as long as the PAM module holding them
+    /// takes — `pam_fprintd` waits out its whole timeout, and greetd reads
+    /// nothing from us until it does — and Enter cannot be dead for that long:
+    /// Escape and a name typed after it is somebody logging in, not somebody
+    /// answering the question they just left.
     fn awaiting_reply(&self) -> bool {
-        !self.outstanding.is_empty()
+        self.outstanding
+            .iter()
+            .any(|asked| !matches!(asked, Asked::Abandoned | Asked::Cancel))
     }
 
     /// Whether greetd has asked something that Enter could answer right now.
@@ -1065,6 +1075,32 @@ mod tests {
         assert!(
             greeter.accepts_input(),
             "the field has to take a name straight away"
+        );
+    }
+
+    /// And then logging in again is the whole point of having escaped. The
+    /// reader still holds the request from the login that was left, and greetd
+    /// answers nothing — not even the cancellation — until it lets go: waiting
+    /// for that queue to drain left Enter dead for the reader's entire timeout,
+    /// with a name typed and nothing happening.
+    #[test]
+    fn a_name_typed_after_escape_logs_in_without_waiting_for_the_reader() {
+        let mut greeter = waiting_for_a_finger();
+        greeter.reset(None);
+        assert!(
+            !greeter.outstanding.is_empty(),
+            "the abandoned request and the cancellation are both still owed"
+        );
+
+        greeter.input = "riccardo".to_string();
+        greeter.submit();
+
+        assert_eq!(greeter.username, "riccardo", "Enter has to start the login");
+        assert!(greeter.conversation);
+        assert_eq!(
+            greeter.outstanding.back(),
+            Some(&Asked::Auth),
+            "the new create_session is queued behind the cancellation"
         );
     }
 
