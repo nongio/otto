@@ -176,12 +176,17 @@ multi-workspace support, and integrated screen sharing capabilities."""
 depends = "$auto, libdrm2, libudev1, libgbm1, libxkbcommon0, libegl1, libwayland-server0, libinput10, libdbus-1-3, libsystemd0, libseat1, libpipewire-0.3-0, libfreetype6, libfontconfig1, libpixman-1-0, fonts-inter, wireplumber"
 section = "x11"
 priority = "optional"
+# otto-rdp loads these at runtime (pipewiresrc, and the VA-API H.264 encoder
+# it falls back from), so dpkg-shlibdeps cannot see them. Recommended, not
+# required: everything except the RDP bridge works without them.
+recommends = "gstreamer1.0-plugins-base, gstreamer1.0-plugins-bad, gstreamer1.0-pipewire"
 assets = [
     ["target/release/otto", "usr/bin/", "755"],
     ["target/release/otto-bar", "usr/bin/", "755"],
     ["target/release/otto-islands", "usr/bin/", "755"],
     ["target/release/otto-lock", "usr/bin/", "755"],
     ["target/release/otto-greeter", "usr/bin/", "755"],
+    ["target/release/otto-rdp", "usr/bin/", "755"],
     ["target/release/xdg-desktop-portal-otto", "usr/libexec/", "755"],
     ["README.md", "usr/share/doc/otto/", "644"],
     ["LICENSE", "usr/share/doc/otto/", "644"],
@@ -203,6 +208,7 @@ assets = [
     { source = "target/release/otto-islands", dest = "/usr/bin/otto-islands", mode = "755" },
     { source = "target/release/otto-lock", dest = "/usr/bin/otto-lock", mode = "755" },
     { source = "target/release/otto-greeter", dest = "/usr/bin/otto-greeter", mode = "755" },
+    { source = "target/release/otto-rdp", dest = "/usr/bin/otto-rdp", mode = "755" },
     { source = "target/release/xdg-desktop-portal-otto", dest = "/usr/libexec/xdg-desktop-portal-otto", mode = "755" },
     { source = "README.md", dest = "/usr/share/doc/otto/README.md", mode = "644", doc = true },
     { source = "LICENSE", dest = "/usr/share/doc/otto/LICENSE", mode = "644", doc = true },
@@ -213,6 +219,12 @@ assets = [
     { source = "components/xdg-desktop-portal-otto/portals.conf.example", dest = "/usr/share/doc/otto/portals.conf.example", mode = "644", doc = true },
     { source = "components/otto-lock/otto-lock.pam", dest = "/etc/pam.d/otto-lock", mode = "644", config = true },
 ]
+# Runtime-loaded GStreamer plugins for otto-rdp — see the deb `recommends`.
+[package.metadata.generate-rpm.recommends]
+gstreamer1-plugins-base = "*"
+gstreamer1-plugins-bad-free = "*"
+pipewire-gstreamer = "*"
+
 [package.metadata.generate-rpm.requires]
 libdrm = "*"
 systemd-libs = "*"
@@ -251,6 +263,8 @@ optdepends = [
     "xdg-desktop-portal: Desktop integration",
     "fprintd: fingerprint unlock for otto-lock and otto-greeter",
     "greetd: login manager otto --login hosts a greeter for",
+    "gst-plugin-pipewire: otto-rdp video capture",
+    "gst-plugins-bad: otto-rdp hardware H.264 (VA-API)",
 ]
 files = [
     ["target/release/otto", "/usr/bin/otto", "755"],
@@ -258,6 +272,7 @@ files = [
     ["target/release/otto-islands", "/usr/bin/otto-islands", "755"],
     ["target/release/otto-lock", "/usr/bin/otto-lock", "755"],
     ["target/release/otto-greeter", "/usr/bin/otto-greeter", "755"],
+    ["target/release/otto-rdp", "/usr/bin/otto-rdp", "755"],
     ["target/release/xdg-desktop-portal-otto", "/usr/libexec/xdg-desktop-portal-otto", "755"],
     ["README.md", "/usr/share/doc/otto/README.md", "644"],
     ["LICENSE", "/usr/share/licenses/otto/LICENSE", "644"],
