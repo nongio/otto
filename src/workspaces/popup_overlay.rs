@@ -28,6 +28,11 @@ pub struct PopupOverlayView {
     layers_engine: Arc<Engine>,
     /// Map from popup surface ID to its layer
     popup_layers: HashMap<ObjectId, PopupLayer>,
+    /// Bumped every time a popup layer leaves the scene. A popup paints past
+    /// the bounds its damage is derived from (drop shadow, blur rim), so the
+    /// plane pipeline watches this counter and redraws the overlay plane in
+    /// full after a teardown instead of trusting partial damage.
+    teardown_generation: usize,
 }
 
 impl PopupOverlayView {
@@ -48,6 +53,7 @@ impl PopupOverlayView {
             layer,
             layers_engine,
             popup_layers: HashMap::new(),
+            teardown_generation: 0,
         }
     }
 
@@ -185,6 +191,7 @@ impl PopupOverlayView {
         if let Some(popup) = self.popup_layers.remove(popup_id) {
             tracing::debug!(target: "otto::popups", "remove_popup {:?}", popup_id);
             popup.layer.remove();
+            self.teardown_generation = self.teardown_generation.wrapping_add(1);
             popup.surface_ids
         } else {
             Vec::new()
@@ -214,7 +221,13 @@ impl PopupOverlayView {
     pub fn clear(&mut self) {
         for (_, popup) in self.popup_layers.drain() {
             popup.layer.remove();
+            self.teardown_generation = self.teardown_generation.wrapping_add(1);
         }
+    }
+
+    /// Counter of popup teardowns so far — see `teardown_generation`.
+    pub fn teardown_generation(&self) -> usize {
+        self.teardown_generation
     }
 
     /// Get a popup layer by ID

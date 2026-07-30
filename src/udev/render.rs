@@ -598,6 +598,17 @@ impl Otto<UdevData> {
                 .is_animating
                 .load(std::sync::atomic::Ordering::Relaxed);
 
+        // Read before the device/surface borrow below (see `popup_teardown_seen`).
+        // Wayland popups live in the overlay plane; the dock's own context menu
+        // is a lay-rs subtree inside the dock plane — both need the same
+        // post-teardown full redraw, on their respective plane.
+        let popup_teardown_gen = self.workspaces.popup_overlay.teardown_generation();
+        let dock_menu_teardown_gen = self
+            .workspaces
+            .dock
+            .menu_teardown_gen
+            .load(std::sync::atomic::Ordering::Relaxed);
+
         let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {
             device
         } else {
@@ -843,6 +854,25 @@ impl Otto<UdevData> {
             }
         }
         surface.overlay_was_active = overlay_active;
+        // A popup that just went away painted past the bounds its damage was
+        // derived from (drop shadow, blur rim), so partial damage can leave
+        // faint marks where it used to be. Redraw the overlay plane in full
+        // and rebuild the backdrop (which bakes the popup subtree in) once per
+        // teardown — a handful of frames per menu close, not per frame.
+        if surface.popup_teardown_seen != popup_teardown_gen {
+            surface.popup_teardown_seen = popup_teardown_gen;
+            surface.backdrop_dirty = true;
+            if let Some(el) = &surface.overlay_dmabuf_element {
+                el.request_full_render();
+            }
+        }
+        if surface.dock_menu_teardown_seen != dock_menu_teardown_gen {
+            surface.dock_menu_teardown_seen = dock_menu_teardown_gen;
+            surface.backdrop_dirty = true;
+            if let Some(el) = &surface.dock_dmabuf_element {
+                el.request_full_render();
+            }
+        }
         if switcher_active && !surface.switcher_was_active {
             if let Some(el) = &surface.switcher_dmabuf_element {
                 el.request_full_render();

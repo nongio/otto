@@ -242,6 +242,16 @@ pub struct SurfaceData {
     /// flashing ghost content (`SceneDmabufElement::request_full_render`).
     pub(super) overlay_was_active: bool,
     pub(super) switcher_was_active: bool,
+    /// Last `PopupOverlayView::teardown_generation()` this surface has drawn.
+    /// A popup teardown removes nodes that painted outside the bounds damage
+    /// is derived from (drop shadow, blur rim), so the frame after a teardown
+    /// redraws the overlay plane in full and rebuilds the backdrop instead of
+    /// trusting partial damage — otherwise faint marks survive in the plane
+    /// buffer (and in the popup-bearing backdrop) where the popup used to be.
+    pub(super) popup_teardown_seen: usize,
+    /// Same, for the dock's own context menu — it lives in the dock plane's
+    /// subtree, so its teardown forces a full redraw of that plane.
+    pub(super) dock_menu_teardown_seen: usize,
     /// Promotion hysteresis: the candidate set currently waiting out its
     /// stability window, and since when it has been produced unchanged.
     /// Demotions apply instantly (compositing is always correct); adding a
