@@ -160,6 +160,14 @@ impl PopupOverlayView {
                 None,
             );
 
+            // Popups stack in one plane, so a blurred popup overlaps content
+            // painted earlier in the same pass (the menu a submenu opened from).
+            // Seeding the pre-blurred backdrop puts it *behind* that content,
+            // which then shows through sharp — opt into the raw backdrop plus a
+            // real blur so same-pass content below is blurred too. No-op on
+            // layers that aren't `BackgroundBlur`.
+            layer.set_blur_include_content(true);
+
             if let Some(ref parent_id) = wvs.parent_id {
                 if let Some(parent_layer) = surface_layers.get(parent_id) {
                     let _ = layers_engine.append_layer(&layer, parent_layer.id());
@@ -228,6 +236,14 @@ impl PopupOverlayView {
     /// Counter of popup teardowns so far — see `teardown_generation`.
     pub fn teardown_generation(&self) -> usize {
         self.teardown_generation
+    }
+
+    /// How many popups are currently in the scene. Non-zero means the plane
+    /// hosting them carries `blur_include_content` layers, whose blur samples
+    /// content painted earlier in the same pass — see the full-render guard in
+    /// the udev render loop.
+    pub fn popup_count(&self) -> usize {
+        self.popup_layers.len()
     }
 
     /// Get a popup layer by ID

@@ -222,6 +222,13 @@ pub struct SurfaceData {
     /// per-popup clip (no faded edge rim, like the islands). Falls back to
     /// `backdrop_image` when there are no popups.
     pub(super) backdrop_overlay_image: Option<layers::skia::Image>,
+    /// The *unblurred* desktop composite (same content as `backdrop_image`
+    /// before the blur, popups excluded). Handed to the overlay plane as the
+    /// raw backdrop so its `blur_include_content` layers — stacked popups —
+    /// blur this plus whatever the same pass already painted behind them (the
+    /// menu a submenu overlaps). Without a raw copy the pre-blurred seed lands
+    /// *behind* that same-pass content, leaving the parent menu sharp.
+    pub(super) backdrop_raw_image: Option<layers::skia::Image>,
     /// Whether the backdrop images are already blurred — consumers seed them
     /// directly and skip their own shape-clipped blur (which would leave a rim).
     pub(super) backdrop_preblurred: bool,

@@ -603,6 +603,7 @@ impl Otto<UdevData> {
         // is a lay-rs subtree inside the dock plane — both need the same
         // post-teardown full redraw, on their respective plane.
         let popup_teardown_gen = self.workspaces.popup_overlay.teardown_generation();
+        let popups_open = self.workspaces.popup_overlay.popup_count() > 0;
         let dock_menu_teardown_gen = self
             .workspaces
             .dock
@@ -859,6 +860,17 @@ impl Otto<UdevData> {
         // faint marks where it used to be. Redraw the overlay plane in full
         // and rebuild the backdrop (which bakes the popup subtree in) once per
         // teardown — a handful of frames per menu close, not per frame.
+        // A popup's blur samples what the same pass painted behind it
+        // (`blur_include_content`), and a partial repaint only paints — and only
+        // clears — inside the damage clip: outside it the blur reads whatever
+        // this swapchain slot held before, so an overlapped menu blurs
+        // intermittently. Redraw the whole plane while any popup is open;
+        // menus are transient, so this costs a handful of frames.
+        if popups_open {
+            if let Some(el) = &surface.overlay_dmabuf_element {
+                el.request_full_render();
+            }
+        }
         if surface.popup_teardown_seen != popup_teardown_gen {
             surface.popup_teardown_seen = popup_teardown_gen;
             surface.backdrop_dirty = true;

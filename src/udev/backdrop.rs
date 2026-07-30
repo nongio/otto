@@ -351,6 +351,7 @@ pub(super) fn update_backdrop_and_upper_planes(
                 // The unblurred desktop composite — the "backdrop cache". Blur it
                 // once for the dock/switcher planes (they must not show popups).
                 let desktop = bs.surface.image_snapshot();
+                surface.backdrop_raw_image = Some(desktop.clone());
                 let desktop_blurred = blur_image(&desktop, &mut bs.context, BACKDROP_BLUR_SIGMA);
                 surface.backdrop_preblurred = desktop_blurred.is_some();
                 surface.backdrop_image = Some(desktop_blurred.unwrap_or_else(|| desktop.clone()));
@@ -391,11 +392,16 @@ pub(super) fn update_backdrop_and_upper_planes(
     let preblurred = surface.backdrop_preblurred;
     // Overlay plane: desktop + popups (falls back to desktop-only before the
     // first build). Dock/switcher: desktop only.
+    // The raw copy is what `blur_include_content` layers (stacked popups) use:
+    // they blur raw desktop + the same-pass content painted behind them, so a
+    // submenu blurs the menu it overlaps instead of letting it show through
+    // sharp. Everything else in the plane seeds the pre-blurred image.
+    let overlay_raw = surface.backdrop_raw_image.clone();
     let overlay_backdrop = surface
         .backdrop_overlay_image
         .clone()
         .or_else(|| surface.backdrop_image.clone())
-        .map(|img| (img, BACKDROP_SCALE, preblurred, None));
+        .map(|img| (img, BACKDROP_SCALE, preblurred, overlay_raw));
     let upper_backdrop = surface
         .backdrop_image
         .clone()
