@@ -172,6 +172,10 @@ manage_lid_switch = true
 #            external monitor is connected (clamshell mode) or a remote client
 #            is actively consuming frames (RDP bridge / screenshare), in which
 #            case the system keeps running
+#   "lock"   - Like "auto", but lock the session first (see [lock] below), the
+#            way on_power_button = "lock" does, so the machine wakes to the
+#            lock screen. Clamshell and remote sessions stay unlocked: the
+#            session is still in use
 #   "disable_internal_screen" - Always disable screen but stay running, never
 #            suspend (for display managers/kiosks)
 on_lid_close = "auto"

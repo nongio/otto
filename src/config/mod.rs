@@ -495,6 +495,8 @@ pub struct PowerManagementConfig {
     ///   "auto" - Normal laptop: disable screen, then suspend via logind —
     ///     unless an external monitor is connected or a remote client (RDP
     ///     bridge / screenshare) is actively consuming frames
+    ///   "lock" - Like "auto", but lock the session first, the way
+    ///     `on_power_button = "lock"` does, so the machine wakes to the locker
     ///   "disable_internal_screen" - Always disable screen but stay running,
     ///     never suspend (for display managers/kiosks)
     #[serde(default = "default_on_lid_close")]
@@ -515,6 +517,10 @@ pub enum LidCloseAction {
     /// external monitor is connected or a remote session is active
     #[default]
     Auto,
+    /// [`LidCloseAction::Auto`] plus a session lock, so the machine wakes to
+    /// the locker. Skipped in the same cases the suspend is: a clamshell or
+    /// remote session is still in use, and stays unlocked
+    Lock,
     /// Always disable screen but keep running, never suspend (for display
     /// managers/kiosks)
     DisableInternalScreen,
