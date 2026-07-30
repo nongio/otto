@@ -178,7 +178,13 @@ prefix followed by a JSON payload, in both directions.
   greetd exposes no user list and there is no unprivileged record of who logged
   in last, so this is the closest thing to "whoever this machine is for". On the
   single-user machines Otto is built for it is the only candidate; elsewhere it
-  is a suggestion, and Enter is all a login costs.
+  is a suggestion, and typing over it is all a different login costs.
+  - When there is such a name, the greeter submits it itself as soon as the
+    panel exists, so the first screen anyone sees is the password field or the
+    fingerprint reader rather than a username to confirm. A name the screen
+    filled in is a question it already answered; asking for Enter to repeat it
+    is a step in front of the login. Escape from there empties the field as
+    below, which is how somebody else logs in.
   - It is a suggestion, not a prefix. A field cannot show a selection, so the
     first edit stands in for one: any character replaces the whole name and
     Backspace clears it, rather than appending to or nibbling at a name nobody

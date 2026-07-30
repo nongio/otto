@@ -775,6 +775,20 @@ impl App for Greeter {
         ));
 
         self.surface = Some(surface);
+
+        // A name the screen filled in itself is a question already answered:
+        // making someone press Enter to confirm it puts a step in front of the
+        // thing they actually came to do. Submitting it here means the first
+        // screen is the password field or the reader. Escape still goes back to
+        // an empty field, for whoever is not the account being offered.
+        //
+        // Done here rather than in `new` so the conversation starts with a
+        // panel to draw its result on: `pam_fprintd` announces the reader
+        // almost at once, and there would be nothing to show it with.
+        if self.input_is_a_suggestion {
+            self.submit();
+        }
+
         Ok(())
     }
 
