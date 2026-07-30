@@ -67,6 +67,11 @@ keyboard_repeat_rate = 30
 # [lock]
 # locker_command = "otto-lock"
 # locker_args = []
+# Lock the session after this many seconds with no keyboard, pointer, touch or
+# tablet input. 0 (the default) never locks on its own. Clients that take an
+# idle inhibitor (idle-inhibit-unstable-v1 — video players, presentations) hold
+# the lock off while they play and restart the countdown when they stop.
+# auto_lock_timeout = 300
 
 # Systemd integration — send READY=1 via sd_notify and activate graphical-session.target
 # when the Wayland socket is ready. Enable this when running Otto as a systemd user service

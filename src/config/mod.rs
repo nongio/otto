@@ -392,6 +392,12 @@ pub struct LockConfig {
     pub locker_command: String,
     /// Arguments passed to `locker_command`.
     pub locker_args: Vec<String>,
+    /// Lock the session after this many seconds with no input from the user.
+    /// `0` (the default) never locks on its own.
+    ///
+    /// A client holding an `idle-inhibit-unstable-v1` inhibitor — a video
+    /// player, a presentation — holds the lock off while it plays.
+    pub auto_lock_timeout: u64,
 }
 
 impl Default for LockConfig {
@@ -399,6 +405,7 @@ impl Default for LockConfig {
         Self {
             locker_command: "otto-lock".to_string(),
             locker_args: Vec::new(),
+            auto_lock_timeout: 0,
         }
     }
 }

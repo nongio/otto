@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fmt::Debug,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -190,6 +190,9 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// but the shade is still on screen until this passes and the frame has to
     /// be composited as a whole to carry it — see `Otto::lock_blank_on_screen`.
     pub lock_shade_until: Option<std::time::Instant>,
+    /// When the user last did anything. Auto-lock (`lock.auto_lock_timeout`)
+    /// measures idleness from here — see `Otto::note_input_activity`.
+    pub lock_last_activity: std::time::Instant,
     pub workspaces: Workspaces,
 
     // smithay state
@@ -197,6 +200,12 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub data_device_state: DataDeviceState,
     pub layer_shell_state: WlrLayerShellState,
     pub session_lock_manager_state: smithay::wayland::session_lock::SessionLockManagerState,
+    #[allow(dead_code)]
+    pub idle_inhibit_manager_state: smithay::wayland::idle_inhibit::IdleInhibitManagerState,
+    /// Surfaces holding an `idle-inhibit-unstable-v1` inhibitor — a client
+    /// saying "don't consider the session idle" (a video playing, a
+    /// presentation). Consulted by auto-lock; see `Otto::idle_inhibited`.
+    pub idle_inhibitors: HashSet<WlSurface>,
     pub output_manager_state: OutputManagerState,
     pub primary_selection_state: PrimarySelectionState,
     pub data_control_state: DataControlState,
@@ -461,6 +470,19 @@ delegate_viewporter!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_xdg_shell!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_layer_shell!(@<BackendData: Backend + 'static> Otto<BackendData>);
 smithay::delegate_session_lock!(@<BackendData: Backend + 'static> Otto<BackendData>);
+smithay::delegate_idle_inhibit!(@<BackendData: Backend + 'static> Otto<BackendData>);
+
+impl<BackendData: Backend + 'static> smithay::wayland::idle_inhibit::IdleInhibitHandler
+    for Otto<BackendData>
+{
+    fn inhibit(&mut self, surface: WlSurface) {
+        self.idle_inhibitors.insert(surface);
+    }
+
+    fn uninhibit(&mut self, surface: WlSurface) {
+        self.idle_inhibitors.remove(&surface);
+    }
+}
 delegate_presentation!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_xdg_foreign!(@<BackendData: Backend + 'static> Otto<BackendData>);
 
@@ -601,6 +623,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let layer_shell_state = WlrLayerShellState::new::<Self>(&dh);
         let session_lock_manager_state =
             smithay::wayland::session_lock::SessionLockManagerState::new::<Self, _>(&dh, |_| true);
+        let idle_inhibit_manager_state =
+            smithay::wayland::idle_inhibit::IdleInhibitManagerState::new::<Self>(&dh);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
         let data_control_state =
@@ -725,6 +749,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         #[cfg(feature = "debugger")]
         layers_engine.start_debugger();
 
+        // No-op unless `lock.auto_lock_timeout` is set.
+        Self::start_auto_lock_timer(&handle);
+
         // Get backend name before moving backend_data
         #[cfg(feature = "metrics")]
         let backend_name = backend_data.backend_name();
@@ -746,12 +773,15 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             data_device_state,
             layer_shell_state,
             session_lock_manager_state,
+            idle_inhibit_manager_state,
+            idle_inhibitors: HashSet::new(),
             lock_state: crate::lock::LockState::Unlocked,
             lock_surfaces: Default::default(),
             lock_previous_focus: None,
             lock_locker_seen: false,
             lock_last_spawn: None,
             lock_shade_until: None,
+            lock_last_activity: std::time::Instant::now(),
             output_manager_state,
             primary_selection_state,
             data_control_state,
