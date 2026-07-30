@@ -19,7 +19,7 @@ use smithay_client_toolkit::{
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{
-        keyboard::{KeyboardHandler, Keysym, Modifiers},
+        keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers},
         pointer::{PointerEvent, PointerHandler},
         Capability, SeatHandler, SeatState,
     },
@@ -34,6 +34,11 @@ use wayland_client::{
     globals::registry_queue_init,
     protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_surface},
     Connection, Dispatch, QueueHandle,
+};
+use wayland_protocols::ext::session_lock::v1::client::{
+    ext_session_lock_manager_v1::ExtSessionLockManagerV1,
+    ext_session_lock_surface_v1::{self, ExtSessionLockSurfaceV1},
+    ext_session_lock_v1::{self, ExtSessionLockV1},
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::ZwlrLayerShellV1, zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
@@ -68,6 +73,33 @@ pub trait App {
         // Default: do nothing
     }
 
+    /// Called when the compositor configures an `ext-session-lock-v1` surface.
+    /// The surface itself acks the configure and resizes its canvas; this is
+    /// only the app's chance to lay content out and paint.
+    fn on_configure_lock_surface(
+        &mut self,
+        _ctx: &AppContext,
+        _lock_surface: &wayland_protocols::ext::session_lock::v1::client::ext_session_lock_surface_v1::ExtSessionLockSurfaceV1,
+        _width: i32,
+        _height: i32,
+        _serial: u32,
+    ) {
+        // Default: do nothing
+    }
+
+    /// The session is locked: nothing of it is visible on any output. Until
+    /// this arrives a locker's surfaces may be drawn but the desktop behind
+    /// them has not necessarily left the screen.
+    fn on_session_locked(&mut self, _ctx: &AppContext) {
+        // Default: do nothing
+    }
+
+    /// The lock request was refused, or the lock has ended. The session was
+    /// never hidden, and the lock object must not be used again.
+    fn on_session_lock_finished(&mut self, _ctx: &AppContext) {
+        // Default: do nothing
+    }
+
     /// Called when the user requests to close the app
     /// Return `true` to allow closing, `false` to prevent it
     fn on_close(&mut self) -> bool {
@@ -81,6 +113,20 @@ pub trait App {
         &mut self,
         _ctx: &AppContext,
         _key: u32,
+        _state: wl_keyboard::KeyState,
+        _serial: u32,
+    ) {
+        // Default: do nothing
+    }
+
+    /// Called for the same events as [`App::on_keyboard_event`], but with the
+    /// full `KeyEvent` — including `keysym` and the `utf8` text produced by the
+    /// active keymap. Implement this instead when you need text entry rather
+    /// than raw evdev codes.
+    fn on_key_event(
+        &mut self,
+        _ctx: &AppContext,
+        _event: &KeyEvent,
         _state: wl_keyboard::KeyState,
         _serial: u32,
     ) {
@@ -116,6 +162,15 @@ pub trait App {
     /// event or `AppContext::request_wakeup()` wakes the loop.
     fn idle_timeout(&self) -> Option<std::time::Duration> {
         None
+    }
+
+    /// File descriptors to watch alongside the Wayland connection.
+    ///
+    /// `on_update` runs whenever one of these becomes readable, so an app whose
+    /// other input is a socket — an IPC connection, a pipe — can wait on it
+    /// rather than polling it on a timer.
+    fn poll_fds(&self) -> Vec<std::os::fd::RawFd> {
+        Vec::new()
     }
 }
 
@@ -153,6 +208,26 @@ impl App for DefaultApp {
         self.inner.on_configure_layer(ctx, width, height, serial)
     }
 
+    fn on_configure_lock_surface(
+        &mut self,
+        ctx: &AppContext,
+        lock_surface: &wayland_protocols::ext::session_lock::v1::client::ext_session_lock_surface_v1::ExtSessionLockSurfaceV1,
+        width: i32,
+        height: i32,
+        serial: u32,
+    ) {
+        self.inner
+            .on_configure_lock_surface(ctx, lock_surface, width, height, serial)
+    }
+
+    fn on_session_locked(&mut self, ctx: &AppContext) {
+        self.inner.on_session_locked(ctx)
+    }
+
+    fn on_session_lock_finished(&mut self, ctx: &AppContext) {
+        self.inner.on_session_lock_finished(ctx)
+    }
+
     fn on_close(&mut self) -> bool {
         self.inner.on_close()
     }
@@ -165,6 +240,16 @@ impl App for DefaultApp {
         serial: u32,
     ) {
         self.inner.on_keyboard_event(ctx, key, state, serial)
+    }
+
+    fn on_key_event(
+        &mut self,
+        ctx: &AppContext,
+        event: &KeyEvent,
+        state: wl_keyboard::KeyState,
+        serial: u32,
+    ) {
+        self.inner.on_key_event(ctx, event, state, serial)
     }
 
     fn on_keyboard_leave(&mut self, ctx: &AppContext, surface: &wl_surface::WlSurface) {
@@ -182,6 +267,9 @@ impl App for DefaultApp {
     }
     fn idle_timeout(&self) -> Option<std::time::Duration> {
         self.inner.idle_timeout()
+    }
+    fn poll_fds(&self) -> Vec<std::os::fd::RawFd> {
+        self.inner.poll_fds()
     }
 }
 
@@ -275,6 +363,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         let surface_style_manager = globals.bind(&qh, 1..=1, ()).ok();
         let wlr_layer_shell: Option<ZwlrLayerShellV1> = globals.bind(&qh, 1..=4, ()).ok();
         let otto_dock_manager = globals.bind(&qh, 1..=1, ()).ok();
+        let session_lock_manager = globals.bind(&qh, 1..=1, ()).ok();
         let subcompositor = globals.bind(&qh, 1..=1, ()).ok();
         let cursor_shape_manager: Option<wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1> =
             globals.bind(&qh, 1..=2, ()).ok();
@@ -286,6 +375,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
 
         // Move states into the context data structure (box it to prevent movement)
         let context = Box::new(AppContextData {
+            connection: conn.clone(),
             compositor_state,
             xdg_shell_state,
             shm_state,
@@ -295,6 +385,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
             wlr_layer_shell,
             subcompositor,
             otto_dock_manager,
+            session_lock_manager,
             cursor_shape_manager,
             display_ptr,
         });
@@ -373,6 +464,14 @@ impl<A: App + 'static> AppRunnerInitialized<A> {
                 break;
             }
 
+            // An app that asked to stop has usually just sent something it
+            // needs delivered — a locker's unlock request — so flush before
+            // dropping the connection.
+            if AppContext::exit_requested() {
+                self.conn.flush()?;
+                break;
+            }
+
             // 2. Prepare to block for the next batch of events.
             let guard = loop {
                 match self.event_queue.prepare_read() {
@@ -392,7 +491,7 @@ impl<A: App + 'static> AppRunnerInitialized<A> {
                 .map(|d| d.as_millis().min(i32::MAX as u128) as i32)
                 .unwrap_or(-1); // -1 = block forever
 
-            let mut fds = [
+            let mut fds = vec![
                 libc::pollfd {
                     fd: wl_fd,
                     events: libc::POLLIN,
@@ -404,8 +503,22 @@ impl<A: App + 'static> AppRunnerInitialized<A> {
                     revents: 0,
                 },
             ];
+            // Whatever else the app wants woken for. Their readiness is not
+            // reported back: `on_update` runs on every iteration anyway, which
+            // is where an app reads its own descriptors.
+            fds.extend(
+                self.app_data
+                    .app
+                    .poll_fds()
+                    .into_iter()
+                    .map(|fd| libc::pollfd {
+                        fd,
+                        events: libc::POLLIN,
+                        revents: 0,
+                    }),
+            );
 
-            let n = unsafe { libc::poll(fds.as_mut_ptr(), 2, timeout_ms) };
+            let n = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) };
 
             if n < 0 {
                 let err = std::io::Error::last_os_error();
@@ -469,6 +582,10 @@ impl<A: App + 'static> CompositorHandler for AppData<A> {
         if has_callback {
             AppContext::request_frame(surface);
         }
+
+        // The last committed frame is on screen, so a client throttling itself
+        // to the compositor may paint the next one.
+        AppContext::clear_frame_in_flight(&surface.id());
 
         AppContext::dispatch_frame_callback(&surface.id());
     }
@@ -643,6 +760,8 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
         let ctx = AppContext::new(&self.context_data);
         self.app
             .on_keyboard_event(&ctx, event.raw_code, wl_keyboard::KeyState::Pressed, serial);
+        self.app
+            .on_key_event(&ctx, &event, wl_keyboard::KeyState::Pressed, serial);
     }
 
     fn release_key(
@@ -660,6 +779,8 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
             wl_keyboard::KeyState::Released,
             serial,
         );
+        self.app
+            .on_key_event(&ctx, &event, wl_keyboard::KeyState::Released, serial);
     }
 
     fn update_modifiers(
@@ -784,6 +905,72 @@ impl<A: App + 'static> wayland_client::Dispatch<ZwlrLayerSurfaceV1, ()> for AppD
         }
     }
 }
+
+// ext-session-lock-v1: a screen locker's side of the protocol.
+//
+// The lock object outlives its surfaces and is what "locked" is attached to,
+// so both events reach the app rather than being handled here — only the app
+// knows whether a `finished` means "refused, give up" or "we just unlocked".
+impl<A: App + 'static> Dispatch<ExtSessionLockV1, ()> for AppData<A> {
+    fn event(
+        state: &mut Self,
+        _proxy: &ExtSessionLockV1,
+        event: ext_session_lock_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        let ctx = AppContext::new(&state.context_data);
+        match event {
+            ext_session_lock_v1::Event::Locked => {
+                tracing::info!("session locked");
+                state.app.on_session_locked(&ctx);
+            }
+            ext_session_lock_v1::Event::Finished => {
+                tracing::info!("session lock finished");
+                state.app.on_session_lock_finished(&ctx);
+            }
+            _ => {}
+        }
+    }
+}
+
+impl<A: App + 'static> Dispatch<ExtSessionLockSurfaceV1, ()> for AppData<A> {
+    fn event(
+        state: &mut Self,
+        proxy: &ExtSessionLockSurfaceV1,
+        event: ext_session_lock_surface_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use wayland_client::Proxy;
+
+        if let ext_session_lock_surface_v1::Event::Configure {
+            serial,
+            width,
+            height,
+        } = event
+        {
+            tracing::debug!("Lock surface configure: {width}x{height}");
+            // The surface acks and resizes its canvas first, so the app is
+            // called with somewhere to draw.
+            AppContext::dispatch_lock_surface_configure(
+                &proxy.id(),
+                width as i32,
+                height as i32,
+                serial,
+            );
+
+            let ctx = AppContext::new(&state.context_data);
+            state
+                .app
+                .on_configure_lock_surface(&ctx, proxy, width as i32, height as i32, serial);
+        }
+    }
+}
+
+wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore ExtSessionLockManagerV1);
 
 smithay_client_toolkit::delegate_compositor!(@<A: App> AppData<A>);
 smithay_client_toolkit::delegate_output!(@<A: App + 'static> AppData<A>);

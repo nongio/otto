@@ -230,6 +230,15 @@ where
         match request {
             zwlr_screencopy_frame_v1::Request::Copy { buffer }
             | zwlr_screencopy_frame_v1::Request::CopyWithDamage { buffer } => {
+                // A locked screen is not capturable. Refusing here rather than
+                // at frame creation covers a capture requested before the lock
+                // and copied after it.
+                if state.is_session_locked() {
+                    tracing::debug!("screencopy refused: session is locked");
+                    resource.failed();
+                    return;
+                }
+
                 let mut frame_state = data.state.lock().unwrap();
                 if !matches!(*frame_state, FrameState::AwaitingCopy) {
                     resource.failed();

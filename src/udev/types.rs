@@ -222,6 +222,13 @@ pub struct SurfaceData {
     /// per-popup clip (no faded edge rim, like the islands). Falls back to
     /// `backdrop_image` when there are no popups.
     pub(super) backdrop_overlay_image: Option<layers::skia::Image>,
+    /// The *unblurred* desktop composite (same content as `backdrop_image`
+    /// before the blur, popups excluded). Handed to the overlay plane as the
+    /// raw backdrop so its `blur_include_content` layers — stacked popups —
+    /// blur this plus whatever the same pass already painted behind them (the
+    /// menu a submenu overlaps). Without a raw copy the pre-blurred seed lands
+    /// *behind* that same-pass content, leaving the parent menu sharp.
+    pub(super) backdrop_raw_image: Option<layers::skia::Image>,
     /// Whether the backdrop images are already blurred — consumers seed them
     /// directly and skip their own shape-clipped blur (which would leave a rim).
     pub(super) backdrop_preblurred: bool,
@@ -242,6 +249,16 @@ pub struct SurfaceData {
     /// flashing ghost content (`SceneDmabufElement::request_full_render`).
     pub(super) overlay_was_active: bool,
     pub(super) switcher_was_active: bool,
+    /// Last `PopupOverlayView::teardown_generation()` this surface has drawn.
+    /// A popup teardown removes nodes that painted outside the bounds damage
+    /// is derived from (drop shadow, blur rim), so the frame after a teardown
+    /// redraws the overlay plane in full and rebuilds the backdrop instead of
+    /// trusting partial damage — otherwise faint marks survive in the plane
+    /// buffer (and in the popup-bearing backdrop) where the popup used to be.
+    pub(super) popup_teardown_seen: usize,
+    /// Same, for the dock's own context menu — it lives in the dock plane's
+    /// subtree, so its teardown forces a full redraw of that plane.
+    pub(super) dock_menu_teardown_seen: usize,
     /// Promotion hysteresis: the candidate set currently waiting out its
     /// stability window, and since when it has been produced unchanged.
     /// Demotions apply instantly (compositing is always correct); adding a

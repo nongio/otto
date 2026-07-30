@@ -423,22 +423,34 @@ impl Otto<UdevData> {
             .map(|s| s.planes_enabled)
             .unwrap_or(false)
             && self.backend_data.underrun_penalty < 2;
-        // Any running minimize/unminimize genie forces the full-GPU scene
-        // composite for the frame (and drops scanout promotion): the genie's
+        // Two things force the full-GPU scene composite for a frame (and drop
+        // scanout promotion with it).
+        //
+        // Any running minimize/unminimize genie: the genie's
         // image filter paints far outside the per-plane damage rects, so the
         // plane pipeline's partial redraws corrupt the animation. The mode is
         // held ~150ms past the animation: the settle work (reparent into the
         // drawer, rescale, unhide) lands from an async task across several
         // engine updates, and flipping back to planes mid-settle scans out a
         // stale frame.
-        let minimize_now = self.workspaces.has_minimizing_window();
-        let minimize_active = if let Some(surf) = self
+        // A locked session, for a different reason entirely: the plane
+        // decomposition renders one fixed set of
+        // subtrees — background, windows, expose, overlay, switcher, dock —
+        // and the lock plane is in none of them. Left to the planes, the blank
+        // and the locker's surface are drawn nowhere at all while the desktop's
+        // own planes keep scanning out, so a locked screen shows the session.
+        // Compositing the whole output subtree is what puts the lock plane on
+        // screen, and it costs nothing worth counting on a screen whose only
+        // job is to wait for a password. It holds a little past the unlock
+        // too, while the blank slides back off the top.
+        let composite_now = self.workspaces.has_minimizing_window() || self.lock_blank_on_screen();
+        let composite_active = if let Some(surf) = self
             .backend_data
             .backends
             .get_mut(&node)
             .and_then(|d| d.surfaces.get_mut(&crtc))
         {
-            if minimize_now {
+            if composite_now {
                 surf.composite_hold_until =
                     Some(Instant::now() + std::time::Duration::from_millis(150));
                 true
@@ -447,7 +459,7 @@ impl Otto<UdevData> {
                     .is_some_and(|t| Instant::now() < t)
             }
         } else {
-            minimize_now
+            composite_now
         };
         // Promotion candidates are per-output — resolve this CRTC's output
         // before the surface borrow below.
@@ -462,9 +474,14 @@ impl Otto<UdevData> {
             if !planes_enabled
                 || self.backend_data.underrun_penalty >= 1
                 || capture_active
-                || minimize_active
+                || composite_active
                 || self.swipe_gesture.is_active()
                 || fullscreen_window.is_some()
+                // A promoted window is scanned out from its own KMS plane,
+                // independently of the composited frame the blank is drawn
+                // into — it would keep showing through a locked screen, and
+                // through the blank on its way back up after an unlock.
+                || self.lock_blank_on_screen()
             {
                 Vec::new()
             } else if let Some(output) = scanout_output {
@@ -580,6 +597,18 @@ impl Otto<UdevData> {
                 .workspaces
                 .is_animating
                 .load(std::sync::atomic::Ordering::Relaxed);
+
+        // Read before the device/surface borrow below (see `popup_teardown_seen`).
+        // Wayland popups live in the overlay plane; the dock's own context menu
+        // is a lay-rs subtree inside the dock plane — both need the same
+        // post-teardown full redraw, on their respective plane.
+        let popup_teardown_gen = self.workspaces.popup_overlay.teardown_generation();
+        let popups_open = self.workspaces.popup_overlay.popup_count() > 0;
+        let dock_menu_teardown_gen = self
+            .workspaces
+            .dock
+            .menu_teardown_gen
+            .load(std::sync::atomic::Ordering::Relaxed);
 
         let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {
             device
@@ -826,6 +855,36 @@ impl Otto<UdevData> {
             }
         }
         surface.overlay_was_active = overlay_active;
+        // A popup that just went away painted past the bounds its damage was
+        // derived from (drop shadow, blur rim), so partial damage can leave
+        // faint marks where it used to be. Redraw the overlay plane in full
+        // and rebuild the backdrop (which bakes the popup subtree in) once per
+        // teardown — a handful of frames per menu close, not per frame.
+        // A popup's blur samples what the same pass painted behind it
+        // (`blur_include_content`), and a partial repaint only paints — and only
+        // clears — inside the damage clip: outside it the blur reads whatever
+        // this swapchain slot held before, so an overlapped menu blurs
+        // intermittently. Redraw the whole plane while any popup is open;
+        // menus are transient, so this costs a handful of frames.
+        if popups_open {
+            if let Some(el) = &surface.overlay_dmabuf_element {
+                el.request_full_render();
+            }
+        }
+        if surface.popup_teardown_seen != popup_teardown_gen {
+            surface.popup_teardown_seen = popup_teardown_gen;
+            surface.backdrop_dirty = true;
+            if let Some(el) = &surface.overlay_dmabuf_element {
+                el.request_full_render();
+            }
+        }
+        if surface.dock_menu_teardown_seen != dock_menu_teardown_gen {
+            surface.dock_menu_teardown_seen = dock_menu_teardown_gen;
+            surface.backdrop_dirty = true;
+            if let Some(el) = &surface.dock_dmabuf_element {
+                el.request_full_render();
+            }
+        }
         if switcher_active && !surface.switcher_was_active {
             if let Some(el) = &surface.switcher_dmabuf_element {
                 el.request_full_render();
@@ -863,7 +922,7 @@ impl Otto<UdevData> {
         // while the plane buffers sat idle. Without a full redraw the first
         // planes frame scans out the stale pre-composite content (ghost of
         // the just-minimized window).
-        if surface.was_force_composite && !minimize_active {
+        if surface.was_force_composite && !composite_active {
             for el in [
                 &surface.scene_dmabuf_element,
                 &surface.windows_dmabuf_element,
@@ -881,7 +940,7 @@ impl Otto<UdevData> {
                 surface.transition_dump_left = 8;
             }
         }
-        surface.was_force_composite = minimize_active;
+        surface.was_force_composite = composite_active;
 
         let output_scene_element = self
             .workspaces
@@ -940,7 +999,7 @@ impl Otto<UdevData> {
                 .scanout_commit_pending
                 .swap(false, std::sync::atomic::Ordering::Relaxed),
             planes_enabled,
-            minimize_active,
+            composite_active,
             output_scene_element,
             &self.layers_engine,
             // Popups live in the primary output's overlay plane only.
@@ -1005,9 +1064,15 @@ impl Otto<UdevData> {
             }
         };
 
-        // Render to screenshare buffers if rendering succeeded
+        let rendered_this_frame = matches!(&result, Ok(outcome) if outcome.rendered);
+        let session_locked = self.lock_state.is_active();
+
+        // Render to screenshare buffers if rendering succeeded. A locked
+        // screen is not capturable, so the stream freezes for the duration
+        // rather than carrying the lock screen — or what is behind it — to a
+        // remote viewer.
         if let Ok(outcome) = &result {
-            if outcome.rendered && !self.screenshare_sessions.is_empty() {
+            if outcome.rendered && !self.screenshare_sessions.is_empty() && !session_locked {
                 let scale = Scale::from(output.current_scale().fractional_scale());
 
                 // Get the source framebuffer that was just rendered to
@@ -1286,6 +1351,15 @@ impl Otto<UdevData> {
             }
         }
 
+        // A locked session confirms itself frame by frame: the client is told
+        // the session is locked only once every output has actually put the
+        // blank on screen. Done here, after the device and renderer borrows
+        // have ended, because it needs all of `self`.
+        if rendered_this_frame {
+            self.lock_surfaces_pruned();
+            self.lock_frame_presented(&output);
+        }
+
         profiling::finish_frame!();
     }
 
@@ -1407,6 +1481,7 @@ impl Otto<UdevData> {
         }
 
         let primary_gpu = self.backend_data.primary_gpu;
+        let locked = self.is_session_locked();
         let all_window_elements: Vec<&WindowElement> = self.workspaces.spaces_elements().collect();
         let scene_element = self.scene_element.clone();
 
@@ -1441,6 +1516,12 @@ impl Otto<UdevData> {
                 .map(|ows| {
                     let pos = ows.output_layer.render_position();
                     let origin = (pos.x, pos.y);
+                    // A locked session is hidden from a stream as thoroughly
+                    // as from the screen: only the lock plane is composited,
+                    // so no subtree that could hold a window is even consulted.
+                    if locked {
+                        return vec![scene_element.for_plane_subtree(&ows.lock_plane, origin)];
+                    }
                     let mut stack = vec![
                         scene_element.for_plane_subtree(&ows.dock_plane, origin),
                         scene_element.for_plane_subtree(&ows.switcher_plane, origin),

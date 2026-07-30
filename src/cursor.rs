@@ -18,6 +18,12 @@ use xcursor::CursorTheme;
 
 static FALLBACK_CURSOR_DATA: &[u8] = include_bytes!("../resources/cursor.rgba");
 
+/// Side of the built-in cursor bitmap, in pixels. It is square.
+const FALLBACK_SRC_SIDE: i32 = 64;
+
+/// The arrow's tip within that bitmap — the point that tracks the pointer.
+const FALLBACK_HOTSPOT: (i32, i32) = (1, 1);
+
 /// Simple xcursor loader for XWayland default cursor.
 #[cfg(feature = "xwayland")]
 pub struct Cursor {
@@ -191,7 +197,7 @@ impl CursorManager {
                 }
 
                 if *icon == CursorIcon::Default && cursor.is_err() {
-                    cursor = Ok(Self::fallback_cursor());
+                    cursor = Ok(Self::fallback_cursor(size));
                 }
 
                 cursor.ok().map(Rc::new)
@@ -245,15 +251,32 @@ impl CursorManager {
         env::set_var("XCURSOR_SIZE", size.to_string());
     }
 
-    fn fallback_cursor() -> XCursor {
+    /// The built-in cursor, drawn at `size` physical pixels.
+    ///
+    /// A theme answers a size request with art that fills the box it reports.
+    /// The built-in bitmap is instead one fixed image, an arrow occupying the
+    /// top-left corner of a 64×64 canvas, so emitting it unscaled draws a
+    /// cursor a fraction of the size that was asked for. That is worst exactly
+    /// where the fallback is most likely to be reached: a HiDPI screen with a
+    /// theme the process cannot see, such as a greeter running as a user with
+    /// no `~/.icons`. Resample the arrow to the requested size instead.
+    fn fallback_cursor(size: i32) -> XCursor {
+        let (art_x, art_y, art_w, art_h) = Self::fallback_art_bounds();
+        // Match the height, as a themed arrow does; the width follows from the
+        // aspect ratio so the shape is not distorted.
+        let scale = (size.max(1) as f32 / art_h as f32).max(f32::MIN_POSITIVE);
+        let width = ((art_w as f32 * scale).round() as i32).max(1);
+        let height = ((art_h as f32 * scale).round() as i32).max(1);
+
         let images = vec![Image {
-            size: 32,
-            width: 64,
-            height: 64,
-            xhot: 1,
-            yhot: 1,
+            size: size.max(1) as u32,
+            width: width as u32,
+            height: height as u32,
+            // The hotspot is the arrow's tip, so it moves with the art.
+            xhot: (((FALLBACK_HOTSPOT.0 - art_x) as f32) * scale).round() as u32,
+            yhot: (((FALLBACK_HOTSPOT.1 - art_y) as f32) * scale).round() as u32,
             delay: 0,
-            pixels_rgba: Vec::from(FALLBACK_CURSOR_DATA),
+            pixels_rgba: Self::resample_fallback(art_x, art_y, art_w, art_h, width, height),
             pixels_argb: vec![],
         }];
 
@@ -261,6 +284,81 @@ impl CursorManager {
             images,
             animation_duration: 0,
         }
+    }
+
+    /// Extent of the drawn arrow within the built-in bitmap, as
+    /// `(x, y, width, height)`.
+    ///
+    /// Measured rather than hardcoded so redrawing `resources/cursor.rgba`
+    /// cannot silently leave the scaling wrong. Falls back to the whole canvas
+    /// for a bitmap that is entirely transparent.
+    fn fallback_art_bounds() -> (i32, i32, i32, i32) {
+        let side = FALLBACK_SRC_SIDE;
+        let (mut min_x, mut min_y, mut max_x, mut max_y) = (side, side, -1, -1);
+
+        for y in 0..side {
+            for x in 0..side {
+                // Argb8888 little-endian: alpha is the last byte of each texel.
+                if FALLBACK_CURSOR_DATA[((y * side + x) * 4 + 3) as usize] > 0 {
+                    min_x = min_x.min(x);
+                    min_y = min_y.min(y);
+                    max_x = max_x.max(x);
+                    max_y = max_y.max(y);
+                }
+            }
+        }
+
+        if max_x < min_x || max_y < min_y {
+            return (0, 0, side, side);
+        }
+        (min_x, min_y, max_x - min_x + 1, max_y - min_y + 1)
+    }
+
+    /// Bilinearly scale the `src_*` region of the built-in bitmap into a new
+    /// `dst_w × dst_h` buffer.
+    ///
+    /// The channels are premultiplied, which is what makes interpolating them
+    /// independently correct — straight alpha would bleed the colour of fully
+    /// transparent texels into the arrow's edge.
+    fn resample_fallback(
+        src_x: i32,
+        src_y: i32,
+        src_w: i32,
+        src_h: i32,
+        dst_w: i32,
+        dst_h: i32,
+    ) -> Vec<u8> {
+        let side = FALLBACK_SRC_SIDE;
+        let texel = |x: i32, y: i32, c: usize| -> f32 {
+            let x = x.clamp(src_x, src_x + src_w - 1);
+            let y = y.clamp(src_y, src_y + src_h - 1);
+            FALLBACK_CURSOR_DATA[((y * side + x) * 4) as usize + c] as f32
+        };
+
+        let mut pixels = vec![0u8; (dst_w * dst_h * 4) as usize];
+        for y in 0..dst_h {
+            // Sample at texel centres, so the edges of the source region map to
+            // the edges of the destination rather than half a texel outside it.
+            let sy = (y as f32 + 0.5) * src_h as f32 / dst_h as f32 - 0.5 + src_y as f32;
+            let y0 = sy.floor();
+            let fy = sy - y0;
+
+            for x in 0..dst_w {
+                let sx = (x as f32 + 0.5) * src_w as f32 / dst_w as f32 - 0.5 + src_x as f32;
+                let x0 = sx.floor();
+                let fx = sx - x0;
+                let (x0, y0) = (x0 as i32, y0 as i32);
+
+                for c in 0..4 {
+                    let top = texel(x0, y0, c) * (1.0 - fx) + texel(x0 + 1, y0, c) * fx;
+                    let bottom = texel(x0, y0 + 1, c) * (1.0 - fx) + texel(x0 + 1, y0 + 1, c) * fx;
+                    let value = top * (1.0 - fy) + bottom * fy;
+                    pixels[((y * dst_w + x) * 4) as usize + c] =
+                        value.round().clamp(0.0, 255.0) as u8;
+                }
+            }
+        }
+        pixels
     }
 }
 
@@ -354,5 +452,66 @@ impl XCursor {
 
     pub fn hotspot(image: &Image) -> Point<i32, Physical> {
         (image.xhot as i32, image.yhot as i32).into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The bug this guards: the built-in arrow used to be emitted at a fixed
+    /// 64×64 whatever size was asked for, so on a HiDPI screen without a
+    /// readable cursor theme it drew at a fraction of the configured size.
+    #[test]
+    fn fallback_cursor_fills_the_requested_size() {
+        for size in [16, 24, 32, 48, 64, 96, 128] {
+            let cursor = CursorManager::fallback_cursor(size);
+            let image = &cursor.images[0];
+
+            assert_eq!(
+                image.height as i32, size,
+                "the arrow should be as tall as the size requested"
+            );
+            assert!(
+                image.width > 0 && image.width <= image.height,
+                "aspect ratio should be preserved, got {}x{}",
+                image.width,
+                image.height
+            );
+            assert_eq!(
+                image.pixels_rgba.len(),
+                (image.width * image.height * 4) as usize,
+                "buffer must match the declared dimensions"
+            );
+            assert!(
+                image.pixels_rgba.chunks(4).any(|texel| texel[3] > 0),
+                "the arrow must still be visible after resampling"
+            );
+            assert!(
+                (image.xhot as i32) < image.width as i32
+                    && (image.yhot as i32) < image.height as i32,
+                "the hotspot must stay inside the image"
+            );
+        }
+    }
+
+    /// The bitmap's opaque region is measured, not assumed; if it is ever
+    /// redrawn the bounds must still describe something inside the canvas.
+    #[test]
+    fn fallback_art_bounds_lie_within_the_bitmap() {
+        let (x, y, w, h) = CursorManager::fallback_art_bounds();
+        assert!(x >= 0 && y >= 0, "bounds start inside the canvas");
+        assert!(w > 0 && h > 0, "bounds are non-empty");
+        assert!(
+            x + w <= FALLBACK_SRC_SIDE && y + h <= FALLBACK_SRC_SIDE,
+            "bounds end inside the canvas"
+        );
+        assert!(
+            FALLBACK_HOTSPOT.0 >= x
+                && FALLBACK_HOTSPOT.1 >= y
+                && FALLBACK_HOTSPOT.0 < x + w
+                && FALLBACK_HOTSPOT.1 < y + h,
+            "the hotspot must sit within the art, or scaling it moves the tip"
+        );
     }
 }

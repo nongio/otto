@@ -52,6 +52,10 @@ pub struct Config {
     #[serde(default)]
     pub occlusion_culling: bool,
     #[serde(default)]
+    pub login: LoginConfig,
+    #[serde(default)]
+    pub lock: LockConfig,
+    #[serde(default)]
     pub exec_once: Vec<RunCommandConfig>,
     #[serde(default)]
     pub xdg_autostart: bool,
@@ -92,6 +96,8 @@ impl Default for Config {
             shortcut_bindings: Vec::new(),
             virtual_outputs: Vec::new(),
             occlusion_culling: false,
+            login: LoginConfig::default(),
+            lock: LockConfig::default(),
             exec_once: Vec::new(),
             xdg_autostart: false,
             systemd_notify: false,
@@ -356,6 +362,47 @@ fn default_appswitcher_follow_cursor() -> bool {
     true
 }
 
+/// Settings that only apply when Otto runs as a greeter host (`otto --login`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LoginConfig {
+    /// The greeter client to launch. It is the only client Otto starts in
+    /// login mode, and its first toplevel is forced fullscreen on the primary
+    /// output.
+    pub greeter_command: String,
+    /// Arguments passed to `greeter_command`.
+    pub greeter_args: Vec<String>,
+}
+
+impl Default for LoginConfig {
+    fn default() -> Self {
+        Self {
+            greeter_command: "otto-greeter".to_string(),
+            greeter_args: Vec::new(),
+        }
+    }
+}
+
+/// Settings for locking the running session (`ext-session-lock-v1`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LockConfig {
+    /// The locker to launch for the `lock` action. It authenticates the user
+    /// itself; Otto only hides the session behind it.
+    pub locker_command: String,
+    /// Arguments passed to `locker_command`.
+    pub locker_args: Vec<String>,
+}
+
+impl Default for LockConfig {
+    fn default() -> Self {
+        Self {
+            locker_command: "otto-lock".to_string(),
+            locker_args: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LayerShellConfig {
     /// Maximum exclusive zone allowed for top edge in logical points (0 = unlimited)
@@ -445,6 +492,11 @@ pub struct PowerManagementConfig {
     ///     never suspend (for display managers/kiosks)
     #[serde(default = "default_on_lid_close")]
     pub on_lid_close: LidCloseAction,
+
+    /// What to do when the hardware power button is pressed (default: "lock").
+    /// Set to "ignore" to leave the key to systemd-logind / the focused client.
+    #[serde(default = "default_on_power_button")]
+    pub on_power_button: PowerButtonAction,
 }
 
 /// Action to take when laptop lid is closed
@@ -461,13 +513,34 @@ pub enum LidCloseAction {
     DisableInternalScreen,
 }
 
+/// Action to take when the hardware power button is pressed
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PowerButtonAction {
+    /// Leave the key alone: systemd-logind's `HandlePowerKey` decides, and the
+    /// keysym is delivered to the focused client like any other key
+    Ignore,
+    /// Lock the session by launching the configured locker
+    #[default]
+    Lock,
+    /// Suspend the system (via logind)
+    Suspend,
+    /// Power the machine off (via logind)
+    Shutdown,
+}
+
 impl Default for PowerManagementConfig {
     fn default() -> Self {
         Self {
             manage_lid_switch: default_manage_lid_switch(),
             on_lid_close: default_on_lid_close(),
+            on_power_button: default_on_power_button(),
         }
     }
+}
+
+fn default_on_power_button() -> PowerButtonAction {
+    PowerButtonAction::Lock
 }
 
 fn default_manage_lid_switch() -> bool {

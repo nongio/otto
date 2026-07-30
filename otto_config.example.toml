@@ -49,6 +49,25 @@ keyboard_repeat_rate = 30
 # Disabled by default.
 # xdg_autostart = true
 
+# Login mode — only used when Otto is started with `--login`, where it acts as
+# the host compositor for a greeter (the role `cage` plays for gtkgreet).
+# In this mode Otto drives the primary output only, shows no dock, app switcher
+# or expose, and launches the greeter below instead of the autostart entries.
+# Authentication is delegated to greetd; Otto never touches PAM.
+#
+# [login]
+# greeter_command = "otto-greeter"
+# greeter_args = []
+
+# Screen locking — the client launched by the `LockSession` action
+# (Ctrl+Alt+Escape by default). It speaks ext-session-lock-v1 and authenticates
+# the user itself; Otto only hides the session behind it and never touches PAM.
+# Any ext-session-lock-v1 locker works here.
+#
+# [lock]
+# locker_command = "otto-lock"
+# locker_args = []
+
 # Systemd integration — send READY=1 via sd_notify and activate graphical-session.target
 # when the Wayland socket is ready. Enable this when running Otto as a systemd user service
 # (Type=notify in the unit file). Can also be triggered with the --systemd-notify CLI flag.
@@ -151,6 +170,19 @@ manage_lid_switch = true
 #   "disable_internal_screen" - Always disable screen but stay running, never
 #            suspend (for display managers/kiosks)
 on_lid_close = "auto"
+
+# What to do when the hardware power button is pressed (default: "lock")
+# Options:
+#   "lock"     - Launch the configured locker (see [lock] below)
+#   "suspend"  - Suspend the system via logind
+#   "shutdown" - Power the machine off via logind
+#   "ignore"   - Otto stays out of the way: systemd-logind's HandlePowerKey
+#                decides, and the key reaches the focused client as XF86PowerOff
+# Anything other than "ignore" requires logind to be configured with
+# HandlePowerKey=ignore, otherwise logind acts first. The button is read from
+# the raw keycode, so it works even while the session is locked or a greeter
+# holds the keyboard.
+on_power_button = "lock"
 
 # Audio / Sound feedback
 [audio]

@@ -26,6 +26,10 @@ fn print_help() {
     println!(
         "    --systemd-notify   Send sd_notify(READY=1) and activate graphical-session.target"
     );
+    println!(
+        "    --login            Run as a greeter host: primary output only, no dock/switcher,"
+    );
+    println!("                       launches the greeter client instead of autostart");
     println!();
     println!("If no backend is specified, otto auto-detects based on the environment.");
 }
@@ -53,6 +57,7 @@ async fn main() {
                 && !other.starts_with("--probe")
                 && !other.starts_with("--x11")
                 && !other.starts_with("--headless")
+                && !other.starts_with("--login")
                 && !other.starts_with("--systemd-notify") =>
         {
             eprintln!("Unknown argument: {}", other);
@@ -61,6 +66,12 @@ async fn main() {
             std::process::exit(1);
         }
         _ => {}
+    }
+
+    // Greeter mode. Set before any state is built so output mapping and
+    // workspace chrome can consult it during construction.
+    if std::env::args().any(|a| a == "--login") {
+        otto::login::set_login_mode(true);
     }
 
     // Check for --systemd-notify flag (can appear as first or second argument)
@@ -91,7 +102,9 @@ async fn main() {
     #[cfg(feature = "profile-with-puffin")]
     profiling::puffin::set_scopes_on(true);
 
-    let arg = ::std::env::args().skip(1).find(|a| a != "--systemd-notify");
+    let arg = ::std::env::args()
+        .skip(1)
+        .find(|a| a != "--systemd-notify" && a != "--login");
     match arg.as_ref().map(|s| &s[..]) {
         #[cfg(feature = "winit")]
         Some("--winit") => {

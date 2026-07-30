@@ -1,0 +1,29 @@
+#!/bin/sh
+# Otto as a login session, for the Exec line of a wayland-sessions entry.
+#
+# greetd execs the session with the VT as its stdin/stdout/stderr, and the VT
+# is back in text mode by the time we get here — the greeter's compositor died
+# and took graphics mode with it. Anything written before Otto modesets is
+# therefore painted on the console: a terminal flashing between the greeter and
+# the desktop. Otto logs at `info` by default, which is a screenful.
+#
+# So keep the console silent and put the log where it can be read afterwards.
+# One generation is kept, because the interesting log is usually the one from
+# the session that just died.
+#
+# Nothing here may prevent the session from starting: a wrapper that fails
+# leaves the user staring at the greeter with no way in. If the log directory
+# is unusable the output goes to /dev/null and Otto starts anyway.
+
+otto="${OTTO_BIN:-/usr/local/bin/otto}"
+log_dir="${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}/otto"
+log=/dev/null
+
+if mkdir -p "$log_dir" 2>/dev/null; then
+    if [ -f "$log_dir/session.log" ]; then
+        mv -f "$log_dir/session.log" "$log_dir/session.log.1" 2>/dev/null
+    fi
+    : >"$log_dir/session.log" 2>/dev/null && log="$log_dir/session.log"
+fi
+
+exec "$otto" --tty-udev >"$log" 2>&1

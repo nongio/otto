@@ -28,6 +28,11 @@ pub struct PopupOverlayView {
     layers_engine: Arc<Engine>,
     /// Map from popup surface ID to its layer
     popup_layers: HashMap<ObjectId, PopupLayer>,
+    /// Bumped every time a popup layer leaves the scene. A popup paints past
+    /// the bounds its damage is derived from (drop shadow, blur rim), so the
+    /// plane pipeline watches this counter and redraws the overlay plane in
+    /// full after a teardown instead of trusting partial damage.
+    teardown_generation: usize,
 }
 
 impl PopupOverlayView {
@@ -48,6 +53,7 @@ impl PopupOverlayView {
             layer,
             layers_engine,
             popup_layers: HashMap::new(),
+            teardown_generation: 0,
         }
     }
 
@@ -154,6 +160,14 @@ impl PopupOverlayView {
                 None,
             );
 
+            // Popups stack in one plane, so a blurred popup overlaps content
+            // painted earlier in the same pass (the menu a submenu opened from).
+            // Seeding the pre-blurred backdrop puts it *behind* that content,
+            // which then shows through sharp — opt into the raw backdrop plus a
+            // real blur so same-pass content below is blurred too. No-op on
+            // layers that aren't `BackgroundBlur`.
+            layer.set_blur_include_content(true);
+
             if let Some(ref parent_id) = wvs.parent_id {
                 if let Some(parent_layer) = surface_layers.get(parent_id) {
                     let _ = layers_engine.append_layer(&layer, parent_layer.id());
@@ -185,6 +199,7 @@ impl PopupOverlayView {
         if let Some(popup) = self.popup_layers.remove(popup_id) {
             tracing::debug!(target: "otto::popups", "remove_popup {:?}", popup_id);
             popup.layer.remove();
+            self.teardown_generation = self.teardown_generation.wrapping_add(1);
             popup.surface_ids
         } else {
             Vec::new()
@@ -214,7 +229,21 @@ impl PopupOverlayView {
     pub fn clear(&mut self) {
         for (_, popup) in self.popup_layers.drain() {
             popup.layer.remove();
+            self.teardown_generation = self.teardown_generation.wrapping_add(1);
         }
+    }
+
+    /// Counter of popup teardowns so far — see `teardown_generation`.
+    pub fn teardown_generation(&self) -> usize {
+        self.teardown_generation
+    }
+
+    /// How many popups are currently in the scene. Non-zero means the plane
+    /// hosting them carries `blur_include_content` layers, whose blur samples
+    /// content painted earlier in the same pass — see the full-render guard in
+    /// the udev render loop.
+    pub fn popup_count(&self) -> usize {
+        self.popup_layers.len()
     }
 
     /// Get a popup layer by ID

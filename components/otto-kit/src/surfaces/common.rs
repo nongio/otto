@@ -1,3 +1,4 @@
+use layers::prelude::taffy;
 use layers::types::Size;
 use std::fmt;
 use std::rc::Rc;
@@ -40,7 +41,21 @@ impl BaseWaylandSurface {
     ) -> Self {
         let layer_node = AppContext::layers_engine().map(|engine| {
             let l = engine.new_layer();
+            // Every surface's root node is its own origin: it is drawn into
+            // that surface's canvas alone, and `draw_scene` concatenates the
+            // node's transform before rendering it. Left in the engine root's
+            // flow, a second surface would be laid out beside the first and
+            // paint its content off to the right of its own buffer — which is
+            // what an app with a surface per output (the lock screen, the
+            // greeter) gets the moment it has more than one, and what a
+            // surface recreated after an output comes back gets even with one
+            // on screen, since it is appended after the survivors.
+            l.set_layout_style(taffy::Style {
+                position: taffy::Position::Absolute,
+                ..Default::default()
+            });
             l.set_size(Size::points(width as f32, height as f32), None);
+            l.set_position((0.0, 0.0), None);
             let _ = engine.add_layer(&l);
             l
         });
@@ -182,10 +197,32 @@ impl BaseWaylandSurface {
                 draw_fn(canvas);
             });
 
-            // Present the frame
+            // Ask to be told when this frame reaches the screen. `wl_surface
+            // .frame` is double-buffered state, so the request has to be made
+            // before the commit that carries it — and that commit is the one
+            // eglSwapBuffers makes below, not one of ours. Surfaces already
+            // driving their own frame loop through `on_frame` are left alone:
+            // the runner re-requests for those, and a second callback would
+            // run their loop twice per frame.
+            if !AppContext::has_frame_callback(&self.wl_surface.id()) {
+                AppContext::request_throttled_frame(&self.wl_surface);
+            }
+
+            // Present the frame. eglSwapBuffers attaches the buffer, damages it
+            // and commits, so committing again here would only ask the
+            // compositor to recomposite the output for a surface that has
+            // nothing new on it.
             surface.swap_buffers(ctx);
-            surface.commit();
         });
+    }
+
+    /// Whether a frame committed on this surface has yet to reach the screen.
+    ///
+    /// Content that redraws continuously — an animation reading the clock —
+    /// should paint only when this is false, so it runs at the compositor's
+    /// pace rather than as fast as it can submit.
+    pub fn frame_in_flight(&self) -> bool {
+        AppContext::frame_in_flight(&self.wl_surface.id())
     }
 
     /// Render the layer node if one is assigned

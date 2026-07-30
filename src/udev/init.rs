@@ -351,6 +351,42 @@ pub fn run_udev() {
                 if let Err(err) = libinput_context.resume() {
                     error!("Failed to resume libinput context: {:?}", err);
                 }
+
+                // Coming back from another VT, the primary plane has no content
+                // and nothing in the scene has changed — so resetting the DRM
+                // buffers below is only half the story. The scene engine
+                // replays recorded pictures and reports damage for what moved,
+                // and nothing moved while we were away, so it would hand back
+                // an empty frame over an empty plane. Damage the whole scene so
+                // the first frame after the switch is a complete one.
+                let extent = data
+                    .workspaces
+                    .outputs()
+                    .filter_map(|output| data.workspaces.output_geometry(&output))
+                    .fold(
+                        None::<smithay::utils::Rectangle<i32, smithay::utils::Logical>>,
+                        |acc, geo| {
+                            Some(match acc {
+                                Some(acc) => acc.merge(geo),
+                                None => geo,
+                            })
+                        },
+                    );
+                if let Some(extent) = extent {
+                    // Scene space is physical pixels; a scale of 1 would
+                    // under-damage a HiDPI screen, so take the largest.
+                    let scale = data
+                        .workspaces
+                        .outputs()
+                        .map(|o| o.current_scale().fractional_scale() as f32)
+                        .fold(1.0f32, f32::max);
+                    data.layers_engine.add_damage(layers::skia::Rect::from_xywh(
+                        extent.loc.x as f32 * scale,
+                        extent.loc.y as f32 * scale,
+                        extent.size.w as f32 * scale,
+                        extent.size.h as f32 * scale,
+                    ));
+                }
                 for (node, backend) in data
                     .backend_data
                     .backends
@@ -551,7 +587,14 @@ pub fn run_udev() {
      * Create virtual outputs from config
      */
     {
-        let vout_configs = crate::config::Config::with(|c| c.virtual_outputs.clone());
+        // Login mode drives the primary output only. A configured virtual
+        // output would otherwise be created here and hand the greeter a second
+        // screen — one that a remote client could attach to.
+        let vout_configs = if crate::login::is_login_mode() {
+            Vec::new()
+        } else {
+            crate::config::Config::with(|c| c.virtual_outputs.clone())
+        };
         if !vout_configs.is_empty() {
             let gbm_device = state.backend_data.gbm_device();
             let format_modifiers = state

@@ -1,0 +1,27 @@
+#%PAM-1.0
+#
+# PAM service for otto-lock, Otto's screen locker. Install as
+# /etc/pam.d/otto-lock.
+#
+# Unlocking is proving that the session's own user is still at the keyboard, so
+# this is the same stack a login uses — including whatever is configured there
+# for fingerprint readers or smartcards, which otto-lock then picks up with no
+# code of its own. Without this file PAM falls through to `other`, which denies
+# everything; otto-lock notices and falls back to `system-auth`, but the
+# fallback is not the configuration anyone reviewed.
+#
+# `pam_fprintd` is listed explicitly because a distribution's `system-auth`
+# usually does not include it — a reader configured for polkit or sudo is
+# configured in those services, not in the shared stack. `sufficient` means a
+# recognised finger is enough and anything else falls through to the password
+# below, which is what the panel's "Enter Password" button is for: the module
+# holds the conversation until it times out, and what is typed meanwhile waits
+# for the prompt that follows. Drop the line on a machine with no reader.
+#
+# The lines below are for distributions with a `system-auth` stack (Arch,
+# Fedora, openSUSE). On Debian and Ubuntu, replace `system-auth` with
+# `common-auth` and `common-account`.
+
+auth      sufficient pam_fprintd.so
+auth      include    system-auth
+account   include    system-auth

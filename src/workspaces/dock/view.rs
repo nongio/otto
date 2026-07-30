@@ -75,6 +75,13 @@ pub struct DockView {
     app_icons_manager: Arc<AppIconsManager>,
 
     pub context_menu: Arc<RwLock<Option<ContextMenuView>>>,
+    /// Counter of context-menu teardowns, bumped when the menu's fade-out
+    /// finishes. The dock's menu lives in the dock plane's subtree and paints
+    /// past the bounds its damage is derived from (drop shadow, blur rim), so
+    /// the plane pipeline redraws that plane in full once per teardown —
+    /// otherwise a stale swapchain slot shows the menu again as a trail the
+    /// next time the dock repaints partially (magnification, autohide).
+    pub menu_teardown_gen: Arc<std::sync::atomic::AtomicUsize>,
     /// The identifier of the app whose icon is currently showing the context-menu pressed state.
     pub(super) context_menu_app_id: Arc<RwLock<Option<String>>>,
     /// Runtime dock configuration — loaded at startup, kept in sync with the file on changes.
@@ -307,6 +314,7 @@ impl DockView {
             magnification_position: Arc::new(RwLock::new(-500.0)),
             dragging: Arc::new(AtomicBool::new(false)),
             context_menu: Arc::new(RwLock::new(None)),
+            menu_teardown_gen: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             context_menu_app_id: Arc::new(RwLock::new(None)),
             dock_config: Arc::new(RwLock::new(Config::with(|c| c.dock.clone()))),
             magnification_enabled: Arc::new(AtomicBool::new(Config::with(|c| {
@@ -1403,7 +1411,11 @@ impl DockView {
 
         let mut context_menu_lock = self.context_menu.write().unwrap();
         if context_menu_lock.is_none() {
-            let menu = ContextMenuView::new(&self.wrap_layer, items.clone());
+            let menu = ContextMenuView::with_teardown_counter(
+                &self.wrap_layer,
+                items.clone(),
+                self.menu_teardown_gen.clone(),
+            );
             let s = Config::with(|c| c.screen_scale) as f32;
             menu.set_style(ContextMenuStyle::default_with_scale(s));
             *context_menu_lock = Some(menu);
@@ -1512,7 +1524,11 @@ impl DockView {
             }
         } else {
             let items = self.build_context_menu_items(&app_id);
-            let menu = ContextMenuView::new(&self.wrap_layer, items);
+            let menu = ContextMenuView::with_teardown_counter(
+                &self.wrap_layer,
+                items,
+                self.menu_teardown_gen.clone(),
+            );
             let scale = Config::with(|c| c.screen_scale) as f32;
             menu.set_style(ContextMenuStyle::default_with_scale(scale));
             *context_menu_lock = Some(menu);

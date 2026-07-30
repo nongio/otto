@@ -20,6 +20,8 @@ pub mod headless;
 pub mod input;
 pub mod input_handler;
 pub mod interactive_view;
+pub mod lock;
+pub mod login;
 pub mod otto_dock;
 pub mod render;
 pub mod render_elements;

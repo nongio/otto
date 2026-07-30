@@ -1,4 +1,7 @@
-use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::{
+    atomic::{AtomicBool, AtomicUsize},
+    Arc,
+};
 
 use layers::{
     engine::animation::{Spring, TimingFunction, Transition},
@@ -39,6 +42,13 @@ pub struct ContextMenuView {
     pub view_layer: Layer,
     pub view: View<ContextMenuState>,
     active: Arc<AtomicBool>,
+    /// Bumped once the fade-out finishes and the menu leaves the scene. The
+    /// menu paints past the bounds its damage is derived from (drop shadow,
+    /// blur rim), so the plane pipeline redraws the hosting plane in full after
+    /// a teardown instead of trusting partial damage — otherwise a stale
+    /// swapchain slot keeps the menu and shows it as a trail on the next
+    /// partial redraw of that plane.
+    teardown_gen: Arc<AtomicUsize>,
 }
 
 impl PartialEq for ContextMenuView {
@@ -56,6 +66,16 @@ impl IsAlive for ContextMenuView {
 impl ContextMenuView {
     /// Create a new context menu view
     pub fn new(base_layer: &Layer, items: Vec<MenuItem>) -> Self {
+        Self::with_teardown_counter(base_layer, items, Arc::new(AtomicUsize::new(0)))
+    }
+
+    /// Same as `new`, with a caller-owned teardown counter (see `teardown_gen`)
+    /// so the plane pipeline can watch it without holding the menu's lock.
+    pub fn with_teardown_counter(
+        base_layer: &Layer,
+        items: Vec<MenuItem>,
+        teardown_gen: Arc<AtomicUsize>,
+    ) -> Self {
         let layers_engine = base_layer.engine.clone();
         let wrap = layers_engine.new_layer();
         wrap.set_key("context_menu_container");
@@ -84,6 +104,7 @@ impl ContextMenuView {
             view_layer,
             view,
             active: Arc::new(AtomicBool::new(false)),
+            teardown_gen,
         }
     }
 
@@ -115,6 +136,7 @@ impl ContextMenuView {
     pub fn hide(&self) {
         self.active
             .store(false, std::sync::atomic::Ordering::Relaxed);
+        let teardown_gen = self.teardown_gen.clone();
         self.wrap_layer
             .set_opacity(
                 0.0,
@@ -124,8 +146,9 @@ impl ContextMenuView {
                 }),
             )
             .on_finish(
-                |l: &Layer, _p: f32| {
+                move |l: &Layer, _p: f32| {
                     l.set_hidden(true);
+                    teardown_gen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 },
                 true,
             );

@@ -44,6 +44,9 @@ pub enum KeyboardFocusTarget<B: Backend> {
     LayerSurface(LayerSurface),
     Popup(PopupKind),
     View(InteractiveView<B>),
+    /// An `ext-session-lock-v1` surface. Focus goes here, and nowhere else,
+    /// while the session is locked — see `src/lock.rs`.
+    LockSurface(WlSurface),
 }
 
 impl<B: Backend> PartialEq for KeyboardFocusTarget<B> {
@@ -55,6 +58,9 @@ impl<B: Backend> PartialEq for KeyboardFocusTarget<B> {
             }
             (KeyboardFocusTarget::Popup(p1), KeyboardFocusTarget::Popup(p2)) => p1 == p2,
             (KeyboardFocusTarget::View(d1), KeyboardFocusTarget::View(d2)) => d1 == d2,
+            (KeyboardFocusTarget::LockSurface(s1), KeyboardFocusTarget::LockSurface(s2)) => {
+                s1 == s2
+            }
             _ => false,
         }
     }
@@ -65,6 +71,7 @@ impl<B: Backend> Clone for KeyboardFocusTarget<B> {
             KeyboardFocusTarget::Window(w) => KeyboardFocusTarget::Window(w.clone()),
             KeyboardFocusTarget::LayerSurface(l) => KeyboardFocusTarget::LayerSurface(l.clone()),
             KeyboardFocusTarget::Popup(p) => KeyboardFocusTarget::Popup(p.clone()),
+            KeyboardFocusTarget::LockSurface(s) => KeyboardFocusTarget::LockSurface(s.clone()),
             KeyboardFocusTarget::View(d) => KeyboardFocusTarget::View(d.clone()),
         }
     }
@@ -79,6 +86,9 @@ impl<B: Backend> Debug for KeyboardFocusTarget<B> {
             }
             KeyboardFocusTarget::Popup(p) => write!(f, "KeyboardFocusTarget::Popup({:?})", p),
             KeyboardFocusTarget::View(d) => write!(f, "KeyboardFocusTarget::View({:?})", d),
+            KeyboardFocusTarget::LockSurface(s) => {
+                write!(f, "KeyboardFocusTarget::LockSurface({:?})", s)
+            }
         }
     }
 }
@@ -90,6 +100,7 @@ impl<B: Backend> IsAlive for KeyboardFocusTarget<B> {
             KeyboardFocusTarget::LayerSurface(l) => l.alive(),
             KeyboardFocusTarget::Popup(p) => p.alive(),
             KeyboardFocusTarget::View(d) => d.alive(),
+            KeyboardFocusTarget::LockSurface(s) => s.alive(),
         }
     }
 }
@@ -425,6 +436,9 @@ impl<B: Backend> KeyboardTarget<Otto<B>> for KeyboardFocusTarget<B> {
                 KeyboardTarget::enter(p.wl_surface(), seat, data, keys, serial)
             }
             KeyboardFocusTarget::View(d) => KeyboardTarget::enter(d, seat, data, keys, serial),
+            KeyboardFocusTarget::LockSurface(s) => {
+                KeyboardTarget::enter(s, seat, data, keys, serial)
+            }
         }
     }
     fn leave(&self, seat: &Seat<Otto<B>>, data: &mut Otto<B>, serial: Serial) {
@@ -464,6 +478,7 @@ impl<B: Backend> KeyboardTarget<Otto<B>> for KeyboardFocusTarget<B> {
                 KeyboardTarget::leave(p.wl_surface(), seat, data, serial)
             }
             KeyboardFocusTarget::View(d) => KeyboardTarget::leave(d, seat, data, serial),
+            KeyboardFocusTarget::LockSurface(s) => KeyboardTarget::leave(s, seat, data, serial),
         }
     }
     fn key(
@@ -497,6 +512,9 @@ impl<B: Backend> KeyboardTarget<Otto<B>> for KeyboardFocusTarget<B> {
             KeyboardFocusTarget::View(d) => {
                 KeyboardTarget::key(d, seat, data, key, state, serial, time)
             }
+            KeyboardFocusTarget::LockSurface(s) => {
+                KeyboardTarget::key(s, seat, data, key, state, serial, time)
+            }
         }
     }
     /// Hold modifiers were changed on a keyboard from a given seat
@@ -528,6 +546,9 @@ impl<B: Backend> KeyboardTarget<Otto<B>> for KeyboardFocusTarget<B> {
             }
             KeyboardFocusTarget::View(d) => {
                 KeyboardTarget::modifiers(d, seat, data, modifiers, serial)
+            }
+            KeyboardFocusTarget::LockSurface(s) => {
+                KeyboardTarget::modifiers(s, seat, data, modifiers, serial)
             }
         }
     }
@@ -659,6 +680,7 @@ impl<B: Backend> WaylandFocus for KeyboardFocusTarget<B> {
             KeyboardFocusTarget::LayerSurface(l) => Some(Cow::Borrowed(l.wl_surface())),
             KeyboardFocusTarget::Popup(p) => Some(Cow::Borrowed(p.wl_surface())),
             KeyboardFocusTarget::View(_) => None,
+            KeyboardFocusTarget::LockSurface(s) => Some(Cow::Borrowed(s)),
         }
     }
 }

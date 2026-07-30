@@ -58,8 +58,22 @@ pub enum KeyAction {
     MediaNext,
     MediaPrev,
     MediaStop,
+    /// Lock the session by launching the configured locker
+    LockSession,
+    /// The hardware power button was pressed; `[power_management].on_power_button`
+    /// decides what that means
+    PowerButton,
     /// Do nothing more
     None,
+}
+
+/// Hand a system power transition to logind, the way the lid-close path does.
+/// Otto never freezes or shuts itself down; it only asks.
+fn systemctl(verb: &str) {
+    info!(verb, "Requesting system power transition via logind");
+    if let Err(err) = Command::new("systemctl").arg(verb).spawn() {
+        error!("Failed to invoke systemctl {verb}: {err}");
+    }
 }
 
 impl<BackendData: Backend> Otto<BackendData> {
@@ -109,12 +123,37 @@ impl<BackendData: Backend> Otto<BackendData> {
             });
         }
 
-        if let Err(e) = command.spawn() {
-            error!(program = %cmd, err = %e, "Failed to start program");
+        match command.spawn() {
+            // Nothing in the compositor waits on a launched program, so
+            // without a reaper every one of them leaves a zombie behind for as
+            // long as Otto runs. It goes unnoticed for apps, which are
+            // launched by hand and outlive their launch — but a screen locker
+            // exits on every unlock, so locking the session a dozen times
+            // leaves a dozen of them. A thread per child rather than a
+            // SIGCHLD handler: that signal is process-wide, and XWayland's
+            // own child management waits on its children.
+            Ok(mut child) => {
+                let _ = std::thread::Builder::new()
+                    .name(format!("reap {cmd}"))
+                    .spawn(move || {
+                        let _ = child.wait();
+                    });
+            }
+            Err(e) => error!(program = %cmd, err = %e, "Failed to start program"),
         }
     }
 
     pub fn autostart(&mut self) {
+        // In login mode the greeter is the only client we start. User-session
+        // autostart (exec_once, XDG autostart) belongs to the session greetd
+        // execs after authentication, not to the greeter.
+        if crate::login::is_login_mode() {
+            let (cmd, args) = crate::login::greeter_command();
+            info!(greeter = %cmd, "Login mode: launching greeter");
+            self.launch_program(cmd, args);
+            return;
+        }
+
         let entries = Config::with(|c| c.exec_once.clone());
         for entry in entries {
             self.launch_program(entry.cmd, entry.args);
@@ -214,6 +253,36 @@ impl<BackendData: Backend> Otto<BackendData> {
 
             KeyAction::Run((cmd, args)) => {
                 self.launch_program(cmd, args);
+            }
+
+            // Locking is launching the locker: it binds
+            // `ext_session_lock_manager_v1` and asks for the lock itself, so
+            // an idle daemon or a suspend hook running the same command takes
+            // exactly the same path. See `src/lock.rs`.
+            KeyAction::LockSession => {
+                if self.is_session_locked() {
+                    return;
+                }
+                let (cmd, args) = crate::lock::locker_command();
+                info!(locker = %cmd, "Locking session");
+                self.launch_program(cmd, args);
+            }
+
+            KeyAction::PowerButton => {
+                use crate::config::PowerButtonAction;
+
+                let action = Config::with(|c| c.power_management.on_power_button);
+                info!(?action, "Power button pressed");
+                match action {
+                    // Not reachable: the key is left alone in `ignore` mode
+                    // and never turns into this action.
+                    PowerButtonAction::Ignore => (),
+                    PowerButtonAction::Lock => {
+                        self.process_common_key_action(KeyAction::LockSession)
+                    }
+                    PowerButtonAction::Suspend => systemctl("suspend"),
+                    PowerButtonAction::Shutdown => systemctl("poweroff"),
+                }
             }
 
             KeyAction::ToggleDecorations => {
@@ -597,6 +666,7 @@ pub fn resolve_shortcut_action(config: &Config, action: &ShortcutAction) -> Opti
             BuiltinAction::MediaNext => Some(KeyAction::MediaNext),
             BuiltinAction::MediaPrev => Some(KeyAction::MediaPrev),
             BuiltinAction::MediaStop => Some(KeyAction::MediaStop),
+            BuiltinAction::LockSession => Some(KeyAction::LockSession),
         },
         ShortcutAction::RunCommand(run) => {
             Some(KeyAction::Run((run.cmd.clone(), run.args.clone())))

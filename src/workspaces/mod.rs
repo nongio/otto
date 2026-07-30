@@ -18,7 +18,10 @@ use smithay::{
     output::Output,
     reexports::{
         calloop::channel::{channel, Sender as CalloopSender},
-        wayland_server::{backend::ObjectId, Resource},
+        wayland_server::{
+            backend::{GlobalId, ObjectId},
+            Resource,
+        },
     },
     utils::{IsAlive, Rectangle},
 };
@@ -96,6 +99,10 @@ pub struct OutputWorkspaces {
     /// with normal layout) rendered through a bottom-strip viewport onto its
     /// own KMS plane. Topmost.
     pub dock_plane: Layer,
+    /// Session-lock plane: the blank and the locker's surface for this output.
+    /// Above everything else, including the dock and fullscreen windows, and
+    /// hidden whenever the session is unlocked. See `src/lock.rs`.
+    pub lock_plane: Layer,
     /// Per-output workspace selector strip (expose UI). Each output shows its
     /// own selector so previews reflect that output's content at its own
     /// resolution. Lives in `overlay_plane`.
@@ -144,16 +151,28 @@ pub struct WorkspacesModel {
     pub scale: f64,
 }
 
+/// An output whose DRM surface was torn down but whose `Output` is kept alive
+/// for the reconnect — see [`Workspaces::suspend_output`].
+pub struct SuspendedOutput {
+    pub output: Output,
+    pub location: smithay::utils::Point<i32, smithay::utils::Logical>,
+    pub was_primary: bool,
+    /// The output's `wl_output`. Dropping this is what withdraws the global,
+    /// so it is held here for as long as the output may come back.
+    pub global: Option<GlobalId>,
+}
+
 pub struct Workspaces {
     model: Arc<RwLock<WorkspacesModel>>,
     pub output_workspaces: HashMap<String, OutputWorkspaces>,
     outputs: Vec<Output>,
     primary_output: Option<Output>,
-    /// Position and primary flag of outputs suspended via `suspend_output`
-    /// (lid close), keyed by output name. Consumed on reconnect so the panel
-    /// returns to its pre-suspend arrangement instead of being auto-placed
-    /// after outputs (e.g. virtual ones) that kept running meanwhile.
-    suspended_outputs: HashMap<String, (smithay::utils::Point<i32, smithay::utils::Logical>, bool)>,
+    /// Outputs suspended via `suspend_output` (lid close), keyed by name.
+    /// Consumed on reconnect so the panel returns with the same `Output` — and
+    /// the same `wl_output` — it went away with, in its pre-suspend
+    /// arrangement rather than auto-placed after outputs (e.g. virtual ones)
+    /// that kept running meanwhile.
+    suspended_outputs: HashMap<String, SuspendedOutput>,
     display_handle: DisplayHandle,
 
     pub windows_map: HashMap<ObjectId, WindowElement>,
@@ -328,7 +347,10 @@ impl Workspaces {
 
         let dock = DockView::new(layers_engine.clone(), app_icons_manager.clone());
         let dock = Arc::new(dock);
-        dock.show(None);
+        // The greeter owns the whole screen: no dock, no switcher, no expose.
+        if !crate::login::is_login_mode() {
+            dock.show(None);
+        }
 
         // Layer shell top layer (z-order: above workspaces)
         let layer_shell_top = layers_engine.new_layer();
@@ -714,6 +736,7 @@ impl Workspaces {
             ows.overlay_plane.set_size(Size::points(w, h), None);
             ows.switcher_plane.set_size(Size::points(w, h), None);
             ows.dock_plane.set_size(Size::points(w, h), None);
+            ows.lock_plane.set_size(Size::points(w, h), None);
             // The switcher panel sizes itself from its host output — a mode or
             // scale change under it must re-render it at the new geometry.
             if self.app_switcher_output_name().as_deref() == Some(output_name.as_str()) {
@@ -3541,6 +3564,27 @@ impl Workspaces {
         dock_plane.set_size(layers::types::Size::points(phys_w, phys_h), None);
         dock_plane.set_pointer_events(false);
 
+        // The lock plane covers this output whole while the session is locked.
+        // It is created for every output up front so a lock can blank a screen
+        // that no locker has drawn on yet, and hotplug needs no extra wiring.
+        let lock_plane = self.layers_engine.new_layer();
+        lock_plane.set_key(format!("lock_plane_{}", output.name()));
+        lock_plane.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        lock_plane.set_size(layers::types::Size::points(phys_w, phys_h), None);
+        lock_plane.set_background_color(
+            layers::types::PaintColor::Solid {
+                color: layers::types::Color::new_rgba(0.0, 0.0, 0.0, 1.0),
+            },
+            None,
+        );
+        // Pointer events on, so a click while locked cannot reach the session
+        // underneath even before the locker has mapped a surface.
+        lock_plane.set_pointer_events(true);
+        lock_plane.set_hidden(true);
+
         if is_this_primary {
             // Wire the primary output's expose layer into self.expose_layer so all
             // existing show/hide logic works unchanged.
@@ -3579,6 +3623,17 @@ impl Workspaces {
             let _ = output_layer.add_sublayer(&overlay_plane.clone());
             let _ = output_layer.add_sublayer(&switcher_plane.clone());
             let _ = output_layer.add_sublayer(&dock_plane.clone());
+        }
+        // Added last on every output: nothing may draw above a locked screen.
+        let _ = output_layer.add_sublayer(&lock_plane.clone());
+
+        // Login mode keeps the scene shape identical (so nothing downstream has
+        // to special-case a missing node) but never lets session chrome become
+        // visible: the greeter is the only thing on screen.
+        if crate::login::is_login_mode() {
+            dock_plane.set_hidden(true);
+            switcher_plane.set_hidden(true);
+            selector_layer.set_hidden(true);
         }
 
         let workspace_counter_start = self.with_model(|m| m.workspace_counter);
@@ -3623,6 +3678,7 @@ impl Workspaces {
             overlay_plane,
             switcher_plane,
             dock_plane,
+            lock_plane,
             workspace_selector,
         };
         self.output_workspaces.insert(output.name(), ows);
@@ -3689,7 +3745,12 @@ impl Workspaces {
     /// Used for lid-close: the DRM surface is torn down (no rendering) but
     /// all workspaces, windows, and scene-graph layers are preserved so they
     /// can be instantly restored when the output comes back.
-    pub fn suspend_output(&mut self, output: &Output) {
+    /// `global` is the output's `wl_output`, handed over so it outlives the
+    /// DRM surface the caller is about to drop: everything that holds an
+    /// `Output` — layer surfaces and their layer map, lock surfaces, window
+    /// assignments — keys off the object, and a client that watched its
+    /// output go away has no reason to come back on its own.
+    pub fn suspend_output(&mut self, output: &Output, global: Option<GlobalId>) {
         // Remember where the output was and whether it was primary, so a
         // reconnect of the same connector restores the pre-suspend
         // arrangement (position AND primary status).
@@ -3698,8 +3759,15 @@ impl Workspaces {
             .map(|g| g.loc)
             .unwrap_or_default();
         let was_primary = self.primary_output.as_ref() == Some(output);
-        self.suspended_outputs
-            .insert(output.name(), (location, was_primary));
+        self.suspended_outputs.insert(
+            output.name(),
+            SuspendedOutput {
+                output: output.clone(),
+                location,
+                was_primary,
+                global,
+            },
+        );
 
         self.outputs.retain(|o| o != output);
         if self.primary_output.as_ref() == Some(output) {
@@ -3709,12 +3777,8 @@ impl Workspaces {
         self.sync_model_from_primary();
     }
 
-    /// Take (consume) the saved position/primary of a previously suspended
-    /// output, if any. Returns `(location, was_primary)`.
-    pub fn take_suspended_output(
-        &mut self,
-        output_name: &str,
-    ) -> Option<(smithay::utils::Point<i32, smithay::utils::Logical>, bool)> {
+    /// Take (consume) a previously suspended output, if any.
+    pub fn take_suspended_output(&mut self, output_name: &str) -> Option<SuspendedOutput> {
         self.suspended_outputs.remove(output_name)
     }
 
