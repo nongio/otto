@@ -971,7 +971,7 @@ impl Otto<UdevData> {
             expose_active,
             fullscreen_window.as_ref(),
             switcher_active,
-            chrome_output && !self.workspaces.dock.is_hidden(),
+            chrome_output && !self.workspaces.dock.is_hidden_for_render(),
             overlay_active,
             {
                 // The windows plane must stay up while a workspace switch is
