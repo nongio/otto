@@ -51,7 +51,7 @@ Testing and issue reports are welcome. Development follows a draft roadmap of pl
 ## Features and roadmap
 - **Window management:** move/resize, fullscreen/maximize (animated), minimize to the Dock (animated), snap to left/right halves, new windows placed where they overlap the least.
 - **Workspaces:** multiple workspaces, animated switching, drag windows between workspaces, configurable background; each monitor has its own independent set.
-- **Multi-monitor:** per-output rendering, workspaces, fullscreen, Exposé and workspace selector; hotplug, and virtual outputs created on demand.
+- **Multi-monitor:** per-output rendering, workspaces, fullscreen, Exposé and workspace selector; hotplug, display arrangement and modes from the config, and virtual outputs created on demand.
 - **Dock (task manager):** shows running apps, minimized windows and pinned/bookmarked apps, bounces an icon while a launch is in progress.
 - **App switcher** (default: `Ctrl+Tab`): searches app metadata/icons (XDG), can close apps, cycles between windows of the same app, appears on the monitor under the pointer.
 - **Exposé / overview** (default: `PageDown`, gesture: three-finger swipe up): shows all windows, shows window previews with names, includes “show desktop”.
@@ -69,7 +69,7 @@ Testing and issue reports are welcome. Development follows a draft roadmap of pl
 
 ### Still to come
  - **Screen capture:** per-window capture and screenshots.
- - **Multi-monitor:** display arrangement in the config, mirroring.
+ - **Multi-monitor:** display mirroring.
  - **Dock improvements:** favorite locations; move Dock code out of compositor core.
  - **Input polish:** scroll acceleration.
 
