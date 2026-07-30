@@ -67,6 +67,8 @@ Testing and issue reports are welcome. Development follows a draft roadmap of pl
 - **XWayland:** X11 apps including fullscreen games — keyboard focus for globally-active clients, output scale via XSETTINGS, direct scanout.
 - **Rendering:** Skia pipeline with KMS multi-plane scanout (dock, app switcher, popups and topmost windows on their own planes) and cross-plane backdrop blur.
 
+> **Note on KMS scanout:** on the tty-udev backend, Otto puts parts of the desktop on their own hardware planes instead of compositing everything into one buffer, keeping the number of overlapping planes small to limit GPU work. This has mostly been tested on Intel GPUs. Other drivers are expected to fall back to full composition when the atomic test rejects a plane configuration, but that path is untested — if you see missing, misplaced or flickering elements on AMD or NVIDIA, this is the first thing to suspect, and a report is welcome. See [docs/developer/drm_plane.md](./docs/developer/drm_plane.md).
+
 ### Still to come
  - **Screen capture:** per-window capture and screenshots.
  - **Multi-monitor:** display mirroring.
