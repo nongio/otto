@@ -4,6 +4,7 @@ use layers::prelude::Transition;
 use smithay::{
     desktop::WindowSurface,
     input::pointer::Focus,
+    output::Output,
     reexports::wayland_server::Resource,
     utils::{Logical, Rectangle, SERIAL_COUNTER},
     wayland::{
@@ -72,31 +73,41 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
     }
 
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
-        let maybe = self.workspaces.space().and_then(|s| {
-            s.elements()
-                .find(|e| {
-                    if let WindowSurface::X11(x) = e.underlying_surface() {
-                        x == &window
-                    } else {
-                        false
-                    }
-                })
-                .cloned()
-        });
+        let maybe = self
+            .workspaces
+            .windows_map
+            .values()
+            .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
+            .cloned();
         if let Some(elem) = maybe {
             // Free the dedicated fullscreen workspace when a fullscreen window closes,
-            // mirroring the XDG path in xdg.rs::toplevel_destroyed.
+            // mirroring the XDG path in xdg.rs::toplevel_destroyed. Fullscreen
+            // workspaces are per-output.
             if elem.is_fullscreen() {
                 let fullscreen_workspace = elem.get_fullscreen_workspace();
-                if let Some(workspace) = self.workspaces.get_workspace_at(fullscreen_workspace) {
-                    workspace.set_fullscreen_mode(false);
-                    workspace.set_fullscreen_animating(false);
-                    workspace.set_name(None);
-                }
-                if self.workspaces.get_current_workspace_index() == fullscreen_workspace {
-                    let prev_workspace = (fullscreen_workspace as i32 - 1).min(0) as usize;
-                    self.workspaces
-                        .set_current_workspace_index(prev_workspace, None);
+                if let Some(output) = self.workspaces.output_for_window(&elem) {
+                    let name = output.name();
+                    if let Some(workspace) = self
+                        .workspaces
+                        .output_workspaces
+                        .get(&name)
+                        .and_then(|ows| ows.workspace_views.get(fullscreen_workspace).cloned())
+                    {
+                        workspace.set_fullscreen_mode(false);
+                        workspace.set_fullscreen_animating(false);
+                        workspace.set_name(None);
+                    }
+                    let current = self
+                        .workspaces
+                        .output_workspaces
+                        .get(&name)
+                        .map(|ows| ows.current_workspace)
+                        .unwrap_or(0);
+                    if current == fullscreen_workspace {
+                        let prev_workspace = fullscreen_workspace.saturating_sub(1);
+                        self.workspaces
+                            .set_workspace_for_output(&output, prev_workspace, None);
+                    }
                 }
             }
             if let Some(surface) = elem.wl_surface() {
@@ -145,11 +156,13 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
             geometry,
             window.title()
         );
-        let Some(elem) = self.workspaces.space().and_then(|s| {
-            s.elements()
-                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
-                .cloned()
-        }) else {
+        let Some(elem) = self
+            .workspaces
+            .windows_map
+            .values()
+            .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
+            .cloned()
+        else {
             return;
         };
         self.workspaces.map_window(&elem, geometry.loc, false, None);
@@ -160,11 +173,13 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
     }
 
     fn unmaximize_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        let Some(elem) = self.workspaces.space().and_then(|s| {
-            s.elements()
-                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
-                .cloned()
-        }) else {
+        let Some(elem) = self
+            .workspaces
+            .windows_map
+            .values()
+            .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
+            .cloned()
+        else {
             return;
         };
 
@@ -186,11 +201,15 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
     }
 
     fn fullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        let Some(elem) = self.workspaces.space().and_then(|s| {
-            s.elements()
-                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
-                .cloned()
-        }) else {
+        // Search the global window map — `space()` only sees the primary
+        // output's current workspace, missing windows on other outputs.
+        let Some(elem) = self
+            .workspaces
+            .windows_map
+            .values()
+            .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
+            .cloned()
+        else {
             // The element does not exist yet: Otto defers X11 mapping to
             // XWaylandShellHandler::surface_associated, so a client that maps and
             // immediately requests _NET_WM_STATE_FULLSCREEN (Unity/Proton games)
@@ -213,11 +232,15 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
     }
 
     fn unfullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        let Some(elem) = self.workspaces.space().and_then(|s| {
-            s.elements()
-                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
-                .cloned()
-        }) else {
+        // Search the global window map — `space()` only sees the primary
+        // output's current workspace, missing windows on other outputs.
+        let Some(elem) = self
+            .workspaces
+            .windows_map
+            .values()
+            .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
+            .cloned()
+        else {
             return;
         };
 
@@ -225,31 +248,42 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
             return;
         }
 
+        // The output the window is fullscreen on.
+        let Some(output) = self.workspaces.output_for_window(&elem).or_else(|| {
+            self.workspaces
+                .outputs()
+                .find(|o| {
+                    o.user_data()
+                        .get::<FullscreenSurface>()
+                        .and_then(|f| f.get())
+                        .map(|w| w == elem)
+                        .unwrap_or(false)
+                })
+                .cloned()
+        }) else {
+            return;
+        };
         // Clear direct-scanout registration
-        if let Some(output) = self
-            .workspaces
-            .outputs()
-            .find(|o| {
-                o.user_data()
-                    .get::<FullscreenSurface>()
-                    .and_then(|f| f.get())
-                    .map(|w| w == elem)
-                    .unwrap_or(false)
-            })
-            .cloned()
-        {
-            output
-                .user_data()
-                .get::<FullscreenSurface>()
-                .unwrap()
-                .clear();
+        if let Some(fullscreen) = output.user_data().get::<FullscreenSurface>() {
+            fullscreen.clear();
             self.backend_data.reset_buffers(&output);
         }
 
+        let output_name = output.name();
         let prev_workspace = elem.get_workspace();
-        let fullscreen_workspace_index = self.workspaces.get_current_workspace_index();
+        let fullscreen_workspace_index = self
+            .workspaces
+            .output_workspaces
+            .get(&output_name)
+            .map(|ows| ows.current_workspace)
+            .unwrap_or(0);
 
-        if let Some(workspace) = self.workspaces.get_current_workspace() {
+        if let Some(workspace) = self
+            .workspaces
+            .output_workspaces
+            .get(&output_name)
+            .and_then(|ows| ows.workspace_views.get(fullscreen_workspace_index).cloned())
+        {
             workspace.set_fullscreen_mode(false);
             workspace.set_fullscreen_animating(false);
         }
@@ -265,49 +299,70 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
 
         let transition = Transition::ease_in_out_quad(1.4);
 
-        self.workspaces
-            .move_window_to_workspace(&elem, prev_workspace, restore_loc);
-        let scroll_transaction = self
-            .workspaces
-            .set_current_workspace_index(prev_workspace, Some(transition.clone()));
+        self.workspaces.move_window_to_workspace_on_output(
+            &output,
+            &elem,
+            prev_workspace,
+            restore_loc,
+        );
+        let scroll_transaction = self.workspaces.set_workspace_for_output(
+            &output,
+            prev_workspace,
+            Some(transition.clone()),
+        );
 
         // Defer fullscreen workspace removal until the scroll animation completes,
         // so the workspace remains visible while scrolling away from it.
         if let Some(tr) = &scroll_transaction {
-            self.workspaces
-                .defer_remove_workspace_at(fullscreen_workspace_index, tr);
+            self.workspaces.defer_remove_workspace_on_output(
+                &output_name,
+                fullscreen_workspace_index,
+                tr,
+            );
         } else {
             self.workspaces
-                .remove_workspace_at(fullscreen_workspace_index);
+                .remove_workspace_from_output(&output_name, fullscreen_workspace_index);
         }
 
         self.workspaces.expose_set_visible(false);
-        self.workspaces.set_fullscreen_overlay_visibility(false);
-        self.workspaces.dock.show(None);
+        // Layer-shell chrome and dock live on the primary output only.
+        let is_primary = self
+            .workspaces
+            .primary_output()
+            .is_some_and(|p| p.name() == output_name);
+        if is_primary {
+            self.workspaces.set_fullscreen_overlay_visibility(false);
+            self.workspaces.dock.show(None);
+        }
 
-        // Park the window layer under dnd_view before removing the fullscreen workspace,
-        // then animate it to the restored position and re-parent it to the workspace on finish.
-        // This mirrors the XDG unfullscreen flow and prevents freed-node panics from pending
+        // Park the window layer in its output's overlay plane before removing the
+        // fullscreen workspace, then animate it to the restored position and
+        // re-parent it to the workspace on finish. This mirrors the XDG
+        // unfullscreen flow and prevents freed-node panics from pending
         // transaction callbacks still holding references to the removed workspace's layers.
         if let Some(view) = self.workspaces.get_window_view(&elem.id()) {
-            let scale = self
-                .workspaces
-                .outputs_for_element(&elem)
-                .first()
-                .map(|o| o.current_scale().fractional_scale())
-                .unwrap_or(1.0);
-            let position = restore_loc.to_f64().to_physical(scale);
+            let scale = output.current_scale().fractional_scale();
+            // Scene layer positions are output-local physical pixels.
+            let position = (restore_loc - output.current_location())
+                .to_f64()
+                .to_physical(scale);
 
-            let target_workspace = self.workspaces.get_workspace_at(prev_workspace);
-            let workspace_layer = target_workspace.map(|ws| ws.windows_layer.clone());
-
-            if let Err(e) = self
+            let workspace_layer = self
                 .workspaces
-                .dnd_view
-                .layer
-                .add_sublayer(&view.window_layer)
-            {
-                tracing::warn!("x11 unfullscreen: failed to park window in dnd layer: {e}");
+                .output_workspaces
+                .get(&output_name)
+                .and_then(|ows| ows.workspace_views.get(prev_workspace))
+                .map(|ws| ws.windows_layer.clone());
+
+            let park_layer = self
+                .workspaces
+                .output_workspaces
+                .get(&output_name)
+                .map(|ows| ows.overlay_plane.clone());
+            if let Some(park_layer) = park_layer {
+                if let Err(e) = park_layer.add_sublayer(&view.window_layer) {
+                    tracing::warn!("x11 unfullscreen: failed to park window in overlay plane: {e}");
+                }
             }
 
             view.window_layer
@@ -346,11 +401,13 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
     ) {
         let start_data = self.pointer.grab_start_data().unwrap();
 
-        let Some(element) = self.workspaces.space().and_then(|s| {
-            s.elements()
-                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
-                .cloned()
-        }) else {
+        let Some(element) = self
+            .workspaces
+            .windows_map
+            .values()
+            .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
+            .cloned()
+        else {
             return;
         };
 
@@ -499,9 +556,20 @@ impl<BackendData: Backend> Otto<BackendData> {
 
         self.backend_data.reset_buffers(&output);
 
-        // Create a dedicated fullscreen workspace
-        let current_workspace_index = self.workspaces.get_current_workspace_index();
-        let (next_workspace_index, next_workspace) = self.workspaces.get_next_free_workspace();
+        // Create a dedicated fullscreen workspace on the window's own output
+        let output_name = output.name();
+        let current_workspace_index = self
+            .workspaces
+            .output_workspaces
+            .get(&output_name)
+            .map(|ows| ows.current_workspace)
+            .unwrap_or(0);
+        let Some((next_workspace_index, next_workspace)) = self
+            .workspaces
+            .get_next_free_workspace_on_output(&output_name)
+        else {
+            return;
+        };
         next_workspace.set_fullscreen_mode(true);
 
         // Fetch app info asynchronously to get the proper display name for the workspace.
@@ -530,15 +598,26 @@ impl<BackendData: Backend> Otto<BackendData> {
         elem.set_fullscreen(true, next_workspace_index);
         elem.set_workspace(current_workspace_index);
 
-        self.workspaces
-            .move_window_to_workspace(elem, next_workspace_index, (0, 0));
+        self.workspaces.move_window_to_workspace_on_output(
+            &output,
+            elem,
+            next_workspace_index,
+            output.current_location(),
+        );
 
         let transition = Some(Transition::ease_in_out_quad(1.4));
         self.workspaces
-            .set_current_workspace_index(next_workspace_index, transition);
+            .set_workspace_for_output(&output, next_workspace_index, transition);
 
-        self.workspaces.set_fullscreen_overlay_visibility(true);
-        self.workspaces.dock.hide(None);
+        // Layer-shell chrome and dock live on the primary output only.
+        let is_primary = self
+            .workspaces
+            .primary_output()
+            .is_some_and(|p| p.name() == output_name);
+        if is_primary {
+            self.workspaces.set_fullscreen_overlay_visibility(true);
+            self.workspaces.dock.hide(None);
+        }
 
         // Ensure the X11 `_NET_WM_STATE_FULLSCREEN` atom is set so the client can read
         // its fullscreen state back (Wine/Unity games block until they see it). We set
@@ -552,11 +631,13 @@ impl<BackendData: Backend> Otto<BackendData> {
     }
 
     pub fn maximize_request_x11(&mut self, window: &X11Surface) {
-        let Some(elem) = self.workspaces.space().and_then(|s| {
-            s.elements()
-                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == window))
-                .cloned()
-        }) else {
+        let Some(elem) = self
+            .workspaces
+            .windows_map
+            .values()
+            .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == window))
+            .cloned()
+        else {
             return;
         };
 
@@ -588,8 +669,13 @@ impl<BackendData: Backend> Otto<BackendData> {
             .get::<OldGeometry>()
             .unwrap()
             .save(old_geo);
-        self.workspaces
-            .map_window(&elem, geometry.loc, false, Some(Transition::ease_out(0.3)));
+        self.workspaces.map_window_on_output(
+            &output,
+            &elem,
+            geometry.loc,
+            false,
+            Some(Transition::ease_out(0.3)),
+        );
     }
 
     /// Snap an X11 window into a tiling target rectangle (logical pixels).
@@ -601,14 +687,17 @@ impl<BackendData: Backend> Otto<BackendData> {
     pub fn apply_tile_x11(
         &mut self,
         window: &X11Surface,
+        output: &Output,
         target: Rectangle<i32, Logical>,
         maximize: bool,
     ) {
-        let Some(elem) = self.workspaces.space().and_then(|s| {
-            s.elements()
-                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == window))
-                .cloned()
-        }) else {
+        let Some(elem) = self
+            .workspaces
+            .windows_map
+            .values()
+            .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == window))
+            .cloned()
+        else {
             return;
         };
 
@@ -626,16 +715,25 @@ impl<BackendData: Backend> Otto<BackendData> {
 
         let _ = window.set_maximized(maximize);
         let _ = window.configure(target);
-        self.workspaces
-            .map_window(&elem, target.loc, false, Some(Transition::ease_out(0.3)));
+        // `target` belongs to `output`: pin it, or center-based routing would
+        // send a still-full-width window onto the neighbouring output.
+        self.workspaces.map_window_on_output(
+            output,
+            &elem,
+            target.loc,
+            false,
+            Some(Transition::ease_out(0.3)),
+        );
     }
 
     pub fn unmaximize_request_x11(&mut self, window: &X11Surface) {
-        let Some(elem) = self.workspaces.space().and_then(|s| {
-            s.elements()
-                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == window))
-                .cloned()
-        }) else {
+        let Some(elem) = self
+            .workspaces
+            .windows_map
+            .values()
+            .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == window))
+            .cloned()
+        else {
             return;
         };
 
@@ -743,11 +841,13 @@ impl<BackendData: Backend> Otto<BackendData> {
             return;
         };
 
-        let Some(element) = self.workspaces.space().and_then(|s| {
-            s.elements()
-                .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == window))
-                .cloned()
-        }) else {
+        let Some(element) = self
+            .workspaces
+            .windows_map
+            .values()
+            .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == window))
+            .cloned()
+        else {
             return;
         };
 

@@ -212,10 +212,18 @@ pub struct SurfaceData {
     /// vibrancy). Rebuilt only when a lower plane changes under the
     /// overlay's blur region.
     pub(super) backdrop_surface: Option<BackdropSurface>,
-    /// Snapshot of `backdrop_surface` handed to the overlay element.
+    /// Blurred *desktop-only* composite (bg + windows/expose). Handed to the
+    /// dock and switcher planes, which must not show popups in their vibrancy.
     pub(super) backdrop_image: Option<layers::skia::Image>,
-    /// Whether `backdrop_image` is already blurred — consumers seed it directly
-    /// and skip their own shape-clipped blur (which would leave a faded rim).
+    /// Blurred composite of the desktop PLUS the popup subtree, for the overlay
+    /// plane. Popups stack in that plane, so a submenu must blur the popup(s)
+    /// beneath it: we draw the popups onto the unblurred desktop cache and blur
+    /// the whole image before it is seeded, so the blur happens before any
+    /// per-popup clip (no faded edge rim, like the islands). Falls back to
+    /// `backdrop_image` when there are no popups.
+    pub(super) backdrop_overlay_image: Option<layers::skia::Image>,
+    /// Whether the backdrop images are already blurred — consumers seed them
+    /// directly and skip their own shape-clipped blur (which would leave a rim).
     pub(super) backdrop_preblurred: bool,
     /// Lower-plane damage occurred while no blur consumer needed the
     /// composite (or outside every active consumer's region); the next
@@ -275,8 +283,7 @@ pub struct SurfaceData {
     /// Their `content_layer` is hidden in lay-rs so only the shadow renders in
     /// `windows_dmabuf_element`. The client buffer is pushed directly as a
     /// `ScanoutCandidate` render element on the plane above.
-    pub(super) shadow_only_windows:
-        Vec<smithay::reexports::wayland_server::backend::ObjectId>,
+    pub(super) shadow_only_windows: Vec<smithay::reexports::wayland_server::backend::ObjectId>,
     /// Window that was fullscreen direct-scanned-out on the previous frame.
     /// Fullscreen scanout never renders the window into the scene, so when it
     /// ends (e.g. an expose gesture) the window is re-imported like a demotion

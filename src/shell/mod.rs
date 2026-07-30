@@ -441,23 +441,8 @@ impl<BackendData: Backend> Otto<BackendData> {
             );
 
             self.surface_layers.extend(popup_layers);
-
-            // Show the popup only after the initial configure has been sent and
-            // the client has committed at the correct position. Until then the
-            // layer stays hidden (as initialised in get_or_create_popup_layer).
-            let initial_configure_sent =
-                smithay::wayland::compositor::with_states(popup_surface, |states| {
-                    states
-                        .data_map
-                        .get::<XdgPopupSurfaceData>()
-                        .map(|d: &std::sync::Mutex<_>| d.lock().unwrap().initial_configure_sent)
-                        .unwrap_or(false)
-                });
-            if initial_configure_sent {
-                if let Some(popup_layer) = self.workspaces.popup_overlay.get_popup(&popup_id) {
-                    popup_layer.layer.set_hidden(false);
-                }
-            }
+            // Visibility is owned by update_popup: the layer starts hidden and
+            // is shown on the first update that carries renderable content.
         });
 
         // Ensure all surfaces in the tree have rendering layers
@@ -659,10 +644,22 @@ impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
         wlr_layer: Layer,
         namespace: String,
     ) {
-        let output = wl_output
+        // A NULL wl_output leaves the choice to us. It must be a real output:
+        // the chrome containers (`layer_shell_top`/`layer_shell_overlay`) live
+        // in the PRIMARY output's overlay plane, and that plane is only pushed
+        // while `is_overlay_ui_active` sees a Top/Overlay layer in the primary
+        // output's layer map. Assigning the surface to a virtual output (RDP,
+        // mirror) therefore renders it into a plane nobody scans out — mako
+        // notifications and rofi stayed invisible until an unrelated popup
+        // happened to activate the plane.
+        let Some(output) = wl_output
             .as_ref()
             .and_then(Output::from_resource)
-            .unwrap_or_else(|| self.workspaces.outputs().next().unwrap().clone());
+            .or_else(|| self.workspaces.default_client_output().cloned())
+        else {
+            tracing::warn!("new_layer_surface: no output available for {namespace}");
+            return;
+        };
 
         // Create the Smithay LayerSurface wrapper
         let layer_surface = LayerSurface::new(surface.clone(), namespace.clone());

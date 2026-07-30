@@ -1,5 +1,6 @@
 mod activity;
 mod dbus_service;
+mod dialog;
 mod notifications;
 mod renderer;
 mod state;
@@ -12,12 +13,14 @@ use otto_kit::surfaces::{LayerShellSurface, SubsurfaceSurface};
 use otto_kit::{App, AppContext, AppRunner};
 use smithay_client_toolkit::compositor::Region;
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
+use wayland_client::protocol::wl_keyboard::KeyState;
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::Layer, zwlr_layer_surface_v1::Anchor,
 };
 
 use crate::activity::Activity;
-use crate::dbus_service::{IslandService, DBUS_NAME};
+use crate::dbus_service::{DialogService, IslandService, DBUS_NAME};
+use crate::dialog::{DialogHit, DialogId, DialogResponse, DialogView};
 use crate::renderer::{
     animate_to, apply_island_style, draw_centered, set_size_and_position, COMPACT_H, MINI_H, MINI_W,
 };
@@ -31,8 +34,12 @@ const LAYER_W: u32 = 800;
 const LAYER_H: u32 = 400; // Tall enough for pill + MAX_VISIBLE_CARDS cards.
 const BAR_HEIGHT: f32 = 36.0;
 const GAP: f32 = 6.0;
+/// Top edge of a dialog panel, dropped down just below the island bar.
+const DIALOG_TOP: f32 = BAR_HEIGHT + 14.0;
 /// Seconds of inactivity before the focused island shrinks to Mini.
 const FOCUS_TIMEOUT_SECS: f64 = 4.0;
+/// Seconds a destroyed surface is kept alive so its exit animation can play.
+const DESTROY_DELAY_SECS: f64 = 0.8;
 
 // ---------------------------------------------------------------------------
 // Island — one notification group or music activity
@@ -48,6 +55,26 @@ enum IslandMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IslandKind {
     Notification,
+}
+
+/// Signature of what a pill buffer currently shows — redraw only on change.
+#[derive(Clone, PartialEq)]
+struct PillContent {
+    mode: IslandMode,
+    icon: String,
+    title: String,
+    count: usize,
+    w: f32,
+    h: f32,
+}
+
+/// Signature of what a card buffer currently shows.
+#[derive(Clone, PartialEq)]
+struct CardContent {
+    title: String,
+    body: String,
+    icon: String,
+    time_label: String,
 }
 
 /// An island represents one group (notification app_id or music).
@@ -74,11 +101,30 @@ struct Island {
     peek_until: Option<std::time::Instant>,
     /// Last layout target (w, h, x, y) — skip animation when unchanged.
     last_layout: (f32, f32, f32, f32),
+    /// Last drawn pill content — skip redraw when unchanged.
+    last_content: Option<PillContent>,
 }
 
 struct CardSurface {
     surface: SubsurfaceSurface,
     activity_id: u64,
+    /// Last drawn card content — skip redraw when unchanged.
+    last_content: Option<CardContent>,
+}
+
+/// A presented Access-style dialog panel (one subsurface, drawn as a whole).
+struct DialogPanel {
+    id: DialogId,
+    surface: SubsurfaceSurface,
+    view: DialogView,
+    /// Per choice-group selected option index.
+    selected: Vec<usize>,
+    /// Panel top-left in layer coordinates (for hit testing).
+    origin: (f32, f32),
+    /// Cached content height (for layer sizing / input region).
+    layout_h: f32,
+    /// Whether the entrance animation has played.
+    entered: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +144,12 @@ struct IslandApp {
     pending_destroy: Vec<(SubsurfaceSurface, std::time::Instant)>,
     /// Last time the user interacted (pointer event). Used for focus timeout.
     last_interaction: std::time::Instant,
+    /// Last applied layer size — skip set_size/commit when unchanged.
+    last_layer_size: Option<(u32, u32)>,
+    /// Last applied input region rects — skip region set/commit when unchanged.
+    last_input_region: Option<Vec<(i32, i32, i32, i32)>>,
+    /// The currently-presented Access-style dialog, if any.
+    dialog: Option<DialogPanel>,
 }
 
 impl IslandApp {
@@ -111,6 +163,9 @@ impl IslandApp {
             hovered_app: None,
             pending_destroy: Vec::new(),
             last_interaction: std::time::Instant::now(),
+            last_layer_size: None,
+            last_input_region: None,
+            dialog: None,
         }
     }
 
@@ -155,9 +210,9 @@ impl IslandApp {
             .push((surface, std::time::Instant::now()));
     }
 
-    /// Destroy surfaces whose animations have had time to complete (>0.8s).
+    /// Destroy surfaces whose animations have had time to complete.
     fn flush_pending_destroy(&mut self) {
-        let cutoff = std::time::Instant::now() - Duration::from_secs_f64(0.8);
+        let cutoff = std::time::Instant::now() - Duration::from_secs_f64(DESTROY_DELAY_SECS);
         self.pending_destroy.retain_mut(|(surface, queued_at)| {
             if *queued_at <= cutoff {
                 surface.destroy();
@@ -240,6 +295,7 @@ impl IslandApp {
                         last_activity_id: 0,
                         peek_until: None,
                         last_layout: (0.0, 0.0, 0.0, 0.0),
+                        last_content: None,
                     });
                     // Auto-focus only if no island is currently Expanded.
                     let any_expanded = self.islands.iter().any(|i| i.mode == IslandMode::Expanded);
@@ -310,8 +366,8 @@ impl IslandApp {
 
     fn layout(&mut self, grouped: &[(Activity, usize)], reposition_delay: bool) {
         if self.islands.is_empty() {
-            self.update_layer_size();
-            self.update_input_region();
+            let size_changed = self.update_layer_size();
+            self.update_input_region(size_changed);
             return;
         }
 
@@ -348,6 +404,7 @@ impl IslandApp {
         let mut expanded_layouts: Vec<(usize, f32, f32, f32, f32)> = Vec::new();
         let mut pulse_targets: Vec<(usize, f32, f32, f32, f32)> = Vec::new();
         let mut layout_targets: Vec<(usize, f32, f32, f32, f32)> = Vec::new(); // (idx, w, h, x, y)
+        let mut content_updates: Vec<(usize, PillContent)> = Vec::new();
 
         for (idx, island) in self.islands.iter().enumerate() {
             let count = grouped
@@ -400,9 +457,20 @@ impl IslandApp {
 
             match island.mode {
                 IslandMode::Mini => {
-                    draw_centered(&island.surface, w, h, |canvas| {
-                        renderer::draw_mini(canvas, icon, count, w, h);
-                    });
+                    let content = PillContent {
+                        mode: island.mode,
+                        icon: icon.to_string(),
+                        title: String::new(),
+                        count,
+                        w,
+                        h,
+                    };
+                    if island.last_content.as_ref() != Some(&content) {
+                        draw_centered(&island.surface, w, h, |canvas| {
+                            renderer::draw_mini(canvas, icon, count, w, h);
+                        });
+                        content_updates.push((idx, content));
+                    }
                     if should_pulse {
                         pulse_targets.push((idx, w, h, cx, cy));
                     } else {
@@ -416,18 +484,29 @@ impl IslandApp {
                         .map(|(a, _)| a.title.as_str())
                         .unwrap_or("");
                     let expanded = island.mode == IslandMode::Expanded;
-                    draw_centered(&island.surface, w, h, |canvas| {
-                        renderer::draw_pill(
-                            canvas,
-                            &island.app_id,
-                            icon,
-                            title,
-                            count,
-                            expanded,
-                            w,
-                            h,
-                        );
-                    });
+                    let content = PillContent {
+                        mode: island.mode,
+                        icon: icon.to_string(),
+                        title: title.to_string(),
+                        count,
+                        w,
+                        h,
+                    };
+                    if island.last_content.as_ref() != Some(&content) {
+                        draw_centered(&island.surface, w, h, |canvas| {
+                            renderer::draw_pill(
+                                canvas,
+                                &island.app_id,
+                                icon,
+                                title,
+                                count,
+                                expanded,
+                                w,
+                                h,
+                            );
+                        });
+                        content_updates.push((idx, content));
+                    }
                     if should_pulse {
                         pulse_targets.push((idx, w, h, cx, cy));
                     } else {
@@ -442,6 +521,10 @@ impl IslandApp {
             }
 
             x += w + GAP;
+        }
+
+        for (idx, content) in content_updates {
+            self.islands[idx].last_content = Some(content);
         }
 
         // Apply layout animations only when target changed.
@@ -527,6 +610,8 @@ impl IslandApp {
         drop(state);
 
         let mut dismissed_card_surfaces: Vec<SubsurfaceSurface> = Vec::new();
+        // place_above on a new card only takes effect on a parent commit — force one.
+        let mut card_created = false;
 
         // Capture wl_surface before mutable borrow of islands.
         let wl = self.wl_surface();
@@ -554,6 +639,16 @@ impl IslandApp {
                 // Start position: center of card at pill bottom.
                 let start_cy = pill_bottom + card_h / 2.0;
 
+                let content = CardContent {
+                    title: notif.title.clone(),
+                    body: notif.body.clone(),
+                    icon: if notif.icon.is_empty() {
+                        group_icon.clone()
+                    } else {
+                        notif.icon.clone()
+                    },
+                    time_label: renderer::elapsed_label(notif.created_at),
+                };
                 let existing = island.cards.iter().position(|c| c.activity_id == notif.id);
                 let is_new = existing.is_none();
                 let cidx = if let Some(ci) = existing {
@@ -583,14 +678,19 @@ impl IslandApp {
                     island.cards.push(CardSurface {
                         surface,
                         activity_id: notif.id,
+                        last_content: Some(content.clone()),
                     });
+                    card_created = true;
                     island.cards.len() - 1
                 };
 
-                // Redraw content for existing cards (count/time may have changed).
-                draw_centered(&island.cards[cidx].surface, card_w, card_h, |canvas| {
-                    renderer::draw_card(canvas, notif, group_icon, card_w, card_h);
-                });
+                // Redraw only when the card's content actually changed.
+                if island.cards[cidx].last_content.as_ref() != Some(&content) {
+                    draw_centered(&island.cards[cidx].surface, card_w, card_h, |canvas| {
+                        renderer::draw_card(canvas, notif, group_icon, card_w, card_h);
+                    });
+                    island.cards[cidx].last_content = Some(content);
+                }
 
                 if is_new {
                     // New card: start at pill bottom, invisible, slide down + fade in.
@@ -650,17 +750,19 @@ impl IslandApp {
             self.defer_destroy(s);
         }
 
-        self.update_layer_size();
-        self.update_input_region();
+        let size_changed = self.update_layer_size();
+        self.update_input_region(size_changed || card_created);
     }
 
     // -----------------------------------------------------------------------
     // Layer size & input region
     // -----------------------------------------------------------------------
 
-    fn update_layer_size(&self) {
+    /// Returns true when the layer size changed (a wl_surface commit is needed
+    /// to apply the pending zwlr set_size).
+    fn update_layer_size(&mut self) -> bool {
         let Some(layer) = &self.layer_surface else {
-            return;
+            return false;
         };
 
         // Compute the minimum height needed for current layout.
@@ -679,6 +781,11 @@ impl IslandApp {
             }
         }
 
+        // A presented dialog panel drops below the bar and may extend the layer.
+        if let Some(panel) = &self.dialog {
+            max_h = max_h.max(DIALOG_TOP + panel.layout_h + 12.0);
+        }
+
         // Compute the minimum width needed for all islands.
         let total_w: f32 = self
             .islands
@@ -686,20 +793,28 @@ impl IslandApp {
             .map(|i| i.last_layout.0.max(MINI_H))
             .sum::<f32>()
             + (self.islands.len().saturating_sub(1)) as f32 * GAP;
-        let needed_w = (total_w + 40.0).max(LAYER_W as f32); // padding + minimum
+        let mut needed_w = (total_w + 40.0).max(LAYER_W as f32); // padding + minimum
+        if self.dialog.is_some() {
+            needed_w = needed_w.max(dialog::DIALOG_W + 40.0);
+        }
 
-        layer.set_size(needed_w.ceil() as u32, max_h.ceil() as u32);
+        let size = (needed_w.ceil() as u32, max_h.ceil() as u32);
+        if self.last_layer_size == Some(size) {
+            return false;
+        }
+        layer.set_size(size.0, size.1);
+        self.last_layer_size = Some(size);
+        true
     }
 
-    fn update_input_region(&self) {
+    fn update_input_region(&mut self, force_commit: bool) {
         let Some(layer) = &self.layer_surface else {
             return;
         };
-        let cs = AppContext::compositor_state();
-        let Ok(region) = Region::new(cs) else { return };
 
-        // Add input rects when there are visible islands.
+        // Collect input rects when there are visible islands.
         // Empty region = zero input area (clicks pass through).
+        let mut rects: Vec<(i32, i32, i32, i32)> = Vec::new();
         if !self.islands.is_empty() {
             // One rect per island, derived from last_layout (center coords).
             for island in &self.islands {
@@ -714,12 +829,12 @@ impl IslandApp {
                 };
                 let x = cx - pill_w / 2.0;
                 let y = (BAR_HEIGHT - pill_h) / 2.0;
-                region.add(
+                rects.push((
                     x.max(0.0) as i32,
                     y as i32,
                     pill_w.ceil() as i32,
                     pill_h.ceil() as i32,
-                );
+                ));
             }
 
             // Card stack region — one rect per expanded island, positioned under its pill.
@@ -739,17 +854,49 @@ impl IslandApp {
                 let stack_top = pill_bottom + card_gap;
                 let stack_h = card_count * card_h + (card_count - 1.0) * card_gap;
                 let card_region_x = pill_left + (pill_w - card_w) / 2.0;
-                region.add(
+                rects.push((
                     card_region_x.max(0.0) as i32,
                     stack_top as i32,
                     card_w.ceil() as i32,
                     stack_h.ceil() as i32,
-                );
+                ));
             }
         }
 
+        // A dialog panel captures input over its own rect. A modal dialog
+        // additionally captures the whole layer so clicks can't fall through to
+        // windows behind while a decision is pending.
+        if let Some(panel) = &self.dialog {
+            if panel.view.modal {
+                if let Some((lw, lh)) = self.last_layer_size {
+                    rects.push((0, 0, lw as i32, lh as i32));
+                }
+            } else {
+                let (ox, oy) = panel.origin;
+                rects.push((
+                    ox.max(0.0) as i32,
+                    oy.max(0.0) as i32,
+                    dialog::DIALOG_W.ceil() as i32,
+                    panel.layout_h.ceil() as i32,
+                ));
+            }
+        }
+
+        let region_changed = self.last_input_region.as_ref() != Some(&rects);
+        if !region_changed && !force_commit {
+            return;
+        }
+
         let wl_surface = layer.base_surface().wl_surface();
-        wl_surface.set_input_region(Some(region.wl_region()));
+        if region_changed {
+            let cs = AppContext::compositor_state();
+            let Ok(region) = Region::new(cs) else { return };
+            for &(x, y, w, h) in &rects {
+                region.add(x, y, w, h);
+            }
+            wl_surface.set_input_region(Some(region.wl_region()));
+            self.last_input_region = Some(rects);
+        }
         wl_surface.commit();
     }
 
@@ -806,6 +953,10 @@ impl IslandApp {
     // -----------------------------------------------------------------------
 
     fn handle_click(&mut self, px: f32, py: f32) {
+        // A dialog is modal — it consumes all clicks while present.
+        if self.handle_dialog_click(px, py) {
+            return;
+        }
         let Some((app_id, card_id)) = self.hit_test(px, py) else {
             return;
         };
@@ -903,6 +1054,171 @@ impl IslandApp {
             state.dirty = true;
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Access-style dialogs
+    // -----------------------------------------------------------------------
+
+    /// Reconcile the presented dialog panel with the front of the dialog queue.
+    fn sync_dialog(&mut self) {
+        let front = {
+            let mut state = self.state.lock().unwrap();
+            state.prune_withdrawn_dialogs();
+            state.front_dialog_view()
+        };
+
+        match (front, self.dialog.as_ref().map(|p| p.id)) {
+            // Same dialog already presented — just (re)render below.
+            (Some(view), Some(cur)) if view.id == cur => {
+                // Update view in case labels changed; keep selection/anim state.
+                if let Some(panel) = self.dialog.as_mut() {
+                    panel.view = view;
+                }
+            }
+            // A different (or first) dialog — replace any existing panel.
+            (Some(view), _) => {
+                if let Some(old) = self.dialog.take() {
+                    self.animate_dialog_out(old);
+                }
+                if let Some(panel) = self.create_dialog_panel(view) {
+                    self.dialog = Some(panel);
+                }
+            }
+            // Queue drained — dismiss the panel.
+            (None, Some(_)) => {
+                if let Some(old) = self.dialog.take() {
+                    self.animate_dialog_out(old);
+                }
+            }
+            (None, None) => {}
+        }
+
+        self.render_dialog();
+        let size_changed = self.update_layer_size();
+        self.update_input_region(size_changed);
+    }
+
+    fn create_dialog_panel(&self, view: DialogView) -> Option<DialogPanel> {
+        let wl = self.wl_surface()?;
+        let surface =
+            SubsurfaceSurface::new(&wl, 0, 0, dialog::DIALOG_BUF_W, dialog::DIALOG_BUF_H).ok()?;
+        dialog::apply_dialog_style(&surface);
+        // Keep the panel above the island pills.
+        for island in &self.islands {
+            surface.place_above(island.surface.wl_surface());
+        }
+        surface.draw(|canvas| {
+            canvas.clear(skia_safe::Color::TRANSPARENT);
+        });
+        let selected: Vec<usize> = view.choices.iter().map(|g| g.default).collect();
+        tracing::info!(id = view.id, app_id = %view.app_id, title = %view.title, "dialog shown");
+        Some(DialogPanel {
+            id: view.id,
+            surface,
+            view,
+            selected,
+            origin: (0.0, 0.0),
+            layout_h: 0.0,
+            entered: false,
+        })
+    }
+
+    /// Draw and position the active dialog panel.
+    fn render_dialog(&mut self) {
+        let layer_w = self.layer_width();
+        let Some(panel) = self.dialog.as_mut() else {
+            return;
+        };
+        let layout = dialog::dialog_layout(&panel.view);
+        let w = layout.width;
+        let h = layout.height;
+
+        let selected = panel.selected.clone();
+        let view = panel.view.clone();
+        panel.surface.draw(|canvas| {
+            dialog::draw_dialog(canvas, &view, &selected, &layout);
+        });
+
+        let cx = layer_w / 2.0;
+        let cy = DIALOG_TOP + h / 2.0;
+        panel.origin = (cx - w / 2.0, DIALOG_TOP);
+        panel.layout_h = h;
+
+        if !panel.entered {
+            // Start slightly above and transparent, then spring in.
+            set_size_and_position(&panel.surface, w, h, cx, cy - 12.0);
+            if let Some(ss) = panel.surface.base_surface().surface_style() {
+                ss.set_opacity(0.0);
+            }
+            renderer::animate_to_with_opacity(
+                &panel.surface,
+                w,
+                h,
+                cx,
+                cy,
+                dialog::PANEL_RADIUS as f64,
+                Some(1.0),
+                0.0,
+            );
+            panel.entered = true;
+        } else {
+            set_size_and_position(&panel.surface, w, h, cx, cy);
+        }
+    }
+
+    fn animate_dialog_out(&mut self, panel: DialogPanel) {
+        renderer::animate_dismiss(&panel.surface, 0.96);
+        self.defer_destroy(panel.surface);
+    }
+
+    /// Route a click to the active dialog. Returns true if a dialog consumed it.
+    fn handle_dialog_click(&mut self, px: f32, py: f32) -> bool {
+        let Some(panel) = self.dialog.as_ref() else {
+            return false;
+        };
+        let (ox, oy) = panel.origin;
+        let layout = dialog::dialog_layout(&panel.view);
+        match dialog::hit_test(&layout, px - ox, py - oy) {
+            Some(DialogHit::Option { group, option }) => {
+                if let Some(panel) = self.dialog.as_mut() {
+                    if let Some(sel) = panel.selected.get_mut(group) {
+                        *sel = option;
+                    }
+                }
+                self.render_dialog();
+            }
+            Some(DialogHit::Grant) => self.resolve_active_dialog(0),
+            Some(DialogHit::Deny) => self.resolve_active_dialog(1),
+            // Click landed on the panel background — swallow it (modal).
+            None => {}
+        }
+        true
+    }
+
+    /// Deliver a decision for the active dialog and let the next tick dismiss it.
+    fn resolve_active_dialog(&mut self, response: u32) {
+        let Some(panel) = self.dialog.as_ref() else {
+            return;
+        };
+        let results: Vec<(String, String)> = if response == 0 {
+            panel
+                .view
+                .choices
+                .iter()
+                .enumerate()
+                .filter_map(|(gi, g)| {
+                    let idx = panel.selected.get(gi).copied().unwrap_or(g.default);
+                    g.options.get(idx).map(|o| (g.id.clone(), o.id.clone()))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let id = panel.id;
+        tracing::info!(id, response, "dialog resolved");
+        let mut state = self.state.lock().unwrap();
+        state.resolve_dialog(id, DialogResponse { response, results });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -935,11 +1251,10 @@ impl App for IslandApp {
                 layer.draw(|canvas| {
                     canvas.clear(skia_safe::Color::TRANSPARENT);
                 });
-                layer.base_surface().on_frame(|| {});
             }
             self.surfaces_ready = true;
             // Set empty input region so clicks pass through until islands appear.
-            self.update_input_region();
+            self.update_input_region(false);
         }
     }
 
@@ -997,6 +1312,14 @@ impl App for IslandApp {
             }
         }
 
+        // Poll for withdrawn dialogs (caller aborted the request). This marks
+        // state dirty when one is pruned so the panel is dismissed below.
+        if self.dialog.is_some() {
+            let mut state = self.state.lock().unwrap();
+            state.prune_withdrawn_dialogs();
+            drop(state);
+        }
+
         let mut state = self.state.lock().unwrap();
         state.check_expired_refocus();
 
@@ -1008,11 +1331,67 @@ impl App for IslandApp {
 
         if dirty {
             self.sync();
+            self.sync_dialog();
         }
     }
 
+    /// Wake only for the earliest pending deadline; block indefinitely when idle.
+    /// D-Bus events wake the loop via `AppContext::request_wakeup()`, pointer and
+    /// configure events via the Wayland fd — no periodic polling needed.
     fn idle_timeout(&self) -> Option<Duration> {
-        Some(Duration::from_millis(200))
+        let now = std::time::Instant::now();
+        let mut deadlines: Vec<std::time::Instant> = Vec::new();
+
+        for (_, queued_at) in &self.pending_destroy {
+            deadlines.push(*queued_at + Duration::from_secs_f64(DESTROY_DELAY_SECS));
+        }
+        for island in &self.islands {
+            if let Some(until) = island.peek_until {
+                deadlines.push(until);
+            }
+        }
+        // While a dialog is up, poll periodically to detect caller withdrawal
+        // (the D-Bus method future being dropped closes the response channel).
+        if self.dialog.is_some() {
+            deadlines.push(now + Duration::from_millis(500));
+        }
+        // Focus timeout only counts down when it can actually fire (see on_update).
+        if self.focused_app.is_some()
+            && !self.islands.iter().any(|i| i.mode == IslandMode::Expanded)
+        {
+            deadlines.push(self.last_interaction + Duration::from_secs_f64(FOCUS_TIMEOUT_SECS));
+        }
+        if let Ok(state) = self.state.lock() {
+            // Dirty work queued during this iteration (e.g. pulse relayout) —
+            // re-enter on_update immediately.
+            if state.dirty {
+                return Some(Duration::ZERO);
+            }
+            for a in &state.activities {
+                if a.timeout_ms > 0 && !a.expired {
+                    deadlines.push(a.created_at + Duration::from_millis(a.timeout_ms as u64));
+                }
+            }
+        }
+
+        // +1ms so poll's millisecond truncation can't wake us just before the
+        // deadline and spin.
+        deadlines
+            .into_iter()
+            .min()
+            .map(|d| d.saturating_duration_since(now) + Duration::from_millis(1))
+    }
+
+    fn on_keyboard_event(&mut self, _ctx: &AppContext, key: u32, state: KeyState, _serial: u32) {
+        if state != KeyState::Pressed || self.dialog.is_none() {
+            return;
+        }
+        // evdev keycodes: ESC = 1, ENTER = 28.
+        match key {
+            1 => self.resolve_active_dialog(1),
+            28 => self.resolve_active_dialog(0),
+            _ => {}
+        }
     }
 
     fn on_keyboard_leave(
@@ -1161,10 +1540,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let state: SharedState = Arc::new(Mutex::new(IslandState::new()));
 
-    // Spawn org.otto.Island1 D-Bus service
+    // Spawn org.otto.Island1 + org.otto.Dialog1 D-Bus services
     let dbus_state = state.clone();
+    let dialog_state = state.clone();
     tokio::spawn(async move {
         let service = IslandService::new(dbus_state);
+        let dialog_service = DialogService::new(dialog_state);
 
         let connection = match zbus::ConnectionBuilder::session()
             .expect("session bus")
@@ -1186,6 +1567,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await
         {
             tracing::error!("Failed to register D-Bus object: {e}");
+            return;
+        }
+
+        if let Err(e) = connection
+            .object_server()
+            .at(dbus_service::DIALOG_DBUS_PATH, dialog_service)
+            .await
+        {
+            tracing::error!("Failed to register Dialog D-Bus object: {e}");
             return;
         }
 

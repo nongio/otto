@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::activity::{Activity, ActivityId, ActivitySource, NotificationAction, Priority};
+use crate::dialog::{DialogId, DialogRequest, DialogResponse, DialogView};
 
 pub type SharedState = Arc<Mutex<IslandState>>;
 
@@ -12,6 +13,9 @@ pub struct IslandState {
     next_id: ActivityId,
     pub activities: Vec<Activity>,
     pub dirty: bool,
+    next_dialog_id: DialogId,
+    /// Pending Access-style dialogs, presented one at a time in arrival order.
+    pub dialogs: Vec<DialogRequest>,
 }
 
 impl IslandState {
@@ -20,6 +24,8 @@ impl IslandState {
             next_id: 1,
             activities: Vec::new(),
             dirty: false,
+            next_dialog_id: 1,
+            dialogs: Vec::new(),
         }
     }
 
@@ -266,6 +272,63 @@ impl IslandState {
         self.activities
             .iter()
             .max_by_key(|a| (a.priority.rank(), a.created_at))
+    }
+
+    // -----------------------------------------------------------------------
+    // Access-style dialogs
+    // -----------------------------------------------------------------------
+
+    /// Queue a new dialog request. Returns its assigned id.
+    pub fn add_dialog(&mut self, mut req: DialogRequest) -> DialogId {
+        let id = self.next_dialog_id;
+        self.next_dialog_id += 1;
+        req.id = id;
+        self.dialogs.push(req);
+        self.dirty = true;
+        id
+    }
+
+    /// A display snapshot of the front dialog.
+    pub fn front_dialog_view(&self) -> Option<DialogView> {
+        self.dialogs.first().map(|d| d.view())
+    }
+
+    /// Deliver a decision for dialog `id` and remove it from the queue.
+    /// Returns true if a dialog with that id was found.
+    pub fn resolve_dialog(&mut self, id: DialogId, response: DialogResponse) -> bool {
+        if let Some(pos) = self.dialogs.iter().position(|d| d.id == id) {
+            let mut req = self.dialogs.remove(pos);
+            if let Some(tx) = req.response_tx.take() {
+                let _ = tx.send(response);
+            }
+            self.dirty = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Resolve every dialog whose caller has abandoned it (receiver dropped)
+    /// with an "ended" response. Returns true if any were pruned.
+    pub fn prune_withdrawn_dialogs(&mut self) -> bool {
+        let before = self.dialogs.len();
+        let mut i = 0;
+        while i < self.dialogs.len() {
+            if self.dialogs[i].is_withdrawn() {
+                let mut req = self.dialogs.remove(i);
+                if let Some(tx) = req.response_tx.take() {
+                    let _ = tx.send(DialogResponse::ended());
+                }
+            } else {
+                i += 1;
+            }
+        }
+        if self.dialogs.len() != before {
+            self.dirty = true;
+            true
+        } else {
+            false
+        }
     }
 
     /// The second activity (for the right "o" surface).

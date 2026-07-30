@@ -78,6 +78,12 @@ impl PopupOverlayView {
                 content_layer.set_pointer_events(false);
                 content_layer.set_picture_cached(true);
 
+                // Start hidden — update_popup unhides once the popup has
+                // renderable content, so the first visible frame is already at
+                // the correct position. (Gating on xdg initial_configure data
+                // instead left non-xdg popup types permanently invisible.)
+                layer.set_hidden(true);
+
                 let _ = self.layers_engine.append_layer(&layer, self.layer.id());
                 let _ = self.layers_engine.append_layer(&content_layer, layer.id());
 
@@ -163,6 +169,13 @@ impl PopupOverlayView {
         }
 
         popup.surface_ids = new_surface_ids;
+
+        // First frame with actual content: the position set above is now the
+        // real one (clients only attach buffers after the initial configure),
+        // so the popup can become visible without a mispositioned first frame.
+        if !popup.surface_ids.is_empty() {
+            popup.layer.set_hidden(false);
+        }
 
         surface_layers
     }

@@ -896,7 +896,13 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
         // When autohide is enabled the dock slides away, so tiled/maximized
         // windows can use the full height; otherwise stop above the dock.
-        if !self.workspaces.dock.is_autohide_enabled() {
+        // The dock is rendered on the primary output only — other outputs
+        // keep their full height.
+        let is_primary = self
+            .workspaces
+            .primary_output()
+            .is_some_and(|p| p.name() == output.name());
+        if is_primary && !self.workspaces.dock.is_autohide_enabled() {
             let dock_geom = self.workspaces.get_dock_geometry();
             if dock_geom.size.h > 0 {
                 let dock_top = dock_geom.loc.y;
@@ -1362,6 +1368,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// on stale or empty content until the next frame demotes the window.
     pub fn demote_scanout_window(&mut self, window: &WindowElement) {
         let id = window.id();
+        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let ids = self.workspaces.scanout_window_ids();
         if ids.contains(&id) {
             tracing::info!(target: "otto::planes", "demoting {:?} from scanout (pre-animation)", id);
@@ -1375,6 +1382,19 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             // demote lands inside the prefetch window).
             self.backend_data.invalidate_scene_prefetch();
             self.backend_data.request_redraw();
+        }
+    }
+
+    /// Demote every promoted window and re-import its buffer. Used when
+    /// entering the expose overview: mirrors draw the scene content, which is
+    /// blanked while a window sits on a scanout plane.
+    #[allow(clippy::mutable_key_type)]
+    pub fn demote_all_scanout_windows(&mut self) {
+        let ids: Vec<_> = self.workspaces.scanout_window_ids().into_iter().collect();
+        for id in ids {
+            if let Some(w) = self.workspaces.get_window_for_surface(&id).cloned() {
+                self.demote_scanout_window(&w);
+            }
         }
     }
 
@@ -1425,6 +1445,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 smithay::desktop::PopupKind,
                 smithay::utils::Point<i32, smithay::utils::Logical>,
             )> = PopupManager::popups_for_surface(&window_surface).collect();
+            #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
             let popup_offsets: std::collections::HashMap<
                 smithay::reexports::wayland_server::backend::ObjectId,
                 smithay::utils::Point<i32, smithay::utils::Logical>,
@@ -1450,7 +1471,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 };
                 let degenerate_nested = parent_surface
                     .and_then(|p| popup_offsets.get(&p.id()).copied())
-                    .map_or(false, |parent_off| parent_off == popup_offset);
+                    .is_some_and(|parent_off| parent_off == popup_offset);
                 if degenerate_nested {
                     continue;
                 }
@@ -1641,6 +1662,23 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     let _ = self
                         .layers_engine
                         .append_layer(root_layer, content_layer.id());
+                }
+
+                // Keep the expose preview live. The preview mirror is a
+                // *follower* of the window's base layer, and lay-rs only
+                // propagates NEEDS_PAINT from the leader node itself — this
+                // commit repaints a surface layer deeper in the tree, which
+                // never reaches the mirror. Report the new content on the
+                // leader so the follower repaints; otherwise the previews
+                // freeze on whatever was on screen when expose opened (a
+                // playing video looks stuck). Only while expose is up: the
+                // mirrors aren't rendered otherwise, and the real window layer
+                // repaints through the normal path.
+                if self.workspaces.get_show_all() || self.workspaces.is_expose_transitioning() {
+                    window.base_layer().add_damage(layers::skia::Rect::from_wh(
+                        window_geometry.size.w as f32,
+                        window_geometry.size.h as f32,
+                    ));
                 }
 
                 self.workspaces.expose_update_if_needed();

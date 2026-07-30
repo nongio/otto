@@ -20,5 +20,6 @@ impl OttoClient {
     }
 }
 
+pub mod dialog;
 pub mod screencast;
 pub mod settings;

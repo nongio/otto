@@ -155,11 +155,7 @@ fn dump_backdrop_image(surface: &SurfaceData, dir: &str) {
         }
     };
     let path = format!("{dir}/otto_backdrop.png");
-    match image.encode(
-        Some(&mut ctx),
-        layers::skia::EncodedImageFormat::PNG,
-        None,
-    ) {
+    match image.encode(Some(&mut ctx), layers::skia::EncodedImageFormat::PNG, None) {
         Some(data) => {
             if let Err(e) = std::fs::write(&path, data.as_bytes()) {
                 tracing::warn!(target: "otto::planes", "dump_backdrop write failed: {e}");
@@ -227,7 +223,11 @@ pub(super) fn maybe_save_planes(surface: &SurfaceData) {
         };
     }
     dbg_save!(DBG_SAVE_BG, surface.scene_dmabuf_element, ss_path!("bg"));
-    dbg_save!(DBG_SAVE_WIN, surface.windows_dmabuf_element, ss_path!("win"));
+    dbg_save!(
+        DBG_SAVE_WIN,
+        surface.windows_dmabuf_element,
+        ss_path!("win")
+    );
     dbg_save!(
         DBG_SAVE_EXPOSE,
         surface.expose_dmabuf_element,

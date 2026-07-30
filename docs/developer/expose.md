@@ -24,6 +24,7 @@ Three-finger swipe gestures use accumulated delta values to determine intent: wh
 ## Window mirroring
 - Each window is mirrored by a layer created in `WorkspaceView::map_window` (`window_selector_view.map_window` adds it to the expose container). The mirror follows the real window layer via `add_follower_node`, so content stays in sync.
 - Mirrors are excluded from expose while a drag is in progress (`expose_dragging_window`) to avoid double-rendering the dragged item.
+- **Keeping mirrors live:** lay-rs only propagates `NEEDS_PAINT` from a *leader node itself* to its followers, never from the leader's descendants. A client commit repaints the surface layer deep inside the window's tree, so the mirror is never flagged and keeps drawing its last picture — with the real `workspaces_layer` hidden during expose, nothing else damages it either, and the previews freeze (a playing video looks stuck). `update_window_view` therefore calls `add_damage` on the window's base layer while expose is up, which marks the followers. Covered by the `expose_preview_repaints_on_client_commit` headless test, which asserts `subtree_damage` on the mirror node — whole-scene damage is not specific enough to catch the regression.
 - When a window is minimized, it is excluded from the expose, its mirror is hidden (`minimize_window`), and restored on unminimize.
 
 ## Layout: natural flow
@@ -32,6 +33,12 @@ Three-finger swipe gestures use accumulated delta values to determine intent: wh
   - Windows keep aspect ratios; scaling is limited to 1.0 so previews never exceed real size.
   - Packing is deterministic: windows are sorted by protocol id before hashing, and a layout hash is cached to skip no-op recalculations.
   - Results are stored in `expose_bin` and mirrored into `WindowSelectorState.rects`, which drives both drawing and hit-testing.
+
+## Hover selection
+- `WindowSelectorState.current_selection` is the index of the hovered preview; it drives the accent highlight and the title label drawn by `view_window_selector`.
+- A re-layout must not drop it. `update_windows` rebuilds `rects` from scratch, so it carries the hovered window over by id, keeping it selected as long as the last recorded cursor position still falls inside that window's (possibly moved) preview. Re-layouts are not rare: a window's geometry is derived from its surface-tree bbox, so ordinary client commits invalidate the layout hash and rebuild the grid under a stationary pointer.
+- For the same reason `expose_update_if_needed` re-shows the selection overlay (`show_selection_overlays`) after the re-layout animation is scheduled: `expose_show_all_apply` blanks that overlay to 0 opacity for the length of the open animation and only restores it in the animation's `on_finish`, which would make the highlight and label blink out on every re-layout while expose is already open.
+- Covered by the `expose_selection_survives_client_commit` headless test.
 
 ## Animation and positioning
 - `expose_show_all_animate` interpolates window layers from their on-screen bbox to the target rects in `expose_bin`, applying translation + scale; easing is Spring-based when `end_gesture` is true.

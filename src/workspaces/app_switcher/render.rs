@@ -7,7 +7,14 @@ use super::model::AppSwitcherModel;
 /// Compute the layout metrics for a given model.
 /// Returns `(component_width, component_height, available_icon_size, icon_padding, gap, padding_h, padding_v)`.
 pub fn layout_metrics(state: &AppSwitcherModel) -> (f32, f32, f32, f32, f32, f32, f32) {
-    let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
+    // Scale of the output the panel is on; falls back to the configured
+    // screen scale until the panel has been placed.
+    let output_scale = if state.scale > 0.0 {
+        state.scale
+    } else {
+        Config::with(|config| config.screen_scale) as f32
+    };
+    let draw_scale = output_scale * 0.8;
     let available_width = state.width as f32 - 20.0 * draw_scale;
     let icon_size: f32 = 160.0 * draw_scale;
     let icon_padding: f32 = available_width * 0.006 * draw_scale;

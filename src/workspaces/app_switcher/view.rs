@@ -35,6 +35,10 @@ pub struct AppSwitcherView {
     pub wrap_layer: layers::prelude::Layer,
     pub view: View<AppSwitcherModel>,
     app_icons_manager: Arc<AppIconsManager>,
+    /// Physical width and fractional scale of the output currently hosting the
+    /// panel, set by `Workspaces::place_app_switcher`. `(0, _)` before the
+    /// first placement, where the shared model's screen width is used instead.
+    host_metrics: Arc<std::sync::RwLock<(i32, f32)>>,
     active: Arc<AtomicBool>,
     notify_tx: mpsc::Sender<WorkspacesModel>,
     latest_event: Arc<tokio::sync::RwLock<Option<WorkspacesModel>>>,
@@ -82,6 +86,7 @@ impl AppSwitcherView {
             wrap_layer: wrap,
             view,
             app_icons_manager,
+            host_metrics: Arc::new(std::sync::RwLock::new((0, 0.0))),
             active: Arc::new(AtomicBool::new(false)),
             notify_tx,
             latest_event: Arc::new(tokio::sync::RwLock::new(None)),
@@ -167,12 +172,38 @@ impl AppSwitcherView {
             .map(|app| app.identifier.clone())
     }
 
+    /// Record the geometry of the output the panel is parented to. Layout is
+    /// derived from these rather than from the shared model, which only ever
+    /// describes the primary output.
+    ///
+    /// A change re-renders the panel immediately: every layout metric is
+    /// derived from these two numbers, and the panel may already be on screen
+    /// — moved to another output, or left in place while that output's mode
+    /// or scale changed under it.
+    pub fn set_host_metrics(&self, width_px: i32, scale: f32) {
+        {
+            // Scoped: `build_model_with_stacks` reads this lock.
+            let mut metrics = self.host_metrics.write().unwrap();
+            if *metrics == (width_px, scale) {
+                return;
+            }
+            *metrics = (width_px, scale);
+        }
+        let state = self.view.get_state();
+        let fresh = self.build_model_with_stacks(state.apps, state.current_app, width_px);
+        self.view.update_state(&fresh);
+    }
+
     fn build_model_with_stacks(
         &self,
         apps: Vec<Application>,
         current_app: usize,
         width: i32,
     ) -> AppSwitcherModel {
+        // The host output wins over the model width: the model mirrors the
+        // primary output, and the panel may be showing on another screen.
+        let (host_width, scale) = *self.host_metrics.read().unwrap();
+        let width = if host_width > 0 { host_width } else { width };
         let icon_stacks = apps
             .iter()
             .map(|app| {
@@ -185,6 +216,7 @@ impl AppSwitcherView {
             apps,
             current_app,
             width,
+            scale,
             icon_stacks,
         }
     }

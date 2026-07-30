@@ -137,14 +137,19 @@ max_right = 50      # Right side panels
 # Power management
 [power_management]
 # Enable Otto's lid switch handling (default: true)
-# When true, Otto manages display state on lid close/open and coordinates with systemd-logind
+# When true, Otto manages display state on lid close/open and owns the suspend
+# decision (systemd-logind should be set to HandleLidSwitch=ignore)
 # When false, all lid handling is delegated to systemd-logind
 manage_lid_switch = true
 
 # What to do when laptop lid closes (default: "auto")
 # Options:
-#   "auto" - Normal laptop: disable screen, allow suspend if no external monitor
-#   "disable_internal_screen" - Always disable screen but stay running (for display managers/kiosks)
+#   "auto" - Normal laptop: disable screen, then suspend the system — unless an
+#            external monitor is connected (clamshell mode) or a remote client
+#            is actively consuming frames (RDP bridge / screenshare), in which
+#            case the system keeps running
+#   "disable_internal_screen" - Always disable screen but stay running, never
+#            suspend (for display managers/kiosks)
 on_lid_close = "auto"
 
 # Audio / Sound feedback
@@ -218,3 +223,7 @@ bookmarks = [
   { desktop_id = "org.gnome.Terminal.desktop" }
 ]
 
+[appswitcher]
+# Show the app switcher (cmd-tab panel) on the output the pointer is on
+# (default: true). When false it always appears on the primary output.
+follow_cursor = true

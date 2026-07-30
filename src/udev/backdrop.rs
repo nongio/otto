@@ -9,17 +9,29 @@
 //! anyway: a low-res backdrop is imperceptible after blurring but far
 //! cheaper to build, hold and sample than a full-res snapshot.
 //!
-//! Two-stage build in one small surface: draw bg → snapshot (the expose
-//! backdrop), then draw the middle plane on top → snapshot (the overlay
-//! backdrop). Rebuilt only when a lower plane recorded damage intersecting
-//! an active consumer's region; the fresh snapshot's unique_id is what
-//! makes the consumers re-render.
+//! Staged build in one small surface: draw bg → snapshot (the expose
+//! backdrop), draw the middle plane on top → the desktop composite. Blur the
+//! desktop for the dock/switcher planes. Then, because popups stack in the
+//! overlay plane (a submenu must blur the popup beneath it), draw the popup
+//! subtree on top of the desktop and blur the WHOLE image for the overlay
+//! plane — the blur happens before any per-popup clip, so popups seed a
+//! pre-blurred image and skip their own shape-clipped blur (no faded rim, like
+//! the islands) yet still show the popups underneath.
+//!
+//! Rebuilt when a lower plane recorded damage intersecting an active consumer's
+//! region, OR when the popup subtree changed; the fresh snapshot's unique_id is
+//! what makes the consumers re-render.
 
+use std::sync::Arc;
+
+use layers::drawing::render_node_tree;
+use layers::prelude::{Engine, NodeRef};
+use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::output::Output;
 
 use crate::render_elements::scene_dmabuf_element::SceneDmabufElement;
 
-use super::types::{SurfaceData, UdevRenderer};
+use super::types::{BackdropSurface, SurfaceData, UdevRenderer};
 
 const BACKDROP_SCALE: f32 = 0.25;
 
@@ -71,10 +83,49 @@ fn blur_image(
     Some(surface.image_snapshot())
 }
 
-/// Rebuild the two-stage backdrop composite when needed, render the middle
-/// plane (windows or expose), and hand the fresh composite to the
-/// blur-bearing upper planes (overlay, switcher, dock), rendering the
-/// active ones. The bg plane must already be rendered by the caller.
+/// Draw the popup subtree onto the (already desktop-filled) backdrop surface at
+/// `BACKDROP_SCALE`, aligned with the desktop composite. Mirrors the transform
+/// `SceneDmabufElement::render` applies (translate by the root's scene position,
+/// minus the output's scene origin) plus the backdrop's downscale, so the popups
+/// land exactly where they sit on screen. Blurring the result then folds them
+/// into the overlay plane's backdrop. Popups are primary-output-only.
+fn draw_popups(
+    bs: &mut BackdropSurface,
+    engine: &Arc<Engine>,
+    popup_root: NodeRef,
+    scene_origin: (i32, i32),
+) {
+    let scene = engine.scene();
+    let canvas = bs.surface.canvas();
+    let save = canvas.save();
+    canvas.scale((BACKDROP_SCALE, BACKDROP_SCALE));
+    if let Some(layer) = engine.get_layer(&popup_root) {
+        let pos = layer.render_position();
+        canvas.translate((pos.x - scene_origin.0 as f32, pos.y - scene_origin.1 as f32));
+    }
+    scene.with_arena(|arena| {
+        scene.with_renderable_arena(|renderable_arena| {
+            render_node_tree(
+                popup_root,
+                arena,
+                renderable_arena,
+                canvas,
+                1.0,
+                None,
+                None,
+                None,
+            );
+        });
+    });
+    canvas.restore_to_count(save);
+}
+
+/// Rebuild the backdrop composites when needed, render the middle plane
+/// (windows or expose), and hand the fresh composites to the blur-bearing
+/// upper planes (overlay, switcher, dock), rendering the active ones. The
+/// overlay composite also folds in the popup subtree (see `draw_popups`). The
+/// bg plane must already be rendered by the caller.
+#[allow(clippy::too_many_arguments)] // plane-state plumbing, all of it per-frame
 pub(super) fn update_backdrop_and_upper_planes(
     surface: &mut SurfaceData,
     renderer: &mut UdevRenderer<'_>,
@@ -83,6 +134,17 @@ pub(super) fn update_backdrop_and_upper_planes(
     overlay_active: bool,
     switcher_active: bool,
     dock_visible: bool,
+    engine: &Arc<Engine>,
+    popup_root: Option<NodeRef>,
+    // Direct-scanout windows are hidden in the windows plane, so their pixels
+    // exist in no plane snapshot — only in the client dmabuf KMS scans out.
+    // Each entry is that dmabuf plus its on-screen rect in global scene
+    // physical px; the rebuild blits them zero-copy on top of the middle
+    // plane (import is a cache hit re-binding the same EGLImage).
+    promoted: &[(Dmabuf, layers::skia::Rect)],
+    // A promoted window committed a new buffer this frame (their commits
+    // produce no scene damage, so this is the only change signal).
+    promoted_commit: bool,
 ) {
     // (The bg plane was already rendered above, before the branch.)
     let bg_damage = surface
@@ -95,6 +157,13 @@ pub(super) fn update_backdrop_and_upper_planes(
         surface.windows_dmabuf_element.as_ref()
     };
     let middle_damage = middle_el.and_then(|el| el.subtree_damage());
+    // The output's static scene position, so popups (global scene coords) map
+    // into the output-local backdrop surface.
+    let scene_origin = surface
+        .overlay_dmabuf_element
+        .as_ref()
+        .map(|el| el.scene_origin())
+        .unwrap_or((0, 0));
 
     // The composite only matters to the blur-bearing consumers that
     // are actually on screen, and only where they sample it: the dock
@@ -132,23 +201,34 @@ pub(super) fn update_backdrop_and_upper_planes(
             interest.extend(strip_rect(&surface.switcher_dmabuf_element));
         }
     }
-    let hits_interest = |d: &Option<layers::skia::Rect>| {
-        d.map_or(false, |r| {
-            interest.iter().any(|i| {
-                r.left() < i.right()
-                    && r.right() > i.left()
-                    && r.top() < i.bottom()
-                    && r.bottom() > i.top()
-            })
+    let intersects = |r: &layers::skia::Rect| {
+        interest.iter().any(|i| {
+            r.left() < i.right()
+                && r.right() > i.left()
+                && r.top() < i.bottom()
+                && r.bottom() > i.top()
         })
     };
+    let hits_interest = |d: &Option<layers::skia::Rect>| d.is_some_and(|r| intersects(&r));
+    // Promoted rects are global scene coords; interest rects are output-local.
+    let promoted_hits = promoted_commit
+        && promoted.iter().any(|(_, r)| {
+            intersects(&r.with_offset((-(scene_origin.0 as f32), -(scene_origin.1 as f32))))
+        });
     let any_consumer = !interest.is_empty();
-    let lower_damaged = bg_damage.is_some() || middle_damage.is_some();
+    let lower_damaged =
+        bg_damage.is_some() || middle_damage.is_some() || (promoted_commit && !promoted.is_empty());
+    // Popups live in the overlay plane and are folded into its backdrop, so a
+    // popup opening/closing/animating must rebuild too — its own subtree damage
+    // (islands are a separate subtree, so their animations don't trigger this).
+    let popup_damage = popup_root.and_then(|r| engine.subtree_damage(r));
     let rebuild = any_consumer
         && (surface.backdrop_image.is_none()
             || surface.backdrop_dirty
             || hits_interest(&bg_damage)
-            || hits_interest(&middle_damage));
+            || hits_interest(&middle_damage)
+            || promoted_hits
+            || (overlay_active && popup_damage.is_some()));
     if rebuild {
         surface.backdrop_dirty = false;
     } else if lower_damaged {
@@ -216,9 +296,11 @@ pub(super) fn update_backdrop_and_upper_planes(
                         // Pre-blur so expose seeds it and skips its own blur.
                         match blur_image(&bg_small, &mut bs.context, BACKDROP_BLUR_SIGMA) {
                             Some(blurred) => {
-                                expose.set_backdrop(Some((blurred, BACKDROP_SCALE, true)))
+                                expose.set_backdrop(Some((blurred, BACKDROP_SCALE, true, None)))
                             }
-                            None => expose.set_backdrop(Some((bg_small, BACKDROP_SCALE, false))),
+                            None => {
+                                expose.set_backdrop(Some((bg_small, BACKDROP_SCALE, false, None)))
+                            }
                         }
                     }
                 }
@@ -231,15 +313,68 @@ pub(super) fn update_backdrop_and_upper_planes(
                 if let Some(middle_img) = middle_el.and_then(|el| el.snapshot()) {
                     let canvas = bs.surface.canvas();
                     canvas.draw_image_rect_with_sampling_options(
-                        &middle_img, None, dst, sampling, &paint,
+                        &middle_img,
+                        None,
+                        dst,
+                        sampling,
+                        &paint,
+                    );
+                }
+                // + promoted windows: their content_layer is hidden, so the
+                // middle snapshot only has their shadows. Blit each client
+                // dmabuf (the buffer KMS is scanning out) on top — buffer
+                // reuse, not a re-render.
+                for (dmabuf, rect) in promoted {
+                    use smithay::backend::renderer::ImportDma as _;
+                    let img = match renderer.as_mut().import_dmabuf(dmabuf, None) {
+                        Ok(tex) => tex.image,
+                        Err(e) => {
+                            tracing::debug!(
+                                target: "otto::planes",
+                                "backdrop: promoted dmabuf import failed: {e:?}"
+                            );
+                            continue;
+                        }
+                    };
+                    let win_dst = layers::skia::Rect::from_xywh(
+                        (rect.left() - scene_origin.0 as f32) * BACKDROP_SCALE,
+                        (rect.top() - scene_origin.1 as f32) * BACKDROP_SCALE,
+                        rect.width() * BACKDROP_SCALE,
+                        rect.height() * BACKDROP_SCALE,
+                    );
+                    let canvas = bs.surface.canvas();
+                    canvas.draw_image_rect_with_sampling_options(
+                        &img, None, win_dst, sampling, &paint,
                     );
                 }
                 bs.context.flush_and_submit();
-                // Blur the whole composite once; consumers seed it pre-blurred.
-                let composite = bs.surface.image_snapshot();
-                let blurred = blur_image(&composite, &mut bs.context, BACKDROP_BLUR_SIGMA);
-                surface.backdrop_preblurred = blurred.is_some();
-                surface.backdrop_image = Some(blurred.unwrap_or(composite));
+                // The unblurred desktop composite — the "backdrop cache". Blur it
+                // once for the dock/switcher planes (they must not show popups).
+                let desktop = bs.surface.image_snapshot();
+                let desktop_blurred = blur_image(&desktop, &mut bs.context, BACKDROP_BLUR_SIGMA);
+                surface.backdrop_preblurred = desktop_blurred.is_some();
+                surface.backdrop_image = Some(desktop_blurred.unwrap_or_else(|| desktop.clone()));
+
+                // The overlay plane hosts stacked popups: a submenu must blur the
+                // popup(s) beneath it. Draw the popup subtree on top of the desktop
+                // cache and blur the WHOLE image — the blur happens before any
+                // per-popup clip, so the popups seed this pre-blurred image and
+                // skip their own shape-clipped blur (no faded rim, like islands),
+                // yet still see the popups underneath. No popups → reuse the
+                // desktop blur so islands keep their usual vibrancy.
+                let has_popups = popup_root
+                    .and_then(|r| engine.get_layer(&r))
+                    .is_some_and(|l| !l.children().is_empty());
+                let overlay_src = if has_popups {
+                    draw_popups(bs, engine, popup_root.unwrap(), scene_origin);
+                    bs.context.flush_and_submit();
+                    bs.surface.image_snapshot()
+                } else {
+                    desktop
+                };
+                let overlay_blurred =
+                    blur_image(&overlay_src, &mut bs.context, BACKDROP_BLUR_SIGMA);
+                surface.backdrop_overlay_image = Some(overlay_blurred.unwrap_or(overlay_src));
             }
         } else if let Some(el) = middle_el {
             // No bg snapshot/context yet (first frames) — still render
@@ -254,12 +389,19 @@ pub(super) fn update_backdrop_and_upper_planes(
     // re-renders only when the snapshot's unique_id changes or its own
     // subtree is damaged.
     let preblurred = surface.backdrop_preblurred;
+    // Overlay plane: desktop + popups (falls back to desktop-only before the
+    // first build). Dock/switcher: desktop only.
+    let overlay_backdrop = surface
+        .backdrop_overlay_image
+        .clone()
+        .or_else(|| surface.backdrop_image.clone())
+        .map(|img| (img, BACKDROP_SCALE, preblurred, None));
     let upper_backdrop = surface
         .backdrop_image
         .clone()
-        .map(|img| (img, BACKDROP_SCALE, preblurred));
+        .map(|img| (img, BACKDROP_SCALE, preblurred, None));
     if let Some(el) = &surface.overlay_dmabuf_element {
-        el.set_backdrop(upper_backdrop.clone());
+        el.set_backdrop(overlay_backdrop);
         if overlay_active {
             let dmg = el.subtree_damage();
             let rendered = el.render(renderer.as_mut());

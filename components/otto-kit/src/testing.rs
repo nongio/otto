@@ -139,6 +139,8 @@ impl TestClient {
             height: height as i32,
             closed: false,
             title: title.to_string(),
+            surface: surface.clone(),
+            buffer: None,
         }));
 
         let xdg_surface = xdg_wm_base.get_xdg_surface(&surface, &self.qh, toplevel_state.clone());
@@ -156,6 +158,7 @@ impl TestClient {
             height,
         );
         surface.attach(Some(buffer.buffer()), 0, 0);
+        toplevel_state.lock().unwrap().buffer = Some(buffer.buffer().clone());
 
         // Roundtrip to receive configure
         let _ = self.roundtrip();
@@ -175,6 +178,20 @@ pub struct TestToplevel {
     pub height: i32,
     pub closed: bool,
     pub title: String,
+    /// The toplevel's wl_surface, so tests can push further commits.
+    pub surface: wl_surface::WlSurface,
+    /// The buffer attached at map time, so tests can re-attach it.
+    pub buffer: Option<wl_buffer::WlBuffer>,
+}
+
+impl TestToplevel {
+    /// Re-attach the buffer, damage the whole surface and commit,
+    /// simulating a client redraw.
+    pub fn commit_frame(&self) {
+        self.surface.attach(self.buffer.as_ref(), 0, 0);
+        self.surface.damage(0, 0, self.width, self.height);
+        self.surface.commit();
+    }
 }
 
 /// A minimal SHM buffer backed by a memfd.

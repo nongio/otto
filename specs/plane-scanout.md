@@ -36,20 +36,37 @@ vibrancy even though the content behind it lives on other planes.
   blur against live scene content.
 - The blur composite is rebuilt only when a lower plane recorded damage
   that intersects an active blur consumer's region (the dock strip, the
-  switcher strip, or the full output while overlay UI or expose is shown);
+  switcher strip, or the full output while overlay UI or expose is shown),
+  or when a promoted window committed a new buffer whose rect intersects
+  such a region (promoted commits produce no scene damage, so the commit
+  flag is the only change signal);
   a rebuild triggers exactly one re-render of each blur-bearing plane. The
   composite is downscaled (currently 1/4 resolution) — a low-res backdrop is
   imperceptible after blurring but far cheaper.
   Damage skipped this way marks the composite dirty so a later-activating
-  consumer still gets fresh content.
+  consumer still gets fresh content. Frames that bypass the plane path
+  entirely while still consuming engine damage (fullscreen direct scanout,
+  forced full-GPU composite) also mark the composite dirty, so the first
+  planes frame after them rebuilds instead of seeding consumers with stale
+  content.
 - Per-buffer damage is reported tightly (FB_DAMAGE_CLIPS) so PSR
   partial-refresh works on eDP; a backdrop change falls back to full-buffer
   damage.
 
+- Direct-scanout (promoted) windows are folded into the blur composite by
+  blitting their client dmabuf — the same buffer KMS scans out, wrapped
+  zero-copy through the renderer's dmabuf import cache — on top of the
+  windows-plane snapshot. Their content layer is hidden in the scene, so
+  without this the topmost window would be absent from every blur backdrop
+  (dock bubbles/popups showing pre-window content), and promote/demote
+  transitions would visibly flip the blur between with-window and
+  without-window composites. Occluder-based demotion (below) still keeps
+  windows under the primary chrome strips unpromoted, but overlay UI that
+  appears above a promoted window (tooltips, dock popups, islands) relies
+  on this fold-in.
+
 ## Non-Goals
 
-- Including direct-scanout client buffers in the blur composite (windows
-  under the blur region are demoted to the windows buffer instead).
 - Tier probing via TEST_ONLY commits — plane acceptance is delegated to
   Smithay's per-frame assignment and fallback.
 
@@ -65,18 +82,33 @@ vibrancy even though the content behind it lives on other planes.
   multi-output.md).
 - Direct-scanout promotion is evaluated independently per output: candidates
   are drawn only from that output's own current workspace, and the
-  promoted-window cap (see below) applies per output, not globally. Dock,
-  app-switcher, and OSD occluder rects are only applied on the primary
-  output — that chrome is primary-only and never occludes a secondary
-  output's candidates. The set of windows actually applied to plane state
+  promoted-window cap (see below) applies per output, not globally. Dock and
+  OSD occluder rects are only applied on the primary output — that chrome is
+  primary-only and never occludes a secondary output's candidates. The
+  app-switcher occluder rect is applied on whichever output currently hosts
+  the switcher panel, which need not be the primary (see multi-output.md).
+  The set of windows actually applied to plane state
   is the union of every output's per-output candidate set, so one output's
   promotion decision cannot demote a window promoted on another output.
+- Likewise, an app switcher shown on one output does not block fullscreen
+  direct scanout on another: the fullscreen-stability check consults the
+  switcher's host output, not its global visibility.
 - The dock and app-switcher strip planes themselves are pushed only to the
-  CRTC of the output that actually hosts that chrome (the primary output);
-  a secondary output never submits a plane for either role. This is both a
-  correctness fix (that chrome has no content on a secondary output) and a
+  CRTC of the output that actually hosts that chrome — always the primary
+  for the dock, the switcher's current host output for the switcher; every
+  other output never submits a plane for that role. This is both a
+  correctness fix (that chrome has no content on the other outputs) and a
   fetch-bandwidth saving — an otherwise-empty full-width strip plane on a
   secondary output still costs the display engine fetch budget to scan out.
+- The overlay plane is pushed on demand — an empty full-screen ARGB buffer
+  must not occupy a plane slot — so it is gated on the overlay chrome that is
+  actually live: layer-shell Top/Overlay surfaces, popups, the workspace
+  selector, OSD, tiling overlay, DnD. Because the layer-shell scene containers
+  are primary-only chrome, the primary output's gate counts layer-shell
+  surfaces mapped on *any* output: a surface mapped to another output still
+  renders into the primary's overlay plane, and gating per-output would leave
+  it in a buffer no CRTC ever scans out (invisible until unrelated chrome
+  happened to activate the plane).
 - The decomposition is enabled per output at surface creation, only when
   the driver is atomic, at least 3 overlay planes exist after
   driver-specific filtering (NVIDIA's are vetoed), and the output renders
@@ -92,7 +124,11 @@ vibrancy even though the content behind it lives on other planes.
   last rendered (slots rotate, so a reacquired slot is several commits
   old); only the clip region is cleared and redrawn. Full render on a
   slot's first use, when the damage history no longer reaches the slot's
-  commit, or when the backdrop changed (blur can repaint anywhere).
+  commit, or when the backdrop changed (blur can repaint anywhere). A
+  render that bails after the damage check (no free swapchain slot, export
+  or surface failure) forces its next successful render to redraw fully —
+  the frame's damage evidence is gone by then (engine damage clears at end
+  of frame), and clipping past it would leave the region permanently stale.
 - A buffer's damage is expanded to the full bounds of any `BackgroundBlur`
   shape it contains that the damage reaches: because a blur samples a
   neighborhood of its input, damage under (or within a blur radius of) a
@@ -239,6 +275,14 @@ vibrancy even though the content behind it lives on other planes.
 
 - Overlapping overlay planes must be blended by the hardware; availability
   is device-dependent (see docs/developer/overlay-scanout-hardware.md).
+- Plane buffers hold premultiplied alpha, so every plane that exposes the
+  KMS "pixel blend mode" property must be set to *Pre-multiplied*. The raw
+  enum value is driver-defined (i915: `Pre-multiplied=0, Coverage=1,
+  None=2`) and is resolved by name from the property. Selecting "Coverage"
+  multiplies alpha in a second time, so anything scanned out at partial
+  alpha — a fading blur panel above all — darkens mid-animation while both
+  endpoints still look correct, and only in the scanout path (the GPU
+  composite fallback always blends premultiplied).
 - Blur baked into the overlay buffer double-blends slightly with the live
   planes below (material is semi-opaque); acceptable by design.
 - The first frame after startup renders the overlay without a backdrop (the

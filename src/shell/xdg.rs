@@ -84,52 +84,6 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
         tracing::info!("SC::new_toplevel at({}, {})", location.x, location.y);
 
-        // If the current workspace is in fullscreen mode, decide where to map the new window
-        let current_workspace = self.workspaces.get_current_workspace();
-        let current_index = self.workspaces.get_current_workspace_index();
-
-        if current_workspace
-            .as_ref()
-            .map(|w| w.get_fullscreen_mode())
-            .unwrap_or(false)
-        {
-            // Check if the new window belongs to the same app as the fullscreen window
-            if let Some(fullscreen_window) = self.workspaces.get_fullscreen_window() {
-                let new_app_id = window_element.display_app_id(&self.display_handle);
-                let fullscreen_app_id = fullscreen_window.display_app_id(&self.display_handle);
-
-                if !new_app_id.is_empty() && new_app_id == fullscreen_app_id {
-                    // Same app: keep in the fullscreen workspace (e.g., dialogs)
-                    tracing::info!(
-                        "New window from same fullscreen app '{}': keeping in workspace {}",
-                        new_app_id,
-                        current_index
-                    );
-                } else {
-                    // Different app: redirect to previous workspace
-                    if current_index > 0 {
-                        let prev_workspace = current_index - 1;
-                        tracing::info!(
-                            "New window from different app in fullscreen workspace: redirecting from workspace {} to workspace {}",
-                            current_index,
-                            prev_workspace
-                        );
-                        self.workspaces
-                            .set_current_workspace_index(prev_workspace, None);
-                    } else {
-                        tracing::warn!(
-                            "Fullscreen workspace 0 detected, cannot redirect to previous workspace"
-                        );
-                    }
-                }
-            }
-        } else {
-            tracing::debug!(
-                "Normal workspace: mapping new window to current workspace {}",
-                current_index
-            );
-        }
-
         // Map window to the output under the pointer, falling back to primary.
         let target_output = self
             .workspaces
@@ -137,6 +91,61 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             .next()
             .cloned()
             .or_else(|| self.workspaces.primary_output().cloned());
+
+        // If the target output's current workspace is in fullscreen mode,
+        // decide where to map the new window. Fullscreen is per-output.
+        if let Some(ref output) = target_output {
+            let name = output.name();
+            let (current_index, current_fullscreen) = self
+                .workspaces
+                .output_workspaces
+                .get(&name)
+                .map(|ows| {
+                    (
+                        ows.current_workspace,
+                        ows.workspace_views
+                            .get(ows.current_workspace)
+                            .map(|w| w.get_fullscreen_mode())
+                            .unwrap_or(false),
+                    )
+                })
+                .unwrap_or((0, false));
+
+            if current_fullscreen {
+                // Check if the new window belongs to the same app as the fullscreen window
+                if let Some(fullscreen_window) =
+                    self.workspaces.get_fullscreen_window_on_output(output)
+                {
+                    let new_app_id = window_element.display_app_id(&self.display_handle);
+                    let fullscreen_app_id = fullscreen_window.display_app_id(&self.display_handle);
+
+                    if !new_app_id.is_empty() && new_app_id == fullscreen_app_id {
+                        // Same app: keep in the fullscreen workspace (e.g., dialogs)
+                        tracing::info!(
+                            "New window from same fullscreen app '{}': keeping in workspace {}",
+                            new_app_id,
+                            current_index
+                        );
+                    } else {
+                        // Different app: redirect this output to its previous workspace
+                        if current_index > 0 {
+                            let prev_workspace = current_index - 1;
+                            tracing::info!(
+                                "New window from different app in fullscreen workspace: redirecting from workspace {} to workspace {}",
+                                current_index,
+                                prev_workspace
+                            );
+                            self.workspaces
+                                .set_workspace_for_output(output, prev_workspace, None);
+                        } else {
+                            tracing::warn!(
+                                "Fullscreen workspace 0 detected, cannot redirect to previous workspace"
+                            );
+                        }
+                    }
+                }
+            }
+        }
         tracing::info!(
             "[window_assign] pointer=({:.1},{:.1}) output_under={:?} -> assigning to={:?}",
             pointer_location.x,
@@ -203,18 +212,34 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             }
         }
 
-        if let Some(window) = self.workspaces.get_window_for_surface(&id) {
+        if let Some(window) = self.workspaces.get_window_for_surface(&id).cloned() {
             if window.is_fullscreen() {
+                // Fullscreen workspaces are per-output: clear the flags on the
+                // owning output's view and switch only that output back.
                 let fullscreen_workspace = window.get_fullscreen_workspace();
-                if let Some(workspace) = self.workspaces.get_workspace_at(fullscreen_workspace) {
-                    workspace.set_fullscreen_mode(false);
-                    workspace.set_fullscreen_animating(false);
-                    workspace.set_name(None);
-                }
-                if self.workspaces.get_current_workspace_index() == fullscreen_workspace {
-                    let prev_workspace = (fullscreen_workspace as i32 - 1).min(0) as usize;
-                    self.workspaces
-                        .set_current_workspace_index(prev_workspace, None);
+                if let Some(output) = self.workspaces.output_for_window(&window) {
+                    let name = output.name();
+                    if let Some(workspace) = self
+                        .workspaces
+                        .output_workspaces
+                        .get(&name)
+                        .and_then(|ows| ows.workspace_views.get(fullscreen_workspace).cloned())
+                    {
+                        workspace.set_fullscreen_mode(false);
+                        workspace.set_fullscreen_animating(false);
+                        workspace.set_name(None);
+                    }
+                    let current = self
+                        .workspaces
+                        .output_workspaces
+                        .get(&name)
+                        .map(|ows| ows.current_workspace)
+                        .unwrap_or(0);
+                    if current == fullscreen_workspace {
+                        let prev_workspace = fullscreen_workspace.saturating_sub(1);
+                        self.workspaces
+                            .set_workspace_for_output(&output, prev_workspace, None);
+                    }
                 }
             }
         }
@@ -543,42 +568,51 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 .capabilities
                 .contains(xdg_toplevel::WmCapabilities::Fullscreen)
         }) {
-            // the surface size is either output size
-            // or the current workspace size
             let wl_surface = surface.wl_surface();
 
-            let geometry = fullscreen_output_geometry(wl_output.as_ref(), &self.workspaces);
+            let wid = wl_surface.id();
+            let Some(window) = self.workspaces.get_window_for_surface(&wid).cloned() else {
+                return;
+            };
 
-            // if let Some(geometry) = output_geometry {
-            let output = wl_output
-                .as_ref()
-                .and_then(Output::from_resource)
-                .unwrap_or_else(|| self.workspaces.outputs().next().unwrap().clone());
+            // Fullscreen on the output the window actually lives on — never
+            // yank it to another screen. Fall back to the client-requested
+            // output, then to a real output (never a virtual RDP/mirror one —
+            // see `default_client_output`).
+            let Some(output) = self
+                .workspaces
+                .output_for_window(&window)
+                .or_else(|| wl_output.as_ref().and_then(Output::from_resource))
+                .or_else(|| self.workspaces.default_client_output().cloned())
+            else {
+                return;
+            };
             let client = self.display_handle.get_client(wl_surface.id()).unwrap();
             for output in output.client_outputs(&client) {
                 wl_output = Some(output);
             }
 
-            let wid = surface.wl_surface().id();
-            let window = self
-                .workspaces
-                .get_window_for_surface(&wid)
-                .unwrap()
-                .clone();
+            // The surface covers its output.
+            let geometry = self.workspaces.output_geometry(&output).unwrap_or_else(|| {
+                fullscreen_output_geometry(wl_output.as_ref(), &self.workspaces)
+            });
 
             // Ignore the request if the window is already fullscreen or animating towards fullscreen
             if window.is_fullscreen() {
                 return;
             }
 
-            // Also ignore if any workspace is currently animating towards fullscreen
-            // This prevents multiple workspaces from being created when F11 is held down
-            let mut i = 0;
-            while let Some(ws) = self.workspaces.get_workspace_at(i) {
-                if ws.get_fullscreen_animating() {
+            // Also ignore if any of this output's workspaces is animating towards
+            // fullscreen. This prevents multiple workspaces from being created
+            // when F11 is held down.
+            if let Some(ows) = self.workspaces.output_workspaces.get(&output.name()) {
+                if ows
+                    .workspace_views
+                    .iter()
+                    .any(|ws| ws.get_fullscreen_animating())
+                {
                     return;
                 }
-                i += 1;
             }
 
             let id = window.id();
@@ -601,7 +635,12 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             // This prevents damage tracking artifacts from the scene-based rendering
             self.backend_data.reset_buffers(&output);
 
-            let (next_workspace_index, next_workspace) = self.workspaces.get_next_free_workspace();
+            let Some((next_workspace_index, next_workspace)) = self
+                .workspaces
+                .get_next_free_workspace_on_output(&output.name())
+            else {
+                return;
+            };
             next_workspace.set_fullscreen_mode(true);
             next_workspace.set_fullscreen_animating(true);
 
@@ -629,20 +668,41 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
             window.set_fullscreen(true, next_workspace_index);
 
-            let current_workspace_index = self.workspaces.get_current_workspace_index();
+            // The workspace to come back to on unfullscreen — this OUTPUT's
+            // current one, not the global/focused index.
+            let current_workspace_index = self
+                .workspaces
+                .output_workspaces
+                .get(&output.name())
+                .map(|ows| ows.current_workspace)
+                .unwrap_or(0);
 
             let id = window.id();
             if let Some(view) = self.workspaces.get_window_view(&id) {
                 let transition = Transition::ease_in_out_quad(1.4);
 
-                // Fade out layer_shell_overlay when entering fullscreen
-                self.workspaces.set_fullscreen_overlay_visibility(true);
+                // Fade out layer_shell_overlay when entering fullscreen — the
+                // layer-shell chrome lives on the primary output only.
+                let is_primary = self
+                    .workspaces
+                    .primary_output()
+                    .is_some_and(|p| p.name() == output.name());
+                if is_primary {
+                    self.workspaces.set_fullscreen_overlay_visibility(true);
+                }
 
-                self.workspaces
-                    .move_window_to_workspace(&window, next_workspace_index, (0, 0));
+                self.workspaces.move_window_to_workspace_on_output(
+                    &output,
+                    &window,
+                    next_workspace_index,
+                    output.current_location(),
+                );
                 window.set_workspace(current_workspace_index);
-                self.workspaces
-                    .set_current_workspace_index(next_workspace_index, Some(transition.clone()));
+                self.workspaces.set_workspace_for_output(
+                    &output,
+                    next_workspace_index,
+                    Some(transition.clone()),
+                );
 
                 let surface_clone = surface.clone();
                 let wl_output_ref = wl_output.clone();
@@ -676,13 +736,19 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 );
                 self.layers_engine.start_animation(animation, 0.0);
 
-                if let Err(e) = self
+                // Park the window in ITS OUTPUT's overlay plane for the
+                // transition — the dnd layer lives on the primary output, so
+                // parking there would teleport a secondary-output window
+                // across screens for the duration of the animation.
+                let park_layer = self
                     .workspaces
-                    .dnd_view
-                    .layer
-                    .add_sublayer(&view.window_layer)
-                {
-                    tracing::warn!("fullscreen: failed to park window in dnd layer: {e}");
+                    .output_workspaces
+                    .get(&output.name())
+                    .map(|ows| ows.overlay_plane.clone());
+                if let Some(park_layer) = park_layer {
+                    if let Err(e) = park_layer.add_sublayer(&view.window_layer) {
+                        tracing::warn!("fullscreen: failed to park window in overlay plane: {e}");
+                    }
                 }
 
                 view.window_layer
@@ -722,65 +788,101 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         let id = surface.wl_surface().id();
 
         if let Some(view) = self.workspaces.get_window_view(&id) {
-            let output = surface.with_pending_state(|state| {
+            let wl_output = surface.with_pending_state(|state| {
                 state.states.unset(xdg_toplevel::State::Fullscreen);
                 state.fullscreen_output.take()
             });
-            if let Some(output) = output {
-                let output = Output::from_resource(&output).unwrap();
-
+            if let Some(we) = self.workspaces.get_window_for_surface(&id).cloned() {
+                // The output the window is fullscreen on: its actual owner
+                // first, falling back to the protocol's fullscreen_output.
+                let Some(output) = self
+                    .workspaces
+                    .output_for_window(&we)
+                    .or_else(|| wl_output.as_ref().and_then(Output::from_resource))
+                else {
+                    return;
+                };
                 if let Some(fullscreen) = output.user_data().get::<FullscreenSurface>() {
                     fullscreen.clear();
                     self.backend_data.reset_buffers(&output);
                 }
-            }
-            if let Some(we) = self.workspaces.get_window_for_surface(&id).cloned() {
+
                 we.set_fullscreen(false, 0);
-                let Some(output) = self.workspaces.outputs_for_element(&we).first().cloned() else {
-                    return;
-                };
                 let scale = output.current_scale().fractional_scale();
 
-                let position = view.unmaximised_rect.loc.to_f64().to_physical(scale);
+                // Scene layer positions are output-local physical pixels.
+                let position = (view.unmaximised_rect.loc - output.current_location())
+                    .to_f64()
+                    .to_physical(scale);
 
-                if let Some(next_workspace) = self.workspaces.get_workspace_at(we.get_workspace()) {
+                let output_name = output.name();
+                let restore_index = we.get_workspace();
+                let next_workspace = self
+                    .workspaces
+                    .output_workspaces
+                    .get(&output_name)
+                    .and_then(|ows| ows.workspace_views.get(restore_index).cloned());
+                if let Some(next_workspace) = next_workspace {
                     let transition = Transition::ease_in_out_quad(1.4);
 
-                    // Get the fullscreen workspace index before switching away from it
-                    let fullscreen_workspace_index = self.workspaces.get_current_workspace_index();
-                    let Some(workspace) = self.workspaces.get_current_workspace() else {
+                    // The fullscreen workspace is this OUTPUT's current one.
+                    let fullscreen_workspace_index = self
+                        .workspaces
+                        .output_workspaces
+                        .get(&output_name)
+                        .map(|ows| ows.current_workspace)
+                        .unwrap_or(0);
+                    let Some(workspace) = self
+                        .workspaces
+                        .output_workspaces
+                        .get(&output_name)
+                        .and_then(|ows| {
+                            ows.workspace_views.get(fullscreen_workspace_index).cloned()
+                        })
+                    else {
                         return;
                     };
                     workspace.set_fullscreen_mode(false);
                     workspace.set_fullscreen_animating(false);
 
-                    self.workspaces.move_window_to_workspace(
+                    self.workspaces.move_window_to_workspace_on_output(
+                        &output,
                         &we,
-                        we.get_workspace(),
+                        restore_index,
                         view.unmaximised_rect.loc,
                     );
-                    let scroll_transaction = self
-                        .workspaces
-                        .set_current_workspace_index(we.get_workspace(), Some(transition.clone()));
+                    let scroll_transaction = self.workspaces.set_workspace_for_output(
+                        &output,
+                        restore_index,
+                        Some(transition.clone()),
+                    );
 
                     // Defer fullscreen workspace removal until the scroll animation completes,
                     // so the workspace remains visible while scrolling away from it.
                     if let Some(tr) = &scroll_transaction {
-                        self.workspaces
-                            .defer_remove_workspace_at(fullscreen_workspace_index, tr);
+                        self.workspaces.defer_remove_workspace_on_output(
+                            &output_name,
+                            fullscreen_workspace_index,
+                            tr,
+                        );
                     } else {
                         self.workspaces
-                            .remove_workspace_at(fullscreen_workspace_index);
+                            .remove_workspace_from_output(&output_name, fullscreen_workspace_index);
                     }
 
                     // Exit expose mode
                     self.workspaces.expose_set_visible(false);
 
-                    // Fade in layer_shell_overlay when exiting fullscreen
-                    self.workspaces.set_fullscreen_overlay_visibility(false);
-
-                    // Show dock with animation at the start of unfullscreen transition
-                    self.workspaces.dock.show(Some(transition.clone()));
+                    // Fade in layer_shell_overlay and show the dock when exiting
+                    // fullscreen — both live on the primary output only.
+                    let is_primary = self
+                        .workspaces
+                        .primary_output()
+                        .is_some_and(|p| p.name() == output_name);
+                    if is_primary {
+                        self.workspaces.set_fullscreen_overlay_visibility(false);
+                        self.workspaces.dock.show(Some(transition.clone()));
+                    }
 
                     // Animate size during unfullscreen transition
                     let current_element_geometry = self.workspaces.element_geometry(&we).unwrap();
@@ -813,13 +915,19 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                     let restored_size = view.unmaximised_rect.size;
                     let workspace_layer = next_workspace.windows_layer.clone();
 
-                    if let Err(e) = self
+                    // Park the window in its own output's overlay plane for
+                    // the transition (the dnd layer is primary-only).
+                    let park_layer = self
                         .workspaces
-                        .dnd_view
-                        .layer
-                        .add_sublayer(&view.window_layer)
-                    {
-                        tracing::warn!("unmaximize: failed to park window in dnd layer: {e}");
+                        .output_workspaces
+                        .get(&output_name)
+                        .map(|ows| ows.overlay_plane.clone());
+                    if let Some(park_layer) = park_layer {
+                        if let Err(e) = park_layer.add_sublayer(&view.window_layer) {
+                            tracing::warn!(
+                                "unfullscreen: failed to park window in overlay plane: {e}"
+                            );
+                        }
                     }
 
                     view.window_layer
@@ -917,8 +1025,13 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             );
             self.layers_engine.start_animation(animation, 0.0);
 
-            self.workspaces
-                .map_window(&window, new_geometry.loc, true, Some(transition));
+            self.workspaces.map_window_on_output(
+                &output,
+                &window,
+                new_geometry.loc,
+                true,
+                Some(transition),
+            );
         }
     }
 
@@ -1376,13 +1489,20 @@ impl<BackendData: Backend> Otto<BackendData> {
                 );
                 self.layers_engine.start_animation(animation, 0.0);
 
-                self.workspaces
-                    .map_window(window, target.loc, true, Some(transition));
+                // Pin the destination output: `target` comes from this output's
+                // usable zone, and the window still has its pre-tile size here.
+                self.workspaces.map_window_on_output(
+                    &output,
+                    window,
+                    target.loc,
+                    true,
+                    Some(transition),
+                );
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11) => {
                 let x11 = x11.clone();
-                self.apply_tile_x11(&x11, target, matches!(zone, TileZone::Maximize));
+                self.apply_tile_x11(&x11, &output, target, matches!(zone, TileZone::Maximize));
             }
             #[cfg(not(feature = "xwayland"))]
             _ => {}

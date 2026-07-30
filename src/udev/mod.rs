@@ -3,12 +3,12 @@
 // This module implements the production backend for Otto using DRM/KMS for display
 // and libinput for input handling.
 
+pub mod backdrop;
+pub mod debug;
 pub mod device;
 pub mod feedback;
 pub mod gamma;
 pub mod init;
-pub mod backdrop;
-pub mod debug;
 pub mod planes;
 pub mod render;
 pub mod types;

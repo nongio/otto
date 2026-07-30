@@ -4,6 +4,7 @@
 //! - `org.freedesktop.impl.portal.ScreenCast`
 //! - `org.freedesktop.impl.portal.Settings`
 
+mod access;
 mod interface;
 mod request;
 mod session;
@@ -11,6 +12,7 @@ mod settings;
 mod state;
 mod stream;
 
+pub use access::AccessPortal;
 pub use interface::{
     fallback_mapping_id, validate_cursor_mode, validate_persist_mode, ScreenCastPortal,
 };

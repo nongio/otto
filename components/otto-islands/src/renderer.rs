@@ -172,6 +172,19 @@ pub fn draw_mini(canvas: &Canvas, icon: &str, count: usize, _w: f32, h: f32) {
 // Drawing: notification card
 // ---------------------------------------------------------------------------
 
+/// Human-readable elapsed-time label shown on a card ("just now", "5m ago").
+/// Also part of the card content signature used to skip unchanged redraws.
+pub fn elapsed_label(created_at: std::time::Instant) -> String {
+    let elapsed = created_at.elapsed().as_secs();
+    if elapsed < 60 {
+        "just now".to_string()
+    } else if elapsed < 3600 {
+        format!("{}m ago", elapsed / 60)
+    } else {
+        format!("{}h ago", elapsed / 3600)
+    }
+}
+
 pub fn draw_card(canvas: &Canvas, activity: &Activity, group_icon: &str, w: f32, h: f32) {
     let theme = AppContext::current_theme();
     let pad = 10.0;
@@ -239,14 +252,7 @@ pub fn draw_card(canvas: &Canvas, activity: &Activity, group_icon: &str, w: f32,
     let mut hint_paint = Paint::default();
     hint_paint.set_anti_alias(true);
     hint_paint.set_color(theme.text_tertiary);
-    let elapsed = activity.created_at.elapsed().as_secs();
-    let time_str = if elapsed < 60 {
-        "just now".to_string()
-    } else if elapsed < 3600 {
-        format!("{}m ago", elapsed / 60)
-    } else {
-        format!("{}h ago", elapsed / 3600)
-    };
+    let time_str = elapsed_label(activity.created_at);
     let (tw, _) = hint_font.measure_str(&time_str, None);
     canvas.draw_str(
         &time_str,

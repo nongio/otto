@@ -44,8 +44,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let white = conn.generate_id()?;
 
     // Create graphics contexts
-    conn.create_gc(black, screen.root, &CreateGCAux::new().foreground(screen.black_pixel))?;
-    conn.create_gc(white, screen.root, &CreateGCAux::new().foreground(screen.white_pixel))?;
+    conn.create_gc(
+        black,
+        screen.root,
+        &CreateGCAux::new().foreground(screen.black_pixel),
+    )?;
+    conn.create_gc(
+        white,
+        screen.root,
+        &CreateGCAux::new().foreground(screen.white_pixel),
+    )?;
 
     // Create window
     let depth = screen.root_depth;
@@ -53,13 +61,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         depth,
         win,
         screen.root,
-        100,   // x
-        100,   // y
-        800,   // width
-        600,   // height
-        1,     // border
+        100, // x
+        100, // y
+        800, // width
+        600, // height
+        1,   // border
         WindowClass::INPUT_OUTPUT,
-        0,     // visual
+        0, // visual
         &CreateWindowAux::new()
             .background_pixel(screen.black_pixel)
             .event_mask(
@@ -77,7 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // XWMHints structure (order: flags, input, initial_state, icon_pixmap,
         //                        icon_window, icon_x, icon_y, icon_mask, window_group)
         let flags: u32 = 0x0003; // StateHint | InputHint
-        let input: u32 = 0;      // False = client doesn't accept input focus
+        let input: u32 = 0; // False = client doesn't accept input focus
         let initial_state: u32 = 3; // IconicState
         let icon_pixmap: u32 = 0;
         let icon_window: u32 = 0;
@@ -86,7 +94,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let icon_mask: u32 = 0;
         let window_group: u32 = 0;
 
-        [flags, input, initial_state, icon_pixmap, icon_window, icon_x, icon_y, icon_mask, window_group]
+        [
+            flags,
+            input,
+            initial_state,
+            icon_pixmap,
+            icon_window,
+            icon_x,
+            icon_y,
+            icon_mask,
+            window_group,
+        ]
     };
     conn.change_property32(
         PropMode::REPLACE,
@@ -144,8 +162,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut event = [0u8; 32];
     event[0] = 33; // ClientMessage
     event[1] = 32; // format
-    // sequence (bytes 2-3): leave 0
-    // window (bytes 4-7)
+                   // sequence (bytes 2-3): leave 0
+                   // window (bytes 4-7)
     event[4..8].copy_from_slice(&win.to_ne_bytes());
     // message_type (bytes 8-11)
     event[8..12].copy_from_slice(&wm_state.to_ne_bytes());
@@ -181,14 +199,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Poll _NET_ACTIVE_WINDOW on root
-        if let Ok(reply) = conn.get_property(
-            false,
-            screen.root,
-            atoms._NET_ACTIVE_WINDOW,
-            AtomEnum::WINDOW,
-            0,
-            1,
-        )?.reply()
+        if let Ok(reply) = conn
+            .get_property(
+                false,
+                screen.root,
+                atoms._NET_ACTIVE_WINDOW,
+                AtomEnum::WINDOW,
+                0,
+                1,
+            )?
+            .reply()
         {
             let active = reply.value32().and_then(|mut v| v.next());
             if active == Some(win) && !activated {
@@ -198,14 +218,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Poll _NET_WM_STATE on our window
-        if let Ok(reply) = conn.get_property(
-            false,
-            win,
-            atoms._NET_WM_STATE,
-            AtomEnum::ATOM,
-            0,
-            64,
-        )?.reply()
+        if let Ok(reply) = conn
+            .get_property(false, win, atoms._NET_WM_STATE, AtomEnum::ATOM, 0, 64)?
+            .reply()
         {
             if reply.format == 32 && reply.length > 0 {
                 eprint!("   _NET_WM_STATE:");
@@ -232,17 +247,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     eprintln!("[+] FocusIn (mode={:?}, detail={:?})", ev.mode, ev.detail);
 
                     // Debug: immediately read _NET_ACTIVE_WINDOW after FocusIn
-                    if let Ok(reply) = conn.get_property(
-                        false,
-                        screen.root,
-                        atoms._NET_ACTIVE_WINDOW,
-                        AtomEnum::WINDOW,
-                        0,
-                        1,
-                    )?.reply()
+                    if let Ok(reply) = conn
+                        .get_property(
+                            false,
+                            screen.root,
+                            atoms._NET_ACTIVE_WINDOW,
+                            AtomEnum::WINDOW,
+                            0,
+                            1,
+                        )?
+                        .reply()
                     {
                         let active = reply.value32().and_then(|mut v| v.next());
-                        eprintln!("   Debug: _NET_ACTIVE_WINDOW on root = 0x{:x?} (format={}, len={})", active, reply.format, reply.length);
+                        eprintln!(
+                            "   Debug: _NET_ACTIVE_WINDOW on root = 0x{:x?} (format={}, len={})",
+                            active, reply.format, reply.length
+                        );
                     }
                 }
                 Event::FocusOut(ev) => {
@@ -257,14 +277,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let protocol = ev.data.as_data32()[0];
                         if protocol == atoms.WM_TAKE_FOCUS {
                             let timestamp = ev.data.as_data32()[1];
-                            eprintln!("[+] WM_TAKE_FOCUS received (ts={}). Taking focus.", timestamp);
+                            eprintln!(
+                                "[+] WM_TAKE_FOCUS received (ts={}). Taking focus.",
+                                timestamp
+                            );
 
                             // Accept focus
-                            conn.set_input_focus(
-                                InputFocus::PARENT,
-                                win,
-                                timestamp,
-                            )?;
+                            conn.set_input_focus(InputFocus::PARENT, win, timestamp)?;
                             has_focus = true;
                         }
                     }
@@ -307,7 +326,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("*** SUCCESS after {} seconds ***", elapsed);
             eprintln!(
                 "   Focus received at t={:.1}s, activated. Otto fix works.",
-                first_focus_time.map(|t| t.duration_since(start).as_secs_f64()).unwrap_or(0.0)
+                first_focus_time
+                    .map(|t| t.duration_since(start).as_secs_f64())
+                    .unwrap_or(0.0)
             );
 
             // Short render loop to prove we're alive
@@ -324,7 +345,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 conn.poly_fill_rectangle(
                     win,
                     black,
-                    &[Rectangle { x: 0, y: 0, width: 800, height: 600 }],
+                    &[Rectangle {
+                        x: 0,
+                        y: 0,
+                        width: 800,
+                        height: 600,
+                    }],
                 )?;
                 conn.poly_fill_rectangle(
                     win,
@@ -362,21 +388,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Print WM_HINTS
-    if let Ok(reply) = conn.get_property(
-        false,
-        win,
-        AtomEnum::WM_HINTS,
-        AtomEnum::WM_HINTS,
-        0,
-        9,
-    )?.reply()
+    if let Ok(reply) = conn
+        .get_property(false, win, AtomEnum::WM_HINTS, AtomEnum::WM_HINTS, 0, 9)?
+        .reply()
     {
         if let Some(values) = reply.value32() {
             let vals: Vec<u32> = values.collect();
-            eprintln!("WM_HINTS: flags=0x{:x} input={} initial_state={}",
-                      vals.get(0).unwrap_or(&0),
-                      vals.get(1).unwrap_or(&0),
-                      vals.get(2).unwrap_or(&0));
+            eprintln!(
+                "WM_HINTS: flags=0x{:x} input={} initial_state={}",
+                vals.get(0).unwrap_or(&0),
+                vals.get(1).unwrap_or(&0),
+                vals.get(2).unwrap_or(&0)
+            );
         }
     }
 

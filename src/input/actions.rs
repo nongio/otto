@@ -4,6 +4,7 @@ use brightness::blocking::Brightness;
 use freedesktop_desktop_entry::DesktopEntry;
 use smithay::{
     reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1,
+    utils::IsAlive,
     wayland::{compositor::with_states, shell::xdg::XdgToplevelSurfaceData},
 };
 use tracing::{error, info, warn};
@@ -330,8 +331,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                 if let Some(picture) = recorder.finish_recording_as_picture(None) {
                     let data = picture.serialize();
                     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-                    let dir =
-                        std::path::PathBuf::from(&home).join("Pictures/Screenshots");
+                    let dir = std::path::PathBuf::from(&home).join("Pictures/Screenshots");
                     let _ = fs::create_dir_all(&dir);
                     let secs = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -369,12 +369,18 @@ impl<BackendData: Backend> Otto<BackendData> {
         if self.workspaces.get_show_all() {
             self.close_expose_show_all_and_focus_top();
         }
+        if !self.workspaces.app_switcher.alive() {
+            self.workspaces.place_app_switcher();
+        }
         self.workspaces.app_switcher.next();
     }
 
     pub(crate) fn handle_app_switcher_prev(&mut self) {
         if self.workspaces.get_show_all() {
             self.close_expose_show_all_and_focus_top();
+        }
+        if !self.workspaces.app_switcher.alive() {
+            self.workspaces.place_app_switcher();
         }
         self.workspaces.app_switcher.previous();
     }
@@ -428,6 +434,7 @@ impl<BackendData: Backend> Otto<BackendData> {
             // Dismiss all popups before entering expose mode
             // to release pointer grabs that would intercept events
             self.dismiss_all_popups();
+            self.demote_all_scanout_windows();
             self.workspaces.expose_set_visible(true);
         }
     }

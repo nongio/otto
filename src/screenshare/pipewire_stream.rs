@@ -121,6 +121,10 @@ pub struct NegotiatedFormat {
 struct SharedState {
     node_id: AtomicU32,
     active: AtomicBool,
+    /// True while a consumer is linked and the stream is in `Streaming`
+    /// state (e.g. an RDP bridge or portal client pulling frames), as
+    /// opposed to `active` which only means the stream was started.
+    streaming: AtomicBool,
     should_stop: AtomicBool,
     /// Buffer pool shared with main thread for blitting
     buffer_pool: Arc<Mutex<BufferPool>>,
@@ -156,6 +160,7 @@ impl PipeWireStream {
         let shared = Arc::new(SharedState {
             node_id: AtomicU32::new(0),
             active: AtomicBool::new(false),
+            streaming: AtomicBool::new(false),
             should_stop: AtomicBool::new(false),
             buffer_pool: Arc::new(Mutex::new(BufferPool::default())),
             #[allow(clippy::arc_with_non_send_sync)]
@@ -195,6 +200,7 @@ impl PipeWireStream {
                 tracing::error!("PipeWire thread error: {}", e);
             }
             shared.active.store(false, Ordering::SeqCst);
+            shared.streaming.store(false, Ordering::SeqCst);
         });
 
         // Wait for stream to be ready
@@ -217,6 +223,12 @@ impl PipeWireStream {
     /// Check if the stream is active.
     pub fn is_active(&self) -> bool {
         self.shared.active.load(Ordering::SeqCst)
+    }
+
+    /// Check if a consumer is currently linked and pulling frames
+    /// (PipeWire stream state is `Streaming`).
+    pub fn is_streaming(&self) -> bool {
+        self.shared.streaming.load(Ordering::SeqCst)
     }
 
     /// Get access to the buffer pool for rendering from main thread.
@@ -320,10 +332,15 @@ fn run_pipewire_thread(
         .state_changed({
             let ready_tx = ready_tx.clone();
             let ready_sent = ready_sent.clone();
+            let shared = shared.clone();
             move |stream, _state, old, new| {
                 use pw::stream::StreamState as PwState;
 
                 tracing::debug!("PipeWire stream state: {:?} -> {:?}", old, new);
+
+                shared
+                    .streaming
+                    .store(matches!(new, PwState::Streaming), Ordering::SeqCst);
 
                 match new {
                     PwState::Paused => {
@@ -892,7 +909,10 @@ fn build_format_params(config: &StreamConfig) -> Result<Vec<Vec<u8>>, PipeWireEr
                 let bytes =
                     PodSerializer::serialize(Cursor::new(Vec::new()), &Value::Object(format))
                         .map_err(|e| {
-                            PipeWireError::InitFailed(format!("Failed to serialize format: {:?}", e))
+                            PipeWireError::InitFailed(format!(
+                                "Failed to serialize format: {:?}",
+                                e
+                            ))
                         })?
                         .0
                         .into_inner();
@@ -1014,8 +1034,8 @@ fn parse_negotiated_format(
                     let choice = value.as_raw_ptr() as *const spa_pod_choice;
                     let child = &(*choice).body.child as *const spa_pod;
                     if (*child).type_ == SPA_TYPE_Long {
-                        let first = (child as *const u8).add(std::mem::size_of::<spa_pod>())
-                            as *const i64;
+                        let first =
+                            (child as *const u8).add(std::mem::size_of::<spa_pod>()) as *const i64;
                         Some(first.read_unaligned())
                     } else {
                         None

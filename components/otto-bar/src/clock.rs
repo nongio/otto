@@ -28,4 +28,24 @@ impl Clock {
     fn formatted_now() -> String {
         Local::now().format(clock_format()).to_string()
     }
+
+    /// Time until the clock text next changes: the next second boundary when
+    /// the format shows seconds, otherwise the next minute boundary.
+    pub fn until_next_change() -> std::time::Duration {
+        use chrono::Timelike;
+        let now = Local::now();
+        let fmt = clock_format();
+        let has_seconds = ["%S", "%T", "%X", "%r", "%s"]
+            .iter()
+            .any(|s| fmt.contains(s));
+        // nanosecond() can exceed 1e9 during a leap second — clamp via modulo.
+        let to_next_second = 1_000_000_000 - (now.nanosecond() % 1_000_000_000) as u64;
+        let ns = if has_seconds {
+            to_next_second
+        } else {
+            (59 - now.second().min(59)) as u64 * 1_000_000_000 + to_next_second
+        };
+        // +25ms so the wake lands safely past the boundary.
+        std::time::Duration::from_nanos(ns) + std::time::Duration::from_millis(25)
+    }
 }

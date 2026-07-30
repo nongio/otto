@@ -27,6 +27,8 @@ pub struct Config {
     #[serde(default)]
     pub dock: DockConfig,
     #[serde(default)]
+    pub appswitcher: AppSwitcherConfig,
+    #[serde(default)]
     pub layer_shell: LayerShellConfig,
     #[serde(default)]
     pub power_management: PowerManagementConfig,
@@ -72,6 +74,7 @@ impl Default for Config {
             cursor_size: 24,
             input: InputConfig::default(),
             dock: DockConfig::default(),
+            appswitcher: AppSwitcherConfig::default(),
             layer_shell: LayerShellConfig::default(),
             power_management: PowerManagementConfig::default(),
             audio: AudioConfig::default(),
@@ -332,6 +335,27 @@ pub struct DockConfig {
     pub bookmarks: Vec<DockBookmark>,
 }
 
+/// App switcher (cmd-tab panel) configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppSwitcherConfig {
+    /// Show the switcher on the output the pointer is on (default: true).
+    /// When false it always appears on the primary output.
+    #[serde(default = "default_appswitcher_follow_cursor")]
+    pub follow_cursor: bool,
+}
+
+impl Default for AppSwitcherConfig {
+    fn default() -> Self {
+        Self {
+            follow_cursor: default_appswitcher_follow_cursor(),
+        }
+    }
+}
+
+fn default_appswitcher_follow_cursor() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LayerShellConfig {
     /// Maximum exclusive zone allowed for top edge in logical points (0 = unlimited)
@@ -414,8 +438,11 @@ pub struct PowerManagementConfig {
 
     /// What to do when laptop lid closes (default: "auto")
     /// Options:
-    ///   "auto" - Normal laptop: disable screen, allow suspend if no external monitor
-    ///   "disable_internal_screen" - Always disable screen but stay running (for display managers/kiosks)
+    ///   "auto" - Normal laptop: disable screen, then suspend via logind —
+    ///     unless an external monitor is connected or a remote client (RDP
+    ///     bridge / screenshare) is actively consuming frames
+    ///   "disable_internal_screen" - Always disable screen but stay running,
+    ///     never suspend (for display managers/kiosks)
     #[serde(default = "default_on_lid_close")]
     pub on_lid_close: LidCloseAction,
 }
@@ -425,10 +452,12 @@ pub struct PowerManagementConfig {
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
 pub enum LidCloseAction {
-    /// Normal laptop behavior: disable screen, allow suspend if no external monitor
+    /// Normal laptop behavior: disable screen, then suspend — unless an
+    /// external monitor is connected or a remote session is active
     #[default]
     Auto,
-    /// Always disable screen but keep running (for display managers/kiosks)
+    /// Always disable screen but keep running, never suspend (for display
+    /// managers/kiosks)
     DisableInternalScreen,
 }
 
