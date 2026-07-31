@@ -1064,13 +1064,15 @@ impl ContextMenu {
             // buffer. Setting it on the scene layer as well composites it
             // twice, so a translucent material lands far more opaque than the
             // same menu drawn compositor-side (the dock's).
-            // Scene-layer geometry is in physical pixels, unlike the painted
-            // content, so the radius and shadow scale with the output. Values
-            // match the compositor-side menus (the dock's) so a menu looks the
-            // same wherever it is drawn.
+            // Shadow geometry is in physical pixels, so it scales with the
+            // output; values match the compositor-side menus (the dock's) so a
+            // menu looks the same wherever it is drawn. The corner radius does
+            // NOT get scaled here — it has to agree with the rounding the
+            // renderer paints into the buffer, and scaling it makes the bar's
+            // menus visibly rounder than the dock's.
             let scale = crate::app_runner::context::AppContext::fractional_scale();
             let shadow = style.theme.shadow;
-            scene_surface.set_corner_radius(style.corner_radius as f64 * scale);
+            scene_surface.set_corner_radius(style.corner_radius as f64);
             scene_surface.set_masks_to_bounds(ClipMode::Enabled);
             scene_surface.set_shadow(
                 shadow.a() as f64 / 255.0,
