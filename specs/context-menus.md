@@ -31,6 +31,7 @@ Context menus are hierarchical popup menus that display items for user selection
 4. Menu height is the sum of all item heights plus vertical padding.
 5. Items are rendered with a rounded-rect highlight when selected. Separators are not selectable.
 6. Disabled items are rendered with reduced opacity and do not respond to user interaction.
+6a. The menu background uses the theme's popup material, which is more opaque than the chrome materials used for bars and sidebars: a menu floats over arbitrary window content and its labels must stay readable against it.
 
 ### Keyboard Navigation
 

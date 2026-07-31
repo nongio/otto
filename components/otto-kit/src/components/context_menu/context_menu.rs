@@ -1060,13 +1060,10 @@ impl ContextMenu {
 
     fn apply_surface_effects(style: &ContextMenuStyle, popup: &PopupSurface) {
         if let Some(scene_surface) = popup.base_surface().surface_style() {
-            let bg = style.background_color();
-            scene_surface.set_background_color(
-                bg.r() as f64 / 255.0,
-                bg.g() as f64 / 255.0,
-                bg.b() as f64 / 255.0,
-                bg.a() as f64 / 255.0,
-            );
+            // The renderer already paints `style.background_color()` into the
+            // buffer. Setting it on the scene layer as well composites it
+            // twice, so a translucent material lands far more opaque than the
+            // same menu drawn compositor-side (the dock's).
             scene_surface.set_corner_radius(style.corner_radius as f64);
             scene_surface.set_masks_to_bounds(ClipMode::Enabled);
             scene_surface.set_shadow(0.2, 2.0, 0.0, 7.0, 0.3, 0.3, 0.3);
