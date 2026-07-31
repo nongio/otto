@@ -266,6 +266,15 @@ where
                 // Wake the render loop — the compositor may be idle with no pending
                 // damage, so `should_draw` would normally be false and screencopy
                 // would never be fulfilled without this kick.
+                //
+                // Waking is not enough on its own: the copy is filled only for a
+                // frame that actually composited something (`rendered` in the
+                // udev render loop), and a woken frame over a static desktop has
+                // no damage and composites nothing. The client would then wait
+                // forever — `grim` hangs on an idle screen, which is most of the
+                // time. Dropping the buffers forces a full frame, the same trick
+                // `kick_screencast_outputs` uses to keep a cast alive.
+                state.backend_data.reset_buffers(&data.output);
                 state.backend_data.request_redraw();
             }
             zwlr_screencopy_frame_v1::Request::Destroy => {}
