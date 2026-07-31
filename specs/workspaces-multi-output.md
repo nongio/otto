@@ -44,6 +44,8 @@ Otto supports multiple workspaces across multiple outputs (physical monitors and
 
 **Removing a workspace:**
 
+- The "×" button is revealed when the pointer hovers a workspace preview, and stays visible while the pointer moves from the preview onto the button itself. It hides again once the pointer leaves both.
+- No "×" is rendered for the current workspace, nor for a fullscreen workspace that still has windows — neither can be removed.
 - When the user clicks "×" on a workspace preview, that workspace is removed from that output only.
 - If the output has only one workspace, the remove action is ignored (minimum one workspace per output).
 - A removal animation plays (the preview shrinks to zero width) before the workspace is actually removed.
