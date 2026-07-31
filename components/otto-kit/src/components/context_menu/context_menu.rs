@@ -1064,9 +1064,23 @@ impl ContextMenu {
             // buffer. Setting it on the scene layer as well composites it
             // twice, so a translucent material lands far more opaque than the
             // same menu drawn compositor-side (the dock's).
-            scene_surface.set_corner_radius(style.corner_radius as f64);
+            // Scene-layer geometry is in physical pixels, unlike the painted
+            // content, so the radius and shadow scale with the output. Values
+            // match the compositor-side menus (the dock's) so a menu looks the
+            // same wherever it is drawn.
+            let scale = crate::app_runner::context::AppContext::fractional_scale();
+            let shadow = style.theme.shadow;
+            scene_surface.set_corner_radius(style.corner_radius as f64 * scale);
             scene_surface.set_masks_to_bounds(ClipMode::Enabled);
-            scene_surface.set_shadow(0.2, 2.0, 0.0, 7.0, 0.3, 0.3, 0.3);
+            scene_surface.set_shadow(
+                shadow.a() as f64 / 255.0,
+                16.0 * scale,
+                0.0,
+                4.0 * scale,
+                shadow.r() as f64 / 255.0,
+                shadow.g() as f64 / 255.0,
+                shadow.b() as f64 / 255.0,
+            );
             scene_surface.set_blend_mode(BlendMode::BackgroundBlur);
         }
     }
