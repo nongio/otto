@@ -25,6 +25,18 @@ trait ScreenCast {
 
     /// Lists available output connectors.
     async fn list_outputs(&self) -> Result<Vec<String>>;
+
+    /// Lists capturable windows as `(identifier, app_id, title)`.
+    async fn list_windows(&self) -> Result<Vec<(String, String, String)>>;
+}
+
+/// A capturable window as reported by the compositor.
+#[derive(Clone, Debug)]
+pub struct WindowSource {
+    /// `ext-foreign-toplevel-list-v1` identifier — opaque, pass back verbatim.
+    pub id: String,
+    pub app_id: String,
+    pub title: String,
 }
 
 /// D-Bus proxy for `org.otto.ScreenCast.Session`.
@@ -95,6 +107,40 @@ impl OttoClient {
             outputs
         );
         Ok(outputs)
+    }
+
+    /// Lists capturable windows from the compositor.
+    pub async fn list_windows(&self) -> Result<Vec<WindowSource>> {
+        debug!("Requesting list_windows from compositor");
+        let proxy = ScreenCastProxy::builder(&self.connection).build().await?;
+        let windows = proxy.list_windows().await?;
+        debug!("Received {} windows from compositor", windows.len());
+        Ok(windows
+            .into_iter()
+            .map(|(id, app_id, title)| WindowSource { id, app_id, title })
+            .collect())
+    }
+
+    /// Starts recording a single window by its foreign-toplevel identifier.
+    pub async fn record_window(
+        &self,
+        session_path: &OwnedObjectPath,
+        window_id: &str,
+        cursor_mode: u32,
+    ) -> Result<OwnedObjectPath> {
+        let proxy = ScreenCastSessionProxy::builder(&self.connection)
+            .path(session_path)?
+            .build()
+            .await?;
+
+        let mut properties = HashMap::new();
+        properties.insert("window-id", Value::from(window_id));
+        properties.insert("cursor-mode", Value::U32(cursor_mode));
+        debug!(window_id, "Recording window");
+        let stream_path = proxy.record_window(properties).await?;
+        debug!(%stream_path, "Stream created");
+
+        Ok(stream_path)
     }
 
     /// Starts recording a monitor identified by connector name.

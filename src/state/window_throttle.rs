@@ -41,6 +41,10 @@ pub enum WindowThrottleState {
     Minimized,
     /// Window's workspace is not active on any output. Throttle heavily.
     HiddenWorkspace,
+    /// Being screencast. Full rate regardless of what covers it or which
+    /// workspace it is on — the remote viewer is looking at it even when the
+    /// local user is not — but *not* activated, since it has no keyboard focus.
+    Captured,
 }
 
 impl WindowThrottleState {
@@ -58,7 +62,7 @@ impl WindowThrottleState {
         match self {
             // Zero means "always send". The render-loop's own pacing (VBlank +
             // draw-deadline timer) limits the actual rate to the output refresh.
-            WindowThrottleState::Focused => Duration::ZERO,
+            WindowThrottleState::Focused | WindowThrottleState::Captured => Duration::ZERO,
             // ~30 Hz — halves the work for unfocused visible windows without
             // making their animations visibly stutter.
             WindowThrottleState::Secondary => Duration::from_millis(33),
@@ -93,6 +97,9 @@ pub struct ClassifierContext<'a> {
     /// True when the expose overview is animating or open; all non-minimized
     /// windows get smooth live previews during this period.
     pub expose_active: bool,
+    /// Windows with an active screencast stream. Outranks occlusion and
+    /// workspace visibility — see [`WindowThrottleState::Captured`].
+    pub captured_ids: &'a HashSet<ObjectId>,
 }
 
 /// Classify a single window given its own minimized flag and a context
@@ -102,6 +109,11 @@ pub fn classify_one(
     is_minimized: bool,
     ctx: &ClassifierContext<'_>,
 ) -> WindowThrottleState {
+    if ctx.captured_ids.contains(window_id) {
+        // Checked before `is_minimized`: a minimized window still has live
+        // content if something is casting it.
+        return WindowThrottleState::Captured;
+    }
     if is_minimized {
         return WindowThrottleState::Minimized;
     }
@@ -145,6 +157,7 @@ pub fn classify_windows(
     windows: &[&WindowElement],
     occluded_ids: &HashSet<ObjectId>,
     expose_active: bool,
+    captured_ids: &HashSet<ObjectId>,
 ) -> HashMap<ObjectId, WindowThrottleState> {
     // Fullscreen and top-of-stack are per-output properties of each output's
     // CURRENT workspace: a fullscreen window on one screen must not demote
@@ -176,6 +189,7 @@ pub fn classify_windows(
             top_of_current,
             occluded_ids,
             expose_active,
+            captured_ids,
         };
         let state = classify_one(&id, window.is_minimised(), &ctx);
         result.insert(id, state);
@@ -222,6 +236,7 @@ mod tests {
             top_of_current: Some(&id),
             occluded_ids: &occ,
             expose_active: true,
+            captured_ids: &empty_occluded(),
         };
         assert_eq!(
             classify_one(&id, true, &ctx),
@@ -239,6 +254,7 @@ mod tests {
             top_of_current: None,
             occluded_ids: &occ,
             expose_active: true,
+            captured_ids: &empty_occluded(),
         };
         assert_eq!(
             classify_one(&id, false, &ctx),
@@ -256,11 +272,41 @@ mod tests {
             top_of_current: Some(&id),
             occluded_ids: &occ,
             expose_active: false,
+            captured_ids: &empty_occluded(),
         };
         assert_eq!(
             classify_one(&id, false, &ctx),
             WindowThrottleState::Focused,
             "the fullscreen window itself is Focused"
+        );
+    }
+
+    #[test]
+    fn captured_window_beats_minimized() {
+        let id = mk_id();
+        let occ = empty_occluded();
+        let mut captured = HashSet::new();
+        captured.insert(id.clone());
+        let ctx = ClassifierContext {
+            fullscreen_id: None,
+            top_of_current: None,
+            occluded_ids: &occ,
+            expose_active: false,
+            captured_ids: &captured,
+        };
+        assert_eq!(
+            classify_one(&id, true, &ctx),
+            WindowThrottleState::Captured,
+            "a minimized window still streams at full rate while screencast"
+        );
+        assert_eq!(
+            WindowThrottleState::Captured.throttle(),
+            Duration::ZERO,
+            "captured windows are not frame-throttled"
+        );
+        assert!(
+            !WindowThrottleState::Captured.is_activated(),
+            "being captured must not make a window think it has focus"
         );
     }
 

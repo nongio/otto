@@ -87,10 +87,11 @@ The compositor runs a zbus server on a dedicated tokio thread and registers:
 org.otto.ScreenCast:
   CreateSession(properties: a{sv}) -> session_path: o
   ListOutputs() -> connectors: as
+  ListWindows() -> windows: a(sss)      # (identifier, app_id, title)
 
 org.otto.ScreenCast.Session:
   RecordMonitor(connector: s, properties: a{sv}) -> stream_path: o
-  RecordWindow(properties: a{sv}) -> stream_path: o
+  RecordWindow(properties: a{sv}) -> stream_path: o   # properties: window-id, cursor-mode
   Start()
   Stop()
   OpenPipeWireRemote(options: a{sv}) -> fd: h
@@ -99,11 +100,12 @@ org.otto.ScreenCast.Stream:
   Start()
   Stop()
   PipeWireNode() -> info: a{sv}
-  Metadata() -> info: a{sv}
+  Metadata() -> info: a{sv}             # connector|window-id, source-type, size, cursor-mode
 
 Notes:
 
-- `RecordWindow` currently returns “not supported”.
+- `RecordWindow`'s `window-id` is an `ext-foreign-toplevel-list-v1` identifier, as returned
+  by `ListWindows`. See "Window capture" below.
 - `Start()` is where the compositor actually creates a PipeWire stream and returns a node id
   through `PipeWireNode()`.
 ```
@@ -172,6 +174,36 @@ Screen sharing uses a **direct GPU blit** approach:
 3. Otto blits the framebuffer into that DMA-BUF using `Blit<Dmabuf>` (GPU-only
   `glBlitFramebuffer`).
 4. Otto signals PipeWire that a new frame can be queued.
+
+### Window capture
+
+A stream targets either an output or a single window — `StreamTarget` in
+`src/screenshare/mod.rs`, which also supplies the key for `ScreencastSession::streams`
+(`output:<connector>` / `window:<identifier>`).
+
+Window streams do **not** blit the composited framebuffer. They re-render the window's own
+surface tree (toplevel + subsurfaces + popups) into the PipeWire dmabuf via
+`window_to_dmabuf`, with the window's geometry origin at (0, 0). Consequences worth knowing:
+
+- Nothing stacked above the shared window can leak into the capture, and the window keeps
+  streaming while occluded, on another workspace, or minimized.
+- lay-rs scene decoration (shadows, rounded corners, blur) is *not* in the capture — this is
+  the client's raw content.
+- The stream size is fixed at `RecordWindow` time (even-rounded physical pixels). A window
+  that resizes is cropped or letterboxed; the format is never renegotiated.
+
+Two supporting mechanisms make this work:
+
+- **Frame pacing**: `WindowThrottleState::Captured` (`src/state/window_throttle.rs`) pins a
+  captured window to full-rate frame callbacks, outranking minimize/occlusion, without
+  marking it `activated`. Without this a shared background window would tick at 2 Hz.
+- **Render triggers**: `screencast_active` and `kick_screencast_outputs` in
+  `src/udev/render.rs` resolve a window target to the output currently hosting it, so that
+  output forces a composite and keeps painting while idle.
+
+Both paths call `crate::screenshare::window_for_identifier`, which takes `&Workspaces` and
+`&foreign_toplevels` separately rather than `&Otto` — the render loop already holds a
+mutable borrow of `backend_data`, so only field-disjoint borrows compile there.
 
 #### Udev Backend (`src/udev.rs`)
 
@@ -352,15 +384,19 @@ silent fallback to LINEAR (that previously caused tiled-read-as-linear corrupted
 SHM fallback pods are offered alongside DMA-BUF today, so non-DMA_DRM gst pipelines can't
 currently negotiate. Full behavior and rationale: `specs/screenshare.md`.
 
-### Screencast Output Selection
+### Screencast Source Selection
 
-`xdg-desktop-portal-otto`'s `SelectSources` (`components/xdg-desktop-portal-otto/src/portal/interface.rs`)
-defaults to the first output from the compositor's `ListOutputs`, but checks
-`$XDG_CONFIG_HOME/otto/screencast-output` (falling back to `~/.config/otto/screencast-output`)
-for a one-line connector-name override, re-read on every call so it can be changed between
-sessions with no restart. An override naming an output not currently present falls back to
-the first output with a warning. This is a stopgap until a real source-picker UI exists. Full
-behavior: `specs/screenshare.md`.
+`xdg-desktop-portal-otto`'s `SelectSources`
+(`components/xdg-desktop-portal-otto/src/portal/interface.rs`) presents a picker: one radio
+list combining every output and every window, rendered by otto-islands through the
+Access-style `org.otto.Dialog1` service (the same dialog the portal's Access implementation
+uses). Option ids are `monitor:<connector>` / `window:<identifier>`.
+
+If no dialog renderer answers on the bus, monitor capture falls back to the pre-picker
+behaviour: `$XDG_CONFIG_HOME/otto/screencast-output` (falling back to
+`~/.config/otto/screencast-output`) for a one-line connector-name override, re-read on every
+call, else the first output. A window is never auto-selected in that path. Full behavior:
+`specs/screenshare.md`.
 
 ### Known Issues and Fixes
 

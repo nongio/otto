@@ -771,11 +771,18 @@ impl Otto<UdevData> {
         #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let occluded_ids = self.workspaces.occluded_window_ids();
         #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
+        let captured_ids = crate::screenshare::screencast_window_ids(
+            &self.screenshare_sessions,
+            &self.workspaces,
+            &self.foreign_toplevels,
+        );
+        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let window_throttle_states = crate::state::window_throttle::classify_windows(
             &self.workspaces,
             &all_window_elements,
             &occluded_ids,
             expose_active,
+            &captured_ids,
         );
 
         // ── Shadow-only / direct scanout window selection ─────────────────────
@@ -793,10 +800,24 @@ impl Otto<UdevData> {
         // of frames and the remote client spins forever. The off-VBlank timer
         // (`kick_screencast_outputs`) supplies the render trigger when idle;
         // this makes that trigger actually paint.
-        let screencast_active = self
-            .screenshare_sessions
-            .values()
-            .any(|s| s.streams.contains_key(&output.name()));
+        // A window stream counts too: it is serviced from this output's frame,
+        // so this output must keep painting even when nothing else changed.
+        // The composite is forced for the same reason as a monitor stream —
+        // `blit_current_frame` and the window re-render both need the GPU
+        // path, not direct scanout.
+        let screencast_active = self.screenshare_sessions.values().any(|s| {
+            s.streams.values().any(|stream| match &stream.target {
+                crate::screenshare::StreamTarget::Output(connector) => connector == &output.name(),
+                crate::screenshare::StreamTarget::Window(id) => {
+                    crate::screenshare::window_for_identifier(
+                        &self.workspaces,
+                        &self.foreign_toplevels,
+                        id,
+                    )
+                    .is_some_and(|(_, window_output)| window_output.name() == output.name())
+                }
+            })
+        });
         let screencopy_pending = screencast_active
             || self
                 .pending_screencopy_frames
@@ -1092,97 +1113,153 @@ impl Otto<UdevData> {
                         should_render_cursor
                     );
 
-                    // Build cursor elements for screenshare if needed
-                    let cursor_elements: Vec<WorkspaceRenderElements<_>> = if should_render_cursor {
-                        let output_geometry =
-                            Rectangle::new((0, 0).into(), output.current_mode().unwrap().size);
-                        let output_scale = output.current_scale().fractional_scale();
-                        // Rebase the global pointer to this output's space —
-                        // same correction as in render_output_frame.
-                        let pointer_location =
-                            self.pointer.current_location() - output.current_location().to_f64();
-
-                        let pointer_in_output = output_geometry
-                            .to_f64()
-                            .contains(pointer_location.to_physical(scale));
-
-                        if pointer_in_output {
-                            use crate::cursor::RenderCursor;
-                            use smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement;
-                            use smithay::backend::renderer::element::surface::render_elements_from_surface_tree;
-
-                            let mut elements = Vec::new();
-
-                            match self
-                                .cursor_manager
-                                .get_render_cursor(output_scale.round() as i32)
-                            {
-                                RenderCursor::Hidden => {}
-                                RenderCursor::Surface { hotspot, surface } => {
-                                    let cursor_pos_scaled = (pointer_location.to_physical(scale)
-                                        - hotspot.to_f64().to_physical(scale))
-                                    .to_i32_round();
-                                    let cursor_elems: Vec<WorkspaceRenderElements<_>> =
-                                        render_elements_from_surface_tree(
-                                            &mut renderer,
-                                            &surface,
-                                            cursor_pos_scaled,
-                                            scale,
-                                            1.0,
-                                            Kind::Cursor,
-                                        );
-                                    elements.extend(cursor_elems);
+                    for (stream_key, stream) in &session.streams {
+                        // Window streams are serviced on the frame of whatever
+                        // output currently hosts the window, so a window that
+                        // moves between outputs keeps streaming.
+                        let window_capture = match &stream.target {
+                            crate::screenshare::StreamTarget::Output(connector) => {
+                                if connector != &output.name() {
+                                    continue;
                                 }
-                                RenderCursor::Named {
-                                    icon,
-                                    scale: _,
-                                    cursor,
-                                } => {
-                                    let elapsed_millis = self.clock.now().as_millis();
-                                    let (idx, image) = cursor.frame(elapsed_millis);
-                                    let texture = self.cursor_texture_cache.get(
-                                        icon,
-                                        output_scale.round() as i32,
-                                        &cursor,
-                                        idx,
-                                    );
-                                    let hotspot_physical =
-                                        Point::from((image.xhot as f64, image.yhot as f64));
-                                    let cursor_pos_scaled: Point<i32, Physical> =
-                                        (pointer_location.to_physical(scale) - hotspot_physical)
-                                            .to_i32_round();
-                                    let elem = MemoryRenderBufferRenderElement::from_buffer(
-                                        &mut renderer,
-                                        cursor_pos_scaled.to_f64(),
-                                        &texture,
-                                        None,
-                                        None,
-                                        None,
-                                        Kind::Cursor,
-                                    )
-                                    .expect("Failed to create cursor render element");
-                                    elements.push(WorkspaceRenderElements::from(elem));
+                                None
+                            }
+                            crate::screenshare::StreamTarget::Window(id) => {
+                                match crate::screenshare::window_for_identifier(
+                                    &self.workspaces,
+                                    &self.foreign_toplevels,
+                                    id,
+                                ) {
+                                    Some((window, window_output))
+                                        if window_output.name() == output.name() =>
+                                    {
+                                        Some(window)
+                                    }
+                                    // Unmapped, or on another output's frame.
+                                    _ => continue,
                                 }
                             }
+                        };
 
-                            elements
-                        } else {
-                            Vec::new()
-                        }
-                    } else {
-                        Vec::new()
-                    };
+                        // Cursor elements are positioned in the capture
+                        // target's own space: output space for a monitor
+                        // stream, window space for a window stream. Built per
+                        // stream because that offset differs.
+                        let capture_origin_px: Point<i32, Physical> = match &window_capture {
+                            Some(window) => self
+                                .workspaces
+                                .element_location(window)
+                                .unwrap_or_default()
+                                .to_physical_precise_round(scale),
+                            None => Point::from((0, 0)),
+                        };
 
-                    for (connector, stream) in &session.streams {
-                        if connector == &output.name() {
+                        let cursor_elements: Vec<WorkspaceRenderElements<_>> =
+                            if should_render_cursor {
+                                let output_geometry = Rectangle::new(
+                                    (0, 0).into(),
+                                    output.current_mode().unwrap().size,
+                                );
+                                let output_scale = output.current_scale().fractional_scale();
+                                // Rebase the global pointer to this output's space —
+                                // same correction as in render_output_frame.
+                                let pointer_location = self.pointer.current_location()
+                                    - output.current_location().to_f64();
+
+                                let pointer_in_output = output_geometry
+                                    .to_f64()
+                                    .contains(pointer_location.to_physical(scale));
+
+                                if pointer_in_output {
+                                    use crate::cursor::RenderCursor;
+                                    use smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement;
+                                    use smithay::backend::renderer::element::surface::render_elements_from_surface_tree;
+
+                                    let mut elements = Vec::new();
+
+                                    match self
+                                        .cursor_manager
+                                        .get_render_cursor(output_scale.round() as i32)
+                                    {
+                                        RenderCursor::Hidden => {}
+                                        RenderCursor::Surface { hotspot, surface } => {
+                                            let cursor_pos_scaled = (pointer_location
+                                                .to_physical(scale)
+                                                - hotspot.to_f64().to_physical(scale))
+                                            .to_i32_round()
+                                                - capture_origin_px;
+                                            let cursor_elems: Vec<WorkspaceRenderElements<_>> =
+                                                render_elements_from_surface_tree(
+                                                    &mut renderer,
+                                                    &surface,
+                                                    cursor_pos_scaled,
+                                                    scale,
+                                                    1.0,
+                                                    Kind::Cursor,
+                                                );
+                                            elements.extend(cursor_elems);
+                                        }
+                                        RenderCursor::Named {
+                                            icon,
+                                            scale: _,
+                                            cursor,
+                                        } => {
+                                            let elapsed_millis = self.clock.now().as_millis();
+                                            let (idx, image) = cursor.frame(elapsed_millis);
+                                            let texture = self.cursor_texture_cache.get(
+                                                icon,
+                                                output_scale.round() as i32,
+                                                &cursor,
+                                                idx,
+                                            );
+                                            let hotspot_physical =
+                                                Point::from((image.xhot as f64, image.yhot as f64));
+                                            let cursor_pos_scaled: Point<i32, Physical> =
+                                                (pointer_location.to_physical(scale)
+                                                    - hotspot_physical)
+                                                    .to_i32_round()
+                                                    - capture_origin_px;
+                                            let elem =
+                                                MemoryRenderBufferRenderElement::from_buffer(
+                                                    &mut renderer,
+                                                    cursor_pos_scaled.to_f64(),
+                                                    &texture,
+                                                    None,
+                                                    None,
+                                                    None,
+                                                    Kind::Cursor,
+                                                )
+                                                .expect("Failed to create cursor render element");
+                                            elements.push(WorkspaceRenderElements::from(elem));
+                                        }
+                                    }
+
+                                    elements
+                                } else {
+                                    Vec::new()
+                                }
+                            } else {
+                                Vec::new()
+                            };
+
+                        {
                             let buffer_pool = stream.pipewire_stream.buffer_pool();
                             let mut pool = buffer_pool.lock().unwrap();
 
                             if let Some(available) = pool.available.pop_front() {
-                                let size = output
-                                    .current_mode()
-                                    .map(|m| m.size)
-                                    .unwrap_or_else(|| (1920, 1080).into());
+                                let size = match &window_capture {
+                                    // The stream's negotiated size, fixed at
+                                    // RecordWindow time — not the window's
+                                    // current size, which may have changed.
+                                    Some(_) => {
+                                        let (w, h) = stream.pipewire_stream.stream_size();
+                                        (w as i32, h as i32).into()
+                                    }
+                                    None => output
+                                        .current_mode()
+                                        .map(|m| m.size)
+                                        .unwrap_or_else(|| (1920, 1080).into()),
+                                };
 
                                 // Force full frame for first render (when last_rendered_fd is None)
                                 let is_first_frame = pool.last_rendered_fd.is_none();
@@ -1199,20 +1276,84 @@ impl Otto<UdevData> {
 
                                 if is_first_frame {
                                     tracing::debug!(
-                                        "First frame for stream on {}, forcing full blit",
-                                        connector
+                                        "First frame for stream {}, forcing full blit",
+                                        stream_key
                                     );
                                 }
 
-                                // Blit from source framebuffer and render cursor on top
-                                let blit_result = crate::screenshare::fullscreen_to_dmabuf(
-                                    &mut renderer,
-                                    &mut available.dmabuf.clone(),
-                                    size,
-                                    damage_to_use,
-                                    &cursor_elements,
-                                    scale,
-                                );
+                                let blit_result = if let Some(window) = &window_capture {
+                                    // Re-render just this window's surfaces,
+                                    // with the window's geometry origin at
+                                    // (0, 0) so CSD shadow margins are cropped
+                                    // out. `render_elements` positions the
+                                    // surface origin, which sits at -geometry.loc
+                                    // relative to that.
+                                    use smithay::backend::renderer::element::surface::render_elements_from_surface_tree;
+
+                                    let geometry =
+                                        smithay::desktop::space::SpaceElement::geometry(window);
+                                    let surface_origin_px = Point::<i32, Physical>::from((0, 0))
+                                        - geometry.loc.to_physical_precise_round(scale);
+
+                                    let mut elements: Vec<WorkspaceRenderElements<_>> = Vec::new();
+
+                                    if let Some(surface) = window.wl_surface() {
+                                        // Popups first — front-to-back order
+                                        // puts them above the toplevel.
+                                        for (popup, popup_offset) in
+                                            smithay::desktop::PopupManager::popups_for_surface(
+                                                &surface,
+                                            )
+                                        {
+                                            let offset: Point<i32, Physical> = (popup_offset
+                                                - popup.geometry().loc)
+                                                .to_physical_precise_round(scale);
+                                            elements.extend(render_elements_from_surface_tree::<
+                                                _,
+                                                WorkspaceRenderElements<_>,
+                                            >(
+                                                &mut renderer,
+                                                popup.wl_surface(),
+                                                surface_origin_px + offset,
+                                                scale,
+                                                1.0,
+                                                Kind::Unspecified,
+                                            ));
+                                        }
+
+                                        elements.extend(render_elements_from_surface_tree::<
+                                            _,
+                                            WorkspaceRenderElements<_>,
+                                        >(
+                                            &mut renderer,
+                                            &surface,
+                                            surface_origin_px,
+                                            scale,
+                                            1.0,
+                                            Kind::Unspecified,
+                                        ));
+                                    }
+
+                                    // Front-to-back order: cursor on top.
+                                    elements.splice(0..0, cursor_elements);
+                                    crate::screenshare::window_to_dmabuf(
+                                        &mut renderer,
+                                        &mut available.dmabuf.clone(),
+                                        size,
+                                        &elements,
+                                        scale,
+                                    )
+                                } else {
+                                    // Blit from source framebuffer and render cursor on top
+                                    crate::screenshare::fullscreen_to_dmabuf(
+                                        &mut renderer,
+                                        &mut available.dmabuf.clone(),
+                                        size,
+                                        damage_to_use,
+                                        &cursor_elements,
+                                        scale,
+                                    )
+                                };
 
                                 if let Err(e) = blit_result {
                                     tracing::debug!("Screenshare blit failed: {}", e);
@@ -1229,7 +1370,10 @@ impl Otto<UdevData> {
                                 // No buffer available - trigger to dequeue any released buffers
                                 drop(pool);
                                 stream.pipewire_stream.trigger_frame();
-                                tracing::trace!("No available buffers for screenshare on {}, triggering dequeue", connector);
+                                tracing::trace!(
+                                    "No available buffers for screenshare {}, triggering dequeue",
+                                    stream_key
+                                );
                             }
                         }
                     }
@@ -1434,11 +1578,25 @@ impl Otto<UdevData> {
         self.backend_data.last_screencast_kick = Some(std::time::Instant::now());
         self.backend_data.last_kick_cursor_pos = Some(cursor_pos);
         // Collect the connectors with an active cast (dedup across sessions).
+        // A window stream kicks the output its window currently lives on.
         let mut connectors: Vec<String> = Vec::new();
         for session in self.screenshare_sessions.values() {
-            for connector in session.streams.keys() {
-                if !connectors.contains(connector) {
-                    connectors.push(connector.clone());
+            for stream in session.streams.values() {
+                let connector = match &stream.target {
+                    crate::screenshare::StreamTarget::Output(connector) => connector.clone(),
+                    crate::screenshare::StreamTarget::Window(id) => {
+                        match crate::screenshare::window_for_identifier(
+                            &self.workspaces,
+                            &self.foreign_toplevels,
+                            id,
+                        ) {
+                            Some((_, output)) => output.name(),
+                            None => continue,
+                        }
+                    }
+                };
+                if !connectors.contains(&connector) {
+                    connectors.push(connector);
                 }
             }
         }
@@ -1723,8 +1881,12 @@ impl Otto<UdevData> {
             // Same deferred-fence model as the virtual-output stream above.
             for session in self.screenshare_sessions.values_mut() {
                 for stream in session.streams.values_mut() {
-                    if stream.output_connector != output_name {
-                        continue;
+                    // Window streams are driven from the physical output
+                    // hosting the window, never from a virtual output tap.
+                    match &stream.target {
+                        crate::screenshare::StreamTarget::Output(connector)
+                            if connector == &output_name => {}
+                        _ => continue,
                     }
                     let ss_pool = stream.pipewire_stream.buffer_pool();
 

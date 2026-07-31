@@ -61,12 +61,36 @@ pub struct ScreencastSession {
     pub streams: HashMap<String, ActiveStream>,
 }
 
-/// Active stream for one output.
+/// What a stream captures.
+///
+/// Monitor capture blits the finished output framebuffer; window capture
+/// re-renders one toplevel's surface tree into the PipeWire buffer. The two
+/// live in the same session map, keyed by [`StreamTarget::key`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum StreamTarget {
+    /// An output, by connector name (e.g. "HDMI-A-1").
+    Output(String),
+    /// A toplevel, by its `ext-foreign-toplevel-list-v1` identifier.
+    Window(String),
+}
+
+impl StreamTarget {
+    /// Map key for `ScreencastSession::streams`. Prefixed so an output and a
+    /// window can never collide.
+    pub fn key(&self) -> String {
+        match self {
+            StreamTarget::Output(connector) => format!("output:{connector}"),
+            StreamTarget::Window(id) => format!("window:{id}"),
+        }
+    }
+}
+
+/// Active stream for one capture target.
 ///
 /// Contains the PipeWire stream.
 pub struct ActiveStream {
-    /// Output connector name (e.g., "HDMI-A-1").
-    pub output_connector: String,
+    /// What this stream captures.
+    pub target: StreamTarget,
     /// PipeWire stream instance.
     pub pipewire_stream: PipeWireStream,
     /// Frame rendered last cycle, awaiting its GPU fence before the dmabuf is
@@ -87,18 +111,22 @@ pub enum CompositorCommand {
     ListOutputs {
         response_tx: tokio::sync::oneshot::Sender<Vec<OutputInfo>>,
     },
-    /// Start recording on a specific output.
+    /// List capturable toplevel windows.
+    ListWindows {
+        response_tx: tokio::sync::oneshot::Sender<Vec<WindowInfo>>,
+    },
+    /// Start recording a capture target.
     StartRecording {
         session_id: String,
-        output_connector: String,
+        target: StreamTarget,
         cursor_mode: u32,
         /// Response channel for the PipeWire node ID.
         response_tx: tokio::sync::oneshot::Sender<Result<u32, String>>,
     },
-    /// Stop recording on a specific output.
+    /// Stop recording a capture target.
     StopRecording {
         session_id: String,
-        output_connector: String,
+        target: StreamTarget,
     },
     /// Get a PipeWire file descriptor for the session.
     GetPipeWireFd {
@@ -119,6 +147,19 @@ pub struct OutputInfo {
     pub width: u32,
     pub height: u32,
     pub refresh_rate: u32,
+}
+
+/// Information about a capturable window.
+#[derive(Debug, Clone)]
+pub struct WindowInfo {
+    /// `ext-foreign-toplevel-list-v1` identifier — the handle the portal
+    /// passes back to `RecordWindow`.
+    pub id: String,
+    pub app_id: String,
+    pub title: String,
+    /// Window geometry in physical pixels.
+    pub width: u32,
+    pub height: u32,
 }
 
 /// Information about an active stream.
@@ -179,6 +220,64 @@ impl ScreenshareManager {
     }
 }
 
+/// Resolve an `ext-foreign-toplevel-list-v1` identifier to a mapped window and
+/// the output hosting it.
+///
+/// Returns `None` if the identifier is unknown or the window is no longer
+/// mapped to any output (the portal may hold a stale identifier from before
+/// the user answered the picker dialog).
+///
+/// Takes the two fields it needs rather than `&Otto` so callers inside the
+/// render loop — which already hold a mutable borrow of `backend_data` — can
+/// still use it under field-disjoint borrows.
+#[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
+pub fn window_for_identifier(
+    workspaces: &crate::workspaces::Workspaces,
+    foreign_toplevels: &HashMap<
+        smithay::reexports::wayland_server::backend::ObjectId,
+        crate::state::foreign_toplevel_shared::ForeignToplevelHandles,
+    >,
+    identifier: &str,
+) -> Option<(crate::shell::WindowElement, smithay::output::Output)> {
+    let window = workspaces.spaces_elements().find(|window| {
+        foreign_toplevels
+            .get(&window.id())
+            .and_then(|handles| handles.identifier())
+            .is_some_and(|id| id == identifier)
+    })?;
+    let output = workspaces.outputs_for_element(window).first().cloned()?;
+    Some((window.clone(), output))
+}
+
+/// Ids of windows with an active screencast stream.
+///
+/// Drives [`crate::state::window_throttle::WindowThrottleState::Captured`] so a
+/// shared window keeps painting while occluded or on another workspace. Takes
+/// individual fields for the same borrow reason as [`window_for_identifier`].
+#[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
+pub fn screencast_window_ids(
+    sessions: &HashMap<String, ScreencastSession>,
+    workspaces: &crate::workspaces::Workspaces,
+    foreign_toplevels: &HashMap<
+        smithay::reexports::wayland_server::backend::ObjectId,
+        crate::state::foreign_toplevel_shared::ForeignToplevelHandles,
+    >,
+) -> std::collections::HashSet<smithay::reexports::wayland_server::backend::ObjectId> {
+    let mut ids = std::collections::HashSet::new();
+    for session in sessions.values() {
+        for stream in session.streams.values() {
+            if let StreamTarget::Window(identifier) = &stream.target {
+                if let Some((window, _)) =
+                    window_for_identifier(workspaces, foreign_toplevels, identifier)
+                {
+                    ids.insert(window.id());
+                }
+            }
+        }
+    }
+    ids
+}
+
 /// Handle a command from the D-Bus service.
 fn handle_screenshare_command<B: crate::state::Backend + 'static>(
     state: &mut crate::state::Otto<B>,
@@ -225,33 +324,100 @@ fn handle_screenshare_command<B: crate::state::Backend + 'static>(
             tracing::info!("Returning {} outputs", outputs.len());
             let _ = response_tx.send(outputs);
         }
+        CompositorCommand::ListWindows { response_tx } => {
+            let windows: Vec<WindowInfo> = state
+                .workspaces
+                .spaces_elements()
+                .filter_map(|window| {
+                    // Only toplevels the foreign-toplevel protocol knows about
+                    // are addressable by a portal — that identifier is the
+                    // whole contract with the picker.
+                    let handles = state.foreign_toplevels.get(&window.id())?;
+                    let id = handles.identifier()?;
+                    let output = state
+                        .workspaces
+                        .outputs_for_element(window)
+                        .first()
+                        .cloned();
+                    let scale = output
+                        .map(|o| o.current_scale().fractional_scale())
+                        .unwrap_or(1.0);
+                    let size = smithay::desktop::space::SpaceElement::geometry(window).size;
+                    Some(WindowInfo {
+                        id,
+                        app_id: handles.app_id(),
+                        title: handles.title(),
+                        width: ((size.w as f64) * scale).round().max(0.0) as u32,
+                        height: ((size.h as f64) * scale).round().max(0.0) as u32,
+                    })
+                })
+                .collect();
+            tracing::info!("Returning {} windows", windows.len());
+            let _ = response_tx.send(windows);
+        }
         CompositorCommand::StartRecording {
             session_id,
-            output_connector,
+            target,
             cursor_mode,
             response_tx,
         } => {
             tracing::debug!(
-                "StartRecording: session={}, output={}, cursor_mode={}",
+                "StartRecording: session={}, target={:?}, cursor_mode={}",
                 session_id,
-                output_connector,
+                target,
                 cursor_mode
             );
 
-            // Find the output by connector name
-            let output = state
-                .workspaces
-                .outputs()
-                .find(|o| o.name() == output_connector);
+            // Resolve the target to a capture size, plus the output whose
+            // refresh rate paces the stream. A window is captured at its
+            // current size; later resizes are letterboxed into these fixed
+            // dimensions rather than renegotiating the PipeWire format.
+            let resolved = match &target {
+                StreamTarget::Output(connector) => state
+                    .workspaces
+                    .outputs()
+                    .find(|o| o.name() == *connector)
+                    .cloned()
+                    .ok_or_else(|| format!("Output not found: {connector}"))
+                    .map(|output| {
+                        let (w, h, refresh) = output
+                            .current_mode()
+                            .map(|m| (m.size.w as u32, m.size.h as u32, m.refresh as u32))
+                            .unwrap_or((1920, 1080, 60000));
+                        (w, h, refresh)
+                    }),
+                StreamTarget::Window(id) => {
+                    window_for_identifier(&state.workspaces, &state.foreign_toplevels, id)
+                        .ok_or_else(|| format!("Window not found: {id}"))
+                        .and_then(|(window, output)| {
+                            let scale = output.current_scale().fractional_scale();
+                            let size =
+                                smithay::desktop::space::SpaceElement::geometry(&window).size;
+                            // Even dimensions: several PipeWire consumers (and
+                            // every YUV encoder downstream) reject odd sizes.
+                            let w = (((size.w as f64) * scale).round() as u32) & !1;
+                            let h = (((size.h as f64) * scale).round() as u32) & !1;
+                            if w == 0 || h == 0 {
+                                return Err(format!("Window {id} has zero size"));
+                            }
+                            let refresh = output
+                                .current_mode()
+                                .map(|m| m.refresh as u32)
+                                .unwrap_or(60000);
+                            Ok((w, h, refresh))
+                        })
+                }
+            };
 
-            let output = match output {
-                Some(o) => o.clone(),
-                None => {
-                    let _ =
-                        response_tx.send(Err(format!("Output not found: {}", output_connector)));
+            let (width, height, refresh_rate) = match resolved {
+                Ok(v) => v,
+                Err(e) => {
+                    let _ = response_tx.send(Err(e));
                     return;
                 }
             };
+
+            let stream_key = target.key();
 
             // Get the session and update cursor_mode
             let session = match state.screenshare_sessions.get_mut(&session_id) {
@@ -265,20 +431,11 @@ fn handle_screenshare_command<B: crate::state::Backend + 'static>(
             // Update cursor mode for this session
             session.cursor_mode = cursor_mode;
 
-            // Check if already recording this output
-            if session.streams.contains_key(&output_connector) {
-                let _ = response_tx.send(Err(format!(
-                    "Already recording output: {}",
-                    output_connector
-                )));
+            // Check if already recording this target
+            if session.streams.contains_key(&stream_key) {
+                let _ = response_tx.send(Err(format!("Already recording: {}", stream_key)));
                 return;
             }
-
-            // Get output dimensions for stream config
-            let (width, height, refresh_rate) = output
-                .current_mode()
-                .map(|m| (m.size.w as u32, m.size.h as u32, m.refresh as u32))
-                .unwrap_or((1920, 1080, 60000));
 
             // Build backend capabilities
             let gbm_device = state.backend_data.gbm_device();
@@ -360,23 +517,19 @@ fn handle_screenshare_command<B: crate::state::Backend + 'static>(
             };
 
             tracing::debug!(
-                "PipeWire stream started: session={}, output={}, node_id={}",
+                "PipeWire stream started: session={}, target={}, node_id={}, size={}x{}",
                 session_id,
-                output_connector,
-                node_id
-            );
-
-            tracing::debug!(
-                "Started PipeWire stream for session={}, output={}",
-                session_id,
-                output_connector
+                stream_key,
+                node_id,
+                width,
+                height
             );
 
             // Store the active stream
             session.streams.insert(
-                output_connector.clone(),
+                stream_key,
                 ActiveStream {
-                    output_connector,
+                    target,
                     pipewire_stream,
                     pending_frame: None,
                 },
@@ -385,15 +538,8 @@ fn handle_screenshare_command<B: crate::state::Backend + 'static>(
             // Send success response with node_id
             let _ = response_tx.send(Ok(node_id));
         }
-        CompositorCommand::StopRecording {
-            session_id,
-            output_connector,
-        } => {
-            tracing::debug!(
-                "StopRecording: session={}, output={}",
-                session_id,
-                output_connector
-            );
+        CompositorCommand::StopRecording { session_id, target } => {
+            tracing::debug!("StopRecording: session={}, target={:?}", session_id, target);
 
             // Get the session
             let session = match state.screenshare_sessions.get_mut(&session_id) {
@@ -405,17 +551,18 @@ fn handle_screenshare_command<B: crate::state::Backend + 'static>(
             };
 
             // Remove and stop the stream
-            if let Some(_stream) = session.streams.remove(&output_connector) {
+            let stream_key = target.key();
+            if let Some(_stream) = session.streams.remove(&stream_key) {
                 tracing::debug!(
-                    "Stopped stream for session={}, output={}",
+                    "Stopped stream for session={}, target={}",
                     session_id,
-                    output_connector
+                    stream_key
                 );
                 // PipeWire stream will be dropped here
             } else {
                 tracing::warn!(
-                    "No active stream for output {} in session {}",
-                    output_connector,
+                    "No active stream for {} in session {}",
+                    stream_key,
                     session_id
                 );
             }
@@ -449,6 +596,67 @@ fn handle_screenshare_command<B: crate::state::Backend + 'static>(
             state.focus_app(&app_id);
         }
     }
+}
+
+/// Render render elements into a PipeWire dmabuf, over an opaque black clear.
+///
+/// This is the window-capture counterpart of [`fullscreen_to_dmabuf`]. Instead
+/// of blitting the composited output it re-renders the window's own surface
+/// tree, so the capture is unaffected by windows stacked on top of it, by the
+/// dock/topbar, or by which workspace is currently on screen.
+///
+/// Elements are expected to be positioned by the caller so the window's
+/// geometry origin lands at (0, 0). Content outside `size` is clipped: a window
+/// that grew since recording started is cropped, one that shrank leaves the
+/// remainder black.
+pub fn window_to_dmabuf<R, E>(
+    renderer: &mut R,
+    dst_dmabuf: &mut smithay::backend::allocator::dmabuf::Dmabuf,
+    size: smithay::utils::Size<i32, smithay::utils::Physical>,
+    elements: &[E],
+    scale: smithay::utils::Scale<f64>,
+) -> Result<(), String>
+where
+    R: smithay::backend::renderer::Renderer
+        + smithay::backend::renderer::Bind<smithay::backend::allocator::dmabuf::Dmabuf>,
+    E: smithay::backend::renderer::element::RenderElement<R>,
+{
+    use smithay::backend::renderer::{Color32F, Frame};
+    use smithay::utils::{Physical, Rectangle};
+
+    let full = Rectangle::<i32, Physical>::from_size(size);
+
+    let mut dmabuf_fb = renderer
+        .bind(dst_dmabuf)
+        .map_err(|e| format!("Failed to bind dmabuf: {:?}", e))?;
+
+    let mut frame = renderer
+        .render(&mut dmabuf_fb, size, smithay::utils::Transform::Normal)
+        .map_err(|e| format!("Failed to create frame: {:?}", e))?;
+
+    // Opaque black: the stream is ARGB, and consumers that ignore alpha would
+    // otherwise show whatever was left in the recycled buffer.
+    frame
+        .clear(Color32F::new(0.0, 0.0, 0.0, 1.0), &[full])
+        .map_err(|e| format!("Failed to clear: {:?}", e))?;
+
+    // Front-to-back element order is top-most first; draw in reverse so upper
+    // elements land on top.
+    for element in elements.iter().rev() {
+        let src = element.src();
+        let dst = element.geometry(scale);
+        let Some(mut damage) = full.intersection(dst) else {
+            continue;
+        };
+        damage.loc -= dst.loc;
+        element
+            .draw(&mut frame, src, dst, &[damage], &[])
+            .map_err(|e| format!("Failed to draw element: {:?}", e))?;
+    }
+
+    std::mem::drop(frame);
+
+    Ok(())
 }
 
 /// Copy compositor framebuffer to PipeWire buffer with cursor rendering

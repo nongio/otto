@@ -9,7 +9,8 @@ Otto exposes a compositor-side `org.otto.ScreenCast` D-Bus service that a portal
 (`xdg-desktop-portal-otto`) uses to implement `org.freedesktop.portal.ScreenCast` for
 applications (OBS, Chrome, Firefox, etc.). This spec covers two pieces of that path: how
 the PipeWire video stream negotiates a DMA-BUF format/modifier with the consuming client,
-and how the portal picks which output gets shared when a session starts. Everything else
+and how the portal picks which source (an output or a single window) gets shared when a
+session starts. Everything else
 about the screenshare pipeline (D-Bus service shape, GPU blit, damage metadata) is
 documented in `docs/developer/screenshare.md`.
 
@@ -23,19 +24,23 @@ documented in `docs/developer/screenshare.md`.
   plane only).
 - The modifier a client actually negotiates must be read correctly and unambiguously; Otto
   must never allocate a buffer in one layout while the client reads it as another.
-- A user must be able to choose which output a screencast session records without a
-  source-picker UI, and change that choice between sessions without restarting anything.
+- A user must be able to choose what a screencast session records — any output, or any
+  single toplevel window — from a picker presented at `SelectSources` time.
+- A shared window must be captured from its own surfaces, so the stream shows neither
+  windows stacked above it nor the desktop behind it, and keeps updating while the window
+  is occluded, on another workspace, or minimized.
 
 ## Non-Goals
 
-- A graphical source-picker UI for choosing the shared output (tracked as future work).
+- Live thumbnails in the source picker (the list is text + app icon only; previews are
+  future work, most likely via `ext-image-copy-capture-v1`).
+- Region capture, and capture of a window's sub-surface or a specific tab.
+- Renegotiating the PipeWire stream format when a captured window resizes.
 - Negotiating DMA-BUF for pixel formats other than `Argb8888`/BGRA.
 - A CPU/SHM fill path for the DMA-BUF format when no GBM device is available beyond the
   existing SHM-only fallback (see Constraints).
-- Multi-monitor / multiple simultaneous output selection (the portal always resolves to a
-  single output; see `multiple` handling below).
-- Window or region capture (`RecordWindow` is unimplemented; only monitor capture is
-  supported).
+- Multiple simultaneous sources in one session (the portal always resolves to a single
+  source; see `multiple` handling below).
 
 ## Behavior
 
@@ -76,10 +81,69 @@ documented in `docs/developer/screenshare.md`.
   - A negotiated modifier value of `DRM_FORMAT_MOD_INVALID` is accepted and treated as
     "implicit modifier" DMA-BUF, distinct from a parse failure.
 
-### Portal output selection (`SelectSources`)
+### Window identity
 
-- On every `SelectSources` call, the portal backend asks the compositor for the current
-  output list (`ListOutputs`) and by default selects the **first** output in that list.
+- A capturable window is named by its `ext-foreign-toplevel-list-v1` **identifier** — the
+  opaque, stable, cross-process handle the protocol defines for exactly this purpose. Otto
+  never exposes surface ids, PIDs, or window titles as the addressing key.
+- `org.otto.ScreenCast.ListWindows` returns `(identifier, app_id, title)` for every mapped
+  toplevel that has a foreign-toplevel handle. A toplevel without one is not capturable.
+- `org.otto.ScreenCast.Session.RecordWindow` takes a `window-id` property carrying that
+  identifier, and a `cursor-mode` property, mirroring `RecordMonitor`.
+- An identifier that no longer resolves (window closed or unmapped between the picker and
+  `Start`) fails `RecordWindow` rather than falling back to any other window.
+
+### Portal source selection (`SelectSources`)
+
+- `SelectSources` accepts `types` containing `MONITOR` (1), `WINDOW` (2), or both. A request
+  for neither is rejected as before.
+- On every call the portal asks the compositor for the current sources: `ListOutputs` when
+  monitors are allowed, `ListWindows` when windows are allowed. A `ListWindows` failure
+  (e.g. an older compositor) degrades to an empty window list rather than failing the call.
+- If both lists are empty, the portal returns response `3` (no sources).
+- The portal then presents a **single radio list** containing every allowed source: each
+  output (labelled `Entire screen` when there is exactly one, else `Screen — <connector>`),
+  followed by each window (labelled by title, falling back to app_id, with app_id as the
+  icon hint). Monitors and windows are offered together regardless of which `types` bits
+  the app set, so the user is never forced back to the app to change the request.
+- The list is presented through the `org.otto.Dialog1` renderer (otto-islands), the same
+  Access-style permission/choice dialog used by the portal's Access implementation. Option
+  ids are namespaced `monitor:<connector>` and `window:<identifier>`.
+- The user's answer resolves as:
+  - **Chose a source** → stored on the session; response `0`.
+  - **Dismissed the dialog** → response `1` (cancelled). Nothing is captured.
+  - **No dialog renderer answered on the bus** → the portal falls back to the pre-picker
+    behaviour for monitors (override file, else first output) so a session without
+    otto-islands still shares a screen. A window is **never** selected on the user's behalf
+    in this path; if only windows were available the call returns response `2`.
+- `Start` calls `RecordMonitor` or `RecordWindow` according to the stored selection, and the
+  resulting portal stream carries `source_type` = 1 or 2 to match.
+
+### Window capture
+
+- A window stream renders the window's **own surface tree** (toplevel + subsurfaces, plus
+  its popups) into the PipeWire DMA-BUF; it does not blit the composited output. Content
+  stacked above the window, the dock/topbar, and the desktop behind it are therefore never
+  in the capture.
+- The window's geometry origin is placed at (0, 0) of the stream buffer, so client-side
+  decoration shadow margins are cropped out.
+- The buffer is cleared to opaque black before each frame.
+- The stream size is fixed at `RecordWindow` time to the window's geometry in physical
+  pixels, rounded **down to even** dimensions. A window that later grows is cropped to that
+  size; one that shrinks leaves the remainder black. The format is never renegotiated.
+- With cursor mode `EMBEDDED`, the cursor is drawn into the window stream at window-relative
+  coordinates, so it appears only while the pointer is over the captured window.
+- Window streams are serviced from the render frame of whichever output currently hosts the
+  window, so moving a window between outputs does not interrupt its stream. They force that
+  output to composite (no direct scanout) and to keep painting when otherwise idle, exactly
+  as a monitor stream does.
+- A window with an active stream is classified `Captured` by the frame-callback throttler:
+  it receives frame callbacks at full rate even when occluded, on an inactive workspace, or
+  minimized, and is **not** reported as `activated` (it has no keyboard focus).
+- A locked session suspends all capture, window streams included.
+
+### Output-selection override file
+
 - Before falling back to the default, the portal checks for an override file at
   `$XDG_CONFIG_HOME/otto/screencast-output` (falling back to `~/.config/otto/screencast-output`
   if `XDG_CONFIG_HOME` is unset). The file is read fresh on every `SelectSources` call — there
@@ -93,8 +157,10 @@ documented in `docs/developer/screenshare.md`.
   `ListOutputs`, the portal logs a warning and falls back to selecting the first output from
   `ListOutputs`, exactly as if no override existed.
 - If the app requests `multiple` source selection, the portal logs that it is limiting
-  selection to a single output and proceeds with the same first-output-or-override
-  resolution above; it never selects more than one output.
+  selection to a single source and proceeds with the single-choice picker above; it never
+  selects more than one source.
+- The override only applies to the no-renderer fallback path; when the picker is reachable
+  the user's answer wins.
 
 ## Constraints & Edge Cases
 
@@ -120,9 +186,22 @@ documented in `docs/developer/screenshare.md`.
   is a single trimmed line with no quoting, comments, or multi-output support; an invalid or
   stale connector name degrades gracefully (falls back to first output with a warning) rather
   than failing the session.
-- **This override is a stopgap:** it exists only because there is no interactive
-  source-picker in the portal flow yet. It is expected to be superseded by a real UI that
-  lets the user choose the output per-session.
+- **The override is now only a fallback:** with the picker in place it applies solely when
+  no `org.otto.Dialog1` renderer answers, keeping headless/islands-less sessions working.
+- **A resized captured window is not renegotiated:** the stream keeps its original
+  dimensions for its lifetime, cropping or letterboxing instead. Renegotiating mid-stream
+  would require tearing down and re-announcing the PipeWire format, which many consumers
+  handle poorly; a fixed size trades fidelity for a stream that never drops.
+- **Window capture bypasses the compositor's effects:** because it renders the client's own
+  surfaces rather than the composited scene, rounded corners, shadows, blur and any other
+  lay-rs scene decoration are absent from the capture. This is intentional — the consumer
+  wants the window's content, not Otto's presentation of it.
+- **A captured window is pinned at full frame rate**, which removes the power savings the
+  throttler would otherwise get from occlusion/minimization for that one window. This is
+  required: the remote viewer sees the window even when the local user does not.
+- **The picker is modal and blocking:** `SelectSources` does not return until the user
+  answers. An app that times out its portal call will fail the session; this matches the
+  behaviour of every other portal implementation's chooser.
 
 ## Rationale
 
@@ -150,10 +229,29 @@ documented in `docs/developer/screenshare.md`.
   which virtual/monitor output gets captured across ad hoc RDP/screenshare testing sessions)
   where restarting the whole D-Bus session is disruptive.
 
+- **Reusing the Access-style choice dialog for the picker** avoids building a bespoke
+  source-picker UI: `org.freedesktop.impl.portal.Access` already defines a labelled radio
+  list (`choices`), Otto's `org.otto.Dialog1` mirrors that shape, and otto-islands already
+  renders it with app icons. A dedicated picker with live previews can replace it later
+  without changing the compositor-side contract.
+- **`ext-foreign-toplevel-list-v1` identifiers as the window key** were chosen over any
+  internal id because the protocol defines them precisely for naming a window to another
+  process, Otto already implements the protocol, and it keeps the door open for a picker
+  that enumerates windows itself instead of via `ListWindows`.
+- **Re-rendering the window's surfaces instead of cropping the output framebuffer** is what
+  makes occluded, off-workspace and minimized capture work at all, and prevents leaking
+  whatever happens to be stacked on top of the shared window to the remote viewer — the
+  privacy property users assume when they pick "share a window" over "share a screen".
+
 ## Open Questions
 
 - Should the SHM fallback path also be re-enabled as an *additional* pod when DMA-BUF pods
   are offered, so a client that can't negotiate `DMA_DRM` caps still gets a (CPU-copied)
   stream instead of failing outright?
-- Should the output-selection override file be replaced by an actual portal-side UI, and if
-  so, does the override file stay as a scriptable/testing escape hatch afterward?
+- Should the picker show live thumbnails, and if so, does that arrive via
+  `ext-image-copy-capture-v1` (picker captures for itself) or a compositor-side thumbnail
+  API?
+- Should a captured window that is resized renegotiate the stream format rather than being
+  cropped, and is any consumer robust enough to make that worthwhile?
+- Should the compositor show a persistent indicator while a window is being cast, as it
+  arguably should for monitor casts too?
