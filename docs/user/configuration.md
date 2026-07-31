@@ -43,16 +43,22 @@ $EDITOR ~/.config/otto/config.toml
 
 | Topic | Description |
 |-------|-------------|
-| [Display](display.md) | Scaling, display profiles, layer shell zones |
+| [Display](display.md) | Scaling, display profiles, monitor arrangement, virtual outputs, layer shell zones |
 | [Theming](theming.md) | Theme scheme, accent color, fonts, background, cursors, icons |
-| [Input](input.md) | Keyboard repeat, touchpad, pointer acceleration |
-| [Keyboard Shortcuts](keyboard-shortcuts.md) | Key remapping, shortcut bindings, available actions |
+| [Input](input.md) | Keyboard layout and repeat, touchpad, pointer acceleration |
+| [Keyboard Shortcuts](keyboard-shortcuts.md) | Binding syntax and the complete action list |
 | [Dock](dock.md) | Dock appearance, bookmarks, autohide, magnification |
+| [Top Bar](topbar.md) | Clock format, tray, global menus (`topbar.toml`) |
 | [Audio](audio.md) | Sound effects and sound themes |
-| [Power Management](power-management.md) | Lid switch behavior |
+| [Power Management](power-management.md) | Lid switch, power button, suspend, clamshell |
+| [Lock Screen](lock-screen.md) | Locker command, idle auto-lock, PAM setup |
+| [Login Greeter](login-greeter.md) | `--login` mode and the greeter command |
 | [Night Shift](night-shift.md) | Color temperature and brightness control |
 | [Autostart](autostart.md) | exec_once, XDG autostart, systemd integration |
 | [Clipboard](clipboard.md) | Clipboard persistence and managers |
+
+For everything else — how to *use* the desktop rather than configure it — start
+from the [User Guide index](README.md).
 
 ## Tips
 
@@ -75,10 +81,14 @@ $EDITOR ~/.config/otto/config.toml
 - Some themes may require additional packages.
 
 **Keyboard shortcuts not working:**
-- Modifier names are `Logo`, `Ctrl`, `Alt`, `Shift` (case-sensitive).
-- Some shortcuts may conflict with system bindings.
+- Modifiers are `Ctrl`, `Alt`, `Shift` and `Logo` (aliases accepted, case-insensitive).
+- An unparsable trigger or action is **skipped with a warning**, not an error —
+  grep the log for `skipping shortcut`.
+- Some shortcuts may conflict with an application's shortcut inhibitor.
 
 **Touchpad settings ignored:**
 - Settings only apply to touchpad devices, not mice.
 - Some hardware may not support all features.
 - Check `libinput` capabilities for your device.
+
+For a fuller list, see [Troubleshooting](troubleshooting.md).

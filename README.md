@@ -54,9 +54,9 @@ Testing and issue reports are welcome. Development follows a draft roadmap of pl
 - **Multi-monitor:** per-output rendering, workspaces, fullscreen, Exposé and workspace selector; hotplug, display arrangement and modes from the config, and virtual outputs created on demand.
 - **Dock (task manager):** shows running apps, minimized windows and pinned/bookmarked apps, bounces an icon while a launch is in progress.
 - **App switcher** (default: `Ctrl+Tab`): searches app metadata/icons (XDG), can close apps, cycles between windows of the same app, appears on the monitor under the pointer.
-- **Exposé / overview** (default: `PageDown`, gesture: three-finger swipe up): shows all windows, shows window previews with names, includes “show desktop”.
+- **Exposé / overview** (default: `PageUp`, gesture: three-finger swipe up): shows all windows, shows window previews with names; “show desktop” is a separate action (default: `PageDown`, gesture: four-finger pinch out).
 - **Topbar:** clock, system tray, and application menus exported over DBusMenu.
-- **Dynamic island:** notifications, ongoing activities, and system UI (brightness, volume, keyboard backlight) in a floating panel.
+- **Dynamic island:** a `org.freedesktop.Notifications` daemon, ongoing activities pushed over D-Bus, and permission dialogs, in a floating panel. Volume and brightness changes show a separate compositor-drawn indicator.
 - **Session lock:** `ext-session-lock-v1` locking with a PAM-backed locker (`otto-lock`), lock on `Ctrl+Alt+Escape`, on the power button, on lid close, or after an idle timeout — respecting `idle-inhibit` clients.
 - **Login greeter:** `otto --login` hosts a login screen (`otto-greeter`) against greetd, with password and fingerprint prompts.
 - **Power management:** Otto-owned lid-close suspend with clamshell and remote-session awareness, configurable power-button and lid actions.
@@ -70,7 +70,7 @@ Testing and issue reports are welcome. Development follows a draft roadmap of pl
 > **Note on KMS scanout:** on the tty-udev backend, Otto puts parts of the desktop on their own hardware planes instead of compositing everything into one buffer, keeping the number of overlapping planes small to limit GPU work. This has mostly been tested on Intel GPUs. Other drivers are expected to fall back to full composition when the atomic test rejects a plane configuration, but that path is untested — if you see missing, misplaced or flickering elements on AMD or NVIDIA, this is the first thing to suspect, and a report is welcome. See [docs/developer/drm_plane.md](./docs/developer/drm_plane.md).
 
 ### Still to come
- - **Screen capture:** per-window capture and screenshots.
+ - **Screen capture:** per-window capture, and a built-in screenshot UI (whole-output and region capture already work through `wlr-screencopy`, e.g. with `grim`).
  - **Multi-monitor:** display mirroring.
  - **Dock improvements:** favorite locations; move Dock code out of compositor core.
  - **Input polish:** scroll acceleration.
@@ -250,7 +250,7 @@ You can create backend-specific configuration files for development using the na
 
 Backend-specific configs have the highest priority and override all other configuration files. This allows you to maintain different display settings, keyboard shortcuts, or other preferences for each backend. For instance, you might want different `screen_scale` values when running in a window (winit/X11) versus on bare metal (tty-udev).
 
-For detailed configuration options, see the [configuration documentation](./docs/user/configuration.md).
+For detailed configuration options, see the [configuration documentation](./docs/user/configuration.md), and the [User Guide](./docs/user/README.md) for everything else — window management, workspaces, gestures, the dock and top bar, screen sharing, remote desktop, locking and login.
 
 ### Keyboard Shortcuts
 Hotkeys are now fully configurable via the `otto_config.toml` file. See the `[keyboard_shortcuts]` section to customize keybindings for your setup. Example:
