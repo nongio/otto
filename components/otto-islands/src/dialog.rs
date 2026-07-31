@@ -302,24 +302,18 @@ pub fn draw_dialog(canvas: &Canvas, view: &DialogView, selected: &[usize], layou
 
     let w = layout.width;
     let cx = w / 2.0;
-    let white = Color::WHITE;
-    let dim = Color::from_argb(190, 255, 255, 255);
-    let dim2 = Color::from_argb(140, 255, 255, 255);
-    let accent = Color::from_argb(0xFF, 0x0A, 0x84, 0xFF);
+    let theme = otto_kit::AppContext::current_theme();
+    // Text is black on light, white on dark — the theme decides.
+    let text = theme.text_primary;
+    let dim = theme.text_secondary;
+    let dim2 = theme.text_tertiary;
+    let accent = theme.accent_blue;
+    // Labels drawn on top of the accent fill stay white in both schemes.
+    let on_accent = Color::WHITE;
 
-    // Panel background fill (rounded). The surface style also paints a blurred
-    // near-black backdrop; this fill gives a solid, self-contained card look.
-    let mut bg = Paint::default();
-    bg.set_anti_alias(true);
-    bg.set_color(Color::from_argb(0xF2, 0x1C, 0x1C, 0x1E));
-    canvas.draw_rrect(
-        RRect::new_rect_xy(
-            Rect::from_xywh(0.0, 0.0, w, layout.height),
-            PANEL_RADIUS,
-            PANEL_RADIUS,
-        ),
-        &bg,
-    );
+    // No panel fill here: the surface style paints the translucent material over
+    // a blurred backdrop (see [`apply_dialog_style`]) and clips the rounded
+    // corners, so the canvas only carries content.
 
     // Icon.
     if layout.icon_present {
@@ -334,7 +328,7 @@ pub fn draw_dialog(canvas: &Canvas, view: &DialogView, selected: &[usize], layou
         cx,
         layout.title_y + 14.0,
         &font(15.0, 700),
-        white,
+        text,
     );
 
     // Subtitle.
@@ -372,7 +366,7 @@ pub fn draw_dialog(canvas: &Canvas, view: &DialogView, selected: &[usize], layou
         row_bg.set_color(if is_selected {
             accent
         } else {
-            Color::from_argb(28, 255, 255, 255)
+            theme.fill_secondary
         });
         canvas.draw_rrect(
             RRect::new_rect_xy(*rect, OPTION_RADIUS, OPTION_RADIUS),
@@ -394,7 +388,7 @@ pub fn draw_dialog(canvas: &Canvas, view: &DialogView, selected: &[usize], layou
 
         let mut paint = Paint::default();
         paint.set_anti_alias(true);
-        paint.set_color(white);
+        paint.set_color(if is_selected { on_accent } else { text });
         canvas.draw_str(
             &opt.label,
             (text_x, rect.center_y() + 4.5),
@@ -406,7 +400,7 @@ pub fn draw_dialog(canvas: &Canvas, view: &DialogView, selected: &[usize], layou
         if is_selected {
             let mut ck = Paint::default();
             ck.set_anti_alias(true);
-            ck.set_color(white);
+            ck.set_color(on_accent);
             ck.set_style(skia_safe::paint::Style::Stroke);
             ck.set_stroke_width(2.0);
             ck.set_stroke_cap(skia_safe::paint::Cap::Round);
@@ -425,11 +419,17 @@ pub fn draw_dialog(canvas: &Canvas, view: &DialogView, selected: &[usize], layou
         canvas,
         &layout.deny_rect,
         &view.deny_label,
-        Color::from_argb(40, 255, 255, 255),
-        white,
+        theme.fill_secondary,
+        text,
     );
     // Grant button (accent).
-    draw_button(canvas, &layout.grant_rect, &view.grant_label, accent, white);
+    draw_button(
+        canvas,
+        &layout.grant_rect,
+        &view.grant_label,
+        accent,
+        on_accent,
+    );
 
     canvas.restore();
 }
@@ -470,12 +470,18 @@ fn draw_icon(canvas: &Canvas, icon_name: &str, x: f32, y: f32, size: f32) {
     }
 }
 
-/// Apply the frosted-panel surface style to a dialog subsurface. The panel's
-/// solid fill is drawn in [`draw_dialog`]; the style provides the blur backdrop,
-/// rounded clipping, drop shadow, and center anchor.
+/// Apply the frosted-panel surface style to a dialog subsurface: a translucent
+/// theme material over a blurred backdrop, rounded clipping, drop shadow, and
+/// center anchor. [`draw_dialog`] draws only the content on top.
 pub fn apply_dialog_style(surface: &SubsurfaceSurface) {
+    let c = otto_kit::AppContext::current_theme().material_medium;
     if let Some(ss) = surface.base_surface().surface_style() {
-        ss.set_background_color(0.0, 0.0, 0.0, 0.0);
+        ss.set_background_color(
+            c.r() as f64 / 255.0,
+            c.g() as f64 / 255.0,
+            c.b() as f64 / 255.0,
+            c.a() as f64 / 255.0,
+        );
         ss.set_corner_radius(PANEL_RADIUS as f64 * BUFFER_SCALE);
         ss.set_masks_to_bounds(ClipMode::Enabled);
         ss.set_shadow(0.35, 24.0, 0.0, 8.0, 0.0, 0.0, 0.0);
