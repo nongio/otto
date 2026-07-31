@@ -367,6 +367,8 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         let subcompositor = globals.bind(&qh, 1..=1, ()).ok();
         let cursor_shape_manager: Option<wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1> =
             globals.bind(&qh, 1..=2, ()).ok();
+        let fractional_scale_manager: Option<wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1> =
+            globals.bind(&qh, 1..=1, ()).ok();
 
         // Get display pointer for creating surfaces
         let display_ptr = conn.backend().display_ptr() as *mut std::ffi::c_void;
@@ -387,6 +389,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
             otto_dock_manager,
             session_lock_manager,
             cursor_shape_manager,
+            fractional_scale_manager,
             display_ptr,
         });
 
@@ -1072,9 +1075,32 @@ impl<A: App + 'static> Dispatch<otto_dock_item_v1::OttoDockItemV1, ()> for AppDa
     }
 }
 
+impl<A: App + 'static>
+    Dispatch<
+        wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1::WpFractionalScaleV1,
+        (),
+    > for AppData<A>
+{
+    fn event(
+        _state: &mut Self,
+        _proxy: &wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1::WpFractionalScaleV1,
+        event: wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1::Event;
+        if let Event::PreferredScale { scale } = event {
+            tracing::debug!("preferred fractional scale: {}", scale as f64 / 120.0);
+            AppContext::set_fractional_scale_120(scale);
+        }
+    }
+}
+
 // Delegate noop for protocols we don't handle
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_client::protocol::wl_subcompositor::WlSubcompositor);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_client::protocol::wl_subsurface::WlSubsurface);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore ZwlrLayerShellV1);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::WpCursorShapeDeviceV1);
+wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);

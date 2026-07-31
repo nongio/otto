@@ -87,6 +87,12 @@ static EXIT_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 
 static DISPLAY_SCALE_FACTOR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(2);
 
+/// Preferred fractional scale in 120ths, as sent by `wp_fractional_scale_v1`.
+/// 0 means the compositor has not sent one yet — callers fall back to the
+/// integer `wl_surface` scale.
+static DISPLAY_FRACTIONAL_SCALE_120: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0);
+
 // -- Wakeup pipe (cross-thread) --
 
 use std::sync::OnceLock;
@@ -133,6 +139,7 @@ pub struct AppContextData {
     pub otto_dock_manager: Option<crate::protocols::otto_dock_manager_v1::OttoDockManagerV1>,
     pub session_lock_manager: Option<wayland_protocols::ext::session_lock::v1::client::ext_session_lock_manager_v1::ExtSessionLockManagerV1>,
     pub cursor_shape_manager: Option<wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
+    pub fractional_scale_manager: Option<wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
     pub display_ptr: *mut std::ffi::c_void,
 }
 
@@ -186,6 +193,24 @@ impl<'a> AppContext<'a> {
         DISPLAY_SCALE_FACTOR.store(factor, std::sync::atomic::Ordering::Relaxed);
     }
 
+    /// The output scale as a fraction (physical pixels per logical point).
+    ///
+    /// Buffers are still rendered at the integer [`scale_factor`], but geometry
+    /// handed to the compositor in physical pixels — surface-style sizes and
+    /// positions — must use this: on a 1.5x output the integer factor is 2, and
+    /// scaling by it makes a surface a third too large.
+    pub fn fractional_scale() -> f64 {
+        match DISPLAY_FRACTIONAL_SCALE_120.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => Self::scale_factor().max(1) as f64,
+            n => n as f64 / 120.0,
+        }
+    }
+
+    /// Store the preferred scale from `wp_fractional_scale_v1` (in 120ths).
+    pub(crate) fn set_fractional_scale_120(scale_120: u32) {
+        DISPLAY_FRACTIONAL_SCALE_120.store(scale_120, std::sync::atomic::Ordering::Relaxed);
+    }
+
     pub fn xdg_shell_state() -> &'static XdgShell {
         Self::with_global(|ctx| unsafe { &*(ctx.xdg_shell_state_ref() as *const XdgShell) })
     }
@@ -195,6 +220,16 @@ impl<'a> AppContext<'a> {
         Self::with_global(|ctx| unsafe {
             ctx.surface_style_manager_ref()
                 .map(|r| &*(r as *const otto_surface_style_manager_v1::OttoSurfaceStyleManagerV1))
+        })
+    }
+
+    pub fn fractional_scale_manager() -> Option<&'static wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>{
+        use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1;
+        Self::with_global(|ctx| unsafe {
+            ctx.data
+                .fractional_scale_manager
+                .as_ref()
+                .map(|r| &*(r as *const WpFractionalScaleManagerV1))
         })
     }
 

@@ -131,7 +131,11 @@ impl TopBarApp {
         txn.set_duration(0.5);
         txn.set_timing_function(&timing);
 
-        let scale = AppContext::scale_factor().max(1) as f64;
+        // Surface-style geometry is in physical pixels, so it must use the
+        // output's fractional scale — the integer buffer scale is 2 on a 1.5x
+        // output and would size the panel past its exclusive zone, over the
+        // maximized window below.
+        let scale = AppContext::fractional_scale();
         style.set_size(width as f64 * scale, height as f64 * scale);
 
         txn.commit();
