@@ -1,6 +1,6 @@
 # Display
 screen_scale = 1.0
-locales = ["en"]  # Language preferences for app names/desktop entries (e.g., ["fr", "en"])
+locales = ["en_US", "en"]  # Language preferences for app names/desktop entries, most specific first. Use standard locale identifiers with region codes (e.g., ["fr_FR", "fr"], ["zh_CN", "zh"]); matching falls back from region to bare language.
 
 # Occlusion culling: skip rendering of layers fully hidden behind opaque layers.
 # Improves GPU/CPU throughput when windows overlap. Disable if you see missing content.

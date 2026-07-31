@@ -115,11 +115,16 @@ inheritance — a theme that lacks an icon falls back to its parent.
 ## Language
 
 ```toml
-locales = ["en"]
+locales = ["en_US", "en"]
 ```
 
 Preferred languages for application names and descriptions read from `.desktop`
-files. `["fr", "en"]` means "French if the entry has it, English otherwise".
+files. Use standard locale identifiers, most specific first, and prefer the
+region-qualified form (`lang_COUNTRY`): `["fr_FR", "fr"]` means "French (France)
+if the entry has that variant, plain French otherwise, English as the ultimate
+fallback from the entry's untranslated name". Matching follows the freedesktop
+Desktop Entry spec and falls back automatically from region to bare language, so
+listing both `zh_CN` and `zh` catches entries that localize either form.
 
 This affects names shown in the dock, app switcher and menus. It does not change
 Otto's own UI language.
@@ -142,7 +147,7 @@ cursor_theme = "Adwaita"
 cursor_size = 32
 icon_theme = "Papirus-Dark"
 
-locales = ["en"]
+locales = ["en_US", "en"]
 ```
 
 ## Troubleshooting
