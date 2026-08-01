@@ -61,6 +61,12 @@ impl BaseWaylandSurface {
         });
         let surface_style = AppContext::surface_style_manager()
             .map(|manager| manager.get_surface_style(&wl_surface, AppContext::queue_handle(), ()));
+        // Learn the output's fractional scale. Buffers stay at the integer
+        // `buffer_scale`, but geometry sent to the compositor in physical
+        // pixels needs the real fraction — see `AppContext::fractional_scale`.
+        if let Some(manager) = AppContext::fractional_scale_manager() {
+            let _ = manager.get_fractional_scale(&wl_surface, AppContext::queue_handle(), ());
+        }
         Self {
             wl_surface,
             skia_surface: None,

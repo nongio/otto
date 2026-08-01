@@ -152,7 +152,7 @@ impl ContextMenuStyle {
 
     /// Get the background color from theme
     pub fn background_color(&self) -> skia_safe::Color {
-        self.theme.material_medium
+        self.theme.material_popup
     }
 
     /// Get the border color from theme — lighter than the background for definition

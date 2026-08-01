@@ -100,7 +100,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 - **App has no dbusmenu:** Show only app name, no menu entries. Do not show an empty menu bar.
 - **SNI watcher absent:** Tray section is hidden. The bar must not crash — re-probe every 30 seconds.
 - **Menu root changes while open:** Close the current open menu and re-fetch before re-opening.
-- **HiDPI / fractional scaling:** The bar must render at the output's native scale. All sizes are in logical points; the bar converts to physical pixels using the output's scale factor.
+- **HiDPI / fractional scaling:** The bar must render at the output's native scale. All sizes are in logical points; the bar converts to physical pixels using the output's *fractional* scale (`wp_fractional_scale_v1`), not the integer buffer scale — on a 1.5x output the integer scale is 2, and sizing by it pushes the panels past their exclusive zone and over the window below.
 - **Theme change:** Re-apply colors within one second without restarting. Use the color-scheme D-Bus portal (`org.freedesktop.portal.Settings`) to track system theme.
 - **Multiple monitors:** Primary-output bar shows all three zones. Secondary-output bars (if enabled) show only tray + clock.
 - **Right-to-left locales:** Zone order reverses (right zone on left, left zone on right). Menu popup alignment mirrors accordingly.

@@ -244,8 +244,10 @@ pub fn setup_miniwindow_icon(layer: &Layer, inner_layer: &Layer, icon_width: f32
 }
 
 pub fn setup_label(new_layer: &Layer, label_text: String) {
-    let _draw_scale = Config::with(|config| config.screen_scale as f32);
-    let text_size = 26.0;
+    // The tooltip is drawn straight into the scene, so every measurement below
+    // is in physical pixels: keep the design in logical points and scale once.
+    let scale = Config::with(|config| config.screen_scale as f32);
+    let text_size = 13.0 * scale;
     let font_family = Config::with(|config| config.font_family.clone());
     let font = FONT_CACHE.with(|font_cache| {
         font_cache.make_font_with_fallback(
@@ -260,17 +262,17 @@ pub fn setup_label(new_layer: &Layer, label_text: String) {
     let text_bounds = font.measure_str(label_text, Some(&paint));
 
     let text_bounds = text_bounds.1;
-    let arrow_height = 20.0;
-    let text_padding_h = 30.0;
-    let text_padding_v = 14.0;
-    let safe_margin = 100.0;
+    let arrow_height = 10.0 * scale;
+    let text_padding_h = 15.0 * scale;
+    let text_padding_v = 7.0 * scale;
+    let safe_margin = 50.0 * scale;
     let label_size_width = text_bounds.width() + text_padding_h * 2.0 + safe_margin * 2.0;
     // Fixed height based on font size, not measured text bounds
     let label_size_height = text_size + arrow_height + text_padding_v * 2.0 + safe_margin * 2.0;
 
-    let rect_corner_radius = 10.0;
-    let arrow_width = 25.0;
-    let arrow_corner_radius = 3.0;
+    let rect_corner_radius = 5.0 * scale;
+    let arrow_width = 12.5 * scale;
+    let arrow_corner_radius = 1.5 * scale;
     // Calculate tooltip dimensions
     let tooltip_width = label_size_width - safe_margin * 2.0;
     let tooltip_height = label_size_height - safe_margin * 2.0;
@@ -347,11 +349,11 @@ pub fn setup_label(new_layer: &Layer, label_text: String) {
         .background_color(theme_colors().materials_ultrathick)
         .position(Point {
             x: -label_size_width / 2.0,
-            y: -label_size_height - 10.0 + safe_margin,
+            y: -label_size_height - 5.0 * scale + safe_margin,
         })
         .shadow_color(theme_colors().shadow_color)
         .shadow_offset(((0.0, 0.0).into(), None))
-        .shadow_radius((20.0, None))
+        .shadow_radius((10.0 * scale, None))
         .opacity((0.0, None))
         .pointer_events(false)
         .content(Some(draw_label))

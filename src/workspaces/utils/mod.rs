@@ -299,6 +299,22 @@ pub fn configure_surface_layer(
         let src_w = draw_wvs.phy_src_w.max(1.0);
         let src_h = draw_wvs.phy_src_h.max(1.0);
 
+        // Buffer pixels are not physical pixels: a client painting at buffer
+        // scale 2 on a 1.5x output hands us a 60px buffer for 45 physical px.
+        // The non-resizing gravities align the texture rather than stretch it,
+        // but they still have to bridge that ratio — otherwise the content is
+        // drawn oversized and cropped to the layer.
+        let base_x = if draw_wvs.phy_dst_w > 0.0 {
+            draw_wvs.phy_dst_w / src_w
+        } else {
+            1.0
+        };
+        let base_y = if draw_wvs.phy_dst_h > 0.0 {
+            draw_wvs.phy_dst_h / src_h
+        } else {
+            1.0
+        };
+
         // Use live w/h for all gravity modes so the draw scales correctly during animations.
         let (scale_x, scale_y, tx, ty) = match gravity {
             ContentsGravity::Resize => (w / src_w, h / src_h, 0.0f32, 0.0f32),
@@ -315,14 +331,14 @@ pub fn configure_surface_layer(
                 (s, s, tx, ty)
             }
             ContentsGravity::Center => {
-                let tx = (w - src_w) / 2.0;
-                let ty = (h - src_h) / 2.0;
-                (1.0f32, 1.0f32, tx, ty)
+                let tx = (w - src_w * base_x) / 2.0;
+                let ty = (h - src_h * base_y) / 2.0;
+                (base_x, base_y, tx, ty)
             }
-            ContentsGravity::TopLeft => (1.0f32, 1.0f32, 0.0f32, 0.0f32),
+            ContentsGravity::TopLeft => (base_x, base_y, 0.0f32, 0.0f32),
             ContentsGravity::TopRight => {
-                let tx = w - src_w;
-                (1.0f32, 1.0f32, tx, 0.0f32)
+                let tx = w - src_w * base_x;
+                (base_x, base_y, tx, 0.0f32)
             }
         };
 

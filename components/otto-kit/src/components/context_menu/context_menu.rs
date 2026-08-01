@@ -1060,16 +1060,29 @@ impl ContextMenu {
 
     fn apply_surface_effects(style: &ContextMenuStyle, popup: &PopupSurface) {
         if let Some(scene_surface) = popup.base_surface().surface_style() {
-            let bg = style.background_color();
-            scene_surface.set_background_color(
-                bg.r() as f64 / 255.0,
-                bg.g() as f64 / 255.0,
-                bg.b() as f64 / 255.0,
-                bg.a() as f64 / 255.0,
-            );
+            // The renderer already paints `style.background_color()` into the
+            // buffer. Setting it on the scene layer as well composites it
+            // twice, so a translucent material lands far more opaque than the
+            // same menu drawn compositor-side (the dock's).
+            // Shadow geometry is in physical pixels, so it scales with the
+            // output; values match the compositor-side menus (the dock's) so a
+            // menu looks the same wherever it is drawn. The corner radius does
+            // NOT get scaled here — it has to agree with the rounding the
+            // renderer paints into the buffer, and scaling it makes the bar's
+            // menus visibly rounder than the dock's.
+            let scale = crate::app_runner::context::AppContext::fractional_scale();
+            let shadow = style.theme.shadow;
             scene_surface.set_corner_radius(style.corner_radius as f64);
             scene_surface.set_masks_to_bounds(ClipMode::Enabled);
-            scene_surface.set_shadow(0.2, 2.0, 0.0, 7.0, 0.3, 0.3, 0.3);
+            scene_surface.set_shadow(
+                shadow.a() as f64 / 255.0,
+                16.0 * scale,
+                0.0,
+                4.0 * scale,
+                shadow.r() as f64 / 255.0,
+                shadow.g() as f64 / 255.0,
+                shadow.b() as f64 / 255.0,
+            );
             scene_surface.set_blend_mode(BlendMode::BackgroundBlur);
         }
     }
