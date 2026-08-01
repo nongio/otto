@@ -569,10 +569,7 @@ pub fn apply_dialog_style(surface: &SubsurfaceSurface) {
     // what they belong to. This panel is large, modal, and carries a decision —
     // it needs the backdrop legible behind it but the content unmistakably in
     // front, so it runs a good deal more solid than the shared material.
-    let c = at_least_opaque(
-        otto_kit::AppContext::current_theme().material_medium,
-        0xE0,
-    );
+    let c = at_least_opaque(otto_kit::AppContext::current_theme().material_medium, 0xE0);
     if let Some(ss) = surface.base_surface().surface_style() {
         ss.set_background_color(
             c.r() as f64 / 255.0,

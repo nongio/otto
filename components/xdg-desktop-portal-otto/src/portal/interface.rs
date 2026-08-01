@@ -170,25 +170,69 @@ impl ScreenCastPortal {
             return Ok(None);
         };
 
-        let proxy = self.sc_client.dialog_proxy().await?;
-        let (response, results) = proxy
-            .present_access(
-                app_id,
-                "Share your screen",
-                &format!("{} wants to share your screen", display_app_name(app_id)),
-                "The selected source will be visible to the application.",
-                "video-display",
-                "Share",
-                "Cancel",
-                true,
-                vec![(
-                    "source".to_string(),
-                    "Choose what to share".to_string(),
-                    options,
-                    default_id,
-                )],
-            )
-            .await?;
+        let title = "Share your screen";
+        let subtitle = format!("{} wants to share your screen", display_app_name(app_id));
+        let body = "The selected source will be visible to the application.";
+
+        // Native renderer first — it's the only one that shows app icons.
+        let native = async {
+            let proxy = self.sc_client.dialog_proxy().await?;
+            proxy
+                .present_access(
+                    app_id,
+                    title,
+                    &subtitle,
+                    body,
+                    "video-display",
+                    "Share",
+                    "Cancel",
+                    true,
+                    vec![(
+                        "source".to_string(),
+                        "Choose what to share".to_string(),
+                        options.clone(),
+                        default_id.clone(),
+                    )],
+                )
+                .await
+        }
+        .await;
+
+        let (response, results) = match native {
+            Ok(answer) => answer,
+            Err(err) => {
+                // otto-islands isn't running. Rather than fail — which would
+                // make window sharing impossible without it — borrow another
+                // desktop's Access dialog. Icons are lost: the standard
+                // choices tuple has no icon field.
+                warn!(
+                    ?err,
+                    "Native dialog unavailable; trying standard Access backends"
+                );
+                let plain: Vec<(String, String)> = options
+                    .into_iter()
+                    .map(|(id, label, _icon)| (id, label))
+                    .collect();
+                self.sc_client
+                    .present_access_fallback(
+                        app_id,
+                        title,
+                        &subtitle,
+                        body,
+                        "video-display",
+                        "Share",
+                        "Cancel",
+                        true,
+                        vec![(
+                            "source".to_string(),
+                            "Choose what to share".to_string(),
+                            plain,
+                            default_id,
+                        )],
+                    )
+                    .await?
+            }
+        };
 
         if response != 0 {
             return Ok(None);

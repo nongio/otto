@@ -276,6 +276,7 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
 
                     if let Some(window) = window {
                         window.on_commit();
+                        self.settle_initial_placement(&window);
 
                         if self.popups.find_popup(surface).is_some() {
                             tracing::debug!(
@@ -800,6 +801,69 @@ impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
 pub struct SurfaceData {
     pub geometry: Option<Rectangle<i32, Logical>>,
     pub resize_state: ResizeState,
+}
+
+/// A window at most this fraction of the usable area, in **both** axes, is
+/// treated as a dialog and centered.
+///
+/// There is no protocol signal to key on: GTK dialogs send `set_parent(nil)`
+/// and don't implement `xdg-dialog-v1`, so "small" is the only thing that
+/// actually distinguishes a dialog from a document window across toolkits.
+const DIALOG_MAX_FRACTION: f64 = 0.6;
+
+impl<BackendData: crate::state::Backend> crate::state::Otto<BackendData> {
+    /// Re-place a freshly mapped window now that its real size is known.
+    ///
+    /// Initial placement runs at `new_toplevel`, before the client has
+    /// configured, so it assumes a default size and spreads windows by least
+    /// overlap — which puts a small dialog in the top-left corner. Once the
+    /// first sized commit arrives we can tell a dialog from a normal window and
+    /// center it. Runs at most once per window.
+    fn settle_initial_placement(&mut self, window: &WindowElement) {
+        let id = window.id();
+        if !self.pending_initial_placement.contains(&id) {
+            return;
+        }
+
+        let size = window.geometry().size;
+        // Still unsized — wait for a later commit.
+        if size.w <= 0 || size.h <= 0 {
+            return;
+        }
+        self.pending_initial_placement.remove(&id);
+
+        // Fullscreen/maximized windows own their geometry already.
+        if window.is_fullscreen() || window.is_maximized() {
+            return;
+        }
+
+        let Some(output) = self.workspaces.output_for_window(window) else {
+            return;
+        };
+        let Some(usable) = self.workspaces.usable_geometry(&output) else {
+            return;
+        };
+
+        let is_dialog = (size.w as f64) <= usable.size.w as f64 * DIALOG_MAX_FRACTION
+            && (size.h as f64) <= usable.size.h as f64 * DIALOG_MAX_FRACTION;
+        if !is_dialog {
+            return;
+        }
+
+        let location = smithay::utils::Point::<i32, Logical>::from((
+            usable.loc.x + (usable.size.w - size.w) / 2,
+            usable.loc.y + (usable.size.h - size.h) / 2,
+        ));
+
+        tracing::debug!(
+            "settle_initial_placement: centering {}x{} dialog at {:?}",
+            size.w,
+            size.h,
+            location
+        );
+        self.workspaces
+            .map_window_on_output(&output, window, location, false, None);
+    }
 }
 
 fn ensure_initial_configure<Backend: crate::state::Backend>(
