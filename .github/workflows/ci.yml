@@ -16,7 +16,7 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@1.87.0
+        uses: dtolnay/rust-toolchain@1.97.0
         with:
           components: rustfmt
       - name: Cargo cache
@@ -35,7 +35,7 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@1.87.0
+        uses: dtolnay/rust-toolchain@1.97.0
         with:
           components: clippy
       - name: Cargo cache (registry + target)
@@ -64,7 +64,7 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@1.87.0
+        uses: dtolnay/rust-toolchain@1.97.0
       - name: Cargo cache (registry + target)
         uses: Swatinem/rust-cache@v2
         with:
@@ -94,7 +94,7 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@1.87.0
+        uses: dtolnay/rust-toolchain@1.97.0
       - name: Cargo cache (registry + target)
         uses: Swatinem/rust-cache@v2
         with:
@@ -123,7 +123,7 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@1.87.0
+        uses: dtolnay/rust-toolchain@1.97.0
       - name: Cargo cache (registry + target)
         uses: Swatinem/rust-cache@v2
         with:

@@ -4,7 +4,7 @@ authors = ["Riccardo Canalicchio <riccardo.canalicchio@gmail.com>"]
 version = "0.15.0"
 edition = "2021"
 license = "MIT"
-rust-version = "1.85.0"
+rust-version = "1.87.0"
 description = "A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail, inspired by familiar macOS interactions."
 repository = "https://github.com/nongio/otto"
 
