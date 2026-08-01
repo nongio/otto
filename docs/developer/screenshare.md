@@ -398,6 +398,19 @@ behaviour: `$XDG_CONFIG_HOME/otto/screencast-output` (falling back to
 call, else the first output. A window is never auto-selected in that path. Full behavior:
 `specs/screenshare.md`.
 
+An approved source survives into a new session through the spec's `restore_data` handshake
+(`components/xdg-desktop-portal-otto/src/portal/restore.rs`): `Start` returns
+`("otto", 1, {source-type, id})`, the frontend hands the app a token for it, and a
+`SelectSources` that replays the tuple skips the picker as long as the source is still there
+and still matches the requested `types`. Chrome relies on this — its window picker builds the
+preview in one session and then re-creates the session for the real capture, so without a
+restorable token the dialog opened a second time on top of a live share.
+
+Two things gate that path and are easy to break: the impl interface must export `version`
+under exactly that lowercase name (`#[zbus(property, name = "version")]`, or the frontend
+reads 0 and drops every option added after interface version 1), and `AvailableSourceTypes`
+must include the `WINDOW` bit.
+
 ### Known Issues and Fixes
 
 #### Framerate Compatibility (January 2026)

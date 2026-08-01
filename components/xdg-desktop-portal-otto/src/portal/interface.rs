@@ -15,9 +15,10 @@ use zbus::zvariant::{OwnedFd, OwnedObjectPath, OwnedValue};
 use crate::otto_client::screencast::WindowSource;
 use crate::otto_client::OttoClient;
 use crate::portal::{
-    build_streams_value_from_descriptors, make_output_mapping_id, PortalState, Request,
-    SelectedWindow, Session, SessionState, StreamDescriptor, CURSOR_MODE_EMBEDDED,
-    SOURCE_TYPE_MONITOR, SOURCE_TYPE_WINDOW, SUPPORTED_CURSOR_MODES,
+    build_streams_value_from_descriptors, decode_restore_data, encode_restore_data,
+    make_output_mapping_id, resolve_restored, PortalState, Request, RestoredSource, SelectedWindow,
+    Session, SessionState, StreamDescriptor, CURSOR_MODE_EMBEDDED, SOURCE_TYPE_MONITOR,
+    SOURCE_TYPE_WINDOW, SUPPORTED_CURSOR_MODES,
 };
 use zbus::zvariant::Str;
 
@@ -257,6 +258,40 @@ impl ScreenCastPortal {
         })
     }
 
+    /// Record the source this session will capture, however it was chosen.
+    async fn store_selection(
+        &self,
+        session_handle: &OwnedObjectPath,
+        selection: &SourceSelection,
+        cursor_mode: u32,
+        persist_mode: Option<u32>,
+    ) -> fdo::Result<()> {
+        let mut state = self.state.lock().await;
+        let entry = state
+            .sessions
+            .get_mut(session_handle.as_str())
+            .ok_or_else(|| fdo::Error::Failed("Session not found".to_string()))?;
+
+        match selection {
+            SourceSelection::Monitor(connector) => {
+                entry.selected_outputs = vec![connector.clone()];
+                entry.selected_window = None;
+            }
+            SourceSelection::Window(window) => {
+                entry.selected_outputs = Vec::new();
+                entry.selected_window = Some(SelectedWindow {
+                    id: window.id.clone(),
+                    title: window.title.clone(),
+                });
+            }
+        }
+        entry.cursor_mode = cursor_mode;
+        entry.persist_mode = persist_mode;
+        entry.next_stream_id = 0;
+
+        Ok(())
+    }
+
     /// Export a temporary Request object in dbus so the frontend can listen for the response signal.
     async fn register_request(
         &self,
@@ -445,6 +480,38 @@ impl ScreenCastPortal {
                 );
             }
 
+            // A session the app is re-creating (Chrome does exactly that
+            // between the preview in its own picker and the real capture)
+            // carries the source the user already approved. Restoring it is
+            // what keeps the picker from opening a second time.
+            let restored = options
+                .get("restore_data")
+                .and_then(decode_restore_data)
+                .and_then(|source| {
+                    resolve_restored(
+                        source,
+                        requested_types,
+                        &available_outputs,
+                        &available_windows,
+                    )
+                });
+
+            if let Some(selection) = restored {
+                info!(
+                    session = %session_handle,
+                    ?selection,
+                    "Restored the previously approved source; not prompting"
+                );
+                self.store_selection(&session_handle, &selection, cursor_mode, persist_mode)
+                    .await?;
+
+                let mut results = HashMap::new();
+                if let Some(pm) = persist_mode {
+                    results.insert("persist_mode".to_string(), OwnedValue::from(pm));
+                }
+                return Ok((0, results));
+            }
+
             let selection = match self
                 .pick_source(&app_id, &available_outputs, &available_windows)
                 .await
@@ -467,30 +534,8 @@ impl ScreenCastPortal {
                 }
             };
 
-            {
-                let mut state = self.state.lock().await;
-                let entry = state
-                    .sessions
-                    .get_mut(session_handle.as_str())
-                    .ok_or_else(|| fdo::Error::Failed("Session not found".to_string()))?;
-
-                match &selection {
-                    SourceSelection::Monitor(connector) => {
-                        entry.selected_outputs = vec![connector.clone()];
-                        entry.selected_window = None;
-                    }
-                    SourceSelection::Window(window) => {
-                        entry.selected_outputs = Vec::new();
-                        entry.selected_window = Some(SelectedWindow {
-                            id: window.id.clone(),
-                            title: window.title.clone(),
-                        });
-                    }
-                }
-                entry.cursor_mode = cursor_mode;
-                entry.persist_mode = persist_mode;
-                entry.next_stream_id = 0;
-            }
+            self.store_selection(&session_handle, &selection, cursor_mode, persist_mode)
+                .await?;
 
             info!(
                 session = %session_handle,
@@ -725,8 +770,25 @@ impl ScreenCastPortal {
             let mut results = HashMap::new();
             results.insert("streams".to_string(), streams_value);
 
-            if let Some(pm) = persist_mode {
+            // Persistence is the frontend's to manage: it hands the app a token
+            // for whatever `restore_data` we return here and gives the tuple
+            // back on the app's next SelectSources. Nothing to return when the
+            // app didn't ask for any persistence (mode 0 or absent).
+            if let Some(pm) = persist_mode.filter(|mode| *mode != 0) {
                 results.insert("persist_mode".to_string(), OwnedValue::from(pm));
+
+                let restorable = match &selected_source {
+                    SourceSelection::Monitor(connector) => {
+                        RestoredSource::Monitor(connector.clone())
+                    }
+                    SourceSelection::Window(window) => RestoredSource::Window(window.id.clone()),
+                };
+                match encode_restore_data(&restorable) {
+                    Ok(value) => {
+                        results.insert("restore_data".to_string(), value);
+                    }
+                    Err(err) => warn!(?err, "Failed to encode restore_data; session won't persist"),
+                }
             }
 
             Ok((0, results))
@@ -776,7 +838,7 @@ impl ScreenCastPortal {
 
     #[zbus(property)]
     fn available_source_types(&self) -> u32 {
-        SOURCE_TYPE_MONITOR
+        SOURCE_TYPE_MONITOR | SOURCE_TYPE_WINDOW
     }
 
     #[zbus(property)]
@@ -786,8 +848,10 @@ impl ScreenCastPortal {
 
     /// The impl portal spec spells this property lowercase. zbus would
     /// derive `Version` from the method name, and xdg-desktop-portal then
-    /// reads 0 — which makes it skip the `AvailableCursorModes` binding
-    /// entirely and reject every cursor mode but the unset one.
+    /// reads 0 — which gates off everything the spec added after interface
+    /// version 1: the `AvailableCursorModes` binding (so every cursor mode
+    /// but the unset one is rejected) and the `restore_data` round-trip this
+    /// backend relies on to not prompt twice.
     #[zbus(property, name = "version")]
     fn version(&self) -> u32 {
         5

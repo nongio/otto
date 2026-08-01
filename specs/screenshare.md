@@ -138,6 +138,28 @@ documented in `docs/developer/screenshare.md`.
 - `Start` calls `RecordMonitor` or `RecordWindow` according to the stored selection, and the
   resulting portal stream carries `source_type` = 1 or 2 to match.
 
+### Session persistence (`restore_data`)
+
+- `AvailableSourceTypes` advertises `MONITOR | WINDOW`, and the impl interface exports its
+  `version` property under that exact (lowercase) name. zbus would otherwise derive
+  `Version` from the method name; xdg-desktop-portal reads a missing property as `0` and
+  then gates off everything the spec added after version 1 — `restore_data` included.
+- When the app asked for persistence (`persist_mode` 1 or 2), `Start` returns `restore_data`
+  as `("otto", 1, <a{sv}>)` where the payload carries `source-type` (1 or 2) and `id` (the
+  connector name or the foreign-toplevel identifier), plus the effective `persist_mode`. The
+  portal keeps no state of its own: the frontend hands the app a token for that tuple and
+  gives the tuple back on a later `SelectSources`.
+- A `SelectSources` carrying `restore_data` skips the picker when **all** of the following
+  hold; otherwise the user is prompted normally:
+  - the vendor field is `otto` and the payload version is one this build understands;
+  - the source's type is among the `types` the app requested on this call;
+  - the source is still available — the connector is still in `ListOutputs`, or the window
+    identifier is still in `ListWindows`.
+- This is what keeps a single approval from being asked twice. Chrome's own picker creates
+  one session to render the preview thumbnail, then closes it and creates a second session
+  for the real capture; without a restorable token the second one re-opened the dialog on
+  top of an already-running share, and dismissing it tore the share down.
+
 ### Window capture
 
 - A window stream renders the window's **own surface tree** (toplevel + subsurfaces, plus
