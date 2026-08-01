@@ -43,6 +43,16 @@ const DEFAULT_MAX_VISIBLE_NOTIFICATIONS: usize = 10;
 /// Seconds of inactivity before the focused island shrinks to Mini.
 const FOCUS_TIMEOUT_SECS: f64 = 4.0;
 
+/// Top edge of an expanded music panel, in layer coordinates.
+///
+/// The panel is pinned to the top of the layer and grows downward. It must
+/// never start above 0: `COMPACT_H` is taller than `BAR_HEIGHT`, so centering
+/// the panel on the bar pushes it off the top of the screen, where the layer
+/// clips it.
+fn expanded_music_top() -> f32 {
+    ((BAR_HEIGHT - COMPACT_H) / 2.0).max(0.0)
+}
+
 // ---------------------------------------------------------------------------
 // Island — one notification group or music activity
 // ---------------------------------------------------------------------------
@@ -541,8 +551,7 @@ impl IslandApp {
             right_x -= w;
             let cx = right_x + w / 2.0;
             let cy = if island.kind == IslandKind::Music && island.mode == IslandMode::Expanded {
-                let pill_top = (BAR_HEIGHT - COMPACT_H) / 2.0;
-                pill_top + h / 2.0
+                expanded_music_top() + h / 2.0
             } else {
                 BAR_HEIGHT / 2.0
             };
@@ -963,9 +972,8 @@ impl IslandApp {
         for island in &self.islands {
             if island.mode == IslandMode::Expanded {
                 if island.kind == IslandKind::Music {
-                    let pill_top = (BAR_HEIGHT - COMPACT_H) / 2.0;
                     let h = island.last_layout.1;
-                    max_h = max_h.max(pill_top + h + 4.0);
+                    max_h = max_h.max(expanded_music_top() + h + 4.0);
                 } else {
                     let card_count = island.cards.len().min(5) as f32;
                     let pill_h = COMPACT_H;
@@ -989,7 +997,6 @@ impl IslandApp {
         }
         layer.base_surface().wl_surface().commit();
     }
-
 
     // -----------------------------------------------------------------------
     // Hit testing
@@ -1172,7 +1179,6 @@ impl App for IslandApp {
         // Don't clip the layer surface — pills have shadows and bouncy
         // animations that extend beyond the layer bounds.
 
-
         self.layer_surface = Some(layer_surface);
         Ok(())
     }
@@ -1188,7 +1194,6 @@ impl App for IslandApp {
             }
             self.surfaces_ready = true;
             // Set empty input region so clicks pass through until islands appear.
-
         }
     }
 
@@ -1349,9 +1354,12 @@ impl App for IslandApp {
                     if new_hovered != self.hovered_app {
                         // Shrink the previously hovered island back.
                         if let Some(old_id) = &self.hovered_app {
-                            if let Some(island) = self.islands.iter().find(|i| &i.app_id == old_id) {
+                            if let Some(island) = self.islands.iter().find(|i| &i.app_id == old_id)
+                            {
                                 let (w, h, cx, cy) = island.last_layout;
-                                let r = if island.kind == IslandKind::Music && island.mode == IslandMode::Expanded {
+                                let r = if island.kind == IslandKind::Music
+                                    && island.mode == IslandMode::Expanded
+                                {
                                     16.0
                                 } else {
                                     h as f64 / 2.0
@@ -1361,15 +1369,26 @@ impl App for IslandApp {
                         }
                         // Grow the newly hovered island.
                         if let Some(new_id) = &new_hovered {
-                            if let Some(island) = self.islands.iter().find(|i| &i.app_id == new_id) {
+                            if let Some(island) = self.islands.iter().find(|i| &i.app_id == new_id)
+                            {
                                 let (w, h, cx, cy) = island.last_layout;
                                 let grow = renderer::HOVER_GROW;
-                                let r = if island.kind == IslandKind::Music && island.mode == IslandMode::Expanded {
+                                let r = if island.kind == IslandKind::Music
+                                    && island.mode == IslandMode::Expanded
+                                {
                                     16.0
                                 } else {
                                     (h + grow) as f64 / 2.0
                                 };
-                                renderer::animate_to(&island.surface, w + grow, h + grow, cx, cy, r, 0.0);
+                                renderer::animate_to(
+                                    &island.surface,
+                                    w + grow,
+                                    h + grow,
+                                    cx,
+                                    cy,
+                                    r,
+                                    0.0,
+                                );
                             }
                         }
                         self.hovered_app = new_hovered;

@@ -1175,15 +1175,64 @@ fn font_bold(size: f32) -> skia_safe::Font {
     .font()
 }
 
+/// Decode `%XX` escapes in a URL path. MPRIS `file://` art URLs are proper
+/// URLs, so any path with a space or a non-ASCII character (accented artist
+/// names, for instance) arrives percent-encoded and must be decoded before it
+/// can be opened.
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3])
+                .ok()
+                .and_then(|h| u8::from_str_radix(h, 16).ok());
+            if let Some(byte) = hex {
+                out.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Extract the filesystem path from a `file://` URL, decoding percent escapes.
+/// Accepts both `file:///path` and `file://localhost/path`.
+fn file_url_to_path(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("file://")?;
+    let path = rest.strip_prefix("localhost").unwrap_or(rest);
+    if !path.starts_with('/') {
+        return None;
+    }
+    Some(percent_decode(path))
+}
+
 fn load_album_art(url: &str) -> Option<Image> {
     if url.is_empty() {
         return None;
     }
 
-    let bytes = if let Some(path) = url.strip_prefix("file://") {
-        fs::read(path).ok()?
+    let bytes = if url.starts_with("file://") {
+        let path = file_url_to_path(url)?;
+        match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                tracing::warn!(path, error = %e, "failed to read album art");
+                return None;
+            }
+        }
     } else if url.starts_with("http://") || url.starts_with("https://") {
-        match ureq::get(url).call() {
+        // Bounded: this runs on the island's update thread, so an unreachable
+        // host must not stall the UI.
+        let agent = ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(5)))
+            .build()
+            .new_agent();
+        match agent.get(url).call() {
             Ok(resp) => resp.into_body().read_to_vec().ok()?,
             Err(e) => {
                 tracing::warn!(url, error = %e, "failed to fetch album art");
@@ -1191,6 +1240,7 @@ fn load_album_art(url: &str) -> Option<Image> {
             }
         }
     } else {
+        tracing::warn!(url, "unsupported album art URL scheme");
         return None;
     };
 

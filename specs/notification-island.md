@@ -148,6 +148,9 @@ Music is another island in the same row. It follows the same Mini/Compact/Expand
 - When a notification group is clicked to Compact, music shrinks to Mini.
 - Music Mini: 3-bar equalizer in a circle.
 - Music Compact: album art + title + artist + equalizer.
+- Music Expanded: the panel is pinned to the top of the layer (y = 0) and grows
+  downward. It is never centred on `BAR_HEIGHT` — `COMPACT_H` is taller than the
+  bar, so centring puts the top of the panel above the layer, where it is clipped.
 
 ## D-Bus Integration
 
