@@ -34,6 +34,9 @@ const GROUP_LABEL_H: f32 = 18.0;
 const OPTION_H: f32 = 44.0;
 const OPTION_GAP: f32 = 6.0;
 const OPTION_RADIUS: f32 = 11.0;
+/// Space kept clear at the right edge of an option row for the checkmark.
+/// Reserved on unselected rows too, so labels don't reflow as selection moves.
+const CHECK_GUTTER: f32 = 30.0;
 const BTN_H: f32 = 36.0;
 const BTN_GAP: f32 = 10.0;
 const BTN_RADIUS: f32 = 10.0;
@@ -273,6 +276,47 @@ fn font(size: f32, weight: i32) -> skia_safe::Font {
     .font()
 }
 
+/// Truncate `text` to fit `max_w`, appending an ellipsis when it doesn't.
+///
+/// Window titles are arbitrary and frequently longer than the panel — without
+/// this they run under the checkmark and off the rounded edge. Walks back by
+/// character (not byte) so multi-byte titles can't be split mid-codepoint.
+fn ellipsize(text: &str, f: &skia_safe::Font, max_w: f32) -> String {
+    if f.measure_str(text, None).0 <= max_w {
+        return text.to_string();
+    }
+    const ELLIPSIS: &str = "…";
+    let ellipsis_w = f.measure_str(ELLIPSIS, None).0;
+    // Nothing sensible fits — an ellipsis alone still beats overflowing.
+    if ellipsis_w > max_w {
+        return ELLIPSIS.to_string();
+    }
+    let budget = max_w - ellipsis_w;
+    let mut end = 0;
+    for (idx, ch) in text.char_indices() {
+        let next = idx + ch.len_utf8();
+        if f.measure_str(&text[..next], None).0 > budget {
+            break;
+        }
+        end = next;
+    }
+    // Don't leave a dangling space before the ellipsis.
+    format!("{}{ELLIPSIS}", text[..end].trim_end())
+}
+
+/// Centered variant: truncates to `max_w`, then centers whatever survived.
+fn draw_text_centered_clamped(
+    canvas: &Canvas,
+    text: &str,
+    cx: f32,
+    baseline_y: f32,
+    f: &skia_safe::Font,
+    color: Color,
+    max_w: f32,
+) {
+    draw_text_centered(canvas, &ellipsize(text, f, max_w), cx, baseline_y, f, color);
+}
+
 fn draw_text_centered(
     canvas: &Canvas,
     text: &str,
@@ -302,11 +346,18 @@ pub fn draw_dialog(canvas: &Canvas, view: &DialogView, selected: &[usize], layou
 
     let w = layout.width;
     let cx = w / 2.0;
+    // Every centered run of text is clamped to the panel's content width.
+    let text_max_w = w - PAD * 2.0;
     let theme = otto_kit::AppContext::current_theme();
-    // Text is black on light, white on dark — the theme decides.
-    let text = theme.text_primary;
-    let dim = theme.text_secondary;
-    let dim2 = theme.text_tertiary;
+    // Text is black on light, white on dark — the theme decides. The dialog
+    // takes it fully opaque: `text_primary` is deliberately soft (0xD9) for
+    // chrome that sits on solid fills, but this panel floats over a blurred
+    // backdrop of arbitrary content, where that softness reads as washed out.
+    let text = opaque(theme.text_primary);
+    // Same reasoning for the supporting text, but the hierarchy is preserved:
+    // subtitle and body stay lighter than the title, just not ghostly.
+    let dim = at_least_opaque(theme.text_secondary, 0xC0);
+    let dim2 = at_least_opaque(theme.text_tertiary, 0x99);
     let accent = theme.accent_blue;
     // Labels drawn on top of the accent fill stay white in both schemes.
     let on_accent = Color::WHITE;
@@ -322,23 +373,40 @@ pub fn draw_dialog(canvas: &Canvas, view: &DialogView, selected: &[usize], layou
     }
 
     // Title.
-    draw_text_centered(
+    draw_text_centered_clamped(
         canvas,
         &view.title,
         cx,
         layout.title_y + 14.0,
         &font(15.0, 700),
         text,
+        text_max_w,
     );
 
     // Subtitle.
     if let Some(sy) = layout.subtitle_y {
-        draw_text_centered(canvas, &view.subtitle, cx, sy + 12.0, &font(12.0, 500), dim);
+        draw_text_centered_clamped(
+            canvas,
+            &view.subtitle,
+            cx,
+            sy + 12.0,
+            &font(12.0, 500),
+            dim,
+            text_max_w,
+        );
     }
 
     // Body.
     if let Some(by) = layout.body_y {
-        draw_text_centered(canvas, &view.body, cx, by + 12.0, &font(12.0, 400), dim2);
+        draw_text_centered_clamped(
+            canvas,
+            &view.body,
+            cx,
+            by + 12.0,
+            &font(12.0, 400),
+            dim2,
+            text_max_w,
+        );
     }
 
     // Group labels.
@@ -347,7 +415,13 @@ pub fn draw_dialog(canvas: &Canvas, view: &DialogView, selected: &[usize], layou
             let mut paint = Paint::default();
             paint.set_anti_alias(true);
             paint.set_color(dim2);
-            canvas.draw_str(&group.label, (PAD, gy + 12.0), &font(11.0, 600), &paint);
+            let gf = font(11.0, 600);
+            canvas.draw_str(
+                ellipsize(&group.label, &gf, text_max_w),
+                (PAD, gy + 12.0),
+                &gf,
+                &paint,
+            );
         }
     }
 
@@ -389,10 +463,14 @@ pub fn draw_dialog(canvas: &Canvas, view: &DialogView, selected: &[usize], layou
         let mut paint = Paint::default();
         paint.set_anti_alias(true);
         paint.set_color(if is_selected { on_accent } else { text });
+        // Reserve the checkmark gutter on every row, selected or not, so a
+        // label doesn't reflow when the selection moves.
+        let label_font = font(13.0, 500);
+        let label_max_w = (rect.right - CHECK_GUTTER) - text_x;
         canvas.draw_str(
-            &opt.label,
+            ellipsize(&opt.label, &label_font, label_max_w),
             (text_x, rect.center_y() + 4.5),
-            &font(13.0, 500),
+            &label_font,
             &paint,
         );
 
@@ -439,13 +517,16 @@ fn draw_button(canvas: &Canvas, rect: &Rect, label: &str, bg: Color, text: Color
     bg_paint.set_anti_alias(true);
     bg_paint.set_color(bg);
     canvas.draw_rrect(RRect::new_rect_xy(*rect, BTN_RADIUS, BTN_RADIUS), &bg_paint);
-    draw_text_centered(
+    // Caller-supplied labels ("Share", but also whatever an app passes as
+    // grant_label) must not spill past the button's rounded edge.
+    draw_text_centered_clamped(
         canvas,
         label,
         rect.center_x(),
         rect.center_y() + 4.5,
         &font(13.0, 600),
         text,
+        rect.width() - 16.0,
     );
 }
 
@@ -473,8 +554,25 @@ fn draw_icon(canvas: &Canvas, icon_name: &str, x: f32, y: f32, size: f32) {
 /// Apply the frosted-panel surface style to a dialog subsurface: a translucent
 /// theme material over a blurred backdrop, rounded clipping, drop shadow, and
 /// center anchor. [`draw_dialog`] draws only the content on top.
+/// Drop a colour's transparency, keeping its RGB.
+fn opaque(c: Color) -> Color {
+    Color::from_argb(0xFF, c.r(), c.g(), c.b())
+}
+
+/// Raise a colour's alpha to at least `min_alpha`, keeping its RGB.
+fn at_least_opaque(c: Color, min_alpha: u8) -> Color {
+    Color::from_argb(c.a().max(min_alpha), c.r(), c.g(), c.b())
+}
+
 pub fn apply_dialog_style(surface: &SubsurfaceSurface) {
-    let c = otto_kit::AppContext::current_theme().material_medium;
+    // `material_medium` is tuned for menus, which are small and sit close to
+    // what they belong to. This panel is large, modal, and carries a decision —
+    // it needs the backdrop legible behind it but the content unmistakably in
+    // front, so it runs a good deal more solid than the shared material.
+    let c = at_least_opaque(
+        otto_kit::AppContext::current_theme().material_medium,
+        0xE0,
+    );
     if let Some(ss) = surface.base_surface().surface_style() {
         ss.set_background_color(
             c.r() as f64 / 255.0,
