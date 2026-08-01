@@ -129,6 +129,19 @@ vibrancy even though the content behind it lives on other planes.
   or surface failure) forces its next successful render to redraw fully —
   the frame's damage evidence is gone by then (engine damage clears at end
   of frame), and clipping past it would leave the region permanently stale.
+- Subtree damage is reported in scene coordinates and mapped into buffer
+  coordinates by subtracting only the output's scene origin and the
+  element's viewport — never the root node's own `render_position()`. The
+  root's position already carries the dynamic workspace-scroll offset, and
+  the subtree is drawn with that offset re-applied, so subtracting it would
+  double-count: on any workspace but the first, the windows and background
+  plane roots sit a full output width to the left and every dirty rect
+  would clamp to a sliver at the buffer edge, freezing those planes.
+- Damage that falls entirely outside a buffer after that mapping does not
+  render it: a window on a workspace scrolled off screen changes nothing
+  visible, and rendering would repaint — and report FB_DAMAGE_CLIPS for —
+  an edge sliver on every frame it animates. Scrolling that workspace back
+  into view damages the moved subtree itself, so it repaints then.
 - A buffer's damage is expanded to the full bounds of any `BackgroundBlur`
   shape it contains that the damage reaches: because a blur samples a
   neighborhood of its input, damage under (or within a blur radius of) a
