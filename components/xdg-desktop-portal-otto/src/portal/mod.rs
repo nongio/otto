@@ -7,6 +7,7 @@
 mod access;
 mod interface;
 mod request;
+mod restore;
 mod session;
 mod settings;
 mod state;
@@ -16,6 +17,7 @@ pub use access::AccessPortal;
 pub use interface::{
     fallback_mapping_id, validate_cursor_mode, validate_persist_mode, ScreenCastPortal,
 };
+pub use restore::{decode_restore_data, encode_restore_data, resolve_restored, RestoredSource};
 pub use settings::SettingsPortal;
 pub use state::{PortalState, SelectedWindow, SessionState};
 pub use stream::{build_streams_value_from_descriptors, StreamDescriptor};
