@@ -570,7 +570,14 @@ impl IslandApp {
                     let (eq_w, eq_h, eq_ox, eq_oy) = mr.eq_layout(pmode, w, h);
                     let eq_cx = eq_ox + eq_w / 2.0;
                     let eq_cy = eq_oy + eq_h / 2.0;
-                    renderer::set_size_and_position(eq_surf, eq_w, eq_h, eq_cx, eq_cy);
+                    if island.last_layout.0 == 0.0 {
+                        // First placement — no pill geometry to travel with.
+                        renderer::set_size_and_position(eq_surf, eq_w, eq_h, eq_cx, eq_cy);
+                    } else {
+                        // Travel with the pill. Snapping to the target while the
+                        // pill is still springing leaves the bars outside it.
+                        animate_to(eq_surf, eq_w, eq_h, eq_cx, eq_cy, 0.0, 0.0);
+                    }
                 }
                 self.music_last_redraw = std::time::Instant::now();
             }
