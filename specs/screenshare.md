@@ -138,12 +138,25 @@ documented in `docs/developer/screenshare.md`.
 - `Start` calls `RecordMonitor` or `RecordWindow` according to the stored selection, and the
   resulting portal stream carries `source_type` = 1 or 2 to match.
 
+### Portal bus name ownership
+
+- The backend claims `org.freedesktop.impl.portal.desktop.otto` with
+  `ReplaceExisting | AllowReplacement | DoNotQueue`, and only after every interface is
+  exported. A running backend that loses the name to a newer instance exits.
+- The reason is that the **session bus outlives the graphical session**: a backend left
+  running by an earlier login, or one started before an upgrade, otherwise holds the name
+  for as long as the user is logged in. Every later instance died on startup while the
+  desktop kept talking to the stale one — an installed fix simply never took effect.
+- A backend predating this flag still cannot be replaced (replacement needs the current
+  owner's consent). Startup then fails with an explicit message naming the conflict rather
+  than continuing without the name.
+
 ### Session persistence (`restore_data`)
 
-- `AvailableSourceTypes` advertises `MONITOR | WINDOW`, and the impl interface exports its
-  `version` property under that exact (lowercase) name. zbus would otherwise derive
-  `Version` from the method name; xdg-desktop-portal reads a missing property as `0` and
-  then gates off everything the spec added after version 1 — `restore_data` included.
+- `AvailableSourceTypes` advertises `MONITOR | WINDOW`. Persistence additionally depends on
+  the lowercase `version` property above: the frontend reads a missing property as `0` and
+  then gates off everything the spec added after interface version 1, `restore_data`
+  (version 4) included.
 - When the app asked for persistence (`persist_mode` 1 or 2), `Start` returns `restore_data`
   as `("otto", 1, <a{sv}>)` where the payload carries `source-type` (1 or 2) and `id` (the
   connector name or the foreign-toplevel identifier), plus the effective `persist_mode`. The
