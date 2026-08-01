@@ -34,6 +34,12 @@ vibrancy even though the content behind it lives on other planes.
   blurred }` handed to a layer carries a `blurred` flag; in-scene blur
   consumers with no external backdrop (context menus, OSD) still run the real
   blur against live scene content.
+- The whole-image blur carries a vibrancy tone map (saturation boost plus a
+  gentle downward gain and a small bias), because skipping the layer's own blur
+  pass also skips lay-rs' tone map. Without it a frosted panel over a flat
+  white window composites back to white and its boundary disappears; the tone
+  map shifts the backdrop a few percent darker and a little more saturated so
+  the material stays distinguishable on any background.
 - The blur composite is rebuilt only when a lower plane recorded damage
   that intersects an active blur consumer's region (the dock strip, the
   switcher strip, or the full output while overlay UI or expose is shown),
