@@ -92,6 +92,16 @@ impl ForeignToplevelHandles {
             .unwrap_or_default()
     }
 
+    /// Stable, opaque cross-process identifier from the ext handle.
+    ///
+    /// `ext-foreign-toplevel-list-v1` defines this string for exactly this
+    /// purpose: naming a window to another process (a portal picking a
+    /// screencast source). The wlr protocol has no equivalent, so this is
+    /// `None` for toplevels that somehow lack an ext handle.
+    pub fn identifier(&self) -> Option<String> {
+        self.ext.as_ref().map(|h| h.identifier())
+    }
+
     /// Get app_id from ext handle (they should be in sync)
     pub fn app_id(&self) -> String {
         self.ext

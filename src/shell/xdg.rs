@@ -164,6 +164,10 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 .map_window(&window_element, location, true, None);
         }
 
+        // The placement above assumed a default size because the client hasn't
+        // configured yet. Revisit it once the real size arrives.
+        self.pending_initial_placement.insert(window_element.id());
+
         // Register with foreign toplevel protocols (both ext and wlr)
         let surface_id = surface.wl_surface().id();
         let app_id = window_element.xdg_app_id();

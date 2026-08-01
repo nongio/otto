@@ -549,6 +549,49 @@ fn animate_position_opacity_duration(
     }
 }
 
+/// Entrance animation: pop open from a small rounded shape.
+///
+/// The surface must already be sized and positioned at its final layout — this
+/// only drives the transform, so the content never reflows. Starts as a small,
+/// fully-rounded, transparent blob at the panel's centre (anchor is 0.5/0.5)
+/// and springs out to full size with a pronounced bounce, the corner radius
+/// relaxing to `radius` on the way.
+pub fn animate_enter_pop(surface: &otto_kit::SubsurfaceSurface, radius: f64) {
+    /// Scale the panel starts at. Small enough to read as "a shape opening up"
+    /// rather than "a panel that was already there, slightly smaller".
+    const FROM_SCALE: f64 = 0.32;
+    /// Corner radius at rest in the start state. Once divided by FROM_SCALE it
+    /// is far larger than half the collapsed box, so the blob reads as a pill.
+    const FROM_RADIUS: f64 = 44.0;
+    /// Spring bounce. Higher than the 0.15 used for ordinary layout moves —
+    /// this is the one moment the panel is meant to feel springy.
+    const BOUNCE: f64 = 0.42;
+
+    if let Some(scene_surface) = surface.base_surface().surface_style() {
+        // Start state, applied outside any transaction so it is instant.
+        scene_surface.set_scale(FROM_SCALE, FROM_SCALE);
+        scene_surface.set_corner_radius(FROM_RADIUS * BUFFER_SCALE);
+        scene_surface.set_opacity(0.0);
+
+        if let Some(scene) = AppContext::surface_style_manager() {
+            let qh = AppContext::queue_handle();
+
+            let timing = scene.create_timing_function(qh, ());
+            timing.set_spring(BOUNCE, 0.0);
+
+            let anim = scene.begin_transaction(qh, ());
+            anim.set_duration(0.55);
+            anim.set_timing_function(&timing);
+
+            scene_surface.set_scale(1.0, 1.0);
+            scene_surface.set_corner_radius(radius * BUFFER_SCALE);
+            scene_surface.set_opacity(1.0);
+
+            anim.commit();
+        }
+    }
+}
+
 /// Dismiss animation: scale up to `scale` while fading out to opacity 0.
 pub fn animate_dismiss(surface: &otto_kit::SubsurfaceSurface, scale: f64) {
     if let Some(scene_surface) = surface.base_surface().surface_style() {

@@ -1103,6 +1103,13 @@ impl IslandApp {
         let surface =
             SubsurfaceSurface::new(&wl, 0, 0, dialog::DIALOG_BUF_W, dialog::DIALOG_BUF_H).ok()?;
         dialog::apply_dialog_style(&surface);
+        // Start fully transparent. The panel is created before anything knows
+        // its layout, so until `render_dialog` has positioned it and started
+        // the entrance it must not be able to show at its default geometry —
+        // otherwise it flashes for a frame in the wrong place.
+        if let Some(ss) = surface.base_surface().surface_style() {
+            ss.set_opacity(0.0);
+        }
         // Keep the panel above the island pills.
         for island in &self.islands {
             surface.place_above(island.surface.wl_surface());
@@ -1133,36 +1140,28 @@ impl IslandApp {
         let w = layout.width;
         let h = layout.height;
 
+        let cx = layer_w / 2.0;
+        let cy = DIALOG_TOP + h / 2.0;
+        panel.origin = (cx - w / 2.0, DIALOG_TOP);
+        panel.layout_h = h;
+
+        // Geometry before content: `draw` commits the buffer, so a panel drawn
+        // while still at its default position would be presented there for a
+        // frame before the entrance moved it.
+        set_size_and_position(&panel.surface, w, h, cx, cy);
+
         let selected = panel.selected.clone();
         let view = panel.view.clone();
         panel.surface.draw(|canvas| {
             dialog::draw_dialog(canvas, &view, &selected, &layout);
         });
 
-        let cx = layer_w / 2.0;
-        let cy = DIALOG_TOP + h / 2.0;
-        panel.origin = (cx - w / 2.0, DIALOG_TOP);
-        panel.layout_h = h;
-
         if !panel.entered {
-            // Start slightly above and transparent, then spring in.
-            set_size_and_position(&panel.surface, w, h, cx, cy - 12.0);
-            if let Some(ss) = panel.surface.base_surface().surface_style() {
-                ss.set_opacity(0.0);
-            }
-            renderer::animate_to_with_opacity(
-                &panel.surface,
-                w,
-                h,
-                cx,
-                cy,
-                dialog::PANEL_RADIUS as f64,
-                Some(1.0),
-                0.0,
-            );
+            // Pop open from a small rounded shape — the transform animates,
+            // the content does not. Opacity was pinned to 0 at creation, so
+            // this is the first frame the panel can be seen at all.
+            renderer::animate_enter_pop(&panel.surface, dialog::PANEL_RADIUS as f64);
             panel.entered = true;
-        } else {
-            set_size_and_position(&panel.surface, w, h, cx, cy);
         }
     }
 

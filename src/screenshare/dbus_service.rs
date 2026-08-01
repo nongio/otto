@@ -13,7 +13,7 @@ use tracing::{debug, error, info, warn};
 use zbus::zvariant::{ObjectPath, OwnedFd, OwnedObjectPath, OwnedValue, Value};
 use zbus::{interface, Connection};
 
-use super::CompositorCommand;
+use super::{CompositorCommand, StreamTarget};
 
 /// Global session counter for unique IDs.
 static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -142,6 +142,34 @@ impl ScreenCastInterface {
         debug!("Received {} outputs: {:?}", connectors.len(), connectors);
         Ok(connectors)
     }
+
+    /// Lists capturable windows as `(identifier, app_id, title)`.
+    ///
+    /// The identifier is the window's `ext-foreign-toplevel-list-v1` handle
+    /// identifier; pass it back as the `window-id` property of `RecordWindow`.
+    async fn list_windows(&self) -> zbus::fdo::Result<Vec<(String, String, String)>> {
+        debug!("Listing windows (D-Bus handler)");
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
+        self.compositor_tx
+            .send(CompositorCommand::ListWindows { response_tx: tx })
+            .map_err(|e| {
+                error!("Failed to send ListWindows command: {}", e);
+                zbus::fdo::Error::Failed(format!("Channel send error: {e}"))
+            })?;
+
+        let windows = rx.await.map_err(|e| {
+            error!("Failed to receive ListWindows response: {}", e);
+            zbus::fdo::Error::Failed(format!("Response channel error: {e}"))
+        })?;
+
+        debug!("Received {} windows", windows.len());
+        Ok(windows
+            .into_iter()
+            .map(|w| (w.id, w.app_id, w.title))
+            .collect())
+    }
 }
 
 /// Session D-Bus interface.
@@ -163,7 +191,7 @@ pub struct SessionInterface {
 /// Internal state for a stream.
 #[derive(Clone)]
 struct StreamState {
-    connector: String,
+    target: StreamTarget,
     cursor_mode: u32,
     node_id: Option<u32>,
     width: u32,
@@ -186,44 +214,22 @@ impl SessionInterface {
             streams: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-}
 
-#[interface(name = "org.otto.ScreenCast.Session")]
-impl SessionInterface {
-    /// Starts recording a monitor by connector name.
-    async fn record_monitor(
-        &mut self,
-        connector: &str,
-        properties: HashMap<&str, Value<'_>>,
+    /// Allocate a stream object for `target` and export it on the bus.
+    ///
+    /// The PipeWire stream itself is not created until `Session.Start`; until
+    /// then `node_id` stays `None`.
+    async fn register_stream(
+        &self,
+        target: StreamTarget,
+        cursor_mode: u32,
+        width: u32,
+        height: u32,
     ) -> zbus::fdo::Result<OwnedObjectPath> {
-        let cursor_mode = properties
-            .get("cursor-mode")
-            .and_then(|v| u32::try_from(v).ok())
-            .unwrap_or(1);
-
         let stream_id = STREAM_COUNTER.fetch_add(1, Ordering::Relaxed);
         let stream_path = format!("{}/stream/{stream_id}", self.session_path);
 
-        info!(
-            %connector,
-            cursor_mode,
-            "Recording monitor, stream at {stream_path}"
-        );
-
-        // Get output info from compositor to know dimensions
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.compositor_tx
-            .send(CompositorCommand::ListOutputs { response_tx: tx })
-            .map_err(|e| zbus::fdo::Error::Failed(format!("Channel send error: {e}")))?;
-
-        let outputs = rx
-            .await
-            .map_err(|e| zbus::fdo::Error::Failed(format!("Response channel error: {e}")))?;
-
-        let output = outputs
-            .iter()
-            .find(|o| o.connector == connector)
-            .ok_or_else(|| zbus::fdo::Error::Failed(format!("Output {connector} not found")))?;
+        debug!(target = %target.key(), width, height, "Registering stream at {stream_path}");
 
         // Store stream state (node_id will be set when PipeWire stream starts)
         {
@@ -231,11 +237,11 @@ impl SessionInterface {
             streams.insert(
                 stream_path.clone(),
                 StreamState {
-                    connector: connector.to_string(),
+                    target,
                     cursor_mode,
                     node_id: None,
-                    width: output.width,
-                    height: output.height,
+                    width,
+                    height,
                     started: false,
                 },
             );
@@ -268,15 +274,93 @@ impl SessionInterface {
         OwnedObjectPath::try_from(stream_path)
             .map_err(|e| zbus::fdo::Error::Failed(format!("Invalid path: {e}")))
     }
+}
 
-    /// Starts recording a window (not implemented).
-    async fn record_window(
-        &self,
-        _properties: HashMap<&str, Value<'_>>,
+#[interface(name = "org.otto.ScreenCast.Session")]
+impl SessionInterface {
+    /// Starts recording a monitor by connector name.
+    async fn record_monitor(
+        &mut self,
+        connector: &str,
+        properties: HashMap<&str, Value<'_>>,
     ) -> zbus::fdo::Result<OwnedObjectPath> {
-        Err(zbus::fdo::Error::NotSupported(
-            "Window recording not yet implemented".to_string(),
-        ))
+        let cursor_mode = properties
+            .get("cursor-mode")
+            .and_then(|v| u32::try_from(v).ok())
+            .unwrap_or(1);
+
+        info!(%connector, cursor_mode, "Recording monitor");
+
+        // Get output info from compositor to know dimensions
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.compositor_tx
+            .send(CompositorCommand::ListOutputs { response_tx: tx })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Channel send error: {e}")))?;
+
+        let outputs = rx
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Response channel error: {e}")))?;
+
+        let output = outputs
+            .iter()
+            .find(|o| o.connector == connector)
+            .ok_or_else(|| zbus::fdo::Error::Failed(format!("Output {connector} not found")))?;
+
+        self.register_stream(
+            StreamTarget::Output(connector.to_string()),
+            cursor_mode,
+            output.width,
+            output.height,
+        )
+        .await
+    }
+
+    /// Starts recording a single window.
+    ///
+    /// Properties:
+    /// - `window-id`: s — the window's `ext-foreign-toplevel-list-v1`
+    ///   identifier, as returned by `org.otto.ScreenCast.ListWindows`.
+    /// - `cursor-mode`: u32 — optional, defaults to embedded.
+    async fn record_window(
+        &mut self,
+        properties: HashMap<&str, Value<'_>>,
+    ) -> zbus::fdo::Result<OwnedObjectPath> {
+        let window_id: String = properties
+            .get("window-id")
+            .and_then(|v| String::try_from(v.try_clone().ok()?).ok())
+            .ok_or_else(|| {
+                zbus::fdo::Error::InvalidArgs("RecordWindow requires a window-id".to_string())
+            })?;
+
+        let cursor_mode = properties
+            .get("cursor-mode")
+            .and_then(|v| u32::try_from(v).ok())
+            .unwrap_or(1);
+
+        info!(%window_id, cursor_mode, "Recording window");
+
+        // Resolve the identifier to current window dimensions.
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.compositor_tx
+            .send(CompositorCommand::ListWindows { response_tx: tx })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Channel send error: {e}")))?;
+
+        let windows = rx
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("Response channel error: {e}")))?;
+
+        let window = windows
+            .iter()
+            .find(|w| w.id == window_id)
+            .ok_or_else(|| zbus::fdo::Error::Failed(format!("Window {window_id} not found")))?;
+
+        self.register_stream(
+            StreamTarget::Window(window_id.clone()),
+            cursor_mode,
+            window.width,
+            window.height,
+        )
+        .await
     }
 
     /// Starts all streams in the session.
@@ -297,20 +381,16 @@ impl SessionInterface {
         };
 
         for stream_path in stream_paths {
-            let (connector, cursor_mode) = {
+            let Some((target, cursor_mode)) = ({
                 let streams = self.streams.read().await;
                 streams
                     .get(&stream_path)
-                    .map(|s| (s.connector.clone(), s.cursor_mode))
-                    .unwrap_or_else(|| {
-                        // Skip if stream not found
-                        (String::new(), 0)
-                    })
-            };
-
-            if connector.is_empty() {
+                    .map(|s| (s.target.clone(), s.cursor_mode))
+            }) else {
+                // Stream vanished between listing and starting
                 continue;
-            }
+            };
+            let connector = target.key();
 
             // Create response channel for node_id
             let (tx, rx) = tokio::sync::oneshot::channel();
@@ -318,7 +398,7 @@ impl SessionInterface {
             // Notify compositor to start recording
             if let Err(e) = self.compositor_tx.send(CompositorCommand::StartRecording {
                 session_id: self.session_path.clone(),
-                output_connector: connector.clone(),
+                target,
                 cursor_mode,
                 response_tx: tx,
             }) {
@@ -366,17 +446,17 @@ impl SessionInterface {
         info!(session = %self.session_path, stream_count = streams.len(), "Stopping {} streams", streams.len());
         for (path, stream) in streams.iter_mut() {
             if stream.started {
-                info!(session = %self.session_path, stream_path = %path, connector = %stream.connector, "Stopping started stream");
+                info!(session = %self.session_path, stream_path = %path, target = %stream.target.key(), "Stopping started stream");
                 stream.started = false;
 
                 if let Err(e) = self.compositor_tx.send(CompositorCommand::StopRecording {
                     session_id: self.session_path.clone(),
-                    output_connector: stream.connector.clone(),
+                    target: stream.target.clone(),
                 }) {
                     warn!(?e, "Failed to stop recording");
                 }
             } else {
-                info!(session = %self.session_path, stream_path = %path, connector = %stream.connector, "Skipping non-started stream");
+                info!(session = %self.session_path, stream_path = %path, target = %stream.target.key(), "Skipping non-started stream");
             }
         }
 
@@ -500,10 +580,24 @@ impl StreamInterface {
             .ok_or_else(|| zbus::fdo::Error::Failed("Stream not found".to_string()))?;
 
         let mut result = HashMap::new();
-        result.insert(
-            "connector".to_string(),
-            Value::from(stream.connector.as_str()).try_into().unwrap(),
-        );
+        // `source-type` mirrors the portal's SOURCE_TYPE_* bits so the portal
+        // can build the right stream properties without tracking targets itself.
+        match &stream.target {
+            StreamTarget::Output(connector) => {
+                result.insert(
+                    "connector".to_string(),
+                    Value::from(connector.as_str()).try_into().unwrap(),
+                );
+                result.insert("source-type".to_string(), OwnedValue::from(1u32));
+            }
+            StreamTarget::Window(window_id) => {
+                result.insert(
+                    "window-id".to_string(),
+                    Value::from(window_id.as_str()).try_into().unwrap(),
+                );
+                result.insert("source-type".to_string(), OwnedValue::from(2u32));
+            }
+        }
         result.insert("width".to_string(), OwnedValue::from(stream.width));
         result.insert("height".to_string(), OwnedValue::from(stream.height));
         result.insert(

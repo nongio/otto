@@ -17,7 +17,7 @@ pub use interface::{
     fallback_mapping_id, validate_cursor_mode, validate_persist_mode, ScreenCastPortal,
 };
 pub use settings::SettingsPortal;
-pub use state::{PortalState, SessionState};
+pub use state::{PortalState, SelectedWindow, SessionState};
 pub use stream::{build_streams_value_from_descriptors, StreamDescriptor};
 
 pub(crate) use request::Request;
@@ -28,7 +28,6 @@ pub const DESKTOP_PATH: &str = "/org/freedesktop/portal/desktop";
 
 // Source type bitmask values per XDG Desktop Portal spec.
 pub const SOURCE_TYPE_MONITOR: u32 = 1;
-#[allow(dead_code)]
 pub const SOURCE_TYPE_WINDOW: u32 = 2;
 #[allow(dead_code)]
 pub const SOURCE_TYPE_VIRTUAL: u32 = 4;

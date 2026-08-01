@@ -292,6 +292,12 @@ impl WorkspaceSelectorView {
     }
 }
 
+/// Is the scene-space point `(x, y)` inside this layer's transformed bounds?
+fn layer_contains(layer: &Layer, x: f32, y: f32) -> bool {
+    let r = layer.render_bounds_transformed();
+    x >= r.x() && x <= r.x() + r.width() && y >= r.y() && y <= r.y() + r.height()
+}
+
 fn render_workspace_selector_view(
     state: &WorkspaceSelectorViewState,
     view: &View<WorkspaceSelectorViewState>,
@@ -401,13 +407,20 @@ fn render_workspace_selector_view(
                 })
                 .on_pointer_out({
                     let view_ref = view.clone();
-                    move |_layer: &Layer, _x, _y| {
+                    move |layer: &Layer, x, y| {
                         let key = format!("workspace_selector_desktop_remove_{}", workspace_index);
-                        if let Some(remove_button) = view_ref.layer_by_key(key.as_str()) {
-                            remove_button.set_opacity(0.0, Transition::spring(0.3, 0.1));
-                            remove_button
-                                .set_scale(Point::new(0.8, 0.8), Transition::spring(0.3, 0.1));
+                        let Some(remove_button) = view_ref.layer_by_key(key.as_str()) else {
+                            return;
+                        };
+                        // Reaching for the button crosses out of the preview, so the
+                        // engine emits Out here (after the Move that revealed it) and
+                        // the button would vanish under the cursor. Keep it shown while
+                        // the pointer is still over the preview or over the button.
+                        if layer_contains(layer, x, y) || layer_contains(&remove_button, x, y) {
+                            return;
                         }
+                        remove_button.set_opacity(0.0, Transition::spring(0.3, 0.1));
+                        remove_button.set_scale(Point::new(0.8, 0.8), Transition::spring(0.3, 0.1));
                     }
                 })
                 .children::<LayerTree>({

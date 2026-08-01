@@ -33,6 +33,28 @@ pub struct StreamDescriptor {
     pub modifier: Option<u64>,
     /// Buffer type (e.g., "DMA", "SHM").
     pub buffer_kind: Option<String>,
+    /// Portal source type bit for this stream (monitor or window).
+    pub source_type: u32,
+}
+
+impl Default for StreamDescriptor {
+    fn default() -> Self {
+        Self {
+            node_id: 0,
+            stream_id: String::new(),
+            mapping_id: None,
+            width: None,
+            height: None,
+            position: None,
+            scale_factor: None,
+            refresh_millihz: None,
+            stride: None,
+            fourcc: None,
+            modifier: None,
+            buffer_kind: None,
+            source_type: SOURCE_TYPE_MONITOR,
+        }
+    }
 }
 
 /// Converts stream descriptors to the D-Bus vardict format.
@@ -48,7 +70,7 @@ pub fn build_streams_value_from_descriptors(
         let mut dict: HashMap<String, OwnedValue> = HashMap::new();
         dict.insert(
             "source_type".to_string(),
-            OwnedValue::from(SOURCE_TYPE_MONITOR),
+            OwnedValue::from(descriptor.source_type),
         );
         dict.insert(
             "id".to_string(),

@@ -2489,6 +2489,32 @@ impl Workspaces {
 
     // Helpers / Windows Management
 
+    /// The area of `output` a normal window may occupy: the output geometry
+    /// minus layer-shell exclusive zones and the dock.
+    pub fn usable_geometry(
+        &self,
+        output: &Output,
+    ) -> Option<Rectangle<i32, smithay::utils::Logical>> {
+        let geo = self.output_geometry(output)?;
+        let map = layer_map_for_output(output);
+        let zone = map.non_exclusive_zone();
+        let mut adjusted = Rectangle::new(geo.loc + zone.loc, zone.size);
+
+        // Account for the dock geometry (internal compositor UI, not layer-shell)
+        let dock_geom = self.get_dock_geometry();
+        if dock_geom.size.h > 0 {
+            let dock_top = dock_geom.loc.y;
+            let available_bottom = adjusted.loc.y + adjusted.size.h;
+
+            // If dock is in the usable area, reduce height to stop above dock
+            if dock_top < available_bottom {
+                adjusted.size.h = dock_top - adjusted.loc.y;
+            }
+        }
+
+        Some(adjusted)
+    }
+
     /// Determine the initial placement of a new window within the workspace.
     /// It calculates the appropriate position and bounds for the window based
     /// on the current pointer location and the output geometry under the pointer.
@@ -2505,26 +2531,7 @@ impl Workspaces {
             .or_else(|| self.default_client_output())
             .cloned();
         let output_geometry = output
-            .and_then(|o| {
-                let geo = self.output_geometry(&o)?;
-                let map = layer_map_for_output(&o);
-                let zone = map.non_exclusive_zone();
-                let mut adjusted = Rectangle::new(geo.loc + zone.loc, zone.size);
-
-                // Account for the dock geometry (internal compositor UI, not layer-shell)
-                let dock_geom = self.get_dock_geometry();
-                if dock_geom.size.h > 0 {
-                    let dock_top = dock_geom.loc.y;
-                    let available_bottom = adjusted.loc.y + adjusted.size.h;
-
-                    // If dock is in the usable area, reduce height to stop above dock
-                    if dock_top < available_bottom {
-                        adjusted.size.h = dock_top - adjusted.loc.y;
-                    }
-                }
-
-                Some(adjusted)
-            })
+            .and_then(|o| self.usable_geometry(&o))
             .unwrap_or_else(|| Rectangle::new((0, 0).into(), (800, 800).into()));
 
         // The client's real size is unknown until it configures; assume a typical

@@ -645,6 +645,9 @@ pub fn run_winit() {
                                     &all_window_elements,
                                     &std::collections::HashSet::new(),
                                     expose_active,
+                                    // Winit has no per-frame screenshare tap,
+                                    // so nothing is ever capture-pinned here.
+                                    &std::collections::HashSet::new(),
                                 );
                             post_repaint(
                                 &output,

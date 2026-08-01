@@ -231,6 +231,14 @@ impl PipeWireStream {
         self.shared.streaming.load(Ordering::SeqCst)
     }
 
+    /// The size this stream negotiated, in pixels.
+    ///
+    /// Fixed for the stream's lifetime — a window that resizes mid-capture is
+    /// cropped or letterboxed into these dimensions rather than renegotiating.
+    pub fn stream_size(&self) -> (u32, u32) {
+        (self.config.width, self.config.height)
+    }
+
     /// Get access to the buffer pool for rendering from main thread.
     pub fn buffer_pool(&self) -> Arc<Mutex<BufferPool>> {
         self.shared.buffer_pool.clone()

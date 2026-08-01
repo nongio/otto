@@ -12,11 +12,12 @@ use zbus::interface;
 use zbus::object_server::ObjectServer;
 use zbus::zvariant::{OwnedFd, OwnedObjectPath, OwnedValue};
 
+use crate::otto_client::screencast::WindowSource;
 use crate::otto_client::OttoClient;
 use crate::portal::{
-    build_streams_value_from_descriptors, make_output_mapping_id, PortalState, Request, Session,
-    SessionState, StreamDescriptor, CURSOR_MODE_EMBEDDED, SOURCE_TYPE_MONITOR,
-    SUPPORTED_CURSOR_MODES,
+    build_streams_value_from_descriptors, make_output_mapping_id, PortalState, Request,
+    SelectedWindow, Session, SessionState, StreamDescriptor, CURSOR_MODE_EMBEDDED,
+    SOURCE_TYPE_MONITOR, SOURCE_TYPE_WINDOW, SUPPORTED_CURSOR_MODES,
 };
 use zbus::zvariant::Str;
 
@@ -71,6 +72,44 @@ fn preferred_output_override() -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
+/// Best-effort human-readable name for a requesting app, for the dialog copy.
+fn display_app_name(app_id: &str) -> String {
+    match app_id.rsplit('.').next() {
+        Some(name) if !name.is_empty() => name.to_string(),
+        _ => "An application".to_string(),
+    }
+}
+
+/// Picks the output to capture when no picker dialog is reachable: the
+/// `screencast-output` override if it names a present output, else the first.
+fn fallback_output(available: &[String]) -> Option<String> {
+    if available.is_empty() {
+        return None;
+    }
+    match preferred_output_override() {
+        Some(preferred) if available.contains(&preferred) => {
+            info!(output = %preferred, "Using screencast-output override");
+            Some(preferred)
+        }
+        Some(preferred) => {
+            warn!(
+                output = %preferred,
+                ?available,
+                "screencast-output override not among available outputs; using first"
+            );
+            available.first().cloned()
+        }
+        None => available.first().cloned(),
+    }
+}
+
+/// What the user picked in the source dialog.
+#[derive(Clone, Debug)]
+pub enum SourceSelection {
+    Monitor(String),
+    Window(WindowSource),
+}
+
 #[derive(Clone)]
 pub struct ScreenCastPortal {
     state: Arc<Mutex<PortalState>>,
@@ -83,6 +122,139 @@ impl ScreenCastPortal {
             state: Arc::new(Mutex::new(PortalState::default())),
             sc_client: Arc::new(sc_client),
         }
+    }
+
+    /// Ask the user which source to share.
+    ///
+    /// Monitors and windows are offered as one radio list — the portal spec
+    /// lets an app request both types, and the user shouldn't have to care
+    /// which bit was set. Returns `Ok(None)` if the user dismissed the dialog,
+    /// and `Err` only when no dialog renderer answered (see the caller's
+    /// fallback).
+    async fn pick_source(
+        &self,
+        app_id: &str,
+        outputs: &[String],
+        windows: &[WindowSource],
+    ) -> zbus::Result<Option<SourceSelection>> {
+        // Option ids are prefixed so one flat list can carry both kinds.
+        let mut options: Vec<(String, String, String)> = Vec::new();
+
+        for connector in outputs {
+            let label = if outputs.len() == 1 {
+                "Entire screen".to_string()
+            } else {
+                format!("Screen — {connector}")
+            };
+            options.push((
+                format!("monitor:{connector}"),
+                label,
+                "video-display".into(),
+            ));
+        }
+
+        for window in windows {
+            let label = if window.title.is_empty() {
+                window.app_id.clone()
+            } else {
+                window.title.clone()
+            };
+            options.push((
+                format!("window:{}", window.id),
+                label,
+                window.app_id.clone(),
+            ));
+        }
+
+        let Some((default_id, _, _)) = options.first().cloned() else {
+            return Ok(None);
+        };
+
+        let title = "Share your screen";
+        let subtitle = format!("{} wants to share your screen", display_app_name(app_id));
+        let body = "The selected source will be visible to the application.";
+
+        // Native renderer first — it's the only one that shows app icons.
+        let native = async {
+            let proxy = self.sc_client.dialog_proxy().await?;
+            proxy
+                .present_access(
+                    app_id,
+                    title,
+                    &subtitle,
+                    body,
+                    "video-display",
+                    "Share",
+                    "Cancel",
+                    true,
+                    vec![(
+                        "source".to_string(),
+                        "Choose what to share".to_string(),
+                        options.clone(),
+                        default_id.clone(),
+                    )],
+                )
+                .await
+        }
+        .await;
+
+        let (response, results) = match native {
+            Ok(answer) => answer,
+            Err(err) => {
+                // otto-islands isn't running. Rather than fail — which would
+                // make window sharing impossible without it — borrow another
+                // desktop's Access dialog. Icons are lost: the standard
+                // choices tuple has no icon field.
+                warn!(
+                    ?err,
+                    "Native dialog unavailable; trying standard Access backends"
+                );
+                let plain: Vec<(String, String)> = options
+                    .into_iter()
+                    .map(|(id, label, _icon)| (id, label))
+                    .collect();
+                self.sc_client
+                    .present_access_fallback(
+                        app_id,
+                        title,
+                        &subtitle,
+                        body,
+                        "video-display",
+                        "Share",
+                        "Cancel",
+                        true,
+                        vec![(
+                            "source".to_string(),
+                            "Choose what to share".to_string(),
+                            plain,
+                            default_id,
+                        )],
+                    )
+                    .await?
+            }
+        };
+
+        if response != 0 {
+            return Ok(None);
+        }
+
+        let Some((_, choice)) = results.into_iter().find(|(group, _)| group == "source") else {
+            warn!("Picker returned no selection for the source group");
+            return Ok(None);
+        };
+
+        Ok(match choice.split_once(':') {
+            Some(("monitor", connector)) => Some(SourceSelection::Monitor(connector.to_string())),
+            Some(("window", id)) => windows
+                .iter()
+                .find(|w| w.id == id)
+                .cloned()
+                .map(SourceSelection::Window),
+            _ => {
+                warn!(%choice, "Picker returned an unrecognised option id");
+                None
+            }
+        })
     }
 
     /// Export a temporary Request object in dbus so the frontend can listen for the response signal.
@@ -154,6 +326,7 @@ impl ScreenCastPortal {
                     SessionState {
                         sc_session: sc_session_obj_path.clone(),
                         selected_outputs: Vec::new(),
+                        selected_window: None,
                         cursor_mode: default_cursor_mode,
                         persist_mode: None,
                         next_stream_id: 0,
@@ -203,7 +376,7 @@ impl ScreenCastPortal {
                 .and_then(|value| u32::try_from(value).ok())
                 .unwrap_or(SOURCE_TYPE_MONITOR);
 
-            if requested_types & SOURCE_TYPE_MONITOR == 0 {
+            if requested_types & (SOURCE_TYPE_MONITOR | SOURCE_TYPE_WINDOW) == 0 {
                 warn!(
                     session = %session_handle,
                     requested_types,
@@ -230,42 +403,68 @@ impl ScreenCastPortal {
                 .and_then(|value| bool::try_from(value).ok())
                 .unwrap_or(false);
 
-            info!(session = %session_handle, "Requesting available outputs from compositor");
-            let available_outputs =
+            let monitors_allowed = requested_types & SOURCE_TYPE_MONITOR != 0;
+            let windows_allowed = requested_types & SOURCE_TYPE_WINDOW != 0;
+
+            let available_outputs = if monitors_allowed {
                 self.sc_client.list_outputs().await.map_err(|err| {
                     error!(session = %session_handle, ?err, "Failed to enumerate outputs");
                     fdo::Error::Failed(format!("Failed to enumerate outputs: {err}"))
-                })?;
+                })?
+            } else {
+                Vec::new()
+            };
 
-            info!(session = %session_handle, count = available_outputs.len(), ?available_outputs, "Received outputs from compositor");
+            // A compositor too old to know ListWindows just yields no windows;
+            // the monitor half of the picker still works.
+            let available_windows = if windows_allowed {
+                self.sc_client.list_windows().await.unwrap_or_else(|err| {
+                    warn!(session = %session_handle, ?err, "Failed to enumerate windows");
+                    Vec::new()
+                })
+            } else {
+                Vec::new()
+            };
 
-            if available_outputs.is_empty() {
-                warn!(session = %session_handle, "No outputs available for screencast");
+            info!(
+                session = %session_handle,
+                outputs = available_outputs.len(),
+                windows = available_windows.len(),
+                "Received sources from compositor"
+            );
+
+            if available_outputs.is_empty() && available_windows.is_empty() {
+                warn!(session = %session_handle, "No sources available for screencast");
                 return Ok((3, HashMap::new()));
             }
 
             if multiple {
                 info!(
                     session = %session_handle,
-                    "Multiple selection requested; limiting to first output"
+                    "Multiple selection requested; limiting to a single source"
                 );
             }
 
-            let chosen_output = match preferred_output_override() {
-                Some(preferred) if available_outputs.contains(&preferred) => {
-                    info!(session = %session_handle, output = %preferred, "Using screencast-output override");
-                    preferred
+            let selection = match self
+                .pick_source(&app_id, &available_outputs, &available_windows)
+                .await
+            {
+                Ok(Some(selection)) => selection,
+                // User dismissed the picker.
+                Ok(None) => {
+                    info!(session = %session_handle, "User cancelled source selection");
+                    return Ok((1, HashMap::new()));
                 }
-                Some(preferred) => {
-                    warn!(
-                        session = %session_handle,
-                        output = %preferred,
-                        ?available_outputs,
-                        "screencast-output override not among available outputs; using first"
-                    );
-                    available_outputs.first().cloned().unwrap_or_default()
+                // No dialog renderer on the bus. Monitor capture keeps its
+                // pre-picker behaviour so an islands-less session still works;
+                // a window is never picked on the user's behalf.
+                Err(err) => {
+                    warn!(session = %session_handle, ?err, "Source picker unavailable");
+                    let Some(fallback) = fallback_output(&available_outputs) else {
+                        return Ok((2, HashMap::new()));
+                    };
+                    SourceSelection::Monitor(fallback)
                 }
-                None => available_outputs.first().cloned().unwrap_or_default(),
             };
 
             {
@@ -275,7 +474,19 @@ impl ScreenCastPortal {
                     .get_mut(session_handle.as_str())
                     .ok_or_else(|| fdo::Error::Failed("Session not found".to_string()))?;
 
-                entry.selected_outputs = vec![chosen_output.clone()];
+                match &selection {
+                    SourceSelection::Monitor(connector) => {
+                        entry.selected_outputs = vec![connector.clone()];
+                        entry.selected_window = None;
+                    }
+                    SourceSelection::Window(window) => {
+                        entry.selected_outputs = Vec::new();
+                        entry.selected_window = Some(SelectedWindow {
+                            id: window.id.clone(),
+                            title: window.title.clone(),
+                        });
+                    }
+                }
                 entry.cursor_mode = cursor_mode;
                 entry.persist_mode = persist_mode;
                 entry.next_stream_id = 0;
@@ -283,7 +494,7 @@ impl ScreenCastPortal {
 
             info!(
                 session = %session_handle,
-                output = %chosen_output,
+                selection = ?selection,
                 cursor_mode,
                 persist_mode = ?persist_mode,
                 "Stored source selection"
@@ -319,24 +530,33 @@ impl ScreenCastPortal {
             .await?;
 
         let result = async {
-            let (sc_session_path, selected_output, cursor_mode, stream_index, persist_mode) = {
+            let (sc_session_path, selected_source, cursor_mode, stream_index, persist_mode) = {
                 let mut state = self.state.lock().await;
                 let entry = state
                     .sessions
                     .get_mut(session_handle.as_str())
                     .ok_or_else(|| fdo::Error::Failed("Session not found".to_string()))?;
 
-                if entry.selected_outputs.is_empty() {
-                    return Err(fdo::Error::Failed(
-                        "No output selected for session".to_string(),
-                    ));
-                }
+                let selected_source = match (&entry.selected_window, entry.selected_outputs.first())
+                {
+                    (Some(window), _) => SourceSelection::Window(WindowSource {
+                        id: window.id.clone(),
+                        app_id: String::new(),
+                        title: window.title.clone(),
+                    }),
+                    (None, Some(connector)) => SourceSelection::Monitor(connector.clone()),
+                    (None, None) => {
+                        return Err(fdo::Error::Failed(
+                            "No source selected for session".to_string(),
+                        ))
+                    }
+                };
 
                 entry.next_stream_id += 1;
 
                 (
                     entry.sc_session.clone(),
-                    entry.selected_outputs[0].clone(),
+                    selected_source,
                     entry.cursor_mode,
                     entry.next_stream_id,
                     entry.persist_mode,
@@ -345,23 +565,39 @@ impl ScreenCastPortal {
 
             let stream_identifier = format!("screen-{stream_index}");
 
+            // Name kept for the mapping-id fallback below, which is
+            // output-shaped; a window stream carries its own mapping id.
+            let selected_output = match &selected_source {
+                SourceSelection::Monitor(connector) => connector.clone(),
+                SourceSelection::Window(window) => window.id.clone(),
+            };
+
             info!(
                 sc_session = %sc_session_path,
-                output = %selected_output,
+                source = ?selected_source,
                 cursor_mode,
-                "Calling RecordMonitor on ScreenComposer session"
+                "Recording selected source"
             );
 
-            let sc_stream_path = self
-                .sc_client
-                .record_monitor(&sc_session_path, selected_output.as_str(), cursor_mode)
-                .await
-                .map_err(|err| {
-                    fdo::Error::Failed(format!(
-                        "Failed to record monitor '{}': {err}",
-                        selected_output
-                    ))
-                })?;
+            let sc_stream_path = match &selected_source {
+                SourceSelection::Monitor(connector) => self
+                    .sc_client
+                    .record_monitor(&sc_session_path, connector.as_str(), cursor_mode)
+                    .await
+                    .map_err(|err| {
+                        fdo::Error::Failed(format!("Failed to record monitor '{connector}': {err}"))
+                    })?,
+                SourceSelection::Window(window) => self
+                    .sc_client
+                    .record_window(&sc_session_path, window.id.as_str(), cursor_mode)
+                    .await
+                    .map_err(|err| {
+                        fdo::Error::Failed(format!(
+                            "Failed to record window '{}': {err}",
+                            window.title
+                        ))
+                    })?,
+            };
 
             info!(sc_stream = %sc_stream_path, "Got stream path, starting session");
 
@@ -475,6 +711,10 @@ impl ScreenCastPortal {
                 fourcc,
                 modifier,
                 buffer_kind,
+                source_type: match &selected_source {
+                    SourceSelection::Monitor(_) => SOURCE_TYPE_MONITOR,
+                    SourceSelection::Window(_) => SOURCE_TYPE_WINDOW,
+                },
             };
 
             let streams_value =

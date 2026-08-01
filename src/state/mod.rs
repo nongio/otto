@@ -311,6 +311,13 @@ pub struct Otto<BackendData: Backend + 'static> {
     // foreign toplevel list - maps surface ObjectId to unified toplevel handles (both protocols)
     pub foreign_toplevels: HashMap<ObjectId, foreign_toplevel_shared::ForeignToplevelHandles>,
 
+    /// Toplevels mapped but not yet placed against their real size.
+    ///
+    /// Initial placement runs before a client has configured, so it can only
+    /// guess at dimensions. Windows land here at map time and are re-placed on
+    /// their first sized commit — see `Otto::settle_initial_placement`.
+    pub pending_initial_placement: std::collections::HashSet<ObjectId>,
+
     // surface style protocol
     // Map from surface ID to list of surface styles augmenting that surface
     pub surfaces_style: HashMap<ObjectId, Vec<crate::surface_style::SurfaceStyle>>,
@@ -852,6 +859,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
             // foreign toplevel list
             foreign_toplevels: HashMap::new(),
+            pending_initial_placement: std::collections::HashSet::new(),
 
             // Surface style protocol
             surfaces_style: HashMap::new(),
