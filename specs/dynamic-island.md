@@ -159,6 +159,13 @@ When music is playing (detected via `playerctl`), the island automatically creat
 
 Album art accent color is extracted and used for equalizer bars and progress fill.
 
+Art comes from the MPRIS `mpris:artUrl` field, which is a URL, not a path:
+- `file://` (optionally `file://localhost/`) — percent escapes are decoded before
+  the file is opened, so paths with spaces or non-ASCII characters still load.
+- `http://` / `https://` — fetched with a bounded timeout so an unreachable host
+  cannot stall the island's update thread.
+- Anything else is logged and falls back to the ♪ placeholder.
+
 ### Positioning
 
 - The layer shell surface is anchored to `Top` with a small margin (matching topbar).
