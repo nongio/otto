@@ -42,9 +42,45 @@ const BACKDROP_SCALE: f32 = 0.25;
 /// blur (which leaves a faded, seed-exposing rim at the layer edge).
 const BACKDROP_BLUR_SIGMA: f32 = 10.0;
 
-/// Gaussian-blur `image` into a fresh same-size GPU surface and return the
-/// snapshot. Returns `None` if the surface or filter can't be built (caller
-/// falls back to the raw image).
+/// Vibrancy tone map applied to the blurred backdrop, so a frosted panel stays
+/// distinguishable from what is behind it. A plain Gaussian blur of a flat
+/// white window is still flat white: the dock's translucent material over it
+/// composites back to white and the panel disappears. Saturation boost plus a
+/// gentle downward gain gives the material a slight, consistent colour shift —
+/// bright backdrops read a few percent darker (a visible boundary on white),
+/// coloured ones keep more of their hue, and the small bias keeps dark
+/// backdrops from crushing.
+///
+/// Consumers seeding a pre-blurred backdrop skip lay-rs' own blur pass — and
+/// with it lay-rs' vibrancy filter — so this is the only place the plane path
+/// gets a tone map. Kept mild in the same spirit; the composite fallback path
+/// (no external backdrop) still uses lay-rs' slightly weaker one.
+const VIBRANCY_SATURATION: f32 = 1.25;
+const VIBRANCY_GAIN: f32 = 0.85;
+const VIBRANCY_BIAS: f32 = 0.04;
+
+/// The saturation + gain/bias colour matrix described on [`VIBRANCY_SATURATION`],
+/// as a colour filter. Rows are the standard luma-preserving saturation matrix
+/// scaled by the gain, with the bias in the translation column.
+fn vibrancy_filter() -> layers::skia::ColorFilter {
+    let s = VIBRANCY_SATURATION;
+    let g = VIBRANCY_GAIN;
+    let b = VIBRANCY_BIAS;
+    // Rec. 709 luma coefficients, matching lay-rs' backdrop tone map.
+    let (lr, lg, lb) = (0.213, 0.715, 0.072);
+    #[rustfmt::skip]
+    let matrix = layers::skia::ColorMatrix::new(
+        g * (lr + (1.0 - lr) * s), g * (lg - lg * s),         g * (lb - lb * s),         0.0, b,
+        g * (lr - lr * s),         g * (lg + (1.0 - lg) * s), g * (lb - lb * s),         0.0, b,
+        g * (lr - lr * s),         g * (lg - lg * s),         g * (lb + (1.0 - lb) * s), 0.0, b,
+        0.0,                       0.0,                       0.0,                       1.0, 0.0,
+    );
+    layers::skia::color_filters::matrix(&matrix, None)
+}
+
+/// Gaussian-blur `image` into a fresh same-size GPU surface, apply the vibrancy
+/// tone map, and return the snapshot. Returns `None` if the surface or filter
+/// can't be built (caller falls back to the raw image).
 fn blur_image(
     image: &layers::skia::Image,
     ctx: &mut layers::skia::gpu::DirectContext,
@@ -72,8 +108,10 @@ fn blur_image(
         None,
         None,
     )?;
+    // Tone map on top of the blur: one filter chain, one pass.
+    let filter = layers::skia::image_filters::color_filter(vibrancy_filter(), blur, None)?;
     let mut paint = layers::skia::Paint::default();
-    paint.set_image_filter(blur);
+    paint.set_image_filter(filter);
     {
         let canvas = surface.canvas();
         canvas.clear(layers::skia::Color4f::new(0.0, 0.0, 0.0, 1.0));
