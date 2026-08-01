@@ -333,16 +333,48 @@ impl SceneDmabufElement {
         let has_dmabuf = self.current_dmabuf.lock().unwrap().is_some();
         if has_dmabuf {
             match inner.node_ref {
-                Some(node_ref) => {
-                    dirty_rect = inner.engine.subtree_damage(node_ref);
-                    if dirty_rect.is_none() && !backdrop_changed && !force_full {
-                        return false;
-                    }
-                }
+                Some(node_ref) => dirty_rect = inner.engine.subtree_damage(node_ref),
                 None => return false,
             }
         } else {
             dirty_rect = None;
+        }
+
+        // Map the scene-space dirty rect into buffer space, clipped to the
+        // buffer — used both to clip this render and to report damage below.
+        // `render_node_tree` draws the subtree with the root node at the canvas
+        // origin and the draw path then translates back by the root's *dynamic*
+        // offset (`render_position() − scene_origin`), so scene content lands at
+        // `scene − scene_origin − viewport`. Subtracting the root's full
+        // `render_position()` here instead would double-count the workspace
+        // scroll: on any workspace but the first, the windows/background plane
+        // roots sit a full output width to the left, and every dirty rect
+        // clamped to a sliver at the buffer edge — a window on workspace 2
+        // stopped repainting (Chrome scrolling froze on screen).
+        //
+        // `None` means the damage lies entirely outside this buffer, which is
+        // the normal case for a window on a workspace scrolled off screen:
+        // nothing visible changed, so the plane must not redraw at all. Letting
+        // it through would repaint (and report FB_DAMAGE_CLIPS for) an edge
+        // sliver on every frame a background workspace animates.
+        let (w, h) = inner.size;
+        let (ox, oy) = inner.scene_origin;
+        let (vx, vy) = inner.viewport;
+        let visible_damage = dirty_rect.and_then(|r| {
+            let x = (r.left().floor() as i32 - ox - vx).clamp(0, w);
+            let y = (r.top().floor() as i32 - oy - vy).clamp(0, h);
+            let x2 = (r.right().ceil() as i32 - ox - vx).clamp(0, w);
+            let y2 = (r.bottom().ceil() as i32 - oy - vy).clamp(0, h);
+            if x2 <= x || y2 <= y {
+                return None;
+            }
+            Some(Rectangle::<i32, Physical>::new(
+                (x, y).into(),
+                (x2 - x, y2 - y).into(),
+            ))
+        });
+        if has_dmabuf && visible_damage.is_none() && !backdrop_changed && !force_full {
+            return false;
         }
 
         let swapchain = match inner.swapchain.as_mut() {
@@ -399,32 +431,10 @@ impl SceneDmabufElement {
             }
         }
 
-        // Map the scene-space dirty rect into buffer space and clamp to buffer
-        // bounds — used both to clip this render and to report damage below.
-        // `render_node_tree` draws the subtree with the root node at the canvas
-        // origin and the draw path then translates back by the root's *dynamic*
-        // offset (`render_position() − scene_origin`), so scene content lands at
-        // `scene − scene_origin − viewport`. Subtracting the root's full
-        // `render_position()` here instead would double-count the workspace
-        // scroll: on any workspace but the first, the windows/background plane
-        // roots sit a full output width to the left, and every dirty rect
-        // clamped to a 1px sliver at the buffer edge — a window on workspace 2
-        // stopped repainting (Chrome scrolling froze on screen).
-        let (w, h) = inner.size;
-        let (ox, oy) = inner.scene_origin;
-        let (vx, vy) = inner.viewport;
-        let damage_rect = dirty_rect
+        // Full buffer when the backdrop changed (blur can repaint anywhere),
+        // on a forced redraw, or on this element's first render.
+        let damage_rect = visible_damage
             .filter(|_| !backdrop_changed && !force_full)
-            .map(|r| {
-                let x = (r.left().floor() as i32 - ox - vx).clamp(0, w);
-                let y = (r.top().floor() as i32 - oy - vy).clamp(0, h);
-                let x2 = (r.right().ceil() as i32 - ox - vx).clamp(0, w);
-                let y2 = (r.bottom().ceil() as i32 - oy - vy).clamp(0, h);
-                Rectangle::<i32, Physical>::new(
-                    (x, y).into(),
-                    ((x2 - x).max(1), (y2 - y).max(1)).into(),
-                )
-            })
             .unwrap_or_else(|| Rectangle::new((0, 0).into(), (w, h).into()));
 
         // Render into the slot's Skia surface.
