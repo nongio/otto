@@ -629,6 +629,10 @@ pub struct PlaybackInfo {
     pub duration_secs: f32,
     /// MPRIS player name (e.g. "spotify", "firefox") — typically matches Wayland app_id.
     pub player_name: String,
+    /// Every player the current track was read from. A browser publishes the
+    /// same track twice (engine + integration shim), and either name can be
+    /// the one that matches the focused window's app_id.
+    pub player_names: Vec<String>,
 }
 
 pub type SharedPlayback = Arc<Mutex<PlaybackInfo>>;
@@ -749,12 +753,13 @@ impl MusicMonitor {
             return false;
         }
         if let Ok(info) = self.playback.lock() {
-            if info.player_name.is_empty() {
-                return false;
-            }
             // MPRIS player names and Wayland app_ids typically match
-            // (e.g. "spotify", "firefox"). Compare case-insensitively.
-            focused.app_id.eq_ignore_ascii_case(&info.player_name)
+            // (e.g. "spotify", "firefox"). Compare case-insensitively, against
+            // every player the track was read from — for a browser the app_id
+            // matches the engine player, not the integration shim.
+            info.player_names
+                .iter()
+                .any(|name| !name.is_empty() && focused.app_id.eq_ignore_ascii_case(name))
         } else {
             false
         }
@@ -852,6 +857,105 @@ impl MusicMonitor {
 // Background threads
 // ---------------------------------------------------------------------------
 
+/// Field separator for the `playerctl` format string. ASCII unit separator, so
+/// it cannot collide with a track title.
+const FIELD_SEP: char = '\u{1f}';
+
+/// One MPRIS player as reported by `playerctl --all-players`.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct PlayerEntry {
+    name: String,
+    status: String,
+    title: String,
+    artist: String,
+    art_url: String,
+    position: f64,
+    length: f64,
+}
+
+impl PlayerEntry {
+    fn parse(line: &str) -> Option<Self> {
+        let f: Vec<&str> = line.split(FIELD_SEP).collect();
+        if f.len() < 7 {
+            return None;
+        }
+        Some(Self {
+            name: f[0].to_string(),
+            status: f[1].to_string(),
+            title: f[2].to_string(),
+            artist: f[3].to_string(),
+            art_url: f[4].to_string(),
+            position: f[5].parse().unwrap_or(0.0),
+            length: f[6].parse().unwrap_or(0.0),
+        })
+    }
+
+    fn is_playing(&self) -> bool {
+        self.status.eq_ignore_ascii_case("playing")
+    }
+
+    fn is_stopped(&self) -> bool {
+        self.status.eq_ignore_ascii_case("stopped")
+    }
+
+    /// How much of the track this player actually describes. Browsers publish
+    /// the same track from two players: the engine (title only, everything
+    /// mashed into one string) and an integration shim that carries the art and
+    /// a separate artist. The richer one is the one worth showing.
+    fn richness(&self) -> u8 {
+        u8::from(!self.art_url.is_empty()) * 2
+            + u8::from(!self.artist.is_empty())
+            + u8::from(!self.title.is_empty())
+    }
+}
+
+/// Pick the player to display, merging duplicate entries for the same track.
+///
+/// `playerctl` without `--player` picks whichever player sorts first, which for
+/// a browser is the metadata-poor engine player — that is why album art went
+/// missing. Prefer a playing player, then the one describing the track best,
+/// then fill any gaps from the other entries for the same track.
+fn select_player(entries: Vec<PlayerEntry>) -> Option<PlayerEntry> {
+    let mut candidates: Vec<PlayerEntry> = if entries.iter().any(|e| e.is_playing()) {
+        entries.into_iter().filter(|e| e.is_playing()).collect()
+    } else {
+        entries
+    };
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let best_idx = candidates
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, e)| e.richness())
+        .map(|(i, _)| i)?;
+    let mut best = candidates.swap_remove(best_idx);
+    let mut names = vec![best.name.clone()];
+
+    for other in candidates {
+        // Same duration means the same track, published twice.
+        if other.length != best.length || best.length == 0.0 {
+            continue;
+        }
+        if best.title.is_empty() {
+            best.title = other.title.clone();
+        }
+        if best.artist.is_empty() {
+            best.artist = other.artist.clone();
+        }
+        if best.art_url.is_empty() {
+            best.art_url = other.art_url.clone();
+        }
+        // The shim's position often does not advance; trust whichever is ahead.
+        best.position = best.position.max(other.position);
+        names.push(other.name);
+    }
+
+    best.name = names.join(",");
+    Some(best)
+}
+
 pub fn start_playerctl_monitor() -> SharedPlayback {
     let shared = Arc::new(Mutex::new(PlaybackInfo {
         track_title: "No media".to_string(),
@@ -861,65 +965,58 @@ pub fn start_playerctl_monitor() -> SharedPlayback {
         progress: 0.0,
         duration_secs: 0.0,
         player_name: String::new(),
+        player_names: Vec::new(),
     }));
     let shared_for_thread = shared.clone();
 
+    let format = format!(
+        "{{{{playerName}}}}{s}{{{{status}}}}{s}{{{{title}}}}{s}{{{{artist}}}}{s}\
+         {{{{mpris:artUrl}}}}{s}{{{{position}}}}{s}{{{{mpris:length}}}}",
+        s = FIELD_SEP
+    );
+
     thread::spawn(move || loop {
-        // Single playerctl call for all metadata + status.
+        // Single playerctl call covering every player's metadata + status.
         let output = Command::new("playerctl")
-            .args([
-                "metadata",
-                "--format",
-                "{{status}}\n{{title}}\n{{artist}}\n{{mpris:artUrl}}\n{{position}}\n{{mpris:length}}\n{{playerName}}",
-            ])
+            .args(["--all-players", "metadata", "--format", &format])
             .output()
             .ok()
             .filter(|o| o.status.success())
             .map(|o| String::from_utf8_lossy(&o.stdout).to_string());
 
-        if let Some(output) = output {
-            let lines: Vec<&str> = output.trim().split('\n').collect();
-            let status = lines.first().unwrap_or(&"");
-            let is_playing = status.eq_ignore_ascii_case("playing");
-            let is_stopped = status.eq_ignore_ascii_case("stopped");
+        let selected = output.as_deref().and_then(|out| {
+            select_player(
+                out.lines()
+                    .filter_map(PlayerEntry::parse)
+                    .collect::<Vec<_>>(),
+            )
+        });
+
+        if let Some(entry) = selected {
             // When status is "Stopped", report "No media" so the island is
             // dismissed after the grace period. Paused tracks keep their title.
-            let track_title = if is_stopped {
+            let track_title = if entry.is_stopped() || entry.title.is_empty() {
                 "No media".to_string()
             } else {
-                lines
-                    .get(1)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or(&"No media")
-                    .to_string()
+                entry.title.clone()
             };
-            let track_artist = lines.get(2).unwrap_or(&"").to_string();
-            let art_url = lines.get(3).unwrap_or(&"").to_string();
-            let position = lines
-                .get(4)
-                .and_then(|s| s.parse::<f64>().ok())
-                .unwrap_or(0.0);
-            let length = lines
-                .get(5)
-                .and_then(|s| s.parse::<f64>().ok())
-                .unwrap_or(1.0);
-            let player_name = lines.get(6).unwrap_or(&"").to_string();
-
-            let progress = if length > 0.0 {
-                (position / length).clamp(0.0, 1.0) as f32
+            let length = if entry.length > 0.0 {
+                entry.length
             } else {
-                0.0
+                1.0
             };
-            let duration_secs = (length / 1_000_000.0) as f32;
+            let progress = (entry.position / length).clamp(0.0, 1.0) as f32;
+            let is_playing = entry.is_playing();
 
             if let Ok(mut info) = shared_for_thread.lock() {
                 info.track_title = track_title;
-                info.track_artist = track_artist;
-                info.art_url = art_url;
+                info.track_artist = entry.artist;
+                info.art_url = entry.art_url;
                 info.is_playing = is_playing;
                 info.progress = progress;
-                info.duration_secs = duration_secs;
-                info.player_name = player_name;
+                info.duration_secs = (length / 1_000_000.0) as f32;
+                info.player_names = entry.name.split(',').map(str::to_string).collect();
+                info.player_name = entry.name;
             }
         } else if let Ok(mut info) = shared_for_thread.lock() {
             // playerctl failed — no player running. Clear track info so the
@@ -928,6 +1025,7 @@ pub fn start_playerctl_monitor() -> SharedPlayback {
             info.track_title = "No media".to_string();
             info.track_artist.clear();
             info.player_name.clear();
+            info.player_names.clear();
         }
         thread::sleep(Duration::from_millis(1500));
     });
@@ -1285,4 +1383,79 @@ fn track_offsets(track: &str) -> [f32; BAR_COUNT] {
         *item = normalized * std::f32::consts::TAU;
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line(name: &str, status: &str, title: &str, artist: &str, art: &str, len: &str) -> String {
+        format!("{name}\u{1f}{status}\u{1f}{title}\u{1f}{artist}\u{1f}{art}\u{1f}0\u{1f}{len}")
+    }
+
+    #[test]
+    fn percent_escapes_are_decoded() {
+        assert_eq!(
+            file_url_to_path("file:///home/u/art%20dir/Beyonc%C3%A9.png").as_deref(),
+            Some("/home/u/art dir/Beyoncé.png")
+        );
+        assert_eq!(
+            file_url_to_path("file://localhost/tmp/cover.png").as_deref(),
+            Some("/tmp/cover.png")
+        );
+        assert_eq!(file_url_to_path("https://example.com/a.png"), None);
+    }
+
+    #[test]
+    fn browser_duplicate_players_are_merged() {
+        // Chromium publishes the track twice: the engine player has no art and
+        // no artist, the integration shim has both.
+        let entries = vec![
+            PlayerEntry::parse(&line(
+                "chromium",
+                "Playing",
+                "On Hold • The xx",
+                "",
+                "",
+                "224179773",
+            ))
+            .unwrap(),
+            PlayerEntry::parse(&line(
+                "plasma-browser-integration",
+                "Playing",
+                "On Hold",
+                "The xx",
+                "file:///tmp/art.png",
+                "224179773",
+            ))
+            .unwrap(),
+        ];
+        let picked = select_player(entries).unwrap();
+        assert_eq!(picked.art_url, "file:///tmp/art.png");
+        assert_eq!(picked.artist, "The xx");
+        assert_eq!(picked.title, "On Hold");
+        assert_eq!(picked.name, "plasma-browser-integration,chromium");
+    }
+
+    #[test]
+    fn playing_player_wins_over_paused() {
+        let entries = vec![
+            PlayerEntry::parse(&line("vlc", "Paused", "Old", "A", "file:///a.png", "100")).unwrap(),
+            PlayerEntry::parse(&line("spotify", "Playing", "New", "B", "", "200")).unwrap(),
+        ];
+        let picked = select_player(entries).unwrap();
+        assert_eq!(picked.title, "New");
+        assert_eq!(picked.name, "spotify");
+    }
+
+    #[test]
+    fn unrelated_tracks_are_not_merged() {
+        let entries = vec![
+            PlayerEntry::parse(&line("a", "Playing", "One", "", "", "100")).unwrap(),
+            PlayerEntry::parse(&line("b", "Playing", "Two", "X", "file:///b.png", "999")).unwrap(),
+        ];
+        let picked = select_player(entries).unwrap();
+        assert_eq!(picked.title, "Two");
+        assert_eq!(picked.name, "b");
+    }
 }
