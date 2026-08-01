@@ -1099,12 +1099,10 @@ impl Otto<UdevData> {
                 // Get the source framebuffer that was just rendered to
                 // Blit to PipeWire buffers on main thread
                 for session in self.screenshare_sessions.values() {
-                    // Check if we should render cursor for this session
-                    // CURSOR_MODE_HIDDEN (1) = don't render cursor
-                    // CURSOR_MODE_EMBEDDED (2) = render cursor into video
-                    // CURSOR_MODE_METADATA (4) = send cursor as metadata (not in video) - NOT IMPLEMENTED, treat as hidden
-                    const CURSOR_MODE_EMBEDDED: u32 = 2;
-                    let should_render_cursor = session.cursor_mode == CURSOR_MODE_EMBEDDED;
+                    // Only EMBEDDED draws the cursor into the stream; METADATA
+                    // is not implemented and falls back to hidden.
+                    let should_render_cursor =
+                        session.cursor_mode == crate::screenshare::CURSOR_MODE_EMBEDDED;
 
                     tracing::trace!(
                         "Screenshare session {}: cursor_mode={}, should_render={}",

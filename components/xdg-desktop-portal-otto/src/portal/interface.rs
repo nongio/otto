@@ -784,7 +784,11 @@ impl ScreenCastPortal {
         SUPPORTED_CURSOR_MODES
     }
 
-    #[zbus(property)]
+    /// The impl portal spec spells this property lowercase. zbus would
+    /// derive `Version` from the method name, and xdg-desktop-portal then
+    /// reads 0 — which makes it skip the `AvailableCursorModes` binding
+    /// entirely and reject every cursor mode but the unset one.
+    #[zbus(property, name = "version")]
     fn version(&self) -> u32 {
         5
     }

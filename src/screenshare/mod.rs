@@ -49,6 +49,14 @@ use zbus::zvariant::OwnedFd;
 
 use crate::renderer::BlitCurrentFrame;
 
+/// Cursor mode values, matching the xdg-desktop-portal ScreenCast bitmask —
+/// the portal forwards its own value verbatim as the `cursor-mode` property.
+pub const CURSOR_MODE_HIDDEN: u32 = 1;
+/// The cursor is drawn into the streamed frames.
+pub const CURSOR_MODE_EMBEDDED: u32 = 2;
+/// The cursor is sent as PipeWire metadata — not implemented, treated as hidden.
+pub const CURSOR_MODE_METADATA: u32 = 4;
+
 /// Active screencast session state (compositor side).
 ///
 /// Tracks all active streams for a D-Bus session.
