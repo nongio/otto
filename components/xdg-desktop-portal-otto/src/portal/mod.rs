@@ -17,7 +17,7 @@ pub use interface::{
     fallback_mapping_id, validate_cursor_mode, validate_persist_mode, ScreenCastPortal,
 };
 pub use settings::SettingsPortal;
-pub use state::{PortalState, SelectedWindow, SessionState};
+pub use state::{PortalState, RecentGrant, SelectedWindow, SessionState, SourceSelection};
 pub use stream::{build_streams_value_from_descriptors, StreamDescriptor};
 
 pub(crate) use request::Request;

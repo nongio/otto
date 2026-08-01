@@ -1,14 +1,41 @@
 //! Portal state management for tracking active sessions.
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use zbus::zvariant::OwnedObjectPath;
+
+use crate::otto_client::screencast::WindowSource;
 
 /// Global portal state tracking all active sessions.
 #[derive(Default)]
 pub struct PortalState {
     /// Map from portal session handle to session state.
     pub sessions: HashMap<String, SessionState>,
+    /// Last source each app was granted, keyed by app id. See [`RecentGrant`].
+    pub recent_grants: HashMap<String, RecentGrant>,
+}
+
+/// What the user picked in the source dialog.
+#[derive(Clone, Debug)]
+pub enum SourceSelection {
+    Monitor(String),
+    Window(WindowSource),
+}
+
+/// A source the user approved, remembered for a short while so the same app
+/// isn't asked twice in a row.
+///
+/// Chrome opens one screencast session to render the preview in its own picker
+/// and a second one to actually share, which without this would pop the source
+/// dialog twice for a single user action. The grant is only reused for the same
+/// app, for the same source, while it is still on offer, and its timestamp is
+/// never refreshed — an app cannot keep the window open by re-asking.
+pub struct RecentGrant {
+    /// The source the user approved.
+    pub source: SourceSelection,
+    /// When the user approved it.
+    pub granted_at: Instant,
 }
 
 /// State for a single screencast session.

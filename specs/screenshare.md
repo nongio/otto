@@ -119,6 +119,28 @@ documented in `docs/developer/screenshare.md`.
 - `Start` calls `RecordMonitor` or `RecordWindow` according to the stored selection, and the
   resulting portal stream carries `source_type` = 1 or 2 to match.
 
+### Re-asking the same app (recent grants)
+
+- When the user picks a source, the portal remembers it against the requesting app id for
+  60 seconds.
+- A later `SelectSources` from the **same app id** skips the dialog and reuses that source —
+  answering response `0` as if the user had picked it again — but only when *all* of the
+  following hold:
+  - the grant is younger than 60 seconds;
+  - the granted source is still among the ones this call would have offered (the output is
+    still in `ListOutputs`, or the window is still in `ListWindows`);
+  - the app reports a non-empty app id.
+- An empty app id never matches a grant, in either direction: it identifies nobody, so one
+  unidentified app's grant must not answer another's request.
+- A grant's timestamp is set once when the user answers and is **not** refreshed on reuse,
+  so an app cannot hold the window open by re-asking.
+- Only a real user answer creates a grant. The no-renderer fallback (override file / first
+  output) does not, and neither does a dismissed dialog.
+- Grants live in the portal process only; restarting the portal forgets them.
+
+This is what stops Chrome asking twice for a single share: Chrome opens one screencast
+session to render the preview inside its own picker and a second one to capture for real.
+
 ### Window capture
 
 - A window stream renders the window's **own surface tree** (toplevel + subsurfaces, plus
@@ -202,6 +224,14 @@ documented in `docs/developer/screenshare.md`.
 - **The picker is modal and blocking:** `SelectSources` does not return until the user
   answers. An app that times out its portal call will fail the session; this matches the
   behaviour of every other portal implementation's chooser.
+- **A recent grant is a silent re-capture window:** for up to 60 seconds after the user
+  approves a source, the same app can start capturing that same source again without a
+  prompt — including after the user stopped the first share. The window is deliberately
+  short and narrow (same app, same still-present source, no timestamp refresh); the
+  alternative, prompting per session, asks the user to make the same decision twice for one
+  action, which trains them to click through the dialog without reading it.
+- **Grants key on app id, which is empty for unsandboxed apps:** those apps get the old
+  behaviour (a dialog per session) rather than sharing a grant pool.
 
 ## Rationale
 
@@ -243,7 +273,16 @@ documented in `docs/developer/screenshare.md`.
   whatever happens to be stacked on top of the shared window to the remote viewer — the
   privacy property users assume when they pick "share a window" over "share a screen".
 
+- **Remembering the answer in the portal rather than relying on `persist_mode` /
+  `restore_token`** is what actually fixes the double prompt: Chrome's preview and capture
+  sessions both arrive with empty options — no `persist_mode`, no token — so there is
+  nothing for a spec-level persistence mechanism to key on. A short-lived per-app grant
+  needs no cooperation from the app.
+
 ## Open Questions
+
+- Should the grant window be configurable, or extended to an explicit per-app allow-list in
+  `otto_config.toml` ("always let this app share without asking")?
 
 - Should the SHM fallback path also be re-enabled as an *additional* pod when DMA-BUF pods
   are offered, so a client that can't negotiate `DMA_DRM` caps still gets a (CPU-copied)

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_io::Timer;
 use tokio::sync::Mutex;
@@ -15,9 +15,9 @@ use zbus::zvariant::{OwnedFd, OwnedObjectPath, OwnedValue};
 use crate::otto_client::screencast::WindowSource;
 use crate::otto_client::OttoClient;
 use crate::portal::{
-    build_streams_value_from_descriptors, make_output_mapping_id, PortalState, Request,
-    SelectedWindow, Session, SessionState, StreamDescriptor, CURSOR_MODE_EMBEDDED,
-    SOURCE_TYPE_MONITOR, SOURCE_TYPE_WINDOW, SUPPORTED_CURSOR_MODES,
+    build_streams_value_from_descriptors, make_output_mapping_id, PortalState, RecentGrant,
+    Request, SelectedWindow, Session, SessionState, SourceSelection, StreamDescriptor,
+    CURSOR_MODE_EMBEDDED, SOURCE_TYPE_MONITOR, SOURCE_TYPE_WINDOW, SUPPORTED_CURSOR_MODES,
 };
 use zbus::zvariant::Str;
 
@@ -25,6 +25,12 @@ use zbus::zvariant::Str;
 const NODE_ID_MAX_RETRIES: u32 = 100;
 /// Delay between retries when polling for PipeWire node ID.
 const NODE_ID_RETRY_DELAY: Duration = Duration::from_millis(10);
+
+/// How long an approved source stays reusable for the same app without asking
+/// again. Long enough to cover an app that opens a preview session and then a
+/// real one for a single user action (Chrome), short enough that a share the
+/// user stopped a while ago cannot be silently resumed.
+const GRANT_REUSE_TTL: Duration = Duration::from_secs(60);
 
 /// Creates a fallback mapping ID when output name is empty or unavailable.
 pub fn fallback_mapping_id(output: &str) -> String {
@@ -101,13 +107,6 @@ fn fallback_output(available: &[String]) -> Option<String> {
         }
         None => available.first().cloned(),
     }
-}
-
-/// What the user picked in the source dialog.
-#[derive(Clone, Debug)]
-pub enum SourceSelection {
-    Monitor(String),
-    Window(WindowSource),
 }
 
 #[derive(Clone)]
@@ -255,6 +254,94 @@ impl ScreenCastPortal {
                 None
             }
         })
+    }
+
+    /// Store the resolved source on the session, ready for `Start`.
+    async fn store_selection(
+        &self,
+        session_handle: &OwnedObjectPath,
+        selection: &SourceSelection,
+        cursor_mode: u32,
+        persist_mode: Option<u32>,
+    ) -> fdo::Result<()> {
+        let mut state = self.state.lock().await;
+        let entry = state
+            .sessions
+            .get_mut(session_handle.as_str())
+            .ok_or_else(|| fdo::Error::Failed("Session not found".to_string()))?;
+
+        match selection {
+            SourceSelection::Monitor(connector) => {
+                entry.selected_outputs = vec![connector.clone()];
+                entry.selected_window = None;
+            }
+            SourceSelection::Window(window) => {
+                entry.selected_outputs = Vec::new();
+                entry.selected_window = Some(SelectedWindow {
+                    id: window.id.clone(),
+                    title: window.title.clone(),
+                });
+            }
+        }
+        entry.cursor_mode = cursor_mode;
+        entry.persist_mode = persist_mode;
+        entry.next_stream_id = 0;
+
+        Ok(())
+    }
+
+    /// The source this app was just granted, if it may be reused without
+    /// asking again.
+    ///
+    /// A grant is only reused for the same app id, while it is younger than
+    /// [`GRANT_REUSE_TTL`], and while the very same source is still among the
+    /// ones we would have offered — so a closed window or an unplugged output
+    /// sends the user back to the picker. Apps that report no id at all are
+    /// never matched: an empty id identifies nobody, so one app's grant must
+    /// not answer another's request.
+    async fn reusable_grant(
+        &self,
+        app_id: &str,
+        outputs: &[String],
+        windows: &[WindowSource],
+    ) -> Option<SourceSelection> {
+        if app_id.is_empty() {
+            return None;
+        }
+
+        let state = self.state.lock().await;
+        let grant = state.recent_grants.get(app_id)?;
+        if grant.granted_at.elapsed() > GRANT_REUSE_TTL {
+            return None;
+        }
+
+        match &grant.source {
+            SourceSelection::Monitor(connector) => outputs
+                .contains(connector)
+                .then(|| SourceSelection::Monitor(connector.clone())),
+            SourceSelection::Window(window) => windows
+                .iter()
+                .find(|available| available.id == window.id)
+                .cloned()
+                .map(SourceSelection::Window),
+        }
+    }
+
+    /// Remember what the user just approved, so a follow-up session from the
+    /// same app doesn't ask again. Only called for answers the user actually
+    /// gave — the no-renderer fallback never records a grant.
+    async fn record_grant(&self, app_id: &str, source: &SourceSelection) {
+        if app_id.is_empty() {
+            return;
+        }
+
+        self.state.lock().await.recent_grants.insert(
+            app_id.to_string(),
+            RecentGrant {
+                source: source.clone(),
+                granted_at: Instant::now(),
+            },
+        );
     }
 
     /// Export a temporary Request object in dbus so the frontend can listen for the response signal.
@@ -445,11 +532,35 @@ impl ScreenCastPortal {
                 );
             }
 
+            // An app that just got an answer for this very source doesn't get
+            // to ask again — that second dialog is the app's business (a
+            // preview session, say), not a second decision for the user.
+            if let Some(selection) = self
+                .reusable_grant(&app_id, &available_outputs, &available_windows)
+                .await
+            {
+                info!(
+                    session = %session_handle,
+                    selection = ?selection,
+                    "Reusing the source this app was just granted"
+                );
+                self.store_selection(&session_handle, &selection, cursor_mode, persist_mode)
+                    .await?;
+                let mut results = HashMap::new();
+                if let Some(pm) = persist_mode {
+                    results.insert("persist_mode".to_string(), OwnedValue::from(pm));
+                }
+                return Ok((0, results));
+            }
+
             let selection = match self
                 .pick_source(&app_id, &available_outputs, &available_windows)
                 .await
             {
-                Ok(Some(selection)) => selection,
+                Ok(Some(selection)) => {
+                    self.record_grant(&app_id, &selection).await;
+                    selection
+                }
                 // User dismissed the picker.
                 Ok(None) => {
                     info!(session = %session_handle, "User cancelled source selection");
@@ -467,30 +578,8 @@ impl ScreenCastPortal {
                 }
             };
 
-            {
-                let mut state = self.state.lock().await;
-                let entry = state
-                    .sessions
-                    .get_mut(session_handle.as_str())
-                    .ok_or_else(|| fdo::Error::Failed("Session not found".to_string()))?;
-
-                match &selection {
-                    SourceSelection::Monitor(connector) => {
-                        entry.selected_outputs = vec![connector.clone()];
-                        entry.selected_window = None;
-                    }
-                    SourceSelection::Window(window) => {
-                        entry.selected_outputs = Vec::new();
-                        entry.selected_window = Some(SelectedWindow {
-                            id: window.id.clone(),
-                            title: window.title.clone(),
-                        });
-                    }
-                }
-                entry.cursor_mode = cursor_mode;
-                entry.persist_mode = persist_mode;
-                entry.next_stream_id = 0;
-            }
+            self.store_selection(&session_handle, &selection, cursor_mode, persist_mode)
+                .await?;
 
             info!(
                 session = %session_handle,
