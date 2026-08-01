@@ -13,7 +13,7 @@ use tracing::{debug, error, info, warn};
 use zbus::zvariant::{ObjectPath, OwnedFd, OwnedObjectPath, OwnedValue, Value};
 use zbus::{interface, Connection};
 
-use super::{CompositorCommand, StreamTarget};
+use super::{CompositorCommand, StreamTarget, CURSOR_MODE_EMBEDDED};
 
 /// Global session counter for unique IDs.
 static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -57,7 +57,7 @@ impl ScreenCastInterface {
     /// Creates a new screencast session.
     ///
     /// Properties may include:
-    /// - `cursor-mode`: u32 (0 = hidden, 1 = embedded, 2 = metadata)
+    /// - `cursor-mode`: u32 (1 = hidden, 2 = embedded, 4 = metadata)
     async fn create_session(
         &self,
         properties: HashMap<&str, Value<'_>>,
@@ -65,7 +65,7 @@ impl ScreenCastInterface {
         let cursor_mode = properties
             .get("cursor-mode")
             .and_then(|v| u32::try_from(v).ok())
-            .unwrap_or(1); // Default to embedded cursor
+            .unwrap_or(CURSOR_MODE_EMBEDDED);
 
         let session_id = SESSION_COUNTER.fetch_add(1, Ordering::Relaxed);
         let session_path = format!("/org/otto/ScreenCast/session/{session_id}");
@@ -287,7 +287,7 @@ impl SessionInterface {
         let cursor_mode = properties
             .get("cursor-mode")
             .and_then(|v| u32::try_from(v).ok())
-            .unwrap_or(1);
+            .unwrap_or(CURSOR_MODE_EMBEDDED);
 
         info!(%connector, cursor_mode, "Recording monitor");
 
@@ -335,7 +335,7 @@ impl SessionInterface {
         let cursor_mode = properties
             .get("cursor-mode")
             .and_then(|v| u32::try_from(v).ok())
-            .unwrap_or(1);
+            .unwrap_or(CURSOR_MODE_EMBEDDED);
 
         info!(%window_id, cursor_mode, "Recording window");
 

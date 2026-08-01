@@ -131,7 +131,8 @@ impl SettingsPortal {
         self.get_setting(&namespace, &key).await
     }
 
-    #[zbus(property)]
+    /// Lowercase per the impl portal spec — see the ScreenCast interface.
+    #[zbus(property, name = "version")]
     fn version(&self) -> u32 {
         1
     }

@@ -47,7 +47,10 @@ Bitmask of supported cursor presentation modes:
 
 ### `version` (readable `u`)
 
-Must return `5` to indicate compliance with the latest upstream definition.
+Must return `5` to indicate compliance with the latest upstream definition. The property
+name is lowercase — xdg-desktop-portal reads `version` and, when it comes back as 0, stops
+propagating `AvailableCursorModes` to the client-facing portal, which then rejects every
+`cursor_mode` with `Unavailable cursor mode`.
 
 ## Methods
 

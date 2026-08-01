@@ -93,6 +93,25 @@ documented in `docs/developer/screenshare.md`.
 - An identifier that no longer resolves (window closed or unmapped between the picker and
   `Start`) fails `RecordWindow` rather than falling back to any other window.
 
+### Portal implementation properties and cursor modes
+
+- `xdg-desktop-portal-otto` exports the `org.freedesktop.impl.portal.ScreenCast` properties
+  exactly as the impl portal interface spells them: `AvailableSourceTypes`,
+  `AvailableCursorModes`, and **`version`** in lowercase. The same lowercase `version`
+  applies to every impl interface Otto exports (e.g. `…impl.portal.Settings`).
+- The name matters: xdg-desktop-portal reads `version` from the backend and only binds
+  `AvailableCursorModes` through to the client-facing portal when that version is ≥ 2. A
+  backend that spells it `Version` is seen as version 0, the frontend's
+  `AvailableCursorModes` stays 0, and every `SelectSources` carrying a `cursor_mode` is
+  rejected with `Unavailable cursor mode <n>` before it ever reaches Otto.
+- Otto advertises `AvailableCursorModes` = `HIDDEN | EMBEDDED` (3). `METADATA` is not
+  implemented and is not advertised.
+- Cursor modes keep the portal's bitmask numbering end to end — `HIDDEN` = 1, `EMBEDDED` = 2,
+  `METADATA` = 4. The portal forwards the requested value verbatim as the compositor-side
+  `cursor-mode` property of `CreateSession` / `RecordMonitor` / `RecordWindow`, and a missing
+  `cursor-mode` defaults to `EMBEDDED` on both sides. Only `EMBEDDED` draws the cursor into
+  the stream; any other value (including `METADATA`) leaves it out.
+
 ### Portal source selection (`SelectSources`)
 
 - `SelectSources` accepts `types` containing `MONITOR` (1), `WINDOW` (2), or both. A request
