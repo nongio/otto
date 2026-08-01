@@ -401,22 +401,25 @@ impl SceneDmabufElement {
 
         // Map the scene-space dirty rect into buffer space and clamp to buffer
         // bounds — used both to clip this render and to report damage below.
-        // The canvas is translated by the root node's render_position(), so
-        // buffer coords = scene coords − root_pos − viewport.
+        // `render_node_tree` draws the subtree with the root node at the canvas
+        // origin and the draw path then translates back by the root's *dynamic*
+        // offset (`render_position() − scene_origin`), so scene content lands at
+        // `scene − scene_origin − viewport`. Subtracting the root's full
+        // `render_position()` here instead would double-count the workspace
+        // scroll: on any workspace but the first, the windows/background plane
+        // roots sit a full output width to the left, and every dirty rect
+        // clamped to a 1px sliver at the buffer edge — a window on workspace 2
+        // stopped repainting (Chrome scrolling froze on screen).
         let (w, h) = inner.size;
-        let root_pos = inner
-            .node_ref
-            .and_then(|r| inner.engine.get_layer(&r))
-            .map(|l| l.render_position())
-            .unwrap_or_default();
+        let (ox, oy) = inner.scene_origin;
         let (vx, vy) = inner.viewport;
         let damage_rect = dirty_rect
             .filter(|_| !backdrop_changed && !force_full)
             .map(|r| {
-                let x = ((r.left() - root_pos.x) as i32 - vx).clamp(0, w);
-                let y = ((r.top() - root_pos.y) as i32 - vy).clamp(0, h);
-                let x2 = ((r.right() - root_pos.x) as i32 - vx).clamp(0, w);
-                let y2 = ((r.bottom() - root_pos.y) as i32 - vy).clamp(0, h);
+                let x = (r.left().floor() as i32 - ox - vx).clamp(0, w);
+                let y = (r.top().floor() as i32 - oy - vy).clamp(0, h);
+                let x2 = (r.right().ceil() as i32 - ox - vx).clamp(0, w);
+                let y2 = (r.bottom().ceil() as i32 - oy - vy).clamp(0, h);
                 Rectangle::<i32, Physical>::new(
                     (x, y).into(),
                     ((x2 - x).max(1), (y2 - y).max(1)).into(),
