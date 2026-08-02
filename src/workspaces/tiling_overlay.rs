@@ -40,26 +40,28 @@ pub fn zone_from_pointer(
 ) -> Option<TileZone> {
     // Top maximize band, in logical pixels.
     const TOP_BAND: f64 = 80.0;
-    // Left/right zones span a generous fraction of the width (with a floor) so
-    // they're easy to hit, not just a thin strip at the very edge.
-    let edge_band = (usable.size.w as f64 * 0.15).max(120.0);
 
     let left = usable.loc.x as f64;
     let right = (usable.loc.x + usable.size.w) as f64;
     let top = usable.loc.y as f64;
 
-    // Central horizontal band (middle 50% of the usable width) for maximize.
-    let center_lo = left + usable.size.w as f64 * 0.25;
-    let center_hi = right - usable.size.w as f64 * 0.25;
+    // Narrow neutral column around the centre (middle 20% of the usable
+    // width): the only place that doesn't arm a side zone. Nudging a window
+    // off centre is enough to tile it to that half.
+    let center_lo = left + usable.size.w as f64 * 0.4;
+    let center_hi = right - usable.size.w as f64 * 0.4;
 
-    // Top-center → maximize wins over the side bands at the upper corners.
-    if pointer.y <= top + TOP_BAND && pointer.x >= center_lo && pointer.x <= center_hi {
+    // The top maximize band is wider than the neutral column (middle 50%) so
+    // it stays easy to hit, and wins over the side bands at the upper corners.
+    let max_lo = left + usable.size.w as f64 * 0.25;
+    let max_hi = right - usable.size.w as f64 * 0.25;
+    if pointer.y <= top + TOP_BAND && pointer.x >= max_lo && pointer.x <= max_hi {
         return Some(TileZone::Maximize);
     }
-    if pointer.x <= left + edge_band {
+    if pointer.x < center_lo {
         return Some(TileZone::LeftHalf);
     }
-    if pointer.x >= right - edge_band {
+    if pointer.x > center_hi {
         return Some(TileZone::RightHalf);
     }
     None

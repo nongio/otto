@@ -89,7 +89,10 @@ user. Any other `ext-session-lock-v1` client works too.
   An output whose lock surface is destroyed reverts to the blank.
 - Keyboard focus goes to the lock surface of the output that has pointer focus,
   and follows the pointer between outputs. Pointer and touch events go only to
-  lock surfaces.
+  lock surfaces, and arrive surface-local — a lock surface covers its output, so
+  the pointer's position within it is the position on that output. A locker lays
+  its controls out in that space and would otherwise be unable to tell where a
+  click landed.
 - The cursor is drawn from the locker's own cursor surface, or Otto's default if
   it sets none.
 

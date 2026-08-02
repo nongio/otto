@@ -136,6 +136,7 @@ impl Config {
 
         // 2. User config (XDG)
         if let Some(user_config) = get_user_config_path() {
+            prune_materialized_dock_keys_in_file(&user_config);
             if let Ok(content) = std::fs::read_to_string(&user_config) {
                 match content.parse::<toml::Value>() {
                     Ok(value) => {
@@ -297,6 +298,12 @@ fn backend_override_candidates(backend: &str) -> Vec<String> {
 ///
 /// The caller is responsible for passing the authoritative in-memory state.
 /// Only the `[dock]` table is touched; all other sections are left unchanged.
+///
+/// Within `[dock]`, only the keys the dock UI can actually change are written.
+/// The rest (`size`, `genie_*`, `colorize_*`) belongs to whoever hand-edited the
+/// config: rewriting the whole table would materialize a copy of every inherited
+/// value into the writable file, where it shadows the same key in a lower-priority
+/// config for good and silently reverts edits made while Otto is running.
 pub fn save_dock_config(dock: &DockConfig) {
     let path = writable_config_path();
     let raw = std::fs::read_to_string(&path).unwrap_or_default();
@@ -304,18 +311,155 @@ pub fn save_dock_config(dock: &DockConfig) {
         .parse()
         .unwrap_or(toml::Value::Table(Default::default()));
 
-    if let Ok(dock_value) = toml::Value::try_from(dock) {
-        doc.as_table_mut()
-            .unwrap()
-            .insert("dock".to_string(), dock_value);
-    }
+    merge_dock_config(&mut doc, dock);
 
     if let Ok(serialized) = toml::to_string_pretty(&doc) {
         let _ = std::fs::write(&path, serialized);
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+/// Write the dock-owned keys of `dock` into the `[dock]` table of `doc`,
+/// leaving every other key in that table (and every other section) alone.
+fn merge_dock_config(doc: &mut toml::Value, dock: &DockConfig) {
+    let Some(table) = doc.as_table_mut() else {
+        return;
+    };
+    let dock_table = table
+        .entry("dock".to_string())
+        .or_insert_with(|| toml::Value::Table(Default::default()));
+    let Some(dock_table) = dock_table.as_table_mut() else {
+        return;
+    };
+
+    dock_table.insert("autohide".to_string(), toml::Value::Boolean(dock.autohide));
+    dock_table.insert(
+        "magnification".to_string(),
+        toml::Value::Boolean(dock.magnification),
+    );
+    if let Ok(bookmarks) = toml::Value::try_from(SerializedBookmarks(&dock.bookmarks)) {
+        dock_table.insert("bookmarks".to_string(), bookmarks);
+    }
+}
+
+/// The `[dock]` keys the dock UI never writes: only a human ever sets them.
+const HAND_EDITED_DOCK_KEYS: [&str; 6] = [
+    "size",
+    "genie_scale",
+    "genie_span",
+    "colorize_icons",
+    "colorize_color",
+    "colorize_intensity",
+];
+
+/// Clean up after the builds that rewrote the whole `[dock]` table (see
+/// [`save_dock_config`]): those left a copy of every inherited value in the user
+/// config, where it shadows `/etc/otto/config.toml` for good, so editing the
+/// system config looks like it does nothing.
+///
+/// Rewrites `path` in place if anything was pruned. Nothing else in the file is
+/// touched, but the rewrite goes through `toml` and so drops comments — the same
+/// trade-off [`save_dock_config`] already makes, and it happens at most once per
+/// affected install.
+fn prune_materialized_dock_keys_in_file(path: &std::path::Path) {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(mut doc) = content.parse::<toml::Value>() else {
+        return; // a parse error is reported when the file is loaded
+    };
+
+    let pruned = prune_materialized_dock_keys(&mut doc);
+    if pruned.is_empty() {
+        return;
+    }
+
+    match toml::to_string_pretty(&doc) {
+        Ok(serialized) => match std::fs::write(path, serialized) {
+            Ok(()) => tracing::info!(
+                "Dropped [dock] {} from {}: written by an older build, not hand-edited",
+                pruned.join(", "),
+                path.display()
+            ),
+            Err(err) => warn!("Failed to rewrite {}: {err}", path.display()),
+        },
+        Err(err) => warn!("Failed to serialize {}: {err}", path.display()),
+    }
+}
+
+/// Remove the hand-edited-only `[dock]` keys of `doc` that carry no intent, and
+/// report which ones went.
+///
+/// Only a machine-written table is touched: an older build wrote *all* of
+/// [`HAND_EDITED_DOCK_KEYS`] at once, so anything less than the full set is
+/// somebody's hand-written config and is left alone. Within such a table, a key
+/// holding a value the user could have chosen stays; one holding the built-in
+/// default — or the zero those builds wrote when the key was absent, which no
+/// documented setting uses — can only have been copied in, so it goes and lets
+/// the lower-priority configs be seen again.
+fn prune_materialized_dock_keys(doc: &mut toml::Value) -> Vec<&'static str> {
+    let Some(dock) = doc.get_mut("dock").and_then(toml::Value::as_table_mut) else {
+        return Vec::new();
+    };
+    if !HAND_EDITED_DOCK_KEYS
+        .iter()
+        .all(|key| dock.contains_key(*key))
+    {
+        return Vec::new();
+    }
+
+    let defaults =
+        toml::Value::try_from(DockConfig::default()).expect("dock defaults are always valid toml");
+
+    let mut pruned = Vec::new();
+    for key in HAND_EDITED_DOCK_KEYS {
+        let Some(value) = dock.get(key) else { continue };
+        let is_default = defaults
+            .get(key)
+            .is_some_and(|default| same_toml_scalar(value, default));
+        if is_default || is_zeroed(value) {
+            dock.remove(key);
+            pruned.push(key);
+        }
+    }
+    pruned
+}
+
+/// Whether `value` is what the old derived `DockConfig::default()` produced for a
+/// missing key: a zero size or intensity and an empty color, none of which are a
+/// usable setting.
+fn is_zeroed(value: &toml::Value) -> bool {
+    match value {
+        toml::Value::String(text) => text.is_empty(),
+        toml::Value::Boolean(flag) => !flag,
+        other => as_number(other) == Some(0.0),
+    }
+}
+
+/// TOML equality that treats `size = 1` and `size = 1.0` as the same value.
+fn same_toml_scalar(a: &toml::Value, b: &toml::Value) -> bool {
+    match (as_number(a), as_number(b)) {
+        (Some(a), Some(b)) => a == b,
+        _ => a == b,
+    }
+}
+
+fn as_number(value: &toml::Value) -> Option<f64> {
+    value
+        .as_float()
+        .or_else(|| value.as_integer().map(|i| i as f64))
+}
+
+/// Newtype so the bookmark list can be serialized on its own with the same
+/// compact representation `DockConfig` uses.
+struct SerializedBookmarks<'a>(&'a [DockBookmark]);
+
+impl Serialize for SerializedBookmarks<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serialize_dock_bookmarks(self.0, serializer)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DockConfig {
     #[serde(default = "default_dock_size")]
     pub size: f64,
@@ -339,6 +483,26 @@ pub struct DockConfig {
         deserialize_with = "deserialize_dock_bookmarks"
     )]
     pub bookmarks: Vec<DockBookmark>,
+}
+
+/// Must stay in sync with the `#[serde(default = ...)]` functions above:
+/// `Config::init` seeds the merge from `Config::default()` serialized to TOML,
+/// so a derived (all-zero) `Default` would shadow those functions and silently
+/// give a `size` of 0 (clamped to 0.5) whenever the key is absent.
+impl Default for DockConfig {
+    fn default() -> Self {
+        Self {
+            size: default_dock_size(),
+            genie_scale: default_genie_scale(),
+            genie_span: default_genie_span(),
+            colorize_icons: false,
+            colorize_color: default_dock_colorize_color(),
+            colorize_intensity: default_dock_colorize_intensity(),
+            autohide: false,
+            magnification: default_magnification(),
+            bookmarks: Vec::new(),
+        }
+    }
 }
 
 /// App switcher (cmd-tab panel) configuration
@@ -1151,6 +1315,163 @@ mod tests {
             config.dock.bookmarks[1].exec_args,
             vec!["--single-instance".to_string()]
         );
+    }
+
+    #[test]
+    fn test_dock_defaults_match_serde_defaults() {
+        // `Config::init` seeds the config merge from `Config::default()` serialized
+        // to TOML, so `DockConfig::default()` — not the `#[serde(default = ...)]`
+        // functions — is what a config file without a `[dock] size` ends up with.
+        let dock = DockConfig::default();
+        assert_eq!(dock.size, default_dock_size());
+        assert_eq!(dock.genie_scale, default_genie_scale());
+        assert_eq!(dock.genie_span, default_genie_span());
+        assert_eq!(dock.colorize_color, default_dock_colorize_color());
+        assert_eq!(dock.colorize_intensity, default_dock_colorize_intensity());
+        assert_eq!(dock.magnification, default_magnification());
+
+        let merged =
+            toml::Value::try_from(Config::default()).expect("default config is valid toml");
+        let from_defaults: Config = merged.try_into().expect("default config round-trips");
+        assert_eq!(from_defaults.dock.size, default_dock_size());
+    }
+
+    #[test]
+    fn test_save_dock_config_keeps_hand_edited_keys() {
+        let raw = r#"
+            [dock]
+            size = 1.6
+            genie_scale = 0.3
+            autohide = false
+        "#;
+        let mut doc: toml::Value = raw.parse().expect("config should parse");
+
+        let dock = DockConfig {
+            size: 1.0,
+            genie_scale: 0.5,
+            autohide: true,
+            bookmarks: vec![DockBookmark {
+                desktop_id: "firefox.desktop".to_string(),
+                label: None,
+                exec_args: Vec::new(),
+            }],
+            ..DockConfig::default()
+        };
+        merge_dock_config(&mut doc, &dock);
+
+        let saved = doc.get("dock").expect("dock table is present");
+        // Dock-owned keys are written…
+        assert_eq!(
+            saved.get("autohide").and_then(toml::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            saved
+                .get("bookmarks")
+                .and_then(toml::Value::as_array)
+                .map(|b| b.len()),
+            Some(1)
+        );
+        // …while keys only the user sets keep whatever the file said.
+        assert_eq!(saved.get("size").and_then(toml::Value::as_float), Some(1.6));
+        assert_eq!(
+            saved.get("genie_scale").and_then(toml::Value::as_float),
+            Some(0.3)
+        );
+    }
+
+    #[test]
+    fn test_prune_materialized_dock_keys() {
+        // The whole table as an older build wrote it, with `size` since changed.
+        let raw = r##"
+            [dock]
+            size = 2.0
+            genie_scale = 0.5
+            genie_span = 10.0
+            colorize_icons = false
+            colorize_color = "#ffffff"
+            colorize_intensity = 1.0
+            autohide = true
+            magnification = true
+        "##;
+        let mut doc: toml::Value = raw.parse().expect("config should parse");
+        let pruned = prune_materialized_dock_keys(&mut doc);
+
+        assert!(!pruned.contains(&"size"));
+        assert!(pruned.contains(&"genie_scale"));
+        let dock = doc.get("dock").expect("dock table is present");
+        // The value the user picked stays, the copies of the defaults go…
+        assert_eq!(dock.get("size").and_then(toml::Value::as_float), Some(2.0));
+        assert!(dock.get("genie_scale").is_none());
+        assert!(dock.get("colorize_color").is_none());
+        // …and the dock's own keys are none of this migration's business.
+        assert_eq!(
+            dock.get("autohide").and_then(toml::Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn test_prune_drops_the_zeroed_defaults_old_builds_wrote() {
+        // What an old build actually left behind: `size` copied from the built-in
+        // default, `colorize_*` copied from the derived `Default` that zeroed them,
+        // `genie_*` copied from a real config.
+        let raw = r#"
+            [dock]
+            size = 1.0
+            genie_scale = 0.3
+            genie_span = 23.0
+            colorize_icons = false
+            colorize_color = ""
+            colorize_intensity = 0.0
+        "#;
+        let mut doc: toml::Value = raw.parse().expect("config should parse");
+        prune_materialized_dock_keys(&mut doc);
+
+        let dock = doc.get("dock").expect("dock table is present");
+        assert!(dock.get("size").is_none());
+        assert!(dock.get("colorize_color").is_none());
+        assert!(dock.get("colorize_intensity").is_none());
+        // A value that is neither the default nor a zero could have been chosen.
+        assert_eq!(
+            dock.get("genie_span").and_then(toml::Value::as_float),
+            Some(23.0)
+        );
+    }
+
+    #[test]
+    fn test_prune_leaves_hand_written_dock_tables_alone() {
+        // Nobody hand-writes all six keys, so a partial table is somebody's config
+        // even when a value happens to equal the default.
+        let raw = format!(
+            "[dock]\nsize = 1.0\ngenie_scale = {}\n",
+            default_genie_scale()
+        );
+        let mut doc: toml::Value = raw.parse().expect("config should parse");
+
+        assert!(prune_materialized_dock_keys(&mut doc).is_empty());
+        assert_eq!(
+            doc.get("dock").and_then(|d| d.get("genie_scale")),
+            Some(&toml::Value::Float(default_genie_scale()))
+        );
+    }
+
+    #[test]
+    fn test_prune_matches_defaults_written_as_integers() {
+        let raw = r##"
+            [dock]
+            size = 1
+            genie_scale = 0.5
+            genie_span = 10
+            colorize_icons = false
+            colorize_color = "#ffffff"
+            colorize_intensity = 1
+        "##;
+        let mut doc: toml::Value = raw.parse().expect("config should parse");
+
+        assert_eq!(prune_materialized_dock_keys(&mut doc).len(), 6);
+        let dock = doc.get("dock").expect("dock table is present");
+        assert!(dock.as_table().expect("dock is a table").is_empty());
     }
 
     #[test]
