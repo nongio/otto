@@ -26,6 +26,8 @@ Otto searches for configuration files in the following order (later files overri
 
 Values from higher-priority files are merged recursively into lower-priority ones, so you only need to specify the options you want to override.
 
+Config files are read once, when the session starts: an edit takes effect on the next login.
+
 ## Getting Started
 
 ```bash
@@ -74,6 +76,10 @@ from the [User Guide index](README.md).
 - Verify the TOML syntax (matching brackets, quotes, commas).
 - Check Otto's log output for parsing errors and which config files were loaded.
 - Ensure the config file is in one of the searched locations listed above.
+
+**An edit to `/etc/otto/config.toml` does nothing:**
+- The user config wins. Check whether `~/.config/otto/config.toml` sets the same key — a key present there shadows the system file even if you never typed it, since older builds copied the whole `[dock]` table into it (see [Dock](dock.md)).
+- Restart the session: config is only read at startup.
 
 **Icon/cursor theme not found:**
 - Verify the theme is installed: `ls /usr/share/icons/ ~/.local/share/icons/`
