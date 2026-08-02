@@ -169,12 +169,12 @@ impl AppIconsManager {
                     entry.badge_layer.set_draw_content(draw_badge(t));
                     entry
                         .badge_layer
-                        .set_opacity(1.0, Some(Transition::ease_in_quad(0.15)));
+                        .set_opacity(1.0_f32, Some(Transition::ease_in_quad(0.15)));
                 }
                 _ => {
                     entry
                         .badge_layer
-                        .set_opacity(0.0, Some(Transition::ease_in_quad(0.15)));
+                        .set_opacity(0.0_f32, Some(Transition::ease_in_quad(0.15)));
                 }
             }
         }
@@ -191,12 +191,12 @@ impl AppIconsManager {
                         .set_draw_content(draw_progress(v.clamp(0.0, 1.0)));
                     entry
                         .progress_layer
-                        .set_opacity(1.0, Some(Transition::ease_in_quad(0.15)));
+                        .set_opacity(1.0_f32, Some(Transition::ease_in_quad(0.15)));
                 }
                 _ => {
                     entry
                         .progress_layer
-                        .set_opacity(0.0, Some(Transition::ease_in_quad(0.15)));
+                        .set_opacity(0.0_f32, Some(Transition::ease_in_quad(0.15)));
                 }
             }
         }

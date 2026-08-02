@@ -189,7 +189,7 @@ impl DockView {
             .key("dock_background_bar")
             .pointer_events(false)
             .size(Size {
-                width: taffy::percent(1.0),
+                width: taffy::percent(1.0_f32),
                 height: taffy::Dimension::Length(initial_bar_height),
             })
             .blend_mode(BlendMode::BackgroundBlur)
@@ -224,7 +224,7 @@ impl DockView {
                 justify_content: Some(taffy::JustifyContent::FlexEnd),
                 justify_items: Some(taffy::JustifyItems::FlexEnd),
                 align_items: Some(taffy::AlignItems::FlexEnd),
-                gap: taffy::Size::<taffy::LengthPercentage>::from_length(0.0),
+                gap: taffy::Size::<taffy::LengthPercentage>::from_length(0.0_f32),
                 min_size: taffy::Size {
                     width: taffy::Dimension::Length(20.0 * draw_scale),
                     height: taffy::Dimension::Length(0.0),
@@ -484,7 +484,7 @@ impl DockView {
             justify_content: Some(taffy::JustifyContent::Center),
             justify_items: Some(taffy::JustifyItems::Center),
             align_items: Some(taffy::AlignItems::Center),
-            gap: taffy::Size::<taffy::LengthPercentage>::from_length(0.0),
+            gap: taffy::Size::<taffy::LengthPercentage>::from_length(0.0_f32),
             padding: taffy::Rect {
                 top: taffy::length(padding_top),
                 bottom: taffy::length(padding_bottom),
@@ -507,7 +507,7 @@ impl DockView {
 
         self.bar_layer.set_size(
             Size {
-                width: taffy::percent(1.0),
+                width: taffy::percent(1.0_f32),
                 height: taffy::Dimension::Length(bar_height),
             },
             None,
@@ -632,10 +632,10 @@ impl DockView {
                             .layout_style(taffy::Style {
                                 position: taffy::Position::Absolute,
                                 inset: taffy::Rect {
-                                    left: taffy::length(0.0),
-                                    right: taffy::length(0.0),
+                                    left: taffy::length(0.0_f32),
+                                    right: taffy::length(0.0_f32),
                                     top: taffy::LengthPercentageAuto::Auto,
-                                    bottom: taffy::length(0.0),
+                                    bottom: taffy::length(0.0_f32),
                                 },
                                 ..Default::default()
                             })
@@ -717,7 +717,7 @@ impl DockView {
                 .layers_engine
                 .add_animation_from_transition(&Transition::ease_out_quad(0.3), false);
             let mut changes = vec![
-                layer.change_opacity(0.0),
+                layer.change_opacity(0.0_f32),
                 layer.change_size(layers::types::Size::points(0.0, app_height)),
             ];
             if let Some(entry) = apps_layers_map
@@ -745,7 +745,7 @@ impl DockView {
 
         // Mini window layers
         for layer in previous_miniwindows {
-            layer.set_opacity(0.0, Transition::ease_out_quad(0.2));
+            layer.set_opacity(0.0_f32, Transition::ease_out_quad(0.2));
             layer.set_size(
                 layers::types::Size::points(0.0, miniwindow_height),
                 Transition::ease_out_quad(0.3),
@@ -958,11 +958,11 @@ impl DockView {
         let mut active = self.active_label.write().unwrap();
         if let Some(prev) = active.as_ref() {
             if label.as_ref().map(|l| l.id() != prev.id()).unwrap_or(true) {
-                prev.set_opacity(0.0, None);
+                prev.set_opacity(0.0_f32, None);
             }
         }
         if let Some(l) = label.as_ref() {
-            l.set_opacity(1.0, None);
+            l.set_opacity(1.0_f32, None);
         }
         *active = label;
     }
@@ -1055,7 +1055,7 @@ impl DockView {
         if let Some((d, _, label, ..)) = miniwindow_layers.get(wid) {
             drawer = Some(d.clone());
             // hide the label
-            label.set_opacity(0.0, None);
+            label.set_opacity(0.0_f32, None);
             miniwindow_layers.remove(wid);
         }
         drawer
@@ -1572,10 +1572,10 @@ impl DockView {
         if let Some(entry) = app_layers.values().find(|e| e.identifier == app_id) {
             if active {
                 entry.icon_scaler.set_color_filter(filter);
-                entry.icon_scaler.set_opacity(1.0, None);
+                entry.icon_scaler.set_opacity(1.0_f32, None);
             } else {
                 entry.icon_scaler.set_color_filter(None);
-                entry.icon_scaler.set_opacity(1.0, None);
+                entry.icon_scaler.set_opacity(1.0_f32, None);
             }
         }
     }

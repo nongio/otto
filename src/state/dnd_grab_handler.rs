@@ -30,7 +30,7 @@ impl<BackendData: Backend> WaylandDndGrabHandler for Otto<BackendData> {
         self.workspaces
             .dnd_view
             .layer
-            .set_opacity(0.8, Some(Transition::default()));
+            .set_opacity(0.8_f32, Some(Transition::default()));
 
         // Actually start the DnD grab!
         match type_ {
@@ -75,7 +75,7 @@ impl<BackendData: Backend> DndGrabHandler for Otto<BackendData> {
         self.workspaces
             .dnd_view
             .layer
-            .set_opacity(0.0, Some(Transition::default()));
+            .set_opacity(0.0_f32, Some(Transition::default()));
         self.workspaces
             .dnd_view
             .layer

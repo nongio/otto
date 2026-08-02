@@ -63,7 +63,7 @@ impl OsdView {
         // Create inner view layer
         let layer = layers_engine.new_layer();
         let _ = wrap.add_sublayer(&layer);
-        layer.set_opacity(0.0, None);
+        layer.set_opacity(0.0_f32, None);
         layer.set_pointer_events(false);
         wrap.set_hidden(true);
 
@@ -128,7 +128,7 @@ impl OsdView {
         let w = self.wrap_layer.clone();
         self.view_layer
             .set_opacity(
-                1.0,
+                1.0_f32,
                 Some(Transition {
                     delay: 0.0,
                     timing: TimingFunction::ease_out_quad(0.2),
@@ -139,7 +139,7 @@ impl OsdView {
                     let w = w.clone();
 
                     l.set_opacity(
-                        0.0,
+                        0.0_f32,
                         Some(Transition {
                             delay: 0.5,
                             timing: TimingFunction::ease_out_quad(0.3),
@@ -166,7 +166,7 @@ impl OsdView {
 
         self.view_layer
             .set_opacity(
-                0.0,
+                0.0_f32,
                 Some(Transition {
                     delay: 1.0,
                     timing: TimingFunction::ease_out_quad(0.4),

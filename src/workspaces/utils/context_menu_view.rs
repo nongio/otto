@@ -121,10 +121,10 @@ impl ContextMenuView {
         );
         self.active
             .store(true, std::sync::atomic::Ordering::Relaxed);
-        self.wrap_layer.set_opacity(0.0, None);
+        self.wrap_layer.set_opacity(0.0_f32, None);
         self.wrap_layer.set_hidden(false);
         self.wrap_layer.set_opacity(
-            1.0,
+            1.0_f32,
             Some(Transition {
                 delay: 0.0,
                 timing: TimingFunction::Spring(Spring::with_duration_and_bounce(0.05, 0.0)),
@@ -139,7 +139,7 @@ impl ContextMenuView {
         let teardown_gen = self.teardown_gen.clone();
         self.wrap_layer
             .set_opacity(
-                0.0,
+                0.0_f32,
                 Some(Transition {
                     delay: 0.0,
                     timing: TimingFunction::Spring(Spring::with_duration_and_bounce(0.10, 0.0)),
