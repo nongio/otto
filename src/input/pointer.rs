@@ -318,16 +318,22 @@ impl<BackendData: Backend> Otto<BackendData> {
         // when this output has no lock surface is deliberate: the click must
         // land nowhere rather than fall through to the desktop.
         if self.is_session_locked() {
+            // The offset is where the surface *is*, not where the pointer is
+            // inside it: Smithay subtracts it from the event location to get
+            // surface-local coordinates. A lock surface covers its output, so
+            // that is the output's origin — passing the local point instead
+            // made every click arrive at (0, 0) and miss every control.
             let origin = self
                 .workspaces
                 .output_geometry(output)
                 .map(|g| g.loc)
                 .unwrap_or_default();
-            let local =
-                Point::<f64, Logical>::from((pos.x - origin.x as f64, pos.y - origin.y as f64));
-            return self
-                .lock_surface_for_output(output)
-                .map(|surface| (PointerFocusTarget::from(surface), local));
+            return self.lock_surface_for_output(output).map(|surface| {
+                (
+                    PointerFocusTarget::from(surface),
+                    Point::<f64, Logical>::from((origin.x as f64, origin.y as f64)),
+                )
+            });
         }
 
         // App switcher check
