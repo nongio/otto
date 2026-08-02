@@ -341,6 +341,7 @@ pub struct Otto<BackendData: Backend + 'static> {
 }
 
 pub mod app_management;
+pub mod config_reload;
 pub mod data_device_handler;
 pub mod dnd_grab_handler;
 pub mod foreign_toplevel_list_handler;
@@ -758,6 +759,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
         // No-op unless `lock.auto_lock_timeout` is set.
         Self::start_auto_lock_timer(&handle);
+        Self::start_config_watcher(&handle);
 
         // Get backend name before moving backend_data
         #[cfg(feature = "metrics")]
@@ -2371,6 +2373,9 @@ pub trait Backend {
     fn set_cursor(&mut self, image: &CursorImageStatus); //, renderer: &mut SkiaRenderer);
     fn renderer_context(&mut self) -> Option<layers::skia::gpu::DirectContext>;
     fn request_redraw(&mut self) {}
+    /// Re-apply the `[input]` settings to the devices the backend owns after a
+    /// config reload. Only backends driving libinput have anything to do.
+    fn apply_input_config(&mut self, _config: &Config) {}
     /// Invalidate any pre-computed (vblank-prefetched) scene update. Called
     /// on client commits: a commit can create scene layers (e.g. a popup)
     /// AFTER the prefetch ran, and drawing from the stale prefetch renders

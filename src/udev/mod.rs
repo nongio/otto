@@ -106,6 +106,12 @@ impl Backend for UdevData {
         "udev"
     }
 
+    fn apply_input_config(&mut self, config: &crate::config::Config) {
+        for device in self.input_devices.iter_mut() {
+            crate::udev::init::apply_device_config(device, config);
+        }
+    }
+
     fn reset_buffers(&mut self, output: &Output) {
         if let Some(id) = output.user_data().get::<UdevOutputId>() {
             if let Some(gpu) = self.backends.get_mut(&id.device_id) {
