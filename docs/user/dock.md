@@ -71,7 +71,16 @@ genie_span = 10.0      # and how far it reaches
 ### Size
 
 `size` scales the whole dock. `0.5` is half-height, `2.0` is double. Icon sizes,
-padding and the bar height all follow.
+padding and the bar height all follow. It is read once at startup, so a change
+needs a session restart.
+
+Only `autohide`, `magnification` and `bookmarks` are ever written back by the
+dock itself; everything else in `[dock]` stays exactly as you typed it. Older
+builds rewrote the whole table instead, leaving a copy of every value in
+`~/.config/otto/config.toml` — which then shadowed `/etc/otto/config.toml` and
+made editing the system config look like it did nothing. Otto drops those
+leftovers from the user config on the next start (values you have actually
+changed are kept, and the file is rewritten without its comments).
 
 ### Magnification
 
