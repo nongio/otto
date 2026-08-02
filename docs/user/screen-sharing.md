@@ -64,21 +64,29 @@ In a browser, click "Share screen"; in a video call, pick screen sharing. The
 portal takes over from there:
 
 1. A **permission dialog** appears in the
-   [dynamic island](dynamic-island.md) — who is asking, and what for.
-2. You grant or deny.
-3. On grant, Otto starts a PipeWire stream of the chosen monitor and hands the
+   [dynamic island](dynamic-island.md) — who is asking, and what for, with a
+   list of everything you can share.
+2. You pick a source and grant, or deny.
+3. On grant, Otto starts a PipeWire stream of the chosen source and hands the
    node to the application.
 
-`otto-islands` is what renders that dialog. **If it is not running, the request
-is denied** rather than left hanging — a screenshare that cannot ask fails
-closed.
+`otto-islands` is what renders that dialog. If it is not running, Otto asks
+another desktop's portal dialog instead (GTK, GNOME or KDE, in that order) —
+the same list, without app icons.
 
-### Choosing which monitor
+### Choosing what to share
 
-There is no graphical source picker yet. Without one, Otto shares the first
-monitor it enumerates.
+The dialog lists every connected monitor and, when the application asks for
+windows too, every open window — one list, one choice. With a single monitor
+and no windows on offer there is nothing to choose, so the dialog is just the
+grant/deny prompt.
 
-To override, write the connector name into a file:
+If no dialog renderer answers at all, monitor sharing still works: Otto shares
+the first monitor it enumerates rather than failing. Windows are never picked
+for you on that path.
+
+To choose which monitor that fallback lands on, write the connector name into a
+file:
 
 ```sh
 echo "HDMI-A-1" > ~/.config/otto/screencast-output
@@ -89,7 +97,8 @@ without restarting anything. Use a name from `otto --probe`, or a virtual output
 name like `virtual-1`.
 
 If the name does not match any available output, Otto logs a warning and falls
-back to the first one.
+back to the first one. The file is only consulted when no dialog renderer
+answers — when the dialog appears, your choice in it wins.
 
 ### Cursor
 
@@ -159,8 +168,10 @@ the very portal you just configured:
 
 1. Set up a non-interactive virtual output (AirPlay mirroring has no input
    channel — it is view-only).
-2. Point `~/.config/otto/screencast-output` at it.
-3. Run doubletake and pick your receiver.
+2. Run doubletake and pick your receiver.
+3. Otto's share dialog lists every monitor, the virtual output included — pick
+   the one you want to cast. With a single monitor there is nothing to choose
+   and casting starts on it.
 
 Otto does not implement the AirPlay protocol itself. The sender side requires
 Apple's FairPlay handshake, which no clean-room implementation exists for.
