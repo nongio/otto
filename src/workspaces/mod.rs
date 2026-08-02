@@ -4864,14 +4864,16 @@ impl Workspaces {
             delay: 0.0,
             timing: TimingFunction::Spring(Spring::with_duration_and_bounce(1.0, 0.1)),
         });
-        if is_primary {
-            if !self.get_show_all() {
-                if let Some(workspace) = &target_view {
-                    if workspace.get_fullscreen_mode() {
-                        self.dock.hide(Some(resolved_transition.clone()));
-                    } else if !self.dock.is_autohide_enabled() {
-                        self.dock.show(Some(resolved_transition.clone()));
-                    }
+        // Expose hides the dock and the layer-shell chrome itself, and restores
+        // them when it closes. Switching workspace underneath an open (or
+        // animating) expose must not fade them back in.
+        let expose_active = self.get_show_all() || self.is_expose_transitioning();
+        if is_primary && !expose_active {
+            if let Some(workspace) = &target_view {
+                if workspace.get_fullscreen_mode() {
+                    self.dock.hide(Some(resolved_transition.clone()));
+                } else if !self.dock.is_autohide_enabled() {
+                    self.dock.show(Some(resolved_transition.clone()));
                 }
             }
 
@@ -4948,7 +4950,8 @@ impl Workspaces {
             // Don't use hide/show during:
             // - expose mode or expose transitions (let expose system control position)
             // - fullscreen animations (let fullscreen transition complete smoothly)
-            if !self.get_show_all() {
+            let expose_active = self.get_show_all() || self.is_expose_transitioning();
+            if !expose_active {
                 if workspace.get_fullscreen_mode() {
                     self.dock.hide(Some(transition.clone()));
                 } else if !self.dock.is_autohide_enabled() {
@@ -4956,27 +4959,27 @@ impl Workspaces {
                     // show_autohide(); calling show() would hide it (see DockView::show).
                     self.dock.show(Some(transition.clone()));
                 }
-            }
 
-            // Animate layer_shell_overlay and layer_shell_top based on target workspace fullscreen state
-            let is_fullscreen = workspace.get_fullscreen_mode();
-            let target_opacity = if is_fullscreen { 0.0 } else { 1.0 };
-            if !is_fullscreen {
-                self.layer_shell_top.set_hidden(false);
+                // Animate layer_shell_overlay and layer_shell_top based on target workspace fullscreen state
+                let is_fullscreen = workspace.get_fullscreen_mode();
+                let target_opacity = if is_fullscreen { 0.0 } else { 1.0 };
+                if !is_fullscreen {
+                    self.layer_shell_top.set_hidden(false);
+                }
+                self.layer_shell_overlay
+                    .set_opacity(target_opacity, Some(transition.clone()));
+                let layer_shell_top_ref = self.layer_shell_top.clone();
+                self.layer_shell_top
+                    .set_opacity(target_opacity, Some(transition.clone()))
+                    .on_finish(
+                        move |_: &Layer, _| {
+                            if is_fullscreen {
+                                layer_shell_top_ref.set_hidden(true);
+                            }
+                        },
+                        true,
+                    );
             }
-            self.layer_shell_overlay
-                .set_opacity(target_opacity, Some(transition.clone()));
-            let layer_shell_top_ref = self.layer_shell_top.clone();
-            self.layer_shell_top
-                .set_opacity(target_opacity, Some(transition.clone()))
-                .on_finish(
-                    move |_: &Layer, _| {
-                        if is_fullscreen {
-                            layer_shell_top_ref.set_hidden(true);
-                        }
-                    },
-                    true,
-                );
 
             if self.get_show_all() {
                 // In expose mode, ensure the target workspace has its layout calculated
@@ -5096,9 +5099,12 @@ impl Workspaces {
         ows.workspaces_layer.set_position((-new_offset, 0.0), None);
 
         // Interpolate layer_shell_top opacity during swipe based on fullscreen state
-        // of the two workspaces we're swiping between.
+        // of the two workspaces we're swiping between. Expose owns that opacity
+        // while it is open (or animating) — driving it from here would bring the
+        // top bar back on screen mid-expose.
         let step = workspace_width + workspace_gap_px;
-        if step > 0.0 {
+        let expose_active = self.get_show_all() || self.is_expose_transitioning();
+        if step > 0.0 && !expose_active {
             let progress = new_offset / step;
             let left_index = (progress.floor() as usize).min(num_workspaces.saturating_sub(1));
             let right_index = (left_index + 1).min(num_workspaces.saturating_sub(1));
