@@ -26,6 +26,20 @@ Otto searches for configuration files in the following order (later files overri
 
 Values from higher-priority files are merged recursively into lower-priority ones, so you only need to specify the options you want to override.
 
+## Live Reload
+
+Otto watches these files while it runs. Save an edit and it applies to the
+running session within a couple of seconds — no logout, no restart. That covers
+the dock, the wallpaper, keyboard layout and repeat, touchpad and pointer
+settings, cursor theme, scaling, theme colours and fonts.
+
+A few things still need a restart because they only exist at startup:
+`exec_once` and XDG autostart entries (programs already launched are left
+alone), `systemd_notify`, and the `--login` greeter command.
+
+If a file has a syntax error, Otto logs it and keeps the values it could read;
+the session is never left without a configuration.
+
 ## Getting Started
 
 ```bash

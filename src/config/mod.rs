@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock, RwLock};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod default_apps;
 pub mod shortcuts;
+pub mod watcher;
 
 use shortcuts::{build_bindings, RunCommandConfig, ShortcutBinding, ShortcutMap};
 use toml::map::Entry;
@@ -66,7 +67,13 @@ pub struct Config {
     shortcut_bindings: Vec<ShortcutBinding>,
 }
 
-static CONFIG: OnceLock<Config> = OnceLock::new();
+/// The live configuration. Swappable: `Config::reload` re-reads every config
+/// file and publishes the result, so an edit applies without a restart.
+static CONFIG: OnceLock<RwLock<Arc<Config>>> = OnceLock::new();
+
+fn config_cell() -> &'static RwLock<Arc<Config>> {
+    CONFIG.get_or_init(|| RwLock::new(Arc::new(Config::init())))
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -109,11 +116,46 @@ impl Default for Config {
 pub const WINIT_DISPLAY_ID: &str = "winit";
 
 impl Config {
-    pub fn with<R>(f: impl FnOnce(&Config) -> R) -> R {
-        let config = CONFIG.get_or_init(Config::init);
-        f(config)
+    /// A snapshot of the live configuration. Cheap (one `Arc` clone) and
+    /// stable for as long as the returned handle is held — a reload swaps the
+    /// shared pointer, it never mutates a config in place.
+    pub fn current() -> Arc<Config> {
+        config_cell().read().unwrap().clone()
     }
+
+    pub fn with<R>(f: impl FnOnce(&Config) -> R) -> R {
+        // Take a snapshot and drop the lock before running `f`: `Config::with`
+        // calls nest all over the codebase, and holding a read guard across a
+        // nested call deadlocks as soon as a reload waits for the write lock.
+        let config = Self::current();
+        f(&config)
+    }
+
+    /// Re-read every config file and publish the result.
+    ///
+    /// Returns the previous and the new config when the merged result actually
+    /// changed, so callers can re-apply only the parts that moved.
+    pub fn reload() -> Option<(Arc<Config>, Arc<Config>)> {
+        let previous = Self::current();
+        let next = Arc::new(Self::load());
+        if !section_changed(previous.as_ref(), next.as_ref()) {
+            return None;
+        }
+        *config_cell().write().unwrap() = next.clone();
+        Some((previous, next))
+    }
+
     fn init() -> Self {
+        let config = Self::load();
+
+        // Environment variables for Wayland session
+        std::env::set_var("XDG_SESSION_TYPE", "wayland");
+        std::env::set_var("XDG_CURRENT_DESKTOP", "otto");
+
+        config
+    }
+
+    fn load() -> Self {
         let mut merged =
             toml::Value::try_from(Self::default()).expect("default config is always valid toml");
 
@@ -192,11 +234,7 @@ impl Config {
 
         config.rebuild_shortcut_bindings();
 
-        // Environment variables for Wayland session
-        std::env::set_var("XDG_SESSION_TYPE", "wayland");
-        std::env::set_var("XDG_CURRENT_DESKTOP", "otto");
-
-        tracing::info!("Config initialized: {:#?}", config.theme_scheme);
+        tracing::info!("Config loaded: {:#?}", config.theme_scheme);
         config
     }
 
@@ -215,6 +253,42 @@ impl Config {
     ) -> Option<DisplayProfile> {
         self.displays.resolve(name, descriptor)
     }
+}
+
+/// Whether two config values differ, compared through their serialized form.
+///
+/// Used to keep reloads cheap: only the sections that actually moved are
+/// re-applied. Serializing avoids spreading `PartialEq` derives over every
+/// config type (`Config` also carries compiled shortcut bindings, which are
+/// derived state and not comparable).
+pub(crate) fn section_changed<T: Serialize>(previous: &T, next: &T) -> bool {
+    match (toml::Value::try_from(previous), toml::Value::try_from(next)) {
+        (Ok(a), Ok(b)) => a != b,
+        // Unserializable either way: assume it changed rather than miss an edit.
+        _ => true,
+    }
+}
+
+/// Every path a config value can come from, in merge order, whether or not it
+/// exists right now — a file that appears later is a config change too.
+pub fn watched_paths() -> Vec<PathBuf> {
+    let mut paths = vec![PathBuf::from("/etc/otto/config.toml")];
+
+    if let Some(dir) = user_config_dir() {
+        paths.push(dir.join("otto").join("config.toml"));
+    }
+
+    paths.push(PathBuf::from("otto_config.toml"));
+
+    if let Ok(backend) = std::env::var("OTTO_BACKEND") {
+        paths.extend(
+            backend_override_candidates(&backend)
+                .into_iter()
+                .map(PathBuf::from),
+        );
+    }
+
+    paths
 }
 
 fn merge_value(base: &mut toml::Value, overrides: toml::Value) {
@@ -244,15 +318,19 @@ fn get_system_config_path() -> Option<PathBuf> {
     }
 }
 
-fn get_user_config_path() -> Option<PathBuf> {
-    let config_dir = std::env::var("XDG_CONFIG_HOME")
+fn user_config_dir() -> Option<PathBuf> {
+    std::env::var("XDG_CONFIG_HOME")
         .ok()
         .map(PathBuf::from)
         .or_else(|| {
             std::env::var("HOME")
                 .ok()
                 .map(|home| PathBuf::from(home).join(".config"))
-        })?;
+        })
+}
+
+fn get_user_config_path() -> Option<PathBuf> {
+    let config_dir = user_config_dir()?;
 
     let path = config_dir.join("otto").join("config.toml");
     if path.exists() {

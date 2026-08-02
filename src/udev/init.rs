@@ -53,8 +53,15 @@ fn looks_like_display_underrun(line: &str) -> bool {
             || l.contains("display"))
 }
 
-/// Configures all libinput devices based on Otto's configuration
-fn configure_libinput_devices(libinput: &mut Libinput, config: &Config) {
+/// Configures all libinput devices based on Otto's configuration.
+///
+/// Returns the devices it saw: these `DeviceAdded` events are consumed here,
+/// before the smithay backend exists, so this is the only chance to record
+/// them for a later config reload.
+fn configure_libinput_devices(
+    libinput: &mut Libinput,
+    config: &Config,
+) -> Vec<smithay::reexports::input::Device> {
     use smithay::reexports::input::{
         event::{DeviceEvent, EventTrait},
         Event,
@@ -63,16 +70,19 @@ fn configure_libinput_devices(libinput: &mut Libinput, config: &Config) {
     // Process initial devices
     libinput.dispatch().ok();
 
+    let mut devices = Vec::new();
     for event in libinput.by_ref() {
         if let Event::Device(DeviceEvent::Added(added_event)) = event {
             let mut device = added_event.device();
             apply_device_config(&mut device, config);
+            devices.push(device);
         }
     }
+    devices
 }
 
 /// Applies configuration to an individual input device
-fn apply_device_config(device: &mut smithay::reexports::input::Device, config: &Config) {
+pub(super) fn apply_device_config(device: &mut smithay::reexports::input::Device, config: &Config) {
     // Only configure pointer devices (touchpads)
     if !device.has_capability(smithay::reexports::input::DeviceCapability::Pointer) {
         return;
@@ -276,6 +286,7 @@ pub fn run_udev() {
         primary_gpu,
         gpus,
         backends: HashMap::new(),
+        input_devices: Vec::new(),
         #[cfg(feature = "fps_ticker")]
         fps_texture: None,
 
@@ -308,9 +319,8 @@ pub fn run_udev() {
     libinput_context.udev_assign_seat(&state.seat_name).unwrap();
 
     // Configure input devices based on config
-    Config::with(|config| {
-        configure_libinput_devices(&mut libinput_context, config);
-    });
+    state.backend_data.input_devices =
+        Config::with(|config| configure_libinput_devices(&mut libinput_context, config));
 
     let libinput_backend = LibinputInputBackend::new(libinput_context.clone());
 
@@ -320,6 +330,21 @@ pub fn run_udev() {
     event_loop
         .handle()
         .insert_source(libinput_backend, move |event, _, data| {
+            // Track the device set so a config reload can re-apply the input
+            // settings, and configure devices plugged in after startup.
+            match &event {
+                smithay::backend::input::InputEvent::DeviceAdded { device } => {
+                    let mut device = device.clone();
+                    Config::with(|config| apply_device_config(&mut device, config));
+                    if !data.backend_data.input_devices.contains(&device) {
+                        data.backend_data.input_devices.push(device);
+                    }
+                }
+                smithay::backend::input::InputEvent::DeviceRemoved { device } => {
+                    data.backend_data.input_devices.retain(|d| d != device);
+                }
+                _ => {}
+            }
             let dh = data.backend_data.dh.clone();
             data.process_input_event(&dh, event);
             // Input may move the cursor or trigger visual changes — request a render.

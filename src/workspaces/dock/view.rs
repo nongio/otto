@@ -1598,6 +1598,36 @@ impl DockView {
         }
     }
 
+    /// Adopt a `[dock]` section that was re-read from disk.
+    ///
+    /// The dock owns its config at runtime (the handle menu writes it back to
+    /// the file), so a reload that merely reflects Otto's own write is a no-op
+    /// — bookmarks are resolved asynchronously and re-rendering on every dock
+    /// interaction would be churn for nothing.
+    pub fn apply_config(&self, config: &crate::config::DockConfig) {
+        {
+            let current = self.dock_config.read().unwrap();
+            if !crate::config::section_changed(&*current, config) {
+                return;
+            }
+        }
+        let bookmarks_changed = crate::config::section_changed(
+            &self.dock_config.read().unwrap().bookmarks,
+            &config.bookmarks,
+        );
+
+        *self.dock_config.write().unwrap() = config.clone();
+        self.magnification_enabled
+            .store(config.magnification, std::sync::atomic::Ordering::SeqCst);
+        if !config.magnification {
+            self.update_magnification_position(-500.0);
+        }
+        if bookmarks_changed {
+            self.load_configured_bookmarks();
+        }
+        self.render_dock();
+    }
+
     /// Persist the current in-memory dock config to the writable config file.
     pub(super) fn save_config(&self) {
         crate::config::save_dock_config(&self.dock_config.read().unwrap());

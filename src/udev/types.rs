@@ -78,6 +78,9 @@ pub struct UdevData {
     pub(super) primary_gpu: DrmNode,
     pub(super) gpus: GpuManager<GbmGlesBackend<SkiaRenderer, DrmDeviceFd>>,
     pub backends: HashMap<DrmNode, BackendData>,
+    /// Libinput devices currently present. Kept so a config reload can
+    /// re-apply the `[input]` settings without waiting for a replug.
+    pub(super) input_devices: Vec<smithay::reexports::input::Device>,
     #[cfg(feature = "fps_ticker")]
     pub(super) fps_texture: Option<smithay::backend::renderer::multigpu::MultiTexture>,
     pub context_id: Option<ContextId<MultiTexture>>,

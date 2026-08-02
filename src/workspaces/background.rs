@@ -63,6 +63,17 @@ impl BackgroundView {
             ..self.view.get_state()
         });
     }
+
+    /// Replace both the wallpaper and the colour drawn when there is none.
+    /// Used when the config is reloaded: dropping the image is meaningful
+    /// (the wallpaper was removed from the config), so it takes an `Option`.
+    pub fn set_background(&self, image: Option<skia::Image>, fallback_color: skia::Color4f) {
+        self.view.update_state(&BackgroundViewState {
+            image,
+            fallback_color,
+            ..self.view.get_state()
+        });
+    }
 }
 
 // static mut COUNTER: f32 = 1.0;
