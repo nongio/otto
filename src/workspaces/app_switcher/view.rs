@@ -66,7 +66,7 @@ impl AppSwitcherView {
             align_items: Some(taffy::AlignItems::Center),
             ..Default::default()
         });
-        wrap.set_opacity(0.0, None);
+        wrap.set_opacity(0.0_f32, None);
         wrap.set_pointer_events(false);
         wrap.set_hidden(true);
 
@@ -115,7 +115,7 @@ impl AppSwitcherView {
         self.active.store(true, Ordering::Relaxed);
         self.wrap_layer.set_hidden(false);
         self.wrap_layer.set_opacity(
-            1.0,
+            1.0_f32,
             Some(Transition {
                 delay: 0.05,
                 timing: TimingFunction::ease_out_quad(0.1),
@@ -136,7 +136,7 @@ impl AppSwitcherView {
         self.active.store(true, Ordering::Relaxed);
         self.wrap_layer.set_hidden(false);
         self.wrap_layer.set_opacity(
-            1.0,
+            1.0_f32,
             Some(Transition {
                 delay: 0.0,
                 timing: TimingFunction::ease_out_quad(0.1),
@@ -148,7 +148,7 @@ impl AppSwitcherView {
         self.active.store(false, Ordering::Relaxed);
         let tr = self
             .wrap_layer
-            .set_opacity(0.0, Some(Transition::ease_in_quad(0.05)));
+            .set_opacity(0.0_f32, Some(Transition::ease_in_quad(0.05)));
         tr.on_finish(
             move |l: &layers::prelude::Layer, _p: f32| {
                 l.set_hidden(true);

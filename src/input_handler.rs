@@ -474,16 +474,16 @@ impl Otto<UdevData> {
                         .add_tablet::<Self>(dh, &TabletDescriptor::from(&device));
                 }
             }
-            InputEvent::DeviceRemoved { device } => {
-                if device.has_capability(DeviceCapability::TabletTool) {
-                    let tablet_seat = self.seat.tablet_seat();
+            InputEvent::DeviceRemoved { device }
+                if device.has_capability(DeviceCapability::TabletTool) =>
+            {
+                let tablet_seat = self.seat.tablet_seat();
 
-                    tablet_seat.remove_tablet(&TabletDescriptor::from(&device));
+                tablet_seat.remove_tablet(&TabletDescriptor::from(&device));
 
-                    // If there are no tablets in seat we can remove all tools
-                    if tablet_seat.count_tablets() == 0 {
-                        tablet_seat.clear_tools();
-                    }
+                // If there are no tablets in seat we can remove all tools
+                if tablet_seat.count_tablets() == 0 {
+                    tablet_seat.clear_tools();
                 }
             }
             _ => {

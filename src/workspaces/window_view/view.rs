@@ -158,7 +158,7 @@ impl WindowView {
 
         let tr = self
             .window_layer
-            .set_image_filter_progress(1.0, Transition::linear(0.7));
+            .set_image_filter_progress(1.0_f32, Transition::linear(0.7));
 
         self.set_is_minimizing(true);
         let view_ref = self.clone();
@@ -200,7 +200,7 @@ impl WindowView {
         // Re-enable the shader and reset the scale before running the animation
         // we need set opacity to 0 first to avoid flickering
         self.window_layer.set_hidden(false);
-        self.window_layer.set_opacity(0.0, None);
+        self.window_layer.set_opacity(0.0_f32, None);
         self.window_layer.set_scale(Point { x: 1.0, y: 1.0 }, None);
         // See minimize(): filters render only via the image-cached path.
         self.window_layer.set_image_cached(true);
@@ -209,13 +209,13 @@ impl WindowView {
         self.window_layer.engine.update(0.0);
         self.genie_effect.set_destination(from, false);
         let view_ref = self.clone();
-        self.window_layer.set_image_filter_progress(1.0, None);
+        self.window_layer.set_image_filter_progress(1.0_f32, None);
         *self
             .window_layer
-            .set_image_filter_progress(0.0, Transition::linear(0.8))
+            .set_image_filter_progress(0.0_f32, Transition::linear(0.8))
             .on_start(
                 |l: &Layer, _| {
-                    l.set_opacity(1.0, None);
+                    l.set_opacity(1.0_f32, None);
                 },
                 true,
             )

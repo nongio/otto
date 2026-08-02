@@ -135,7 +135,7 @@ impl WorkspaceSelectorView {
         );
         layer.set_pointer_events(false);
         layer.set_position((0.0, -400.0), None);
-        layer.set_opacity(1.0, None);
+        layer.set_opacity(1.0_f32, None);
         view.set_layer(layer.clone());
 
         let drop_targets = Arc::new(RwLock::new(Vec::new()));
@@ -399,7 +399,7 @@ fn render_workspace_selector_view(
                     move |_layer: &Layer, _x, _y| {
                         let key = format!("workspace_selector_desktop_remove_{}", workspace_index);
                         if let Some(remove_button) = view_ref.layer_by_key(key.as_str()) {
-                            remove_button.set_opacity(1.0, Transition::spring(0.3, 0.1));
+                            remove_button.set_opacity(1.0_f32, Transition::spring(0.3, 0.1));
                             remove_button
                                 .set_scale(Point::new(1.0, 1.0), Transition::spring(0.3, 0.1));
                         }
@@ -419,7 +419,7 @@ fn render_workspace_selector_view(
                         if layer_contains(layer, x, y) || layer_contains(&remove_button, x, y) {
                             return;
                         }
-                        remove_button.set_opacity(0.0, Transition::spring(0.3, 0.1));
+                        remove_button.set_opacity(0.0_f32, Transition::spring(0.3, 0.1));
                         remove_button.set_scale(Point::new(0.8, 0.8), Transition::spring(0.3, 0.1));
                     }
                 })
@@ -607,12 +607,12 @@ fn render_workspace_selector_view(
                     flex_direction: taffy::FlexDirection::Row,
                     align_items: Some(taffy::AlignItems::Center),
                     justify_content: Some(taffy::AlignContent::Center),
-                    gap: taffy::length(0.0),
+                    gap: taffy::length(0.0_f32),
                     padding: taffy::Rect {
-                        bottom: taffy::length(20.0),
-                        top: taffy::length(30.0),
-                        left: taffy::length(10.0),
-                        right: taffy::length(10.0),
+                        bottom: taffy::length(20.0_f32),
+                        top: taffy::length(30.0_f32),
+                        left: taffy::length(10.0_f32),
+                        right: taffy::length(10.0_f32),
                     },
                     ..Default::default()
                 })

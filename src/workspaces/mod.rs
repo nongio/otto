@@ -286,7 +286,7 @@ impl Workspaces {
                 workspace_view
                     .window_selector_view
                     .window_selector_view
-                    .set_opacity(0.0, None);
+                    .set_opacity(0.0_f32, None);
             }
         }
         self.expose_update_if_needed();
@@ -955,7 +955,7 @@ impl Workspaces {
             if let Some(workspace_view) = self.get_workspace_at(i) {
                 let ol = &workspace_view.window_selector_view.window_selector_view;
                 let before = ol.opacity();
-                ol.set_opacity(0.0, None);
+                ol.set_opacity(0.0_f32, None);
                 let after = ol.opacity();
                 if before > 0.0 || after > 0.0 {
                     tracing::debug!(
@@ -1035,7 +1035,7 @@ impl Workspaces {
                 workspace_view
                     .window_selector_view
                     .window_selector_view
-                    .set_opacity(0.0, None);
+                    .set_opacity(0.0_f32, None);
                 // Clear any leftover selection/state and force a fresh layout recalculation.
                 workspace_view.window_selector_view.take_pre_close_hovered();
                 workspace_view.window_selector_view.clear_selection();
@@ -1086,7 +1086,7 @@ impl Workspaces {
                 workspace_view
                     .window_selector_view
                     .window_selector_view
-                    .set_opacity(0.0, None);
+                    .set_opacity(0.0_f32, None);
                 workspace_view.window_selector_view.save_pre_close_hovered();
                 workspace_view.window_selector_view.clear_selection();
             }
@@ -1574,7 +1574,7 @@ impl Workspaces {
         self.is_animating
             .store(is_starting_animation, std::sync::atomic::Ordering::Relaxed);
 
-        window_selector_view.set_opacity(0.0, None);
+        window_selector_view.set_opacity(0.0_f32, None);
 
         // Create animation if transition is specified
         let animation = transition
@@ -1802,10 +1802,10 @@ impl Workspaces {
                                         delay: 0.05,
                                         timing: TimingFunction::ease_in_out(0.2),
                                     };
-                                    ol.set_opacity(1.0, Some(fade_in));
+                                    ol.set_opacity(1.0_f32, Some(fade_in));
                                 } else {
                                     tracing::debug!("wsv: on_finish(close) → opacity=0");
-                                    ol.set_opacity(0.0, None);
+                                    ol.set_opacity(0.0_f32, None);
                                 }
                             }
                         } else {
@@ -1835,8 +1835,8 @@ impl Workspaces {
                             })
                             .unwrap_or(false);
                         if !is_fullscreen {
-                            layer_shell_overlay_ref.set_opacity(if show_all { 0.0 } else { 1.0 }, None);
-                            layer_shell_top_ref.set_opacity(if show_all { 0.0 } else { 1.0 }, None);
+                            layer_shell_overlay_ref.set_opacity(if show_all { 0.0_f32 } else { 1.0_f32 }, None);
+                            layer_shell_top_ref.set_opacity(if show_all { 0.0_f32 } else { 1.0_f32 }, None);
                             layer_shell_top_ref.set_hidden(show_all);
                         } else {
                             // Fullscreen: keep layers hidden and transparent
@@ -1849,7 +1849,7 @@ impl Workspaces {
                 );
             }
             for layer in &selector_layers {
-                layer.set_opacity(1.0, None);
+                layer.set_opacity(1.0_f32, None);
             }
 
             // Animate layer shell overlay and top opacity (fade out when entering expose)
@@ -1905,7 +1905,7 @@ impl Workspaces {
     /// When entering fullscreen (is_fullscreen=true), fades out both layers and hides them
     /// When exiting fullscreen (is_fullscreen=false), shows and fades in both layers
     pub fn set_fullscreen_overlay_visibility(&self, is_fullscreen: bool) {
-        let target_opacity = if is_fullscreen { 0.0 } else { 1.0 };
+        let target_opacity = if is_fullscreen { 0.0_f32 } else { 1.0_f32 };
         let transition = Some(Transition::ease_in_out_quad(1.4));
 
         if !is_fullscreen {
@@ -2106,7 +2106,7 @@ impl Workspaces {
             // Create a simple animation transaction to hook the on_finish callback
             let wl = self.primary_workspaces_layer().cloned();
             if let Some(ref wl) = wl {
-                let transaction = wl.set_opacity(1.0, Some(trans));
+                let transaction = wl.set_opacity(1.0_f32, Some(trans));
                 transaction.on_finish(
                     move |_: &Layer, _: f32| {
                         let is_active = show_desktop_ref.load(std::sync::atomic::Ordering::Relaxed);
@@ -2169,7 +2169,7 @@ impl Workspaces {
             workspace_view
                 .window_selector_view
                 .window_selector_view
-                .set_opacity(1.0, None);
+                .set_opacity(1.0_f32, None);
         }
     }
 
@@ -4880,7 +4880,7 @@ impl Workspaces {
             // Animate layer_shell_top opacity based on target workspace fullscreen state
             if let Some(workspace) = &target_view {
                 let is_fullscreen = workspace.get_fullscreen_mode();
-                let target_opacity = if is_fullscreen { 0.0 } else { 1.0 };
+                let target_opacity = if is_fullscreen { 0.0_f32 } else { 1.0_f32 };
                 if !is_fullscreen {
                     self.layer_shell_top.set_hidden(false);
                 }
@@ -4962,7 +4962,7 @@ impl Workspaces {
 
                 // Animate layer_shell_overlay and layer_shell_top based on target workspace fullscreen state
                 let is_fullscreen = workspace.get_fullscreen_mode();
-                let target_opacity = if is_fullscreen { 0.0 } else { 1.0 };
+                let target_opacity = if is_fullscreen { 0.0_f32 } else { 1.0_f32 };
                 if !is_fullscreen {
                     self.layer_shell_top.set_hidden(false);
                 }
@@ -5441,7 +5441,7 @@ impl Workspaces {
                     .unwrap_or(false);
                 if !is_fullscreen {
                     self.layer_shell_top.set_hidden(false);
-                    self.layer_shell_top.set_opacity(1.0, None);
+                    self.layer_shell_top.set_opacity(1.0_f32, None);
                 }
                 if let Err(e) = self.layer_shell_top.add_sublayer(&layer) {
                     tracing::warn!("layer_shell: failed to add top layer: {e}");

@@ -649,18 +649,16 @@ impl ContextMenu {
                                 y,
                             );
                         }
-                        PointerEventKind::Press { button, .. } => {
-                            if button == 0x110 {
-                                Self::handle_click_static(
-                                    &state,
-                                    &popups,
-                                    &style,
-                                    &on_item_click,
-                                    depth,
-                                    x as f32,
-                                    y as f32,
-                                );
-                            }
+                        PointerEventKind::Press { button: 0x110, .. } => {
+                            Self::handle_click_static(
+                                &state,
+                                &popups,
+                                &style,
+                                &on_item_click,
+                                depth,
+                                x as f32,
+                                y as f32,
+                            );
                         }
                         _ => {}
                     }

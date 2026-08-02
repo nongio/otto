@@ -54,7 +54,7 @@ cargo run -- --winit &
 WAYLAND_DISPLAY=wayland-1 cargo run -p apps-manager
 ```
 
-**Note:** No test suite exists yet. Minimum supported Rust version is 1.85.0.
+**Note:** No test suite exists yet. Minimum supported Rust version is 1.87.0 (1.96.0 to build the whole workspace, which `otto-rdp` pins through GStreamer). CI pins 1.97.0.
 
 ## Architecture Overview
 

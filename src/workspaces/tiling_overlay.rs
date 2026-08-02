@@ -97,7 +97,7 @@ impl TilingOverlayView {
             ..Default::default()
         });
         preview.set_pointer_events(false);
-        preview.set_opacity(0.0, None);
+        preview.set_opacity(0.0_f32, None);
         preview.set_background_color(
             PaintColor::Solid {
                 color: Color::new_rgba(1.0, 1.0, 1.0, 0.3),
@@ -143,14 +143,14 @@ impl TilingOverlayView {
         self.preview_layer
             .set_size(Size::points(w_px, h_px), move_transition);
         self.preview_layer
-            .set_opacity(1.0, Some(Transition::ease_out_quad(0.2)));
+            .set_opacity(1.0_f32, Some(Transition::ease_out_quad(0.2)));
     }
 
     /// Fade the preview out and hide the container once it finishes.
     pub fn hide(&self) {
         let w = self.wrap_layer.clone();
         self.preview_layer
-            .set_opacity(0.0, Some(Transition::ease_out_quad(0.15)))
+            .set_opacity(0.0_f32, Some(Transition::ease_out_quad(0.15)))
             .on_finish(
                 move |_l: &Layer, _| {
                     w.set_hidden(true);

@@ -83,7 +83,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
                     if let Some((target, label)) = self.darkening_target_for_hover(&layer_id) {
                         self.darken_pressed(&target);
                         if let Some(l) = label {
-                            l.set_opacity(1.0, Some(Transition::ease_in_quad(0.05)));
+                            l.set_opacity(1.0_f32, Some(Transition::ease_in_quad(0.05)));
                         }
                     }
                 }
