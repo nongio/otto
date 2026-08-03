@@ -207,6 +207,23 @@ impl Frame for SkiaFrame<'_> {
                 SyncPoint::signaled()
             });
 
+        // Submit the fence command itself.
+        //
+        // `EGL_ANDROID_native_fence_sync` — which Smithay's `EGLFence` picks
+        // whenever the driver has it — does NOT implicitly flush: the fence is
+        // appended to the command stream and only reaches the GPU on the next
+        // flush. Everything drawn before it was already submitted by Skia
+        // above, so without this the fence sits unsubmitted and never signals.
+        //
+        // A consumer that polls it (`is_reached()`) instead of blocking then
+        // waits forever: that is what froze virtual outputs, whose render loop
+        // only starts the next frame once the previous fence has signaled. It
+        // recovered only when an unrelated render — a physical output redrawing
+        // because the pointer moved — flushed the shared context for us.
+        unsafe {
+            self.renderer.gl.Flush();
+        }
+
         Ok(sync)
     }
 
