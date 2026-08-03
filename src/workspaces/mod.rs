@@ -5216,13 +5216,24 @@ impl Workspaces {
     pub fn outputs_for_element(&self, element: &WindowElement) -> Vec<Output> {
         // Windows live in their owning output's space, not necessarily the
         // primary's — search every output's spaces.
+        //
+        // An *interactive* virtual output hosts windows exactly like a
+        // physical screen, so it must be reported here: callers use this to
+        // answer "which output is this window on?" (maximize, tiling,
+        // fractional scale, screenshare). Filtering every virtual output out
+        // made a window maximized on a virtual output fall back to the
+        // primary physical screen and jump there. Non-interactive virtual
+        // outputs stay excluded — nothing is ever placed on them.
         let mut outputs: Vec<Output> = self
             .output_workspaces
             .values()
             .flat_map(|ows| ows.spaces.iter())
             .flat_map(|s| s.outputs_for_element(element))
-            .filter(|o| !crate::virtual_output::is_virtual_output(o))
+            .filter(|o| !crate::virtual_output::is_unreachable_virtual_output(o))
             .collect();
+        // A window overlapping both kinds belongs to the physical one:
+        // callers take `.first()` as "the window's output".
+        outputs.sort_by_key(crate::virtual_output::is_virtual_output);
         outputs.dedup_by_key(|o| o.name());
         outputs
     }
