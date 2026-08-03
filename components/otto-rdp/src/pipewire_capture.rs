@@ -97,6 +97,31 @@ impl TargetSize {
     }
 }
 
+/// The most recently composed frame, kept so a client that connects between
+/// two captures can be painted immediately instead of waiting for the next
+/// one to arrive (an idle desktop produces them slowly, and a bitmap client
+/// shows black until its first update).
+#[derive(Clone, Default)]
+pub struct LatestFrame(Arc<std::sync::Mutex<Option<Arc<Frame>>>>);
+
+impl LatestFrame {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    fn set(&self, frame: Arc<Frame>) {
+        *self.0.lock().unwrap() = Some(frame);
+    }
+    /// The last frame, if it was composed for `size` (a client that
+    /// negotiated a different desktop can't use it).
+    pub fn get_for(&self, size: (u32, u32)) -> Option<Arc<Frame>> {
+        self.0
+            .lock()
+            .unwrap()
+            .clone()
+            .filter(|f| (f.width, f.height) == size)
+    }
+}
+
 /// Spawn the PipeWire main-loop thread, connecting to `node_id`.
 /// Frames are published on `tx`, already scaled to `target` (see `TargetSize`)
 /// so the big native frame is never allocated. The caller owns the channel so
@@ -107,11 +132,12 @@ pub fn spawn(
     expected: (u32, u32),
     target: TargetSize,
     tx: broadcast::Sender<Arc<Frame>>,
+    latest: LatestFrame,
 ) {
     std::thread::Builder::new()
         .name("pw-capture".into())
         .spawn(move || {
-            if let Err(e) = run(node_id, expected, tx, target) {
+            if let Err(e) = run(node_id, expected, tx, target, latest) {
                 tracing::error!("pipewire capture terminated: {e:#}");
             }
         })
@@ -139,6 +165,11 @@ struct StreamData {
     min_interval: std::time::Duration,
     /// Size to deliver (the RDP client's desktop), re-read per frame.
     target: TargetSize,
+    /// Layout the last emitted frame was composed for. A change means a
+    /// client just negotiated its desktop, so that frame skips rate limiting.
+    last_layout: Option<ServedLayout>,
+    /// Newest frame, for clients that subscribe between two captures.
+    latest: LatestFrame,
 }
 
 fn run(
@@ -146,6 +177,7 @@ fn run(
     expected: (u32, u32),
     tx: broadcast::Sender<Arc<Frame>>,
     target: TargetSize,
+    latest: LatestFrame,
 ) -> anyhow::Result<()> {
     pw::init();
 
@@ -169,6 +201,8 @@ fn run(
         last_emit: None,
         min_interval: target_frame_interval(),
         target,
+        last_layout: None,
+        latest,
     };
 
     let _listener = stream
@@ -204,21 +238,32 @@ fn run(
             let Some(mut buffer) = stream.dequeue_buffer() else {
                 return;
             };
+            let Some(info) = data.format else { return };
+            let width = info.size().width;
+            let height = info.size().height;
+
+            // Scale straight out of the source buffer into the client's
+            // letterboxed desktop — the full-res frame is never materialised
+            // (22 MB -> ~4 MB for a phone-sized client).
+            let layout = data.target.resolve((width, height));
+
             // Rate limit BEFORE the ~22 MB copy below: drop frames that arrive
             // sooner than the target interval. `buffer` is returned to PipeWire
             // when it drops at end of scope. Keeps allocation churn and RDP
             // send-buffer growth bounded (the OOM risk on a big display).
+            // Exception: the first frame for a newly negotiated layout — a
+            // client that just connected has nothing on screen, so it must not
+            // wait out the interval for its first picture.
             let now = std::time::Instant::now();
-            if let Some(last) = data.last_emit {
-                if now.duration_since(last) < data.min_interval {
-                    return;
+            let layout_changed = data.last_layout != Some(layout);
+            if !layout_changed {
+                if let Some(last) = data.last_emit {
+                    if now.duration_since(last) < data.min_interval {
+                        return;
+                    }
                 }
             }
             data.last_emit = Some(now);
-
-            let Some(info) = data.format else { return };
-            let width = info.size().width;
-            let height = info.size().height;
 
             let datas = buffer.datas_mut();
             if datas.is_empty() {
@@ -242,10 +287,6 @@ fn run(
             let type_ = d.type_();
             let mapped_ok = d.data().map(|s| s.len() >= needed).unwrap_or(false);
 
-            // Scale straight out of the source buffer into the client's
-            // letterboxed desktop — the full-res frame is never materialised
-            // (22 MB -> ~4 MB for a phone-sized client).
-            let layout = data.target.resolve((width, height));
             let (dw, dh) = layout.desktop;
 
             let pixels: Option<Vec<u8>> = if mapped_ok {
@@ -287,6 +328,8 @@ fn run(
                 height: dh,
                 data: Bytes::from(pixels),
             });
+            data.last_layout = Some(layout);
+            data.latest.set(Arc::clone(&frame));
             // Send fails only when no RDP client is connected — fine.
             let receivers = data.tx.send(frame).unwrap_or(0);
             static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
