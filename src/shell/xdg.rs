@@ -1045,18 +1045,23 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 view.unmaximised_rect = current_element_geometry;
                 self.workspaces.set_window_view(&id, view);
             }
+            // Maximize onto the output the window actually lives on — the
+            // space it is mapped in is authoritative, including for windows
+            // on a virtual (RDP) output. Only an unmapped window falls back
+            // to a physical screen.
             let outputs_for_window = self.workspaces.outputs_for_element(&window);
-            let output = outputs_for_window
-                .first()
-                // The window hasn't been mapped yet, use the primary physical output instead
+            let output = self
+                .workspaces
+                .output_for_window(&window)
+                .or_else(|| outputs_for_window.first().cloned())
                 .or_else(|| {
                     self.workspaces
                         .outputs()
                         .find(|o| !crate::virtual_output::is_virtual_output(o))
+                        .cloned()
                 })
                 // Assumes that at least one output exists
-                .expect("No outputs found")
-                .clone(); // Clone to avoid borrow conflicts
+                .expect("No outputs found");
 
             // Recalculate exclusive zones for this output before using them
             // This ensures we have fresh data even if layer surfaces changed
@@ -1557,9 +1562,8 @@ impl<BackendData: Backend> Otto<BackendData> {
 
         let Some(output) = self
             .workspaces
-            .outputs_for_element(window)
-            .first()
-            .cloned()
+            .output_for_window(window)
+            .or_else(|| self.workspaces.outputs_for_element(window).first().cloned())
             .or_else(|| {
                 self.workspaces
                     .outputs()
