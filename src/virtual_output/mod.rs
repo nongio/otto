@@ -51,7 +51,18 @@ pub struct VirtualOutputState {
     /// of the next `render_virtual_outputs` tick so the fence wait never blocks
     /// the main loop / input dispatch.
     pub pending_frame: Option<smithay::backend::renderer::sync::SyncPoint>,
+    /// When `pending_frame` was stashed. A fence that never signals would
+    /// otherwise stall this output's render loop forever (no new frame is
+    /// started while one is pending), so after [`PENDING_FRAME_DEADLINE`] the
+    /// frame is handed over regardless.
+    pub pending_since: Option<std::time::Instant>,
 }
+
+/// How long a rendered frame may wait for its GPU fence before it is queued
+/// anyway. Generous compared with a frame (a stalled fence, not a slow GPU, is
+/// what this catches); the worst case is one possibly-incomplete frame in the
+/// stream, against a stream that otherwise never advances again.
+pub const PENDING_FRAME_DEADLINE: std::time::Duration = std::time::Duration::from_millis(500);
 
 impl VirtualOutputState {
     /// Build an `Output` from config (without registering a Wayland global yet).
@@ -143,6 +154,7 @@ impl VirtualOutputState {
             pipewire_stream,
             damage_tracker,
             pending_frame: None,
+            pending_since: None,
         };
 
         Ok((state, node_id))
