@@ -341,12 +341,19 @@ where
                     // this they keep resolving against wherever the physical
                     // mouse last was.
                     state.last_pointer_location = (new_location.x, new_location.y);
-                    let scale = focused
-                        .as_ref()
-                        .or(data.output.as_ref())
+                    let hit_output = focused.as_ref().or(data.output.as_ref());
+                    let scale = hit_output
                         .map(|o| o.current_scale().fractional_scale())
                         .unwrap_or(1.0);
-                    let phys = new_location.to_physical(scale);
+                    // lay-rs scene coordinates are OUTPUT-LOCAL (output subtrees
+                    // overlap at (0,0)), so rebase the global position to the
+                    // output's origin before hit-testing — exactly as the
+                    // real-input path does. Without it, synthesized hover on any
+                    // output placed past x=0 (an RDP virtual output, say) probes
+                    // the scene far outside the subtree and never lands on the
+                    // UI under the cursor.
+                    let origin = hit_output.map(|o| o.current_location()).unwrap_or_default();
+                    let phys = (new_location - origin.to_f64()).to_physical(scale);
                     state.cursor_physical_position = (phys.x, phys.y);
                     state
                         .layers_engine
