@@ -1900,6 +1900,15 @@ impl Otto<UdevData> {
         let scene_element = self.scene_element.clone();
 
         for i in 0..self.virtual_outputs.len() {
+            // Nobody is pulling frames (no PipeWire consumer linked yet) —
+            // skip the composite/render entirely rather than burning GPU
+            // time on a stream nothing reads. Otto resumes rendering the
+            // moment a consumer (e.g. otto-rdp) connects and the PipeWire
+            // stream transitions to `Streaming`.
+            if !self.virtual_outputs[i].pipewire_stream.is_streaming() {
+                continue;
+            }
+
             let mut renderer = match self.backend_data.gpus.single_renderer(&primary_gpu) {
                 Ok(r) => r,
                 Err(e) => {
@@ -1948,7 +1957,13 @@ impl Otto<UdevData> {
                     stack.push(scene_element.for_plane_subtree(&ows.background_plane, origin));
                     stack
                 })
-                .unwrap_or_else(|| vec![scene_element.clone()]);
+                .unwrap_or_else(|| {
+                    warn!(
+                        "render_virtual_outputs: no workspaces for '{output_name}' — \
+                         compositing the global scene root instead"
+                    );
+                    vec![scene_element.clone()]
+                });
 
             // Build cursor elements if pointer is over this output
             let scale = Scale::from(output_clone.current_scale().fractional_scale());
@@ -2054,7 +2069,20 @@ impl Otto<UdevData> {
             let pool_arc = self.virtual_outputs[i].pipewire_stream.buffer_pool();
 
             if let Some(sync) = self.virtual_outputs[i].pending_frame.take() {
-                if sync.is_reached() {
+                let overdue = self.virtual_outputs[i]
+                    .pending_since
+                    .is_some_and(|t| t.elapsed() >= crate::virtual_output::PENDING_FRAME_DEADLINE);
+                if sync.is_reached() || overdue {
+                    if overdue && !sync.is_reached() {
+                        // Never block the stream on a fence that isn't coming:
+                        // no frame is started while one is pending, so waiting
+                        // forever would freeze this output's feed for good.
+                        warn!(
+                            "virtual output '{output_name}': GPU fence still unsignaled after \
+                             {:?} — queueing the frame anyway",
+                            crate::virtual_output::PENDING_FRAME_DEADLINE
+                        );
+                    }
                     {
                         let mut pool = pool_arc.lock().unwrap();
                         let ready: Vec<_> = pool.pending.drain().collect();
@@ -2062,6 +2090,7 @@ impl Otto<UdevData> {
                             pool.to_queue.insert(fd, buf);
                         }
                     }
+                    self.virtual_outputs[i].pending_since = None;
                     self.virtual_outputs[i]
                         .pipewire_stream
                         .increment_frame_sequence();
@@ -2125,6 +2154,7 @@ impl Otto<UdevData> {
                     Some(sync) => {
                         pool_arc.lock().unwrap().pending.insert(fd, pw_buffer);
                         self.virtual_outputs[i].pending_frame = Some(sync);
+                        self.virtual_outputs[i].pending_since = Some(std::time::Instant::now());
                     }
                     // Render failed — return the buffer so it isn't leaked.
                     None => {
