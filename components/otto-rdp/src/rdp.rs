@@ -36,6 +36,9 @@ pub struct VirtualOutputDisplay {
     /// bypassed entirely — but size negotiation and the letterbox layout are
     /// shared with the bitmap path so input mapping stays correct.
     pub egfx_mode: bool,
+    /// Newest captured frame, replayed to a client the moment it subscribes so
+    /// it isn't left on a black screen until the next capture arrives.
+    pub latest: crate::pipewire_capture::LatestFrame,
     /// EGFX only: shared state with the graphics driver. The negotiated desktop
     /// size is recorded here (synchronously, before the channel is ready) so the
     /// driver can size its surface and the encoder can letterbox native into it.
@@ -49,6 +52,10 @@ pub struct Updates {
     /// `next_update` waits for the decision — AVC parks here (video flows over
     /// the graphics pipeline), everything else falls through to bitmaps.
     codec_rx: Option<tokio::sync::watch::Receiver<crate::egfx::Codec>>,
+    /// Frame to send before waiting on the channel: the newest capture at
+    /// subscribe time, so the client paints as soon as it asks for updates
+    /// rather than after the next compositor frame. Taken once.
+    initial: Option<Arc<Frame>>,
 }
 
 #[async_trait::async_trait]
@@ -144,6 +151,7 @@ impl RdpServerDisplay for VirtualOutputDisplay {
         Ok(Box::new(Updates {
             rx: self.frames.subscribe(),
             codec_rx: self.gfx_shared.as_ref().map(|s| s.codec_rx()),
+            initial: self.latest.get_for(self.served),
         }))
     }
 }
@@ -177,6 +185,19 @@ impl RdpServerDisplayUpdates for Updates {
             }
             // Committed to bitmaps — don't re-wait on subsequent calls.
             self.codec_rx = None;
+        }
+        // Paint whatever was on screen at subscribe time first: on an idle
+        // desktop the next capture can be a long way off, and until then the
+        // client shows black.
+        if let Some(frame) = self.initial.take() {
+            if let Some(update) = frame_to_bitmap(&frame) {
+                tracing::info!(
+                    "sending the cached frame ({}x{}) as the client's first bitmap",
+                    frame.width,
+                    frame.height
+                );
+                return Ok(Some(DisplayUpdate::Bitmap(update)));
+            }
         }
         loop {
             match self.rx.recv().await {
