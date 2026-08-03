@@ -87,6 +87,11 @@ pub struct StreamConfig {
     pub capabilities: BackendCapabilities,
     /// GBM device (if backend supports DMA-BUF)
     pub gbm_device: Option<GbmDevice<DrmDeviceFd>>,
+    /// Otto output name this stream serves (e.g. "virtual-1"), tagged onto
+    /// the PipeWire node as a custom property so consumers (otto-rdp) can
+    /// resolve a node id from an output name instead of needing the
+    /// numeric id logged at startup.
+    pub label: Option<String>,
 }
 
 impl Default for StreamConfig {
@@ -98,6 +103,7 @@ impl Default for StreamConfig {
             framerate_denom: 1,
             capabilities: BackendCapabilities::default(),
             gbm_device: None,
+            label: None,
         }
     }
 }
@@ -312,17 +318,21 @@ fn run_pipewire_thread(
         .connect_rc(None)
         .map_err(|e| PipeWireError::InitFailed(format!("Failed to connect: {}", e)))?;
 
-    // Create stream
-    let stream = pw::stream::StreamRc::new(
-        core,
-        "otto-screencast",
-        pw::properties::properties! {
-            *pw::keys::MEDIA_TYPE => "Video",
-            *pw::keys::MEDIA_CATEGORY => "Capture",
-            *pw::keys::MEDIA_ROLE => "Screen",
-        },
-    )
-    .map_err(|e| PipeWireError::InitFailed(format!("Failed to create stream: {}", e)))?;
+    // Create stream. `otto.output.name` is a custom property (not a real
+    // PipeWire key) so a consumer can find this node by Otto output name
+    // via the registry instead of needing the numeric node id logged at
+    // startup — see otto-rdp's `discover` module.
+    let mut props = pw::properties::properties! {
+        *pw::keys::MEDIA_TYPE => "Video",
+        *pw::keys::MEDIA_CATEGORY => "Capture",
+        *pw::keys::MEDIA_ROLE => "Screen",
+    };
+    if let Some(label) = &config.label {
+        props.insert(*pw::keys::NODE_DESCRIPTION, format!("Otto: {label}"));
+        props.insert("otto.output.name", label.as_str());
+    }
+    let stream = pw::stream::StreamRc::new(core, "otto-screencast", props)
+        .map_err(|e| PipeWireError::InitFailed(format!("Failed to create stream: {}", e)))?;
 
     // Stream state
     let stream_state = Rc::new(RefCell::new(PwStreamState {

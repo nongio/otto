@@ -33,7 +33,7 @@ use ironrdp_server::{
 use ironrdp_svc::ChannelFlags;
 use tokio::sync::mpsc::{self, UnboundedSender};
 
-use crate::h264::EncodedFrame;
+use crate::h264::{EncodedFrame, KeyframeRequester};
 
 /// Region-metadata quantization hint sent alongside each AVC420 frame. The real
 /// quality lives in the encoded H.264; this is advisory (0–51, lower = better).
@@ -284,8 +284,12 @@ impl GraphicsPipelineHandler for OttoGfxHandler {
 /// frame. Some clients (notably the Microsoft mobile / Windows App clients)
 /// disconnect if graphics setup lags the capability confirm, and the first
 /// encoded frame can be tens of milliseconds out.
-pub async fn drive(shared: Arc<GfxShared>, mut frames: mpsc::UnboundedReceiver<EncodedFrame>) {
-    let mut driver = Driver::new(shared);
+pub async fn drive(
+    shared: Arc<GfxShared>,
+    mut frames: mpsc::UnboundedReceiver<EncodedFrame>,
+    keyframe: KeyframeRequester,
+) {
+    let mut driver = Driver::new(shared, keyframe);
     let mut ready_tick = tokio::time::interval(std::time::Duration::from_millis(5));
     ready_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -322,10 +326,18 @@ struct Driver {
     awaiting_keyframe: bool,
     warned_no_avc: bool,
     sent: u64,
+    /// Asks the encoder for an IDR when the client has nothing decodable yet.
+    keyframe: KeyframeRequester,
+    /// When the last IDR was requested, so a long keyframe wait re-asks
+    /// without spamming the encoder every frame.
+    last_keyframe_request: Option<std::time::Instant>,
 }
 
+/// Don't re-ask the encoder for an IDR more often than this.
+const KEYFRAME_REQUEST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+
 impl Driver {
-    fn new(shared: Arc<GfxShared>) -> Self {
+    fn new(shared: Arc<GfxShared>, keyframe: KeyframeRequester) -> Self {
         Self {
             shared,
             dims: (0, 0),
@@ -335,6 +347,27 @@ impl Driver {
             awaiting_keyframe: true,
             warned_no_avc: false,
             sent: 0,
+            keyframe,
+            last_keyframe_request: None,
+        }
+    }
+
+    /// Ask the encoder for an immediate IDR (rate-limited). Called whenever the
+    /// client has nothing it can decode: a surface was just mapped, or a frame
+    /// was dropped and the stream must resume on a keyframe. Without this the
+    /// client waits for the encoder's own `key-int-max`, which counts *frames* —
+    /// on an idle desktop that is seconds to minutes of black screen.
+    fn request_keyframe(&mut self) {
+        let now = std::time::Instant::now();
+        if self
+            .last_keyframe_request
+            .is_some_and(|t| now.duration_since(t) < KEYFRAME_REQUEST_INTERVAL)
+        {
+            return;
+        }
+        if self.keyframe.request() {
+            self.last_keyframe_request = Some(now);
+            tracing::debug!("requested an IDR from the encoder (client needs a full frame)");
         }
     }
 
@@ -399,6 +432,11 @@ impl Driver {
 
         // Emit ResetGraphics + CreateSurface + MapSurfaceToOutput now.
         Self::emit(&sender, channel_id, messages);
+        // The surface is empty (black) until it receives a decodable frame, so
+        // ask for an IDR immediately instead of waiting for the encoder's next
+        // scheduled one — that is what makes a fresh connection show the
+        // desktop without the user having to move the mouse first.
+        self.request_keyframe();
         Some((handle, sender, self.surface.unwrap()))
     }
 
@@ -412,6 +450,9 @@ impl Driver {
         // Never begin or resume on a P-frame the client can't decode.
         if self.awaiting_keyframe {
             if !frame.keyframe {
+                // Nothing is reaching the client meanwhile — keep nudging the
+                // encoder (rate-limited) rather than waiting out key-int-max.
+                self.request_keyframe();
                 return;
             }
             self.awaiting_keyframe = false;

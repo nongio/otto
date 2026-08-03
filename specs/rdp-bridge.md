@@ -83,6 +83,15 @@ AVC420; the `--bitmap` flag forces the legacy path for every client.
 - The first frame sent to a client, and the first frame sent after any dropped
   frame, must be a keyframe (IDR); non-keyframes are withheld until the next
   keyframe once the stream is not in a known-good state.
+- Whenever a client has nothing decodable — its graphics surface was just
+  created and mapped, or delivery is waiting to resume after a drop — the
+  bridge asks the encoder for a keyframe immediately rather than waiting for
+  the encoder's scheduled one. A connecting client therefore sees the desktop
+  without any user interaction. Relying on the encoder's own keyframe interval
+  is not sufficient: that interval counts encoded frames, and an idle desktop
+  produces frames slowly, so the wait is unbounded in wall-clock time and the
+  client stays black until something on screen moves. These requests are
+  rate-limited so a long keyframe wait cannot flood the encoder.
 - Frame delivery is backpressure-aware: if the client/transport cannot accept a
   frame, that frame is dropped rather than queued, and delivery resumes on the
   next keyframe.
@@ -98,6 +107,13 @@ AVC420; the `--bitmap` flag forces the legacy path for every client.
 - The raw capture pipeline behind this path (CPU capture plus box-filter scale)
   starts lazily, only once a client actually falls back to it. A client that is
   served H.264 for the whole session never causes it to start.
+- A client subscribing for display updates is sent the most recent captured
+  frame right away, when that frame was composed for the desktop size it
+  negotiated; it does not wait for the next capture to arrive.
+- Capture is rate-limited to a target frame rate, but the first frame composed
+  for a newly negotiated desktop layout bypasses that limit — a client that
+  just connected has nothing on screen and must not wait out the interval for
+  its first picture.
 
 ### Input forwarding
 

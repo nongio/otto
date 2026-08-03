@@ -90,6 +90,7 @@ Otto supports multiple workspaces across multiple outputs (physical monitors and
 - A fullscreen window on one output does not affect frame-callback throttling of windows on other outputs: the throttle classifier evaluates fullscreen and top-of-stack per output.
 - Unfullscreen restores the window to its saved rect on the same output, switches only that output back, and removes the dedicated workspace from that output only (via the removal channel's named-output form).
 - Maximize similarly accounts for per-output chrome: the usable area subtracts the dock height only on the primary output; maximized windows on other outputs use the full height.
+- Maximize and tiling target the output whose space the window is actually mapped in, including an interactive virtual (remote/RDP) output. Resolving the target from geometry overlap alone — with virtual outputs excluded from that lookup — made a window maximized on a virtual output resolve to no output and fall back to the primary physical screen, so it jumped off the remote session. Non-interactive virtual outputs remain excluded everywhere: nothing is ever placed on them.
 
 ### App Switcher (Output Placement)
 

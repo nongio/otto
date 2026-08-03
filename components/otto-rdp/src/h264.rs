@@ -33,6 +33,46 @@ pub struct EncodedFrame {
     pub keyframe: bool,
 }
 
+/// Handle for asking the running encoder for an IDR *now*.
+///
+/// A client that attaches mid-GOP has nothing decodable until the next
+/// keyframe, and `key-int-max` counts encoded frames — on an idle desktop
+/// (where the source only produces the occasional keepalive buffer) that can
+/// be far away in wall-clock time, so the client sits on a black screen until
+/// the user moves something. Requesting a key unit when the EGFX surface is
+/// mapped makes the first thing a freshly connected client receives a full
+/// frame.
+///
+/// Cloneable and inert until the pipeline exists (`request` is a no-op then).
+#[derive(Clone, Default)]
+pub struct KeyframeRequester {
+    pipeline: std::sync::Arc<std::sync::Mutex<Option<gst::Pipeline>>>,
+}
+
+impl KeyframeRequester {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn attach(&self, pipeline: gst::Pipeline) {
+        *self.pipeline.lock().unwrap() = Some(pipeline);
+    }
+
+    /// Ask the encoder for an IDR with SPS/PPS. Returns false when no pipeline
+    /// is running yet (its first frame is a keyframe anyway).
+    pub fn request(&self) -> bool {
+        let Some(pipeline) = self.pipeline.lock().unwrap().clone() else {
+            return false;
+        };
+        // The upstream force-key-unit event, built by hand so this doesn't
+        // pull in gstreamer-video for one structure.
+        let structure = gst::Structure::builder("GstForceKeyUnit")
+            .field("all-headers", true)
+            .build();
+        pipeline.send_event(gst::event::CustomUpstream::new(structure))
+    }
+}
+
 /// Encoder configuration. `width`/`height` are the desktop served to the RDP
 /// client (its negotiated box, or `--desktop`); the native output is scaled and
 /// aspect-fit into that size on the GPU (`vapostproc add-borders`), so the coded
@@ -82,7 +122,11 @@ impl Config {
 /// pipeline's ~100ms transition to PLAYING. The pipeline is owned by a
 /// background thread that also watches the bus; when it hits EOS or an error
 /// the thread logs and exits, dropping `tx` so the receiver observes `None`.
-pub fn spawn(cfg: Config, tx: mpsc::UnboundedSender<EncodedFrame>) -> anyhow::Result<()> {
+pub fn spawn(
+    cfg: Config,
+    tx: mpsc::UnboundedSender<EncodedFrame>,
+    keyframe: KeyframeRequester,
+) -> anyhow::Result<()> {
     gst::init().context("gstreamer init")?;
 
     // `vah264enc` = VA-API (hardware) H.264; `vah264lpenc` is the low-power
@@ -164,6 +208,10 @@ pub fn spawn(cfg: Config, tx: mpsc::UnboundedSender<EncodedFrame>) -> anyhow::Re
     pipeline
         .set_state(gst::State::Playing)
         .context("setting H.264 pipeline to Playing")?;
+
+    // Live from here on: the EGFX driver can ask for an IDR whenever a client
+    // needs a full frame (connect, reconnect, resume after a dropped frame).
+    keyframe.attach(pipeline.clone());
 
     // Own the pipeline on a dedicated thread and pump its bus so errors/EOS
     // are logged and state is cleaned up. The thread's lifetime keeps the

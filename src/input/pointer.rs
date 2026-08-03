@@ -626,30 +626,36 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
         }
 
         let (pos_x, pos_y) = pos.into();
+        // Rightmost edge across reachable outputs. This must come from each
+        // output's actual right edge (`loc.x + size.w`), not the sum of their
+        // widths: outputs are not necessarily packed contiguously from x=0,
+        // and any gap in the layout would otherwise clamp the pointer short
+        // of the last output — making part of it unreachable.
         // Virtual outputs are pointer-unreachable — exclude their extent.
         let max_x = self
             .workspaces
             .outputs()
             .filter(|o| !crate::virtual_output::is_unreachable_virtual_output(o))
-            .fold(0, |acc, o| {
-                acc + self
-                    .workspaces
-                    .output_geometry(o)
-                    .map(|g| g.size.w)
-                    .unwrap_or(0)
-            });
+            .filter_map(|o| self.workspaces.output_geometry(o))
+            .map(|g| g.loc.x + g.size.w)
+            .max()
+            .unwrap_or(0);
         let clamped_x = pos_x.clamp(0.0, max_x as f64);
-        let max_y = self
+        // Vertical extent of whichever output holds the clamped x. Match on
+        // the horizontal span alone — an output placed at y != 0 contains no
+        // point with y == 0, and testing against that would skip it and leave
+        // y unclamped.
+        let y_bounds = self
             .workspaces
             .outputs()
-            .find(|o| {
-                let geo = self.workspaces.output_geometry(o).unwrap();
-                geo.contains((clamped_x as i32, 0))
+            .filter_map(|o| self.workspaces.output_geometry(o))
+            .find(|geo| {
+                clamped_x as i32 >= geo.loc.x && (clamped_x as i32) < geo.loc.x + geo.size.w
             })
-            .map(|o| self.workspaces.output_geometry(o).unwrap().size.h);
+            .map(|geo| (geo.loc.y, geo.loc.y + geo.size.h));
 
-        if let Some(max_y) = max_y {
-            let clamped_y = pos_y.clamp(0.0, max_y as f64);
+        if let Some((min_y, max_y)) = y_bounds {
+            let clamped_y = pos_y.clamp(min_y as f64, max_y as f64);
             (clamped_x, clamped_y).into()
         } else {
             (clamped_x, pos_y).into()

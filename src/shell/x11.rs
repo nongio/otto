@@ -646,12 +646,15 @@ impl<BackendData: Backend> Otto<BackendData> {
             .space()
             .and_then(|s| s.element_bbox(&elem))
             .unwrap();
+        // The space the window is mapped in is authoritative — a window on a
+        // virtual (RDP) output maximizes there, not on the physical screen.
         let outputs_for_window = self.workspaces.outputs_for_element(&elem);
-        let output = outputs_for_window
-            .first()
-            .or_else(|| self.workspaces.outputs().next())
-            .expect("No outputs found")
-            .clone();
+        let output = self
+            .workspaces
+            .output_for_window(&elem)
+            .or_else(|| outputs_for_window.first().cloned())
+            .or_else(|| self.workspaces.outputs().next().cloned())
+            .expect("No outputs found");
         let geometry = self.workspaces.output_geometry(&output).unwrap();
 
         tracing::debug!(
