@@ -80,13 +80,26 @@ position = { x = 1440, y = 0 }
 interactive = true        # pointer/focus can reach it → remote control works
 ```
 
-Otto logs the node at startup: `Virtual output 'virtual-1' started (PipeWire node N)`.
-
 ```sh
-WAYLAND_DISPLAY=wayland-1 otto-rdp --node <N> --output virtual-1 --listen 0.0.0.0:3389
-# from the remote machine:
-xfreerdp /v:<host>:3389 /sec:rdp
+WAYLAND_DISPLAY=wayland-1 otto-rdp --output virtual-1 --listen 0.0.0.0:3389
+# from the remote machine (TLS is on by default):
+xfreerdp3 /v:<host>:3389 /cert:ignore
 ```
+
+The bridge resolves the PipeWire node itself — no need to read the numeric
+id out of Otto's log. Otto tags each virtual output's node with a custom
+`otto.output.name` property (`src/screenshare/pipewire_stream.rs`), and
+`otto-rdp`'s `discover` module (`components/otto-rdp/src/discover.rs`) walks
+the PipeWire registry for a node matching `--output` (default `virtual-1`).
+Pass `--node <id>` directly to skip discovery if you already have the id.
+
+**Rendering is on-demand.** `render_virtual_outputs()`
+(`src/udev/render.rs`) skips a virtual output's composite/render work
+entirely while its PipeWire stream has no linked consumer — checked via
+`PipeWireStream::is_streaming()`, which mirrors PipeWire's own
+`StreamState::Streaming` (true only once a consumer has connected and
+negotiated format). A configured-but-unwatched virtual output costs nothing
+until `otto-rdp` (or any other PipeWire consumer) connects.
 
 ## Sharing indicator
 
@@ -119,11 +132,11 @@ the right window and reach the application.
 
 ## Current limitations
 
-- **No auth**: trusted-network only. `--tls` enables TLS security with a
-  self-signed certificate (generated once, persisted under
-  `~/.local/state/otto-rdp`, key 0600) — required by `mstsc` and
-  Microsoft's mobile clients, which refuse the plain-RDP layer. Without
-  `--tls` the listener is `RdpServerSecurity::None` (FreeRDP `/sec:rdp`).
+- **No auth**: trusted-network only. TLS security with a self-signed
+  certificate (generated once, persisted under `~/.local/state/otto-rdp`,
+  key 0600) is on **by default** — required by `mstsc` and Microsoft's
+  mobile clients, which refuse the plain-RDP layer. Pass `--no-tls` for the
+  `RdpServerSecurity::None` listener instead (FreeRDP `/sec:rdp`).
   CredSSP/NLA auth is the natural next step; ironrdp-server supports it.
 - Full-frame updates every frame — no damage-based partial updates yet. The
   virtual output renders at its configured refresh (30 Hz default) and
@@ -150,6 +163,5 @@ the right window and reach the application.
 - Keyboard injection covers ASCII only. Non-ASCII Unicode (accents, emoji,
   non-Latin scripts) is dropped with a debug log — a compose/dead-key or
   dynamic-keymap path is the follow-up.
-- Clients that only speak TLS/NLA (Windows `mstsc`, the Microsoft mobile
-  apps) cannot connect to the `RdpServerSecurity::None` listener; use a
-  FreeRDP-based client with `/sec:rdp`, or add the TLS acceptor.
+- Conversely, a client that only speaks plain-RDP (`xfreerdp /sec:rdp`)
+  cannot connect once `--no-tls` is passed to drop TLS for that reason.

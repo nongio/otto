@@ -194,13 +194,12 @@ noop_dispatch!(
     zxdg_output_manager_v1::ZxdgOutputManagerV1,
 );
 
-/// Run the input loop. Reports the target output's pixel size on `size_tx`
-/// once discovered, then services `rx` until the channel closes.
-pub fn run(
-    output_name: &str,
-    rx: Receiver<InputCommand>,
-    size_tx: Sender<(u32, u32)>,
-) -> anyhow::Result<()> {
+/// Connect to the compositor and enumerate every `wl_output` (physical
+/// connectors and virtual outputs alike — Otto exposes both this way), with
+/// name and current-mode pixel size. Used both to resolve `--output` in
+/// [`run`] and to answer `--list`.
+fn connect_and_list_outputs(
+) -> anyhow::Result<(Connection, wayland_client::EventQueue<State>, State)> {
     // The bridge is launched as soon as Otto's D-Bus service appears, which can
     // be a moment before its Wayland socket is accepting connections. Retry for
     // a few seconds instead of exiting on the first failure — a hard exit here
@@ -259,6 +258,31 @@ pub fn run(
     }
     queue.roundtrip(&mut state)?;
     queue.roundtrip(&mut state)?;
+
+    Ok((conn, queue, state))
+}
+
+/// List every output name Otto currently exposes, with its pixel size —
+/// both physical connectors and virtual outputs, since both show up as
+/// `wl_output` globals. Used for `--list`.
+pub fn list_outputs() -> anyhow::Result<Vec<(String, (u32, u32))>> {
+    let (_conn, _queue, state) = connect_and_list_outputs()?;
+    Ok(state
+        .outputs
+        .iter()
+        .filter_map(|o| Some((o.name.clone()?, o.mode_size?)))
+        .collect())
+}
+
+/// Run the input loop. Reports the target output's pixel size on `size_tx`
+/// once discovered, then services `rx` until the channel closes.
+pub fn run(
+    output_name: &str,
+    rx: Receiver<InputCommand>,
+    size_tx: Sender<(u32, u32)>,
+) -> anyhow::Result<()> {
+    let (_conn, mut queue, mut state) = connect_and_list_outputs()?;
+    let qh = queue.handle();
 
     let target = state
         .outputs
