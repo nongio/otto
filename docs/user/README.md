@@ -4,6 +4,8 @@ Otto is a Wayland compositor and desktop system with a Skia-rendered,
 animation-first interface. This guide covers everything you can do with it as a
 user: what the desktop is made of, how to drive it, and how to configure it.
 
+## Where to start
+
 If you are installing Otto for the first time, start with
 [Getting Started](getting-started.md), then take the
 [Desktop Tour](desktop-tour.md).

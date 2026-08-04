@@ -3,6 +3,8 @@
 Otto handles two audio concerns: **volume control** from the media keys, and
 **UI sound effects** for feedback.
 
+## Not an audio server
+
 It is not an audio server — PipeWire or PulseAudio does the actual mixing. Otto
 talks to whichever you run.
 
