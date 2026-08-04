@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+        <link rel="manifest" href="/site.webmanifest">
+
+        <title>{{ .Title | default .Site.Title }}</title>
+        <meta name="description" content="Otto Wayland Compositor Documentation" />
+
+        <link rel="stylesheet" media="screen" href="/css/main.css">
+        <link rel="stylesheet" media="print" href="/css/print.css">
+
+        {{/* Apply a stored theme override before first paint, so a
+             manual choice doesn't flash the OS-preferred theme first. */}}
+        <script>
+            (function () {
+                var stored = localStorage.getItem('otto-theme');
+                if (stored === 'dark' || stored === 'light') {
+                    document.documentElement.setAttribute('data-theme', stored);
+                }
+            })();
+        </script>
+    </head>
+    <body>
+        <button id="theme-toggle" aria-label="Switch color theme">Dark</button>
+        {{- block "main" . }}{{- end }}
+        {{ $js := resources.Get "js/main.js" }}
+        <script src="{{ $js.Permalink }}"></script>
+    </body>
+</html>

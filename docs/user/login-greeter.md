@@ -4,6 +4,8 @@ Otto can be your login screen. Started with `--login`, it runs as a host
 compositor for a greeter client — the role `cage` plays for `gtkgreet` — and
 `otto-greeter` provides the login panel.
 
+## Authentication
+
 Authentication is handled entirely by [greetd](https://sr.ht/~kennylevinsen/greetd/).
 Otto links no PAM code and never touches your password.
 

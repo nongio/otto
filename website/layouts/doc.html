@@ -1,0 +1,18 @@
+{{ define "main" }}
+    <button id="menu-button">Contents</button>
+
+    {{/* Use built-in TableOfContents, with a small sticky header
+         (back link + current page title) pinned above the entries. */}}
+    {{ $tocHeader := printf `<li class="toc-header"><a class="back-home" href="%s">&larr; %s</a><div class="toc-page-title">%s</div></li>` .Site.Home.RelPermalink .Site.Home.Title .Title }}
+    {{ (replaceRE "(<nav id=\"TableOfContents\">\\s*<ul[^>]*>)" (printf "$1%s" $tocHeader) .TableOfContents) | safeHTML }}
+
+    {{/* main.js walks main's direct children and wraps them into
+         <section>s, and the hero heading / content padding CSS relies
+         on that first section being main's literal :first-child. The
+         back link has to live inside <h1>, not before it, or that
+         wrapping (and the styling built on it) breaks. */}}
+    <main>
+        <h1><a class="back-home" href="{{ .Site.Home.RelPermalink }}">&larr; {{ .Site.Home.Title }}</a><span class="page-title">{{ .Title }}</span></h1>
+        {{ .Content }}
+    </main>
+{{ end }}

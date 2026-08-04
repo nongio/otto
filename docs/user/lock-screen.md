@@ -4,6 +4,8 @@ Locking hides your session behind an opaque surface on every monitor and routes
 all input to the locker. Everything underneath — windows, workspaces, focus,
 running programs — is untouched and comes back exactly as you left it.
 
+## Otto-lock
+
 Otto uses `ext-session-lock-v1`, the Wayland protocol designed for this. Its
 key guarantee: if the locker crashes, the screen **stays blank** rather than
 revealing what was behind it.

@@ -5,6 +5,8 @@ Every shortcut in Otto is defined in your config file, under
 hatches (see [Always-on keys](#always-on-keys) below) — if your config has no
 `[keyboard_shortcuts]` table, Otto starts with no shortcuts at all.
 
+## Default config
+
 The shipped `/etc/otto/config.toml` (a copy of `otto_config.example.toml`)
 defines a full set. Those are the "defaults" referred to throughout this guide.
 

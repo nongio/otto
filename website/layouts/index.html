@@ -1,0 +1,11 @@
+{{ define "main" }}
+    <button id="menu-button">Contents</button>
+
+    {{/* Use built-in TableOfContents */}}
+    {{ .TableOfContents }}
+
+    <main>
+        <h1>{{ .Title }}</h1>
+        {{ .Content }}
+    </main>
+{{ end }}
