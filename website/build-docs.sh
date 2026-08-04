@@ -72,7 +72,7 @@ for file in "${USER_FILES[@]}"; do
             # the hero's fixed-height box and collides with the TOC
             # sidebar once it appears. Merge the intro into one
             # paragraph so it all gets the hero treatment.
-            tail -n +2 "$filepath" | perl -0777 -pe 's/\n\n/ /'
+            tail -n +2 "$filepath" | perl -0777 -pe 's/\n\n/<br><br>/'
         else
             tail -n +2 "$filepath"
         fi
