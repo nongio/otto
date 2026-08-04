@@ -4,6 +4,8 @@
 desktop from Microsoft Remote Desktop, FreeRDP, or the Windows / iOS / Android
 Remote Desktop apps.
 
+## How it works
+
 It is a standalone bridge: it captures an output's frames, encodes them, and
 forwards the remote client's keyboard and pointer back into the compositor. The
 compositor itself knows nothing about RDP.

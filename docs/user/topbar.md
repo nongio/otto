@@ -4,6 +4,8 @@
 primary monitor, with frosted-glass blur, rounded bottom corners and a soft
 shadow.
 
+## Starting it
+
 It is a separate program, not part of the compositor. Start it from your
 config:
 
