@@ -4,6 +4,8 @@
 Otto's notification centre, live-activity display and permission-dialog surface,
 all in one morphing element.
 
+## What is Otto islands?
+
 It is a separate program. Start it from your config:
 
 ```toml

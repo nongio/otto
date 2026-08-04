@@ -11,7 +11,7 @@
          on that first section being main's literal :first-child. The
          back link has to live inside <h1>, not before it, or that
          wrapping (and the styling built on it) breaks. */}}
-    <main class="doc-page">
+    <main>
         <h1><a class="back-home" href="{{ .Site.Home.RelPermalink }}">&larr; {{ .Site.Home.Title }}</a><span class="page-title">{{ .Title }}</span></h1>
         {{ .Content }}
     </main>

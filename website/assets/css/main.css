@@ -169,6 +169,35 @@ body {
    display: none;
 }
 
+#theme-toggle {
+   position: fixed;
+   top: 0;
+   right: 0;
+   z-index: 300;
+   padding: calc(1.7em * 0.5) 1.7em;
+   border: none;
+   background: none;
+   color: inherit;
+   font-family: inherit;
+   font-size: 0.85rem;
+   text-decoration: underline;
+   opacity: 0.5;
+   cursor: pointer;
+}
+
+#theme-toggle:hover,
+#theme-toggle:focus {
+   opacity: 1;
+}
+
+@media (max-width: 900px) {
+   /* Sits above the full-width "Contents" bar on mobile instead of
+      overlapping it. */
+   #theme-toggle {
+      top: 2.5em;
+   }
+}
+
 @media (max-width: 900px) {
    .menu-open {
       overflow: hidden;
@@ -250,6 +279,14 @@ body {
    #TableOfContents li.toc-header {
       background: rgba(0, 0, 0, 1);
    }
+}
+
+:root[data-theme="dark"] #TableOfContents li.toc-header {
+   background: rgba(0, 0, 0, 1);
+}
+
+:root[data-theme="light"] #TableOfContents li.toc-header {
+   background: rgba(255, 255, 255, 1);
 }
 
 #TableOfContents li.toc-header .back-home {
@@ -352,24 +389,6 @@ main > section:first-child > h1 + p {
 
 main > section:first-child > h1 + p a {
    display: inline;
-}
-
-/* Doc pages keep the hero <h1>, but everything after it (the intro
-   paragraph, and anything else before the first ## heading, e.g. a
-   config snippet) is body content, not more hero — reset the "h1 + p"
-   hero box back to a normal paragraph. */
-main.doc-page > section:first-child > h1 + p {
-   position: static;
-   height: auto;
-   display: block;
-   margin: 1.7em 0;
-   box-sizing: border-box;
-   padding: 0;
-   text-align: left;
-   max-width: none;
-   left: 0;
-   transform: none;
-   font-weight: 400;
 }
 
 .github-button {
@@ -632,6 +651,61 @@ pre code {
    pre code {
       background: rgba(126,126,126, 0.4);
    }
+}
+
+/* Manual override via the theme-toggle button (persisted to
+   localStorage as "otto-theme"), applied via [data-theme] on <html>.
+   Wins over prefers-color-scheme regardless of which way the system
+   preference points, since it's gated on an attribute rather than a
+   media query. */
+:root[data-theme="dark"] body {
+   color: rgba(230,230,230,1);
+   background: rgba(0,0,0,1);
+}
+:root[data-theme="dark"] #TableOfContents {
+   background: rgba(0,0,0,0.6);
+}
+:root[data-theme="dark"] h2:after,
+:root[data-theme="dark"] h3:after {
+   background: rgba(0,0,0,1);
+   box-shadow: 0 0 25px rgba(0,0,0,1);
+}
+:root[data-theme="dark"] main ul li:before {
+   background: rgba(230,230,230,1);
+}
+:root[data-theme="dark"] code {
+   background: rgba(126,126,126, 0.4);
+}
+:root[data-theme="dark"] pre {
+   border-color: rgba(126,126,126, 0.4);
+}
+:root[data-theme="dark"] pre code {
+   background: rgba(126,126,126, 0.4);
+}
+
+:root[data-theme="light"] body {
+   color: rgba(0,0,0,1);
+   background: rgba(255,255,255,1);
+}
+:root[data-theme="light"] #TableOfContents {
+   background: rgba(255,255,255,0.6);
+}
+:root[data-theme="light"] h2:after,
+:root[data-theme="light"] h3:after {
+   background: rgba(255,255,255,1);
+   box-shadow: 0 0 25px rgba(255,255,255,1);
+}
+:root[data-theme="light"] main ul li:before {
+   background: rgba(0,0,0,1);
+}
+:root[data-theme="light"] code {
+   background: rgba(126,126,126, 0.25);
+}
+:root[data-theme="light"] pre {
+   border-color: rgb(0,0,0);
+}
+:root[data-theme="light"] pre code {
+   background: rgb(0,0,0);
 }
 
 a:focus, button:focus {

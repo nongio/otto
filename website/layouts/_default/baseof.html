@@ -13,8 +13,20 @@
 
         <link rel="stylesheet" media="screen" href="/css/main.css">
         <link rel="stylesheet" media="print" href="/css/print.css">
+
+        {{/* Apply a stored theme override before first paint, so a
+             manual choice doesn't flash the OS-preferred theme first. */}}
+        <script>
+            (function () {
+                var stored = localStorage.getItem('otto-theme');
+                if (stored === 'dark' || stored === 'light') {
+                    document.documentElement.setAttribute('data-theme', stored);
+                }
+            })();
+        </script>
     </head>
     <body>
+        <button id="theme-toggle" aria-label="Switch color theme">Dark</button>
         {{- block "main" . }}{{- end }}
         {{ $js := resources.Get "js/main.js" }}
         <script src="{{ $js.Permalink }}"></script>

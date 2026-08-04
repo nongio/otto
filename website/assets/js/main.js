@@ -3,8 +3,38 @@ window.addEventListener('DOMContentLoaded', () => {
     convertToNestedSections(document.querySelector('main'));
     addParentHeadingAttribute();
     startNavObservation();
+    initThemeToggle();
 
 });
+
+// The stored override (if any) is already applied to <html> by the
+// inline script in <head>, before first paint. This just wires up the
+// button and keeps its label in sync.
+function initThemeToggle() {
+    var button = document.querySelector('#theme-toggle');
+    var systemDark = window.matchMedia('(prefers-color-scheme: dark)');
+
+    function currentTheme() {
+        var stored = localStorage.getItem('otto-theme');
+        if (stored === 'dark' || stored === 'light') return stored;
+        return systemDark.matches ? 'dark' : 'light';
+    }
+
+    function render() {
+        // Label is the theme a click will switch TO.
+        button.textContent = currentTheme() === 'dark' ? 'Light' : 'Dark';
+    }
+
+    button.addEventListener('click', () => {
+        var next = currentTheme() === 'dark' ? 'light' : 'dark';
+        localStorage.setItem('otto-theme', next);
+        document.documentElement.setAttribute('data-theme', next);
+        render();
+    });
+
+    systemDark.addEventListener('change', render);
+    render();
+}
 
 function convertToNestedSections(rootElement) {
     const children = Array.from(rootElement.children);
