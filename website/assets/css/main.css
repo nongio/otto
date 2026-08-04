@@ -365,25 +365,6 @@ h3 {
    }
 }
 
-h2:before, h3:before {
-   content: "Otto: ";
-}
-
-@media (min-width: 750px) {
-   h3:before {
-      content: "Otto:"attr(data-parent-heading)" ";
-   }
-}
-
-
-h2:before, h3:before {
-   display: inline-block;
-   font-weight: 400;
-   padding-right: 0.5em;
-   position: relative;
-   opacity: 0.5;
-}
-
 h2:after, h3:after {
    content: " ";
    position: absolute;
