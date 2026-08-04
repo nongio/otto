@@ -4,6 +4,12 @@ title = 'Otto Compositor Documentation'
 
 staticDir = ["assets"]
 
+# docs/user/*.md cross-links get rewritten to root-relative paths
+# (/workspaces/) by build-docs.sh; canonifyURLs rewrites those against
+# the actual baseURL at build time so they still work when the site is
+# served from a subpath (GitHub project Pages: /otto/).
+canonifyURLs = true
+
 [markup]
   [markup.goldmark]
     [markup.goldmark.renderer]
