@@ -6,14 +6,9 @@ DOCS_DIR="$SCRIPT_DIR/../docs"
 OUTPUT_DIR="$SCRIPT_DIR/content"
 
 # ============================================
-# USER GUIDE
+# USER GUIDE (one Hugo page per doc, not concatenated)
 # ============================================
-cat > "$OUTPUT_DIR/_index.md" << 'INTRO'
----
-title: "Otto Compositor - User Guide"
----
-
-INTRO
+rm -f "$OUTPUT_DIR"/*.md
 
 USER_FILES=(
     "user/README.md"
@@ -46,40 +41,39 @@ USER_FILES=(
 echo "Building User Guide..."
 for file in "${USER_FILES[@]}"; do
     filepath="$DOCS_DIR/$file"
-    if [ -f "$filepath" ]; then
-        base="$(basename "$file" .md)"
-        slug="$(echo "$base" | tr '[:upper:]' '[:lower:]')"
-        {
-            echo ""
-            echo "<a id=\"$slug\"></a>"
-            echo ""
-            cat "$filepath"
-            echo ""
-        } >> "$OUTPUT_DIR/_index.md"
-    else
+    if [ ! -f "$filepath" ]; then
         echo "⚠ Warning: $file not found"
+        continue
     fi
+
+    base="$(basename "$file" .md)"
+    slug="$(echo "$base" | tr '[:upper:]' '[:lower:]')"
+    title="$(sed -n '1s/^# //p' "$filepath")"
+    # README.md is the guide's landing page, served at "/"; everything
+    # else gets its own top-level page at "/<slug>/".
+    if [ "$slug" = "readme" ]; then
+        outfile="$OUTPUT_DIR/_index.md"
+    else
+        outfile="$OUTPUT_DIR/$slug.md"
+    fi
+
+    {
+        echo "---"
+        echo "title: \"$title\""
+        echo "---"
+        echo ""
+        tail -n +2 "$filepath"
+    } > "$outfile"
 done
 
-# docs/user/*.md link to sibling files (for GitHub rendering), but the
-# user guide concatenates them into one long page, so those links need
-# to become in-page anchors instead. Top-level file.md links become
-# #<basename> (anchored above via the loop). Links into a specific
-# subheading of another file need an explicit anchor too, since
-# goldmark's auto heading IDs aren't stable once headings collide
-# across the merged files.
+# docs/user/*.md link to sibling files (for GitHub rendering); each
+# page is its own Hugo page here, so rewrite those into real page
+# links instead of leaving the raw ".md" filename in the href.
 perl -i -pe '
-    s{^(### Getting an app to export its menu)}{<a id="getting-an-app-to-export-its-menu"></a>\n\n$1};
-    s{^(## Virtual outputs)}{<a id="virtual-outputs"></a>\n\n$1};
-    s{^(## Portal setup)}{<a id="portal-setup"></a>\n\n$1};
-    s{^(## Always-on keys)}{<a id="always-on-keys"></a>\n\n$1};
-    s{^(### Choosing which monitor)}{<a id="choosing-which-monitor"></a>\n\n$1};
-' "$OUTPUT_DIR/_index.md"
-
-perl -i -pe '
-    s{\]\(([a-zA-Z0-9_-]+)\.md#([a-zA-Z0-9_-]+)\)}{](#$2)}g;
-    s{\]\(([a-zA-Z0-9_-]+)\.md\)}{](#\L$1)}g;
-' "$OUTPUT_DIR/_index.md"
+    s{\]\(README\.md\)}{](/)}gi;
+    s{\]\(([a-zA-Z0-9_-]+)\.md#([a-zA-Z0-9_-]+)\)}{](/$1/#$2)}g;
+    s{\]\(([a-zA-Z0-9_-]+)\.md\)}{](/$1/)}g;
+' "$OUTPUT_DIR"/*.md
 
 # ============================================
 # DEVELOPER GUIDE
