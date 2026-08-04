@@ -254,13 +254,13 @@ body {
 
 #TableOfContents li.toc-header .back-home {
    display: block;
-   font-size: 0.7em;
-   margin-bottom: 0.4em;
+   font-size: 0.85em;
+   margin-bottom: 0.5em;
 }
 
 #TableOfContents li.toc-header .toc-page-title {
    font-family: 'Playfair Display', serif;
-   font-size: 1em;
+   font-size: 1.6em;
    opacity: 0.9;
 }
 
