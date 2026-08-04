@@ -1,0 +1,6 @@
+public/
+resources/
+.hugo_build.lock
+themes/
+content/_index.md
+content/developer.md
