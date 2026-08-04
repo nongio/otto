@@ -52,23 +52,39 @@ main h3 {
    font-size: 1.4em;
 }
 
+/* Override the hero-style "main > section:first-child > h1" rules
+   (giant centered viewport-relative type meant for a landing page);
+   every doc page's first heading is this breadcrumb, not a hero. */
+main > section:first-child > h1.breadcrumb-heading,
 main h1.breadcrumb-heading {
+   position: static;
+   height: auto;
    display: flex;
    flex-direction: column;
+   justify-content: flex-start;
+   box-sizing: border-box;
+   padding: 0;
+   text-align: left;
+   font-size: 1.8rem;
+   left: 0;
+   line-height: 1.3;
+   letter-spacing: normal;
+   max-width: none;
+   margin: 0 0 1em;
 }
 
 main h1.breadcrumb-heading .breadcrumb-home {
-   font-size: 0.5em;
+   font-size: 0.55em;
    opacity: 0.6;
-   text-decoration: none;
+   text-decoration: none !important;
 }
 
 main h1.breadcrumb-heading .breadcrumb-home:hover {
-   text-decoration: underline;
+   text-decoration: underline !important;
 }
 
 main h1.breadcrumb-heading .breadcrumb-page {
-   font-size: 1.1em;
+   font-size: 1em;
 }
 
 #TableOfContents {
