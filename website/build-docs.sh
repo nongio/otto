@@ -65,7 +65,17 @@ for file in "${USER_FILES[@]}"; do
         fi
         echo "---"
         echo ""
-        tail -n +2 "$filepath"
+        if [ "$slug" = "readme" ]; then
+            # The home layout's hero CSS only special-cases the single
+            # paragraph immediately after <h1> (h1 + p); README.md's
+            # intro is two paragraphs, and the second one falls out of
+            # the hero's fixed-height box and collides with the TOC
+            # sidebar once it appears. Merge the intro into one
+            # paragraph so it all gets the hero treatment.
+            tail -n +2 "$filepath" | perl -0777 -pe 's/\n\n/ /'
+        else
+            tail -n +2 "$filepath"
+        fi
     } > "$outfile"
 done
 
