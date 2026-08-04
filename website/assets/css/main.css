@@ -55,7 +55,7 @@ main h3 {
 main h1 a.back-home {
    display: block;
    margin-bottom: 0.3em;
-   font-size: 2.2rem;
+   font-size: 3rem;
    letter-spacing: normal;
    color: inherit;
    opacity: 0.5;
@@ -352,6 +352,24 @@ main > section:first-child > h1 + p {
 
 main > section:first-child > h1 + p a {
    display: inline;
+}
+
+/* Doc pages keep the hero <h1>, but everything after it (the intro
+   paragraph, and anything else before the first ## heading, e.g. a
+   config snippet) is body content, not more hero — reset the "h1 + p"
+   hero box back to a normal paragraph. */
+main.doc-page > section:first-child > h1 + p {
+   position: static;
+   height: auto;
+   display: block;
+   margin: 1.7em 0;
+   box-sizing: border-box;
+   padding: 0;
+   text-align: left;
+   max-width: none;
+   left: 0;
+   transform: none;
+   font-weight: 400;
 }
 
 .github-button {
