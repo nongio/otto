@@ -6,9 +6,8 @@
 
     <main>
         <h1 class="breadcrumb-heading">
-            <a href="{{ .Site.Home.RelPermalink }}">{{ .Site.Home.Title }}</a>
-            <span class="breadcrumb-sep">&rarr;</span>
-            {{ .Title }}
+            <a class="breadcrumb-home" href="{{ .Site.Home.RelPermalink }}">{{ .Site.Home.Title }}</a>
+            <span class="breadcrumb-page">{{ .Title }}</span>
         </h1>
         {{ .Content }}
     </main>
