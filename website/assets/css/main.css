@@ -438,11 +438,20 @@ a.permalink:focus::after {
    vertical-align: middle;
 }
 
-main p, 
-main ol, 
-main ul {
+main p,
+main ol,
+main ul,
+main table {
    margin: 1.7em 0;
    font-weight: 400;
+}
+
+main th {
+   font-weight: 600;
+}
+
+main table a {
+   font-weight: 600;
 }
 
 main ol li, 
