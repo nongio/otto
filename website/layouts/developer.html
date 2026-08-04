@@ -5,7 +5,11 @@
     {{ .TableOfContents }}
 
     <main>
-        <h1>{{ .Title }}</h1>
+        <h1 class="breadcrumb-heading">
+            <a href="{{ .Site.Home.RelPermalink }}">{{ .Site.Home.Title }}</a>
+            <span class="breadcrumb-sep">&rarr;</span>
+            {{ .Title }}
+        </h1>
         {{ .Content }}
     </main>
 {{ end }}

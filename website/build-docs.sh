@@ -60,6 +60,9 @@ for file in "${USER_FILES[@]}"; do
     {
         echo "---"
         echo "title: \"$title\""
+        if [ "$slug" = "getting-started" ]; then
+            echo 'layout: "developer"'
+        fi
         echo "---"
         echo ""
         tail -n +2 "$filepath"

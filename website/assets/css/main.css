@@ -52,6 +52,24 @@ main h3 {
    font-size: 1.4em;
 }
 
+main h1.breadcrumb-heading {
+   font-size: 1.6em;
+}
+
+main h1.breadcrumb-heading a {
+   text-decoration: none;
+}
+
+main h1.breadcrumb-heading a:hover {
+   text-decoration: underline;
+}
+
+main h1.breadcrumb-heading .breadcrumb-sep {
+   margin: 0 0.3em;
+   opacity: 0.5;
+   font-weight: 300;
+}
+
 #TableOfContents {
    font-family: 'Playfair Display', serif;
 }
