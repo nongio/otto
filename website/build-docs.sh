@@ -60,8 +60,8 @@ for file in "${USER_FILES[@]}"; do
     {
         echo "---"
         echo "title: \"$title\""
-        if [ "$slug" = "getting-started" ]; then
-            echo 'layout: "developer"'
+        if [ "$slug" != "readme" ]; then
+            echo 'layout: "doc"'
         fi
         echo "---"
         echo ""
@@ -84,7 +84,7 @@ perl -i -pe '
 cat > "$OUTPUT_DIR/developer.md" << 'INTRO'
 ---
 title: "Otto Developer Guide"
-layout: "developer"
+layout: "doc"
 ---
 
 INTRO
