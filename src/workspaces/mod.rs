@@ -3358,6 +3358,87 @@ impl Workspaces {
         self.outputs.iter()
     }
 
+    /// Dump every output's geometry, mode, scale and transform to the log.
+    ///
+    /// Called whenever the output set changes (map / unmap / suspend /
+    /// restore) so a log captured while the pointer or maximize geometry goes
+    /// wrong pins down which transition corrupted the layout. Both bugs read
+    /// [`Workspaces::output_geometry`], so this prints exactly what that
+    /// returns, plus the raw output state it is derived from.
+    ///
+    /// Anything the derived state cannot explain is flagged inline:
+    /// `MISSING-GEOMETRY` for an output that is live but has no space mapped
+    /// (an `output_geometry(..).unwrap()` on that output would panic), and
+    /// `ORPHANED` for workspace data left behind by an output that is no
+    /// longer live.
+    pub fn log_output_topology(&self, reason: &str) {
+        let primary = self.primary_output.as_ref().map(|o| o.name());
+        tracing::info!(
+            target: "otto::outputs",
+            "output set changed ({reason}): {} live, {} suspended, primary={}",
+            self.outputs.len(),
+            self.suspended_outputs.len(),
+            primary.as_deref().unwrap_or("<none>"),
+        );
+
+        for output in &self.outputs {
+            let name = output.name();
+            let geo = self.output_geometry(output);
+            let geo_str = match geo {
+                Some(g) => format!(
+                    "loc=({},{}) size={}x{}",
+                    g.loc.x, g.loc.y, g.size.w, g.size.h
+                ),
+                None => "MISSING-GEOMETRY".to_string(),
+            };
+            let mode = output
+                .current_mode()
+                .map(|m| format!("{}x{}@{}", m.size.w, m.size.h, m.refresh))
+                .unwrap_or_else(|| "<no mode>".to_string());
+            let kind = if crate::virtual_output::is_virtual_output(output) {
+                if crate::virtual_output::is_unreachable_virtual_output(output) {
+                    "virtual/non-interactive"
+                } else {
+                    "virtual/interactive"
+                }
+            } else {
+                "physical"
+            };
+            tracing::info!(
+                target: "otto::outputs",
+                "  {name}{}: {kind} logical[{geo_str}] mode={mode} scale={:.2} transform={:?}",
+                if primary.as_deref() == Some(name.as_str()) {
+                    " (primary)"
+                } else {
+                    ""
+                },
+                output.current_scale().fractional_scale(),
+                output.current_transform(),
+            );
+        }
+
+        for (name, suspended) in &self.suspended_outputs {
+            tracing::info!(
+                target: "otto::outputs",
+                "  {name}: suspended at ({},{}) was_primary={}",
+                suspended.location.x,
+                suspended.location.y,
+                suspended.was_primary,
+            );
+        }
+
+        for name in self.output_workspaces.keys() {
+            if !self.outputs.iter().any(|o| o.name() == *name)
+                && !self.suspended_outputs.contains_key(name)
+            {
+                tracing::warn!(
+                    target: "otto::outputs",
+                    "  {name}: ORPHANED workspace data (no live or suspended output)",
+                );
+            }
+        }
+    }
+
     /// Attach a new output to every workspace
     pub fn map_output(
         &mut self,
@@ -3409,6 +3490,7 @@ impl Workspaces {
             }
             self.sync_model_from_primary();
             self.update_workspaces_layout();
+            self.log_output_topology(&format!("remap {}", output.name()));
             return;
         }
 
@@ -3698,6 +3780,7 @@ impl Workspaces {
         self.sync_model_from_primary();
         self.update_workspaces_layout();
         self.with_model(|m| self.notify_observers(m));
+        self.log_output_topology(&format!("map {}", output.name()));
     }
 
     /// Returns the primary output (used for dock placement and hot zone).
@@ -3751,6 +3834,7 @@ impl Workspaces {
             }
         }
         self.sync_model_from_primary();
+        self.log_output_topology(&format!("unmap {}", output.name()));
     }
 
     /// Suspend an output without destroying its workspace data.
@@ -3788,6 +3872,7 @@ impl Workspaces {
         }
         // Intentionally do NOT remove from output_workspaces — keep windows alive.
         self.sync_model_from_primary();
+        self.log_output_topology(&format!("suspend {}", output.name()));
     }
 
     /// Take (consume) a previously suspended output, if any.
