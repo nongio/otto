@@ -400,6 +400,7 @@ impl RenderElement<SkiaRenderer> for SceneElement {
         // whole untouched subtrees instead of re-walking them per frame.
         let damage_ref = damage_region.as_ref();
 
+        let scene_draw_t = std::time::Instant::now();
         scene.with_arena(|arena| {
             scene.with_renderable_arena(|renderable_arena| {
                 if let Some(root_id) = root_id {
@@ -417,6 +418,7 @@ impl RenderElement<SkiaRenderer> for SceneElement {
                 self.engine.clear_damage();
             });
         });
+        crate::render_phase_stats::record_scene_draw(scene_draw_t.elapsed());
         canvas.restore_to_count(save_point);
 
         Ok(())
