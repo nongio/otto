@@ -31,6 +31,15 @@ Otto can drive more than one output (physical monitor or virtual/screenshare out
 - Virtual (screenshare) outputs are placed according to their configured position, following the same overlap rule as physical outputs; if unconfigured, a virtual output defaults to the same origin as the first output, which overlaps it (see Constraints).
 - Re-laying-out (e.g. after a mode change, hotplug, or resume) recomputes every output's global position from scratch and re-applies it, so positions stay consistent across changes.
 
+### Pointer Reach (clamping across outputs)
+
+- The pointer is clamped to the bounding box of the *pointer-reachable* outputs: every physical output plus any virtual output marked `interactive`. A non-interactive virtual output never contributes to the reachable area, on any input path.
+- The reachable area is the real bounding box of those outputs' global geometries, not the sum of their widths, so arrangements that are vertically stacked, negatively positioned (an output placed to the left of the origin), or non-adjacent are all fully reachable and none of them lets the pointer escape into empty space.
+- The vertical clamp is taken from the outputs that actually span the pointer's clamped x, not from the tallest output overall: over a short external screen beside a taller laptop panel, the pointer stops at that screen's bottom edge. Where the clamped x falls in a horizontal gap between outputs (a layout with a hole), the vertical range falls back to the whole layout's extent.
+- Absolute pointer input (tablets, RDP/remote drivers) is normalized against the same reachable bounding box that clamping uses, so the full input range maps onto exactly the area the pointer can occupy.
+- Outputs whose geometry cannot be resolved yet are ignored rather than assumed: a half-updated output set observed mid-hotplug shrinks the reachable area for that moment instead of panicking or clamping against a stale geometry.
+- The same clamp applies on every path — physical relative motion, physical absolute motion, and virtual-pointer motion.
+
 ### Output-Local Rendering (scene space)
 
 - Every output's render scene subtree — the per-output container layer holding its background, windows, expose, overlay UI, dock, and switcher layers — is positioned at scene coordinate (0,0) and sized to that output's own physical extent. Output subtrees intentionally overlap one another in scene space.

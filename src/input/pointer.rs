@@ -618,42 +618,71 @@ impl<BackendData: Backend> Otto<BackendData> {
     }
 }
 
-#[cfg(any(feature = "winit", feature = "x11"))]
-impl<Backend: crate::state::Backend> Otto<Backend> {
-    pub(crate) fn clamp_coords(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
-        if self.workspaces.outputs().next().is_none() {
-            return pos;
-        }
+/// Clamp a pointer position to the area covered by `geometries`, the logical
+/// geometries of the pointer-reachable outputs.
+///
+/// Works off the real bounding box of the layout instead of assuming outputs
+/// are laid out left-to-right from x=0, so vertically stacked, negatively
+/// positioned or non-adjacent arrangements clamp correctly. The vertical range
+/// comes from the outputs that actually span the clamped x, so the pointer
+/// can't walk into the empty space beside a shorter screen.
+#[cfg(any(feature = "winit", feature = "x11", feature = "udev"))]
+pub(crate) fn clamp_to_output_bounds(
+    pos: Point<f64, Logical>,
+    geometries: &[smithay::utils::Rectangle<i32, Logical>],
+) -> Point<f64, Logical> {
+    if geometries.is_empty() {
+        return pos;
+    }
 
-        let (pos_x, pos_y) = pos.into();
-        // Virtual outputs are pointer-unreachable — exclude their extent.
-        let max_x = self
-            .workspaces
+    let min_x = geometries.iter().map(|g| g.loc.x).min().unwrap() as f64;
+    let max_x = geometries.iter().map(|g| g.loc.x + g.size.w).max().unwrap() as f64;
+    let clamped_x = pos.x.clamp(min_x, max_x);
+
+    // Outputs whose horizontal span covers the clamped x. Bounds are inclusive
+    // so a position exactly on a shared edge belongs to both neighbours.
+    let spanning = || {
+        geometries
+            .iter()
+            .filter(|g| clamped_x >= g.loc.x as f64 && clamped_x <= (g.loc.x + g.size.w) as f64)
+    };
+
+    let (min_y, max_y) = match (
+        spanning().map(|g| g.loc.y).min(),
+        spanning().map(|g| g.loc.y + g.size.h).max(),
+    ) {
+        // x fell in a horizontal gap between outputs — fall back to the
+        // vertical extent of the whole layout.
+        (Some(min), Some(max)) => (min as f64, max as f64),
+        _ => (
+            geometries.iter().map(|g| g.loc.y).min().unwrap() as f64,
+            geometries.iter().map(|g| g.loc.y + g.size.h).max().unwrap() as f64,
+        ),
+    };
+
+    (clamped_x, pos.y.clamp(min_y, max_y)).into()
+}
+
+#[cfg(any(feature = "winit", feature = "x11", feature = "udev"))]
+impl<Backend: crate::state::Backend> Otto<Backend> {
+    /// Geometries of the outputs the pointer is allowed to reach.
+    ///
+    /// Non-interactive virtual outputs are excluded, and so are outputs with no
+    /// geometry yet — during a hotplug the output set can be observed
+    /// half-updated, and an `unwrap()` there would either panic or let a stale
+    /// entry dictate the bounds.
+    pub(crate) fn reachable_output_geometries(
+        &self,
+    ) -> Vec<smithay::utils::Rectangle<i32, Logical>> {
+        self.workspaces
             .outputs()
             .filter(|o| !crate::virtual_output::is_unreachable_virtual_output(o))
-            .fold(0, |acc, o| {
-                acc + self
-                    .workspaces
-                    .output_geometry(o)
-                    .map(|g| g.size.w)
-                    .unwrap_or(0)
-            });
-        let clamped_x = pos_x.clamp(0.0, max_x as f64);
-        let max_y = self
-            .workspaces
-            .outputs()
-            .find(|o| {
-                let geo = self.workspaces.output_geometry(o).unwrap();
-                geo.contains((clamped_x as i32, 0))
-            })
-            .map(|o| self.workspaces.output_geometry(o).unwrap().size.h);
+            .filter_map(|o| self.workspaces.output_geometry(o))
+            .collect()
+    }
 
-        if let Some(max_y) = max_y {
-            let clamped_y = pos_y.clamp(0.0, max_y as f64);
-            (clamped_x, clamped_y).into()
-        } else {
-            (clamped_x, pos_y).into()
-        }
+    pub(crate) fn clamp_coords(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
+        clamp_to_output_bounds(pos, &self.reachable_output_geometries())
     }
     pub(crate) fn on_pointer_move_absolute_windowed<B: InputBackend>(
         &mut self,
@@ -871,25 +900,26 @@ impl crate::Otto<crate::udev::UdevData> {
         evt: B::PointerMotionAbsoluteEvent,
     ) {
         let serial = SCOUNTER.next_serial();
-        let max_x = self.workspaces.outputs().fold(0, |acc, o| {
-            acc + self.workspaces.output_geometry(o).unwrap().size.w
-        });
 
-        let max_h_output = self
-            .workspaces
-            .outputs()
-            .max_by_key(|o| self.workspaces.output_geometry(o).unwrap().size.h)
-            .unwrap()
-            .clone();
+        // Absolute events are normalised against the bounding box of the
+        // pointer-reachable outputs. Same filtering as `clamp_coords`, or an
+        // unreachable virtual output would stretch the mapping and the pointer
+        // would only ever cover part of the real screens.
+        let geometries = self.reachable_output_geometries();
+        let (Some(min_x), Some(max_x), Some(min_y), Some(max_y)) = (
+            geometries.iter().map(|g| g.loc.x).min(),
+            geometries.iter().map(|g| g.loc.x + g.size.w).max(),
+            geometries.iter().map(|g| g.loc.y).min(),
+            geometries.iter().map(|g| g.loc.y + g.size.h).max(),
+        ) else {
+            return;
+        };
 
-        let max_y = self
-            .workspaces
-            .output_geometry(&max_h_output)
-            .unwrap()
-            .size
-            .h;
-
-        let mut pointer_location = (evt.x_transformed(max_x), evt.y_transformed(max_y)).into();
+        let mut pointer_location = (
+            min_x as f64 + evt.x_transformed(max_x - min_x),
+            min_y as f64 + evt.y_transformed(max_y - min_y),
+        )
+            .into();
 
         // clamp to screen limits
         pointer_location = self.clamp_coords(pointer_location);
@@ -954,6 +984,72 @@ mod tests {
         match region {
             Some(r) => r.contains(point),
             None => true,
+        }
+    }
+
+    #[cfg(any(feature = "winit", feature = "x11", feature = "udev"))]
+    mod clamp {
+        use super::super::clamp_to_output_bounds;
+        use smithay::utils::{Logical, Point, Rectangle};
+
+        fn geo(x: i32, y: i32, w: i32, h: i32) -> Rectangle<i32, Logical> {
+            Rectangle::new((x, y).into(), (w, h).into())
+        }
+
+        fn clamp(pos: (f64, f64), geometries: &[Rectangle<i32, Logical>]) -> (f64, f64) {
+            let p: Point<f64, Logical> = clamp_to_output_bounds(pos.into(), geometries);
+            (p.x, p.y)
+        }
+
+        #[test]
+        fn no_outputs_passes_position_through() {
+            assert_eq!(clamp((-40.0, 9000.0), &[]), (-40.0, 9000.0));
+        }
+
+        #[test]
+        fn single_output_clamps_to_its_extent() {
+            let outputs = [geo(0, 0, 1920, 1080)];
+            assert_eq!(clamp((-10.0, -10.0), &outputs), (0.0, 0.0));
+            assert_eq!(clamp((5000.0, 5000.0), &outputs), (1920.0, 1080.0));
+            assert_eq!(clamp((100.0, 200.0), &outputs), (100.0, 200.0));
+        }
+
+        #[test]
+        fn side_by_side_uses_the_output_under_x_for_height() {
+            // Tall laptop panel on the left, short external on the right.
+            let outputs = [geo(0, 0, 1920, 1200), geo(1920, 0, 1280, 720)];
+            assert_eq!(clamp((500.0, 1100.0), &outputs), (500.0, 1100.0));
+            // Over the short output the pointer must stop at its bottom edge,
+            // not at the taller neighbour's.
+            assert_eq!(clamp((2500.0, 1100.0), &outputs), (2500.0, 720.0));
+            assert_eq!(clamp((4000.0, 100.0), &outputs), (3200.0, 100.0));
+        }
+
+        #[test]
+        fn vertically_stacked_outputs_are_both_reachable() {
+            let outputs = [geo(0, 0, 1920, 1080), geo(0, 1080, 1920, 1080)];
+            // Summing widths would have capped x at 3840 and y at 1080,
+            // making the bottom screen unreachable.
+            assert_eq!(clamp((1000.0, 1500.0), &outputs), (1000.0, 1500.0));
+            assert_eq!(clamp((1000.0, 9000.0), &outputs), (1000.0, 2160.0));
+            assert_eq!(clamp((3000.0, 500.0), &outputs), (1920.0, 500.0));
+        }
+
+        #[test]
+        fn negative_origin_is_reachable() {
+            // External monitor placed to the left of the laptop.
+            let outputs = [geo(-1280, 0, 1280, 720), geo(0, 0, 1920, 1080)];
+            assert_eq!(clamp((-600.0, 300.0), &outputs), (-600.0, 300.0));
+            assert_eq!(clamp((-5000.0, 300.0), &outputs), (-1280.0, 300.0));
+            assert_eq!(clamp((-600.0, 900.0), &outputs), (-600.0, 720.0));
+        }
+
+        #[test]
+        fn horizontal_gap_falls_back_to_the_full_vertical_extent() {
+            let outputs = [geo(0, 0, 800, 600), geo(2000, 0, 800, 1000)];
+            let (x, y) = clamp((1500.0, 5000.0), &outputs);
+            assert_eq!(x, 1500.0);
+            assert_eq!(y, 1000.0);
         }
     }
 
