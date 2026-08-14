@@ -664,6 +664,7 @@ impl Otto<UdevData> {
                 overlay_last_active: None,
                 overlay_was_active: false,
                 switcher_was_active: false,
+                windows_warmed_for_expose: false,
                 popup_teardown_seen: 0,
                 dock_menu_teardown_seen: 0,
                 promote_candidates: Vec::new(),

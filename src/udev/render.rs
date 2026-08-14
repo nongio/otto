@@ -209,7 +209,9 @@ impl Otto<UdevData> {
             //
             // `scene_element` and `backend_data` are distinct fields of `self`,
             // so Rust's field-projection rules allow concurrent access here.
+            let engine_t = Instant::now();
             let scene_has_damage = self.scene_element.update();
+            crate::render_phase_stats::record_engine_update(engine_t.elapsed());
             if scene_has_damage {
                 // Damage ticks are counted globally: the flag is consumed by
                 // whichever output ticks first, so other surfaces detect the
@@ -711,7 +713,10 @@ impl Otto<UdevData> {
             // now to apply it before compositing, and force a draw — otherwise
             // the first composited frame after demotion shows the stale,
             // shadow-only scene (a one-frame flicker).
-            if self.scene_element.update() {
+            let engine_t = Instant::now();
+            let updated = self.scene_element.update();
+            crate::render_phase_stats::record_engine_update(engine_t.elapsed());
+            if updated {
                 self.backend_data.damage_generation += 1;
             }
             true
@@ -719,7 +724,9 @@ impl Otto<UdevData> {
             match prefetched_scene_damage {
                 Some(damage) => damage,
                 None => {
+                    let engine_t = Instant::now();
                     let damage = self.scene_element.update();
+                    crate::render_phase_stats::record_engine_update(engine_t.elapsed());
                     if damage {
                         self.backend_data.damage_generation += 1;
                     }
@@ -767,6 +774,8 @@ impl Otto<UdevData> {
                 .is_animating
                 .load(std::sync::atomic::Ordering::Relaxed),
         );
+
+        crate::render_phase_stats::log_if_due();
 
         #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let occluded_ids = self.workspaces.occluded_window_ids();
@@ -2285,12 +2294,24 @@ pub(super) fn render_output_frame<'a>(
                     &surface.expose_dmabuf_element,
                     &mut workspace_render_elements,
                 );
-                // Keep the windows swapchain warm for the expose→windows
-                // transition so closing expose doesn't flash a cold frame.
-                if let Some(el) = &surface.windows_dmabuf_element {
-                    el.render(renderer.as_mut());
+                // Warm the windows swapchain ONCE per expose session, not every
+                // frame. The buffer is not pushed as a plane element above, so
+                // nothing it contains reaches the screen while expose is up —
+                // but `render()` blocks the CPU on a GPU sync, which measured
+                // ~109 ms per second of expose (a fifth of the frame budget) for
+                // invisible pixels. Rendering on the entry edge alone keeps the
+                // warm expose→windows transition this was added for. Content
+                // that changes during expose is still correct on exit: the
+                // damage history no longer reaches the reacquired slot's commit,
+                // which forces a full re-render on the first composited frame.
+                if !surface.windows_warmed_for_expose {
+                    if let Some(el) = &surface.windows_dmabuf_element {
+                        el.render(renderer.as_mut());
+                    }
+                    surface.windows_warmed_for_expose = true;
                 }
             } else {
+                surface.windows_warmed_for_expose = false;
                 // Top-window direct scanout: the client's Wayland buffer goes
                 // to Smithay as a `ScanoutCandidate`. Smithay tries to bind
                 // it to an overlay; if that fails it composites the client
@@ -2489,6 +2510,15 @@ pub(super) fn render_output_frame<'a>(
             | smithay::backend::drm::compositor::FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY
             | smithay::backend::drm::compositor::FrameFlags::ALLOW_OVERLAY_PLANE_SCANOUT
     };
+    // Single CPU wait for every plane buffer rendered above. The per-plane
+    // renders submit without blocking, so this is the one point where the GPU
+    // is guaranteed to have finished writing them — required because the
+    // atomic commit will not wait for offscreen EGLImage targets itself.
+    let plane_sync_t = std::time::Instant::now();
+    renderer.as_mut().flush_planes_for_scanout();
+    crate::render_phase_stats::record_plane_sync(plane_sync_t.elapsed());
+
+    let render_frame_t = std::time::Instant::now();
     let render_frame_result = surface
         .compositor
         .render_frame(renderer, &output_elements, clear_color, frame_flags)
@@ -2505,6 +2535,7 @@ pub(super) fn render_output_frame<'a>(
                 ))))
             }
         })?;
+    crate::render_phase_stats::record_render_frame(render_frame_t.elapsed());
 
     #[cfg(feature = "renderer_sync")]
     {
