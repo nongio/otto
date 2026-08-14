@@ -308,6 +308,19 @@ impl SceneDmabufElement {
     /// Returns `true` if a new frame was rendered, `false` if skipped
     /// (no subtree damage, no swapchain, no free slot, or surface creation failed).
     pub fn render(&self, renderer: &mut SkiaRenderer) -> bool {
+        // Timing wrapper: under plane decomposition this call is where the
+        // Skia work for a plane buffer happens, so it's the only place the
+        // per-plane cost is visible. Only a real re-render is recorded — the
+        // early-out paths below are cheap and would dilute the mean.
+        let started = std::time::Instant::now();
+        let rendered = self.render_inner(renderer);
+        if rendered {
+            crate::render_phase_stats::record_plane_render(self.label, started.elapsed());
+        }
+        rendered
+    }
+
+    fn render_inner(&self, renderer: &mut SkiaRenderer) -> bool {
         let mut inner = self.inner.lock().unwrap();
 
         // Skip re-render when a valid dmabuf already exists and there is nothing
@@ -536,18 +549,30 @@ impl SceneDmabufElement {
             }
 
             canvas.restore_to_count(save_point);
-            // CPU-blocking sync is REQUIRED before the buffer reaches KMS:
-            // Mesa iris does not attach implicit dma-fences to offscreen
+            // A CPU-side sync IS required before any of these buffers reaches
+            // KMS: Mesa iris does not attach implicit dma-fences to offscreen
             // EGLImage render targets (EXEC_OBJECT_ASYNC on everything but
-            // winsys buffers), so the atomic commit does NOT wait for these
-            // GL writes — without this wait every plane flip visibly
-            // flickers with an unfinished buffer. Removing the wait needs
-            // an explicit fence instead: export an EGL native fence here
-            // and deliver it as the plane's IN_FENCE_FD (follow-up).
+            // winsys buffers), so the atomic commit does NOT wait for these GL
+            // writes — without a wait, plane flips show unfinished buffers.
+            //
+            // But that wait does NOT belong here. Every plane's slot surface is
+            // built from the renderer's single shared `DirectContext`, so one
+            // wait after the last plane covers all of them. Waiting per plane
+            // instead serialised CPU against GPU once per plane and measured
+            // ~15 ms of blocked time each — 95-100% of a plane render, and the
+            // dominant term in the frame budget. Submit without blocking here;
+            // `flush_planes_for_scanout` does the single wait before the commit.
+            //
+            // Submitting (rather than merely recording) still matters for
+            // ordering: the backdrop composite samples an earlier plane's
+            // snapshot, and both live in the same GL context, so the queued
+            // order is the correct order.
+            let flush_started = std::time::Instant::now();
             skia_surface.gr_context.flush_and_submit_surface(
                 &mut skia_surface.surface,
-                layers::skia::gpu::SyncCpu::Yes,
+                layers::skia::gpu::SyncCpu::No,
             );
+            crate::render_phase_stats::record_plane_flush(self.label, flush_started.elapsed());
         }
 
         // Update damage and commit counter. The tight damage rect keeps

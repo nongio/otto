@@ -246,6 +246,24 @@ impl SkiaRenderer {
         self.gl_renderer.egl_context()
     }
 
+    /// Block until every plane buffer rendered this frame has actually been
+    /// written by the GPU.
+    ///
+    /// Plane slot surfaces are offscreen EGLImage render targets, which Mesa
+    /// iris does not attach implicit dma-fences to, so the atomic commit will
+    /// not wait for them — something must, or planes flip with half-drawn
+    /// buffers. Every plane shares this one `DirectContext`, so a single wait
+    /// here covers all of them; the per-plane renders submit without blocking
+    /// (see `SceneDmabufElement::render_inner`).
+    ///
+    /// Call once per frame, after the last plane render and before handing the
+    /// buffers to the DRM compositor.
+    pub fn flush_planes_for_scanout(&mut self) {
+        if let Some(context) = self.context.as_mut() {
+            context.flush_submit_and_sync_cpu();
+        }
+    }
+
     /// Create a Skia surface backed by the GL texture we import from
     /// `dmabuf`. Used by [`SceneDmabufElement`](crate::render_elements::scene_dmabuf_element::SceneDmabufElement)
     /// to render the lay-rs scene into a dmabuf the DRM compositor can

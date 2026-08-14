@@ -249,6 +249,13 @@ pub struct SurfaceData {
     /// flashing ghost content (`SceneDmabufElement::request_full_render`).
     pub(super) overlay_was_active: bool,
     pub(super) switcher_was_active: bool,
+    /// Whether the windows plane has already been warmed for the current
+    /// expose session. While expose is up the windows buffer is rendered but
+    /// never pushed as a plane element, so re-rendering it per frame blocks
+    /// the CPU on a GPU sync for pixels that never reach the screen (measured
+    /// at ~109 ms per second of expose). One render on the entry edge keeps
+    /// the warm expose→windows transition; reset when expose ends.
+    pub(super) windows_warmed_for_expose: bool,
     /// Last `PopupOverlayView::teardown_generation()` this surface has drawn.
     /// A popup teardown removes nodes that painted outside the bounds damage
     /// is derived from (drop shadow, blur rim), so the frame after a teardown

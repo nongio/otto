@@ -196,9 +196,11 @@ impl Frame for SkiaFrame<'_> {
         // this, the EGL fence we create below may be inserted *before* Skia has
         // actually emitted the GL draw calls for this frame's content — causing
         // the GPU to scan out a partially/un-rendered buffer (black frame).
+        let flush_t = std::time::Instant::now();
         surface
             .gr_context
             .flush_and_submit_surface(&mut surface.surface, None);
+        crate::render_phase_stats::record_skia_flush(flush_t.elapsed());
 
         let sync = SkiaSync::create(self.renderer.egl_context().display())
             .map(SyncPoint::from)

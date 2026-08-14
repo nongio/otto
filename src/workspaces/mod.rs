@@ -878,9 +878,22 @@ impl Workspaces {
         let is_animating = self.is_animating.load(std::sync::atomic::Ordering::Relaxed);
 
         // We're transitioning if:
-        // 1. Gesture value is between 0 and 1000 (not fully closed or fully open), OR
-        // 2. Animation is in progress AND we're not at a stable state (0 or 1000)
-        (gesture_value > 0 && gesture_value < 1000)
+        // 1. A finger gesture is in flight, whatever the accumulator reads, OR
+        // 2. Gesture value is between 0 and 1000 (not fully closed or fully open), OR
+        // 3. Animation is in progress AND we're not at a stable state (0 or 1000)
+        //
+        // (1) is not redundant with (2): `expose_gesture_start` sets the active
+        // flag and resets the accumulator to exactly 0 (or 1000 when closing) in
+        // the same breath — the two values (2) excludes — and a fast swipe then
+        // saturates at the clamp and stays there for a run of frames. Without
+        // (1), `expose_active` reads false for those frames while `show_all` has
+        // not been committed yet, so the expose plane leaves the plane stack and
+        // the windows plane is pushed instead: mid-gesture the screen flicks back
+        // to the normal layout, then snaps to expose when the gesture ends. A slow
+        // gesture hides the bug by spending most frames strictly inside (0,1000).
+        self.expose_gesture_active
+            .load(std::sync::atomic::Ordering::Relaxed)
+            || (gesture_value > 0 && gesture_value < 1000)
             || (is_animating && gesture_value != 0 && gesture_value != 1000)
     }
 

@@ -27,6 +27,7 @@ pub mod render;
 pub mod render_elements;
 #[cfg(feature = "metrics")]
 pub mod render_metrics;
+pub mod render_phase_stats;
 pub mod renderer;
 pub mod screenshare;
 pub mod settings_service;
