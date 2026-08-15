@@ -19,6 +19,8 @@ pub const CARD_H: f32 = 60.0;
 pub const CARD_GAP: f32 = 4.0;
 pub const CARD_RADIUS: f32 = 10.0;
 pub const HOVER_GROW: f32 = 4.0;
+pub const MAX_VISIBLE_CARDS: usize = 5;
+pub const MORE_INDICATOR_H: f32 = 24.0;
 
 pub const SLOT_BUF_W: i32 = 460;
 pub const SLOT_BUF_H: i32 = 140;
@@ -308,6 +310,23 @@ pub fn draw_card(canvas: &Canvas, activity: &Activity, group_icon: &str, w: f32,
         &close_font,
         &close_paint,
     );
+}
+
+/// "+N more" indicator shown below the stack when there are more
+/// notifications than fit in the visible card list (spec: MAX_VISIBLE_CARDS).
+pub fn draw_more_indicator(canvas: &Canvas, count: usize, w: f32, h: f32) {
+    let font = TextStyle {
+        family: "Inter",
+        weight: 600,
+        size: 10.0,
+    }
+    .font();
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(Color::from_argb(160, 255, 255, 255));
+    let text = format!("+{count} more");
+    let (tw, _) = font.measure_str(&text, None);
+    canvas.draw_str(&text, ((w - tw) / 2.0, h / 2.0 + 4.0), &font, &paint);
 }
 
 // ---------------------------------------------------------------------------

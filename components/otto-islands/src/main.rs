@@ -104,6 +104,10 @@ struct Island {
     last_layout: (f32, f32, f32, f32),
     /// Last drawn pill content — skip redraw when unchanged.
     last_content: Option<PillContent>,
+    /// "+N more" indicator shown below the stack when there are more
+    /// notifications than fit in the visible card list. Lazily created,
+    /// like cards.
+    more_indicator: Option<(SubsurfaceSurface, usize)>,
 }
 
 struct CardSurface {
@@ -277,6 +281,9 @@ impl IslandApp {
                 for card in island.cards.drain(..) {
                     self.defer_destroy(card.surface);
                 }
+                if let Some((surface, _)) = island.more_indicator.take() {
+                    self.defer_destroy(surface);
+                }
                 self.defer_destroy(island.surface);
                 removed_island = true;
             }
@@ -300,6 +307,7 @@ impl IslandApp {
                         peek_until: None,
                         last_layout: (0.0, 0.0, 0.0, 0.0),
                         last_content: None,
+                        more_indicator: None,
                     });
                     // Auto-focus only if no island is currently Expanded.
                     let any_expanded = self.islands.iter().any(|i| i.mode == IslandMode::Expanded);
@@ -356,6 +364,17 @@ impl IslandApp {
                 &card.surface,
                 renderer::CARD_W,
                 renderer::CARD_H,
+                pill_cx,
+                pill_cy,
+                0.0,
+                0.0,
+            );
+        }
+        if let Some((surface, _)) = &island.more_indicator {
+            renderer::animate_position_opacity(
+                surface,
+                renderer::CARD_W,
+                renderer::MORE_INDICATOR_H,
                 pill_cx,
                 pill_cy,
                 0.0,
@@ -634,7 +653,7 @@ impl IslandApp {
             let card_cx = pill_left_x + pill_w / 2.0;
             // Pill bottom edge in top-left coords.
             let pill_bottom = (BAR_HEIGHT - pill_h) / 2.0 + pill_h;
-            let max_cards = 5;
+            let max_cards = renderer::MAX_VISIBLE_CARDS;
 
             for (i, notif) in notifs.iter().take(max_cards).enumerate() {
                 // Card center y.
@@ -753,6 +772,58 @@ impl IslandApp {
                     .position(|&id| id == c.activity_id)
                     .unwrap_or(usize::MAX)
             });
+
+            // "+N more" indicator below the visible cards, when the stack
+            // holds more notifications than fit (spec: MAX_VISIBLE_CARDS).
+            let hidden_count = notifs.len().saturating_sub(max_cards);
+            if hidden_count > 0 {
+                let more_h = renderer::MORE_INDICATOR_H;
+                let more_top = pill_bottom + card_gap + (max_cards as f32) * (card_h + card_gap);
+                let more_cy = more_top + more_h / 2.0;
+                let start_cy = pill_bottom + more_h / 2.0;
+
+                if island.more_indicator.as_ref().map(|(_, n)| *n) != Some(hidden_count) {
+                    if island.more_indicator.is_none() {
+                        if let Some(ref wl) = wl {
+                            if let Ok(surface) = SubsurfaceSurface::new(
+                                wl,
+                                0,
+                                0,
+                                renderer::SLOT_BUF_W,
+                                renderer::SLOT_BUF_H,
+                            ) {
+                                renderer::apply_card_style(&surface);
+                                surface.place_above(island.surface.wl_surface());
+                                if let Some(ss) = surface.base_surface().surface_style() {
+                                    ss.set_opacity(0.0);
+                                }
+                                set_size_and_position(&surface, card_w, more_h, card_cx, start_cy);
+                                card_created = true;
+                                island.more_indicator = Some((surface, 0));
+                            }
+                        }
+                    }
+                    if let Some((surface, n)) = &mut island.more_indicator {
+                        draw_centered(surface, card_w, more_h, |canvas| {
+                            renderer::draw_more_indicator(canvas, hidden_count, card_w, more_h);
+                        });
+                        *n = hidden_count;
+                    }
+                }
+                if let Some((surface, _)) = &island.more_indicator {
+                    renderer::animate_position_opacity_slow(
+                        surface,
+                        card_w,
+                        more_h,
+                        card_cx,
+                        more_cy,
+                        1.0,
+                        max_cards as f64 * 0.05,
+                    );
+                }
+            } else if let Some((surface, _)) = island.more_indicator.take() {
+                dismissed_card_surfaces.push(surface);
+            }
         }
         for s in dismissed_card_surfaces {
             self.defer_destroy(s);
@@ -781,10 +852,16 @@ impl IslandApp {
                 let card_count = island.cards.len().min(5) as f32;
                 let pill_h = COMPACT_H;
                 let pill_bottom = (BAR_HEIGHT - pill_h) / 2.0 + pill_h;
+                let more_h = if island.more_indicator.is_some() {
+                    renderer::CARD_GAP + renderer::MORE_INDICATOR_H
+                } else {
+                    0.0
+                };
                 let stack_h = pill_bottom
                     + renderer::CARD_GAP
                     + card_count * renderer::CARD_H
-                    + (card_count - 1.0).max(0.0) * renderer::CARD_GAP;
+                    + (card_count - 1.0).max(0.0) * renderer::CARD_GAP
+                    + more_h;
                 max_h = max_h.max(stack_h + 4.0);
             }
         }
