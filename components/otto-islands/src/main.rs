@@ -40,6 +40,9 @@ const DIALOG_TOP: f32 = BAR_HEIGHT + 14.0;
 const FOCUS_TIMEOUT_SECS: f64 = 4.0;
 /// Seconds a destroyed surface is kept alive so its exit animation can play.
 const DESTROY_DELAY_SECS: f64 = 0.8;
+/// Per-island delay added as the push travels outward from whichever island
+/// grew, so the row ripples instead of moving in lockstep.
+const CASCADE_STAGGER_SECS: f64 = 0.035;
 /// Expanded-card metrics shared between drawing and hit-testing.
 const CARD_PAD: f32 = 10.0;
 const CARD_ICON: f32 = 24.0;
@@ -129,6 +132,9 @@ struct IslandApp {
     last_stack_order: Option<Vec<u64>>,
     /// Width the last layout pass centered the island row within.
     last_content_width: f32,
+    /// The island the last push radiated from — kept so the row cascades back
+    /// in the same order when that island shrinks again.
+    last_active_island: Option<u64>,
     /// Surfaces pending destruction (kept alive for animations, destroyed next cycle).
     pending_destroy: Vec<(SubsurfaceSurface, std::time::Instant)>,
     /// Last time the user interacted (pointer event). Used for focus timeout.
@@ -153,6 +159,7 @@ impl IslandApp {
             hovered_app: None,
             last_stack_order: None,
             last_content_width: LAYER_W as f32,
+            last_active_island: None,
             pending_destroy: Vec::new(),
             last_interaction: std::time::Instant::now(),
             last_layer_size: None,
@@ -448,9 +455,35 @@ impl IslandApp {
             group_x += group_widths[gi] + GAP;
         }
 
+        // The push travels along the row rather than hitting every bubble at
+        // once: whichever island is currently grown is the source, and each
+        // island further from it starts a little later. When nothing is grown
+        // the source is whatever was grown last, so the row cascades back too.
+        let mut row: Vec<usize> = targets.iter().map(|(idx, ..)| *idx).collect();
+        row.sort_by(|&a, &b| {
+            let (ax, bx) = (self.islands[a].last_layout.2, self.islands[b].last_layout.2);
+            ax.partial_cmp(&bx).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let active = self
+            .islands
+            .iter()
+            .find(|i| i.mode == IslandMode::Expanded)
+            .or_else(|| self.islands.iter().find(|i| i.mode == IslandMode::Compact))
+            .map(|i| i.activity_id)
+            .or(self.last_active_island);
+        self.last_active_island = active;
+        let source_pos = active
+            .and_then(|id| row.iter().position(|&i| self.islands[i].activity_id == id))
+            .unwrap_or(0);
+
         // Redraw buffers whose content changed, then animate to the new layout.
         let layout_delay = if reposition_delay { 0.4 } else { 0.0 };
         for (idx, w, h, cx, cy) in targets {
+            let cascade = row
+                .iter()
+                .position(|&i| i == idx)
+                .map(|p| p.abs_diff(source_pos) as f64 * CASCADE_STAGGER_SECS)
+                .unwrap_or(0.0);
             let activity = notifications
                 .iter()
                 .find(|a| a.id == self.islands[idx].activity_id)
@@ -503,7 +536,7 @@ impl IslandApp {
                     cx,
                     cy,
                     radius,
-                    layout_delay,
+                    layout_delay + cascade,
                 );
                 self.islands[idx].last_layout = target;
             }

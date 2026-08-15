@@ -335,13 +335,18 @@ fn truncate_text(text: &str, font: &skia_safe::Font, max_width: f32) -> String {
 // Surface style helpers
 // ---------------------------------------------------------------------------
 
-/// Bounce for ordinary layout moves — growing, shrinking, and getting pushed
-/// along by a neighbour. Enough overshoot that bubbles feel like they have
-/// weight rather than sliding on rails.
-const LAYOUT_BOUNCE: f64 = 0.4;
-/// Springs settle within the transaction's duration, so this is really "how
-/// long the bounce takes to die down". Short enough to stay responsive.
-const LAYOUT_DURATION: f64 = 0.55;
+/// Moving and resizing get their own springs, because they read as different
+/// kinds of motion: a bubble shoved aside by its neighbour should overshoot
+/// and rock back, while the same bubble growing should just settle.
+///
+/// Bounce for being pushed along the row — overshoots the target and comes
+/// back, enough to feel shoved rather than slid.
+const MOVE_BOUNCE: f64 = 0.45;
+const MOVE_DURATION: f64 = 0.6;
+/// Bounce for growing and shrinking — barely any, so a bubble changing size
+/// doesn't wobble while its content is being read.
+const RESIZE_BOUNCE: f64 = 0.12;
+const RESIZE_DURATION: f64 = 0.45;
 
 pub fn apply_island_style(
     surface: &otto_kit::SubsurfaceSurface,
@@ -398,24 +403,34 @@ pub fn animate_to_with_opacity(
         if let Some(scene) = AppContext::surface_style_manager() {
             let qh = AppContext::queue_handle();
 
-            let timing = scene.create_timing_function(qh, ());
-            timing.set_spring(LAYOUT_BOUNCE, 0.0);
-
-            let anim = scene.begin_transaction(qh, ());
-            anim.set_duration(LAYOUT_DURATION);
+            // Two transactions, so position and size can carry different
+            // springs: the bubble is shoved to its new spot with overshoot
+            // while it settles into its new size without wobbling.
+            let move_timing = scene.create_timing_function(qh, ());
+            move_timing.set_spring(MOVE_BOUNCE, 0.0);
+            let move_anim = scene.begin_transaction(qh, ());
+            move_anim.set_duration(MOVE_DURATION);
             if delay > 0.0 {
-                anim.set_delay(delay);
+                move_anim.set_delay(delay);
             }
-            anim.set_timing_function(&timing);
-
-            scene_surface.set_size(w as f64 * buffer_scale(), h as f64 * buffer_scale());
+            move_anim.set_timing_function(&move_timing);
             scene_surface.set_position(x as f64 * buffer_scale(), y as f64 * buffer_scale());
+            move_anim.commit();
+
+            let resize_timing = scene.create_timing_function(qh, ());
+            resize_timing.set_spring(RESIZE_BOUNCE, 0.0);
+            let resize_anim = scene.begin_transaction(qh, ());
+            resize_anim.set_duration(RESIZE_DURATION);
+            if delay > 0.0 {
+                resize_anim.set_delay(delay);
+            }
+            resize_anim.set_timing_function(&resize_timing);
+            scene_surface.set_size(w as f64 * buffer_scale(), h as f64 * buffer_scale());
             scene_surface.set_corner_radius(radius * buffer_scale());
             if let Some(o) = opacity {
                 scene_surface.set_opacity(o);
             }
-
-            anim.commit();
+            resize_anim.commit();
         }
     }
 }
