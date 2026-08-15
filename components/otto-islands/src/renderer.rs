@@ -15,7 +15,7 @@ pub const CARD_W: f32 = 300.0;
 pub const CARD_H: f32 = 68.0;
 /// Corner radius of an open notification — noticeably squarer than the fully
 /// rounded pill/circle it grew out of.
-pub const CARD_RADIUS: f32 = 8.0;
+pub const CARD_RADIUS: f32 = 12.0;
 
 /// Horizontal offset between stacked islands of the same app at rest — small,
 /// so they read as one deck with only a sliver of each one behind showing.
