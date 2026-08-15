@@ -2,7 +2,10 @@ use layers::prelude::Transition;
 use otto_kit::components::context_menu::ContextMenuRenderer;
 use smithay::{
     backend::input::{ButtonState, KeyState},
-    input::keyboard::Keysym,
+    input::{
+        keyboard::Keysym,
+        pointer::{CursorIcon, CursorImageStatus},
+    },
     utils::IsAlive,
 };
 
@@ -26,9 +29,24 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
     fn on_motion(
         &self,
         _seat: &smithay::input::Seat<crate::Otto<Backend>>,
-        _data: &mut crate::Otto<Backend>,
+        data: &mut crate::Otto<Backend>,
         event: &smithay::input::pointer::MotionEvent,
     ) {
+        // A resize drag owns the pointer until it is released.
+        if self.resize_drag_update(event.location.y) {
+            data.set_cursor(&CursorImageStatus::Named(CursorIcon::NsResize));
+            return;
+        }
+        // The handle is the drag-to-resize grip — say so on hover.
+        let over_handle = data
+            .layers_engine
+            .current_hover()
+            .is_some_and(|layer| self.is_handle_layer(&layer));
+        if over_handle {
+            data.set_cursor(&CursorImageStatus::Named(CursorIcon::NsResize));
+        } else {
+            data.set_cursor(&CursorImageStatus::Named(CursorIcon::default()));
+        }
         if self.dragging.load(std::sync::atomic::Ordering::SeqCst) {
             return;
         }
@@ -80,6 +98,11 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
         match event.state {
             ButtonState::Pressed => {
                 if let Some(layer_id) = state.layers_engine.current_hover() {
+                    // Left-press on the handle starts a vertical resize drag.
+                    if event.button != BTN_RIGHT && self.is_handle_layer(&layer_id) {
+                        self.begin_resize_drag(state.last_pointer_location.1);
+                        return;
+                    }
                     if let Some((target, label)) = self.darkening_target_for_hover(&layer_id) {
                         self.darken_pressed(&target);
                         if let Some(l) = label {
@@ -89,6 +112,18 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
                 }
             }
             ButtonState::Released => {
+                // Finishing a resize drag persists the new size and eats the click.
+                if self.end_resize_drag() {
+                    self.clear_pressed();
+                    let still_on_handle = state
+                        .layers_engine
+                        .current_hover()
+                        .is_some_and(|layer| self.is_handle_layer(&layer));
+                    if !still_on_handle {
+                        state.set_cursor(&CursorImageStatus::Named(CursorIcon::default()));
+                    }
+                    return;
+                }
                 // If context menu is open, forward the click to it
                 {
                     use crate::config::Config;

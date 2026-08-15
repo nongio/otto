@@ -299,8 +299,9 @@ fn backend_override_candidates(backend: &str) -> Vec<String> {
 /// The caller is responsible for passing the authoritative in-memory state.
 /// Only the `[dock]` table is touched; all other sections are left unchanged.
 ///
-/// Within `[dock]`, only the keys the dock UI can actually change are written.
-/// The rest (`size`, `genie_*`, `colorize_*`) belongs to whoever hand-edited the
+/// Within `[dock]`, only the keys the dock UI can actually change are written
+/// (`size` among them: the handle drag sets it).
+/// The rest (`genie_*`, `colorize_*`) belongs to whoever hand-edited the
 /// config: rewriting the whole table would materialize a copy of every inherited
 /// value into the writable file, where it shadows the same key in a lower-priority
 /// config for good and silently reverts edits made while Otto is running.
@@ -331,6 +332,7 @@ fn merge_dock_config(doc: &mut toml::Value, dock: &DockConfig) {
         return;
     };
 
+    dock_table.insert("size".to_string(), toml::Value::Float(dock.size));
     dock_table.insert("autohide".to_string(), toml::Value::Boolean(dock.autohide));
     dock_table.insert(
         "magnification".to_string(),
@@ -341,7 +343,10 @@ fn merge_dock_config(doc: &mut toml::Value, dock: &DockConfig) {
     }
 }
 
-/// The `[dock]` keys the dock UI never writes: only a human ever sets them.
+/// The `[dock]` keys the builds this migration cleans up after materialized:
+/// back then none of them were dock-owned. (`size` is written by the handle
+/// drag now, but a copy of the *default* still carries no intent, so it is
+/// still worth pruning.)
 const HAND_EDITED_DOCK_KEYS: [&str; 6] = [
     "size",
     "genie_scale",
@@ -1372,8 +1377,9 @@ mod tests {
                 .map(|b| b.len()),
             Some(1)
         );
+        // `size` is dock-owned too, since the handle drag sets it.
+        assert_eq!(saved.get("size").and_then(toml::Value::as_float), Some(1.0));
         // …while keys only the user sets keep whatever the file said.
-        assert_eq!(saved.get("size").and_then(toml::Value::as_float), Some(1.6));
         assert_eq!(
             saved.get("genie_scale").and_then(toml::Value::as_float),
             Some(0.3)

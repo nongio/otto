@@ -89,6 +89,11 @@ pub struct DockView {
     pub(super) dock_config: Arc<RwLock<crate::config::DockConfig>>,
     /// Runtime magnification toggle (mirrors config but can be changed without restart).
     magnification_enabled: Arc<AtomicBool>,
+    /// Live drag on the dock handle: the pointer y (logical) where the press
+    /// landed and the `dock.size` multiplier at that moment. `Some` only while a
+    /// resize drag is in flight; the new size is written to the config file when
+    /// the button is released.
+    pub(super) resize_drag: Arc<RwLock<Option<(f64, f64)>>>,
     /// Physical screen dimensions, kept in sync by the compositor via `set_screen_size`.
     screen_size: Arc<RwLock<(i32, i32)>>,
     /// Pre-computed autohide hot-zone rect, rebuilt by `render_dock` every time the dock
@@ -320,6 +325,7 @@ impl DockView {
             magnification_enabled: Arc::new(AtomicBool::new(Config::with(|c| {
                 c.dock.magnification
             }))),
+            resize_drag: Arc::new(RwLock::new(None)),
             screen_size: Arc::new(RwLock::new((0, 0))),
             cached_hot_zone: Arc::new(RwLock::new(None)),
             cached_dock_bounds: Arc::new(RwLock::new(None)),
@@ -1210,8 +1216,25 @@ impl DockView {
         }
     }
     /// Update the physical screen dimensions so `render_dock` can compute a correct hot zone.
+    ///
+    /// The screen width is also the dock's width budget: `available_icon_size`
+    /// divides it by the number of entries and caps the icon size with the
+    /// result. Leaving it at the placeholder width meant that cap was tighter
+    /// than the configured icon size on any real screen, so `[dock] size` had no
+    /// visible effect once a handful of icons were in the dock.
     pub fn set_screen_size(&self, w: i32, h: i32) {
-        *self.screen_size.write().unwrap() = (w, h);
+        {
+            let mut screen_size = self.screen_size.write().unwrap();
+            if *screen_size == (w, h) {
+                return;
+            }
+            *screen_size = (w, h);
+        }
+        let mut state = self.get_state();
+        if state.width != w {
+            state.width = w;
+            self.update_state(&state);
+        }
     }
 
     /// Start bouncing the icon for `match_id` to signal that a launch is in progress.
@@ -1607,6 +1630,48 @@ impl DockView {
     pub(super) fn update_dock_config(&self, f: impl FnOnce(&mut crate::config::DockConfig)) {
         f(&mut self.dock_config.write().unwrap());
         self.save_config();
+    }
+
+    /// Logical pixels of dock height per unit of `dock.size`, i.e. how far the
+    /// pointer has to travel to change the multiplier by 1. The icon is
+    /// `95 * size * screen_scale * 0.8` physical pixels tall, and the pointer
+    /// position is logical, so the scale cancels out.
+    const RESIZE_PIXELS_PER_UNIT: f64 = 95.0 * 0.8;
+
+    /// Remember where a resize drag on the dock handle started. The size is
+    /// updated live from `resize_drag_update` and only written to the config
+    /// file when the drag ends.
+    pub(super) fn begin_resize_drag(&self, pointer_y: f64) {
+        let size = self.dock_config.read().unwrap().size;
+        *self.resize_drag.write().unwrap() = Some((pointer_y, size));
+    }
+
+    /// Apply an in-flight resize drag: dragging up (smaller y) grows the dock.
+    /// Returns whether a drag was actually in flight.
+    pub(super) fn resize_drag_update(&self, pointer_y: f64) -> bool {
+        let Some((start_y, start_size)) = *self.resize_drag.read().unwrap() else {
+            return false;
+        };
+        let size =
+            (start_size + (start_y - pointer_y) / Self::RESIZE_PIXELS_PER_UNIT).clamp(0.5, 2.0);
+        if (size - self.dock_config.read().unwrap().size).abs() < f64::EPSILON {
+            return true;
+        }
+        self.dock_config.write().unwrap().size = size;
+        self.render_dock();
+        true
+    }
+
+    /// End a resize drag and persist the size that was landed on. Returns
+    /// whether a drag was in flight, so the caller can swallow the click.
+    pub(super) fn end_resize_drag(&self) -> bool {
+        let Some((_, start_size)) = self.resize_drag.write().unwrap().take() else {
+            return false;
+        };
+        if (self.dock_config.read().unwrap().size - start_size).abs() > f64::EPSILON {
+            self.save_config();
+        }
+        true
     }
 
     /// Schedule hiding the dock after a short delay (if autohide is enabled).
