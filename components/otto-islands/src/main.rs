@@ -379,42 +379,34 @@ impl IslandApp {
                 sizes.push((idx, w, h));
             }
 
-            // An expanded island leaves the stack and takes its own slot. The
-            // rest of the group — the train — trails off to its left, so the
-            // open notification stays at the right-hand front of its group.
-            let expanded: Vec<&(usize, f32, f32)> = sizes
-                .iter()
-                .filter(|(i, _, _)| self.islands[*i].mode == IslandMode::Expanded)
-                .collect();
-            let stacked: Vec<&(usize, f32, f32)> = sizes
-                .iter()
-                .filter(|(i, _, _)| self.islands[*i].mode != IslandMode::Expanded)
-                .collect();
-
+            // Place every member in arrival order, left to right. Each bubble
+            // covers a fixed slice of the one before it, so the step comes
+            // from the bubble's own width: growing to compact — or opening
+            // fully — pushes the newer ones along instead of expanding
+            // underneath them, and nothing ever changes places.
+            let overlap = (MINI_H - step).max(0.0);
+            let n = sizes.len();
             let mut placed: Vec<(usize, f32, f32, f32)> = Vec::new();
-            let mut cursor = 0.0_f32;
             let mut group_w = 0.0_f32;
+            let mut x = 0.0_f32;
 
-            if let Some(&&(_, front_w, _)) = stacked.first() {
-                // Depth of the visible deck; anything deeper piles up at the
-                // back so a huge group can't stretch the row.
-                let depth = stacked.len().min(renderer::MAX_STACK);
-                let back_span = (depth - 1) as f32 * step;
-                for (i, &&(idx, w, h)) in stacked.iter().enumerate() {
-                    // i == 0 is the front and sits furthest right; each older
-                    // bubble steps back to the left, behind the one before it.
-                    let steps_back = i.min(depth - 1) as f32;
-                    let offset = cursor + back_span - steps_back * step;
-                    placed.push((idx, offset, w, h));
-                    group_w = group_w.max(offset + w);
+            for (k, &(idx, w, h)) in sizes.iter().rev().enumerate() {
+                let expanded = self.islands[idx].mode == IslandMode::Expanded;
+                // An open notification is a panel, not a bubble in the deck:
+                // it stands clear of its neighbours instead of overlapping.
+                if expanded {
+                    x += GAP;
                 }
-                cursor += back_span + front_w + GAP;
-            }
+                placed.push((idx, x, w, h));
+                group_w = group_w.max(x + w);
 
-            for &&(idx, w, h) in &expanded {
-                placed.push((idx, cursor, w, h));
-                group_w = group_w.max(cursor + w);
-                cursor += w + GAP;
+                if expanded {
+                    x += w + GAP;
+                } else if n - 1 - k < renderer::MAX_STACK {
+                    // Anything deeper than MAX_STACK from the front piles up
+                    // in place, so a huge group can't stretch the row.
+                    x += (w - overlap).max(0.0);
+                }
             }
 
             group_widths.push(group_w);
@@ -517,7 +509,17 @@ impl IslandApp {
             }
         }
 
-        let restacked = self.restack(&groups);
+        // Z-order only — this never moves anything, it just decides what
+        // draws on top: an open notification, then the deck front-to-back.
+        let stacking: Vec<Vec<usize>> = groups
+            .iter()
+            .map(|members| {
+                let mut m = members.clone();
+                m.sort_by_key(|&i| self.islands[i].mode != IslandMode::Expanded);
+                m
+            })
+            .collect();
+        let restacked = self.restack(&stacking);
         let size_changed = self.update_layer_size();
         self.update_input_region(size_changed || restacked);
     }

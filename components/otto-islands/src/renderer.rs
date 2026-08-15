@@ -335,6 +335,14 @@ fn truncate_text(text: &str, font: &skia_safe::Font, max_width: f32) -> String {
 // Surface style helpers
 // ---------------------------------------------------------------------------
 
+/// Bounce for ordinary layout moves — growing, shrinking, and getting pushed
+/// along by a neighbour. Enough overshoot that bubbles feel like they have
+/// weight rather than sliding on rails.
+const LAYOUT_BOUNCE: f64 = 0.4;
+/// Springs settle within the transaction's duration, so this is really "how
+/// long the bounce takes to die down". Short enough to stay responsive.
+const LAYOUT_DURATION: f64 = 0.55;
+
 pub fn apply_island_style(
     surface: &otto_kit::SubsurfaceSurface,
     radius: f64,
@@ -391,10 +399,10 @@ pub fn animate_to_with_opacity(
             let qh = AppContext::queue_handle();
 
             let timing = scene.create_timing_function(qh, ());
-            timing.set_spring(0.15, 0.0);
+            timing.set_spring(LAYOUT_BOUNCE, 0.0);
 
             let anim = scene.begin_transaction(qh, ());
-            anim.set_duration(0.8);
+            anim.set_duration(LAYOUT_DURATION);
             if delay > 0.0 {
                 anim.set_delay(delay);
             }
@@ -426,9 +434,9 @@ pub fn animate_enter_pop(surface: &otto_kit::SubsurfaceSurface, radius: f64) {
     /// Corner radius at rest in the start state. Once divided by FROM_SCALE it
     /// is far larger than half the collapsed box, so the blob reads as a pill.
     const FROM_RADIUS: f64 = 44.0;
-    /// Spring bounce. Higher than the 0.15 used for ordinary layout moves —
-    /// this is the one moment the panel is meant to feel springy.
-    const BOUNCE: f64 = 0.42;
+    /// Spring bounce. Higher still than ordinary layout moves — an island
+    /// arriving is the one moment it should really spring.
+    const BOUNCE: f64 = 0.55;
 
     if let Some(scene_surface) = surface.base_surface().surface_style() {
         // Start state, applied outside any transaction so it is instant.
