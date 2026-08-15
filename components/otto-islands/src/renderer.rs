@@ -345,7 +345,7 @@ const MOVE_BOUNCE: f64 = 0.45;
 const MOVE_DURATION: f64 = 0.6;
 /// Bounce for growing and shrinking — barely any, so a bubble changing size
 /// doesn't wobble while its content is being read.
-const RESIZE_BOUNCE: f64 = 0.12;
+const RESIZE_BOUNCE: f64 = 0.04;
 const RESIZE_DURATION: f64 = 0.45;
 
 pub fn apply_island_style(
@@ -440,18 +440,18 @@ pub fn animate_to_with_opacity(
 /// The surface must already be sized and positioned at its final layout — this
 /// only drives the transform, so the content never reflows. Starts as a small,
 /// fully-rounded, transparent blob at the panel's centre (anchor is 0.5/0.5)
-/// and springs out to full size with a pronounced bounce, the corner radius
-/// relaxing to `radius` on the way.
+/// and springs out to full size, the corner radius relaxing to `radius` on
+/// the way.
 pub fn animate_enter_pop(surface: &otto_kit::SubsurfaceSurface, radius: f64) {
-    /// Scale the panel starts at. Small enough to read as "a shape opening up"
-    /// rather than "a panel that was already there, slightly smaller".
-    const FROM_SCALE: f64 = 0.32;
+    /// Scale the panel starts at. Enough to read as "a shape opening up"
+    /// without launching it across the row.
+    const FROM_SCALE: f64 = 0.62;
     /// Corner radius at rest in the start state. Once divided by FROM_SCALE it
     /// is far larger than half the collapsed box, so the blob reads as a pill.
     const FROM_RADIUS: f64 = 44.0;
-    /// Spring bounce. Higher still than ordinary layout moves — an island
-    /// arriving is the one moment it should really spring.
-    const BOUNCE: f64 = 0.55;
+    /// Spring bounce — a little more than a resize settles with, since this is
+    /// the island announcing itself, but nowhere near a pop.
+    const BOUNCE: f64 = 0.2;
 
     if let Some(scene_surface) = surface.base_surface().surface_style() {
         // Start state, applied outside any transaction so it is instant.
