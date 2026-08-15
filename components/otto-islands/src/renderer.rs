@@ -20,9 +20,16 @@ pub const CARD_GAP: f32 = 4.0;
 pub const CARD_RADIUS: f32 = 10.0;
 pub const HOVER_GROW: f32 = 4.0;
 
-pub const BUFFER_SCALE: f64 = 2.0;
 pub const SLOT_BUF_W: i32 = 460;
 pub const SLOT_BUF_H: i32 = 140;
+
+/// Physical-pixel scale for geometry pushed to `otto-surface-style-v1`
+/// (that protocol operates in physical pixels). Must track the real output
+/// scale, not the client's fixed 2x raster buffer scale — see
+/// `otto-bar/src/app.rs`'s `animate_right_size` for the same fix.
+pub fn buffer_scale() -> f64 {
+    AppContext::fractional_scale()
+}
 
 // ---------------------------------------------------------------------------
 // Drawing: group pill (Compact mode)
@@ -399,7 +406,7 @@ pub fn apply_island_style(
 ) {
     if let Some(ss) = surface.base_surface().surface_style() {
         ss.set_background_color(0.03, 0.03, 0.03, 1.0);
-        ss.set_corner_radius(radius * BUFFER_SCALE);
+        ss.set_corner_radius(radius * buffer_scale());
         ss.set_masks_to_bounds(ClipMode::Enabled);
         ss.set_shadow(0.2, 2.0, 0.0, 8.0, 0.0, 0.0, 0.0);
         ss.set_blend_mode(BlendMode::BackgroundBlur);
@@ -419,7 +426,7 @@ pub fn apply_card_style(surface: &otto_kit::SubsurfaceSurface) {
             c.b() as f64 / 255.0,
             c.a() as f64 / 255.0,
         );
-        ss.set_corner_radius(CARD_RADIUS as f64 * BUFFER_SCALE);
+        ss.set_corner_radius(CARD_RADIUS as f64 * buffer_scale());
         ss.set_masks_to_bounds(ClipMode::Enabled);
         ss.set_shadow(0.25, 16.0, 0.0, 1.0, 0.0, 0.0, 0.0);
         ss.set_blend_mode(BlendMode::BackgroundBlur);
@@ -436,8 +443,8 @@ pub fn set_size_and_position(
     y: f32,
 ) {
     if let Some(ss) = surface.base_surface().surface_style() {
-        ss.set_size(w as f64 * BUFFER_SCALE, h as f64 * BUFFER_SCALE);
-        ss.set_position(x as f64 * BUFFER_SCALE, y as f64 * BUFFER_SCALE);
+        ss.set_size(w as f64 * buffer_scale(), h as f64 * buffer_scale());
+        ss.set_position(x as f64 * buffer_scale(), y as f64 * buffer_scale());
     }
 }
 
@@ -477,9 +484,9 @@ pub fn animate_to_with_opacity(
             }
             anim.set_timing_function(&timing);
 
-            scene_surface.set_size(w as f64 * BUFFER_SCALE, h as f64 * BUFFER_SCALE);
-            scene_surface.set_position(x as f64 * BUFFER_SCALE, y as f64 * BUFFER_SCALE);
-            scene_surface.set_corner_radius(radius * BUFFER_SCALE);
+            scene_surface.set_size(w as f64 * buffer_scale(), h as f64 * buffer_scale());
+            scene_surface.set_position(x as f64 * buffer_scale(), y as f64 * buffer_scale());
+            scene_surface.set_corner_radius(radius * buffer_scale());
             if let Some(o) = opacity {
                 scene_surface.set_opacity(o);
             }
@@ -526,7 +533,7 @@ fn animate_position_opacity_duration(
 ) {
     if let Some(scene_surface) = surface.base_surface().surface_style() {
         // Set size immediately (outside any transaction).
-        scene_surface.set_size(w as f64 * BUFFER_SCALE, h as f64 * BUFFER_SCALE);
+        scene_surface.set_size(w as f64 * buffer_scale(), h as f64 * buffer_scale());
 
         if let Some(scene) = AppContext::surface_style_manager() {
             let qh = AppContext::queue_handle();
@@ -541,7 +548,7 @@ fn animate_position_opacity_duration(
             }
             anim.set_timing_function(&timing);
 
-            scene_surface.set_position(x as f64 * BUFFER_SCALE, y as f64 * BUFFER_SCALE);
+            scene_surface.set_position(x as f64 * buffer_scale(), y as f64 * buffer_scale());
             scene_surface.set_opacity(opacity);
 
             anim.commit();
@@ -570,7 +577,7 @@ pub fn animate_enter_pop(surface: &otto_kit::SubsurfaceSurface, radius: f64) {
     if let Some(scene_surface) = surface.base_surface().surface_style() {
         // Start state, applied outside any transaction so it is instant.
         scene_surface.set_scale(FROM_SCALE, FROM_SCALE);
-        scene_surface.set_corner_radius(FROM_RADIUS * BUFFER_SCALE);
+        scene_surface.set_corner_radius(FROM_RADIUS * buffer_scale());
         scene_surface.set_opacity(0.0);
 
         if let Some(scene) = AppContext::surface_style_manager() {
@@ -584,7 +591,7 @@ pub fn animate_enter_pop(surface: &otto_kit::SubsurfaceSurface, radius: f64) {
             anim.set_timing_function(&timing);
 
             scene_surface.set_scale(1.0, 1.0);
-            scene_surface.set_corner_radius(radius * BUFFER_SCALE);
+            scene_surface.set_corner_radius(radius * buffer_scale());
             scene_surface.set_opacity(1.0);
 
             anim.commit();
