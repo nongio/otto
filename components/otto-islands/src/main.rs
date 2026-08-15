@@ -977,17 +977,23 @@ impl App for IslandApp {
     }
 
     fn on_configure_layer(&mut self, _ctx: &AppContext, _w: i32, _h: i32, _serial: u32) {
-        if !self.surfaces_ready {
-            // Clear the parent surface.
-            if let Some(layer) = &self.layer_surface {
-                layer.draw(|canvas| {
-                    canvas.clear(skia_safe::Color::TRANSPARENT);
-                });
-            }
-            self.surfaces_ready = true;
-            // Set empty input region so clicks pass through until islands appear.
-            self.update_input_region(false);
+        // Redraw on *every* configure, not just the first. The parent surface is
+        // fully transparent, but its buffer is what bounds the input region: a
+        // region rect outside the attached buffer is clipped away by the
+        // compositor. Without a redraw after a grow, the layer keeps its initial
+        // buffer and clicks below the old height are never delivered — a tall
+        // dialog's lower rows and its buttons go dead.
+        if let Some(layer) = &self.layer_surface {
+            layer.draw(|canvas| {
+                canvas.clear(skia_safe::Color::TRANSPARENT);
+            });
         }
+        let first = !self.surfaces_ready;
+        self.surfaces_ready = true;
+        // On the first configure this sets an empty region so clicks pass
+        // through until islands appear; later ones re-commit the region now
+        // that the buffer is large enough to carry it.
+        self.update_input_region(!first);
     }
 
     fn on_update(&mut self, _ctx: &AppContext) {
