@@ -1118,7 +1118,12 @@ impl IslandApp {
             state.dismiss_activity(activity_id);
             drop(state);
 
-            if !is_close {
+            if is_close {
+                // Reason 2: dismissed by the user via the Close affordance.
+                if let Some(nid) = notification_id {
+                    emit_notification_closed(nid, 2);
+                }
+            } else {
                 // Action click — focus the app and emit ActionInvoked. A hit on
                 // a specific inline action button reports that action's id;
                 // otherwise (click on the card body) it's the default action.
@@ -1619,27 +1624,66 @@ fn request_focus_app(app_id: String) {
     });
 }
 
+/// The D-Bus connection that owns the org.freedesktop.Notifications bus name.
+/// Signals must be emitted from this connection, not an anonymous one, so
+/// receivers matching on sender="org.freedesktop.Notifications" can see them.
+static NOTIFICATIONS_DBUS_CONNECTION: std::sync::OnceLock<zbus::Connection> =
+    std::sync::OnceLock::new();
+
 /// Emit the org.freedesktop.Notifications ActionInvoked signal.
 fn emit_action_invoked(notification_id: u32, action_key: String) {
+    let Some(connection) = NOTIFICATIONS_DBUS_CONNECTION.get().cloned() else {
+        tracing::warn!(
+            notification_id,
+            "ActionInvoked: notifications D-Bus connection not ready"
+        );
+        return;
+    };
     tokio::spawn(async move {
-        let connection = match zbus::Connection::session().await {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!("failed to connect to session bus for ActionInvoked: {e}");
-                return;
-            }
+        let Ok(ctxt) =
+            zbus::SignalContext::new(&connection, notifications::NOTIFICATIONS_DBUS_PATH)
+        else {
+            tracing::warn!(
+                notification_id,
+                "ActionInvoked: failed to build signal context"
+            );
+            return;
         };
-        let result = connection
-            .emit_signal(
-                None::<&str>,
-                "/org/freedesktop/Notifications",
-                "org.freedesktop.Notifications",
-                "ActionInvoked",
-                &(notification_id, action_key.as_str()),
-            )
-            .await;
-        if let Err(e) = result {
+        if let Err(e) =
+            notifications::NotificationDaemon::action_invoked(&ctxt, notification_id, &action_key)
+                .await
+        {
             tracing::warn!(notification_id, "ActionInvoked signal failed: {e}");
+        }
+    });
+}
+
+/// Emit the org.freedesktop.Notifications NotificationClosed signal.
+/// Reasons per spec: 1 = expired, 2 = dismissed by the user, 3 = closed via
+/// CloseNotification, 4 = undefined.
+fn emit_notification_closed(notification_id: u32, reason: u32) {
+    let Some(connection) = NOTIFICATIONS_DBUS_CONNECTION.get().cloned() else {
+        tracing::warn!(
+            notification_id,
+            "NotificationClosed: notifications D-Bus connection not ready"
+        );
+        return;
+    };
+    tokio::spawn(async move {
+        let Ok(ctxt) =
+            zbus::SignalContext::new(&connection, notifications::NOTIFICATIONS_DBUS_PATH)
+        else {
+            tracing::warn!(
+                notification_id,
+                "NotificationClosed: failed to build signal context"
+            );
+            return;
+        };
+        if let Err(e) =
+            notifications::NotificationDaemon::notification_closed(&ctxt, notification_id, reason)
+                .await
+        {
+            tracing::warn!(notification_id, "NotificationClosed signal failed: {e}");
         }
     });
 }
@@ -1731,6 +1775,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return;
         }
 
+        let _ = NOTIFICATIONS_DBUS_CONNECTION.set(connection);
         tracing::info!(
             "Notifications daemon running on {}",
             notifications::NOTIFICATIONS_DBUS_NAME
