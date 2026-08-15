@@ -1031,8 +1031,15 @@ impl IslandApp {
             let island = self.islands.iter_mut().find(|i| i.app_id == app_id);
             if let Some(island) = island {
                 match island.mode {
-                    IslandMode::Mini | IslandMode::Compact => {
-                        tracing::info!(%app_id, from = ?island.mode, "click: → Expanded");
+                    IslandMode::Mini => {
+                        tracing::info!(%app_id, "click: Mini → Compact");
+                        self.focused_app = Some(app_id.clone());
+                        self.last_interaction = std::time::Instant::now();
+                        island.mode = IslandMode::Compact;
+                        island.peek_until = None;
+                    }
+                    IslandMode::Compact => {
+                        tracing::info!(%app_id, "click: Compact → Expanded");
                         self.focused_app = Some(app_id.clone());
                         self.last_interaction = std::time::Instant::now();
                         island.mode = IslandMode::Expanded;
