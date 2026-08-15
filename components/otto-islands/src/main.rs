@@ -277,18 +277,22 @@ impl IslandApp {
             }
         }
 
-        // Assign modes: focused → Compact (or stays Expanded), peeking stays
-        // Compact until it expires, everything else → Mini.
+        // Exactly one island may be Compact at a time. The pointer wins it,
+        // then whatever was last clicked, then the newest still-peeking
+        // arrival — so a burst of notifications doesn't blow the row up into
+        // a wall of pills.
+        let compact_id = self.hovered_island.or(self.focused_island).or_else(|| {
+            self.islands
+                .iter()
+                .filter(|i| i.peek_until.is_some())
+                .max_by_key(|i| i.created_at)
+                .map(|i| i.activity_id)
+        });
+
         for island in &mut self.islands {
             if island.mode == IslandMode::Expanded {
                 // Only user interaction (click / focus loss) closes it.
-            } else if Some(island.activity_id) == self.focused_island
-                || Some(island.activity_id) == self.hovered_island
-            {
-                // Hovering a mini bubble grows it to the peek size, so you can
-                // read what it is before deciding to open it.
-                island.mode = IslandMode::Compact;
-            } else if island.peek_until.is_some() {
+            } else if Some(island.activity_id) == compact_id {
                 island.mode = IslandMode::Compact;
             } else {
                 island.mode = IslandMode::Mini;
@@ -310,22 +314,22 @@ impl IslandApp {
     /// stands rather than pulling it to the front, so the deck never
     /// reshuffles under the pointer.
     fn group_order(&self) -> Vec<Vec<usize>> {
-        let mut groups: Vec<(std::time::Instant, String, Vec<usize>)> = Vec::new();
+        // `self.islands` is already in arrival order, so nothing is sorted
+        // here: groups appear in the order their first notification did, and
+        // members in the order they arrived. Reversing a group's members just
+        // expresses the same row front-to-back, since the newest bubble is the
+        // rightmost one and sits on top.
+        let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
         for (idx, island) in self.islands.iter().enumerate() {
-            match groups.iter_mut().find(|(_, app, _)| *app == island.app_id) {
-                Some((oldest, _, members)) => {
-                    *oldest = (*oldest).min(island.created_at);
-                    members.push(idx);
-                }
-                None => groups.push((island.created_at, island.app_id.clone(), vec![idx])),
+            match groups.iter_mut().find(|(app, _)| *app == island.app_id) {
+                Some((_, members)) => members.push(idx),
+                None => groups.push((island.app_id.clone(), vec![idx])),
             }
         }
-        groups.sort_by_key(|(oldest, _, _)| *oldest);
-
         groups
             .into_iter()
-            .map(|(_, _, mut members)| {
-                members.sort_by_key(|&i| std::cmp::Reverse(self.islands[i].created_at));
+            .map(|(_, mut members)| {
+                members.reverse();
                 members
             })
             .collect()
