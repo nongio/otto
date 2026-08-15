@@ -193,7 +193,6 @@ pub fn elapsed_label(created_at: std::time::Instant) -> String {
 }
 
 pub fn draw_card(canvas: &Canvas, activity: &Activity, group_icon: &str, w: f32, h: f32) {
-    let theme = AppContext::current_theme();
     let pad = 10.0;
 
     // Use the activity icon if available, otherwise fall back to group icon.
@@ -203,14 +202,8 @@ pub fn draw_card(canvas: &Canvas, activity: &Activity, group_icon: &str, w: f32,
         &activity.icon
     };
 
-    // Background — uses theme material
-    let mut bg = Paint::default();
-    bg.set_anti_alias(true);
-    bg.set_color(theme.material_medium);
-    canvas.draw_rrect(
-        RRect::new_rect_xy(Rect::from_xywh(0.0, 0.0, w, h), CARD_RADIUS, CARD_RADIUS),
-        &bg,
-    );
+    // No background rect here — the subsurface itself is the near-black
+    // bubble material (apply_card_style), same as the pill.
 
     // Icon
     let icon_size = 24.0;
@@ -227,7 +220,7 @@ pub fn draw_card(canvas: &Canvas, activity: &Activity, group_icon: &str, w: f32,
     .font();
     let mut title_paint = Paint::default();
     title_paint.set_anti_alias(true);
-    title_paint.set_color(theme.text_primary);
+    title_paint.set_color(Color::WHITE);
     let close_zone = 40.0;
     let text_x = icon_x + icon_size + 8.0;
     let max_w = w - text_x - close_zone;
@@ -244,7 +237,7 @@ pub fn draw_card(canvas: &Canvas, activity: &Activity, group_icon: &str, w: f32,
         .font();
         let mut body_paint = Paint::default();
         body_paint.set_anti_alias(true);
-        body_paint.set_color(theme.text_secondary);
+        body_paint.set_color(Color::from_argb(180, 255, 255, 255));
         let body = truncate_text(&activity.body, &body_font, max_w);
         canvas.draw_str(&body, (text_x, pad + 28.0), &body_font, &body_paint);
     }
@@ -258,7 +251,7 @@ pub fn draw_card(canvas: &Canvas, activity: &Activity, group_icon: &str, w: f32,
     .font();
     let mut hint_paint = Paint::default();
     hint_paint.set_anti_alias(true);
-    hint_paint.set_color(theme.text_tertiary);
+    hint_paint.set_color(Color::from_argb(120, 255, 255, 255));
     let time_str = elapsed_label(activity.created_at);
     let (tw, _) = hint_font.measure_str(&time_str, None);
     canvas.draw_str(
@@ -271,7 +264,7 @@ pub fn draw_card(canvas: &Canvas, activity: &Activity, group_icon: &str, w: f32,
     // Separator line before close zone
     let mut sep_paint = Paint::default();
     sep_paint.set_anti_alias(true);
-    sep_paint.set_color(Color::from_argb(20, 0, 0, 0));
+    sep_paint.set_color(Color::from_argb(30, 255, 255, 255));
     sep_paint.set_stroke_width(1.0);
     let sep_x = w - close_zone;
     canvas.draw_line((sep_x, 0.0), (sep_x, h), &sep_paint);
@@ -285,7 +278,7 @@ pub fn draw_card(canvas: &Canvas, activity: &Activity, group_icon: &str, w: f32,
     .font();
     let mut close_paint = Paint::default();
     close_paint.set_anti_alias(true);
-    close_paint.set_color(theme.text_secondary);
+    close_paint.set_color(Color::from_argb(180, 255, 255, 255));
     let (cw, _) = close_font.measure_str("Close", None);
     canvas.draw_str(
         "Close",
@@ -415,17 +408,12 @@ pub fn apply_island_style(
     }
 }
 
-/// Style for notification cards — theme material background with blur.
+/// Style for notification cards — same near-black bubble material as the
+/// group pill, so a card reads as a continuation of the same shape rather
+/// than a separate panel.
 pub fn apply_card_style(surface: &otto_kit::SubsurfaceSurface) {
-    let theme = AppContext::current_theme();
-    let c = theme.material_medium;
     if let Some(ss) = surface.base_surface().surface_style() {
-        ss.set_background_color(
-            c.r() as f64 / 255.0,
-            c.g() as f64 / 255.0,
-            c.b() as f64 / 255.0,
-            c.a() as f64 / 255.0,
-        );
+        ss.set_background_color(0.03, 0.03, 0.03, 1.0);
         ss.set_corner_radius(CARD_RADIUS as f64 * buffer_scale());
         ss.set_masks_to_bounds(ClipMode::Enabled);
         ss.set_shadow(0.25, 16.0, 0.0, 1.0, 0.0, 0.0, 0.0);
