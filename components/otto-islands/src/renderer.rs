@@ -1,5 +1,4 @@
 use crate::activity::{Activity, NotificationAction};
-use otto_kit::desktop_entry::lookup_app;
 use otto_kit::icons::named_icon_sized;
 use otto_kit::protocols::otto_surface_style_v1::{BlendMode, ClipMode, ContentsGravity};
 use otto_kit::typography::TextStyle;
@@ -10,17 +9,22 @@ use skia_safe::{Canvas, Color, Paint, RRect, Rect};
 // Constants (from spec)
 // ---------------------------------------------------------------------------
 
-pub const MINI_W: f32 = 44.0;
 pub const MINI_H: f32 = 28.0;
-pub const COMPACT_W: f32 = 240.0;
 pub const COMPACT_H: f32 = 36.0;
 pub const CARD_W: f32 = 300.0;
-pub const CARD_H: f32 = 60.0;
-pub const CARD_GAP: f32 = 4.0;
-pub const CARD_RADIUS: f32 = 10.0;
+pub const CARD_H: f32 = 68.0;
+pub const CARD_RADIUS: f32 = 14.0;
 pub const HOVER_GROW: f32 = 4.0;
-pub const MAX_VISIBLE_CARDS: usize = 5;
-pub const MORE_INDICATOR_H: f32 = 24.0;
+
+/// Horizontal offset between stacked islands of the same app at rest — small,
+/// so they read as one deck with only a sliver of each one behind showing.
+pub const PEEK_STEP: f32 = 8.0;
+/// Offset between stacked islands when the group is hovered — fanned out far
+/// enough that each one can be aimed at and clicked individually.
+pub const FAN_STEP: f32 = 20.0;
+/// Islands past this depth in a group pile up at the same offset, so a huge
+/// group can't grow the row without bound.
+pub const MAX_STACK: usize = 5;
 
 pub const SLOT_BUF_W: i32 = 460;
 pub const SLOT_BUF_H: i32 = 140;
@@ -37,55 +41,23 @@ pub fn buffer_scale() -> f64 {
 // Drawing: group pill (Compact mode)
 // ---------------------------------------------------------------------------
 
-/// Resolve an app_id to a human-readable display name via XDG desktop entries.
-fn app_display_name(app_id: &str) -> String {
-    lookup_app(app_id)
-        .map(|info| info.name)
-        .unwrap_or_else(|| app_id.to_string())
-}
-
-/// Compute the width needed for a notification pill based on its content.
-/// Measures both rows (app name + title) and uses the wider one.
-pub fn pill_width(app_id: &str, title: &str, count: usize) -> f32 {
+/// Compute the width a Compact pill needs for one notification's own title.
+pub fn pill_width(title: &str) -> f32 {
     let pad = 8.0;
     let icon_size = COMPACT_H - pad * 2.0;
     let text_x = pad + icon_size + 6.0;
-    let badge_w = if count > 1 { 8.0 + 18.0 } else { 0.0 };
-
-    // Top row: app name (9px)
-    let name = app_display_name(app_id);
-    let app_font = TextStyle {
-        family: "Inter",
-        weight: 600,
-        size: 9.0,
-    }
-    .font();
-    let (name_w, _) = app_font.measure_str(&name, None);
-
-    // Bottom row: notification title (11px)
-    let display_title = if title.is_empty() { &name } else { title };
-    let title_font = TextStyle {
+    let font = TextStyle {
         family: "Inter",
         weight: 600,
         size: 11.0,
     }
     .font();
-    let (title_w, _) = title_font.measure_str(display_title, None);
-
-    let text_w = name_w.max(title_w);
-    (text_x + text_w + badge_w + pad).clamp(MINI_W, 340.0)
+    let (title_w, _) = font.measure_str(title, None);
+    (text_x + title_w + pad).clamp(MINI_H, 300.0)
 }
 
-pub fn draw_pill(
-    canvas: &Canvas,
-    app_id: &str,
-    icon: &str,
-    title: &str,
-    count: usize,
-    _expanded: bool,
-    w: f32,
-    h: f32,
-) {
+/// Compact: this notification's own icon and title on one line.
+pub fn draw_pill(canvas: &Canvas, icon: &str, title: &str, w: f32, h: f32) {
     let pad = 8.0;
     let icon_size = h - pad * 2.0;
     let icon_x = pad;
@@ -93,88 +65,31 @@ pub fn draw_pill(
     draw_app_icon(canvas, icon, icon_x, icon_y, icon_size);
 
     let text_x = icon_x + icon_size + 6.0;
-    let badge_w = if count > 1 { 8.0 + 18.0 } else { 0.0 };
-    let max_w = w - text_x - badge_w - pad;
+    let max_w = w - text_x - pad;
 
-    // Top row: app name (small, dimmer)
-    let name = app_display_name(app_id);
-    let app_font = TextStyle {
-        family: "Inter",
-        weight: 600,
-        size: 9.0,
-    }
-    .font();
-    let mut app_paint = Paint::default();
-    app_paint.set_anti_alias(true);
-    app_paint.set_color(Color::from_argb(140, 255, 255, 255));
-    let app_label = truncate_text(&name, &app_font, max_w);
-    canvas.draw_str(&app_label, (text_x, h / 2.0 - 3.0), &app_font, &app_paint);
-
-    // Bottom row: notification title (bold, white)
-    let title_font = TextStyle {
+    let font = TextStyle {
         family: "Inter",
         weight: 600,
         size: 11.0,
     }
     .font();
-    let mut title_paint = Paint::default();
-    title_paint.set_anti_alias(true);
-    title_paint.set_color(Color::WHITE);
-    let display_title = if title.is_empty() { &name } else { title };
-    let title_label = truncate_text(display_title, &title_font, max_w);
-    canvas.draw_str(
-        &title_label,
-        (text_x, h / 2.0 + 9.0),
-        &title_font,
-        &title_paint,
-    );
-
-    // Count badge
-    if count > 1 {
-        draw_count_badge(canvas, w - pad - 18.0, (h - 14.0) / 2.0, count);
-    }
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(Color::WHITE);
+    let label = truncate_text(title, &font, max_w);
+    canvas.draw_str(&label, (text_x, h / 2.0 + 4.0), &font, &paint);
 }
 
 // ---------------------------------------------------------------------------
-// Drawing: peek pill (two-line: app name + notification title)
-// ---------------------------------------------------------------------------
-// Drawing: group circle (Mini mode)
+// Drawing: mini circle
 // ---------------------------------------------------------------------------
 
-/// Width for a mini pill: smaller when just one notification.
-pub fn mini_width(count: usize) -> f32 {
-    if count > 1 {
-        MINI_W
-    } else {
-        MINI_H // square pill (icon only)
-    }
-}
-
-pub fn draw_mini(canvas: &Canvas, icon: &str, count: usize, _w: f32, h: f32) {
+/// Mini: just this notification's icon in a circle. There is no count badge —
+/// how many bubbles are stacked behind is what conveys the count.
+pub fn draw_mini(canvas: &Canvas, icon: &str, _w: f32, h: f32) {
     let pad = 6.0;
     let icon_size = h - pad * 2.0;
-    let icon_x = pad;
-    let icon_y = (h - icon_size) / 2.0;
-    draw_app_icon(canvas, icon, icon_x, icon_y, icon_size);
-
-    if count > 1 {
-        let count_text = format!("{count}");
-        let font = TextStyle {
-            family: "Inter",
-            weight: 600,
-            size: 11.0,
-        }
-        .font();
-        let mut paint = Paint::default();
-        paint.set_anti_alias(true);
-        paint.set_color(Color::WHITE);
-        canvas.draw_str(
-            &count_text,
-            (icon_x + icon_size + 4.0, h / 2.0 + 4.0),
-            &font,
-            &paint,
-        );
-    }
+    draw_app_icon(canvas, icon, pad, (h - icon_size) / 2.0, icon_size);
 }
 
 // ---------------------------------------------------------------------------
@@ -194,18 +109,14 @@ pub fn elapsed_label(created_at: std::time::Instant) -> String {
     }
 }
 
-pub fn draw_card(canvas: &Canvas, activity: &Activity, group_icon: &str, w: f32, h: f32) {
+/// Expanded: the island itself grown into a full notification, drawn directly
+/// into the same bubble — icon, title, body (or inline actions), time, close.
+pub fn draw_card(canvas: &Canvas, activity: &Activity, w: f32, h: f32) {
     let pad = 10.0;
-
-    // Use the activity icon if available, otherwise fall back to group icon.
-    let icon = if activity.icon.is_empty() {
-        group_icon
-    } else {
-        &activity.icon
-    };
+    let icon = activity.icon.as_str();
 
     // No background rect here — the subsurface itself is the near-black
-    // bubble material (apply_card_style), same as the pill.
+    // bubble material (apply_island_style).
 
     // Icon
     let icon_size = 24.0;
@@ -312,25 +223,8 @@ pub fn draw_card(canvas: &Canvas, activity: &Activity, group_icon: &str, w: f32,
     );
 }
 
-/// "+N more" indicator shown below the stack when there are more
-/// notifications than fit in the visible card list (spec: MAX_VISIBLE_CARDS).
-pub fn draw_more_indicator(canvas: &Canvas, count: usize, w: f32, h: f32) {
-    let font = TextStyle {
-        family: "Inter",
-        weight: 600,
-        size: 10.0,
-    }
-    .font();
-    let mut paint = Paint::default();
-    paint.set_anti_alias(true);
-    paint.set_color(Color::from_argb(160, 255, 255, 255));
-    let text = format!("+{count} more");
-    let (tw, _) = font.measure_str(&text, None);
-    canvas.draw_str(&text, ((w - tw) / 2.0, h / 2.0 + 4.0), &font, &paint);
-}
-
 // ---------------------------------------------------------------------------
-// Helpers: icons, badges, text
+// Helpers: icons, text
 // ---------------------------------------------------------------------------
 // (dialog and fingerprint rendering will be added in separate PRs)
 
@@ -378,33 +272,6 @@ fn draw_envelope(canvas: &Canvas, x: f32, y: f32, size: f32) {
     b.line_to((x + w / 2.0, oy + h * 0.55));
     b.line_to((x + w, oy));
     canvas.draw_path(&b.detach(), &paint);
-}
-
-fn draw_count_badge(canvas: &Canvas, x: f32, y: f32, count: usize) {
-    let badge_w = 18.0_f32;
-    let badge_h = 14.0_f32;
-    let badge_r = 7.0_f32;
-
-    let mut bg = Paint::default();
-    bg.set_anti_alias(true);
-    bg.set_color(Color::from_argb(80, 255, 255, 255));
-    canvas.draw_rrect(
-        RRect::new_rect_xy(Rect::from_xywh(x, y, badge_w, badge_h), badge_r, badge_r),
-        &bg,
-    );
-
-    let text = format!("{count}");
-    let font = TextStyle {
-        family: "Inter",
-        weight: 600,
-        size: 10.0,
-    }
-    .font();
-    let mut paint = Paint::default();
-    paint.set_anti_alias(true);
-    paint.set_color(Color::WHITE);
-    let (cw, _) = font.measure_str(&text, None);
-    canvas.draw_str(&text, (x + (badge_w - cw) / 2.0, y + 11.0), &font, &paint);
 }
 
 /// Lay out a row of inline action-button chips starting at `(text_x, pad + 28.0)`,
@@ -483,21 +350,6 @@ pub fn apply_island_style(
     }
 }
 
-/// Style for notification cards — same near-black bubble material as the
-/// group pill, so a card reads as a continuation of the same shape rather
-/// than a separate panel.
-pub fn apply_card_style(surface: &otto_kit::SubsurfaceSurface) {
-    if let Some(ss) = surface.base_surface().surface_style() {
-        ss.set_background_color(0.03, 0.03, 0.03, 1.0);
-        ss.set_corner_radius(CARD_RADIUS as f64 * buffer_scale());
-        ss.set_masks_to_bounds(ClipMode::Enabled);
-        ss.set_shadow(0.25, 16.0, 0.0, 1.0, 0.0, 0.0, 0.0);
-        ss.set_blend_mode(BlendMode::BackgroundBlur);
-        ss.set_contents_gravity(ContentsGravity::Center);
-        ss.set_anchor_point(0.5, 0.5);
-    }
-}
-
 pub fn set_size_and_position(
     surface: &otto_kit::SubsurfaceSurface,
     w: f32,
@@ -553,66 +405,6 @@ pub fn animate_to_with_opacity(
             if let Some(o) = opacity {
                 scene_surface.set_opacity(o);
             }
-
-            anim.commit();
-        }
-    }
-}
-
-/// Animate only position and opacity (size is set instantly, not animated).
-pub fn animate_position_opacity(
-    surface: &otto_kit::SubsurfaceSurface,
-    w: f32,
-    h: f32,
-    x: f32,
-    y: f32,
-    opacity: f64,
-    delay: f64,
-) {
-    animate_position_opacity_duration(surface, w, h, x, y, opacity, delay, 0.3);
-}
-
-pub fn animate_position_opacity_slow(
-    surface: &otto_kit::SubsurfaceSurface,
-    w: f32,
-    h: f32,
-    x: f32,
-    y: f32,
-    opacity: f64,
-    delay: f64,
-) {
-    animate_position_opacity_duration(surface, w, h, x, y, opacity, delay, 0.8);
-}
-
-fn animate_position_opacity_duration(
-    surface: &otto_kit::SubsurfaceSurface,
-    w: f32,
-    h: f32,
-    x: f32,
-    y: f32,
-    opacity: f64,
-    delay: f64,
-    duration: f64,
-) {
-    if let Some(scene_surface) = surface.base_surface().surface_style() {
-        // Set size immediately (outside any transaction).
-        scene_surface.set_size(w as f64 * buffer_scale(), h as f64 * buffer_scale());
-
-        if let Some(scene) = AppContext::surface_style_manager() {
-            let qh = AppContext::queue_handle();
-
-            let timing = scene.create_timing_function(qh, ());
-            timing.set_spring(0.0, 0.0);
-
-            let anim = scene.begin_transaction(qh, ());
-            anim.set_duration(duration);
-            if delay > 0.0 {
-                anim.set_delay(delay);
-            }
-            anim.set_timing_function(&timing);
-
-            scene_surface.set_position(x as f64 * buffer_scale(), y as f64 * buffer_scale());
-            scene_surface.set_opacity(opacity);
 
             anim.commit();
         }
@@ -681,24 +473,6 @@ pub fn animate_dismiss(surface: &otto_kit::SubsurfaceSurface, scale: f64) {
             anim.commit();
         }
     }
-}
-
-/// Pulse animation: instantly grow by `grow` pixels, then spring back to target size.
-/// With center anchor, position stays the same — only size changes.
-pub fn animate_pulse(
-    surface: &otto_kit::SubsurfaceSurface,
-    w: f32,
-    h: f32,
-    cx: f32,
-    cy: f32,
-    radius: f64,
-    grow: f32,
-) {
-    // Step 1: instantly set to enlarged size (center anchor keeps it centered).
-    set_size_and_position(surface, w + grow, h + grow, cx, cy);
-
-    // Step 2: spring back to target size.
-    animate_to(surface, w, h, cx, cy, radius, 0.0);
 }
 
 /// Draw content centered in the subsurface buffer.

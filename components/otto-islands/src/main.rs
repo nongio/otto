@@ -22,7 +22,7 @@ use crate::activity::Activity;
 use crate::dbus_service::{DialogService, IslandService, DBUS_NAME};
 use crate::dialog::{DialogHit, DialogId, DialogResponse, DialogView};
 use crate::renderer::{
-    animate_to, apply_island_style, draw_centered, set_size_and_position, COMPACT_H, MINI_H, MINI_W,
+    animate_to, apply_island_style, draw_centered, set_size_and_position, COMPACT_H, MINI_H,
 };
 use crate::state::{IslandState, SharedState};
 
@@ -40,6 +40,10 @@ const DIALOG_TOP: f32 = BAR_HEIGHT + 14.0;
 const FOCUS_TIMEOUT_SECS: f64 = 4.0;
 /// Seconds a destroyed surface is kept alive so its exit animation can play.
 const DESTROY_DELAY_SECS: f64 = 0.8;
+/// Expanded-card metrics shared between drawing and hit-testing.
+const CARD_PAD: f32 = 10.0;
+const CARD_ICON: f32 = 24.0;
+const CARD_CLOSE_ZONE: f32 = 40.0;
 
 // ---------------------------------------------------------------------------
 // Island — one notification group or music activity
@@ -52,71 +56,41 @@ enum IslandMode {
     Expanded,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum IslandKind {
-    Notification,
-}
-
-/// Signature of what a pill buffer currently shows — redraw only on change.
+/// Signature of what an island buffer currently shows — redraw only on change.
 #[derive(Clone, PartialEq)]
-struct PillContent {
+struct IslandContent {
     mode: IslandMode,
     icon: String,
     title: String,
-    count: usize,
+    body: String,
+    time_label: String,
+    actions: Vec<crate::activity::NotificationAction>,
     w: f32,
     h: f32,
 }
 
-/// Signature of what a card buffer currently shows.
-#[derive(Clone, PartialEq)]
-struct CardContent {
-    title: String,
-    body: String,
-    icon: String,
-    time_label: String,
-    actions: Vec<crate::activity::NotificationAction>,
-}
-
-/// An island represents one group (notification app_id or music).
-/// It owns a pill/circle subsurface and optionally card subsurfaces.
+/// An island is one notification. There is no separate group header and no
+/// separate card: the island *is* the notification, and expanding it grows
+/// this same bubble into the full title/body/actions layout. Notifications
+/// from the same app are grouped visually by overlapping their islands into
+/// a peek stack, not by collapsing them into one representative.
 struct Island {
-    /// The group key (app_id for notifications, "org.otto.music" for music).
+    /// The notification this island represents.
+    activity_id: u64,
+    /// Grouping key — same-app islands overlap into one stack.
     app_id: String,
-    kind: IslandKind,
-    /// The icon for this group (resolved once, used consistently in all modes).
     icon: String,
-    /// The pill/circle subsurface.
     surface: SubsurfaceSurface,
-    /// Lazily-created card subsurfaces (only when Expanded, notifications only).
-    cards: Vec<CardSurface>,
-    /// Current mode.
     mode: IslandMode,
-    /// When this group first appeared.
+    /// When this notification arrived (newest sits at the front of its stack).
     created_at: std::time::Instant,
-    /// Last known notification count (for pulse detection).
-    last_count: usize,
-    /// Last seen activity ID (to detect new notifications even when count doesn't change).
-    last_activity_id: u64,
     /// When set, the island temporarily shows as Compact until this instant.
     peek_until: Option<std::time::Instant>,
     /// Last layout target (w, h, x, y) — skip animation when unchanged.
     last_layout: (f32, f32, f32, f32),
-    /// Last drawn pill content — skip redraw when unchanged.
-    last_content: Option<PillContent>,
-    /// "+N more" indicator shown below the stack when there are more
-    /// notifications than fit in the visible card list. Lazily created,
-    /// like cards.
-    more_indicator: Option<(SubsurfaceSurface, usize)>,
-}
-
-struct CardSurface {
-    surface: SubsurfaceSurface,
-    activity_id: u64,
-    /// Last drawn card content — skip redraw when unchanged.
-    last_content: Option<CardContent>,
-    /// Inline actions for this notification, cached for hit-testing without
-    /// locking state (kept in sync with the activity every layout pass).
+    /// Last drawn content — skip redraw when unchanged.
+    last_content: Option<IslandContent>,
+    /// Inline actions, cached for hit-testing without locking state.
     actions: Vec<crate::activity::NotificationAction>,
 }
 
@@ -144,10 +118,17 @@ struct IslandApp {
     layer_surface: Option<LayerShellSurface>,
     islands: Vec<Island>,
     surfaces_ready: bool,
-    /// Which island (by app_id) is currently focused (Compact/Expanded).
-    focused_app: Option<String>,
-    /// Which island (by app_id) the pointer is currently hovering over.
+    /// Which island (by notification id) is currently focused (Compact/Expanded).
+    focused_island: Option<u64>,
+    /// Which island the pointer is over (drives the hover grow).
+    hovered_island: Option<u64>,
+    /// Which group (by app_id) the pointer is over — that stack fans out.
     hovered_app: Option<String>,
+    /// Last applied front-to-back order, so subsurfaces are only restacked
+    /// when the order actually changes.
+    last_stack_order: Option<Vec<u64>>,
+    /// Width the last layout pass centered the island row within.
+    last_content_width: f32,
     /// Surfaces pending destruction (kept alive for animations, destroyed next cycle).
     pending_destroy: Vec<(SubsurfaceSurface, std::time::Instant)>,
     /// Last time the user interacted (pointer event). Used for focus timeout.
@@ -167,8 +148,11 @@ impl IslandApp {
             layer_surface: None,
             islands: Vec::new(),
             surfaces_ready: false,
-            focused_app: None,
+            focused_island: None,
+            hovered_island: None,
             hovered_app: None,
+            last_stack_order: None,
+            last_content_width: LAYER_W as f32,
             pending_destroy: Vec::new(),
             last_interaction: std::time::Instant::now(),
             last_layer_size: None,
@@ -177,15 +161,9 @@ impl IslandApp {
         }
     }
 
-    /// Compute the current effective layer width based on island layout.
+    /// The layer width the last layout pass centered its row within.
     fn layer_width(&self) -> f32 {
-        let total_w: f32 = self
-            .islands
-            .iter()
-            .map(|i| i.last_layout.0.max(MINI_H))
-            .sum::<f32>()
-            + (self.islands.len().saturating_sub(1)) as f32 * GAP;
-        (total_w + 40.0).max(LAYER_W as f32)
+        self.last_content_width.max(LAYER_W as f32)
     }
 
     /// Get the parent wl_surface for creating subsurfaces.
@@ -205,7 +183,7 @@ impl IslandApp {
         // Center coordinates (anchor point is 0.5, 0.5).
         let cx = self.layer_width() / 2.0;
         let cy = BAR_HEIGHT / 2.0;
-        set_size_and_position(&surface, MINI_W, MINI_H, cx, cy);
+        set_size_and_position(&surface, MINI_H, MINI_H, cx, cy);
         surface.draw(|canvas| {
             canvas.clear(skia_safe::Color::TRANSPARENT);
         });
@@ -237,600 +215,325 @@ impl IslandApp {
 
     fn sync(&mut self) {
         let state = self.state.lock().unwrap();
-        let grouped = state.grouped_activities();
+        let notifications: Vec<Activity> = state.activities.clone();
         drop(state);
 
-        // Build the set of app_ids that should exist as islands.
-        let mut desired: Vec<(String, IslandKind, String)> = Vec::new(); // (app_id, kind, icon)
-        for (activity, _count) in &grouped {
-            let kind = IslandKind::Notification;
-            if !desired.iter().any(|(id, _, _)| id == &activity.app_id) {
-                desired.push((activity.app_id.clone(), kind, activity.icon.clone()));
-            }
-        }
-
-        // Remove islands whose app_id is no longer present.
+        // Remove islands whose notification is gone.
         let mut removed_island = false;
         let mut i = 0;
         while i < self.islands.len() {
-            if desired
+            if notifications
                 .iter()
-                .any(|(app_id, _, _)| app_id == &self.islands[i].app_id)
+                .any(|a| a.id == self.islands[i].activity_id)
             {
                 i += 1;
             } else {
-                let mut island = self.islands.remove(i);
-                tracing::info!(app_id = %island.app_id, "island removed");
-                let cx = self.layer_width() / 2.0;
-                let cy = BAR_HEIGHT / 2.0;
-                let h = COMPACT_H;
-                renderer::animate_to_with_opacity(
-                    &island.surface,
-                    0.0,
-                    h,
-                    cx,
-                    cy,
-                    h as f64 / 2.0,
-                    Some(0.0),
-                    0.3,
-                );
-                for card in &island.cards {
-                    renderer::animate_dismiss(&card.surface, 1.2);
-                }
-                // Defer destruction of all surfaces.
-                for card in island.cards.drain(..) {
-                    self.defer_destroy(card.surface);
-                }
-                if let Some((surface, _)) = island.more_indicator.take() {
-                    self.defer_destroy(surface);
-                }
+                let island = self.islands.remove(i);
+                tracing::info!(app_id = %island.app_id, id = island.activity_id, "island removed");
+                renderer::animate_dismiss(&island.surface, 1.2);
                 self.defer_destroy(island.surface);
                 removed_island = true;
             }
         }
 
-        // Add islands for new app_ids.
-        for (app_id, kind, icon) in &desired {
-            if !self.islands.iter().any(|i| i.app_id == *app_id) {
-                if let Some(surface) = self.create_pill_subsurface() {
-                    tracing::info!(%app_id, ?kind, %icon, "island created");
-                    self.islands.push(Island {
-                        app_id: app_id.clone(),
-                        kind: *kind,
-                        icon: icon.clone(),
-                        surface,
-                        cards: Vec::new(),
-                        mode: IslandMode::Mini,
-                        created_at: std::time::Instant::now(),
-                        last_count: 0,
-                        last_activity_id: 0,
-                        peek_until: None,
-                        last_layout: (0.0, 0.0, 0.0, 0.0),
-                        last_content: None,
-                        more_indicator: None,
-                    });
-                    // Auto-focus only if no island is currently Expanded.
-                    let any_expanded = self.islands.iter().any(|i| i.mode == IslandMode::Expanded);
-                    if !any_expanded {
-                        self.focused_app = Some(app_id.clone());
-                    }
-                    self.last_interaction = std::time::Instant::now();
-                }
+        // Add an island per new notification.
+        for activity in &notifications {
+            if self.islands.iter().any(|i| i.activity_id == activity.id) {
+                continue;
+            }
+            let Some(surface) = self.create_pill_subsurface() else {
+                continue;
+            };
+            tracing::info!(app_id = %activity.app_id, id = activity.id, "island created");
+            self.islands.push(Island {
+                activity_id: activity.id,
+                app_id: activity.app_id.clone(),
+                icon: activity.icon.clone(),
+                surface,
+                mode: IslandMode::Mini,
+                created_at: activity.created_at,
+                // A new notification announces itself as Compact for a few
+                // seconds, then settles back into its app's stack.
+                peek_until: Some(std::time::Instant::now() + Duration::from_secs(3)),
+                last_layout: (0.0, 0.0, 0.0, 0.0),
+                last_content: None,
+                actions: activity.actions.clone(),
+            });
+            self.last_interaction = std::time::Instant::now();
+        }
+
+        // Refresh cached per-notification data.
+        for island in &mut self.islands {
+            if let Some(a) = notifications.iter().find(|a| a.id == island.activity_id) {
+                island.actions = a.actions.clone();
+                island.icon = a.icon.clone();
             }
         }
 
-        // Sort islands by creation time (oldest left).
-        self.islands.sort_by_key(|i| i.created_at);
-
-        // If focused app no longer exists, clear focus.
-        if let Some(ref focused) = self.focused_app {
-            if !self.islands.iter().any(|i| i.app_id == *focused) {
-                self.focused_app = None;
+        // If the focused island is gone, clear focus.
+        if let Some(focused) = self.focused_island {
+            if !self.islands.iter().any(|i| i.activity_id == focused) {
+                self.focused_island = None;
             }
         }
 
-        // Assign modes: focused gets Compact/Expanded, peeking stays Compact, rest → Mini.
-        // Expanded islands are preserved — they coexist with Compact (peeking) islands.
+        // Assign modes: focused → Compact (or stays Expanded), peeking stays
+        // Compact until it expires, everything else → Mini.
         for island in &mut self.islands {
             if island.mode == IslandMode::Expanded {
-                // Expanded stays Expanded — only user interaction (click/focus loss) closes it.
-            } else if Some(&island.app_id) == self.focused_app.as_ref() {
-                if island.mode == IslandMode::Mini {
-                    island.mode = IslandMode::Compact;
-                    tracing::debug!(app_id = %island.app_id, "Mini → Compact (focused)");
-                }
+                // Only user interaction (click / focus loss) closes it.
+            } else if Some(island.activity_id) == self.focused_island {
+                island.mode = IslandMode::Compact;
             } else if island.peek_until.is_some() {
-                // Peeking — stay Compact until peek expires.
+                island.mode = IslandMode::Compact;
             } else {
-                // Non-focused, non-peeking, non-expanded → Mini.
-                if island.mode != IslandMode::Mini {
-                    tracing::debug!(app_id = %island.app_id, from = ?island.mode, "→ Mini");
-                }
                 island.mode = IslandMode::Mini;
             }
         }
 
-        self.layout(&grouped, removed_island);
-    }
-
-    /// Close the card stack — animate out but keep surfaces alive for reuse.
-    fn close_cards_for(island: &mut Island) {
-        tracing::info!(app_id = %island.app_id, cards = island.cards.len(), "stack closed");
-        // Slide up to pill center y, keep current x. Fade out.
-        let pill_cy = BAR_HEIGHT / 2.0;
-        let pill_cx = island.last_layout.2; // cx from last layout
-        for card in &island.cards {
-            renderer::animate_position_opacity(
-                &card.surface,
-                renderer::CARD_W,
-                renderer::CARD_H,
-                pill_cx,
-                pill_cy,
-                0.0,
-                0.0,
-            );
-        }
-        if let Some((surface, _)) = &island.more_indicator {
-            renderer::animate_position_opacity(
-                surface,
-                renderer::CARD_W,
-                renderer::MORE_INDICATOR_H,
-                pill_cx,
-                pill_cy,
-                0.0,
-                0.0,
-            );
-        }
+        self.layout(&notifications, removed_island);
     }
 
     // -----------------------------------------------------------------------
     // Layout: position all islands and their cards
     // -----------------------------------------------------------------------
 
-    fn layout(&mut self, grouped: &[(Activity, usize)], reposition_delay: bool) {
+    /// Islands grouped by app, front-to-back within each group.
+    ///
+    /// Groups are ordered by their oldest notification so a group keeps its
+    /// place in the row as notifications come and go. Within a group the
+    /// focused island is pulled to the front, then newest first — the front
+    /// island is the one on top of the stack and the one a click lands on.
+    fn group_order(&self) -> Vec<Vec<usize>> {
+        let mut groups: Vec<(std::time::Instant, String, Vec<usize>)> = Vec::new();
+        for (idx, island) in self.islands.iter().enumerate() {
+            match groups.iter_mut().find(|(_, app, _)| *app == island.app_id) {
+                Some((oldest, _, members)) => {
+                    *oldest = (*oldest).min(island.created_at);
+                    members.push(idx);
+                }
+                None => groups.push((island.created_at, island.app_id.clone(), vec![idx])),
+            }
+        }
+        groups.sort_by_key(|(oldest, _, _)| *oldest);
+
+        let focused = self.focused_island;
+        groups
+            .into_iter()
+            .map(|(_, _, mut members)| {
+                members.sort_by_key(|&i| {
+                    let island = &self.islands[i];
+                    let is_focused = Some(island.activity_id) == focused;
+                    // Focused first, then newest first.
+                    (!is_focused, std::cmp::Reverse(island.created_at))
+                });
+                members
+            })
+            .collect()
+    }
+
+    fn layout(&mut self, notifications: &[Activity], reposition_delay: bool) {
         if self.islands.is_empty() {
             let size_changed = self.update_layer_size();
             self.update_input_region(size_changed);
             return;
         }
 
-        // Compute element sizes for layout.
-        let island_size = |island: &Island, mode: IslandMode| -> (f32, f32) {
-            let entry = grouped.iter().find(|(a, _)| a.app_id == island.app_id);
-            let count = entry.map(|(_, c)| *c).unwrap_or(1);
-            let title = entry.map(|(a, _)| a.title.as_str()).unwrap_or("");
-            match mode {
-                IslandMode::Mini => (renderer::mini_width(count), MINI_H),
-                IslandMode::Compact => {
-                    let w = renderer::pill_width(&island.app_id, title, count);
-                    (w, COMPACT_H)
-                }
-                IslandMode::Expanded => {
-                    let w =
-                        renderer::pill_width(&island.app_id, title, count).max(renderer::CARD_W);
-                    (w, COMPACT_H)
-                }
-            }
+        let title_of = |island: &Island| -> String {
+            notifications
+                .iter()
+                .find(|a| a.id == island.activity_id)
+                .map(|a| a.title.clone())
+                .unwrap_or_default()
         };
 
-        // Compute total row width.
-        let total_w: f32 = self
-            .islands
-            .iter()
-            .map(|i| island_size(i, i.mode).0)
-            .sum::<f32>()
-            + (self.islands.len() - 1) as f32 * GAP;
+        let groups = self.group_order();
 
-        let mut x = ((self.layer_width() - total_w) / 2.0).max(0.0);
+        // Measure every island, then lay each group out as an overlapped stack.
+        // (idx, offset within group, w, h)
+        let mut placements: Vec<Vec<(usize, f32, f32, f32)>> = Vec::new();
+        let mut group_widths: Vec<f32> = Vec::new();
 
-        // Collect positions for expanded islands, pulse targets, and layout targets.
-        let mut expanded_layouts: Vec<(usize, f32, f32, f32, f32)> = Vec::new();
-        let mut pulse_targets: Vec<(usize, f32, f32, f32, f32)> = Vec::new();
-        let mut layout_targets: Vec<(usize, f32, f32, f32, f32)> = Vec::new(); // (idx, w, h, x, y)
-        let mut content_updates: Vec<(usize, PillContent)> = Vec::new();
-
-        for (idx, island) in self.islands.iter().enumerate() {
-            let count = grouped
-                .iter()
-                .find(|(a, _)| a.app_id == island.app_id)
-                .map(|(_, c)| *c)
-                .unwrap_or(0);
-            let icon = island.icon.as_str();
-
-            let (base_w, base_h) = island_size(island, island.mode);
-            let is_hovered = self.hovered_app.as_ref() == Some(&island.app_id);
-            let grow = if is_hovered
-                && (island.mode == IslandMode::Mini || island.mode == IslandMode::Compact)
-            {
-                renderer::HOVER_GROW
+        for members in &groups {
+            let app_id = &self.islands[members[0]].app_id;
+            let step = if self.hovered_app.as_deref() == Some(app_id.as_str()) {
+                renderer::FAN_STEP
             } else {
-                0.0
+                renderer::PEEK_STEP
             };
-            let w = base_w + grow;
-            let h = base_h + grow;
-            // Center coordinates for anchor_point(0.5, 0.5).
-            let cx = x + w / 2.0;
-            let cy = BAR_HEIGHT / 2.0;
 
-            // Detect new notification: count increased or representative activity changed.
-            let current_activity_id = grouped
+            // Measure every member first, then place them: the front of the
+            // stack sits at the right-hand end of the group and the older
+            // bubbles peek out to its left, behind it.
+            let mut sizes: Vec<(usize, f32, f32)> = Vec::new();
+            for &idx in members {
+                let island = &self.islands[idx];
+                let hovered = self.hovered_island == Some(island.activity_id);
+                let grow = if hovered && island.mode != IslandMode::Expanded {
+                    renderer::HOVER_GROW
+                } else {
+                    0.0
+                };
+                let (w, h) = match island.mode {
+                    IslandMode::Mini => (MINI_H + grow, MINI_H + grow),
+                    IslandMode::Compact => (
+                        renderer::pill_width(&title_of(island)) + grow,
+                        COMPACT_H + grow,
+                    ),
+                    IslandMode::Expanded => (renderer::CARD_W, renderer::CARD_H),
+                };
+                sizes.push((idx, w, h));
+            }
+
+            // An expanded island leaves the stack and takes its own slot on
+            // the left; whatever is left of the group stacks to its right.
+            let expanded: Vec<&(usize, f32, f32)> = sizes
                 .iter()
-                .find(|(a, _)| a.app_id == island.app_id)
-                .map(|(a, _)| a.id)
-                .unwrap_or(0);
-            let count_increased = count > island.last_count;
-            let activity_changed =
-                current_activity_id != island.last_activity_id && island.last_activity_id > 0;
-            // Only pulse on new notifications (count went up), not on dismissals.
-            let should_pulse = island.kind == IslandKind::Notification && count_increased;
-            if island.kind == IslandKind::Notification {
-                tracing::debug!(
-                    app_id = %island.app_id,
-                    mode = ?island.mode,
-                    count,
-                    last_count = island.last_count,
-                    current_activity_id,
-                    last_activity_id = island.last_activity_id,
-                    count_increased,
-                    activity_changed,
-                    should_pulse,
-                    "notification pulse check"
-                );
+                .filter(|(i, _, _)| self.islands[*i].mode == IslandMode::Expanded)
+                .collect();
+            let stacked: Vec<&(usize, f32, f32)> = sizes
+                .iter()
+                .filter(|(i, _, _)| self.islands[*i].mode != IslandMode::Expanded)
+                .collect();
+
+            let mut placed: Vec<(usize, f32, f32, f32)> = Vec::new();
+            let mut cursor = 0.0_f32;
+            let mut group_w = 0.0_f32;
+            for &&(idx, w, h) in &expanded {
+                placed.push((idx, cursor, w, h));
+                group_w = group_w.max(cursor + w);
+                cursor += w + GAP;
             }
 
-            match island.mode {
-                IslandMode::Mini => {
-                    let content = PillContent {
-                        mode: island.mode,
-                        icon: icon.to_string(),
-                        title: String::new(),
-                        count,
-                        w,
-                        h,
-                    };
-                    if island.last_content.as_ref() != Some(&content) {
-                        draw_centered(&island.surface, w, h, |canvas| {
-                            renderer::draw_mini(canvas, icon, count, w, h);
-                        });
-                        content_updates.push((idx, content));
-                    }
-                    if should_pulse {
-                        pulse_targets.push((idx, w, h, cx, cy));
-                    } else {
-                        layout_targets.push((idx, w, h, cx, cy));
-                    }
-                }
-                IslandMode::Compact | IslandMode::Expanded => {
-                    let title = grouped
-                        .iter()
-                        .find(|(a, _)| a.app_id == island.app_id)
-                        .map(|(a, _)| a.title.as_str())
-                        .unwrap_or("");
-                    let expanded = island.mode == IslandMode::Expanded;
-                    let content = PillContent {
-                        mode: island.mode,
-                        icon: icon.to_string(),
-                        title: title.to_string(),
-                        count,
-                        w,
-                        h,
-                    };
-                    if island.last_content.as_ref() != Some(&content) {
-                        draw_centered(&island.surface, w, h, |canvas| {
-                            renderer::draw_pill(
-                                canvas,
-                                &island.app_id,
-                                icon,
-                                title,
-                                count,
-                                expanded,
-                                w,
-                                h,
-                            );
-                        });
-                        content_updates.push((idx, content));
-                    }
-                    if should_pulse {
-                        pulse_targets.push((idx, w, h, cx, cy));
-                    } else {
-                        layout_targets.push((idx, w, h, cx, cy));
-                    }
-
-                    if island.mode == IslandMode::Expanded {
-                        // Store top-left x for card positioning.
-                        expanded_layouts.push((idx, x, cx, cy, w));
-                    }
+            if !stacked.is_empty() {
+                // Depth of the visible deck; anything deeper piles up at the
+                // back so a huge group can't stretch the row.
+                let depth = stacked.len().min(renderer::MAX_STACK);
+                let back_span = (depth - 1) as f32 * step;
+                for (i, &&(idx, w, h)) in stacked.iter().enumerate() {
+                    // i == 0 is the front and sits furthest right; each older
+                    // bubble steps back to the left, behind the one before it.
+                    let steps_back = i.min(depth - 1) as f32;
+                    let offset = cursor + back_span - steps_back * step;
+                    placed.push((idx, offset, w, h));
+                    group_w = group_w.max(offset + w);
                 }
             }
 
-            x += w + GAP;
+            group_widths.push(group_w);
+            placements.push(placed);
         }
 
-        for (idx, content) in content_updates {
-            self.islands[idx].last_content = Some(content);
+        let total_w: f32 =
+            group_widths.iter().sum::<f32>() + (group_widths.len().saturating_sub(1)) as f32 * GAP;
+        // Size the layer from the content, then centre the row inside it, so
+        // the two can't chase each other frame to frame.
+        self.last_content_width = (total_w + 40.0).max(LAYER_W as f32);
+        let mut group_x = ((self.last_content_width - total_w) / 2.0).max(0.0);
+
+        let mut targets: Vec<(usize, f32, f32, f32, f32)> = Vec::new();
+        for (gi, placed) in placements.iter().enumerate() {
+            for &(idx, offset, w, h) in placed {
+                let x = group_x + offset;
+                let cx = x + w / 2.0;
+                let cy = match self.islands[idx].mode {
+                    // Expanded grows downward from where the pill's top edge is.
+                    IslandMode::Expanded => (BAR_HEIGHT - COMPACT_H) / 2.0 + h / 2.0,
+                    _ => BAR_HEIGHT / 2.0,
+                };
+                targets.push((idx, w, h, cx, cy));
+            }
+            group_x += group_widths[gi] + GAP;
         }
 
-        // Apply layout animations only when target changed.
+        // Redraw buffers whose content changed, then animate to the new layout.
         let layout_delay = if reposition_delay { 0.4 } else { 0.0 };
-        for (idx, w, h, x, y) in layout_targets {
-            let target = (w, h, x, y);
-            if self.islands[idx].last_layout != target {
-                let radius = h as f64 / 2.0;
-                animate_to(&self.islands[idx].surface, w, h, x, y, radius, layout_delay);
-                self.islands[idx].last_layout = target;
-            }
-        }
+        for (idx, w, h, cx, cy) in targets {
+            let activity = notifications
+                .iter()
+                .find(|a| a.id == self.islands[idx].activity_id)
+                .cloned();
+            let Some(activity) = activity else { continue };
 
-        // Apply pulse and peek as Compact for new notifications.
-        for (idx, w, h, cx, cy) in pulse_targets {
-            let current_mode = self.islands[idx].mode;
-            // If already Compact or Expanded, don't downgrade — just refresh content.
-            if current_mode == IslandMode::Expanded || current_mode == IslandMode::Compact {
-                tracing::info!(
-                    app_id = %self.islands[idx].app_id,
-                    mode = ?current_mode,
-                    "new notification while open — refresh only"
-                );
-            } else {
-                tracing::info!(
-                    app_id = %self.islands[idx].app_id,
-                    from = ?current_mode,
-                    "pulse → peek Compact for 3s"
-                );
-                renderer::animate_pulse(
+            let mode = self.islands[idx].mode;
+            let content = IslandContent {
+                mode,
+                icon: activity.icon.clone(),
+                title: activity.title.clone(),
+                body: activity.body.clone(),
+                time_label: renderer::elapsed_label(activity.created_at),
+                actions: activity.actions.clone(),
+                w,
+                h,
+            };
+            if self.islands[idx].last_content.as_ref() != Some(&content) {
+                let surface = &self.islands[idx].surface;
+                match mode {
+                    IslandMode::Mini => draw_centered(surface, w, h, |canvas| {
+                        renderer::draw_mini(canvas, &activity.icon, w, h);
+                    }),
+                    IslandMode::Compact => draw_centered(surface, w, h, |canvas| {
+                        renderer::draw_pill(canvas, &activity.icon, &activity.title, w, h);
+                    }),
+                    IslandMode::Expanded => draw_centered(surface, w, h, |canvas| {
+                        renderer::draw_card(canvas, &activity, w, h);
+                    }),
+                }
+                self.islands[idx].last_content = Some(content);
+            }
+
+            let radius = match mode {
+                IslandMode::Expanded => renderer::CARD_RADIUS as f64,
+                _ => h as f64 / 2.0,
+            };
+            let target = (w, h, cx, cy);
+            if self.islands[idx].last_layout == (0.0, 0.0, 0.0, 0.0) {
+                // First layout for a brand-new island: land it in place, then
+                // pop it open.
+                set_size_and_position(&self.islands[idx].surface, w, h, cx, cy);
+                renderer::animate_enter_pop(&self.islands[idx].surface, radius);
+                self.islands[idx].last_layout = target;
+            } else if self.islands[idx].last_layout != target {
+                animate_to(
                     &self.islands[idx].surface,
                     w,
                     h,
                     cx,
                     cy,
-                    h as f64 / 2.0,
-                    6.0,
+                    radius,
+                    layout_delay,
                 );
-                self.islands[idx].last_layout = (w, h, cx, cy);
-                self.islands[idx].peek_until =
-                    Some(std::time::Instant::now() + Duration::from_secs(3));
-                self.islands[idx].mode = IslandMode::Compact;
-            }
-            // Update tracking now so the next sync doesn't re-trigger.
-            let app_id = &self.islands[idx].app_id;
-            if let Some((a, c)) = grouped.iter().find(|(a, _)| &a.app_id == app_id) {
-                self.islands[idx].last_count = *c;
-                self.islands[idx].last_activity_id = a.id;
-            }
-            // Mark dirty so the next tick re-layouts at Compact size.
-            // Safe from loops because last_count/last_activity_id are now current.
-            let mut st = self.state.lock().unwrap();
-            st.dirty = true;
-        }
-        for island in &mut self.islands {
-            let entry = grouped.iter().find(|(a, _)| a.app_id == island.app_id);
-            island.last_count = entry.map(|(_, c)| *c).unwrap_or(0);
-            island.last_activity_id = entry.map(|(a, _)| a.id).unwrap_or(0);
-        }
-
-        // Now lay out cards for expanded islands (separate pass to avoid borrow conflict).
-        // Collect (notifs, group_icon) per app_id.
-        let state = self.state.lock().unwrap();
-        let all_notifs: std::collections::HashMap<String, (Vec<Activity>, String)> = {
-            let mut map = std::collections::HashMap::new();
-            for (idx, _, _, _, _) in &expanded_layouts {
-                let app_id = &self.islands[*idx].app_id;
-                let notifs: Vec<Activity> = state
-                    .notifications_for_app(app_id)
-                    .into_iter()
-                    .cloned()
-                    .collect();
-                // Group icon: from grouped_activities representative.
-                let group_icon = grouped
-                    .iter()
-                    .find(|(a, _)| a.app_id == *app_id)
-                    .map(|(a, _)| a.icon.clone())
-                    .unwrap_or_default();
-                map.insert(app_id.clone(), (notifs, group_icon));
-            }
-            map
-        };
-        drop(state);
-
-        let mut dismissed_card_surfaces: Vec<SubsurfaceSurface> = Vec::new();
-        // place_above on a new card only takes effect on a parent commit — force one.
-        let mut card_created = false;
-
-        // Capture wl_surface before mutable borrow of islands.
-        let wl = self.wl_surface();
-
-        for (idx, pill_left_x, _pill_cx, _pill_cy, pill_w) in expanded_layouts {
-            let island = &mut self.islands[idx];
-            let Some((notifs, group_icon)) = all_notifs.get(&island.app_id) else {
-                continue;
-            };
-            let pill_h = COMPACT_H;
-
-            let card_w = renderer::CARD_W;
-            let card_h = renderer::CARD_H;
-            let card_gap = renderer::CARD_GAP;
-            // Center x for cards (centered under pill).
-            let card_cx = pill_left_x + pill_w / 2.0;
-            // Pill bottom edge in top-left coords.
-            let pill_bottom = (BAR_HEIGHT - pill_h) / 2.0 + pill_h;
-            let max_cards = renderer::MAX_VISIBLE_CARDS;
-
-            for (i, notif) in notifs.iter().take(max_cards).enumerate() {
-                // Card center y.
-                let card_top = pill_bottom + card_gap + (i as f32) * (card_h + card_gap);
-                let card_cy = card_top + card_h / 2.0;
-                // Start position: center of card at pill bottom.
-                let start_cy = pill_bottom + card_h / 2.0;
-
-                let content = CardContent {
-                    title: notif.title.clone(),
-                    body: notif.body.clone(),
-                    icon: if notif.icon.is_empty() {
-                        group_icon.clone()
-                    } else {
-                        notif.icon.clone()
-                    },
-                    time_label: renderer::elapsed_label(notif.created_at),
-                    actions: notif.actions.clone(),
-                };
-                let existing = island.cards.iter().position(|c| c.activity_id == notif.id);
-                let is_new = existing.is_none();
-                let cidx = if let Some(ci) = existing {
-                    ci
-                } else {
-                    let Some(ref wl) = wl else { continue };
-                    let Ok(surface) = SubsurfaceSurface::new(
-                        wl,
-                        0,
-                        0,
-                        renderer::SLOT_BUF_W,
-                        renderer::SLOT_BUF_H,
-                    ) else {
-                        continue;
-                    };
-                    renderer::apply_card_style(&surface);
-                    // Wayland subsurface stacking is parent-relative, not screen-relative.
-                    // For a top-anchored layer shell, "above" in the stack means further
-                    // from the screen edge — i.e. visually behind the pill. So place_above
-                    // makes cards render behind the title surface.
-                    surface.place_above(island.surface.wl_surface());
-                    // Pre-render content before making the surface visible.
-                    draw_centered(&surface, card_w, card_h, |canvas| {
-                        renderer::draw_card(canvas, notif, group_icon, card_w, card_h);
-                    });
-                    set_size_and_position(&surface, card_w, card_h, card_cx, start_cy);
-                    island.cards.push(CardSurface {
-                        surface,
-                        activity_id: notif.id,
-                        last_content: Some(content.clone()),
-                        actions: notif.actions.clone(),
-                    });
-                    card_created = true;
-                    island.cards.len() - 1
-                };
-
-                island.cards[cidx].actions = notif.actions.clone();
-
-                // Redraw only when the card's content actually changed.
-                if island.cards[cidx].last_content.as_ref() != Some(&content) {
-                    draw_centered(&island.cards[cidx].surface, card_w, card_h, |canvas| {
-                        renderer::draw_card(canvas, notif, group_icon, card_w, card_h);
-                    });
-                    island.cards[cidx].last_content = Some(content);
-                }
-
-                if is_new {
-                    // New card: start at pill bottom, invisible, slide down + fade in.
-                    set_size_and_position(
-                        &island.cards[cidx].surface,
-                        card_w,
-                        card_h,
-                        card_cx,
-                        start_cy,
-                    );
-                    if let Some(ss) = island.cards[cidx].surface.base_surface().surface_style() {
-                        ss.set_opacity(0.0);
-                    }
-                    renderer::animate_position_opacity_slow(
-                        &island.cards[cidx].surface,
-                        card_w,
-                        card_h,
-                        card_cx,
-                        card_cy,
-                        1.0,
-                        i as f64 * 0.05,
-                    );
-                } else {
-                    // Existing card: animate to position + ensure visible.
-                    renderer::animate_position_opacity_slow(
-                        &island.cards[cidx].surface,
-                        card_w,
-                        card_h,
-                        card_cx,
-                        card_cy,
-                        1.0,
-                        i as f64 * 0.05,
-                    );
-                }
-            }
-
-            // Remove dismissed cards and reorder to match notification order.
-            let notif_ids: Vec<u64> = notifs.iter().take(max_cards).map(|n| n.id).collect();
-            let mut i = 0;
-            while i < island.cards.len() {
-                if notif_ids.contains(&island.cards[i].activity_id) {
-                    i += 1;
-                } else {
-                    let card = island.cards.remove(i);
-                    dismissed_card_surfaces.push(card.surface);
-                }
-            }
-            // Sort cards to match layout order (same as notif_ids).
-            island.cards.sort_by_key(|c| {
-                notif_ids
-                    .iter()
-                    .position(|&id| id == c.activity_id)
-                    .unwrap_or(usize::MAX)
-            });
-
-            // "+N more" indicator below the visible cards, when the stack
-            // holds more notifications than fit (spec: MAX_VISIBLE_CARDS).
-            let hidden_count = notifs.len().saturating_sub(max_cards);
-            if hidden_count > 0 {
-                let more_h = renderer::MORE_INDICATOR_H;
-                let more_top = pill_bottom + card_gap + (max_cards as f32) * (card_h + card_gap);
-                let more_cy = more_top + more_h / 2.0;
-                let start_cy = pill_bottom + more_h / 2.0;
-
-                if island.more_indicator.as_ref().map(|(_, n)| *n) != Some(hidden_count) {
-                    if island.more_indicator.is_none() {
-                        if let Some(ref wl) = wl {
-                            if let Ok(surface) = SubsurfaceSurface::new(
-                                wl,
-                                0,
-                                0,
-                                renderer::SLOT_BUF_W,
-                                renderer::SLOT_BUF_H,
-                            ) {
-                                renderer::apply_card_style(&surface);
-                                surface.place_above(island.surface.wl_surface());
-                                if let Some(ss) = surface.base_surface().surface_style() {
-                                    ss.set_opacity(0.0);
-                                }
-                                set_size_and_position(&surface, card_w, more_h, card_cx, start_cy);
-                                card_created = true;
-                                island.more_indicator = Some((surface, 0));
-                            }
-                        }
-                    }
-                    if let Some((surface, n)) = &mut island.more_indicator {
-                        draw_centered(surface, card_w, more_h, |canvas| {
-                            renderer::draw_more_indicator(canvas, hidden_count, card_w, more_h);
-                        });
-                        *n = hidden_count;
-                    }
-                }
-                if let Some((surface, _)) = &island.more_indicator {
-                    renderer::animate_position_opacity_slow(
-                        surface,
-                        card_w,
-                        more_h,
-                        card_cx,
-                        more_cy,
-                        1.0,
-                        max_cards as f64 * 0.05,
-                    );
-                }
-            } else if let Some((surface, _)) = island.more_indicator.take() {
-                dismissed_card_surfaces.push(surface);
+                self.islands[idx].last_layout = target;
             }
         }
-        for s in dismissed_card_surfaces {
-            self.defer_destroy(s);
-        }
 
+        let restacked = self.restack(&groups);
         let size_changed = self.update_layer_size();
-        self.update_input_region(size_changed || card_created);
+        self.update_input_region(size_changed || restacked);
+    }
+
+    /// Keep the front of each stack visually on top. Wayland subsurface
+    /// stacking is parent-relative: for this top-anchored layer surface
+    /// `place_above` pushes a surface *behind*, so walking each group
+    /// front-to-back and placing each one above its predecessor puts the
+    /// front island on top. Returns true when the order actually changed.
+    fn restack(&mut self, groups: &[Vec<usize>]) -> bool {
+        let order: Vec<u64> = groups
+            .iter()
+            .flat_map(|m| m.iter().map(|&i| self.islands[i].activity_id))
+            .collect();
+        if self.last_stack_order.as_ref() == Some(&order) {
+            return false;
+        }
+        for members in groups {
+            for pair in members.windows(2) {
+                let (front, behind) = (pair[0], pair[1]);
+                let front_surface = self.islands[front].surface.wl_surface().clone();
+                self.islands[behind].surface.place_above(&front_surface);
+            }
+        }
+        self.last_stack_order = Some(order);
+        true
     }
 
     // -----------------------------------------------------------------------
@@ -844,41 +547,17 @@ impl IslandApp {
             return false;
         };
 
-        // Compute the minimum height needed for current layout.
+        // Tall enough for the deepest expanded island, plus any dialog panel.
         let mut max_h = BAR_HEIGHT;
-
         for island in &self.islands {
-            if island.mode == IslandMode::Expanded {
-                let card_count = island.cards.len().min(5) as f32;
-                let pill_h = COMPACT_H;
-                let pill_bottom = (BAR_HEIGHT - pill_h) / 2.0 + pill_h;
-                let more_h = if island.more_indicator.is_some() {
-                    renderer::CARD_GAP + renderer::MORE_INDICATOR_H
-                } else {
-                    0.0
-                };
-                let stack_h = pill_bottom
-                    + renderer::CARD_GAP
-                    + card_count * renderer::CARD_H
-                    + (card_count - 1.0).max(0.0) * renderer::CARD_GAP
-                    + more_h;
-                max_h = max_h.max(stack_h + 4.0);
-            }
+            let (_, h, _, cy) = island.last_layout;
+            max_h = max_h.max(cy + h / 2.0 + 4.0);
         }
-
-        // A presented dialog panel drops below the bar and may extend the layer.
         if let Some(panel) = &self.dialog {
             max_h = max_h.max(DIALOG_TOP + panel.layout_h + 12.0);
         }
 
-        // Compute the minimum width needed for all islands.
-        let total_w: f32 = self
-            .islands
-            .iter()
-            .map(|i| i.last_layout.0.max(MINI_H))
-            .sum::<f32>()
-            + (self.islands.len().saturating_sub(1)) as f32 * GAP;
-        let mut needed_w = (total_w + 40.0).max(LAYER_W as f32); // padding + minimum
+        let mut needed_w = self.layer_width();
         if self.dialog.is_some() {
             needed_w = needed_w.max(dialog::DIALOG_W + 40.0);
         }
@@ -901,49 +580,15 @@ impl IslandApp {
         // Empty region = zero input area (clicks pass through).
         let mut rects: Vec<(i32, i32, i32, i32)> = Vec::new();
         if !self.islands.is_empty() {
-            // One rect per island, derived from last_layout (center coords).
+            // One rect per island, straight from its layout box. Overlapping
+            // rects in a wl_region are fine — the union is what matters.
             for island in &self.islands {
-                let (w, _h, cx, _cy) = island.last_layout;
-                let pill_h = match island.mode {
-                    IslandMode::Mini => MINI_H,
-                    IslandMode::Compact | IslandMode::Expanded => COMPACT_H,
-                };
-                let pill_w = match island.mode {
-                    IslandMode::Expanded => w.max(renderer::CARD_W),
-                    _ => w.max(MINI_H),
-                };
-                let x = cx - pill_w / 2.0;
-                let y = (BAR_HEIGHT - pill_h) / 2.0;
+                let (w, h, cx, cy) = island.last_layout;
                 rects.push((
-                    x.max(0.0) as i32,
-                    y as i32,
-                    pill_w.ceil() as i32,
-                    pill_h.ceil() as i32,
-                ));
-            }
-
-            // Card stack region — one rect per expanded island, positioned under its pill.
-            for island in &self.islands {
-                if island.mode != IslandMode::Expanded || island.cards.is_empty() {
-                    continue;
-                }
-                let pill_w = island.last_layout.0;
-                let pill_cx = island.last_layout.2;
-                let pill_left = pill_cx - pill_w / 2.0;
-                let pill_h = COMPACT_H;
-                let pill_bottom = (BAR_HEIGHT - pill_h) / 2.0 + pill_h;
-                let card_w = renderer::CARD_W;
-                let card_h = renderer::CARD_H;
-                let card_gap = renderer::CARD_GAP;
-                let card_count = island.cards.len() as f32;
-                let stack_top = pill_bottom + card_gap;
-                let stack_h = card_count * card_h + (card_count - 1.0) * card_gap;
-                let card_region_x = pill_left + (pill_w - card_w) / 2.0;
-                rects.push((
-                    card_region_x.max(0.0) as i32,
-                    stack_top as i32,
-                    card_w.ceil() as i32,
-                    stack_h.ceil() as i32,
+                    (cx - w / 2.0).max(0.0) as i32,
+                    (cy - h / 2.0).max(0.0) as i32,
+                    w.ceil() as i32,
+                    h.ceil() as i32,
                 ));
             }
         }
@@ -989,68 +634,40 @@ impl IslandApp {
     // Hit testing
     // -----------------------------------------------------------------------
 
-    /// Returns (app_id, Option<activity_id>, Option<action_id>) for what's at
-    /// (px, py). activity_id is Some when a card is hit; action_id is Some
-    /// when the hit landed on one of the card's inline action buttons.
-    fn hit_test(&self, px: f32, py: f32) -> Option<(String, Option<u64>, Option<String>)> {
-        for island in &self.islands {
-            let (w, _h, cx, _cy) = island.last_layout;
-            let pill_h = match island.mode {
-                IslandMode::Mini => MINI_H,
-                IslandMode::Compact | IslandMode::Expanded => COMPACT_H,
-            };
-            let pill_w = match island.mode {
-                IslandMode::Expanded => w.max(renderer::CARD_W),
-                _ => w.max(MINI_H),
-            };
-            let x = cx - pill_w / 2.0;
-            let y = (BAR_HEIGHT - pill_h) / 2.0;
-
-            // Hit test cards first (they sit below the pill).
-            if island.mode == IslandMode::Expanded {
-                let card_w = renderer::CARD_W;
-                let card_h = renderer::CARD_H;
-                let card_gap = renderer::CARD_GAP;
-                let card_x = x + (pill_w - card_w) / 2.0;
-
-                for (i, card) in island.cards.iter().enumerate() {
-                    let card_y = y + pill_h + card_gap + (i as f32) * (card_h + card_gap);
-                    if px >= card_x
-                        && px <= card_x + card_w
-                        && py >= card_y
-                        && py <= card_y + card_h
-                    {
-                        let action_id = if card.actions.is_empty() {
-                            None
-                        } else {
-                            let pad = 10.0;
-                            let icon_size = 24.0;
-                            let close_zone = 40.0;
-                            let text_x = pad + icon_size + 8.0;
-                            let max_w = card_w - text_x - close_zone;
-                            let local_x = px - card_x;
-                            let local_y = py - card_y;
-                            renderer::action_button_rects(&card.actions, text_x, max_w)
-                                .into_iter()
-                                .find(|(bx, by, bw, bh, _, _)| {
-                                    local_x >= *bx
-                                        && local_x <= *bx + *bw
-                                        && local_y >= *by
-                                        && local_y <= *by + *bh
-                                })
-                                .map(|(_, _, _, _, id, _)| id)
-                        };
-                        return Some((island.app_id.clone(), Some(card.activity_id), action_id));
-                    }
+    /// What is at (px, py): the island hit, and which of its inline action
+    /// buttons if the hit landed on one. Islands are tested front-to-back
+    /// within each group so the top of an overlapped stack wins.
+    fn hit_test(&self, px: f32, py: f32) -> Option<(u64, Option<String>)> {
+        for members in self.group_order() {
+            for idx in members {
+                let island = &self.islands[idx];
+                let (w, h, cx, cy) = island.last_layout;
+                let (x, y) = (cx - w / 2.0, cy - h / 2.0);
+                if px < x || px > x + w || py < y || py > y + h {
+                    continue;
                 }
-            }
 
-            // Hit test pill/circle.
-            if px >= x && px <= x + pill_w && py >= y && py <= y + pill_h {
-                return Some((island.app_id.clone(), None, None));
+                // Only an expanded island draws action buttons.
+                let action_id = if island.mode == IslandMode::Expanded && !island.actions.is_empty()
+                {
+                    let text_x = CARD_PAD + CARD_ICON + 8.0;
+                    let max_w = w - text_x - CARD_CLOSE_ZONE;
+                    let (local_x, local_y) = (px - x, py - y);
+                    renderer::action_button_rects(&island.actions, text_x, max_w)
+                        .into_iter()
+                        .find(|(bx, by, bw, bh, _, _)| {
+                            local_x >= *bx
+                                && local_x <= *bx + *bw
+                                && local_y >= *by
+                                && local_y <= *by + *bh
+                        })
+                        .map(|(_, _, _, _, id, _)| id)
+                } else {
+                    None
+                };
+                return Some((island.activity_id, action_id));
             }
         }
-
         None
     }
 
@@ -1063,120 +680,75 @@ impl IslandApp {
         if self.handle_dialog_click(px, py) {
             return;
         }
-        let Some((app_id, card_id, action_id)) = self.hit_test(px, py) else {
+        let Some((activity_id, action_id)) = self.hit_test(px, py) else {
+            return;
+        };
+        let Some(idx) = self
+            .islands
+            .iter()
+            .position(|i| i.activity_id == activity_id)
+        else {
             return;
         };
 
-        if let Some(activity_id) = card_id {
-            // Determine if the click is in the close zone (right 40px of card).
-            // An inline action button always wins over the close zone — the
-            // buttons live in the body row, well clear of it.
-            let close_zone = 40.0_f32;
-            let is_close = action_id.is_none()
-                && self
-                    .islands
-                    .iter()
-                    .find(|i| i.app_id == app_id)
-                    .map(|island| {
-                        let pill_w = island.last_layout.0;
-                        let pill_cx = island.last_layout.2;
-                        let card_w = renderer::CARD_W;
-                        let pill_x = pill_cx - pill_w / 2.0;
-                        let card_x = pill_x + (pill_w - card_w) / 2.0;
-                        px - card_x > card_w - close_zone
-                    })
-                    .unwrap_or(false);
+        self.last_interaction = std::time::Instant::now();
 
-            // Clicked a card — animate dismiss (scale up + fade out), then remove.
-            if let Some(island) = self.islands.iter().find(|i| i.app_id == app_id) {
-                if let Some(card) = island.cards.iter().find(|c| c.activity_id == activity_id) {
-                    renderer::animate_dismiss(&card.surface, 1.2);
-                }
-            }
-
-            let mut state = self.state.lock().unwrap();
-            let notification_id = state
-                .activities
-                .iter()
-                .find(|a| a.id == activity_id)
-                .and_then(|a| a.notification_id);
-            let default_action = state
-                .activities
-                .iter()
-                .find(|a| a.id == activity_id)
-                .and_then(|a| a.default_action.clone());
-            if let Some(activity) = state.activities.iter().find(|a| a.id == activity_id) {
-                tracing::info!(
-                    activity_id,
-                    %app_id,
-                    close = is_close,
-                    action = ?activity.default_action,
-                    "card clicked"
-                );
-            }
-
-            state.dismiss_activity(activity_id);
-            drop(state);
-
-            if is_close {
-                // Reason 2: dismissed by the user via the Close affordance.
-                if let Some(nid) = notification_id {
-                    emit_notification_closed(nid, 2);
-                }
-            } else {
-                // Action click — focus the app and emit ActionInvoked. A hit on
-                // a specific inline action button reports that action's id;
-                // otherwise (click on the card body) it's the default action.
-                request_focus_app(app_id.clone());
-
-                if let Some(nid) = notification_id {
-                    let action_key = action_id
-                        .or(default_action)
-                        .unwrap_or_else(|| "default".to_string());
-                    emit_action_invoked(nid, action_key);
-                }
-            }
-        } else {
-            // Clicked a pill/circle.
-            // Close any other expanded island first — only one can be expanded at a time.
-            for island in self.islands.iter_mut().filter(|i| i.app_id != app_id) {
+        // Mini → Compact → Expanded is just growth; nothing is dismissed until
+        // the notification is actually open.
+        if self.islands[idx].mode != IslandMode::Expanded {
+            // Only one island is open at a time.
+            for island in &mut self.islands {
                 if island.mode == IslandMode::Expanded {
-                    Self::close_cards_for(island);
                     island.mode = IslandMode::Compact;
-                    island.last_layout = (0.0, 0.0, 0.0, 0.0);
                 }
             }
-            let island = self.islands.iter_mut().find(|i| i.app_id == app_id);
-            if let Some(island) = island {
-                match island.mode {
-                    IslandMode::Mini => {
-                        tracing::info!(%app_id, "click: Mini → Compact");
-                        self.focused_app = Some(app_id.clone());
-                        self.last_interaction = std::time::Instant::now();
-                        island.mode = IslandMode::Compact;
-                        island.peek_until = None;
-                    }
-                    IslandMode::Compact => {
-                        tracing::info!(%app_id, "click: Compact → Expanded");
-                        self.focused_app = Some(app_id.clone());
-                        self.last_interaction = std::time::Instant::now();
-                        island.mode = IslandMode::Expanded;
-                        island.peek_until = None;
-                    }
-                    IslandMode::Expanded => {
-                        tracing::info!(%app_id, "click: Expanded → Compact");
-                        Self::close_cards_for(island);
-                        island.mode = IslandMode::Compact;
-                        island.last_layout = (0.0, 0.0, 0.0, 0.0);
-                        // Keep focus so timeout governs Mini transition.
-                        self.focused_app = Some(app_id.clone());
-                        self.last_interaction = std::time::Instant::now();
-                    }
-                }
-            }
-            // Mark dirty so sync() runs.
+            let island = &mut self.islands[idx];
+            island.peek_until = None;
+            island.mode = match island.mode {
+                IslandMode::Mini => IslandMode::Compact,
+                _ => IslandMode::Expanded,
+            };
+            tracing::info!(app_id = %island.app_id, mode = ?island.mode, "click: island opened");
+            self.focused_island = Some(activity_id);
             let mut state = self.state.lock().unwrap();
             state.dirty = true;
+            return;
+        }
+
+        // The island is expanded: decide between close, an inline action, and
+        // the body (default action). An action button always wins over the
+        // close zone — the buttons sit in the body row, clear of it.
+        let (w, _h, cx, _cy) = self.islands[idx].last_layout;
+        let is_close = action_id.is_none() && px - (cx - w / 2.0) > w - CARD_CLOSE_ZONE;
+
+        let mut state = self.state.lock().unwrap();
+        let activity = state.activities.iter().find(|a| a.id == activity_id);
+        let notification_id = activity.and_then(|a| a.notification_id);
+        let default_action = activity.and_then(|a| a.default_action.clone());
+        let app_id = self.islands[idx].app_id.clone();
+        tracing::info!(activity_id, %app_id, close = is_close, ?action_id, "expanded island clicked");
+
+        state.dismiss_activity(activity_id);
+        drop(state);
+
+        renderer::animate_dismiss(&self.islands[idx].surface, 1.2);
+
+        if is_close {
+            // Reason 2: dismissed by the user via the Close affordance.
+            if let Some(nid) = notification_id {
+                emit_notification_closed(nid, 2);
+            }
+        } else {
+            // Action click — focus the app and emit ActionInvoked. A hit on a
+            // specific inline action button reports that action's id; otherwise
+            // (a click on the body) it's the default action.
+            request_focus_app(app_id);
+            if let Some(nid) = notification_id {
+                let action_key = action_id
+                    .or(default_action)
+                    .unwrap_or_else(|| "default".to_string());
+                emit_action_invoked(nid, action_key);
+            }
         }
     }
 
@@ -1396,15 +968,15 @@ impl App for IslandApp {
             self.last_interaction = std::time::Instant::now();
         }
         let elapsed = self.last_interaction.elapsed().as_secs_f64();
-        if elapsed >= FOCUS_TIMEOUT_SECS && self.focused_app.is_some() {
+        if elapsed >= FOCUS_TIMEOUT_SECS && self.focused_island.is_some() {
             let any_expanded = self.islands.iter().any(|i| i.mode == IslandMode::Expanded);
             if !any_expanded {
                 tracing::info!(
-                    focused = ?self.focused_app,
+                    focused = ?self.focused_island,
                     elapsed_secs = format!("{:.1}", elapsed),
                     "focus timeout → all Mini"
                 );
-                self.focused_app = None;
+                self.focused_island = None;
                 let mut state = self.state.lock().unwrap();
                 state.dirty = true;
                 drop(state);
@@ -1413,27 +985,23 @@ impl App for IslandApp {
 
         let now = std::time::Instant::now();
 
-        // Peek timeout: revert Compact peek back to Mini.
+        // Peek timeout: a newly-arrived notification stops announcing itself
+        // and settles back into its app's stack.
+        let mut dirty_after_peek = false;
         for island in &mut self.islands {
             if let Some(until) = island.peek_until {
                 if now >= until {
                     tracing::info!(app_id = %island.app_id, "peek expired → Mini");
                     island.peek_until = None;
-                    island.mode = IslandMode::Mini;
-                    island.last_layout = (0.0, 0.0, 0.0, 0.0);
-                    // Snapshot current state so the next sync doesn't re-trigger peek.
-                    let state = self.state.lock().unwrap();
-                    let grouped = state.grouped_activities();
-                    drop(state);
-                    if let Some((a, c)) = grouped.iter().find(|(a, _)| a.app_id == island.app_id) {
-                        island.last_count = *c;
-                        island.last_activity_id = a.id;
-                    }
-                    let mut state = self.state.lock().unwrap();
-                    state.dirty = true;
-                    drop(state);
+                    dirty_after_peek = true;
                 }
             }
+        }
+
+        if dirty_after_peek {
+            let mut state = self.state.lock().unwrap();
+            state.dirty = true;
+            drop(state);
         }
 
         // Poll for withdrawn dialogs (caller aborted the request). This marks
@@ -1480,7 +1048,7 @@ impl App for IslandApp {
             deadlines.push(now + Duration::from_millis(500));
         }
         // Focus timeout only counts down when it can actually fire (see on_update).
-        if self.focused_app.is_some()
+        if self.focused_island.is_some()
             && !self.islands.iter().any(|i| i.mode == IslandMode::Expanded)
         {
             deadlines.push(self.last_interaction + Duration::from_secs_f64(FOCUS_TIMEOUT_SECS));
@@ -1523,13 +1091,11 @@ impl App for IslandApp {
         _ctx: &AppContext,
         _surface: &wayland_client::protocol::wl_surface::WlSurface,
     ) {
-        // Close expanded stack on focus loss — animate cards out first.
+        // Collapse an open notification on focus loss.
         let mut changed = false;
         for island in &mut self.islands {
             if island.mode == IslandMode::Expanded {
-                Self::close_cards_for(island);
                 island.mode = IslandMode::Compact;
-                island.last_layout = (0.0, 0.0, 0.0, 0.0);
                 changed = true;
             }
         }
@@ -1548,23 +1114,19 @@ impl App for IslandApp {
                 PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
                     let (px, py) = event.position;
                     let hit = self.hit_test(px as f32, py as f32);
-                    let new_hovered = hit.as_ref().map(|(app_id, _, _)| app_id.clone());
-                    if new_hovered != self.hovered_app {
-                        let old = &self.hovered_app;
-                        // Relayout when a Mini or Compact island gains/loses hover (for grow effect).
-                        let has_hover_grow = |app: &Option<String>| -> bool {
-                            app.as_ref()
-                                .and_then(|a| self.islands.iter().find(|i| i.app_id == *a))
-                                .is_some_and(|i| {
-                                    i.mode == IslandMode::Mini || i.mode == IslandMode::Compact
-                                })
-                        };
-                        let needs_relayout = has_hover_grow(old) || has_hover_grow(&new_hovered);
-                        self.hovered_app = new_hovered;
-                        if needs_relayout {
-                            let mut state = self.state.lock().unwrap();
-                            state.dirty = true;
-                        }
+                    let new_island = hit.as_ref().map(|(id, _)| *id);
+                    let new_app = new_island.and_then(|id| {
+                        self.islands
+                            .iter()
+                            .find(|i| i.activity_id == id)
+                            .map(|i| i.app_id.clone())
+                    });
+                    // The hovered island grows; its whole group fans out.
+                    if new_island != self.hovered_island || new_app != self.hovered_app {
+                        self.hovered_island = new_island;
+                        self.hovered_app = new_app;
+                        let mut state = self.state.lock().unwrap();
+                        state.dirty = true;
                     }
                     if hit.is_some() {
                         AppContext::set_cursor_shape(otto_kit::CursorShape::Pointer);
@@ -1573,8 +1135,9 @@ impl App for IslandApp {
                     }
                 }
                 PointerEventKind::Leave { .. } => {
-                    if self.hovered_app.is_some() {
+                    if self.hovered_app.is_some() || self.hovered_island.is_some() {
                         self.hovered_app = None;
+                        self.hovered_island = None;
                         let mut state = self.state.lock().unwrap();
                         state.dirty = true;
                     }
