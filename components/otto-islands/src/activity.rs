@@ -54,7 +54,7 @@ pub enum PresentationMode {
     Banner,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NotificationAction {
     pub id: String,
     pub label: String,

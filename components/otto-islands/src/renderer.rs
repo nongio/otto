@@ -1,4 +1,4 @@
-use crate::activity::Activity;
+use crate::activity::{Activity, NotificationAction};
 use otto_kit::desktop_entry::lookup_app;
 use otto_kit::icons::named_icon_sized;
 use otto_kit::protocols::otto_surface_style_v1::{BlendMode, ClipMode, ContentsGravity};
@@ -227,8 +227,30 @@ pub fn draw_card(canvas: &Canvas, activity: &Activity, group_icon: &str, w: f32,
     let title = truncate_text(&activity.title, &title_font, max_w);
     canvas.draw_str(&title, (text_x, pad + 13.0), &title_font, &title_paint);
 
-    // Body
-    if !activity.body.is_empty() {
+    // Body — or, when the notification has inline actions, a row of action
+    // buttons in the same slot (there isn't room for both in a 60px card).
+    if !activity.actions.is_empty() {
+        for (bx, by, bw, bh, _id, label) in action_button_rects(&activity.actions, text_x, max_w) {
+            let mut btn_bg = Paint::default();
+            btn_bg.set_anti_alias(true);
+            btn_bg.set_color(Color::from_argb(50, 255, 255, 255));
+            canvas.draw_rrect(
+                RRect::new_rect_xy(Rect::from_xywh(bx, by, bw, bh), bh / 2.0, bh / 2.0),
+                &btn_bg,
+            );
+
+            let btn_font = TextStyle {
+                family: "Inter",
+                weight: 600,
+                size: 10.0,
+            }
+            .font();
+            let mut btn_paint = Paint::default();
+            btn_paint.set_anti_alias(true);
+            btn_paint.set_color(Color::WHITE);
+            canvas.draw_str(&label, (bx + 8.0, by + bh - 5.0), &btn_font, &btn_paint);
+        }
+    } else if !activity.body.is_empty() {
         let body_font = TextStyle {
             family: "Inter",
             weight: 400,
@@ -364,6 +386,40 @@ fn draw_count_badge(canvas: &Canvas, x: f32, y: f32, count: usize) {
     paint.set_color(Color::WHITE);
     let (cw, _) = font.measure_str(&text, None);
     canvas.draw_str(&text, (x + (badge_w - cw) / 2.0, y + 11.0), &font, &paint);
+}
+
+/// Lay out a row of inline action-button chips starting at `(text_x, pad + 28.0)`,
+/// left to right, dropping any that don't fit within `max_w`. Returns
+/// `(x, y, w, h, action_id, label)` per button in card-local coordinates —
+/// shared by `draw_card` (drawing) and hit-testing (`main.rs`) so the two
+/// never disagree about where a button is.
+pub fn action_button_rects(
+    actions: &[NotificationAction],
+    text_x: f32,
+    max_w: f32,
+) -> Vec<(f32, f32, f32, f32, String, String)> {
+    const BTN_H: f32 = 18.0;
+    const GAP: f32 = 6.0;
+    let y = 10.0 + 28.0; // pad + 28.0, same row the body text would occupy
+    let font = TextStyle {
+        family: "Inter",
+        weight: 600,
+        size: 10.0,
+    }
+    .font();
+
+    let mut rects = Vec::new();
+    let mut x = text_x;
+    for action in actions {
+        let (tw, _) = font.measure_str(&action.label, None);
+        let bw = tw + 16.0;
+        if x + bw > text_x + max_w {
+            break;
+        }
+        rects.push((x, y, bw, BTN_H, action.id.clone(), action.label.clone()));
+        x += bw + GAP;
+    }
+    rects
 }
 
 fn truncate_text(text: &str, font: &skia_safe::Font, max_width: f32) -> String {

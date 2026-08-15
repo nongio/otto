@@ -75,6 +75,7 @@ struct CardContent {
     body: String,
     icon: String,
     time_label: String,
+    actions: Vec<crate::activity::NotificationAction>,
 }
 
 /// An island represents one group (notification app_id or music).
@@ -110,6 +111,9 @@ struct CardSurface {
     activity_id: u64,
     /// Last drawn card content — skip redraw when unchanged.
     last_content: Option<CardContent>,
+    /// Inline actions for this notification, cached for hit-testing without
+    /// locking state (kept in sync with the activity every layout pass).
+    actions: Vec<crate::activity::NotificationAction>,
 }
 
 /// A presented Access-style dialog panel (one subsurface, drawn as a whole).
@@ -648,6 +652,7 @@ impl IslandApp {
                         notif.icon.clone()
                     },
                     time_label: renderer::elapsed_label(notif.created_at),
+                    actions: notif.actions.clone(),
                 };
                 let existing = island.cards.iter().position(|c| c.activity_id == notif.id);
                 let is_new = existing.is_none();
@@ -679,10 +684,13 @@ impl IslandApp {
                         surface,
                         activity_id: notif.id,
                         last_content: Some(content.clone()),
+                        actions: notif.actions.clone(),
                     });
                     card_created = true;
                     island.cards.len() - 1
                 };
+
+                island.cards[cidx].actions = notif.actions.clone();
 
                 // Redraw only when the card's content actually changed.
                 if island.cards[cidx].last_content.as_ref() != Some(&content) {
@@ -904,9 +912,10 @@ impl IslandApp {
     // Hit testing
     // -----------------------------------------------------------------------
 
-    /// Returns (app_id, Option<activity_id>) for what's at (px, py).
-    /// activity_id is Some when a card is hit.
-    fn hit_test(&self, px: f32, py: f32) -> Option<(String, Option<u64>)> {
+    /// Returns (app_id, Option<activity_id>, Option<action_id>) for what's at
+    /// (px, py). activity_id is Some when a card is hit; action_id is Some
+    /// when the hit landed on one of the card's inline action buttons.
+    fn hit_test(&self, px: f32, py: f32) -> Option<(String, Option<u64>, Option<String>)> {
         for island in &self.islands {
             let (w, _h, cx, _cy) = island.last_layout;
             let pill_h = match island.mode {
@@ -934,14 +943,34 @@ impl IslandApp {
                         && py >= card_y
                         && py <= card_y + card_h
                     {
-                        return Some((island.app_id.clone(), Some(card.activity_id)));
+                        let action_id = if card.actions.is_empty() {
+                            None
+                        } else {
+                            let pad = 10.0;
+                            let icon_size = 24.0;
+                            let close_zone = 40.0;
+                            let text_x = pad + icon_size + 8.0;
+                            let max_w = card_w - text_x - close_zone;
+                            let local_x = px - card_x;
+                            let local_y = py - card_y;
+                            renderer::action_button_rects(&card.actions, text_x, max_w)
+                                .into_iter()
+                                .find(|(bx, by, bw, bh, _, _)| {
+                                    local_x >= *bx
+                                        && local_x <= *bx + *bw
+                                        && local_y >= *by
+                                        && local_y <= *by + *bh
+                                })
+                                .map(|(_, _, _, _, id, _)| id)
+                        };
+                        return Some((island.app_id.clone(), Some(card.activity_id), action_id));
                     }
                 }
             }
 
             // Hit test pill/circle.
             if px >= x && px <= x + pill_w && py >= y && py <= y + pill_h {
-                return Some((island.app_id.clone(), None));
+                return Some((island.app_id.clone(), None, None));
             }
         }
 
@@ -957,26 +986,29 @@ impl IslandApp {
         if self.handle_dialog_click(px, py) {
             return;
         }
-        let Some((app_id, card_id)) = self.hit_test(px, py) else {
+        let Some((app_id, card_id, action_id)) = self.hit_test(px, py) else {
             return;
         };
 
         if let Some(activity_id) = card_id {
             // Determine if the click is in the close zone (right 40px of card).
+            // An inline action button always wins over the close zone — the
+            // buttons live in the body row, well clear of it.
             let close_zone = 40.0_f32;
-            let is_close = self
-                .islands
-                .iter()
-                .find(|i| i.app_id == app_id)
-                .map(|island| {
-                    let pill_w = island.last_layout.0;
-                    let pill_cx = island.last_layout.2;
-                    let card_w = renderer::CARD_W;
-                    let pill_x = pill_cx - pill_w / 2.0;
-                    let card_x = pill_x + (pill_w - card_w) / 2.0;
-                    px - card_x > card_w - close_zone
-                })
-                .unwrap_or(false);
+            let is_close = action_id.is_none()
+                && self
+                    .islands
+                    .iter()
+                    .find(|i| i.app_id == app_id)
+                    .map(|island| {
+                        let pill_w = island.last_layout.0;
+                        let pill_cx = island.last_layout.2;
+                        let card_w = renderer::CARD_W;
+                        let pill_x = pill_cx - pill_w / 2.0;
+                        let card_x = pill_x + (pill_w - card_w) / 2.0;
+                        px - card_x > card_w - close_zone
+                    })
+                    .unwrap_or(false);
 
             // Clicked a card — animate dismiss (scale up + fade out), then remove.
             if let Some(island) = self.islands.iter().find(|i| i.app_id == app_id) {
@@ -1010,11 +1042,15 @@ impl IslandApp {
             drop(state);
 
             if !is_close {
-                // Action click — focus the app and emit ActionInvoked.
+                // Action click — focus the app and emit ActionInvoked. A hit on
+                // a specific inline action button reports that action's id;
+                // otherwise (click on the card body) it's the default action.
                 request_focus_app(app_id.clone());
 
                 if let Some(nid) = notification_id {
-                    let action_key = default_action.as_deref().unwrap_or("default").to_string();
+                    let action_key = action_id
+                        .or(default_action)
+                        .unwrap_or_else(|| "default".to_string());
                     emit_action_invoked(nid, action_key);
                 }
             }
@@ -1430,7 +1466,7 @@ impl App for IslandApp {
                 PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
                     let (px, py) = event.position;
                     let hit = self.hit_test(px as f32, py as f32);
-                    let new_hovered = hit.as_ref().map(|(app_id, _)| app_id.clone());
+                    let new_hovered = hit.as_ref().map(|(app_id, _, _)| app_id.clone());
                     if new_hovered != self.hovered_app {
                         let old = &self.hovered_app;
                         // Relayout when a Mini or Compact island gains/loses hover (for grow effect).
