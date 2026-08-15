@@ -423,22 +423,13 @@ impl IslandApp {
         let total_w: f32 =
             group_widths.iter().sum::<f32>() + (group_widths.len().saturating_sub(1)) as f32 * GAP;
 
-        // The row is centred on its *resting* width — every bubble mini, every
-        // deck at peek spacing — not on its current one. That pins the left
-        // edge, so growing an island pushes the islands to its right along
-        // instead of sliding the whole row back into centre under the pointer.
-        let resting_w: f32 = groups
-            .iter()
-            .map(|members| {
-                let depth = members.len().min(renderer::MAX_STACK);
-                (depth - 1) as f32 * renderer::PEEK_STEP + MINI_H
-            })
-            .sum::<f32>()
-            + (groups.len().saturating_sub(1)) as f32 * GAP;
-
-        let base_layer_w = (resting_w + 40.0).max(LAYER_W as f32);
-        let mut group_x = ((base_layer_w - resting_w) / 2.0).max(0.0);
-        self.last_content_width = base_layer_w.max(group_x + total_w + 20.0);
+        // The row stays centred on its current width, so an island growing
+        // spreads in both directions: its neighbours to the left are pushed
+        // left and those to the right are pushed right, half the growth each
+        // way. The layer itself keeps a fixed generous width so the surface
+        // origin doesn't shift underneath and cancel the effect.
+        self.last_content_width = (total_w + 40.0).max(LAYER_W as f32);
+        let mut group_x = ((self.last_content_width - total_w) / 2.0).max(0.0);
 
         let mut targets: Vec<(usize, f32, f32, f32, f32)> = Vec::new();
         for (gi, placed) in placements.iter().enumerate() {
