@@ -31,7 +31,7 @@ use crate::state::{IslandState, SharedState};
 // ---------------------------------------------------------------------------
 
 const LAYER_W: u32 = 800;
-const LAYER_H: u32 = 400; // Tall enough for pill + MAX_VISIBLE_CARDS cards.
+const LAYER_H: u32 = 400; // Tall enough for an open notification.
 const BAR_HEIGHT: f32 = 36.0;
 const GAP: f32 = 6.0;
 /// Top edge of a dialog panel, dropped down just below the island bar.
@@ -46,7 +46,7 @@ const CARD_ICON: f32 = 24.0;
 const CARD_CLOSE_ZONE: f32 = 40.0;
 
 // ---------------------------------------------------------------------------
-// Island — one notification group or music activity
+// Island — one notification
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,7 +120,7 @@ struct IslandApp {
     surfaces_ready: bool,
     /// Which island (by notification id) is currently focused (Compact/Expanded).
     focused_island: Option<u64>,
-    /// Which island the pointer is over (drives the hover grow).
+    /// Which island the pointer is over — it grows to the peek size.
     hovered_island: Option<u64>,
     /// Which group (by app_id) the pointer is over — that stack fans out.
     hovered_app: Option<String>,
@@ -282,7 +282,11 @@ impl IslandApp {
         for island in &mut self.islands {
             if island.mode == IslandMode::Expanded {
                 // Only user interaction (click / focus loss) closes it.
-            } else if Some(island.activity_id) == self.focused_island {
+            } else if Some(island.activity_id) == self.focused_island
+                || Some(island.activity_id) == self.hovered_island
+            {
+                // Hovering a mini bubble grows it to the peek size, so you can
+                // read what it is before deciding to open it.
                 island.mode = IslandMode::Compact;
             } else if island.peek_until.is_some() {
                 island.mode = IslandMode::Compact;
@@ -301,9 +305,10 @@ impl IslandApp {
     /// Islands grouped by app, front-to-back within each group.
     ///
     /// Groups are ordered by their oldest notification so a group keeps its
-    /// place in the row as notifications come and go. Within a group the
-    /// focused island is pulled to the front, then newest first — the front
-    /// island is the one on top of the stack and the one a click lands on.
+    /// place in the row as notifications come and go. Within a group it is
+    /// always newest-first: focusing or hovering an island grows it where it
+    /// stands rather than pulling it to the front, so the deck never
+    /// reshuffles under the pointer.
     fn group_order(&self) -> Vec<Vec<usize>> {
         let mut groups: Vec<(std::time::Instant, String, Vec<usize>)> = Vec::new();
         for (idx, island) in self.islands.iter().enumerate() {
@@ -317,16 +322,10 @@ impl IslandApp {
         }
         groups.sort_by_key(|(oldest, _, _)| *oldest);
 
-        let focused = self.focused_island;
         groups
             .into_iter()
             .map(|(_, _, mut members)| {
-                members.sort_by_key(|&i| {
-                    let island = &self.islands[i];
-                    let is_focused = Some(island.activity_id) == focused;
-                    // Focused first, then newest first.
-                    (!is_focused, std::cmp::Reverse(island.created_at))
-                });
+                members.sort_by_key(|&i| std::cmp::Reverse(self.islands[i].created_at));
                 members
             })
             .collect()
@@ -368,25 +367,17 @@ impl IslandApp {
             let mut sizes: Vec<(usize, f32, f32)> = Vec::new();
             for &idx in members {
                 let island = &self.islands[idx];
-                let hovered = self.hovered_island == Some(island.activity_id);
-                let grow = if hovered && island.mode != IslandMode::Expanded {
-                    renderer::HOVER_GROW
-                } else {
-                    0.0
-                };
                 let (w, h) = match island.mode {
-                    IslandMode::Mini => (MINI_H + grow, MINI_H + grow),
-                    IslandMode::Compact => (
-                        renderer::pill_width(&title_of(island)) + grow,
-                        COMPACT_H + grow,
-                    ),
+                    IslandMode::Mini => (MINI_H, MINI_H),
+                    IslandMode::Compact => (renderer::pill_width(&title_of(island)), COMPACT_H),
                     IslandMode::Expanded => (renderer::CARD_W, renderer::CARD_H),
                 };
                 sizes.push((idx, w, h));
             }
 
-            // An expanded island leaves the stack and takes its own slot on
-            // the left; whatever is left of the group stacks to its right.
+            // An expanded island leaves the stack and takes its own slot. The
+            // rest of the group — the train — trails off to its left, so the
+            // open notification stays at the right-hand front of its group.
             let expanded: Vec<&(usize, f32, f32)> = sizes
                 .iter()
                 .filter(|(i, _, _)| self.islands[*i].mode == IslandMode::Expanded)
@@ -399,13 +390,8 @@ impl IslandApp {
             let mut placed: Vec<(usize, f32, f32, f32)> = Vec::new();
             let mut cursor = 0.0_f32;
             let mut group_w = 0.0_f32;
-            for &&(idx, w, h) in &expanded {
-                placed.push((idx, cursor, w, h));
-                group_w = group_w.max(cursor + w);
-                cursor += w + GAP;
-            }
 
-            if !stacked.is_empty() {
+            if let Some(&&(_, front_w, _)) = stacked.first() {
                 // Depth of the visible deck; anything deeper piles up at the
                 // back so a huge group can't stretch the row.
                 let depth = stacked.len().min(renderer::MAX_STACK);
@@ -418,6 +404,13 @@ impl IslandApp {
                     placed.push((idx, offset, w, h));
                     group_w = group_w.max(offset + w);
                 }
+                cursor += back_span + front_w + GAP;
+            }
+
+            for &&(idx, w, h) in &expanded {
+                placed.push((idx, cursor, w, h));
+                group_w = group_w.max(cursor + w);
+                cursor += w + GAP;
             }
 
             group_widths.push(group_w);
