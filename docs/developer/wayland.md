@@ -1,83 +1,91 @@
 ## Wayland protocols
 
-Otto follows Smithay’s “one big compositor state” architecture: most Wayland protocol state and handlers hang off a single struct, `Otto<BackendData>`. If you’re new to the codebase, learning where that struct is initialized and how Smithay routes protocol requests into it will make everything else easier to navigate.
+Otto follows Smithay's "one big compositor state" architecture: nearly all
+protocol state and every handler hangs off a single struct, `Otto<BackendData>`.
+Learning where that struct is built, and how Smithay routes requests into it,
+makes the rest of the codebase navigable.
 
-### The big state variable: `Otto<BackendData>`
+### The big state: `Otto<BackendData>`
 
-`Otto<BackendData>` lives in `src/state/mod.rs` and contains:
+`Otto<BackendData>` lives in `src/state/mod.rs` and holds:
 
-- High-level compositor state (workspaces, popups, input state, the scene graph, etc.)
-- Smithay protocol state objects (e.g. `CompositorState`, `XdgShellState`, `WlrLayerShellState`, `PresentationState`, `ShmState`, …)
-- Backend-specific data (`BackendData`) for rendering + outputs
+- High-level compositor state — workspaces, popups, input state, the scene graph
+- Smithay protocol state objects — `CompositorState`, `XdgShellState`,
+  `WlrLayerShellState`, `PresentationState`, `ShmState`, …
+- Backend-specific data (`BackendData`) for rendering and outputs
 
-When you see code like `self.xdg_shell_state` or `self.shm_state`, that is one of these Smithay protocol state objects stored directly inside `Otto`.
+So `self.xdg_shell_state` or `self.shm_state` is one of those Smithay objects
+stored directly inside `Otto`. There is no separate protocol layer to look for.
 
-### Where it gets initialized
+### Where it is initialized
 
-Most Wayland globals/state objects are created in `Otto::init(...)` in `src/state/mod.rs`:
+Most globals are created in `Otto::init(...)` in `src/state/mod.rs`:
 
-- The Wayland socket/client dispatch source is installed into calloop.
-- Smithay protocol states are constructed (e.g. `CompositorState::new`, `XdgShellState::new`, `PresentationState::new`, etc.).
-- Capability-gated globals are conditionally created based on backend capabilities.
+- The Wayland socket and client dispatch source are installed into calloop.
+- Smithay protocol states are constructed (`CompositorState::new`,
+  `XdgShellState::new`, `PresentationState::new`, …).
+- Capability-gated globals are created conditionally, based on what the backend
+  can actually do.
 
-Backends may also create backend-specific globals in their entrypoints (for example `zwp_linux_dmabuf_v1` is created per backend).
+Backends create their own globals in their entrypoints — most notably
+`zwp_linux_dmabuf_v1`, which is per backend.
 
-### How Smithay “delegation” works here
+### How delegation works
 
-Most Smithay protocols are wired via `delegate_*` macros. The pattern is:
+Smithay protocols are wired with `delegate_*` macros. The pattern is always
+the same three pieces:
 
-1. Otto stores a Smithay protocol state object (e.g. `xdg_shell_state: XdgShellState`).
-2. Otto implements the corresponding Smithay `*Handler` trait (e.g. `XdgShellHandler for Otto<BackendData>`).
-3. A `delegate_*` macro is invoked for `Otto<BackendData>` (often in `src/state/mod.rs`, sometimes in a dedicated handler module under `src/state/`).
+1. Otto stores the protocol state object (`xdg_shell_state: XdgShellState`).
+2. Otto implements the matching handler trait
+   (`impl XdgShellHandler for Otto<BackendData>`).
+3. A `delegate_*` macro is invoked for `Otto<BackendData>`.
 
-The `delegate_*` macro generates the dispatch glue so incoming Wayland requests for that global get forwarded into your `*Handler` trait impl.
+The macro generates the dispatch glue, so requests arriving for that global end
+up in your handler impl.
 
-### “I’m looking for protocol X”: a practical search recipe
+### Finding a protocol
 
-When you need to find where a protocol is implemented, this workflow is usually fastest:
+When you need to know where protocol X is implemented:
 
-1. Search for the delegate macro:
-   - Example patterns: `delegate_xdg_shell!`, `delegate_layer_shell!`, `delegate_presentation!`, `delegate_data_device!`, …
-2. Find the handler trait impl for `Otto<...>`:
-   - Example patterns: `impl<BackendData: Backend> XdgShellHandler for Otto<BackendData>`
-3. Find where the protocol state is constructed:
-   - Usually in `Otto::init(...)` in `src/state/mod.rs`.
-   - Backend-specific globals (notably dmabuf) are in `src/udev.rs`, `src/winit.rs`, `src/x11.rs`.
+1. **Grep for the delegate macro** — `delegate_xdg_shell!`,
+   `delegate_layer_shell!`, `delegate_presentation!`, …
+2. **Find the handler impl** — `impl<BackendData: Backend> XdgShellHandler for Otto<BackendData>`
+3. **Find where the state is constructed** — usually `Otto::init(...)` in
+   `src/state/mod.rs`; backend-specific globals (dmabuf) live in `src/udev/`,
+   `src/winit.rs`, `src/x11.rs`.
 
-In Otto specifically, protocol *handlers* are split roughly like this:
+Handlers are split roughly like this:
 
-- `src/state/*.rs`: “core” protocol handlers and delegate glue (seat, selection, input-method, fractional-scale, foreign toplevel, etc.)
-- `src/shell/*.rs`: XDG shell, layer-shell, and surface commit plumbing
-- `src/{udev,winit,x11}.rs`: backend-specific globals and backend-specific handler impls
+- `src/state/*.rs` — core protocol handlers and delegate glue (seat, selection,
+  input method, fractional scale, foreign toplevel, session lock, screencopy, …)
+- `src/shell/*.rs` — xdg-shell, layer-shell, XWayland, and surface commit plumbing
+- `src/{udev,winit,x11}.rs` — backend-specific globals and handler impls
 
-### Common protocol entrypoints (where to start looking)
+### Common entrypoints
 
-This is a non-exhaustive map of common protocols to the place you’ll usually land first:
+| Protocol | Handler | State + delegation |
+|----------|---------|--------------------|
+| `wl_compositor` / commits | `CompositorHandler` in `src/shell/mod.rs` | `src/state/mod.rs` |
+| `xdg_wm_base` | `XdgShellHandler` in `src/shell/xdg.rs` | `src/state/mod.rs` |
+| `zwlr_layer_shell_v1` | `WlrLayerShellHandler` in `src/shell/mod.rs` | `src/state/mod.rs` |
+| `wl_seat` | `src/state/seat_handler.rs` | seat wiring in `Otto::init` |
+| `wl_data_device_manager` | `src/state/data_device_handler.rs` | |
+| primary selection, data control | `src/state/selection_handler.rs` | |
+| `wp_presentation` | feedback emitted in `post_repaint` / `take_presentation_feedback` | `src/state/mod.rs` |
+| `zwp_linux_dmabuf_v1` | `impl DmabufHandler` per backend | `src/udev/`, `src/winit.rs`, `src/x11.rs` |
+| `ext_session_lock_v1` | `src/state/session_lock_handler.rs`, `src/lock.rs` | |
+| `zwlr_screencopy_manager_v1` | `src/state/screencopy.rs` | |
+| foreign toplevel (both protocols) | `src/state/foreign_toplevel_list_handler.rs`, `src/state/wlr_foreign_toplevel.rs` | see [foreign-toplevel.md](foreign-toplevel.md) |
 
-- `wl_compositor` / surface commits
-  - Handler: `CompositorHandler for Otto<BackendData>` in `src/shell/mod.rs`
-  - State creation + delegation: `src/state/mod.rs` (`CompositorState::new`, `delegate_compositor!`)
+### Otto's own protocols
 
-- `xdg_wm_base` (XDG shell)
-  - Handler: `XdgShellHandler for Otto<BackendData>` in `src/shell/xdg.rs`
-  - Delegation: `src/state/mod.rs` (`delegate_xdg_shell!`)
+Three protocols are Otto-specific. Their XML lives in `protocols/`:
 
-- `wlr_layer_shell_v1`
-  - Handler: `WlrLayerShellHandler for Otto<BackendData>` in `src/shell/mod.rs`
-  - Delegation: `src/state/mod.rs` (`delegate_layer_shell!`)
-  - Otto custom protocol lives separately under `src/sc_layer_shell/`.
+| Protocol | Implementation | What it does |
+|----------|----------------|--------------|
+| `otto-surface-style-unstable-v1` | `src/surface_style/` | Lets a client style and animate its own surface through the compositor's scene graph — corner radius, shadow, opacity, transforms, batched in transactions. See [sc-layer-protocol-design.md](sc-layer-protocol-design.md) for the design history. |
+| `otto-dock-v1` | `src/otto_dock/` | Lets a client contribute items to the compositor-drawn dock |
+| `wlr-gamma-control-unstable-v1` | `src/state/gamma_control.rs` | Gamma ramps, used for night shift |
 
-- `wl_seat` (input)
-  - Handler/delegation: `src/state/seat_handler.rs` + `delegate_seat!`
-  - Seat creation and wiring happen during initialization in `src/state/mod.rs`.
-
-- Clipboard/selection
-  - `wl_data_device_manager`: `src/state/data_device_handler.rs` (+ `delegate_data_device!`)
-  - primary selection + data control: `src/state/selection_handler.rs` (+ `delegate_primary_selection!`, `delegate_data_control!`)
-
-- Presentation timing
-  - State creation + delegation: `src/state/mod.rs` (`PresentationState::new`, `delegate_presentation!`)
-  - Presentation feedback is emitted after rendering (see `post_repaint` / `take_presentation_feedback` in `src/state/mod.rs`, and backend render loops).
-
-- `zwp_linux_dmabuf_v1`
-  - Implemented per backend: see `impl DmabufHandler for Otto<...>` in `src/udev.rs`, `src/winit.rs`, and `src/x11.rs`.
+`protocols/sc-layer-v1.xml` is the ancestor of `otto-surface-style` and is no
+longer implemented; only stale comments still say `sc_layer`.

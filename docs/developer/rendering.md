@@ -1,84 +1,100 @@
-## Rendering pipeline overview
+## Rendering pipeline
 
-This document explains (at a high level) how Otto renders frames, starting from the underlying architecture and ending with the practical “where do I hook in?” points.
+This document explains how Otto gets from "some state changed" to "pixels on a
+display", and where you would hook into that.
 
-If you want to follow the code while reading:
-- Element building / composition: `src/render.rs`
-- Skia wrapper over Smithay GL renderer: `src/skia_renderer.rs`
-- DRM/udev backend and frame submission: `src/udev.rs`
-- winit backend (dev path): `src/winit.rs`
+Files to follow along with:
 
-If you are new to this codebase, a good reading order is:
-1. Skim “Rendering architecture” for the mental model.
-2. Read “Frame flow” to understand the per-frame execution.
-3. Jump to “Screenshare integration points” if you are working on capture/streaming.
+- `src/render.rs` — builds the element list for each output
+- `src/skia_renderer.rs` — the Skia wrapper over Smithay's GL renderer
+- `src/render_elements/scene_element.rs` — the element that draws the scene graph
+- `src/udev/render.rs` — the DRM frame path (the real one)
+- `src/winit.rs` — the windowed dev path
 
-### Rendering architecture (layered mental model)
+### The mental model
 
-Think of Otto rendering as a few layers stacked on top of each other:
+Otto is a **retained-mode** compositor wearing an immediate-mode compositor's
+clothes.
 
-1. **Smithay provides the backend plumbing**
+Smithay expects a list of *render elements* per frame: "draw this texture at
+this rect, it damaged these regions". That is an immediate-mode API. Otto
+satisfies it, but almost all of Otto's UI — windows, the dock, exposé, the app
+switcher, shadows, blur, every animation — lives in a single retained tree
+managed by `lay-rs`, and is handed to Smithay as **one element**, the
+`SceneElement`.
 
-   - Smithay owns the low-level rendering machinery (a `GlesRenderer`) and the output infrastructure.
-   - Conceptually, Smithay renders “into a buffer” that will later be presented on screen.
+The analogy: think of the scene graph as a document, and the frame as printing
+it. `src/workspaces/` spends its time editing the document — moving a layer,
+changing an opacity, starting an animation. It never prints. Once a frame, the
+printer asks the document what changed, and re-inks only those parts of the
+page.
 
-2. **The backend decides what “buffer” means**
+That is why so little of Otto looks like drawing code, and why "why is this not
+updating?" is nearly always a damage question rather than a drawing question.
 
-   - On **winit**, the “output” is a window inside another compositor; the buffer is presented to that host window.
-   - On **udev/DRM**, the “output” is a real connector/CRTC/plane pipeline; buffers are submitted to KMS.
+### The layers underneath
 
-3. **Otto wraps Smithay GL with Skia**
+1. **Smithay owns the plumbing** — a `GlesRenderer`, the output abstraction,
+   swapchains, and the damage tracker. Conceptually it renders into a buffer
+   that someone will later present.
 
-   - Otto’s renderer uses Smithay’s `GlesRenderer` internally.
-   - It wraps the current EGL framebuffer (from the GL context) into a Skia surface.
-   - Otto then uses a Skia canvas to draw.
+2. **The backend decides what a buffer is.**
+   - *winit*: the output is a window inside another compositor; the buffer is
+     presented into that host window.
+   - *udev/DRM*: the output is a real connector/CRTC/plane pipeline; buffers
+     are submitted to KMS.
 
-4. **Otto draws mostly via a retained scene graph (`lay-rs`)**
+3. **Otto wraps Smithay's GL with Skia.** `SkiaRenderer` takes the current EGL
+   framebuffer, wraps it as a Skia surface, and draws into that canvas. So
+   everything Otto paints is Skia, but the buffer management is Smithay's.
 
-   - The UI/scene is built as a retained scene graph managed by `lay-rs`.
-   - In rendering terms, one of the output render elements is a `SceneElement`, which encapsulates “all our graphics”.
+4. **Otto draws through the scene graph.** `lay-rs` owns the tree and its
+   Taffy-based layout; `SceneElement` is the bridge into Smithay's element
+   list.
 
-### Key pieces (what lives where)
+### Frame flow
 
-- **Backend**: udev/DRM+GBM+EGL (primary), plus optional winit/x11 paths.
-- **Buffers & presentation**: handled by Smithay + the backend (winit presents into a host window; udev submits to DRM/KMS).
-- **Renderer**: Smithay `GlesRenderer` wrapped by Skia (`src/skia_renderer.rs`). This draws, imports dmabufs, and manages textures/surfaces.
-- **Elements**: `src/render.rs` produces `OutputRenderElements` per output; it includes a `SceneElement` (from `src/render_elements/scene_element.rs`) that renders the `lay-rs` scene.
-- **Damage tracking**: `smithay::backend::renderer::damage::OutputDamageTracker` is used per output so only damaged regions are rendered.
+![Render pipeline](diagrams/render-pipeline.svg)
 
-### Backends in practice (winit vs udev)
+1. **Build elements** (`src/render.rs`) — one `OutputRenderElements` list per
+   output: the `SceneElement`, plus cursor and drag-and-drop surfaces, plus any
+   debug overlays.
+2. **Hand them to `OutputDamageTracker`** — Smithay intersects each element's
+   damage with the age of the buffer about to be drawn into, and produces the
+   set of rects that actually need repainting. If that set is empty, the frame
+   is skipped entirely.
+3. **Render the damaged regions** — Smithay drives the pass; `SkiaRenderer`
+   wraps the framebuffer and the `SceneElement` paints the scene into it.
+4. **Present** — the backend submits the buffer (a KMS atomic commit, or a host
+   window swap).
 
-- **winit backend**
+On udev this is not the whole story: Otto also splits the scene into several
+scanout-capable buffers so the display hardware can composite them without the
+GPU. See [DRM Planes](drm_plane.md).
 
-  - Best for development.
-  - Output is a regular window; there is no hardware cursor plane.
-  - The cursor is rendered as part of normal composition.
-  - Does not offer all the functionalities of the udev/DRM path (no real outputs, no DMAbuffer, no screensharing).
-  - no touch gestures support.
+### Backends in practice
 
-- **udev/DRM backend**
+**winit** — best for day-to-day development. The output is a regular window.
+There is no hardware cursor plane, so the cursor is composited normally. It
+does *not* offer real outputs, dmabuf import, hardware planes, or the
+screenshare frame path, so anything touching those has to be tested on udev.
+Touch gestures are unsupported.
 
-  - Production/bare-metal path.
-  - Smithay/DRM manages connectors/CRTCs/planes, swapchains, and submission.
-  - The cursor is handled through Smithay so it can be optimized (including being placed on a dedicated DRM plane when available).
+**udev/DRM** — the production path. Smithay manages connectors, CRTCs, planes,
+swapchains and submission. The cursor can be promoted to its own DRM plane;
+parts of the scene can be promoted to overlay planes.
 
-### Frame flow (common path)
+**x11** — Otto as an X11 client. Basic and not actively maintained.
 
-At a high level, rendering a frame looks like:
+### Getting frames out
 
-1. Build the list of renderable elements for each output (`OutputRenderElements` in `src/render.rs`).
-   - This includes the `SceneElement` which renders the `lay-rs` scene graph.
-2. Hand those elements to Smithay’s `OutputDamageTracker`.
-3. Smithay drives the render pass for damaged regions.
-   - Otto’s `SkiaRenderer` uses Smithay’s GL renderer under the hood.
-   - The current framebuffer is wrapped into a Skia surface, and Otto renders the scene (via `SceneElement`) into the Skia canvas.
-4. The backend presents the resulting buffer.
+Two independent capture paths exist, and they share one GPU blit:
 
-### Screenshare integration points
+- **PipeWire screenshare**, used by the portal — after a successful render on
+  udev, Otto blits the framebuffer into a PipeWire-provided DMA-BUF and queues
+  it. Window streams take a different route and re-render the window's own
+  surface tree.
+- **`zwlr_screencopy_v1`**, used by `grim`, `wf-recorder` and `wl-mirror` —
+  dmabuf clients ride the same blit; SHM clients pay a CPU readback.
 
-**Screenshar is available only in udev backend**
-
-After a successful normal render, the udev render loop blits a compositor Output (Screen) buffer into PipeWire-provided buffers.
-
-   - This happens in `src/udev.rs` in `render_surface(...)`: when `outcome.rendered && !screenshare_sessions.is_empty()`, Otto dequeues an available PipeWire buffer and calls `crate::screenshare::fullscreen_to_dmabuf(...)`, then triggers `PipeWireStream` to queue the buffer.
-   - Damage is forwarded when possible; the first frame (or buffer changes) forces a full-frame blit.
+Both are described in [Screen Sharing](screenshare.md).

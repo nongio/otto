@@ -6,6 +6,13 @@ input is injected back into the compositor, targeted at that output. With an
 `interactive = true` virtual output this behaves like a remote-accessible
 extra screen.
 
+The design principle worth noting: **the compositor knows nothing about RDP.**
+A virtual output is just an output that has no physical connector; Otto renders
+it and publishes it as a PipeWire node exactly like any other. `otto-rdp` is an
+ordinary client that consumes that node and injects input back through standard
+virtual-pointer and virtual-keyboard protocols. Any other remote-display
+protocol could be added the same way, without touching `src/`.
+
 ## Architecture
 
 ```
@@ -40,11 +47,15 @@ Three subsystems, one per module:
   deliberately *not* a per-keystroke keymap swap — swapping races the client
   applying the new keymap and yields the wrong character.
 
-## Compositor-side support (two fixes on this branch)
+## Compositor-side support
 
-**Virtual-pointer output binding.** `create_virtual_pointer_with_output` now
-stores the bound output and `motion_absolute` maps normalized coordinates
-into **that** output's global geometry (`src/state/virtual_pointer.rs`).
+Two compositor fixes were needed to make this work. Both have landed; they are
+recorded here because they affect every synthesized-input consumer, not just
+this bridge.
+
+**Virtual-pointer output binding.** `create_virtual_pointer_with_output` stores
+the bound output, and `motion_absolute` maps normalized coordinates into
+**that** output's global geometry (`src/state/virtual_pointer.rs`).
 Previously the output argument was ignored and absolute motion always mapped
 to the first output, so the bridge could not aim input at the virtual screen.
 

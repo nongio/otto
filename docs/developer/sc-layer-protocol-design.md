@@ -1,399 +1,145 @@
-# Screen Composer Layer Protocol Design
+# Surface Style Protocol — design and history
 
-## Overview
+> **Status: superseded.** This document was the design exploration for a
+> client-facing animation protocol, originally sketched as `sc_layer_shell`.
+> What shipped is **`otto-surface-style-unstable-v1`**:
+> XML in [`protocols/otto-surface-style-unstable-v1.xml`](../../protocols/otto-surface-style-unstable-v1.xml),
+> implementation in `src/surface_style/`. The XML is the authority for the
+> current interface; this page explains *why* it looks the way it does.
+> `protocols/sc-layer-v1.xml` is the dead ancestor — only stale code comments
+> still say `sc_layer`.
 
-The `sc_layer_shell` protocol provides Wayland clients with powerful animation and compositing capabilities by exposing the lay-rs engine's features. This allows clients to create rich, GPU-accelerated UIs with declarative animations that run entirely on the compositor.
+## The idea
 
-## Design Philosophy
+Otto already runs a full animation engine, `lay-rs`, on the compositor side:
+springs, bezier timing, transforms, shadows, blur, batched transactions. Every
+Wayland client sitting next to it has to reimplement all of that itself, in its
+own process, and then push the result across the socket one buffer at a time.
 
-### Core Principles
+The protocol hands the engine to clients. A client says *"move to (100, 200)
+and fade to 0.5, over 300 ms, ease-out"* and stops thinking about it. The
+compositor runs the animation at display refresh, on the GPU, whether or not
+the client is scheduled.
 
-1. **Declarative API**: Clients declare what they want (end state + timing), compositor handles execution
-2. **Transaction-based**: Group property changes that should animate together
-3. **Server-side Animation**: All animation runs on the compositor, reducing IPC overhead
-4. **Implicit Animations**: Property changes automatically animate when inside a transaction
-5. **Spring Physics**: Natural, interruptible animations using spring dynamics
+The analogy is CSS transitions versus animating with `setInterval`. You are not
+describing each frame; you are describing the destination and the feel, and
+something below you handles the frames. That comparison is not accidental —
+the model is Core Animation's, and several names (`contents_gravity`,
+`anchor_point`, `masks_to_bounds`) come straight from it.
 
-### Protocol Architecture
+## Design principles
 
-| Client API | Compositor State | lay-rs Backend |
-|------------|------------------|----------------|
-| sc_layer_surface_v1 | ScLayerSurface | Layer |
-| sc_transaction_v1 | PendingTransaction | TransactionRef |
-| sc_timing_function_v1 | TimingFunctionState | TimingFunction |
-| - | Spring configuration | Spring |
+1. **Declarative.** Clients state the end state and the timing; the compositor
+   executes.
+2. **Transaction-based.** Property changes are grouped so they animate together
+   and land atomically.
+3. **Server-side.** Animation state lives in the compositor. No per-frame IPC,
+   and a busy or blocked client does not stutter its own animation.
+4. **Implicit.** Changes made inside a transaction animate by default.
+5. **Spring physics.** Springs are interruptible mid-flight with the current
+   velocity carried over, which is what makes gesture-driven motion feel right.
 
-## Recommended Protocol Structure
+## How it maps
 
-### 1. Transaction-Based Model
+| Client object | Compositor state | lay-rs |
+|---------------|------------------|--------|
+| `otto_surface_style_v1` | `SurfaceStyle` | `Layer` |
+| `otto_style_transaction_v1` | `StyleTransaction` | `TransactionRef` |
+| `otto_timing_function_v1` | timing function state | `TimingFunction` / `Spring` |
 
-Property changes are grouped into transactions that execute atomically:
+## What shipped
 
-```xml
-<interface name="sc_transaction_v1" version="1">
-  <description>
-    A transaction groups property changes that should animate together.
-    Changes made within a transaction are batched and applied atomically.
-  </description>
-  
-  <request name="begin">
-    <description>Begin a new transaction context</description>
-  </request>
-  
-  <request name="commit">
-    <description>Commit all pending changes and start animations</description>
-  </request>
-  
-  <request name="set_duration">
-    <arg name="duration" type="fixed" summary="animation duration in seconds"/>
-  </request>
-  
-  <request name="set_timing_function">
-    <arg name="timing" type="object" interface="sc_timing_function_v1"/>
-  </request>
-  
-  <request name="set_completion_callback">
-    <description>Request notification when transaction completes</description>
-  </request>
-  
-  <event name="completed">
-    <description>Fired when transaction animation completes</description>
-  </event>
-</interface>
-```
+Four interfaces, all in the XML:
 
-### 2. Timing Functions (Aligned with lay-rs)
+**`otto_surface_style_manager_v1`** — the global. `get_surface_style` attaches
+a style object to a `wl_surface`; `begin_transaction` and
+`create_timing_function` make the other two.
 
-```xml
-<interface name="sc_timing_function_v1" version="1">
-  <enum name="preset">
-    <entry name="linear" value="0"/>
-    <entry name="ease_in" value="1"/>
-    <entry name="ease_out" value="2"/>
-    <entry name="ease_in_out" value="3"/>
-  </enum>
-  
-  <request name="set_bezier">
-    <description>Custom cubic bezier curve</description>
-    <arg name="c1x" type="fixed"/>
-    <arg name="c1y" type="fixed"/>
-    <arg name="c2x" type="fixed"/>
-    <arg name="c2y" type="fixed"/>
-  </request>
-  
-  <request name="set_preset">
-    <arg name="preset" type="uint" enum="preset"/>
-  </request>
-  
-  <request name="set_spring">
-    <description>Spring-based timing with natural physics</description>
-    <arg name="duration" type="fixed" summary="approximate duration"/>
-    <arg name="bounce" type="fixed" summary="bounciness factor (0.0-1.0)"/>
-    <arg name="velocity" type="fixed" summary="initial velocity (optional)"/>
-  </request>
-</interface>
-```
+**`otto_surface_style_v1`** — the properties. Geometry: `set_position`,
+`set_z_position`, `set_size`, `set_scale`, `set_rotation`, `set_anchor_point`,
+`set_transform`. Appearance: `set_opacity`, `set_background_color`,
+`set_corner_radius`, `set_border`, `set_shadow`, `set_blend_mode`.
+Layout and clipping: `set_hidden`, `set_masks_to_bounds`,
+`set_contents_gravity` (how the surface buffer fills the layer — resize,
+aspect-fit, aspect-fill), `set_z_order` (whether the style renders above or
+below the surface's own content). Plus `cancel_animation` and
+`cancel_all_animations`.
 
-### 3. Enhanced Layer Surface Properties
+**`otto_style_transaction_v1`** — `set_duration`, `set_delay`,
+`set_timing_function`, `enable_completion_event`, `commit`, and a `completed`
+event.
 
-```xml
-<interface name="sc_layer_surface_v1" version="1">
-  <!-- Transform Properties (Animatable) -->
-  <request name="set_position">
-    <arg name="x" type="fixed"/>
-    <arg name="y" type="fixed"/>
-  </request>
-  
-  <request name="set_scale">
-    <arg name="x" type="fixed"/>
-    <arg name="y" type="fixed"/>
-  </request>
-  
-  <request name="set_rotation">
-    <description>Rotation in radians</description>
-    <arg name="angle" type="fixed"/>
-  </request>
-  
-  <request name="set_anchor_point">
-    <description>Transform origin point (0.0-1.0 normalized)</description>
-    <arg name="x" type="fixed"/>
-    <arg name="y" type="fixed"/>
-  </request>
-  
-  <!-- Appearance Properties (Animatable) -->
-  <request name="set_opacity">
-    <arg name="opacity" type="fixed" summary="0.0 to 1.0"/>
-  </request>
-  
-  <request name="set_corner_radius">
-    <arg name="radius" type="fixed"/>
-  </request>
-  
-  <request name="set_background_color">
-    <arg name="red" type="fixed" summary="0.0 to 1.0"/>
-    <arg name="green" type="fixed" summary="0.0 to 1.0"/>
-    <arg name="blue" type="fixed" summary="0.0 to 1.0"/>
-    <arg name="alpha" type="fixed" summary="0.0 to 1.0"/>
-  </request>
-  
-  <!-- Border Properties -->
-  <request name="set_border">
-    <arg name="width" type="fixed"/>
-    <arg name="red" type="fixed"/>
-    <arg name="green" type="fixed"/>
-    <arg name="blue" type="fixed"/>
-    <arg name="alpha" type="fixed"/>
-  </request>
-  
-  <!-- Shadow Properties (Animatable) -->
-  <request name="set_shadow">
-    <arg name="opacity" type="fixed"/>
-    <arg name="radius" type="fixed"/>
-    <arg name="offset_x" type="fixed"/>
-    <arg name="offset_y" type="fixed"/>
-    <arg name="red" type="fixed"/>
-    <arg name="green" type="fixed"/>
-    <arg name="blue" type="fixed"/>
-  </request>
-  
-  <!-- Hierarchy -->
-  <request name="add_sublayer">
-    <arg name="sublayer" type="object" interface="sc_layer_surface_v1"/>
-  </request>
-  
-  <request name="insert_sublayer">
-    <arg name="sublayer" type="object" interface="sc_layer_surface_v1"/>
-    <arg name="index" type="int"/>
-  </request>
-  
-  <request name="remove_from_superlayer"/>
-  
-  <!-- Filters -->
-  <request name="set_compositing_filter">
-    <arg name="filter" type="object" interface="sc_filter_v1" allow-null="true"/>
-  </request>
-</interface>
-```
+**`otto_timing_function_v1`** — `set_preset` (linear, ease-in, ease-out,
+ease-in-out), `set_bezier` for a custom cubic curve, and two ways to specify a
+spring: `set_spring` (duration, bounce, initial velocity) or
+`set_spring_stiffness_damping` for direct physical parameters.
 
-### 4. Compositing Filters
-
-```xml
-<interface name="sc_filter_v1" version="1">
-  <enum name="type">
-    <entry name="blur" value="0"/>
-    <entry name="brightness" value="1"/>
-    <entry name="contrast" value="2"/>
-    <entry name="saturation" value="3"/>
-    <entry name="multiply" value="4"/>
-    <entry name="screen" value="5"/>
-  </enum>
-  
-  <request name="set_type">
-    <arg name="type" type="uint" enum="type"/>
-  </request>
-  
-  <request name="set_parameter">
-    <arg name="key" type="string"/>
-    <arg name="value" type="fixed"/>
-  </request>
-</interface>
-```
-
-## Usage Examples
-
-### Basic Animation
+## Usage shape
 
 ```c
-// Client code example
-sc_transaction_v1 *tx = sc_shell_begin_transaction(shell);
-sc_transaction_set_duration(tx, wl_fixed_from_double(0.3));
-sc_timing_function_v1 *timing = sc_shell_get_timing_function(shell);
-sc_timing_function_set_preset(timing, SC_TIMING_EASE_OUT);
-sc_transaction_set_timing_function(tx, timing);
+// Group the changes, give them a feel, commit.
+otto_style_transaction_v1 *tx = otto_surface_style_manager_v1_begin_transaction(mgr);
+otto_style_transaction_v1_set_duration(tx, wl_fixed_from_double(0.3));
 
-// These changes will animate
-sc_layer_surface_set_position(layer, 
-    wl_fixed_from_int(100), 
-    wl_fixed_from_int(200));
-sc_layer_surface_set_opacity(layer, wl_fixed_from_double(0.5));
+otto_timing_function_v1 *ease = otto_surface_style_manager_v1_create_timing_function(mgr);
+otto_timing_function_v1_set_preset(ease, OTTO_TIMING_FUNCTION_V1_PRESET_EASE_OUT);
+otto_style_transaction_v1_set_timing_function(tx, ease);
 
-sc_transaction_commit(tx);
+otto_surface_style_v1_set_position(style, wl_fixed_from_int(100), wl_fixed_from_int(200));
+otto_surface_style_v1_set_opacity(style, wl_fixed_from_double(0.5));
+
+otto_style_transaction_v1_commit(tx);
 ```
 
-### Spring Animation
+The gesture case is the one that justifies springs. Set the position directly
+while the finger is down — no transaction, no animation — then on release,
+commit a spring seeded with the gesture's own velocity so the motion continues
+rather than restarting:
 
 ```c
-sc_transaction_v1 *tx = sc_shell_begin_transaction(shell);
-sc_timing_function_v1 *spring = sc_shell_get_timing_function(shell);
-sc_timing_function_set_spring(spring,
-    wl_fixed_from_double(0.5),  // duration
-    wl_fixed_from_double(0.3),  // bounce
-    wl_fixed_from_double(0.0)); // velocity
-sc_transaction_set_timing_function(tx, spring);
-
-sc_layer_surface_set_scale(layer, 
-    wl_fixed_from_double(1.2), 
-    wl_fixed_from_double(1.2));
-
-sc_transaction_commit(tx);
+otto_timing_function_v1_set_spring(spring,
+    wl_fixed_from_double(0.3),      // duration
+    wl_fixed_from_double(0.1),      // bounce
+    wl_fixed_from_double(velocity)); // carried from the gesture
 ```
 
-### Gesture-Driven Animation
+## Compositor side
 
-```c
-// During gesture
-sc_layer_surface_set_position(layer, x, y);  // Immediate
-
-// On gesture end with velocity
-sc_transaction_v1 *tx = sc_shell_begin_transaction(shell);
-sc_timing_function_v1 *spring = sc_shell_get_timing_function(shell);
-sc_timing_function_set_spring(spring,
-    wl_fixed_from_double(0.3),
-    wl_fixed_from_double(0.1),
-    wl_fixed_from_double(velocity)); // Use gesture velocity!
-sc_transaction_set_timing_function(tx, spring);
-
-sc_layer_surface_set_position(layer, target_x, target_y);
-sc_transaction_commit(tx);
-```
-
-## Implementation Mapping
-
-### Compositor Side (Rust)
+On commit, the transaction's timing is converted to a lay-rs `TimingFunction`,
+the pending property changes are turned into layer changes, and both are handed
+to the engine:
 
 ```rust
-// When client commits transaction with timing
-fn handle_transaction_commit(&mut self, tx: &ScTransaction) {
-    let timing = tx.timing_function.map(|tf| {
-        match tf.type {
-            TimingType::Bezier(c1x, c1y, c2x, c2y) => {
-                TimingFunction::Bezier(c1x, c1y, c2x, c2y)
-            }
-            TimingType::Spring { duration, bounce, velocity } => {
-                let spring = Spring::with_duration_bounce_and_velocity(
-                    duration, bounce, velocity
-                );
-                TimingFunction::Spring(spring)
-            }
-            TimingType::Linear => TimingFunction::Linear,
-        }
-    });
-    
-    let transition = Transition {
-        delay: tx.delay,
-        timing: timing.unwrap_or(TimingFunction::Linear),
-    };
-    
-    // Apply all pending changes with animation
-    let changes: Vec<_> = tx.pending_changes.iter()
-        .map(|change| match change {
-            PendingChange::Position(x, y) => 
-                layer.change_position((*x, *y)),
-            PendingChange::Scale(x, y) => 
-                layer.change_scale((*x, *y)),
-            PendingChange::Opacity(opacity) => 
-                layer.change_opacity(*opacity),
-            // ... etc
-        })
-        .collect();
-    
-    let animation = self.engine.add_animation_from_transition(&transition, true);
-    let transactions = self.engine.schedule_changes(&changes, animation);
-    
-    // Track for completion callback
-    if tx.wants_completion {
-        if let Some(tr) = transactions.first() {
-            tr.on_finish(move |_, _| {
-                // Send completion event to client
-                tx_object.completed();
-            }, true);
-        }
+let animation = engine.add_animation_from_transition(&transition, true);
+let transactions = engine.schedule_changes(&changes, animation);
+
+if tx.wants_completion {
+    if let Some(tr) = transactions.first() {
+        tr.on_finish(move |_, _| tx_object.completed(), true);
     }
 }
 ```
 
-## Advanced Features
+See `src/surface_style/handlers/transactions.rs`.
 
-### 1. Keyframe Animations
+## Not built
 
-For complex animations:
+These were part of the original exploration and were not implemented. They are
+recorded here so the reasoning is not re-derived:
 
-```xml
-<interface name="sc_keyframe_animation_v1" version="1">
-  <request name="add_keyframe">
-    <arg name="time" type="fixed" summary="0.0 to 1.0"/>
-    <arg name="value" type="fixed"/>
-  </request>
-  
-  <request name="set_timing_function">
-    <arg name="from_keyframe" type="int"/>
-    <arg name="to_keyframe" type="int"/>
-    <arg name="timing" type="object" interface="sc_timing_function_v1"/>
-  </request>
-</interface>
-```
-
-### 2. Animation Groups
-
-For complex choreography:
-
-```xml
-<interface name="sc_animation_group_v1" version="1">
-  <request name="add_animation">
-    <arg name="animation" type="object" interface="sc_transaction_v1"/>
-    <arg name="start_time" type="fixed" summary="relative start time"/>
-  </request>
-</interface>
-```
-
-### 3. Gesture Tracking
-
-For interactive animations:
-
-```xml
-<interface name="sc_gesture_recognizer_v1" version="1">
-  <request name="link_to_property">
-    <arg name="layer" type="object" interface="sc_layer_surface_v1"/>
-    <arg name="property" type="string" summary="e.g., 'position.x'"/>
-  </request>
-  
-  <event name="gesture_update">
-    <arg name="progress" type="fixed"/>
-    <arg name="velocity" type="fixed"/>
-  </event>
-</interface>
-```
-
-## Performance Considerations
-
-1. **Server-side Animation**: All animation state lives in the compositor, reducing IPC
-2. **Damage Tracking**: lay-rs already provides efficient damage regions
-3. **GPU Acceleration**: Skia backend handles all rendering
-4. **Transaction Batching**: Multiple property changes animate in sync
-5. **Spring Interruption**: Springs can be interrupted mid-flight with new velocity
-
-## Implementation Priority
-
-### Phase 1: Core (MVP)
-- Transaction-based property changes
-- Basic timing functions (linear, bezier, spring)
-- Transform properties (position, scale, rotation)
-- Opacity
-
-### Phase 2: Visual Effects
-- Background colors
-- Borders and corner radius
-- Shadows
-- Compositing filters
-
-### Phase 3: Advanced
-- Keyframe animations
-- Animation groups
-- Gesture recognizers
-- 3D transforms
+- **Compositing filters** (blur, brightness, contrast, saturation as a
+  client-settable filter object).
+- **Keyframe animations** — multi-stop value tracks with per-segment timing.
+- **Animation groups** — choreographing several transactions with relative
+  start times.
+- **Gesture recognizers** — binding a compositor-side gesture directly to a
+  layer property, with `progress`/`velocity` events. Clients currently drive
+  this themselves from ordinary pointer/touch events, which is more code but
+  keeps the protocol small.
 
 ## References
 
-- [lay-rs Engine API](https://github.com/nongio/layers)
-- Compositor implementation examples in `src/workspaces/mod.rs` (spring animation usage)
-- [Wayland Protocol Documentation](https://wayland.freedesktop.org/docs/html/)
+- [`protocols/otto-surface-style-unstable-v1.xml`](../../protocols/otto-surface-style-unstable-v1.xml) — the interface
+- `src/surface_style/` — the implementation
+- [lay-rs](https://github.com/nongio/layers) — the engine being exposed
+- `src/workspaces/mod.rs` — the compositor's own spring animation usage

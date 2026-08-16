@@ -1,9 +1,12 @@
 # AirPlay video screenshare — design exploration
 
-Status: **exploration, nothing implemented.** This doc maps the design space
-for AirPlay screen sharing in Otto, in both directions, and recommends a
-path. It follows the `otto-rdp` pattern (see
-`docs/developer/rdp-virtual-output.md` on `feat/rdp-virtual-output`): a
+Status: **exploration; nothing implemented in Otto.** Phase 0 below — sending a
+virtual output to an Apple TV via doubletake, with no Otto code at all — has
+been validated against real hardware. Everything past that is still design
+space.
+
+This doc maps that space in both directions and recommends a path. It follows
+the `otto-rdp` pattern ([rdp-virtual-output.md](rdp-virtual-output.md)): a
 standalone component that consumes a virtual output's PipeWire node, with the
 compositor knowing nothing about the remote protocol.
 
@@ -121,11 +124,12 @@ against UxPlay first to confirm third-party receivers get that mode.
 
 ## Recommendation
 
-1. **Phase 0 — validate with doubletake (no code).** Virtual output +
-   portal + doubletake against a real Apple TV. Proves Otto's capture path
-   end-to-end, measures real latency, and tells us whether the sender
-   direction is worth owning natively. If it works well, the "integration"
-   might just be docs + a dock affordance that launches it.
+1. **Phase 0 — validate with doubletake (no code). Done.** Virtual output +
+   portal + doubletake against a real Apple TV works: Otto's capture path
+   carries an AirPlay session end to end with no compositor changes. So the
+   sender direction does not obviously need to be owned natively — the
+   "integration" may amount to documentation plus a dock affordance that
+   launches it. A receiver build and the audio path are still open.
 2. **Phase 1 — `otto-airplay-rx`** if receiving is wanted: highest
    feasibility, pure-Rust path available, and it's a visible differentiator
    (iPhone screenshare lands as a normal Otto window; possibly Mac wireless

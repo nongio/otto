@@ -1,64 +1,207 @@
-# Expose mode
+# Exposé
 
-## What it is
-Expose shows scaled previews of every visible window on the current workspace so they can be clicked or dragged between workspaces. It is triggered by `Workspaces::expose_show_all` (keyboard toggle or gesture) which drives both the layout calculation and the transition animation.
+Exposé shows a scaled preview of every visible window on the current workspace,
+laid out on a grid, so windows can be picked or dragged onto another workspace.
+It is triggered by a keyboard shortcut or a three-finger vertical swipe.
+
+## The core trick: mirrors, not moved windows
+
+Exposé does not move the real windows. Each window gets a **mirror layer** —
+a second node in the scene graph that follows the real window's layer via
+`add_follower_node` — and it is the mirrors that are laid out on the grid.
+
+The value of this is that a window keeps rendering into its normal place in the
+scene while a scaled copy of it appears in the grid. Live video keeps playing in
+the preview; the window's own state is untouched, so leaving exposé needs no
+restore step.
+
+Mirrors are created in `WorkspaceView::map_window`, which hands them to
+`window_selector_view.map_window`. A window being dragged is excluded
+(`expose_dragging_window`) so it isn't drawn twice, and a minimized window's
+mirror is hidden by `minimize_window` and restored on unminimize.
+
+**The mirror-freeze trap.** `lay-rs` propagates `NEEDS_PAINT` from a *leader
+node itself* to its followers — never from the leader's descendants. A client
+commit repaints the surface layer deep inside the window's subtree, so the
+mirror is never flagged and keeps drawing its last recorded picture. With
+`workspaces_layer` hidden during exposé, nothing else damages it either, and
+the previews freeze — a playing video looks stuck. `update_window_view`
+therefore calls `add_damage` on the window's *base* layer while exposé is up,
+which does mark the followers.
+
+This is covered by the `expose_preview_repaints_on_client_commit` headless test
+(`tests/headless_basic.rs`), which asserts `subtree_damage` on the mirror node.
+Asserting whole-scene damage is not specific enough to catch the regression.
 
 ## Lifecycle
-- Enter/exit: `expose_show_all_workspace` computes gesture state, then calls `expose_show_all_layout` to build/update the layout bin and `expose_show_all_animate` to drive the animation and visibility.
-- Updates: `expose_update_if_needed` recalculates when windows change (map/unmap/move/drag/drop) but only when expose is visible.
-- Visibility: The expose layer and overlay layers are kept hidden unless animation or `show_all` is active to avoid unnecessary drawing.
-- Chrome ownership: while expose is open *or* transitioning (`get_show_all() || is_expose_transitioning()`), expose alone owns the dock position and the `layer_shell_top` / `layer_shell_overlay` opacity, and restores them from its close animation's `on_finish`. Workspace-switch paths — `workspace_swipe_update`, `workspace_swipe_end` → `set_workspace_for_output`, and `scroll_to_workspace_index` — all drive that same chrome from the target workspace's fullscreen state, so they must skip it under that condition; otherwise starting a workspace swipe (or switching workspace by key) while expose is up fades the top bar back on screen.
 
-## Multi-output
-- Expose is global, not per-output: `show_all` opening/closing drives every output's grid at once. `expose_show_all_layout_for(output_name, workspace_index)` computes one output's grid against that output's own `workspaces_layer` size and origin; `expose_show_all_layout` is a thin wrapper that resolves the *focused* output's name and calls it (used by the gesture/keyboard path which addresses a `workspace_index`, not an output).
-- Only the focused output uses `workspace_index` (the model's current/gesture-target workspace); every other output always grids and animates its own `current_workspace` from its `OutputWorkspaces`, so a mid-gesture focused output doesn't drag secondary outputs' layout along with it. `expose_show_all_animate`'s `is_focused_output` / `animate_this` split encodes this: the focused output only animates when it's showing its current workspace (as before), secondary outputs always animate.
-- Window geometry is rebased output-local before comparing to the bin: `space.element_geometry(window)` returns a position in the global (Space) layout, so each output subtracts its own `current_location()` before converting to physical pixels — otherwise every tile lands off-screen (this was the bug `fix(expose): run expose on the focused output with local coords` fixed for the focused output; `feat(expose): simultaneous per-output expose` extended it to every output).
-- The workspace-selector strip (`Workspaces::workspace_selector_view`) is a single shared instance, not one per output. Both expose entry points (gesture start in `expose_show_all_workspace`, and the keyboard path in `expose_show_all`) reparent its layer into the *focused* output's `overlay_plane` before showing it, so the strip visibly follows the user to whichever screen they're on.
-- Lookups that need the focused output (`Workspaces::focused_output()`, which takes the model's read lock) must be resolved *before* entering a `with_model` closure — nesting the two deadlocks the main thread once a writer contends for the lock. Layout/animation hoist `focused_output()`/`focused_output_workspaces()` calls to the top of the function for this reason.
-- `Workspaces::focused_output()` resolves to the output most recently confirmed under the pointer (falling back to primary). It's kept current by every pointer-motion path — udev relative motion, udev absolute motion, winit, and the virtual-pointer harness path — not just one backend; a path that forgets to update it leaves expose/the selector opening on a stale output. Virtual-pointer motion is clamped to the combined output bounds (`Otto::clamp_coords`) like real input, so a synthesized move can't drift the focused output out of resolvable range.
-- lay-rs scene hit-testing (`layers_engine.pointer_move`, driving hover state and dock/overlay-UI interaction, not only expose) is fed the pointer rebased to the focused output's own origin, because every output's scene subtree overlaps at (0,0) — see `specs/multi-output.md`. Without the rebasing, hover and clicks land on whichever output subtree happens to be topmost in the layer tree rather than the output the pointer is actually over.
-- Debug lever: `echo ActionName > /tmp/otto-action` (polled once per frame in the udev backend) executes a builtin shortcut action as if its key were pressed — useful for driving expose (`ExposeShowAll`, `ExposeShowDesktop`) or workspace switches from a test harness, since virtual-keyboard input bypasses the libinput shortcut layer entirely. It requests a redraw afterward so the scheduled lay-rs transaction actually ticks, and resolves through the same common action handler used for real key presses, which warns (rather than panics) on an action that's backend-specific or unresolvable.
-
-## Gesture direction detection
-Three-finger swipe gestures use accumulated delta values to determine intent: when the gesture begins, both horizontal and vertical deltas are tracked without activating either workspace switching or expose mode. Once the accumulated movement exceeds a 20-pixel threshold in either direction, the compositor commits to that mode based on which axis has greater magnitude—horizontal motion activates workspace switching (`workspace_swipe_update`) while vertical motion triggers expose mode (`expose_update`). This delayed commitment prevents accidental mode activation from minor diagonal movements and ensures the gesture feels responsive once direction is clear. After direction is determined, all subsequent update events feed directly into the active mode (workspace or expose) without re-evaluation, and velocity samples are collected for workspace switching to enable smooth momentum-based snapping on gesture end.
-
-## Window mirroring
-- Each window is mirrored by a layer created in `WorkspaceView::map_window` (`window_selector_view.map_window` adds it to the expose container). The mirror follows the real window layer via `add_follower_node`, so content stays in sync.
-- Mirrors are excluded from expose while a drag is in progress (`expose_dragging_window`) to avoid double-rendering the dragged item.
-- **Keeping mirrors live:** lay-rs only propagates `NEEDS_PAINT` from a *leader node itself* to its followers, never from the leader's descendants. A client commit repaints the surface layer deep inside the window's tree, so the mirror is never flagged and keeps drawing its last picture — with the real `workspaces_layer` hidden during expose, nothing else damages it either, and the previews freeze (a playing video looks stuck). `update_window_view` therefore calls `add_damage` on the window's base layer while expose is up, which marks the followers. Covered by the `expose_preview_repaints_on_client_commit` headless test, which asserts `subtree_damage` on the mirror node — whole-scene damage is not specific enough to catch the regression.
-- When a window is minimized, it is excluded from the expose, its mirror is hidden (`minimize_window`), and restored on unminimize.
+- **Enter / exit** — `Workspaces::expose_show_all(delta, end_gesture)` is the
+  public entry point. It routes to `expose_show_all_workspace`, which
+  accumulates gesture state and decides the target, then calls
+  `expose_show_all_layout` to build the grid and
+  `expose_show_all_update` (mid-gesture) or `expose_show_all_end`
+  (on release) to drive it. Both land in `expose_show_all_apply`, which does
+  the actual layer work.
+- **Updates** — `expose_update_if_needed` recalculates when windows change
+  (map, unmap, move, drag, drop), but only while exposé is visible.
+- **Visibility** — the exposé layer and the overlay layers stay hidden unless
+  an animation is running or `show_all` is set, so they cost nothing when
+  closed.
+- **Chrome ownership** — while exposé is open *or* transitioning
+  (`get_show_all() || is_expose_transitioning()`), exposé alone owns the dock
+  position and the `layer_shell_top` / `layer_shell_overlay` opacity, and
+  restores them from its close animation's `on_finish`. The workspace-switch
+  paths — `workspace_swipe_update`, `workspace_swipe_end` →
+  `set_workspace_for_output`, `scroll_to_workspace_index` — drive that same
+  chrome from the target workspace's fullscreen state, so they must skip it
+  under that condition. Otherwise starting a workspace swipe (or switching by
+  key) while exposé is up fades the top bar back onto the screen.
 
 ## Layout: natural flow
-- `expose_show_all_layout` builds an input list of windows (skipping minimized and currently dragged windows) with their real geometry and title.
-- `WindowSelectorView::update_windows` calls `natural_layout` (in `utils::natural_layout`) to pack the windows into the target rectangle (`LayoutRect`) using a flowing grid algorithm:
-  - Windows keep aspect ratios; scaling is limited to 1.0 so previews never exceed real size.
-  - Packing is deterministic: windows are sorted by protocol id before hashing, and a layout hash is cached to skip no-op recalculations.
-  - Results are stored in `expose_bin` and mirrored into `WindowSelectorState.rects`, which drives both drawing and hit-testing.
+
+`expose_show_all_layout` builds a list of windows with their real geometry and
+title, skipping minimized and currently-dragged ones.
+`WindowSelectorView::update_windows` then calls `natural_layout`
+(`src/utils/natural_layout.rs`) to pack them into the target rectangle:
+
+- Aspect ratios are preserved, and scaling is capped at 1.0 so a preview never
+  exceeds the window's real size.
+- Packing is deterministic — windows are sorted by protocol id before hashing —
+  and a layout hash is cached so a no-op recalculation costs nothing.
+- Results land in `expose_bin` and are mirrored into `WindowSelectorState.rects`,
+  which drives both drawing and hit-testing.
 
 ## Hover selection
-- `WindowSelectorState.current_selection` is the index of the hovered preview; it drives the accent highlight and the title label drawn by `view_window_selector`.
-- A re-layout must not drop it. `update_windows` rebuilds `rects` from scratch, so it carries the hovered window over by id, keeping it selected as long as the last recorded cursor position still falls inside that window's (possibly moved) preview. Re-layouts are not rare: a window's geometry is derived from its surface-tree bbox, so ordinary client commits invalidate the layout hash and rebuild the grid under a stationary pointer.
-- For the same reason `expose_update_if_needed` re-shows the selection overlay (`show_selection_overlays`) after the re-layout animation is scheduled: `expose_show_all_apply` blanks that overlay to 0 opacity for the length of the open animation and only restores it in the animation's `on_finish`, which would make the highlight and label blink out on every re-layout while expose is already open.
-- Covered by the `expose_selection_survives_client_commit` headless test.
+
+`WindowSelectorState.current_selection` is the index of the hovered preview. It
+drives the accent highlight and the title label drawn by `view_window_selector`.
+
+Keeping it across a re-layout is fiddlier than it sounds, because re-layouts
+are **not** rare: a window's geometry comes from its surface-tree bbox, so an
+ordinary client commit invalidates the layout hash and rebuilds the grid under
+a stationary pointer. `update_windows` rebuilds `rects` from scratch, so it
+carries the hovered window over *by id*, keeping it selected as long as the
+last recorded cursor position still falls inside that window's (possibly moved)
+preview.
+
+For the same reason `expose_update_if_needed` re-shows the selection overlay
+(`show_selection_overlays`) after scheduling the re-layout animation:
+`expose_show_all_apply` blanks that overlay to zero opacity for the length of
+the open animation and only restores it in the animation's `on_finish`, which
+would otherwise blink the highlight and label out on every re-layout while
+exposé is already open.
+
+Covered by the `expose_selection_survives_client_commit` headless test.
 
 ## Animation and positioning
-- `expose_show_all_animate` interpolates window layers from their on-screen bbox to the target rects in `expose_bin`, applying translation + scale; easing is Spring-based when `end_gesture` is true.
-- The workspace selector, dock, and overlay opacity/positions are animated in tandem to slide the UI into place. When expose is open, the dock is hidden unless fullscreen requires otherwise.
 
-## Drag and drop in expose
-- Drag activation happens in `WindowSelectorView::try_activate_drag` after a small threshold; mirrors are moved to the drag overlay while keeping anchor/scale consistent.
-- Drop targets come from the workspace selector previews; intersection with a drop layer sets `current_drop_target`.
-- On drop:
-  - If a target workspace is selected, `move_window_to_workspace` is called with the window’s last known position; expose is refreshed to rebuild layout.
-  - If no target, the dragged mirror is restored to its original parent and ordering (`restore_layer_order_from_state`), and expose is refreshed to realign.
-- Logging: drop events log the window id and target workspace to help debugging.
+`expose_show_all_apply` interpolates window layers from their on-screen bbox to
+the target rects in `expose_bin`, applying translation plus scale. Easing is
+Spring-based when `end_gesture` is true. The workspace selector, the dock and
+overlay opacity animate in tandem so the whole UI slides into place; the dock
+hides while exposé is open unless fullscreen requires otherwise. Popups are
+hidden for the whole exposé lifetime and restored in the close animation's
+`on_finish`.
 
-## Common entry points
-- Toggle expose: `expose_show_all(delta, end_gesture)`
-- Force a relayout while in expose: `expose_update_if_needed` / `expose_update_if_needed_workspace`
-- Show desktop (push windows away): `expose_show_desktop`
+## Gesture direction detection
 
-## Tips for agents
-- Wait for expose to finish initializing (`show_all` true and `expose_bin` populated) before asserting layout.
-- Use semantic data (rects from `WindowSelectorState` or `expose_bin`) rather than pixel checks; fractional scaling can shift raster output.
-- During drags, the dragged window is intentionally absent from the grid; expect a temporary gap until drop completes or is cancelled.
+A three-finger swipe can mean either "switch workspace" or "exposé", and the
+compositor cannot know which until the finger has moved.
+
+So it commits late. Both horizontal and vertical deltas accumulate without
+activating either mode. Once accumulated movement passes **20 px** in either
+direction, the axis with the greater magnitude wins: horizontal goes to
+`workspace_swipe_update`, vertical to `expose_update`. After that, every
+subsequent event feeds the chosen mode directly, with no re-evaluation — so a
+diagonal drift mid-gesture cannot flip modes. Velocity samples are collected
+along the way for workspace switching, which uses them for momentum-based
+snapping on release.
+
+## Drag and drop
+
+- `WindowSelectorView::try_activate_drag` starts a drag after a small
+  threshold; the mirror moves to the drag overlay, keeping its anchor and scale
+  consistent so it doesn't jump.
+- Drop targets come from the workspace selector's previews; intersecting a drop
+  layer sets `current_drop_target`.
+- On drop with a target: `move_window_to_workspace` is called with the window's
+  last known position, and exposé refreshes to rebuild the layout.
+- On drop with no target: the mirror is restored to its original parent and
+  ordering (`restore_layer_order_from_state`) and exposé refreshes to realign.
+- Drop events log the window id and target workspace.
+
+## Multi-output
+
+Exposé is **global, not per-output**: opening or closing it drives every
+output's grid at once.
+
+- `expose_show_all_layout_for(output_name, workspace_index)` computes one
+  output's grid against that output's own `workspaces_layer` size and origin.
+  `expose_show_all_layout` is a thin wrapper resolving the *focused* output's
+  name — used by the gesture/keyboard path, which addresses a `workspace_index`
+  rather than an output.
+- Only the focused output uses `workspace_index`. Every other output grids and
+  animates its own `current_workspace` from its `OutputWorkspaces`, so a
+  mid-gesture focused output does not drag secondary outputs' layouts along with
+  it. The `is_focused_output` / `animate_this` split encodes this: the focused
+  output only animates when it is showing its current workspace; secondary
+  outputs always animate.
+- **Window geometry must be rebased output-local before comparing to the bin.**
+  `space.element_geometry(window)` returns a position in the global Space
+  layout, so each output subtracts its own `current_location()` before
+  converting to physical pixels. Without this, every tile lands off-screen.
+- The workspace-selector strip (`Workspaces::workspace_selector_view`) is a
+  single shared instance, not one per output. Both entry points — gesture start
+  in `expose_show_all_workspace` and the keyboard path in `expose_show_all` —
+  reparent its layer into the *focused* output's `overlay_plane` before showing
+  it, so the strip follows the user to whichever screen they are on.
+
+### Two multi-output footguns
+
+**Deadlock.** `Workspaces::focused_output()` takes the model's read lock, so it
+must be resolved *before* entering a `with_model` closure. Nesting the two
+deadlocks the main thread as soon as a writer contends for the lock. Layout and
+animation hoist `focused_output()` / `focused_output_workspaces()` to the top of
+the function for exactly this reason.
+
+**Stale focused output.** `focused_output()` resolves to the output most
+recently confirmed under the pointer, falling back to primary. It is kept
+current by *every* pointer-motion path — udev relative motion, udev absolute
+motion, winit, and the virtual-pointer harness path. A path that forgets to
+update it leaves exposé and the selector opening on the wrong screen.
+Virtual-pointer motion is clamped to the combined output bounds
+(`Otto::clamp_coords`) like real input, so a synthesized move cannot drift the
+focused output out of resolvable range.
+
+**Hit-testing.** `layers_engine.pointer_move` — which drives hover state and all
+dock/overlay-UI interaction, not only exposé — is fed the pointer rebased to the
+focused output's own origin, because every output's scene subtree overlaps at
+(0, 0). See [`specs/multi-output.md`](../../specs/multi-output.md). Without the
+rebasing, hover and clicks land on whichever output subtree happens to be
+topmost in the layer tree, rather than the one the pointer is actually over.
+
+## Entry points
+
+| Action | Call |
+|--------|------|
+| Toggle exposé | `expose_show_all(delta, end_gesture)` |
+| Force a relayout while open | `expose_update_if_needed` / `expose_update_if_needed_workspace` |
+| Show desktop (push windows away) | `expose_show_desktop(delta, end_gesture)` |
+
+## Testing notes
+
+- Wait for exposé to finish initializing — `show_all` true *and* `expose_bin`
+  populated — before asserting on layout.
+- Assert on semantic data (`WindowSelectorState.rects`, `expose_bin`) rather
+  than pixels; fractional scaling shifts raster output.
+- During a drag the dragged window is intentionally absent from the grid.
+  Expect a gap until the drop completes or is cancelled.
+- **Debug lever:** `echo ActionName > /tmp/otto-action` (polled once per frame
+  in the udev backend, `src/udev/init.rs`) runs a builtin shortcut action as if
+  its key had been pressed — useful for driving `ExposeShowAll`,
+  `ExposeShowDesktop` or workspace switches from a harness, since
+  virtual-keyboard input bypasses the libinput shortcut layer entirely. It
+  requests a redraw afterwards so the scheduled `lay-rs` transaction actually
+  ticks, and resolves through the same action handler as a real key press —
+  warning, rather than panicking, on an action that is backend-specific or
+  unresolvable.

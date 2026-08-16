@@ -1,26 +1,24 @@
 ## Foreign Toplevel Management
 
-Otto implements dual-protocol support for foreign toplevel management, enabling external applications (taskbars, launchers, window switchers) to enumerate and interact with compositor windows.
+"Foreign toplevel" protocols are how a compositor lets *other* clients see and
+control its window list — taskbars, launchers, window switchers, screen-share
+pickers. Otto implements two of them, because the ecosystem is split between
+the modern read-only standard and the older wlroots one that most existing
+tools actually use.
 
-## Protocol Support
+| Protocol | Otto's support | What it offers |
+|----------|----------------|----------------|
+| [`ext-foreign-toplevel-list-v1`](https://gitlab.freedesktop.org/wayland/wayland-protocols/-/blob/main/staging/ext-foreign-toplevel-list/ext-foreign-toplevel-list-v1.xml) | Smithay's implementation, complete | Read-only list: title, app_id, stable identifier |
+| [`wlr-foreign-toplevel-management-unstable-v1`](https://gitlab.freedesktop.org/wlroots/wlr-protocols/-/blob/master/unstable/wlr-foreign-toplevel-management-unstable-v1.xml) | Custom implementation | List **plus** control: activate, close, minimize, maximize, fullscreen |
 
-Otto supports two foreign toplevel protocols:
+The `ext` protocol's identifier is also what Otto's screenshare API uses to
+name a window — `RecordWindow`'s `window-id` is an
+`ext-foreign-toplevel-list-v1` identifier. See [screenshare.md](screenshare.md).
 
-### ext-foreign-toplevel-list-v1
-- **Status**: Fully implemented via Smithay
-- **Spec**: [ext-foreign-toplevel-list-v1](https://gitlab.freedesktop.org/wayland/wayland-protocols/-/blob/main/staging/ext-foreign-toplevel-list/ext-foreign-toplevel-list-v1.xml)
-- **Features**: Read-only window list with title and app_id
-- **Use case**: Modern protocol for simple window enumeration
+### One window, two handles
 
-### wlr-foreign-toplevel-management-unstable-v1
-- **Status**: Partially implemented
-- **Spec**: [wlr-foreign-toplevel-management](https://gitlab.freedesktop.org/wlroots/wlr-protocols/-/blob/master/unstable/wlr-foreign-toplevel-management-unstable-v1.xml)
-- **Features**: Window list with control actions (activate, close, minimize, etc.)
-- **Use case**: Widely adopted by wlroots-based tools (rofi, waybar)
-
-### Unified Abstraction
-
-`src/state/foreign_toplevel_shared.rs` provides a unified API via `ForeignToplevelHandles`:
+Rather than duplicating bookkeeping, `src/state/foreign_toplevel_shared.rs`
+wraps both protocol handles in one struct and fans every update out to both:
 
 ```rust
 pub struct ForeignToplevelHandles {
@@ -29,175 +27,87 @@ pub struct ForeignToplevelHandles {
 }
 ```
 
-This struct wraps both protocol handles and provides methods that broadcast state changes to both protocols simultaneously:
+Methods: `send_title`, `send_app_id`, `send_state`, `send_output_enter`,
+`send_output_leave`, `send_done` (ext only — it batches), `send_closed`.
+Callers never pick a protocol.
 
-- `send_title(&str)` - Update window title
-- `send_app_id(&str)` - Update application ID
-- `send_done()` - Signal end of state batch (ext protocol only)
-- `send_closed()` - Notify window destruction
+Handles are stored in `Otto::foreign_toplevels`, a `HashMap` keyed by the
+surface's `ObjectId`.
 
-### Protocol Handlers
+### Lifecycle
 
-**ext-foreign-toplevel-list** (`src/state/foreign_toplevel_list_handler.rs`):
-- Uses Smithay's built-in implementation
-- Simple delegate pattern with no additional code needed
-
-**wlr-foreign-toplevel-management** (`src/state/wlr_foreign_toplevel.rs`):
-- Custom implementation
-- Manages global `WlrForeignToplevelManagerState` with active manager instances
-- Each window gets a `WlrForeignToplevelHandle` that holds window metadata and client resources
-- Implements `Dispatch` traits for request handling
-
-## Integration Flow
-
-### Window Creation
-
-When a new XDG toplevel surface is mapped (`src/shell/xdg.rs`):
-
-1. Extract app_id and title from the window
-2. Create ext-foreign-toplevel-list handle via Smithay
-3. Create wlr-foreign-toplevel handle via custom implementation
-4. Wrap both in `ForeignToplevelHandles`
-5. Store in `state.foreign_toplevels` HashMap keyed by surface ObjectId
+**Creation** — when an xdg toplevel is mapped (`src/shell/xdg.rs`), Otto pulls
+the app_id and title, creates one handle per protocol, wraps them, stores them,
+and immediately sends the window's initial state.
 
 ```rust
-let ext_handle = self.foreign_toplevel_list_state
-    .new_toplevel::<Self>(&app_id, &title);
-let wlr_handle = self.wlr_foreign_toplevel_state
-    .new_toplevel::<Self>(&display_handle, &app_id, &title);
-let handles = ForeignToplevelHandles::new(ext_handle, wlr_handle);
-self.foreign_toplevels.insert(surface_id, handles);
+let ext_handle = self.foreign_toplevel_list_state.new_toplevel::<Self>(&app_id, &title);
+let wlr_handle = self.wlr_foreign_toplevel_state.new_toplevel::<Self>(&display_handle, &app_id, &title);
+self.foreign_toplevels.insert(surface_id, ForeignToplevelHandles::new(ext_handle, wlr_handle, output));
 ```
 
-### Window Updates
+**Updates** — title and app_id changes are broadcast from `src/shell/mod.rs`,
+after checking the value actually changed so idle clients aren't spammed.
+Focus changes call `Otto::send_foreign_toplevel_state`, which reads the
+window's current minimized/maximized/fullscreen flags and sends the whole state
+set.
 
-Window state changes are broadcasted from `src/shell/mod.rs`:
+**Destruction** — on unmap, the handle is removed and `send_closed()` notifies
+every connected taskbar.
 
-- Title changes trigger `handle.send_title(&title)`
-- App ID changes trigger `handle.send_app_id(&app_id)`
-- Both methods update internal state and send events to all subscribed clients
+### Control requests (wlr protocol)
 
-The implementation prevents redundant updates by checking if values actually changed before broadcasting.
+All of these are implemented in `src/state/wlr_foreign_toplevel.rs` and route
+into the same code paths the compositor's own UI uses:
 
-### Window Destruction
+| Request | Maps to |
+|---------|---------|
+| `Activate` | `Otto::activate_window` |
+| `Close` | `toplevel.send_close()`, or `X11Surface::close()` for XWayland windows |
+| `SetMinimized` / `UnsetMinimized` | `Workspaces::minimize_window` / `unminimize_window` (plus focus and scanout demotion) |
+| `SetMaximized` / `UnsetMaximized` | the `XdgShellHandler` maximize/unmaximize requests |
+| `SetFullscreen` / `UnsetFullscreen` | the `XdgShellHandler` fullscreen/unfullscreen requests |
+| `SetRectangle` | ignored — a minimize-animation hint, not required by the protocol |
 
-When a window is unmapped (`src/shell/xdg.rs`):
+### Protocol state (wlr)
 
-```rust
-if let Some(handle) = self.foreign_toplevels.remove(&id) {
-    handle.send_closed();
-}
-```
+The custom implementation keeps two levels of state:
 
-This notifies all connected taskbars/launchers to remove the window from their lists.
+- **`WlrForeignToplevelManagerState`** — the list of bound manager instances,
+  one per connected client. Creating a toplevel broadcasts it to all of them.
+- **`WlrToplevelData`** — per-window: app_id, title, current state, and one
+  protocol resource per manager instance, in an `Arc<Mutex<_>>`.
 
-## Current Features
+When a new manager binds, every existing window is replayed to it — including
+its current state and output — so a taskbar started after the fact sees a
+correct list immediately.
 
-**Implemented:**
-- ✅ Window list enumeration (both protocols)
-- ✅ Title updates (both protocols)
-- ✅ App ID updates (both protocols)
-- ✅ Window closed notifications (both protocols)
-- ✅ Automatic state synchronization across protocols
-- ✅ Multi-client support (multiple taskbars can connect simultaneously)
+### Known gaps
 
-**Not Implemented (wlr protocol only):**
-- ❌ Window activation (focus) - `Activate` request logs debug message
-- ❌ Window close - `Close` request logs debug message
-- ❌ Minimize/unminimize - `SetMinimized`/`UnsetMinimized` log debug messages
-- ❌ Maximize/unmaximize - `SetMaximized`/`UnsetMaximized` log debug messages
-- ❌ Fullscreen - `SetFullscreen`/`UnsetFullscreen` log debug messages
-- ❌ Rectangle hints - `SetRectangle` logs debug message
-- ❌ State reporting - No `state` events sent (activated, maximized, minimized, fullscreen)
-- ❌ Output tracking - No `output_enter`/`output_leave` events
+- **State events are only sent on focus change and on map.** A window minimized
+  or maximized by some other route does not push a fresh `state` event, so an
+  external taskbar can show a stale flag until focus next moves.
+- **Output tracking is set once.** `output_enter` is sent when the handle is
+  created; moving a window to another monitor does not currently emit
+  `output_leave` / `output_enter`.
+- **No parent tracking** — transient/child window relationships are not exposed.
 
-## Implementation Details
+### Testing
 
-### wlr Protocol State Management
-
-The wlr implementation maintains two levels of state:
-
-1. **Global State** (`WlrForeignToplevelManagerState`):
-   - Stores list of active manager instances (one per connected client)
-   - Creates toplevels and broadcasts them to all managers
-   - Handles manager registration/unregistration
-
-2. **Per-Window State** (`WlrToplevelData`):
-   - Stores app_id, title
-   - Maintains list of protocol resources (one per manager instance)
-   - Wrapped in `Arc<Mutex<>>` for shared access
-
-When a new manager binds:
-- All existing windows are re-sent to the new client
-- Each window's resources list gains a new entry
-- Future updates broadcast to all resources including the new one
-
-### Request Handling
-
-All wlr protocol requests are currently stubbed with debug logs in `src/state/wlr_foreign_toplevel.rs`:
-
-```rust
-fn request(...) {
-    match request {
-        Request::Activate { .. } => {
-            tracing::debug!("wlr foreign toplevel: activate requested");
-        }
-        Request::Close => {
-            tracing::debug!("wlr foreign toplevel: close requested");
-        }
-        // ... etc
-    }
-}
-```
-
-To implement these actions, the handler would need:
-- Access to compositor state (workspaces, window map)
-- Ability to look up window by handle
-- Methods to invoke window operations (focus, close, minimize, etc.)
-
-## Testing
-
-Verified working with:
-- ✅ `rofi -modi window -show window` - Shows window list with correct titles
-- ✅ Window list updates when windows open/close
-- ✅ Multiple windows display correctly
-
-Test commands:
-```bash
-# Terminal 1: Run compositor
+```sh
+# terminal 1
 cargo run -- --winit
 
-# Terminal 2: Test with rofi
+# terminal 2 — a wlr-protocol consumer
 WAYLAND_DISPLAY=wayland-1 rofi -modi window -show window
-
-# Terminal 3: Test with waybar (if installed)
 WAYLAND_DISPLAY=wayland-1 waybar
 ```
 
-**Note**: Window actions (clicking to focus, close buttons) will not work due to unimplemented request handlers.
+Selecting a window in `rofi` should focus it; close buttons in a taskbar should
+close it.
 
-## Known Limitations
+### Related
 
-1. **Read-only for wlr protocol**: While the protocol supports window control actions, Otto currently only implements the read-only window list functionality. All control requests are logged but ignored.
-
-2. **No state tracking**: Windows don't report their current state (minimized, maximized, fullscreen, activated) to external applications.
-
-3. **No output information**: Windows don't report which output they're displayed on.
-
-4. **No parent tracking**: Child/transient window relationships are not exposed.
-
-## Future Work
-
-To enable full external dock/taskbar functionality:
-
-1. **Implement window activation**: Look up window by foreign toplevel handle and call `workspaces.focus_app()` or similar
-2. **Implement state events**: Track and broadcast window state changes (activated, minimized, etc.)
-3. **Implement minimize actions**: Integrate with existing `workspaces.minimize_window()` / `unminimize_window()`
-4. **Implement close action**: Send close request to window surface
-5. **Add output tracking**: Send `output_enter`/`output_leave` based on window position
-
-## Related Documentation
-
-- [Dock Design](./dock-design.md) - Current built-in dock implementation
-- [Wayland Protocols](./wayland.md) - General Wayland protocol handling in Otto
-- [Smithay foreign_toplevel_list](https://smithay.github.io/smithay/smithay/wayland/foreign_toplevel_list/)
+- [Dock Design](dock-design.md) — the built-in, compositor-drawn dock
+- [Wayland Protocols](wayland.md) — how handlers are wired in general
+- [Smithay `foreign_toplevel_list`](https://smithay.github.io/smithay/smithay/wayland/foreign_toplevel_list/)

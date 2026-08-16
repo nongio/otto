@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 400" width="760" height="400" role="img" aria-label="Otto render pipeline from scene graph to presented frame">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <text class="tb" x="20" y="24">What Otto draws</text>
+
+  <rect class="box" x="20" y="36" width="200" height="52" rx="7"/>
+  <text class="t"  x="34" y="58">Client buffers</text>
+  <text class="tm" x="34" y="76">imported as GL / dmabuf textures</text>
+
+  <rect class="acc" x="240" y="36" width="200" height="52" rx="7"/>
+  <text class="t"  x="254" y="58">lay-rs scene graph</text>
+  <text class="tm" x="254" y="76">windows, dock, exposé, effects</text>
+
+  <rect class="box" x="460" y="36" width="200" height="52" rx="7"/>
+  <text class="t"  x="474" y="58">Cursor &amp; DnD surfaces</text>
+  <text class="tm" x="474" y="76">may live on their own plane</text>
+
+  <path class="ln" style="marker-end:none" d="M120 88 L120 108 L340 108"/>
+  <path class="ln" d="M340 88 L340 124"/>
+  <path class="ln" style="marker-end:none" d="M560 88 L560 108 L340 108"/>
+
+  <rect class="box" x="180" y="124" width="400" height="50" rx="7"/>
+  <text class="t"  x="196" y="146">1. Build render elements  —  src/render.rs</text>
+  <text class="tm" x="196" y="164">one OutputRenderElements list per output; the scene is one SceneElement</text>
+
+  <path class="ln" d="M380 174 L380 204"/>
+
+  <rect class="box" x="180" y="204" width="400" height="50" rx="7"/>
+  <text class="t"  x="196" y="226">2. OutputDamageTracker  —  Smithay</text>
+  <text class="tm" x="196" y="244">intersects element damage with buffer age → the rects to repaint</text>
+
+  <path class="ln" d="M380 254 L380 284"/>
+  <text class="tm" x="392" y="274">nothing damaged → skip the whole frame</text>
+
+  <rect class="acc" x="180" y="284" width="400" height="50" rx="7"/>
+  <text class="t"  x="196" y="306">3. SkiaRenderer draws  —  src/skia_renderer.rs</text>
+  <text class="tm" x="196" y="324">EGL framebuffer wrapped as a Skia surface; scene painted into its canvas</text>
+
+  <path class="ln" d="M380 334 L380 358"/>
+
+  <rect class="box" x="180" y="358" width="400" height="34" rx="7"/>
+  <text class="t"  x="196" y="379">4. Backend presents  —  KMS atomic commit, or host window swap</text>
+</svg>

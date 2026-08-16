@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 420" width="760" height="420" role="img" aria-label="Otto splits the scene into per-purpose buffers which Smithay assigns to KMS planes">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grn  { fill: #dafbe1; stroke: #2da44e; stroke-width: 1.4; }
+    .warn { fill: #fff8c5; stroke: #d4a72c; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grn { fill: #0f2f18; stroke: #3fb950; }
+      .warn{ fill: #2d2200; stroke: #b08800; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <text class="tb" x="20" y="24">One scene, split into per-purpose buffers  (front-most first)</text>
+
+  <rect class="grp" x="20" y="34" width="380" height="250" rx="10"/>
+
+  <rect class="acc" x="36" y="46" width="348" height="30" rx="6"/>
+  <text class="t"  x="48" y="66">dock strip</text>
+  <text class="tm" x="260" y="66">band, not full screen</text>
+
+  <rect class="acc" x="36" y="82" width="348" height="30" rx="6"/>
+  <text class="t"  x="48" y="102">app-switcher strip</text>
+  <text class="tm" x="260" y="102">band, not full screen</text>
+
+  <rect class="acc" x="36" y="118" width="348" height="30" rx="6"/>
+  <text class="t"  x="48" y="138">overlay UI</text>
+  <text class="tm" x="252" y="138">menus, OSD, islands</text>
+
+  <rect class="acc" x="36" y="154" width="348" height="30" rx="6"/>
+  <text class="t"  x="48" y="174">exposé</text>
+
+  <rect class="grn" x="36" y="190" width="348" height="42" rx="6"/>
+  <text class="t"  x="48" y="210">topmost window's own client buffer</text>
+  <text class="tm" x="48" y="226">promoted for direct scanout when it is still and unoccluded</text>
+
+  <rect class="acc" x="36" y="238" width="348" height="30" rx="6"/>
+  <text class="t"  x="48" y="258">windows</text>
+
+  <rect class="grp" x="20" y="290" width="380" height="46" rx="10"/>
+  <rect class="acc" x="36" y="298" width="348" height="30" rx="6"/>
+  <text class="t"  x="48" y="318">background  (opaque, primary plane only)</text>
+
+  <path class="ln" d="M400 180 L420 180 L420 89 L444 89"/>
+
+  <rect class="box" x="452" y="46" width="288" height="86" rx="7"/>
+  <text class="t"  x="466" y="68">Smithay DrmCompositor</text>
+  <text class="tm" x="466" y="86">tries each element on a hardware plane,</text>
+  <text class="tm" x="466" y="101">front-most first, every frame</text>
+  <text class="tm" x="466" y="120">rejected element → GPU-composited instead</text>
+
+  <path class="ln" d="M560 132 L560 156"/>
+  <path class="ln" style="marker-end:none" d="M640 132 L640 144 L752 144"/>
+  <path class="ln" d="M752 144 L752 257 L740 257"/>
+
+  <rect class="grn" x="452" y="156" width="288" height="58" rx="7"/>
+  <text class="t"  x="466" y="177">Accepted → hardware plane</text>
+  <text class="tm" x="466" y="194">display engine composites it; no GPU work,</text>
+  <text class="tm" x="466" y="208">no re-render while its subtree is undamaged</text>
+
+  <rect class="warn" x="452" y="228" width="288" height="58" rx="7"/>
+  <text class="t"  x="466" y="249">Rejected → GPU fallback</text>
+  <text class="tm" x="466" y="266">drawn into the primary swapchain, exactly</text>
+  <text class="tm" x="466" y="280">as a compositor without planes would</text>
+
+  <rect class="box" x="452" y="300" width="288" height="58" rx="7"/>
+  <text class="t"  x="466" y="321">Backdrop blur across planes</text>
+  <text class="tm" x="466" y="338">lower planes are composited once into a small</text>
+  <text class="tm" x="466" y="352">blurred image the dock/menus sample from</text>
+
+  <text class="tm" x="20" y="356">A buffer is re-rendered only when damage lands under its subtree,</text>
+  <text class="tm" x="20" y="372">so an idle desktop produces no re-renders and no page flips.</text>
+  <text class="tm" x="20" y="396">Full contract: specs/plane-scanout.md</text>
+</svg>

@@ -1,78 +1,165 @@
 ## Dock
 
-The dock is a task manager that shows running apps and minimized windows. Visually is placed always on the bottom of the screen.
+The dock is Otto's task manager: running applications, bookmarked launchers,
+and minimized windows, on one screen edge.
 
-In the current version the Dock is implemented as part of the compositor. It uses the Layers scene graph to render the dock elements.
+It is drawn **by the compositor**, not by a client. That is unusual — the top
+bar, the launcher and the islands are all separate Wayland clients — and it is
+a deliberate trade. The dock is the target of the genie minimize animation, so
+it and the window being minimized have to be nodes in the same scene graph. A
+client-side dock would mean animating a window into a surface the compositor
+cannot see inside.
 
-### Dock elements
-The Dock shows a list of running applications. Each application has an icon and a label. The icon is the application icon and the label is the application name.
+The consequence to keep in mind while working on it: the dock has no window,
+no surface, and no event loop of its own. It is a set of `lay-rs` layers plus
+an observer, living inside the compositor's state.
 
-The icon and application name is retrieved from the application desktop file. The desktop file is a file that describes the application and is located in `/usr/share/applications/` following the [Desktop Entry Specification](https://specifications.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html).
+### Data flow
 
-Application icons and names needs to be loaded asynchronously. The loading is done in a separate thread to avoid blocking the main thread.
+![Dock data flow](diagrams/dock-flow.svg)
 
-Few dependencies are required to load the application icons and names:
-- xdgkit
-- freedesktop-icons
-- freedesktop-desktop-entry
+`Workspaces` is the observable owner of global window state. When the layout
+changes, or a window is minimized or restored, it clones `WorkspacesModel` and
+notifies its observers (`src/workspaces/mod.rs`). `DockView` registers as one
+at startup.
 
+`DockView::notify` does **not** rebuild the dock. It pushes the snapshot onto
+an async channel, and a throttled task in `notification_handler` takes the
+latest snapshot every 0.5 s and turns it into dock state
+(`src/workspaces/dock/view.rs`). Window state churns constantly — focus,
+geometry, title — and rebuilding icon layout on every event would be pure
+waste.
 
-### Bookmarking
-Bookmarks, or favourite applications launchers, can now be declared in `otto_config.toml` under the `[dock]` table. Each entry supplies a desktop file id plus optional label/extra arguments, for example:
+When a snapshot is taken, the dock resolves `Application` metadata via
+`ApplicationsInfo::get_app_info_by_id`, builds a `DockModel`, and calls
+`update_state`, which calls `render_dock()`.
+
+`DockModel` (`src/workspaces/dock/model.rs`) is small on purpose:
+
+```rust
+pub struct DockModel {
+    pub launchers: Vec<Application>,               // bookmarks
+    pub running_apps: Vec<Application>,
+    pub minimized_windows: Vec<(ObjectId, String)>,
+    pub width: i32,
+    pub focus: f32,                                // magnification focus
+}
+```
+
+### Application metadata
+
+Icons and names come from `.desktop` files in the standard locations, per the
+[Desktop Entry Specification](https://specifications.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html).
+
+That lookup touches the filesystem and an icon theme, so it happens **off the
+main thread** — `ApplicationsInfo` (`src/workspaces/apps_info.rs`) resolves
+asynchronously and the dock renders with a placeholder until the result
+arrives. Blocking the compositor's loop on icon lookup would stall every client
+on the system.
+
+The lookup is built on `xdgkit`, `freedesktop-icons` and
+`freedesktop-desktop-entry`.
+
+### Layers and layout
+
+The hierarchy is created in `DockView::new` (`src/workspaces/dock/view.rs`):
+
+- `wrap_layer` — pins the dock to its screen edge
+- `view_layer` — holds the children
+- `bar_layer` — the frosted background
+- `dock_apps_container` — running apps and bookmarks
+- `dock_windows_container` — minimized window thumbnails
+- `resize_handle` — drag to resize; right-click for the dock's context menu
+
+`render_elements_layers` computes the available icon width from the current
+dock width, applies size changes, and installs pointer callbacks on the
+per-app layers. Layers for apps that went away fade and scale out before being
+removed, so the remaining icons slide rather than jump.
+
+`magnify_elements` is the macOS-style magnification: it reads the current
+pointer focus position, computes a Gaussian falloff (`magnify_function`), and
+schedules the resulting size changes through `Engine::schedule_changes`.
+
+### Interactions
+
+Pointer handling lives in the `ViewInteractions` impl for `DockView`
+(`src/workspaces/dock/interactions.rs`):
+
+- **Motion** updates the magnification focus. Leaving the dock resets it to a
+  sentinel value so the icons shrink back.
+- **Button release** looks up the layer under the pointer. An app layer calls
+  `Workspaces::focus_app`, which raises the window and hands it keyboard focus;
+  a minimized-window layer calls `Workspaces::unminimize_window`.
+- **Right-click on the handle** opens the dock's context menu — position,
+  autohide, magnification — which writes back through `set_dock_setting`.
+
+Hit-testing is routed ahead of windows: `InputHandler::surface_under` defers to
+`Workspaces::is_cursor_over_dock` (`src/input/pointer.rs`,
+`src/workspaces/mod.rs`), so the dock claims pointer focus before any window
+underneath it.
+
+### Minimize and restore
+
+- `Workspaces::minimize_window` appends `(ObjectId, title)` to
+  `WorkspacesModel.minimized_windows`, updates dock state, and animates the
+  `WindowView` into the dock's window drawer.
+- `Workspaces::unminimize_window` removes the entry, runs the genie animation
+  back into the workspace, and collapses the drawer.
+- `DockView::add_window_element` / `remove_window_element` are the bridge
+  between dock layers and window views during those animations.
+
+### Rendering
+
+`src/workspaces/dock/render.rs` holds the Skia drawing:
+
+- `draw_app_icon` paints the cached freedesktop icon with a drop shadow, and
+  draws the running-app indicator dot only for apps that are actually running.
+  Without an icon it falls back to a stroked rounded rect.
+- Labels are balloon tooltips with blurred shadows, hidden until hover.
+- The bar uses background blur and colours from `theme_colors()`, and resizes
+  with the icon height.
+
+The whole dock strip is also a candidate for its own hardware plane — see
+[DRM Planes](drm_plane.md), where the dock buffer is a band rather than a
+full-screen buffer precisely so its animations stay cheap.
+
+### Configuration
+
+Under `[dock]` in `otto_config.toml`:
 
 ```toml
 [dock]
+size = 1.0              # multiplier, 0.5 – 2.0
+position = "bottom"     # "bottom", "left", "right"
+autohide = false
+magnification = true
+genie_scale = 0.5       # minimize animation
+genie_span = 10.0
+colorize_icons = false  # tint icons to colorize_color
+
 bookmarks = [
-  { desktop_id = "org.kde.dolphin.desktop" },
+  { desktop_id = "org.gnome.Nautilus.desktop" },
+  { desktop_id = "org.mozilla.firefox.desktop", label = "Web", exec_args = ["--private-window"] },
 ]
 ```
-Configured launchers are preloaded into the dock and share the same icon/hover behaviour as running apps. Clicking a bookmark focuses an existing instance or launches the desktop entry if nothing is running.
 
+Bookmarks are preloaded into the dock and behave like running apps on hover.
+Clicking one focuses an existing instance, or launches the desktop entry if
+nothing is running.
 
-### TODO: Dock submenu
-This feature could make the case for a separate application that communicates with the dock.
+`size`, `position`, `autohide` and `magnification` are **live** settings —
+changing them through `org.otto.Settings` reconfigures the dock in place, no
+restart. See [settings-dbus-api.md](settings-dbus-api.md).
 
-**Open questions**
-Should the compositor be responsible for the dock submenu?
+### Open question: dock submenus
 
-**Ideas**
-A Wayland protocol to retrieve the application icon and name would be more efficient than reading the desktop file.
+Per-app submenus (recent documents, app-provided actions) would need
+information the compositor does not have. Two directions were considered:
 
+- A Wayland protocol for an app to publish its dock items — this is what
+  `otto-dock-v1` (`src/otto_dock/`, `protocols/otto-dock-v1.xml`) is for,
+  though the dock does not consume it yet.
+- A separate application that owns the submenu UI and talks to the dock.
 
-### Components
-- `DockView` owns the layer hierarchy, state cache, and loose coupling to the rest of the compositor (`src/workspaces/dock/view.rs`).
-- `DockModel` is the lightweight data model mirrored inside `DockView`. It contains `launchers` (bookmarked apps), `running_apps`, and `minimized_windows` (`src/workspaces/dock/model.rs`).
-- `DockView` implements `Observer<WorkspacesModel>` so it receives workspace model snapshots (`src/workspaces/dock/view.rs`, `src/workspaces/mod.rs`).
-- Pointer-facing logic lives in the `ViewInteractions` impl for `DockView` (`src/workspaces/dock/interactions.rs`).
-- Rendering helpers live in `src/workspaces/dock/render.rs`.
-
-### State flow
-- `Workspaces` is the observable owner of global workspace state. On layout changes (`update_workspace_model`) or when windows are minimised/restored it clones `WorkspacesModel` and notifies observers (`src/workspaces/mod.rs`).
-- At compositor start `Workspaces::new` registers the dock as an observer (`src/workspaces/mod.rs`).
-- `DockView::notify` pushes workspace snapshots into an async channel and a throttled task inside `notification_handler` turns the latest snapshot into dock state every 0.5s. This keeps UI updates responsive without re-rendering on every transient event (`src/workspaces/dock/view.rs`).
-- When a snapshot arrives, the dock resolves `Application` metadata through `ApplicationsInfo::get_app_info_by_id`, builds `DockModel { launchers, running_apps, minimized_windows, … }`, and calls `update_state`, which triggers `render_dock()` (`src/workspaces/dock/view.rs`).
-- `render_dock()` recomputes icon sizes, (re)builds layers for app icons / miniwindows, and schedules removal animations for stale layers.
-
-### Layer & layout
-- The layer structure is created in `DockView::new`; `wrap_layer` pins the dock to the bottom edge, `view_layer` holds children, and `bar_layer`, `dock_apps_container`, `resize_handle`, and `dock_windows_container` host specific visuals (`src/workspaces/dock/view.rs`).
-- `render_elements_layers` computes available icon width from the current dock width, applies size changes, and installs pointer callbacks on per-app layers. Old layers fade/scale out before removal to avoid layout jumps.
-- `magnify_elements` drives the Mac-style magnification effect. It reads the current pointer focus position, computes a Gaussian (`magnify_function`) falloff, and schedules size changes through `Engine::schedule_changes` (`src/workspaces/dock/view.rs`).
-
-### Interactions
-- Pointer motion updates the magnification focus via `update_magnification_position`; leaving the dock resets it to the sentinel value so icons shrink back (`src/workspaces/dock/interactions.rs`, `src/workspaces/dock/view.rs`).
-- Button release looks up the hovered layer. If the layer maps to an app, `Workspaces::focus_app` raises it and the compositor reassigns keyboard focus. If it maps to a minimised window, `Workspaces::unminimize_window` is invoked to restore it (`src/workspaces/dock/interactions.rs`, `src/workspaces/mod.rs`).
-- `InputHandler::surface_under` delegates hit testing to `Workspaces::is_cursor_over_dock`, ensuring pointer focus enters the dock before regular windows (`src/input_handler.rs`, `src/workspaces/mod.rs`).
-
-### Minimise / restore integration
-- Minimising a window (`Workspaces::minimize_window`) appends the pair `(ObjectId, title)` to `WorkspacesModel.minimized_windows`, updates the dock state, and animates the corresponding `WindowView` into the dock drawer (`src/workspaces/mod.rs`).
-- Restoring (`Workspaces::unminimize_window`) removes the entry, orchestrates the genie animation that puts the window back in the workspace, and collapses the dock drawer (`src/workspaces/mod.rs`).
-- `DockView::add_window_element` and `remove_window_element` provide the bridge between dock layers and window views during these animations (`src/workspaces/dock/view.rs`).
-
-### Visual details
-- Icons render through Skia. `draw_app_icon` paints cached freedesktop icons when available, applies drop shadows, and only draws the indicator dot for running apps; fallbacks render a stroked rounded rect and optional picture (`src/workspaces/dock/render.rs`).
-- Labels are built as balloon tooltips with blurred shadows and stay hidden until pointer hover (`src/workspaces/dock/render.rs`).
-- The bar uses background blur, configurable colours from `theme_colors()`, and resizes dynamically with icon height (`src/workspaces/dock/view.rs`).
-
-### Dependencies & configuration
-- Scaling constants (icon size, genie effect span, screen scale) read from `Config`, so theme and animation tweaks propagate automatically (`src/workspaces/dock/view.rs`, `src/workspaces/dock/render.rs`).
-- Application metadata resolution depends on the async `ApplicationsInfo` helper which queries freedesktop desktop entries (`src/workspaces/apps_info.rs`, `src/workspaces/dock/view.rs`).
+Related: a protocol for icon and name would also be more efficient than reading
+`.desktop` files, and would work for apps that ship no desktop entry at all.

@@ -94,24 +94,25 @@ layout: "doc"
 INTRO
 
 DEVELOPER_FILES=(
-    "developer/intro.md"
     "developer/project-structure.md"
     "developer/rendering.md"
     "developer/render_loop.md"
     "developer/wayland.md"
-    "developer/screenshare.md"
-    # "developer/screenshot-plan.md"
+    "developer/drm_plane.md"
     "developer/dock-design.md"
-    # "developer/expose.md"
-    # "developer/layer-shell.md"
-    
-    
-    # "developer/drm_plane.md"
-    # "developer/foreign-toplevel.md"
-    # "developer/keyboard_mapping.md"
-    # "developer/window-move.md"
+    "developer/expose.md"
+    "developer/window-move.md"
+    "developer/foreign-toplevel.md"
+    "developer/screenshare.md"
+    "developer/color-scheme-setting.md"
+    "developer/settings-dbus-api.md"
+    "developer/rdp-virtual-output.md"
+    # Planning / exploration docs — deliberately not on the website:
+    # "developer/README.md"          (index; the site has its own nav)
+    # "developer/otto-kit-roadmap.md"
     # "developer/sc-layer-protocol-design.md"
-    "developer/credits.md"
+    # "developer/screenshot-plan.md"
+    # "developer/airplay-screenshare.md"
 )
 
 echo "Building Developer Guide..."
@@ -125,6 +126,17 @@ for file in "${DEVELOPER_FILES[@]}"; do
         echo "⚠ Warning: $file not found"
     fi
 done
+
+# The developer docs reference SVG diagrams relatively (diagrams/foo.svg) so
+# they render on GitHub. Here every doc is concatenated into one page at
+# /developer/, so copy the diagrams into the static dir and make the links
+# root-relative; canonifyURLs then resolves them against the real baseURL.
+DIAGRAM_SRC="$DOCS_DIR/developer/diagrams"
+if [ -d "$DIAGRAM_SRC" ]; then
+    mkdir -p "$SCRIPT_DIR/assets/diagrams"
+    cp "$DIAGRAM_SRC"/*.svg "$SCRIPT_DIR/assets/diagrams/" 2>/dev/null
+    perl -i -pe 's{\]\(diagrams/}{](/diagrams/}g' "$OUTPUT_DIR/developer.md"
+fi
 
 echo "✓ Built User Guide: $OUTPUT_DIR/_index.md"
 echo "✓ Built Developer Guide: $OUTPUT_DIR/developer.md"

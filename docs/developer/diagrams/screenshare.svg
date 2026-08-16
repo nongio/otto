@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 430" width="760" height="430" role="img" aria-label="Screenshare control plane over D-Bus and data plane over PipeWire">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grn  { fill: #dafbe1; stroke: #2da44e; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grn { fill: #0f2f18; stroke: #3fb950; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <text class="tb" x="30"  y="24">Control plane  —  D-Bus</text>
+  <text class="tb" x="470" y="24">Data plane  —  GPU</text>
+
+  <rect class="box" x="30" y="36" width="300" height="42" rx="7"/>
+  <text class="t"  x="44" y="56">App  (Chrome, Firefox, OBS)</text>
+  <text class="tm" x="44" y="72">org.freedesktop.portal.ScreenCast</text>
+
+  <path class="ln" d="M180 78 L180 102"/>
+
+  <rect class="box" x="30" y="102" width="300" height="42" rx="7"/>
+  <text class="t"  x="44" y="122">xdg-desktop-portal  (system service)</text>
+  <text class="tm" x="44" y="138">org.freedesktop.impl.portal.ScreenCast</text>
+
+  <path class="ln" d="M180 144 L180 168"/>
+
+  <rect class="box" x="30" y="168" width="300" height="42" rx="7"/>
+  <text class="t"  x="44" y="188">xdg-desktop-portal-otto</text>
+  <text class="tm" x="44" y="204">shows the source picker, then calls…</text>
+
+  <path class="ln" d="M180 210 L180 234"/>
+
+  <rect class="acc" x="30" y="234" width="300" height="42" rx="7"/>
+  <text class="t"  x="44" y="254">org.otto.ScreenCast  (compositor)</text>
+  <text class="tm" x="44" y="270">zbus server on a tokio thread</text>
+
+  <path class="ln" d="M180 276 L180 300"/>
+  <text class="tm" x="192" y="294">calloop channel — sync/async bridge</text>
+
+  <rect class="box" x="30" y="300" width="300" height="42" rx="7"/>
+  <text class="t"  x="44" y="320">Compositor main loop</text>
+  <text class="tm" x="44" y="336">owns state.screenshare_sessions</text>
+
+  <!-- data plane -->
+  <rect class="grp" x="400" y="36" width="330" height="306" rx="10"/>
+
+  <rect class="box" x="416" y="56" width="282" height="42" rx="7"/>
+  <text class="t"  x="430" y="76">Otto renders the output as usual</text>
+  <text class="tm" x="430" y="92">Skia → EGL framebuffer</text>
+
+  <path class="ln" d="M557 98 L557 122"/>
+
+  <rect class="grn" x="416" y="122" width="282" height="56" rx="7"/>
+  <text class="t"  x="430" y="142">Monitor stream: glBlitFramebuffer</text>
+  <text class="tm" x="430" y="159">framebuffer → PipeWire DMA-BUF, damage-aware</text>
+  <text class="tm" x="430" y="173">GPU only, no CPU copy</text>
+
+  <rect class="grn" x="416" y="190" width="282" height="56" rx="7"/>
+  <text class="t"  x="430" y="210">Window stream: re-render the surface tree</text>
+  <text class="tm" x="430" y="227">window_to_dmabuf, origin at (0,0)</text>
+  <text class="tm" x="430" y="241">never captures what is stacked on top</text>
+
+  <text class="tm" x="548" y="186">or</text>
+  <path class="ln" style="marker-end:none" d="M698 150 L712 150 L712 218"/>
+  <path class="ln" d="M698 218 L712 218 L712 293 L706 293"/>
+
+  <rect class="acc" x="416" y="272" width="282" height="42" rx="7"/>
+  <text class="t"  x="430" y="292">PipeWireStream  (dedicated thread)</text>
+  <text class="tm" x="430" y="308">buffer pool, format + modifier negotiation</text>
+
+  <path class="ln" d="M330 255 L400 255"/>
+  <text class="tm" x="336" y="248">Start()</text>
+
+  <path class="ln" d="M416 293 L360 293 L360 372 L214 372"/>
+  <rect class="box" x="30" y="356" width="184" height="34" rx="7"/>
+  <text class="t"  x="44" y="377">App receives frames</text>
+  <text class="tm" x="230" y="377">PipeWire node id handed back through the portal</text>
+</svg>

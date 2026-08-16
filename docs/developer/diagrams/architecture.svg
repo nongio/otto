@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 470" width="760" height="470" role="img" aria-label="Otto architecture: clients, compositor state, scene graph, renderer, backends, hardware">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+      .ln  { stroke: #8b949e; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <!-- clients -->
+  <rect class="box" x="20" y="16" width="720" height="44" rx="8"/>
+  <text class="tb" x="36" y="36">Wayland clients</text>
+  <text class="tm" x="36" y="52">apps · otto-bar · otto-islands · otto-launcher · otto-settings · XWayland</text>
+  <path class="ln" d="M380 60 L380 84"/>
+  <text class="tm" x="392" y="78">wl_surface, xdg_shell, layer-shell, otto-surface-style…</text>
+
+  <!-- compositor -->
+  <rect class="grp" x="20" y="88" width="720" height="212" rx="10"/>
+  <text class="tb" x="36" y="110">Otto compositor  —  one big state: Otto&lt;BackendData&gt;  (src/state/mod.rs)</text>
+
+  <rect class="box" x="36" y="124" width="220" height="64" rx="7"/>
+  <text class="t"  x="50" y="146">Protocol handlers</text>
+  <text class="tm" x="50" y="163">src/state/ · src/shell/</text>
+  <text class="tm" x="50" y="178">seat, xdg, layer-shell, dmabuf…</text>
+
+  <rect class="box" x="270" y="124" width="220" height="64" rx="7"/>
+  <text class="t"  x="284" y="146">Window &amp; desktop logic</text>
+  <text class="tm" x="284" y="163">src/workspaces/</text>
+  <text class="tm" x="284" y="178">workspaces, dock, exposé, switcher</text>
+
+  <rect class="box" x="504" y="124" width="220" height="64" rx="7"/>
+  <text class="t"  x="518" y="146">Services</text>
+  <text class="tm" x="518" y="163">screenshare · settings · lock</text>
+  <text class="tm" x="518" y="178">D-Bus on a tokio thread</text>
+
+  <path class="ln" d="M146 188 L146 210"/>
+  <path class="ln" d="M380 188 L380 210"/>
+
+  <rect class="acc" x="36" y="214" width="688" height="34" rx="7"/>
+  <text class="t"  x="50" y="236">lay-rs scene graph  —  retained tree of layers: position, opacity, blur, animation, damage</text>
+
+  <path class="ln" d="M380 248 L380 264"/>
+  <rect class="box" x="36" y="264" width="688" height="30" rx="7"/>
+  <text class="t"  x="50" y="284">SkiaRenderer  —  wraps Smithay's GlesRenderer; draws the scene onto the EGL framebuffer  (src/skia_renderer.rs)</text>
+
+  <path class="ln" d="M380 300 L380 326"/>
+
+  <!-- backends -->
+  <rect class="grp" x="20" y="330" width="720" height="72" rx="10"/>
+  <text class="tb" x="36" y="350">Backends  —  same compositor logic, different definition of "an output"</text>
+  <rect class="box" x="36" y="358" width="220" height="34" rx="7"/>
+  <text class="t"  x="50" y="379">udev / DRM  (src/udev/)</text>
+  <rect class="box" x="270" y="358" width="220" height="34" rx="7"/>
+  <text class="t"  x="284" y="379">winit  (src/winit.rs)</text>
+  <rect class="box" x="504" y="358" width="220" height="34" rx="7"/>
+  <text class="t"  x="518" y="379">x11  (src/x11.rs)</text>
+
+  <path class="ln" d="M380 402 L380 424"/>
+  <rect class="box" x="20" y="428" width="720" height="30" rx="8"/>
+  <text class="t"  x="36" y="448">Hardware  —  GPU (EGL/GBM) · KMS connectors, CRTCs, planes · libinput devices</text>
+</svg>
