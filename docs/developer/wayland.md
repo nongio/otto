@@ -1,11 +1,11 @@
-## Wayland protocols
+# Wayland protocols
 
 Otto follows Smithay's "one big compositor state" architecture: nearly all
 protocol state and every handler hangs off a single struct, `Otto<BackendData>`.
 Learning where that struct is built, and how Smithay routes requests into it,
 makes the rest of the codebase navigable.
 
-### The big state: `Otto<BackendData>`
+## The big state: `Otto<BackendData>`
 
 `Otto<BackendData>` lives in `src/state/mod.rs` and holds:
 
@@ -17,7 +17,7 @@ makes the rest of the codebase navigable.
 So `self.xdg_shell_state` or `self.shm_state` is one of those Smithay objects
 stored directly inside `Otto`. There is no separate protocol layer to look for.
 
-### Where it is initialized
+## Where it is initialized
 
 Most globals are created in `Otto::init(...)` in `src/state/mod.rs`:
 
@@ -30,7 +30,7 @@ Most globals are created in `Otto::init(...)` in `src/state/mod.rs`:
 Backends create their own globals in their entrypoints — most notably
 `zwp_linux_dmabuf_v1`, which is per backend.
 
-### How delegation works
+## How delegation works
 
 Smithay protocols are wired with `delegate_*` macros. The pattern is always
 the same three pieces:
@@ -43,7 +43,7 @@ the same three pieces:
 The macro generates the dispatch glue, so requests arriving for that global end
 up in your handler impl.
 
-### Finding a protocol
+## Finding a protocol
 
 When you need to know where protocol X is implemented:
 
@@ -61,7 +61,7 @@ Handlers are split roughly like this:
 - `src/shell/*.rs` — xdg-shell, layer-shell, XWayland, and surface commit plumbing
 - `src/{udev,winit,x11}.rs` — backend-specific globals and handler impls
 
-### Common entrypoints
+## Common entrypoints
 
 | Protocol | Handler | State + delegation |
 |----------|---------|--------------------|
@@ -77,7 +77,7 @@ Handlers are split roughly like this:
 | `zwlr_screencopy_manager_v1` | `src/state/screencopy.rs` | |
 | foreign toplevel (both protocols) | `src/state/foreign_toplevel_list_handler.rs`, `src/state/wlr_foreign_toplevel.rs` | see [foreign-toplevel.md](foreign-toplevel.md) |
 
-### Otto's own protocols
+## Otto's own protocols
 
 Three protocols are Otto-specific. Their XML lives in `protocols/`:
 

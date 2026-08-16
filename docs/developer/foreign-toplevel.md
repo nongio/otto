@@ -1,4 +1,4 @@
-## Foreign Toplevel Management
+# Foreign Toplevel Management
 
 "Foreign toplevel" protocols are how a compositor lets *other* clients see and
 control its window list — taskbars, launchers, window switchers, screen-share
@@ -15,7 +15,7 @@ The `ext` protocol's identifier is also what Otto's screenshare API uses to
 name a window — `RecordWindow`'s `window-id` is an
 `ext-foreign-toplevel-list-v1` identifier. See [screenshare.md](screenshare.md).
 
-### One window, two handles
+## One window, two handles
 
 Rather than duplicating bookkeeping, `src/state/foreign_toplevel_shared.rs`
 wraps both protocol handles in one struct and fans every update out to both:
@@ -34,7 +34,7 @@ Callers never pick a protocol.
 Handles are stored in `Otto::foreign_toplevels`, a `HashMap` keyed by the
 surface's `ObjectId`.
 
-### Lifecycle
+## Lifecycle
 
 **Creation** — when an xdg toplevel is mapped (`src/shell/xdg.rs`), Otto pulls
 the app_id and title, creates one handle per protocol, wraps them, stores them,
@@ -55,7 +55,7 @@ set.
 **Destruction** — on unmap, the handle is removed and `send_closed()` notifies
 every connected taskbar.
 
-### Control requests (wlr protocol)
+## Control requests (wlr protocol)
 
 All of these are implemented in `src/state/wlr_foreign_toplevel.rs` and route
 into the same code paths the compositor's own UI uses:
@@ -69,7 +69,7 @@ into the same code paths the compositor's own UI uses:
 | `SetFullscreen` / `UnsetFullscreen` | the `XdgShellHandler` fullscreen/unfullscreen requests |
 | `SetRectangle` | ignored — a minimize-animation hint, not required by the protocol |
 
-### Protocol state (wlr)
+## Protocol state (wlr)
 
 The custom implementation keeps two levels of state:
 
@@ -82,7 +82,7 @@ When a new manager binds, every existing window is replayed to it — including
 its current state and output — so a taskbar started after the fact sees a
 correct list immediately.
 
-### Known gaps
+## Known gaps
 
 - **State events are only sent on focus change and on map.** A window minimized
   or maximized by some other route does not push a fresh `state` event, so an
@@ -92,7 +92,7 @@ correct list immediately.
   `output_leave` / `output_enter`.
 - **No parent tracking** — transient/child window relationships are not exposed.
 
-### Testing
+## Testing
 
 ```sh
 # terminal 1
@@ -106,7 +106,7 @@ WAYLAND_DISPLAY=wayland-1 waybar
 Selecting a window in `rofi` should focus it; close buttons in a taskbar should
 close it.
 
-### Related
+## Related
 
 - [Dock Design](dock-design.md) — the built-in, compositor-drawn dock
 - [Wayland Protocols](wayland.md) — how handlers are wired in general

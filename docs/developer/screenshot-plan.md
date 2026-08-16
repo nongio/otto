@@ -1,4 +1,4 @@
-## Screenshot Portal — implementation plan
+# Screenshot Portal — implementation plan
 
 > **Status: not implemented.** No `org.freedesktop.impl.portal.Screenshot`
 > exists in `xdg-desktop-portal-otto`, and `otto.portal` declares only
@@ -12,7 +12,7 @@
 > *D-Bus portal* interface that GTK/Qt screenshot apps and sandboxed apps use
 > instead.
 
-### What it would add
+## What it would add
 
 `org.freedesktop.impl.portal.Screenshot`, so third-party screenshot tools
 (GNOME Screenshot, Spectacle, Flameshot) can capture through the standard
@@ -22,7 +22,7 @@ The key difference from ScreenCast: a screenshot is **one file, once**, not a
 stream. No PipeWire, no session, no format negotiation. The portal returns a
 `file://` URI and the app takes it from there.
 
-### The chain
+## The chain
 
 ```
 Screenshot app
@@ -32,7 +32,7 @@ Screenshot app
   → capture → PNG → temp file → file:// URI
 ```
 
-### Data flow
+## Data flow
 
 1. App calls `org.freedesktop.portal.Screenshot.Screenshot()`.
 2. xdg-desktop-portal forwards to the otto backend.
@@ -44,7 +44,7 @@ Screenshot app
 8. Return `file:///…/screenshot-XXXXXX.png`.
 9. The app displays, saves, or copies it.
 
-### Phase 1: basic screenshot
+## Phase 1: basic screenshot
 
 **Reuse the existing capture path.** The SHM branch of
 `zwlr_screencopy_v1` already does exactly steps 4–5: `BlitCurrentFrame`
@@ -105,12 +105,12 @@ Do not forget to register the interface in the backend's `main.rs` **and add
 it to `otto.portal`** — an interface that is implemented but not declared is
 never routed to.
 
-### Phase 2: colour picker (optional)
+## Phase 2: colour picker (optional)
 
 `PickColor` returns `(response_code, {"color": (r, g, b)})`. It needs pixel
 readback at a point and a BGRA → RGB conversion; the same capture path applies.
 
-### D-Bus interface
+## D-Bus interface
 
 ```xml
 <method name="Screenshot">
@@ -128,7 +128,7 @@ requesting app provides its own selection and annotation UI.
 
 **Results** — `uri` (s), a `file://` URI to the PNG.
 
-### Dependencies
+## Dependencies
 
 ```toml
 image = { version = "0.25", default-features = false, features = ["png"] }
@@ -138,7 +138,7 @@ tempfile = "3.0"
 Otto already depends on `image` behind the `udev` and `debug` features; check
 whether the existing dependency is enough before adding another.
 
-### Checklist
+## Checklist
 
 **Phase 1**
 - [ ] Add `image` (png) and `tempfile` dependencies where needed
@@ -155,7 +155,7 @@ whether the existing dependency is enough before adding another.
 - [ ] Pixel readback and BGRA → RGB conversion
 - [ ] Test with a portal-aware colour picker
 
-### Design notes
+## Design notes
 
 - **No UI in the compositor.** Third-party apps provide their own selection and
   annotation.
@@ -164,7 +164,7 @@ whether the existing dependency is enough before adding another.
 - **PNG only** initially — most compatible and lossless.
 - **Full primary output** initially.
 
-### Later
+## Later
 
 Specific output selection; window-specific screenshots by window id (the
 `window_to_dmabuf` path from screenshare already does this); JPEG with a

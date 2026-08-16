@@ -1,4 +1,4 @@
-## Dock
+# Dock
 
 The dock is Otto's task manager: running applications, bookmarked launchers,
 and minimized windows, on one screen edge.
@@ -14,7 +14,7 @@ The consequence to keep in mind while working on it: the dock has no window,
 no surface, and no event loop of its own. It is a set of `lay-rs` layers plus
 an observer, living inside the compositor's state.
 
-### Data flow
+## Data flow
 
 ![Dock data flow](diagrams/dock-flow.svg)
 
@@ -46,7 +46,7 @@ pub struct DockModel {
 }
 ```
 
-### Application metadata
+## Application metadata
 
 Icons and names come from `.desktop` files in the standard locations, per the
 [Desktop Entry Specification](https://specifications.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html).
@@ -60,7 +60,7 @@ on the system.
 The lookup is built on `xdgkit`, `freedesktop-icons` and
 `freedesktop-desktop-entry`.
 
-### Layers and layout
+## Layers and layout
 
 The hierarchy is created in `DockView::new` (`src/workspaces/dock/view.rs`):
 
@@ -80,7 +80,7 @@ removed, so the remaining icons slide rather than jump.
 pointer focus position, computes a Gaussian falloff (`magnify_function`), and
 schedules the resulting size changes through `Engine::schedule_changes`.
 
-### Interactions
+## Interactions
 
 Pointer handling lives in the `ViewInteractions` impl for `DockView`
 (`src/workspaces/dock/interactions.rs`):
@@ -98,7 +98,7 @@ Hit-testing is routed ahead of windows: `InputHandler::surface_under` defers to
 `src/workspaces/mod.rs`), so the dock claims pointer focus before any window
 underneath it.
 
-### Minimize and restore
+## Minimize and restore
 
 - `Workspaces::minimize_window` appends `(ObjectId, title)` to
   `WorkspacesModel.minimized_windows`, updates dock state, and animates the
@@ -108,7 +108,7 @@ underneath it.
 - `DockView::add_window_element` / `remove_window_element` are the bridge
   between dock layers and window views during those animations.
 
-### Rendering
+## Rendering
 
 `src/workspaces/dock/render.rs` holds the Skia drawing:
 
@@ -123,7 +123,7 @@ The whole dock strip is also a candidate for its own hardware plane — see
 [DRM Planes](drm_plane.md), where the dock buffer is a band rather than a
 full-screen buffer precisely so its animations stay cheap.
 
-### Configuration
+## Configuration
 
 Under `[dock]` in `otto_config.toml`:
 
@@ -151,7 +151,7 @@ nothing is running.
 changing them through `org.otto.Settings` reconfigures the dock in place, no
 restart. See [settings-dbus-api.md](settings-dbus-api.md).
 
-### Open question: dock submenus
+## Open question: dock submenus
 
 Per-app submenus (recent documents, app-provided actions) would need
 information the compositor does not have. Two directions were considered:

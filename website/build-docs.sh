@@ -85,15 +85,17 @@ perl -i -pe '
 # ============================================
 # DEVELOPER GUIDE
 # ============================================
-cat > "$OUTPUT_DIR/developer.md" << 'INTRO'
----
-title: "Otto Developer Guide"
-layout: "doc"
----
-
-INTRO
+# Same shape as the user guide: one Hugo page per doc, so each page gets its
+# own table of contents. Concatenating them into a single page produced one
+# enormous TOC that was unusable once you started scrolling.
+# These live under /developer/ rather than at the top level, so the guides
+# keep separate URL namespaces and /developer/ stays a valid landing page.
+DEV_OUT="$OUTPUT_DIR/developer"
+rm -rf "$DEV_OUT"
+mkdir -p "$DEV_OUT"
 
 DEVELOPER_FILES=(
+    "developer/README.md"
     "developer/project-structure.md"
     "developer/rendering.md"
     "developer/render_loop.md"
@@ -107,36 +109,62 @@ DEVELOPER_FILES=(
     "developer/color-scheme-setting.md"
     "developer/settings-dbus-api.md"
     "developer/rdp-virtual-output.md"
-    # Planning / exploration docs — deliberately not on the website:
-    # "developer/README.md"          (index; the site has its own nav)
-    # "developer/otto-kit-roadmap.md"
-    # "developer/sc-layer-protocol-design.md"
-    # "developer/screenshot-plan.md"
-    # "developer/airplay-screenshare.md"
+    "developer/otto-kit-roadmap.md"
+    "developer/sc-layer-protocol-design.md"
+    "developer/screenshot-plan.md"
+    "developer/airplay-screenshare.md"
 )
 
 echo "Building Developer Guide..."
 for file in "${DEVELOPER_FILES[@]}"; do
     filepath="$DOCS_DIR/$file"
-    if [ -f "$filepath" ]; then
-        echo "" >> "$OUTPUT_DIR/developer.md"
-        cat "$filepath" >> "$OUTPUT_DIR/developer.md"
-        echo "" >> "$OUTPUT_DIR/developer.md"
-    else
+    if [ ! -f "$filepath" ]; then
         echo "⚠ Warning: $file not found"
+        continue
     fi
+
+    base="$(basename "$file" .md)"
+    slug="$(echo "$base" | tr '[:upper:]' '[:lower:]')"
+    title="$(sed -n '1s/^# //p' "$filepath")"
+    # README.md is the guide's landing page at "/developer/"; every other
+    # doc gets its own page at "/developer/<slug>/".
+    if [ "$slug" = "readme" ]; then
+        outfile="$DEV_OUT/_index.md"
+    else
+        outfile="$DEV_OUT/$slug.md"
+    fi
+
+    {
+        echo "---"
+        echo "title: \"$title\""
+        echo 'layout: "doc"'
+        echo "---"
+        echo ""
+        tail -n +2 "$filepath"
+    } > "$outfile"
 done
 
-# The developer docs reference SVG diagrams relatively (diagrams/foo.svg) so
-# they render on GitHub. Here every doc is concatenated into one page at
-# /developer/, so copy the diagrams into the static dir and make the links
-# root-relative; canonifyURLs then resolves them against the real baseURL.
+# docs/developer/*.md link to sibling files, to diagrams, and out into the
+# repo (../../specs, ../../protocols) so they render on GitHub. Rewrite each
+# kind for the site: siblings become real page links, diagrams point at the
+# static dir, and repo paths become GitHub links since they have no page here.
+perl -i -pe '
+    s{\]\(README\.md\)}{](/developer/)}gi;
+    s{\]\(diagrams/([A-Za-z0-9_-]+\.svg)\)}{](/diagrams/$1)}g;
+    s{\]\(\.\./\.\./([^)]*/)\)}{](https://github.com/nongio/otto/tree/main/$1)}g;
+    s{\]\(\.\./\.\./([^)]+)\)}{](https://github.com/nongio/otto/blob/main/$1)}g;
+    s{\]\(([A-Za-z0-9_-]+)\.md#([^)]+)\)}{"](/developer/" . lc($1) . "/#$2)"}ge;
+    s{\]\(([A-Za-z0-9_-]+)\.md\)}{"](/developer/" . lc($1) . "/)"}ge;
+' "$DEV_OUT"/*.md
+
+# The diagrams are referenced as /diagrams/<name>.svg above; Hugo serves
+# assets/ as the static dir, and canonifyURLs resolves the root-relative
+# path against the real baseURL.
 DIAGRAM_SRC="$DOCS_DIR/developer/diagrams"
 if [ -d "$DIAGRAM_SRC" ]; then
     mkdir -p "$SCRIPT_DIR/assets/diagrams"
     cp "$DIAGRAM_SRC"/*.svg "$SCRIPT_DIR/assets/diagrams/" 2>/dev/null
-    perl -i -pe 's{\]\(diagrams/}{](/diagrams/}g' "$OUTPUT_DIR/developer.md"
 fi
 
 echo "✓ Built User Guide: $OUTPUT_DIR/_index.md"
-echo "✓ Built Developer Guide: $OUTPUT_DIR/developer.md"
+echo "✓ Built Developer Guide: $DEV_OUT/ ($(ls "$DEV_OUT" | wc -l) pages)"

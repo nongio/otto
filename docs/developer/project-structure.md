@@ -1,4 +1,4 @@
-## Project Structure
+# Project Structure
 
 Otto is a Cargo workspace. The root crate is the compositor itself; everything
 under `components/` is a separate binary that talks to the compositor over
@@ -9,7 +9,7 @@ launcher, the lock screen and the greeter are not part of the compositor.**
 They are ordinary Wayland clients built with `otto-kit`. Only the dock,
 exposé, the app switcher and window decorations are drawn server-side.
 
-### The compositor crate
+## The compositor crate
 
 ```
 src/
@@ -51,7 +51,7 @@ src/
 the largest), `planes.rs` and `backdrop.rs` (hardware plane scanout and
 cross-plane blur), `init.rs` and `device.rs` (DRM setup and hotplug).
 
-### Components
+## Components
 
 Each is a standalone binary in `components/`:
 
@@ -69,7 +69,7 @@ Each is a standalone binary in `components/`:
 | `xdg-desktop-portal-otto` | Portal backend: screencast, screenshot, settings, access dialogs |
 | `apps-manager` | Application launcher/manager |
 
-### Other top-level directories
+## Other top-level directories
 
 ```
 protocols/       Wayland protocol XML (otto-surface-style, otto-dock, wlr-*)
@@ -82,7 +82,7 @@ resources/       Runtime resources (cursors, …)
 website/         Hugo site generated from docs/
 ```
 
-### Build & run
+## Build & run
 
 ```sh
 cargo run -- --winit          # windowed, inside an existing session — the dev path
@@ -110,7 +110,7 @@ WAYLAND_DISPLAY=wayland-1 cargo run -p otto-bar
 Minimum supported Rust is 1.87.0 for the compositor; building the whole
 workspace needs 1.96.0, which `otto-rdp` pins through GStreamer.
 
-### Feature flags
+## Feature flags
 
 The canonical list is `[features]` in the workspace `Cargo.toml`. The default
 build is deliberately lean — enable developer tooling on demand:

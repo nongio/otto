@@ -1,8 +1,8 @@
-## Screen Sharing
+# Screen Sharing
 
 How frames get out of Otto and into Chrome, OBS, `grim` or `wf-recorder`.
 
-### The shape of it
+## The shape of it
 
 There are **two halves that never touch each other**, and most confusion about
 this subsystem comes from conflating them:

@@ -9,7 +9,7 @@ clients and go to the grab's own handler instead. That is why dragging a window
 over another window doesn't make the other window react — nothing downstream
 ever sees those events.
 
-### Entry point
+## Entry point
 
 `Otto::move_request_xdg` in `src/shell/xdg.rs`. It verifies that the request
 comes from the serial of the grab that triggered it (pointer or touch) and that
@@ -19,7 +19,7 @@ A maximized window is unmaximized first, and its initial location is reset to
 the pointer or touch position, so the restored geometry appears under the
 cursor instead of jumping away from it.
 
-### Pointer drags
+## Pointer drags
 
 A `PointerMoveSurfaceGrab` (`src/shell/grabs.rs`) is installed on the seat's
 pointer. Pointer focus is cleared from clients for the duration. Each motion
@@ -28,13 +28,13 @@ the grab's start point and calls `workspaces.map_window` to reposition the
 window; the associated view layers are updated so compositor-side UI stays in
 sync with the new position.
 
-### Touch drags
+## Touch drags
 
 A `TouchMoveSurfaceGrab` (`src/shell/grabs.rs`) does the same through
 `workspaces.map_window`, tracking the touch slot that started the grab so a
 second finger cannot hijack the drag.
 
-### Release
+## Release
 
 Both grabs release automatically when the initiating button is released or the
 touch slot ends, restoring normal pointer and touch focus.

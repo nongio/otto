@@ -1,4 +1,4 @@
-## Render Loop
+# Render Loop
 
 Otto's render loop is built around one goal: **keep input-to-pixels latency
 low without burning power when nothing is changing.** Those two pull in
@@ -6,13 +6,13 @@ opposite directions, and most of the machinery below is the compromise.
 
 ![Render loop](diagrams/render-loop.svg)
 
-### Why "quiet until needed"
+## Why "quiet until needed"
 
 If nothing damaged the scene, no cursor or drag surface moved, and no redraw
 was forced, then rendering again would produce identical pixels. Skipping that
 frame costs nothing and saves a GPU pass. An idle Otto desktop does no work.
 
-### Why timing matters
+## Why timing matters
 
 Most clients only repaint after they receive a frame callback (`wl_callback`)
 or presentation feedback. So the compositor's schedule dictates theirs.
@@ -26,7 +26,7 @@ latency for no reason.
 The fix is to render *late*: wait most of the frame period, let clients paint
 first, and compose as close to the next VBlank as the GPU allows.
 
-### Shared building blocks
+## Shared building blocks
 
 **Calloop dispatch.** `Otto` owns a `calloop::LoopHandle`. When surface state
 changes (a commit in `src/shell/mod.rs`, say), `Otto::schedule_event_loop_dispatch()`
@@ -45,7 +45,7 @@ requested redraw, and no auxiliary surface needing a repaint.
 **Cursor and drag-and-drop surfaces** bypass the no-damage fast path, so
 interactive feedback stays responsive over a static scene.
 
-### Damage tracking: why it is the hard part
+## Damage tracking: why it is the hard part
 
 Damage tracking is what lets Otto stay responsive without redrawing whole
 outputs. It is also the single easiest thing to get subtly wrong:
@@ -71,7 +71,7 @@ Two layers of tracking cooperate:
 - `lay-rs` tracks what changed in the UI tree; `SceneElement` reports that as
   the scene's damage.
 
-### Client frame pacing
+## Client frame pacing
 
 Sending frame callbacks at full rate to windows the user cannot see wastes
 power on the client side. `WindowThrottleState` (`src/state/window_throttle.rs`)
@@ -88,7 +88,7 @@ The hidden rate is deliberately not zero: Chromium 115+ treats a window that
 receives no callbacks at all as discardable and evicts its render process. A
 2 Hz trickle satisfies that heuristic while saving essentially all the work.
 
-### Udev (DRM/GBM) backend — `src/udev/`
+## Udev (DRM/GBM) backend — `src/udev/`
 
 This is the production loop, and the only one with real VBlank timing.
 
@@ -119,7 +119,7 @@ This is the production loop, and the only one with real VBlank timing.
    Temporary DRM errors either pause scheduling (device inactive) or trigger a
    retry, depending on the error class.
 
-### Winit backend — `src/winit.rs`
+## Winit backend — `src/winit.rs`
 
 There is no real VBlank to target, so this path biases for responsiveness with
 short timeouts rather than deadline scheduling.
@@ -141,7 +141,7 @@ short timeouts rather than deadline scheduling.
 Buffer age from the backend enables partial damage; a requested full redraw
 resets that path so stale contents cannot be reused.
 
-### X11 backend — `src/x11.rs`
+## X11 backend — `src/x11.rs`
 
 Basic and not actively maintained.
 

@@ -1,9 +1,14 @@
 {{ define "main" }}
     <button id="menu-button">Contents</button>
 
+    {{/* Back link goes one level up, not always to the site home: a user
+         guide page's parent IS the home page, while a developer page's
+         parent is the developer index. */}}
+    {{ $up := .Parent | default .Site.Home }}
+
     {{/* Use built-in TableOfContents, with a small sticky header
          (back link + current page title) pinned above the entries. */}}
-    {{ $tocHeader := printf `<li class="toc-header"><a class="back-home" href="%s">&larr; %s</a><div class="toc-page-title">%s</div></li>` .Site.Home.RelPermalink .Site.Home.Title .Title }}
+    {{ $tocHeader := printf `<li class="toc-header"><a class="back-home" href="%s">&larr; %s</a><div class="toc-page-title">%s</div></li>` $up.RelPermalink $up.Title .Title }}
     {{ (replaceRE "(<nav id=\"TableOfContents\">\\s*<ul[^>]*>)" (printf "$1%s" $tocHeader) .TableOfContents) | safeHTML }}
 
     {{/* main.js walks main's direct children and wraps them into
@@ -12,7 +17,7 @@
          back link has to live inside <h1>, not before it, or that
          wrapping (and the styling built on it) breaks. */}}
     <main>
-        <h1><a class="back-home" href="{{ .Site.Home.RelPermalink }}">&larr; {{ .Site.Home.Title }}</a><span class="page-title">{{ .Title }}</span></h1>
+        <h1><a class="back-home" href="{{ $up.RelPermalink }}">&larr; {{ $up.Title }}</a><span class="page-title">{{ .Title }}</span></h1>
         {{ .Content }}
     </main>
 {{ end }}

@@ -1,9 +1,9 @@
-## Color Scheme
+# Color Scheme
 
 How Otto decides whether the desktop is light or dark, and how applications
 find out.
 
-### The setting
+## The setting
 
 One option in `otto_config.toml`:
 
@@ -18,7 +18,7 @@ It controls two separate things:
    modules.
 2. **Client applications** — over D-Bus, through the XDG Settings portal.
 
-### Why applications need a portal for this
+## Why applications need a portal for this
 
 An application cannot read `otto_config.toml` — it may be sandboxed, and it
 should not have to know which compositor it is running under. The desktop-wide
@@ -36,7 +36,7 @@ a number:
 GTK4 and Qt6 apps query this automatically. So does Firefox, and Chromium via
 its portal integration.
 
-### The chain
+## The chain
 
 ```
 App  →  org.freedesktop.portal.Settings          (xdg-desktop-portal)
@@ -63,7 +63,7 @@ declared in `otto.portal` alongside its other interfaces.
 backend depends on them and they must keep working even as the wider settings
 API grows. See [settings-dbus-api.md](settings-dbus-api.md).
 
-### Verifying
+## Verifying
 
 ```sh
 # Ask the portal what the desktop's preference is
@@ -82,7 +82,7 @@ If the two disagree, the portal backend is stale — a backend from an earlier
 login can still own the bus name. See the note in
 [screenshare.md](screenshare.md#testing-a-portal-build).
 
-### Gaps
+## Gaps
 
 - **Changing the theme still needs a compositor restart.** The general
   `org.otto.Settings` API does emit a `Changed` signal, but the portal backend
@@ -91,7 +91,7 @@ login can still own the bus name. See the note in
 - **Only `color-scheme` is exposed.** The `org.freedesktop.appearance`
   namespace also defines `accent-color` and `contrast`; neither is served yet.
 
-### Spec references
+## Spec references
 
 - [XDG Desktop Portal — Settings](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Settings.html)
 - [`org.freedesktop.appearance`](https://github.com/flatpak/xdg-desktop-portal/blob/main/data/org.freedesktop.appearance.xml)

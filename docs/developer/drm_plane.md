@@ -1,10 +1,10 @@
-## DRM Planes and Direct Scanout
+# DRM Planes and Direct Scanout
 
 > Structure and rationale live here. The full behavioural contract —
 > per-buffer damage rules, blur-composite invalidation, promotion hysteresis —
 > is [`specs/plane-scanout.md`](../../specs/plane-scanout.md).
 
-### What a plane is, and why you would want one
+## What a plane is, and why you would want one
 
 A display controller can read from more than one buffer and blend the results
 itself, on the way to the cable. Each of those inputs is a **plane**: one
@@ -21,7 +21,7 @@ the GPU renders a small strip and the display engine composites it over
 untouched buffers. The background, the windows and everything else are not
 touched at all, and often no GPU work happens for that frame whatsoever.
 
-### What Otto actually does
+## What Otto actually does
 
 Most compositors use planes opportunistically — "if a fullscreen window
 happens to be scanout-compatible, promote it". Otto goes further and
@@ -51,7 +51,7 @@ The rest are `ARGB8888` and non-opaque, since they have to blend.
 A buffer is re-rendered only when damage lands under its subtree. An idle
 desktop produces no re-renders and no page flips.
 
-### When decomposition is enabled
+## When decomposition is enabled
 
 `SurfaceData::planes_enabled` (`src/udev/device.rs`) requires all three:
 
@@ -68,7 +68,7 @@ path — and Otto logs why under the `otto::planes` target.
 overlay usage on those drivers is broken. That also disables decomposition, by
 way of the overlay count check.
 
-### How assignment actually happens
+## How assignment actually happens
 
 Otto does not assign planes. It hands Smithay's `DrmCompositor` a list of
 render elements, and `render_frame()` tries each one on a plane, front-most
@@ -90,7 +90,7 @@ For an element to be *eligible* it must provide `underlying_storage()`, report
 `Kind::ScanoutCandidate`, be backed by a dmabuf (not CPU memory or an anonymous
 GPU texture), and use a format and transform the plane supports.
 
-### Direct scanout of a client window
+## Direct scanout of a client window
 
 The topmost window can be **promoted**: its own client buffer goes straight to
 a plane, so its pixels never pass through Otto's renderer at all. This is the
@@ -106,7 +106,7 @@ alongside the render tranche, so a client can allocate buffers in formats that
 are promotable in the first place (`get_surface_dmabuf_feedback` in
 `src/udev/feedback.rs`).
 
-### The blur problem
+## The blur problem
 
 Planes composite in the display engine, which means a translucent plane cannot
 *see* the planes below it — but Otto's dock, menus and OSD are frosted glass
@@ -124,7 +124,7 @@ Promoted client windows are folded into that composite by blitting their
 dmabuf — the same buffer KMS scans out — so a shared window does not vanish
 from the blur behind the dock.
 
-### Debugging
+## Debugging
 
 ```sh
 # What Otto decided, per output
@@ -143,7 +143,7 @@ Useful trace lines:
 
 Build with `--features debug-kms` for extra KMS logging.
 
-### Related
+## Related
 
 - [`specs/plane-scanout.md`](../../specs/plane-scanout.md) — the contract
 - [Rendering](rendering.md) — the pipeline these buffers feed

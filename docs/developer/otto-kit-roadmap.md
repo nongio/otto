@@ -1,4 +1,4 @@
-## otto-kit: application UI
+# otto-kit: application UI
 
 > **Status: partially built.** Written while scaffolding the settings app
 > ([specs/settings-app.md](../../specs/settings-app.md)) — the first otto-kit
@@ -8,7 +8,7 @@
 > what is done; the analysis is kept because it is what the remaining work is
 > being built against.
 
-### Where the toolkit started
+## Where the toolkit started
 
 otto-kit was a drawing library with a Wayland shell attached: a window, a
 surface, a theme, typography, icons, and components that know how to paint
@@ -32,7 +32,7 @@ struct, a `render_at(canvas, w, h)`, `on_pointer_down` / `on_pointer_drag` /
 `offset_at(x)` for hit-testing. Retained state, immediate-mode draw, event
 methods returning responses — that is the shape the rest of the toolkit needed.
 
-### Who consumes what
+## Who consumes what
 
 The apps and the compositor use otto-kit in opposite ways, and that split
 constrains every design decision below.
@@ -51,7 +51,7 @@ server-side decorations with `Titlebar` / `WindowControl`, its menus with
 `icons::*`. Server-side rendering is not a hypothetical future consumer of this
 toolkit — it is the one shipping today.
 
-### The constraint: stay drawable from the compositor
+## The constraint: stay drawable from the compositor
 
 Otto draws server-side components into a Skia canvas inside a `lay-rs` draw
 closure. There is no `AppRunner`, no `AppContext`, no `wl_surface`. That path
@@ -67,7 +67,7 @@ One instance of this already went wrong: `icons::named_icon_sized` calls
 `find_icon_in_theme` instead — routing around a client-runtime dependency that
 ended up inside what should be a pure lookup.
 
-### Infrastructure
+## Infrastructure
 
 **1. Draw + hit-test convention — done.** The problem was that no component
 reported its own geometry, so an app computed rects twice: once to draw, once
@@ -122,7 +122,7 @@ one additive hook, `on_close`, so a dropdown's field can notice a dismissal
 (ESC, click outside) it did not initiate; callers that never set it are
 unaffected. Full account in `dropdown::menu`'s module docs.
 
-### The widgets
+## The widgets
 
 **Form primitives** — the largest single win, since every settings pane is
 built from them:
@@ -153,7 +153,7 @@ the list above — drawn stateless, positioned by hardcoded rects, inert. It
 exists to look at, and should be promoted into the toolkit rather than written
 twice.
 
-### Order of work
+## Order of work
 
 1. ~~Draw/hit-test convention, scroll view~~ — done.
 2. **Focus and keyboard navigation** — the remaining blocker. Every further
@@ -165,7 +165,7 @@ The display arrangement canvas — outputs as draggable rectangles with edge
 snapping — is deliberately *not* a reusable control and belongs to the settings
 app.
 
-### Draw functions by default, layers by exception
+## Draw functions by default, layers by exception
 
 Components are draw functions. `Renderable::to_layer` exists, and the
 compositor's own UI is built on `lay-rs` layers, but that is not the default a
@@ -182,7 +182,7 @@ effect (it needs animation, transform, blur, or opacity compositing, which a
 canvas cannot give). Neither is a property of a widget in the abstract, so the
 choice belongs to whoever places the component, not to its definition.
 
-### Open question
+## Open question
 
 Why did the client apps skip the components layer? Apps that could have used
 `Label` or `Button` wrote raw Skia instead, while the compositor adopted

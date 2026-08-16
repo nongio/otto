@@ -1,4 +1,4 @@
-## Rendering pipeline
+# Rendering pipeline
 
 This document explains how Otto gets from "some state changed" to "pixels on a
 display", and where you would hook into that.
@@ -11,7 +11,7 @@ Files to follow along with:
 - `src/udev/render.rs` — the DRM frame path (the real one)
 - `src/winit.rs` — the windowed dev path
 
-### The mental model
+## The mental model
 
 Otto is a **retained-mode** compositor wearing an immediate-mode compositor's
 clothes.
@@ -32,7 +32,7 @@ page.
 That is why so little of Otto looks like drawing code, and why "why is this not
 updating?" is nearly always a damage question rather than a drawing question.
 
-### The layers underneath
+## The layers underneath
 
 1. **Smithay owns the plumbing** — a `GlesRenderer`, the output abstraction,
    swapchains, and the damage tracker. Conceptually it renders into a buffer
@@ -52,7 +52,7 @@ updating?" is nearly always a damage question rather than a drawing question.
    Taffy-based layout; `SceneElement` is the bridge into Smithay's element
    list.
 
-### Frame flow
+## Frame flow
 
 ![Render pipeline](diagrams/render-pipeline.svg)
 
@@ -72,7 +72,7 @@ On udev this is not the whole story: Otto also splits the scene into several
 scanout-capable buffers so the display hardware can composite them without the
 GPU. See [DRM Planes](drm_plane.md).
 
-### Backends in practice
+## Backends in practice
 
 **winit** — best for day-to-day development. The output is a regular window.
 There is no hardware cursor plane, so the cursor is composited normally. It
@@ -86,7 +86,7 @@ parts of the scene can be promoted to overlay planes.
 
 **x11** — Otto as an X11 client. Basic and not actively maintained.
 
-### Getting frames out
+## Getting frames out
 
 Two independent capture paths exist, and they share one GPU blit:
 

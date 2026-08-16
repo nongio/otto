@@ -1,4 +1,4 @@
-## `org.otto.Settings` — the settings D-Bus contract
+# `org.otto.Settings` — the settings D-Bus contract
 
 > **Status**: implemented on the compositor side (`src/settings/`,
 > `src/settings_service.rs`), ahead of the app. This document is the interface
@@ -26,7 +26,7 @@ Bus name `org.otto.Settings`, object path `/org/otto/Settings`, interface
 The two existing getters (`GetColorScheme`, `GetIconTheme`) stay exactly as
 they are — `xdg-desktop-portal-otto` depends on them and must not be disturbed.
 
-### Values
+## Values
 
 Every setting value crosses the bus as a variant. The variant's contained type
 is fixed per setting and given in the schema:
@@ -43,7 +43,7 @@ is fixed per setting and given in the schema:
 Sending a variant whose type does not match the schema is an error; the
 compositor never coerces.
 
-### Identifiers
+## Identifiers
 
 A stable dotted path matching the configuration structure: `dock.size`,
 `input.pointer_accel_speed`, `power_management.on_lid_close`. Top-level keys
@@ -53,7 +53,7 @@ have no prefix: `accent_color`, `cursor_size`.
 renamed or repurposed — an app built against an older compositor must keep
 working, and the app is the thing that hardcodes these strings.
 
-### Methods
+## Methods
 
 ```
 Describe()                 → aa{sv}    schema, one dict per setting
@@ -107,7 +107,7 @@ and changes nothing. Returns the same status strings as `Set`.
 file — what the app needs to show a per-setting revert affordance. Effective
 values always come from `GetAll`.
 
-### Signal
+## Signal
 
 ```
 Changed(values: a{sv})
@@ -123,7 +123,7 @@ the only writer, and must not suppress its own echo.
 The signal is coalesced: a continuous interaction such as dragging a slider
 applies live throughout but emits and persists when the interaction settles.
 
-### Errors
+## Errors
 
 | Error name | When |
 | --- | --- |
@@ -135,7 +135,7 @@ applies live throughout but emits and persists when the interaction settles.
 
 `ApplyFailed` means nothing was persisted and the running state is unchanged.
 
-### What a client can rely on
+## What a client can rely on
 
 - The schema is authoritative for labels, ranges, defaults and apply
   behaviour. A client renders from `Describe` rather than hardcoding them.
@@ -143,7 +143,7 @@ applies live throughout but emits and persists when the interaction settles.
 - Every identifier in `GetOverridden` appears in `Describe`.
 - Values are effective values: whatever the layered configuration resolved to.
 
-### Worked example
+## Worked example
 
 ```
 Describe() → [
@@ -168,7 +168,7 @@ Reset("dock.size") → "applied"
   … Changed({ "dock.size": <1.0> })      // whatever the lower layers give
 ```
 
-### Open
+## Open
 
 - Shortcuts are a keyed collection, not a scalar, and do not fit `Set(id,
   value)` cleanly. They likely need their own methods
