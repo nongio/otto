@@ -32,6 +32,8 @@ something for the planes to take.
 
 Per output, front to back: the dock strip, the app-switcher strip, overlay UI,
 exposé, the promoted client window, the windows buffer, and the background.
+Each of those is a subtree of the `lay-rs` scene — see
+[The Scene Graph](scene-graph.md) for how the tree is shaped and why.
 (When the session is locked, only the lock plane is composited — nothing that
 could hold a window is even consulted.)
 

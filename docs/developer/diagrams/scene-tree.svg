@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 560" width="760" height="560" role="img" aria-label="Otto's lay-rs scene tree: engine root, per-output container, plane subtrees, workspace and window layers">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.3; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.3; }
+    .grn  { fill: #dafbe1; stroke: #2da44e; stroke-width: 1.3; }
+    .pur  { fill: #fbefff; stroke: #a475f9; stroke-width: 1.3; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.1; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 12.5px; }
+    .tb   { fill: #1f2328; font-size: 12.5px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 10.5px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.2; fill: none; }
+    .lna  { stroke: #8b949e; stroke-width: 1.3; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grn { fill: #0f2f18; stroke: #3fb950; }
+      .pur { fill: #21162e; stroke: #a475f9; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <text class="tb" x="16" y="20">Engine scene root  —  one tree for the whole compositor</text>
+
+  <rect class="box" x="16" y="30" width="200" height="26" rx="6"/>
+  <text class="t" x="28" y="48">scene root</text>
+
+  <!-- offscreen sources -->
+  <rect class="pur" x="470" y="30" width="274" height="52" rx="6"/>
+  <text class="t"  x="482" y="48">layer_shell_background</text>
+  <text class="tm" x="482" y="65">not rendered directly — a source that</text>
+  <text class="tm" x="482" y="77">mirror layers follow</text>
+  <path class="ln" d="M216 43 L470 43"/>
+
+  <path class="ln" d="M32 56 L32 78"/>
+  <path class="lna" d="M32 78 L44 78"/>
+  <rect class="acc" x="46" y="64" width="250" height="28" rx="6"/>
+  <text class="t" x="58" y="83">output_&lt;name&gt;   (one per output)</text>
+  <text class="tm" x="306" y="83">every output sits at scene (0,0)</text>
+
+  <!-- plane subtrees group -->
+  <rect class="grn" x="78" y="106" width="14" height="12" rx="3"/>
+  <text class="tm" x="98" y="116">direct children of the output, bottom → top in z-order.  Green = rendered into its own buffer and offered to a KMS plane.</text>
+
+  <path class="ln" d="M62 92 L62 386"/>
+
+  <!-- workspaces_layer -->
+  <path class="lna" d="M62 140 L76 140"/>
+  <rect class="box" x="78" y="126" width="200" height="28" rx="6"/>
+  <text class="t" x="90" y="145">workspaces_layer</text>
+  <text class="tm" x="288" y="145">scrolls horizontally between workspaces</text>
+
+  <path class="ln" d="M94 154 L94 268"/>
+
+  <path class="lna" d="M94 178 L108 178"/>
+  <rect class="grn" x="110" y="164" width="180" height="28" rx="6"/>
+  <text class="t" x="122" y="183">background_plane</text>
+  <text class="tm" x="300" y="183">all workspaces' wallpapers</text>
+
+  <path class="lna" d="M94 214 L108 214"/>
+  <rect class="grn" x="110" y="200" width="180" height="28" rx="6"/>
+  <text class="t" x="122" y="219">windows_plane</text>
+  <text class="tm" x="300" y="219">all workspaces' window containers</text>
+
+  <path class="lna" d="M94 250 L108 250"/>
+  <rect class="grn" x="110" y="236" width="180" height="28" rx="6"/>
+  <text class="t" x="122" y="255">expose_layer</text>
+  <text class="tm" x="300" y="255">window previews; hidden unless exposé is up</text>
+
+  <path class="lna" d="M62 290 L76 290"/>
+  <rect class="grn" x="78" y="276" width="200" height="28" rx="6"/>
+  <text class="t" x="90" y="295">overlay_plane</text>
+  <text class="tm" x="288" y="295">layer-shell top/overlay, OSD, DnD, popups, selector</text>
+
+  <path class="lna" d="M62 322 L76 322"/>
+  <rect class="grn" x="78" y="308" width="200" height="28" rx="6"/>
+  <text class="t" x="90" y="327">switcher_plane</text>
+  <text class="tm" x="288" y="327">app switcher</text>
+
+  <path class="lna" d="M62 354 L76 354"/>
+  <rect class="grn" x="78" y="340" width="200" height="28" rx="6"/>
+  <text class="t" x="90" y="359">dock_plane</text>
+  <text class="tm" x="288" y="359">dock</text>
+
+  <path class="lna" d="M62 386 L76 386"/>
+  <rect class="box" x="78" y="372" width="200" height="28" rx="6"/>
+  <text class="t" x="90" y="391">lock_plane</text>
+  <text class="tm" x="288" y="391">above everything; hidden while unlocked</text>
+
+  <!-- window subtree -->
+  <text class="tb" x="16" y="432">Inside windows_plane, one subtree per window</text>
+
+  <rect class="box" x="16" y="442" width="180" height="26" rx="6"/>
+  <text class="t" x="28" y="460">workspace windows_layer</text>
+  <path class="lna" d="M196 455 L216 455"/>
+
+  <rect class="acc" x="218" y="442" width="150" height="26" rx="6"/>
+  <text class="t" x="230" y="460">window (base)</text>
+
+  <path class="ln" d="M234 468 L234 546"/>
+  <path class="lna" d="M234 486 L250 486"/>
+  <rect class="box" x="252" y="474" width="150" height="24" rx="6"/>
+  <text class="t" x="262" y="491">shadow_layer</text>
+
+  <path class="lna" d="M234 516 L250 516"/>
+  <rect class="box" x="252" y="504" width="150" height="24" rx="6"/>
+  <text class="t" x="262" y="521">content_layer</text>
+
+  <path class="lna" d="M234 546 L250 546"/>
+  <rect class="box" x="252" y="534" width="150" height="24" rx="6"/>
+  <text class="t" x="262" y="551">decoration_layer</text>
+
+  <path class="lna" d="M402 516 L420 516"/>
+  <rect class="acc" x="422" y="500" width="200" height="42" rx="6"/>
+  <text class="t"  x="432" y="518">one layer per wl_surface</text>
+  <text class="tm" x="432" y="534">toplevel + subsurfaces, nested</text>
+
+  <path class="lna" d="M368 455 L420 455"/>
+  <rect class="pur" x="422" y="440" width="322" height="42" rx="6"/>
+  <text class="t"  x="432" y="458">mirror_layer  —  a follower of the base layer</text>
+  <text class="tm" x="432" y="474">drawn in exposé; shows the same content, laid out elsewhere</text>
+</svg>

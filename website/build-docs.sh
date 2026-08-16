@@ -100,6 +100,7 @@ DEVELOPER_FILES=(
     "developer/rendering.md"
     "developer/render_loop.md"
     "developer/wayland.md"
+    "developer/scene-graph.md"
     "developer/drm_plane.md"
     "developer/dock-design.md"
     "developer/expose.md"

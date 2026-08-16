@@ -50,7 +50,8 @@ updating?" is nearly always a damage question rather than a drawing question.
 
 4. **Otto draws through the scene graph.** `lay-rs` owns the tree and its
    Taffy-based layout; `SceneElement` is the bridge into Smithay's element
-   list.
+   list. The tree's shape, and how subtrees of it become hardware planes, is
+   [The Scene Graph](scene-graph.md).
 
 ## Frame flow
 
