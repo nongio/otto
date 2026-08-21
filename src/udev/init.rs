@@ -53,8 +53,16 @@ fn looks_like_display_underrun(line: &str) -> bool {
             || l.contains("display"))
 }
 
-/// Configures all libinput devices based on Otto's configuration
-fn configure_libinput_devices(libinput: &mut Libinput, config: &Config) {
+/// Configures the devices libinput already knows about, and records them so a
+/// later `input.*` change can reach them again.
+///
+/// The events are consumed here, before the calloop source exists, so this is
+/// the only chance to see the devices present at startup.
+fn configure_libinput_devices(
+    libinput: &mut Libinput,
+    config: &Config,
+    devices: &mut Vec<smithay::reexports::input::Device>,
+) {
     use smithay::reexports::input::{
         event::{DeviceEvent, EventTrait},
         Event,
@@ -66,157 +74,8 @@ fn configure_libinput_devices(libinput: &mut Libinput, config: &Config) {
     for event in libinput.by_ref() {
         if let Event::Device(DeviceEvent::Added(added_event)) = event {
             let mut device = added_event.device();
-            apply_device_config(&mut device, config);
-        }
-    }
-}
-
-/// Applies configuration to an individual input device
-fn apply_device_config(device: &mut smithay::reexports::input::Device, config: &Config) {
-    // Only configure pointer devices (touchpads)
-    if !device.has_capability(smithay::reexports::input::DeviceCapability::Pointer) {
-        return;
-    }
-
-    // Check if it's a touchpad
-    if device.config_tap_finger_count() > 0 {
-        // Configure tap-to-click
-        if device
-            .config_tap_set_enabled(config.input.tap_enabled)
-            .is_ok()
-        {
-            tracing::debug!(
-                device = device.name(),
-                enabled = config.input.tap_enabled,
-                "Set tap-to-click"
-            );
-        }
-
-        // Configure tap-and-drag
-        if device
-            .config_tap_set_drag_enabled(config.input.tap_drag_enabled)
-            .is_ok()
-        {
-            tracing::debug!(
-                device = device.name(),
-                enabled = config.input.tap_drag_enabled,
-                "Set tap-and-drag"
-            );
-        }
-
-        // Configure tap drag lock
-        if device
-            .config_tap_set_drag_lock_enabled(config.input.tap_drag_lock_enabled)
-            .is_ok()
-        {
-            tracing::debug!(
-                device = device.name(),
-                enabled = config.input.tap_drag_lock_enabled,
-                "Set tap drag lock"
-            );
-        }
-
-        // Configure click method
-        use crate::config::TouchpadClickMethod;
-        use smithay::reexports::input::ClickMethod;
-
-        let click_method = match config.input.touchpad_click_method {
-            TouchpadClickMethod::Clickfinger => ClickMethod::Clickfinger,
-            TouchpadClickMethod::ButtonAreas => ClickMethod::ButtonAreas,
-        };
-
-        if device.config_click_set_method(click_method).is_ok() {
-            tracing::debug!(
-                device = device.name(),
-                method = ?config.input.touchpad_click_method,
-                "Set click method"
-            );
-        }
-
-        // Configure disable-while-typing
-        if device
-            .config_dwt_set_enabled(config.input.touchpad_dwt_enabled)
-            .is_ok()
-        {
-            tracing::debug!(
-                device = device.name(),
-                enabled = config.input.touchpad_dwt_enabled,
-                "Set disable-while-typing"
-            );
-        }
-
-        // Configure natural scrolling for touchpad
-        if device
-            .config_scroll_set_natural_scroll_enabled(config.input.touchpad_natural_scroll_enabled)
-            .is_ok()
-        {
-            tracing::debug!(
-                device = device.name(),
-                enabled = config.input.touchpad_natural_scroll_enabled,
-                "Set natural scroll"
-            );
-        }
-
-        // Configure left-handed mode
-        if device
-            .config_left_handed_set(config.input.touchpad_left_handed)
-            .is_ok()
-        {
-            tracing::debug!(
-                device = device.name(),
-                enabled = config.input.touchpad_left_handed,
-                "Set left-handed mode"
-            );
-        }
-
-        // Configure middle button emulation
-        if device
-            .config_middle_emulation_set_enabled(config.input.touchpad_middle_emulation_enabled)
-            .is_ok()
-        {
-            tracing::debug!(
-                device = device.name(),
-                enabled = config.input.touchpad_middle_emulation_enabled,
-                "Set middle button emulation"
-            );
-        }
-
-        info!(
-            device = device.name(),
-            "Configured touchpad with tap={}, drag={}, natural_scroll={}",
-            config.input.tap_enabled,
-            config.input.tap_drag_enabled,
-            config.input.touchpad_natural_scroll_enabled
-        );
-    }
-
-    // Configure pointer acceleration speed for all pointer devices
-    if device.config_accel_is_available() {
-        use crate::config::PointerAccelProfile;
-        use smithay::reexports::input::AccelProfile;
-
-        let profile = match config.input.pointer_accel_profile {
-            PointerAccelProfile::Flat => AccelProfile::Flat,
-            PointerAccelProfile::Adaptive => AccelProfile::Adaptive,
-        };
-
-        if device.config_accel_set_profile(profile).is_ok() {
-            tracing::debug!(
-                device = device.name(),
-                profile = ?config.input.pointer_accel_profile,
-                "Set pointer acceleration profile"
-            );
-        }
-
-        if device
-            .config_accel_set_speed(config.input.pointer_accel_speed)
-            .is_ok()
-        {
-            tracing::debug!(
-                device = device.name(),
-                speed = config.input.pointer_accel_speed,
-                "Set pointer acceleration speed"
-            );
+            super::input_config::apply_device_config(&mut device, &config.input);
+            devices.push(device);
         }
     }
 }
@@ -276,6 +135,7 @@ pub fn run_udev() {
         primary_gpu,
         gpus,
         backends: HashMap::new(),
+        input_devices: Vec::new(),
         #[cfg(feature = "fps_ticker")]
         fps_texture: None,
 
@@ -308,9 +168,11 @@ pub fn run_udev() {
     libinput_context.udev_assign_seat(&state.seat_name).unwrap();
 
     // Configure input devices based on config
+    let mut initial_devices = Vec::new();
     Config::with(|config| {
-        configure_libinput_devices(&mut libinput_context, config);
+        configure_libinput_devices(&mut libinput_context, config, &mut initial_devices);
     });
+    state.backend_data.input_devices = initial_devices;
 
     let libinput_backend = LibinputInputBackend::new(libinput_context.clone());
 
@@ -320,6 +182,26 @@ pub fn run_udev() {
     event_loop
         .handle()
         .insert_source(libinput_backend, move |event, _, data| {
+            // Keep the device registry in step before the event is handled: a
+            // device that appears now must be configured from the *current*
+            // configuration, not from the snapshot Otto started with, and it
+            // has to be reachable when a setting changes later.
+            match &event {
+                smithay::backend::input::InputEvent::DeviceAdded { device } => {
+                    let mut device = device.clone();
+                    crate::config::Config::with(|config| {
+                        super::input_config::apply_device_config(&mut device, &config.input);
+                    });
+                    data.backend_data.input_devices.push(device);
+                }
+                smithay::backend::input::InputEvent::DeviceRemoved { device } => {
+                    data.backend_data
+                        .input_devices
+                        .retain(|known| known != device);
+                }
+                _ => {}
+            }
+
             let dh = data.backend_data.dh.clone();
             data.process_input_event(&dh, event);
             // Input may move the cursor or trigger visual changes — request a render.
@@ -336,6 +218,12 @@ pub fn run_udev() {
             SessionEvent::PauseSession => {
                 libinput_context.suspend();
                 info!("pausing session");
+
+                // Keys held while we leave for another VT never report their
+                // release here, so xkb would keep them latched for the rest of
+                // the session — a stuck Ctrl arms drag-to-tile on every later
+                // window drag. Drop them all now.
+                data.release_all_keys();
 
                 for backend in data.backend_data.backends.values_mut() {
                     backend.drm.pause();
@@ -637,6 +525,22 @@ pub fn run_udev() {
                     }
                 }
             }
+        }
+
+        // Scripted-gesture driver (`/tmp/otto-gesture`). Idle and allocation-free
+        // until that file appears, so it costs a file-existence check per tick.
+        {
+            let interval = std::time::Duration::from_millis(8);
+            state
+                .handle
+                .insert_source(
+                    smithay::reexports::calloop::timer::Timer::from_duration(interval),
+                    move |_, _, data: &mut Otto<super::types::UdevData>| {
+                        crate::debug_gesture::tick(data);
+                        smithay::reexports::calloop::timer::TimeoutAction::ToDuration(interval)
+                    },
+                )
+                .expect("failed to schedule synthetic gesture timer");
         }
 
         // Calloop timer driving off-VBlank rendering: virtual outputs (which

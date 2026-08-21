@@ -56,12 +56,14 @@ shows its own strip, listing only its own workspaces.
 | Click a preview | Switch that monitor to that workspace |
 | Click `+` at the end of the strip | Add a workspace to that monitor |
 | Hover a preview, click the `×` | Remove that workspace from that monitor |
+| Click a workspace label twice | Rename that workspace in place |
 
 The previews are live: they show the actual current content of each workspace,
 at that monitor's own size and scale, not a stale screenshot.
 
-Adding and removing are animated — a new preview grows in from zero width, a
-removed one shrinks away before the workspace actually goes.
+Adding and removing are animated — a new preview grows in from zero width, and
+a removed one fades out as its slot collapses, the remaining previews sliding
+across to close the gap before the workspace actually goes.
 
 ### Removing a workspace
 
@@ -69,6 +71,20 @@ removed one shrinks away before the workspace actually goes.
 - Windows on the removed workspace are **not** closed — they move to that
   monitor's current workspace.
 - A workspace holding a fullscreen window with content in it cannot be removed.
+
+### Renaming a workspace
+
+Click a workspace's label a second time and it turns into a text field, with
+the current name selected — type to replace it, or click into the text to edit
+it. Selection works as it does anywhere else: drag to select, double-click a
+word, triple-click everything, `Ctrl+A`, shift-arrows.
+
+`Enter` keeps the name, `Escape` throws the edit away, and clicking elsewhere
+keeps it. While you are typing, no keystroke reaches a window and no shortcut
+fires.
+
+Clearing the name puts the default `Workspace N` back. Names are saved to your
+config file and come back on the next start, per monitor.
 
 ## Moving windows between workspaces
 

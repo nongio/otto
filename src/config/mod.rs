@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod default_apps;
+pub mod file;
 pub mod shortcuts;
 
 use shortcuts::{build_bindings, RunCommandConfig, ShortcutBinding, ShortcutMap};
@@ -56,6 +57,8 @@ pub struct Config {
     #[serde(default)]
     pub lock: LockConfig,
     #[serde(default)]
+    pub workspaces: WorkspacesConfig,
+    #[serde(default)]
     pub exec_once: Vec<RunCommandConfig>,
     #[serde(default)]
     pub xdg_autostart: bool,
@@ -66,7 +69,23 @@ pub struct Config {
     shortcut_bindings: Vec<ShortcutBinding>,
 }
 
-static CONFIG: OnceLock<Config> = OnceLock::new();
+/// The live configuration.
+///
+/// `RwLock<Arc<Config>>` rather than a plain `Config` so a reader never holds
+/// the lock while it works: [`Config::with`] clones the `Arc` and releases the
+/// lock immediately, which keeps the render path free of any chance of blocking
+/// behind a writer, and lets a closure passed to `with` read the config again
+/// without deadlocking.
+static CONFIG: OnceLock<RwLock<Arc<Config>>> = OnceLock::new();
+
+/// Serialises read-modify-write updates so two concurrent [`Config::update`]
+/// calls cannot lose one another's change. Held *around* the update rather than
+/// inside the `RwLock`, so the caller's closure may read the config freely.
+static CONFIG_WRITE: Mutex<()> = Mutex::new(());
+
+fn config_cell() -> &'static RwLock<Arc<Config>> {
+    CONFIG.get_or_init(|| RwLock::new(Arc::new(Config::init())))
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -98,6 +117,7 @@ impl Default for Config {
             occlusion_culling: false,
             login: LoginConfig::default(),
             lock: LockConfig::default(),
+            workspaces: WorkspacesConfig::default(),
             exec_once: Vec::new(),
             xdg_autostart: false,
             systemd_notify: false,
@@ -109,89 +129,72 @@ impl Default for Config {
 pub const WINIT_DISPLAY_ID: &str = "winit";
 
 impl Config {
+    /// Run `f` against the current configuration snapshot.
+    ///
+    /// The snapshot is immutable, so a value read here cannot change underneath
+    /// `f`; a concurrent [`Config::update`] is seen by the *next* call.
     pub fn with<R>(f: impl FnOnce(&Config) -> R) -> R {
-        let config = CONFIG.get_or_init(Config::init);
-        f(config)
+        let snapshot = Self::current();
+        f(&snapshot)
     }
+
+    /// The current configuration snapshot, kept alive for as long as the caller
+    /// holds it.
+    pub fn current() -> Arc<Config> {
+        config_cell()
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    /// Replace the live configuration with a mutated copy of the current one.
+    ///
+    /// Copy-on-write: readers holding an older snapshot keep seeing it, which is
+    /// what makes changing configuration on the fly safe from the render path.
+    pub fn update(f: impl FnOnce(&mut Config)) -> Arc<Config> {
+        let _guard = CONFIG_WRITE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut next = (*Self::current()).clone();
+        f(&mut next);
+        next.rebuild_shortcut_bindings();
+        Self::store(next)
+    }
+
+    /// Install `config` as the live configuration, returning the new snapshot.
+    fn store(config: Config) -> Arc<Config> {
+        let next = Arc::new(config);
+        *config_cell()
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = next.clone();
+        next
+    }
+
+    /// Re-read every configuration layer from disk and install the result.
+    ///
+    /// Returns the previous snapshot alongside the new one so the caller can
+    /// work out which settings actually changed.
+    /// A layer that fails to parse aborts the reload: a half-edited file must
+    /// leave the running configuration alone rather than silently revert keys to
+    /// the layer below.
+    pub fn reload() -> Result<(Arc<Config>, Arc<Config>), String> {
+        let _guard = CONFIG_WRITE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (config, errors) = Self::load_layered_reporting();
+        if let Some(error) = errors.into_iter().next() {
+            return Err(error);
+        }
+        let previous = Self::current();
+        let next = Self::store(config);
+        Ok((previous, next))
+    }
+
     fn init() -> Self {
-        let mut merged =
-            toml::Value::try_from(Self::default()).expect("default config is always valid toml");
-
-        let mut found_any_config = false;
-
-        // Load config files in order of priority (lowest to highest)
-        // 1. System config
-        if let Some(system_config) = get_system_config_path() {
-            if let Ok(content) = std::fs::read_to_string(&system_config) {
-                match content.parse::<toml::Value>() {
-                    Ok(value) => {
-                        merge_value(&mut merged, value);
-                        found_any_config = true;
-                        tracing::info!("Loaded system config from {}", system_config.display());
-                    }
-                    Err(err) => warn!("Failed to parse {}: {err}", system_config.display()),
-                }
-            }
+        let (config, errors) = Self::load_layered_reporting();
+        for error in &errors {
+            warn!("{error}");
         }
-
-        // 2. User config (XDG)
-        if let Some(user_config) = get_user_config_path() {
-            prune_materialized_dock_keys_in_file(&user_config);
-            if let Ok(content) = std::fs::read_to_string(&user_config) {
-                match content.parse::<toml::Value>() {
-                    Ok(value) => {
-                        merge_value(&mut merged, value);
-                        found_any_config = true;
-                        tracing::info!("Loaded user config from {}", user_config.display());
-                    }
-                    Err(err) => warn!("Failed to parse {}: {err}", user_config.display()),
-                }
-            }
-        }
-
-        // 3. Current directory (dev override)
-        if let Ok(content) = std::fs::read_to_string("otto_config.toml") {
-            match content.parse::<toml::Value>() {
-                Ok(value) => {
-                    merge_value(&mut merged, value);
-                    found_any_config = true;
-                    tracing::info!("Loaded local config from ./otto_config.toml");
-                }
-                Err(err) => warn!("Failed to parse otto_config.toml: {err}"),
-            }
-        }
-
-        // 4. Backend overrides (highest priority)
-        if let Ok(backend) = std::env::var("OTTO_BACKEND") {
-            for candidate in backend_override_candidates(&backend) {
-                tracing::debug!("Trying to load backend override config: {}", &candidate);
-                if let Ok(content) = std::fs::read_to_string(&candidate) {
-                    match content.parse::<toml::Value>() {
-                        Ok(value) => {
-                            merge_value(&mut merged, value);
-                            found_any_config = true;
-                            tracing::info!("Loaded backend override config from {}", &candidate);
-                            break;
-                        }
-                        Err(err) => {
-                            warn!("Failed to parse {candidate}: {err}");
-                        }
-                    }
-                }
-            }
-        }
-
-        // If no config was found, copy example config to current directory
-        if !found_any_config {
-            warn!("No configuration file found, using default config");
-        }
-
-        let mut config: Config = merged.try_into().unwrap_or_else(|err| {
-            warn!("Falling back to default config due to invalid overrides: {err}");
-            Self::default()
-        });
-
-        config.rebuild_shortcut_bindings();
 
         // Environment variables for Wayland session
         std::env::set_var("XDG_SESSION_TYPE", "wayland");
@@ -199,6 +202,55 @@ impl Config {
 
         tracing::info!("Config initialized: {:#?}", config.theme_scheme);
         config
+    }
+
+    /// Merge every configuration layer, lowest priority first, reporting the
+    /// layers that could not be parsed instead of quietly dropping them.
+    fn load_layered_reporting() -> (Self, Vec<String>) {
+        let mut errors: Vec<String> = Vec::new();
+        let mut merged =
+            toml::Value::try_from(Self::default()).expect("default config is always valid toml");
+
+        // Runs before the layer is read, since it rewrites the file.
+        if let Some(user_config) = get_user_config_path() {
+            prune_materialized_dock_keys_in_file(&user_config);
+        }
+
+        let layers = config_layers();
+        let found_any_config = !layers.is_empty();
+
+        for layer in layers {
+            let content = match std::fs::read_to_string(&layer) {
+                Ok(content) => content,
+                // The layer existed when it was listed; a read error now is
+                // worth reporting rather than skipping in silence.
+                Err(err) => {
+                    errors.push(format!("Failed to read {}: {err}", layer.display()));
+                    continue;
+                }
+            };
+            match content.parse::<toml::Value>() {
+                Ok(value) => {
+                    merge_value(&mut merged, value);
+                    tracing::info!("Loaded config layer from {}", layer.display());
+                }
+                Err(err) => errors.push(format!("Failed to parse {}: {err}", layer.display())),
+            }
+        }
+
+        if !found_any_config {
+            warn!("No configuration file found, using default config");
+        }
+
+        report_where_settings_are_written();
+
+        let mut config: Config = merged.try_into().unwrap_or_else(|err| {
+            errors.push(format!("Invalid config overrides: {err}"));
+            Self::default()
+        });
+
+        config.rebuild_shortcut_bindings();
+        (config, errors)
     }
 
     fn rebuild_shortcut_bindings(&mut self) {
@@ -236,6 +288,21 @@ fn merge_value(base: &mut toml::Value, overrides: toml::Value) {
     }
 }
 
+/// The local override file, resolved against the compositor's working
+/// directory: the dev loop's `cargo run` from a checkout picks up the
+/// checkout's file.
+const LOCAL_CONFIG_FILE: &str = "otto_config.toml";
+
+/// Resolve a working-directory-relative config file to an absolute path, so
+/// that a layer is named the same way wherever it is reported — "the file that
+/// overrides your setting" is only useful with a directory attached.
+fn in_working_directory(name: &str) -> PathBuf {
+    match std::env::current_dir() {
+        Ok(dir) => dir.join(name),
+        Err(_) => PathBuf::from(name),
+    }
+}
+
 fn get_system_config_path() -> Option<PathBuf> {
     let path = PathBuf::from("/etc/otto/config.toml");
     if path.exists() {
@@ -245,7 +312,8 @@ fn get_system_config_path() -> Option<PathBuf> {
     }
 }
 
-fn get_user_config_path() -> Option<PathBuf> {
+/// Where the user's own configuration lives, whether or not it is there yet.
+fn user_config_file() -> Option<PathBuf> {
     let config_dir = std::env::var("XDG_CONFIG_HOME")
         .ok()
         .map(PathBuf::from)
@@ -255,30 +323,73 @@ fn get_user_config_path() -> Option<PathBuf> {
                 .map(|home| PathBuf::from(home).join(".config"))
         })?;
 
-    let path = config_dir.join("otto").join("config.toml");
-    if path.exists() {
-        Some(path)
-    } else {
-        None
-    }
+    Some(config_dir.join("otto").join("config.toml"))
 }
 
-/// Return the best writable config file path:
-/// backend-specific local file if running with a backend override,
-/// user XDG config if it exists, otherwise the local dev override.
-pub fn writable_config_path() -> PathBuf {
-    // Prefer the backend-specific local override (e.g. otto_config.winit.toml)
+fn get_user_config_path() -> Option<PathBuf> {
+    user_config_file().filter(|path| path.exists())
+}
+
+/// The configuration files that are on disk, lowest priority first — the
+/// layers [`Config::load_layered_reporting`] merges, in the order it merges
+/// them:
+///
+/// 1. `/etc/otto/config.toml` — system-wide
+/// 2. `$XDG_CONFIG_HOME/otto/config.toml` — the user's own
+/// 3. `./otto_config.toml` — local override, relative to the *working
+///    directory*, so a session started from `$HOME` reads `~/otto_config.toml`
+/// 4. `otto_config.<backend>.toml` — backend override, only with `OTTO_BACKEND`
+///
+/// The last entry wins every key it sets, so it is the only file a write can
+/// land in and be seen: [`writable_config_path`] takes the top of this stack.
+/// Loading and writing share this list on purpose — a write target that is not
+/// the top layer is a setting that applies live and then silently reverts on
+/// the next reload.
+fn config_layers() -> Vec<PathBuf> {
+    let mut layers = Vec::new();
+
+    if let Some(system) = get_system_config_path() {
+        layers.push(system);
+    }
+    if let Some(user) = get_user_config_path() {
+        layers.push(user);
+    }
+
+    let local = in_working_directory(LOCAL_CONFIG_FILE);
+    if local.is_file() {
+        layers.push(local);
+    }
+
     if let Ok(backend) = std::env::var("OTTO_BACKEND") {
-        for candidate in backend_override_candidates(&backend) {
-            let path = PathBuf::from(&candidate);
-            if path.exists() {
-                return path;
-            }
+        if let Some(override_path) = backend_override_candidates(&backend)
+            .iter()
+            .map(|candidate| in_working_directory(candidate))
+            .find(|path| path.is_file())
+        {
+            layers.push(override_path);
         }
     }
-    get_user_config_path().unwrap_or_else(|| PathBuf::from("otto_config.toml"))
+
+    layers
 }
 
+/// The file a setting is persisted to: the highest-priority layer that is
+/// actually loaded, so what is written is what takes effect.
+///
+/// The system config is never written — it belongs to the package, not to the
+/// user, and a session usually cannot write it anyway; a user config that does
+/// not exist yet is created rather than dropping a stray `otto_config.toml`
+/// into whatever directory the session happens to have started from.
+pub fn writable_config_path() -> PathBuf {
+    config_layers()
+        .into_iter()
+        .rev()
+        .find(|path| Some(path.as_path()) != get_system_config_path().as_deref())
+        .or_else(user_config_file)
+        .unwrap_or_else(|| in_working_directory(LOCAL_CONFIG_FILE))
+}
+
+/// The local override candidates for `backend`, most specific first.
 fn backend_override_candidates(backend: &str) -> Vec<String> {
     match backend {
         "winit" => vec!["otto_config.winit.toml".into()],
@@ -294,53 +405,137 @@ fn backend_override_candidates(backend: &str) -> Vec<String> {
     }
 }
 
-/// Persist a `DockConfig` into the `[dock]` section of the writable config file.
+/// Say which file a changed setting will be written to, when that is not the
+/// user's own config.
 ///
-/// The caller is responsible for passing the authoritative in-memory state.
-/// Only the `[dock]` table is touched; all other sections are left unchanged.
+/// A setting is persisted into the top configuration layer, because that is the
+/// only file whose keys are the effective ones. When a local `otto_config.toml`
+/// sits above the user config — a checkout the session was started from, or a
+/// leftover in the home directory — that file quietly becomes the one the
+/// settings app edits, and `~/.config/otto` stops having any effect. Neither is
+/// wrong, but it is worth being able to read off the log rather than work out
+/// from a setting that will not stick.
+fn report_where_settings_are_written() {
+    let writable = writable_config_path();
+    let Some(user_config) = get_user_config_path() else {
+        return;
+    };
+    if writable == user_config {
+        return;
+    }
+
+    warn!(
+        "Settings are written to {}: it overrides {}, which is only read. \
+         Remove it, or the keys it repeats, to configure Otto from {}.",
+        writable.display(),
+        user_config.display(),
+        user_config.display()
+    );
+}
+
+/// Persist the dock's bookmark list.
 ///
-/// Within `[dock]`, only the keys the dock UI can actually change are written
-/// (`size` among them: the handle drag sets it).
-/// The rest (`genie_*`, `colorize_*`) belongs to whoever hand-edited the
-/// config: rewriting the whole table would materialize a copy of every inherited
-/// value into the writable file, where it shadows the same key in a lower-priority
-/// config for good and silently reverts edits made while Otto is running.
-pub fn save_dock_config(dock: &DockConfig) {
+/// Bookmarks are the one piece of `[dock]` the dock still writes itself: they
+/// are a list the user builds by dragging and by context menu, not a scalar
+/// setting, so they have no schema identifier. Every scalar dock setting is
+/// written by [`crate::settings::set`], one key at a time.
+///
+/// Only `dock.bookmarks` is touched; every other key, section and comment in
+/// the file is left alone.
+pub fn save_dock_bookmarks(bookmarks: &[DockBookmark]) {
     let path = writable_config_path();
-    let raw = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml::Value = raw
-        .parse()
-        .unwrap_or(toml::Value::Table(Default::default()));
+    let mut doc = match file::load_document(&path) {
+        Ok(doc) => doc,
+        Err(err) => {
+            warn!("Not saving dock bookmarks: {err}");
+            return;
+        }
+    };
 
-    merge_dock_config(&mut doc, dock);
+    let serialized = toml::Value::try_from(SerializedBookmarks(bookmarks))
+        .ok()
+        .and_then(|value| file::to_edit_value(&value));
+    let Some(value) = serialized else {
+        warn!("Failed to serialize dock bookmarks");
+        return;
+    };
 
-    if let Ok(serialized) = toml::to_string_pretty(&doc) {
-        let _ = std::fs::write(&path, serialized);
+    if let Err(err) = file::set_key(&mut doc, "dock.bookmarks", value) {
+        warn!("Failed to save dock bookmarks: {err}");
+        return;
+    }
+    if let Err(err) = file::store_document(&path, &doc) {
+        warn!("Failed to save dock bookmarks: {err}");
     }
 }
 
-/// Write the dock-owned keys of `dock` into the `[dock]` table of `doc`,
-/// leaving every other key in that table (and every other section) alone.
-fn merge_dock_config(doc: &mut toml::Value, dock: &DockConfig) {
-    let Some(table) = doc.as_table_mut() else {
-        return;
-    };
-    let dock_table = table
-        .entry("dock".to_string())
-        .or_insert_with(|| toml::Value::Table(Default::default()));
-    let Some(dock_table) = dock_table.as_table_mut() else {
-        return;
-    };
+/// Newtype so the bookmark list can be serialized on its own with the same
+/// compact representation `DockConfig` uses.
+struct SerializedBookmarks<'a>(&'a [DockBookmark]);
 
-    dock_table.insert("size".to_string(), toml::Value::Float(dock.size));
-    dock_table.insert("autohide".to_string(), toml::Value::Boolean(dock.autohide));
-    dock_table.insert(
-        "magnification".to_string(),
-        toml::Value::Boolean(dock.magnification),
-    );
-    if let Ok(bookmarks) = toml::Value::try_from(SerializedBookmarks(&dock.bookmarks)) {
-        dock_table.insert("bookmarks".to_string(), bookmarks);
+impl Serialize for SerializedBookmarks<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serialize_dock_bookmarks(self.0, serializer)
     }
+}
+
+/// Write `value` to the dotted key `path` in the writable config file, touching
+/// nothing else. This is the one way a setting is persisted.
+pub fn persist_key(path: &str, value: &toml::Value) -> Result<(), String> {
+    let file_path = writable_config_path();
+    let mut doc = file::load_document(&file_path)?;
+    let value = file::to_edit_value(value).ok_or_else(|| format!("cannot store `{path}`"))?;
+    file::set_key(&mut doc, path, value)?;
+    file::store_document(&file_path, &doc)
+}
+
+/// Add or replace one `[[virtual_outputs]]` entry in the writable config file,
+/// matched by name. Everything else in the array — and in the file — is left
+/// alone, the same promise [`persist_key`] makes for scalars.
+///
+/// Virtual outputs are a list, not a dotted key, so they cannot go through the
+/// settings schema: there is no fixed identifier for "the third virtual
+/// output". They get their own writer instead of bending the schema around a
+/// collection.
+pub fn persist_virtual_output(config: &VirtualOutputConfig) -> Result<(), String> {
+    let file_path = writable_config_path();
+    let mut doc = file::load_document(&file_path)?;
+    file::upsert_virtual_output(&mut doc, config)?;
+    file::store_document(&file_path, &doc)
+}
+
+/// Drop the `[[virtual_outputs]]` entry called `name`. Removing one that is
+/// not there succeeds and changes nothing.
+pub fn forget_virtual_output(name: &str) -> Result<(), String> {
+    let file_path = writable_config_path();
+    let mut doc = file::load_document(&file_path)?;
+    if !file::remove_virtual_output(&mut doc, name) {
+        return Ok(());
+    }
+    file::store_document(&file_path, &doc)
+}
+
+/// Remove the dotted key `path` from the writable config file, so its value
+/// falls back to the lower configuration layers. Removing a key that is not
+/// there succeeds and changes nothing.
+pub fn forget_key(path: &str) -> Result<(), String> {
+    let file_path = writable_config_path();
+    let mut doc = file::load_document(&file_path)?;
+    if !file::remove_key(&mut doc, path) {
+        return Ok(());
+    }
+    file::store_document(&file_path, &doc)
+}
+
+/// The value the writable config file stores for the dotted key `path`, if any.
+///
+/// This is the *persisted* value, which is not the same as the effective one: a
+/// live interaction such as a dock resize changes the running configuration
+/// long before the drag settles and the key is written.
+pub fn stored_key(path: &str) -> Option<toml::Value> {
+    let file_path = writable_config_path();
+    let doc = file::load_document(&file_path).ok()?;
+    file::to_toml_value(file::get_key(&doc, path)?)
 }
 
 /// The `[dock]` keys the builds this migration cleans up after materialized:
@@ -356,15 +551,15 @@ const HAND_EDITED_DOCK_KEYS: [&str; 6] = [
     "colorize_intensity",
 ];
 
-/// Clean up after the builds that rewrote the whole `[dock]` table (see
-/// [`save_dock_config`]): those left a copy of every inherited value in the user
-/// config, where it shadows `/etc/otto/config.toml` for good, so editing the
-/// system config looks like it does nothing.
+/// Clean up after the builds that rewrote the whole `[dock]` table: those left
+/// a copy of every inherited value in the user config, where it shadows
+/// `/etc/otto/config.toml` for good, so editing the system config looks like it
+/// does nothing.
 ///
 /// Rewrites `path` in place if anything was pruned. Nothing else in the file is
-/// touched, but the rewrite goes through `toml` and so drops comments — the same
-/// trade-off [`save_dock_config`] already makes, and it happens at most once per
-/// affected install.
+/// touched, but the rewrite goes through `toml` and so drops comments — a
+/// trade-off no longer made anywhere else (see [`file`]), and it happens at most
+/// once per affected install.
 fn prune_materialized_dock_keys_in_file(path: &std::path::Path) {
     let Ok(content) = std::fs::read_to_string(path) else {
         return;
@@ -454,13 +649,26 @@ fn as_number(value: &toml::Value) -> Option<f64> {
         .or_else(|| value.as_integer().map(|i| i as f64))
 }
 
-/// Newtype so the bookmark list can be serialized on its own with the same
-/// compact representation `DockConfig` uses.
-struct SerializedBookmarks<'a>(&'a [DockBookmark]);
+/// Which screen edge the dock is docked to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DockPosition {
+    /// Horizontal dock along the bottom edge (the default).
+    #[default]
+    Bottom,
+    /// Vertical dock along the left edge.
+    #[serde(alias = "left-side")]
+    Left,
+    /// Vertical dock along the right edge.
+    #[serde(alias = "right-side")]
+    Right,
+}
 
-impl Serialize for SerializedBookmarks<'_> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serialize_dock_bookmarks(self.0, serializer)
+impl DockPosition {
+    /// Whether the dock runs along a screen side, i.e. stacks its icons
+    /// vertically. Most of the layout code only needs this distinction.
+    pub fn is_vertical(self) -> bool {
+        matches!(self, DockPosition::Left | DockPosition::Right)
     }
 }
 
@@ -468,6 +676,9 @@ impl Serialize for SerializedBookmarks<'_> {
 pub struct DockConfig {
     #[serde(default = "default_dock_size")]
     pub size: f64,
+    /// Screen edge the dock lives on: `"bottom"` (default), `"left"` or `"right"`.
+    #[serde(default)]
+    pub position: DockPosition,
     #[serde(default = "default_genie_scale")]
     pub genie_scale: f64,
     #[serde(default = "default_genie_span")]
@@ -498,6 +709,7 @@ impl Default for DockConfig {
     fn default() -> Self {
         Self {
             size: default_dock_size(),
+            position: DockPosition::default(),
             genie_scale: default_genie_scale(),
             genie_span: default_genie_span(),
             colorize_icons: false,
@@ -549,6 +761,56 @@ impl Default for LoginConfig {
             greeter_command: "otto-greeter".to_string(),
             greeter_args: Vec::new(),
         }
+    }
+}
+
+/// Workspace settings. Only holds the names the user typed in the workspace
+/// selector so far — everything else about a workspace is runtime state.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorkspacesConfig {
+    /// Custom workspace names, keyed by `"<output name>:<position>"` — see
+    /// [`workspace_name_key`]. Workspaces are per output, and positions shift
+    /// when one is removed, so this is a best-effort restore, not an identity.
+    pub names: BTreeMap<String, String>,
+}
+
+/// Key under which the name of workspace `position` on `output` is stored.
+pub fn workspace_name_key(output: &str, position: usize) -> String {
+    format!("{output}:{position}")
+}
+
+/// Persist custom workspace names into the `[workspaces]` section of the
+/// writable config file, replacing the whole `names` table (the compositor
+/// holds the authoritative set) and leaving every other section alone.
+pub fn save_workspace_names(names: &BTreeMap<String, String>) {
+    let path = writable_config_path();
+    let raw = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut doc: toml::Value = raw
+        .parse()
+        .unwrap_or(toml::Value::Table(Default::default()));
+
+    if let Some(table) = doc.as_table_mut() {
+        let workspaces = table
+            .entry("workspaces".to_string())
+            .or_insert_with(|| toml::Value::Table(Default::default()));
+        if let Some(workspaces) = workspaces.as_table_mut() {
+            if let Ok(names) = toml::Value::try_from(names) {
+                workspaces.insert("names".to_string(), names);
+            }
+        }
+    }
+
+    match toml::to_string_pretty(&doc) {
+        Ok(serialized) => {
+            if let Err(err) = std::fs::write(&path, serialized) {
+                warn!(
+                    "Failed to save workspace names to {}: {err}",
+                    path.display()
+                );
+            }
+        }
+        Err(err) => warn!("Failed to serialize workspace names: {err}"),
     }
 }
 
@@ -1185,6 +1447,122 @@ mod tests {
         assert!(matches!(config.theme_scheme, ThemeScheme::Dark));
     }
 
+    /// A temporary configuration environment: an empty `XDG_CONFIG_HOME`, no
+    /// backend override, and a working directory of its own, so a test can
+    /// place a layer at each priority without seeing the developer's real
+    /// files — the local override in particular is resolved against the
+    /// working directory, which is the checkout when tests run.
+    struct ConfigEnv {
+        dir: tempfile::TempDir,
+        /// The temporary directory as the process sees it once it is the
+        /// working directory, which is what the layer paths are built from.
+        path: PathBuf,
+        old_xdg: Option<String>,
+        old_home: Option<String>,
+        old_backend: Option<String>,
+        old_cwd: PathBuf,
+    }
+
+    impl ConfigEnv {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let old_cwd = env::current_dir().unwrap();
+            let old_xdg = env::var("XDG_CONFIG_HOME").ok();
+            let old_home = env::var("HOME").ok();
+            let old_backend = env::var("OTTO_BACKEND").ok();
+
+            env::set_var("XDG_CONFIG_HOME", dir.path());
+            env::remove_var("OTTO_BACKEND");
+            env::set_current_dir(dir.path()).unwrap();
+            let path = env::current_dir().unwrap();
+
+            ConfigEnv {
+                dir,
+                path,
+                old_xdg,
+                old_home,
+                old_backend,
+                old_cwd,
+            }
+        }
+
+        /// Write the user layer and return its path.
+        fn user_config(&self, contents: &str) -> PathBuf {
+            let path = self.path.join("otto").join("config.toml");
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, contents).unwrap();
+            path
+        }
+
+        /// Write the local override — the layer above the user's — and return
+        /// its path. It lives in the working directory, which is this one.
+        fn local_config(&self, contents: &str) -> PathBuf {
+            let path = self.path.join(LOCAL_CONFIG_FILE);
+            fs::write(&path, contents).unwrap();
+            path
+        }
+    }
+
+    impl Drop for ConfigEnv {
+        fn drop(&mut self) {
+            let _ = env::set_current_dir(&self.old_cwd);
+            match self.old_xdg.take() {
+                Some(old) => env::set_var("XDG_CONFIG_HOME", old),
+                None => env::remove_var("XDG_CONFIG_HOME"),
+            }
+            match self.old_home.take() {
+                Some(old) => env::set_var("HOME", old),
+                None => env::remove_var("HOME"),
+            }
+            match self.old_backend.take() {
+                Some(old) => env::set_var("OTTO_BACKEND", old),
+                None => env::remove_var("OTTO_BACKEND"),
+            }
+        }
+    }
+
+    /// `cargo run` from a checkout, or a session started from a directory with
+    /// a leftover `otto_config.toml`: that file is merged over the user's own,
+    /// so it is where a setting has to be written to take effect.
+    #[test]
+    #[serial]
+    fn the_writable_config_is_the_layer_that_wins() {
+        let env = ConfigEnv::new();
+        let user = env.user_config("[dock]\nsize = 0.9\n");
+        assert_eq!(writable_config_path(), user);
+
+        let local = env.local_config("[dock]\nsize = 1.0\n");
+        assert_eq!(writable_config_path(), local);
+    }
+
+    /// With nothing on disk, a setting creates the user's config rather than
+    /// dropping a stray `otto_config.toml` into whatever directory the session
+    /// happened to start from — which is how such a file gets there.
+    #[test]
+    #[serial]
+    fn an_absent_config_is_written_where_the_user_config_belongs() {
+        let env = ConfigEnv::new();
+        assert_eq!(
+            writable_config_path(),
+            env.path.join("otto").join("config.toml")
+        );
+    }
+
+    /// A backend override is the top layer, so it is where a setting goes —
+    /// and the user config below it is only read.
+    #[test]
+    #[serial]
+    fn a_backend_override_takes_the_writes() {
+        let env = ConfigEnv::new();
+        env.user_config("[dock]\nsize = 0.9\n");
+        let backend_override = env.path.join("otto_config.winit.toml");
+        fs::write(&backend_override, "[dock]\nsize = 1.4\n").unwrap();
+
+        env::set_var("OTTO_BACKEND", "winit");
+        assert_eq!(writable_config_path(), backend_override);
+        env::remove_var("OTTO_BACKEND");
+    }
+
     #[test]
     #[serial]
     fn test_get_user_config_path_with_xdg_config_home() {
@@ -1341,48 +1719,113 @@ mod tests {
         assert_eq!(from_defaults.dock.size, default_dock_size());
     }
 
+    /// Exactly what [`save_dock_bookmarks`] writes, minus the filesystem.
+    fn merge_dock_bookmarks(doc: &mut toml_edit::DocumentMut, bookmarks: &[DockBookmark]) {
+        let value = toml::Value::try_from(SerializedBookmarks(bookmarks))
+            .ok()
+            .and_then(|value| file::to_edit_value(&value))
+            .expect("bookmarks are valid toml");
+        file::set_key(doc, "dock.bookmarks", value).expect("bookmarks are settable");
+    }
+
     #[test]
     fn test_save_dock_config_keeps_hand_edited_keys() {
-        let raw = r#"
-            [dock]
-            size = 1.6
-            genie_scale = 0.3
-            autohide = false
-        "#;
-        let mut doc: toml::Value = raw.parse().expect("config should parse");
+        let raw = "# hand written\n[dock]\nsize = 1.6\n# the minimise animation\ngenie_scale = 0.3\nautohide = false\n";
+        let mut doc: toml_edit::DocumentMut = raw.parse().expect("config should parse");
 
-        let dock = DockConfig {
-            size: 1.0,
-            genie_scale: 0.5,
-            autohide: true,
-            bookmarks: vec![DockBookmark {
+        merge_dock_bookmarks(
+            &mut doc,
+            &[DockBookmark {
                 desktop_id: "firefox.desktop".to_string(),
                 label: None,
                 exec_args: Vec::new(),
             }],
-            ..DockConfig::default()
-        };
-        merge_dock_config(&mut doc, &dock);
-
-        let saved = doc.get("dock").expect("dock table is present");
-        // Dock-owned keys are written…
-        assert_eq!(
-            saved.get("autohide").and_then(toml::Value::as_bool),
-            Some(true)
         );
+
+        // The dock's own list is written…
         assert_eq!(
-            saved
-                .get("bookmarks")
-                .and_then(toml::Value::as_array)
+            file::get_key(&doc, "dock.bookmarks")
+                .and_then(|v| v.as_array())
                 .map(|b| b.len()),
             Some(1)
         );
-        // `size` is dock-owned too, since the handle drag sets it.
-        assert_eq!(saved.get("size").and_then(toml::Value::as_float), Some(1.0));
-        // …while keys only the user sets keep whatever the file said.
+        // …and nothing else in the file moves: not the keys the user set,
         assert_eq!(
-            saved.get("genie_scale").and_then(toml::Value::as_float),
+            file::get_key(&doc, "dock.size").and_then(|v| v.as_float()),
+            Some(1.6)
+        );
+        assert_eq!(
+            file::get_key(&doc, "dock.genie_scale").and_then(|v| v.as_float()),
             Some(0.3)
+        );
+        assert_eq!(
+            file::get_key(&doc, "dock.autohide").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        // nor their comments.
+        let out = doc.to_string();
+        assert!(out.contains("# hand written"), "{out}");
+        assert!(out.contains("# the minimise animation"), "{out}");
+    }
+
+    #[test]
+    #[serial]
+    fn test_persist_and_forget_touch_only_one_key() {
+        let env = ConfigEnv::new();
+        let config_file = env.user_config(
+            "# my desktop\nscreen_scale = 2.0\n\n[dock]\n# tuned by hand\ngenie_scale = 0.3\n",
+        );
+
+        persist_key("dock.size", &toml::Value::Float(1.25)).expect("size should persist");
+        let written = fs::read_to_string(&config_file).unwrap();
+        assert!(written.contains("size = 1.25"), "{written}");
+        assert!(written.contains("# my desktop"), "{written}");
+        assert!(written.contains("# tuned by hand"), "{written}");
+        assert!(written.contains("genie_scale = 0.3"), "{written}");
+        assert!(stored_key("dock.size").is_some());
+
+        // Resetting takes the key back out, and nothing else with it.
+        forget_key("dock.size").expect("size should be forgettable");
+        let written = fs::read_to_string(&config_file).unwrap();
+        assert!(!written.contains("size = 1.25"), "{written}");
+        assert!(written.contains("genie_scale = 0.3"), "{written}");
+        assert!(stored_key("dock.size").is_none());
+
+        // …and once the last dock key goes, so does the empty `[dock]` table.
+        forget_key("dock.genie_scale").expect("genie_scale should be forgettable");
+        let written = fs::read_to_string(&config_file).unwrap();
+        assert!(!written.contains("[dock]"), "{written}");
+        assert!(written.contains("screen_scale = 2.0"), "{written}");
+
+        // Forgetting a key that was never written is not an error.
+        forget_key("dock.autohide").expect("an absent key resets cleanly");
+    }
+
+    #[test]
+    fn test_dock_position_round_trip() {
+        let config: Config = toml::from_str(
+            r#"
+            [dock]
+            position = "left"
+        "#,
+        )
+        .expect("dock position should deserialize");
+        assert_eq!(config.dock.position, DockPosition::Left);
+        assert!(config.dock.position.is_vertical());
+
+        // Absent means bottom, and the dock writes its own choice back.
+        let default: Config = toml::from_str("[dock]\n").expect("empty dock table should parse");
+        assert_eq!(default.dock.position, DockPosition::Bottom);
+
+        let mut doc: toml_edit::DocumentMut = "[dock]\n".parse().expect("config should parse");
+        let value = toml::Value::try_from(DockPosition::Right)
+            .ok()
+            .and_then(|value| file::to_edit_value(&value))
+            .expect("a dock position is valid toml");
+        file::set_key(&mut doc, "dock.position", value).expect("position is settable");
+        assert_eq!(
+            file::get_key(&doc, "dock.position").and_then(|v| v.as_str()),
+            Some("right")
         );
     }
 

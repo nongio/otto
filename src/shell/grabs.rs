@@ -43,6 +43,18 @@ pub struct PointerMoveSurfaceGrab<B: Backend + 'static> {
     pub active_zone: Option<crate::workspaces::TileZone>,
 }
 
+/// Whether Ctrl is held right now, read from the keyboard itself.
+///
+/// The cached `current_modifiers` can lag behind on paths that bypass the key
+/// filter, and a latched Ctrl silently arms drag-to-tile on every window drag.
+fn ctrl_held<B: Backend>(state: &Otto<B>) -> bool {
+    state
+        .seat
+        .get_keyboard()
+        .map(|keyboard| keyboard.modifier_state().ctrl)
+        .unwrap_or(false)
+}
+
 impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
     fn motion(
         &mut self,
@@ -53,6 +65,11 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
     ) {
         // While the grab is active, no client has pointer focus
         handle.motion(state, None, event);
+
+        // A dragged window is the one the user is watching: full-rate frame
+        // callbacks for it, and full-rate blur rebuilds while it moves under
+        // a frosted surface (the renderer reads this stamp's recency).
+        state.pointer_interaction = Some((self.window.id(), std::time::Instant::now()));
 
         // The layer lives under the OWNING output's subtree — use that
         // output for both the scale and the global→output-local rebase.
@@ -93,7 +110,7 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
 
         // While Ctrl is held, preview the snap zone the pointer is over;
         // release applies it (see `button`).
-        if state.current_modifiers.ctrl {
+        if ctrl_held(state) {
             if let Some(output) = state
                 .workspaces
                 .outputs_for_element(&self.window)
@@ -148,7 +165,11 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
 
             // Snap the window into the previewed zone, if any.
             data.workspaces.tiling_overlay.hide();
-            if let Some(zone) = self.active_zone.take() {
+            // Re-check the modifier at release: `active_zone` is only
+            // refreshed on motion, so letting go of Ctrl and then of the
+            // button without moving would otherwise still tile the window.
+            let zone = self.active_zone.take();
+            if let Some(zone) = zone.filter(|_| ctrl_held(data)) {
                 data.apply_tile(&self.window, zone);
             }
         }
@@ -427,6 +448,10 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
         data.is_resizing = true;
         // While the grab is active, no client has pointer focus
         handle.motion(data, None, event);
+
+        // Same as the move grab: the resized window is being watched — keep
+        // its frame callbacks and the blur rebuilds at full rate.
+        data.pointer_interaction = Some((self.window.id(), std::time::Instant::now()));
 
         // It is impossible to get `min_size` and `max_size` of dead toplevel, so we return early.
         if !self.window.alive() {

@@ -82,14 +82,49 @@ If the two disagree, the portal backend is stale — a backend from an earlier
 login can still own the bus name. See the note in
 [screenshare.md](screenshare.md#testing-a-portal-build).
 
+## Changes reach running applications
+
+The portal backend subscribes to `org.otto.Settings`' `Changed` signal and
+re-emits the settings it serves as the portal's own `SettingChanged`
+(`portal::spawn_change_relay`). Otto's identifiers are not the portal's keys, so
+only the ones with a counterpart are forwarded:
+
+| `org.otto.Settings` | `org.freedesktop.appearance` |
+| ------------------- | ---------------------------- |
+| `theme_scheme`      | `color-scheme`               |
+| `accent_color`      | `accent-color`               |
+| `icon_theme`        | `icon-theme`                 |
+
+otto-kit apps pick these up through the watchers in `color_scheme.rs`,
+`accent.rs` and `icon_theme.rs`, started by `AppRunner`.
+
+## Accent colour
+
+`accent-color` is served as `(ddd)` — sRGB in `0.0..=1.0`, no alpha, as the
+spec requires. The compositor stores the accent by name (see
+[theming](../user/theming.md)); `GetAccentColor` on `org.otto.Settings` does the
+palette lookup and the conversion, so the portal passes the triple straight
+through.
+
+Inside the compositor the accent takes a shorter path. Otto draws its window
+decorations with otto-kit's `WindowDecoration`, which tints the traffic-light
+controls from `accent::current_accent()` — the global the portal watcher fills
+in a client. Otto cannot use that watcher: it is what answers the portal call,
+so it would be querying itself. `theme::publish_accent()` writes the resolved
+colour straight into the same store with `accent::set_accent`, at startup
+(`Otto::init`) and again whenever `accent_color` is applied live, and
+`theme::accent_color()` reads it back out. One store on both sides, so a
+compositor-drawn titlebar and an otto-kit client's own titlebar cannot disagree.
+
+Because the accent is read inside render functions rather than held in view
+state, applying it re-renders rather than updates: `rerender_accent_colored_views`
+rebuilds the workspace selector, the window selectors, and every window's
+decoration layer.
+
 ## Gaps
 
-- **Changing the theme still needs a compositor restart.** The general
-  `org.otto.Settings` API does emit a `Changed` signal, but the portal backend
-  does not yet translate that into the portal's own `SettingChanged` signal, so
-  running applications will not react.
-- **Only `color-scheme` is exposed.** The `org.freedesktop.appearance`
-  namespace also defines `accent-color` and `contrast`; neither is served yet.
+- **`contrast` is not served.** The `org.freedesktop.appearance` namespace
+  defines it; Otto has no such setting yet.
 
 ## Spec references
 

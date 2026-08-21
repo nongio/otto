@@ -471,6 +471,24 @@ impl App for TopBarApp {
         Ok(())
     }
 
+    fn on_theme_changed(&mut self, _ctx: &AppContext) {
+        // The panel background lives in the surface style, set once at startup
+        // — before the portal watcher has answered. Re-apply it, and repaint so
+        // text and icons pick up the new palette too.
+        if let Some(ref left) = self.left_surface {
+            Self::apply_surface_style(left, ContentsGravity::TopLeft);
+        }
+        if let Some(ref right) = self.right_surface {
+            Self::apply_surface_style(right, ContentsGravity::TopRight);
+        }
+        // The panel styles carry the theme's text and icon tones, and they too
+        // were built before the watcher answered.
+        self.left.update_style();
+        self.right.update_style();
+        self.redraw_left();
+        self.redraw_right();
+    }
+
     fn on_configure_layer(&mut self, _ctx: &AppContext, _width: i32, _height: i32, _serial: u32) {
         // Configure fires for each layer surface (spacer, left, right).
         // We use fixed dimensions, so just redraw on any configure.

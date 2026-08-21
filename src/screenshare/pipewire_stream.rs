@@ -134,6 +134,14 @@ struct SharedState {
     frame_sequence: AtomicU64,
     /// Start time for calculating PTS (nanoseconds since CLOCK_MONOTONIC)
     start_time_ns: AtomicU64,
+    /// Size the buffers currently in the pool were allocated at. Written by
+    /// the PipeWire thread once a format is negotiated, read by the main
+    /// thread to know what it may blit into.
+    width: AtomicU32,
+    height: AtomicU32,
+    /// Size the capture target wants, set by the main thread when it changes.
+    /// The PipeWire thread picks it up and renegotiates the format.
+    pending_size: Mutex<Option<(u32, u32)>>,
 }
 
 // SAFETY: pw_stream pointer is only used to call pw_stream_trigger_process
@@ -167,6 +175,9 @@ impl PipeWireStream {
             stream_ptr: Arc::new(Mutex::new(None)),
             frame_sequence: AtomicU64::new(0),
             start_time_ns: AtomicU64::new(0),
+            width: AtomicU32::new(config.width),
+            height: AtomicU32::new(config.height),
+            pending_size: Mutex::new(None),
         });
 
         Self { shared, config }
@@ -231,12 +242,39 @@ impl PipeWireStream {
         self.shared.streaming.load(Ordering::SeqCst)
     }
 
-    /// The size this stream negotiated, in pixels.
+    /// The size the stream's buffers are currently allocated at, in pixels.
     ///
-    /// Fixed for the stream's lifetime — a window that resizes mid-capture is
-    /// cropped or letterboxed into these dimensions rather than renegotiating.
+    /// Follows [`Self::request_size`] once renegotiation completes, so it lags
+    /// a resized window by a few frames.
     pub fn stream_size(&self) -> (u32, u32) {
-        (self.config.width, self.config.height)
+        (
+            self.shared.width.load(Ordering::Relaxed),
+            self.shared.height.load(Ordering::Relaxed),
+        )
+    }
+
+    /// Ask the stream to renegotiate its format at `size`.
+    ///
+    /// Called every frame with the capture target's current size; a request
+    /// that matches what is already negotiated (or already queued) is dropped,
+    /// so only a real resize reaches PipeWire. The PipeWire thread debounces
+    /// the rest, since an interactive drag produces a new size every frame.
+    pub fn request_size(&self, width: u32, height: u32) {
+        if width == 0 || height == 0 {
+            return;
+        }
+        if (width, height) == self.stream_size() {
+            // Cancel a queued request that this frame just made stale.
+            let mut pending = self.shared.pending_size.lock().unwrap();
+            if pending.is_some() {
+                *pending = None;
+            }
+            return;
+        }
+        let mut pending = self.shared.pending_size.lock().unwrap();
+        if *pending != Some((width, height)) {
+            *pending = Some((width, height));
+        }
     }
 
     /// Get access to the buffer pool for rendering from main thread.
@@ -288,7 +326,7 @@ impl std::error::Error for PipeWireError {}
 
 /// Run the PipeWire thread.
 fn run_pipewire_thread(
-    config: StreamConfig,
+    mut config: StreamConfig,
     shared: Arc<SharedState>,
     ready_tx: std::sync::mpsc::Sender<Result<u32, PipeWireError>>,
 ) -> Result<(), PipeWireError> {
@@ -388,6 +426,7 @@ fn run_pipewire_thread(
         })
         .param_changed({
             let stream_for_update = stream.clone();
+            let shared = shared.clone();
             move |_stream, state, id, param| {
                 use pw::spa::param::ParamType;
 
@@ -410,6 +449,12 @@ fn run_pipewire_thread(
                     );
 
                     state.borrow_mut().negotiated = Some(negotiated.clone());
+
+                    // Publish the size the main thread may blit into. PipeWire
+                    // re-runs remove_buffer/add_buffer for the new dimensions
+                    // right after this, so the pool never mixes sizes.
+                    shared.width.store(negotiated.size.0, Ordering::Relaxed);
+                    shared.height.store(negotiated.size.1, Ordering::Relaxed);
 
                     // If dmabuf, send buffer allocation params
                     if negotiated.is_dmabuf {
@@ -550,9 +595,24 @@ fn run_pipewire_thread(
         })
         .remove_buffer({
             let state = stream_state.clone();
+            let buffer_pool = shared.buffer_pool.clone();
             move |_stream, _user_data, buffer| unsafe {
                 let fd = (*(*buffer).buffer).datas.read().fd;
                 let removed = state.borrow_mut().dmabufs.remove(&fd);
+
+                // Drop every trace of this buffer from the shared pool too —
+                // a renegotiation (window resize) frees the whole set, and a
+                // stale entry would have the main thread blit into a buffer of
+                // the previous size that PipeWire no longer owns.
+                let mut pool = buffer_pool.lock().unwrap();
+                pool.dmabufs.remove(&fd);
+                pool.available.retain(|b| b.fd != fd);
+                pool.to_queue.remove(&fd);
+                pool.pending.remove(&fd);
+                if pool.last_rendered_fd == Some(fd) {
+                    pool.last_rendered_fd = None;
+                }
+
                 if removed.is_some() {
                     tracing::debug!("Buffer removed fd={}", fd);
                 }
@@ -694,8 +754,46 @@ fn run_pipewire_thread(
 
     // Run main loop
     let loop_ref = mainloop.loop_();
+    // An interactive resize changes the target size every frame; renegotiating
+    // that often would thrash buffer allocation, so settle for a moment first.
+    const RESIZE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(250);
+    let mut last_resize = std::time::Instant::now();
     while !shared.should_stop.load(Ordering::SeqCst) {
         loop_ref.iterate(std::time::Duration::from_millis(16));
+
+        let pending = *shared.pending_size.lock().unwrap();
+        let Some((width, height)) = pending else {
+            continue;
+        };
+        if (width, height) == (config.width, config.height) {
+            *shared.pending_size.lock().unwrap() = None;
+            continue;
+        }
+        if last_resize.elapsed() < RESIZE_DEBOUNCE {
+            continue;
+        }
+        *shared.pending_size.lock().unwrap() = None;
+        last_resize = std::time::Instant::now();
+
+        config.width = width;
+        config.height = height;
+
+        tracing::debug!("Renegotiating stream format at {}x{}", width, height);
+
+        let format_params_bytes = match build_format_params(&config) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                tracing::error!("Failed to build format params for resize: {}", e);
+                continue;
+            }
+        };
+        let mut format_params: Vec<&pipewire::spa::pod::Pod> = format_params_bytes
+            .iter()
+            .filter_map(|bytes| pipewire::spa::pod::Pod::from_bytes(bytes))
+            .collect();
+        if let Err(e) = stream.update_params(&mut format_params) {
+            tracing::error!("Failed to update format params for resize: {}", e);
+        }
     }
 
     tracing::debug!("PipeWire thread shutting down");

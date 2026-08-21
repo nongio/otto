@@ -33,6 +33,48 @@ This is covered by the `expose_preview_repaints_on_client_commit` headless test
 (`tests/headless_basic.rs`), which asserts `subtree_damage` on the mirror node.
 Asserting whole-scene damage is not specific enough to catch the regression.
 
+## The wallpaper is painted twice, on purpose
+
+`WindowSelectorView` mirrors the workspace background (`window_selector_background`)
+and the wlr-layer-shell background (`layer_shell_bg_expose_mirror`) into its own
+subtree, below the previews — even though the background plane underneath is
+already showing the same wallpaper. Both are needed:
+
+- **Composite path.** `workspaces_layer` — which owns the real background — is
+  hidden while exposé is up, so without the mirrors the whole scene renders
+  exposé over nothing.
+- **Plane path.** The decoration inside a preview carries
+  `BlendMode::BackgroundBlur`, and a background blur blurs *what the destination
+  canvas already holds*. Exposé renders into its own buffer (its own KMS plane),
+  where the wallpaper of the plane below does not exist. The cross-plane
+  external backdrop does not rescue it either: lay-rs seeds that backdrop only
+  for layers whose own blend mode is `BackgroundBlur`, and a preview is a mirror
+  — `Layer::as_content()` re-renders the leader's subtree with the backdrop
+  parameter set to `None`. So the previews blur the empty exposé buffer and
+  every titlebar comes out the same flat grey, no matter what is behind it.
+
+Painting the wallpaper into the exposé subtree fixes both, and fixes them with
+the *right* pixels: the blur reads the canvas under the mirror's own transform,
+so a preview samples the wallpaper where the preview sits, not where the real
+window sits (which is what seeding the external backdrop by the leader's global
+bounds would have given).
+
+The cost is one extra full-screen wallpaper draw per exposé frame. Only the
+on-screen workspace pays it — the other workspaces' selector roots are laid out
+side by side beyond the output edge and are clipped away.
+
+The same limitation still applies to a preview dragged onto the workspace strip:
+it is reparented into the drag overlay, in the *overlay* plane, whose buffer has
+no wallpaper either.
+
+Outside exposé the same class of bug hit the ordinary server-side titlebar —
+its blur is a real `BackgroundBlur` layer, but the windows plane was never
+given a backdrop, so it blurred an empty buffer too. That one is fixed the
+other way, with the external backdrop: `udev::backdrop` hands the middle plane
+the background-only stage of the composite and the titlebar opts into
+`blur_include_content`, so it blurs the wallpaper *and* the windows painted
+below it in the same pass. See [`specs/plane-scanout.md`](../../specs/plane-scanout.md).
+
 ## Lifecycle
 
 - **Enter / exit** — `Workspaces::expose_show_all(delta, end_gesture)` is the
@@ -123,11 +165,32 @@ snapping on release.
   threshold; the mirror moves to the drag overlay, keeping its anchor and scale
   consistent so it doesn't jump.
 - Drop targets come from the workspace selector's previews; intersecting a drop
-  layer sets `current_drop_target`.
+  layer sets `current_drop_target`. A drop target is keyed by the workspace
+  *view* index (a stable id), not by its position in the strip — positions are
+  resolved through `workspace_position_by_view_index`, and the hover highlight
+  matches on the view index too. The two only ran in lockstep before workspaces
+  could be added and removed from the strip.
 - On drop with a target: `move_window_to_workspace` is called with the window's
-  last known position, and exposé refreshes to rebuild the layout.
+  last known position. It drops the cached grid of the source and destination
+  workspaces first (`invalidate_layout`), because the drag already re-laid the
+  source grid out without the dragged window when it was picked up — the
+  cached hash equals the post-move one, so without the invalidation the drop
+  applies nothing and the grid keeps the layout it was dropped on until an
+  unrelated client commit moves the hash again. It then re-lays out both grids;
+  the drop path only has to put the selection overlay back
+  (`show_selection_overlays`), which the drag hid. Moving a window also drops
+  it from the source grid's selector map, keeping its mirror alive for the
+  destination view (`unmap_window_keep_mirror`).
 - On drop with no target: the mirror is restored to its original parent and
   ordering (`restore_layer_order_from_state`) and exposé refreshes to realign.
+- The selection overlay is hidden for the whole drag and revealed again by
+  `show_selection_overlays`, which **re-renders it before raising the opacity**.
+  Its layer keeps the last picture it was rasterized with, and content that
+  changes while it is invisible is never re-recorded: the highlight left on the
+  preview that was then dragged away came back with the overlay, sitting on
+  empty grid, even though the state had dropped the selection long before.
+  Reproduced and confirmed on hardware (drag a preview onto another workspace's
+  thumbnail and screenshot the frame after the release).
 - Drop events log the window id and target workspace.
 
 ## Multi-output
@@ -194,6 +257,12 @@ topmost in the layer tree, rather than the one the pointer is actually over.
   populated — before asserting on layout.
 - Assert on semantic data (`WindowSelectorState.rects`, `expose_bin`) rather
   than pixels; fractional scaling shifts raster output.
+- The background mirror is covered by
+  `expose_subtree_paints_the_wallpaper_below_the_previews`, which asserts the
+  layer exists under `window_selector_root` *and* is ordered before the previews
+  container. A pixel assertion would not catch the regression: the background
+  plane below keeps showing the wallpaper, so only the blur inside the previews
+  changes.
 - During a drag the dragged window is intentionally absent from the grid.
   Expect a gap until the drop completes or is cancelled.
 - **Debug lever:** `echo ActionName > /tmp/otto-action` (polled once per frame

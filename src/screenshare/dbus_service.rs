@@ -648,6 +648,7 @@ impl CompositorInterface {
 /// Starts the D-Bus service on the session bus.
 pub async fn run_dbus_service(compositor_tx: Sender<CompositorCommand>) -> zbus::Result<()> {
     let connection = Connection::session().await?;
+    let settings_tx = compositor_tx.clone();
 
     let screencast = ScreenCastInterface::new(compositor_tx.clone(), connection.clone());
 
@@ -668,7 +669,7 @@ pub async fn run_dbus_service(compositor_tx: Sender<CompositorCommand>) -> zbus:
     connection.request_name("org.otto.Compositor").await?;
 
     // Register the Settings interface
-    crate::settings_service::register_settings_interface(&connection).await?;
+    crate::settings_service::register_settings_interface(&connection, settings_tx).await?;
 
     info!("D-Bus service started at org.otto.ScreenCast");
 

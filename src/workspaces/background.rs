@@ -57,7 +57,52 @@ impl BackgroundView {
         });
     }
 
+    /// Point the background at `path`, or clear it back to the fallback
+    /// gradient when the path is empty or cannot be decoded.
+    ///
+    /// Clearing is why this exists rather than callers using
+    /// [`Self::set_image`]: emptying the setting has to *remove* the
+    /// wallpaper, and there is no image to pass for that.
+    pub fn set_image_path(&self, path: &str) -> bool {
+        if path.is_empty() {
+            self.clear_image();
+            return true;
+        }
+        match crate::utils::image_from_path(path, (2048, 2048)) {
+            Some(image) => {
+                self.set_image(image);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Drop back to the fallback gradient.
+    pub fn clear_image(&self) {
+        self.view.update_state(&BackgroundViewState {
+            image: None,
+            ..self.view.get_state()
+        });
+    }
+
+    /// Change the colour the gradient is drawn from, for when no wallpaper is
+    /// set. Repainting is the view's job — the state hash covers the colour.
+    pub fn set_fallback_color(&self, color: skia::Color4f) {
+        self.view.update_state(&BackgroundViewState {
+            fallback_color: color,
+            ..self.view.get_state()
+        });
+    }
+
     pub fn set_image(&self, image: skia::Image) {
+        // Force an eager decode. `Image::from_encoded` is LAZY: every playback
+        // re-decodes, and on the GPU that decode+upload happens at flush time,
+        // where it can silently produce nothing under memory pressure — the
+        // wallpaper then paints black on exactly the frames that redraw the
+        // background plane around an exposé transition (CPU playback of the
+        // same picture always decodes fine, which is how this was isolated).
+        // A raster image uploads from stable pixels instead.
+        let image = image.make_raster_image(None, None).unwrap_or(image);
         self.view.update_state(&BackgroundViewState {
             image: Some(image),
             ..self.view.get_state()

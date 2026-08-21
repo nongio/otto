@@ -1,7 +1,7 @@
 # RDP Bridge (otto-rdp)
 
 **Status:** draft  
-**Related specs:** multi-output.md, screenshare.md
+**Related specs:** multi-output.md, screenshare.md, topbar.md
 
 ## Summary
 
@@ -25,6 +25,8 @@ AVC420; the `--bitmap` flag forces the legacy path for every client.
   the client advertises, or forced for every client via `--bitmap`.
 - Forward remote keyboard and pointer input to the captured output so the remote
   session is fully interactive.
+- Tell the local user, unmistakably and without configuration, whenever a remote
+  party can see the screen — and give them a way to end it.
 
 ## Non-Goals
 
@@ -106,6 +108,30 @@ AVC420; the `--bitmap` flag forces the legacy path for every client.
   absolute pointer input is mapped into a specific output's geometry). This
   behavior is identical for both transport modes.
 
+### Sharing indicator
+
+- While — and only while — a connected client is being served frames, the bridge
+  publishes a screen-sharing indicator: a red dot in the desktop's tray with a
+  menu that reports what is shared, with whom, and since when, plus a
+  `Stop Sharing` action.
+- The indicator is not configurable and cannot be turned off. It is a privacy
+  signal, so it is present whenever a remote party can see the screen,
+  regardless of how the bridge or the bar was started.
+- The indicator appears when the client requests display updates, not when its
+  TCP connection is accepted: a port scan or an abandoned handshake must not
+  claim that someone is watching.
+- The indicator disappears when the client disconnects, when the bridge exits,
+  and when the bridge dies without cleaning up. A bridge that is listening with
+  no client attached shows nothing.
+- Several bridges (one per output) each publish their own indicator.
+- The indicator is published as a StatusNotifierItem with a `com.canonical.dbusmenu`
+  menu — the protocols the top bar already implements for tray icons — rather
+  than as an Otto-specific interface, so no bar-side support is needed and any
+  SNI host shows it. The full contract is in
+  `docs/developer/remote-desktop-indicator.md`.
+- `Stop Sharing` terminates the bridge: the client is disconnected, the listening
+  port is closed, and the process exits.
+
 ### Configuration
 
 - `OTTO_RDP_FPS` — target capture/encode frame rate. Default is 30 on the H.264
@@ -133,6 +159,17 @@ AVC420; the `--bitmap` flag forces the legacy path for every client.
 - Dropping a non-keyframe under backpressure or after a client join means the
   remote image is stale until the next keyframe arrives; keyframe cadence
   therefore bounds worst-case recovery latency.
+- The indicator needs a StatusNotifierWatcher to be running. If none is (no bar,
+  or the bar restarted), the bridge still serves — there is simply nowhere to
+  draw the icon — and it re-registers as soon as a host appears. A bridge that
+  serves while no host is running therefore shares without a visible indicator;
+  this is a property of there being no UI, not of the bridge suppressing the
+  signal.
+- The indicator's menu is fixed for the lifetime of a session because hosts
+  cache the layout at registration. Anything that is not yet known then (the
+  negotiated transport codec) is therefore left out rather than shown stale, and
+  the session start time is shown as an absolute clock time rather than a live
+  elapsed duration.
 
 ## Rationale
 
@@ -152,6 +189,15 @@ AVC420; the `--bitmap` flag forces the legacy path for every client.
   connection's lifetime rather than re-evaluated mid-session, to keep the two
   encode pipelines fully separate and avoid mid-session renegotiation
   complexity.
+- The indicator reuses StatusNotifierItem and dbusmenu instead of a dedicated
+  `org.otto.*` interface: the top bar already implements both, so the feature
+  needs no bar-side code, works in any SNI host, and adds no permanent
+  Otto-specific D-Bus surface to maintain. Bus-name ownership then gives crash
+  safety for free — a bridge that dies has its name released by the bus daemon,
+  so the indicator cannot outlive the process that raised it.
+- `Stop Sharing` ends the bridge rather than just dropping the client, because a
+  bridge left listening would let the remote party reconnect immediately, which
+  is not what a user means by stopping sharing.
 - The bitmap capture pipeline (CPU capture plus box-filter scale) is started
   lazily rather than always running, since most connections are expected to use
   H.264 and there is no reason to pay that cost for a client that never falls

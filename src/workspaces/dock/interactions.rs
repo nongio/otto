@@ -12,6 +12,7 @@ use smithay::{
 use crate::{
     config::Config,
     interactive_view::{InteractiveView, ViewInteractions},
+    settings::value::SettingValue,
 };
 
 use tracing::warn;
@@ -32,9 +33,15 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
         data: &mut crate::Otto<Backend>,
         event: &smithay::input::pointer::MotionEvent,
     ) {
+        // The grip runs across the dock, so it resizes along the other axis.
+        let resize_cursor = if self.position().is_vertical() {
+            CursorIcon::EwResize
+        } else {
+            CursorIcon::NsResize
+        };
         // A resize drag owns the pointer until it is released.
-        if self.resize_drag_update(event.location.y) {
-            data.set_cursor(&CursorImageStatus::Named(CursorIcon::NsResize));
+        if self.resize_drag_update((event.location.x, event.location.y)) {
+            data.set_cursor(&CursorImageStatus::Named(resize_cursor));
             return;
         }
         // The handle is the drag-to-resize grip — say so on hover.
@@ -43,11 +50,12 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
             .current_hover()
             .is_some_and(|layer| self.is_handle_layer(&layer));
         if over_handle {
-            data.set_cursor(&CursorImageStatus::Named(CursorIcon::NsResize));
+            data.set_cursor(&CursorImageStatus::Named(resize_cursor));
         } else {
             data.set_cursor(&CursorImageStatus::Named(CursorIcon::default()));
         }
-        if self.dragging.load(std::sync::atomic::Ordering::SeqCst) {
+        // A drag on an icon owns the pointer just as a resize drag does.
+        if self.icon_drag_update((event.location.x, event.location.y)) {
             return;
         }
         let scale = Config::with(|c| c.screen_scale);
@@ -70,7 +78,13 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
             menu.view.update_state(&menu_state);
         }
 
-        self.update_magnification_position((event.location.x * scale) as f32);
+        // Magnification follows the pointer along the dock's long axis.
+        let along = if self.position().is_vertical() {
+            event.location.y
+        } else {
+            event.location.x
+        };
+        self.update_magnification_position((along * scale) as f32);
 
         // Update label visibility: show tooltip for the hovered dock item only.
         // Skip while a context menu is open.
@@ -79,6 +93,11 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
         }
     }
     fn on_leave(&self, _serial: smithay::utils::Serial, _time: u32) {
+        // A drag in flight keeps the dock flat and the icon lifted until the
+        // button comes back up, wherever the pointer has wandered off to.
+        if self.is_icon_dragging() {
+            return;
+        }
         self.demagnify_elements();
         self.set_active_label(None);
         // Autohide is managed exclusively by check_dock_hot_zone via cached_dock_bounds.
@@ -98,9 +117,9 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
         match event.state {
             ButtonState::Pressed => {
                 if let Some(layer_id) = state.layers_engine.current_hover() {
-                    // Left-press on the handle starts a vertical resize drag.
+                    // Left-press on the handle starts a resize drag.
                     if event.button != BTN_RIGHT && self.is_handle_layer(&layer_id) {
-                        self.begin_resize_drag(state.last_pointer_location.1);
+                        self.begin_resize_drag(state.last_pointer_location);
                         return;
                     }
                     if let Some((target, label)) = self.darkening_target_for_hover(&layer_id) {
@@ -109,11 +128,18 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
                             l.set_opacity(1.0_f32, Some(Transition::ease_in_quad(0.05)));
                         }
                     }
+                    // A left press on an app icon may turn into a reorder; it
+                    // only becomes one once the pointer has moved far enough.
+                    if event.button != BTN_RIGHT {
+                        if let Some((_, match_id)) = self.get_app_from_layer(&layer_id) {
+                            self.begin_icon_drag(&match_id, state.last_pointer_location);
+                        }
+                    }
                 }
             }
             ButtonState::Released => {
                 // Finishing a resize drag persists the new size and eats the click.
-                if self.end_resize_drag() {
+                if self.end_resize_drag(state) {
                     self.clear_pressed();
                     let still_on_handle = state
                         .layers_engine
@@ -124,6 +150,13 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
                     }
                     return;
                 }
+                // Finishing an icon drag drops it in its new place and eats
+                // the click, so the app is not launched by being moved.
+                if self.end_icon_drag() {
+                    self.clear_pressed();
+                    return;
+                }
+                self.cancel_icon_drag();
                 // If context menu is open, forward the click to it
                 {
                     use crate::config::Config;
@@ -356,6 +389,20 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
 }
 
 impl DockView {
+    /// Change one `dock.*` setting the way any other client would, so an
+    /// in-compositor interaction and a settings app are indistinguishable to
+    /// everyone watching.
+    fn set_dock_setting<Backend: crate::state::Backend + 'static>(
+        &self,
+        state: &mut crate::Otto<Backend>,
+        id: &str,
+        value: SettingValue,
+    ) {
+        if let Err(err) = crate::settings::set(state, id, value) {
+            warn!("Could not change {id}: {err}");
+        }
+    }
+
     /// Execute the named context-menu action for the given app identifier.
     pub(super) fn execute_context_menu_action<Backend: crate::state::Backend>(
         &self,
@@ -391,9 +438,9 @@ impl DockView {
                             label: None,
                             exec_args: vec![],
                         };
-                        self.update_dock_config(|d| {
-                            if !d.bookmarks.iter().any(|b| b.desktop_id == match_id) {
-                                d.bookmarks.push(bookmark);
+                        self.update_bookmarks(|bookmarks| {
+                            if !bookmarks.iter().any(|b| b.desktop_id == match_id) {
+                                bookmarks.push(bookmark);
                             }
                         });
                         if !dock_state.launchers.iter().any(|a| a.match_id == match_id) {
@@ -406,8 +453,8 @@ impl DockView {
             }
             "remove_from_dock" => {
                 if let Some(match_id) = self.match_id_for(app_id) {
-                    self.update_dock_config(|d| {
-                        d.bookmarks.retain(|b| {
+                    self.update_bookmarks(|bookmarks| {
+                        bookmarks.retain(|b| {
                             let id = b
                                 .desktop_id
                                 .strip_suffix(".desktop")
@@ -425,22 +472,36 @@ impl DockView {
                 state.workspaces.quit_app(app_id);
             }
             "toggle_autohide" => {
-                let autohide = self.dock_config.read().unwrap().autohide;
-                self.update_dock_config(|d| d.autohide = !autohide);
+                let autohide = Config::with(|c| c.dock.autohide);
+                // Through the settings service like any other writer, so the
+                // change is validated, applied, persisted and announced once.
+                self.set_dock_setting(state, "dock.autohide", SettingValue::Bool(!autohide));
                 tracing::info!(
                     "Dock auto-hide {}",
                     if !autohide { "enabled" } else { "disabled" }
                 );
-                // When autohide is disabled the dock becomes permanently visible,
-                // so any maximized windows must shrink to respect the dock height.
-                if autohide {
-                    state.remaximize_maximized_windows();
-                }
+            }
+            "position_bottom" | "position_left" | "position_right" => {
+                let position = match action_id {
+                    "position_left" => crate::config::DockPosition::Left,
+                    "position_right" => crate::config::DockPosition::Right,
+                    _ => crate::config::DockPosition::Bottom,
+                };
+                let name = match position {
+                    crate::config::DockPosition::Left => "left",
+                    crate::config::DockPosition::Right => "right",
+                    crate::config::DockPosition::Bottom => "bottom",
+                };
+                self.set_dock_setting(state, "dock.position", SettingValue::Str(name.to_string()));
+                tracing::info!("Dock moved to {:?}", position);
             }
             "toggle_magnification" => {
-                let magnification = self.dock_config.read().unwrap().magnification;
-                self.set_magnification_enabled(!magnification);
-                self.save_config();
+                let magnification = Config::with(|c| c.dock.magnification);
+                self.set_dock_setting(
+                    state,
+                    "dock.magnification",
+                    SettingValue::Bool(!magnification),
+                );
                 tracing::info!(
                     "Dock magnification {}",
                     if !magnification {

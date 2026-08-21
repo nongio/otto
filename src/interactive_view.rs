@@ -35,6 +35,10 @@ pub trait ViewInteractions<B: Backend>: Sync + Send {
     fn on_axis(&self, _event: &smithay::input::pointer::AxisFrame) {}
     fn on_enter(&self, _event: &smithay::input::pointer::MotionEvent) {}
     fn on_leave(&self, _serial: smithay::utils::Serial, _time: u32) {}
+    /// Same event as [`ViewInteractions::on_leave`], for views that have to
+    /// touch compositor state on the way out — clearing a hover, say. Both run.
+    fn on_leave_with_data(&self, _data: &mut Otto<B>, _serial: smithay::utils::Serial, _time: u32) {
+    }
     fn on_frame(&self) {}
     fn on_gesture_hold_begin(&self, _event: &smithay::input::pointer::GestureHoldBeginEvent) {}
     fn on_gesture_hold_end(&self, _event: &smithay::input::pointer::GestureHoldEndEvent) {}
@@ -259,11 +263,12 @@ impl<B: Backend> PointerTarget<Otto<B>> for InteractiveView<B> {
     fn leave(
         &self,
         _seat: &smithay::input::Seat<Otto<B>>,
-        _data: &mut Otto<B>,
+        data: &mut Otto<B>,
         serial: smithay::utils::Serial,
         time: u32,
     ) {
         self.view.on_leave(serial, time);
+        self.view.on_leave_with_data(data, serial, time);
     }
     fn motion(
         &self,

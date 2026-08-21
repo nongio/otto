@@ -23,7 +23,10 @@ impl GenieEffect {
 
         let runtime_effect = skia::RuntimeEffect::make_for_shader(sksl, None).unwrap();
 
-        let builder = skia::runtime_effect::RuntimeShaderBuilder::new(runtime_effect);
+        let mut builder = skia::runtime_effect::RuntimeShaderBuilder::new(runtime_effect);
+        // Vertical (dock at the bottom) unless told otherwise.
+        let _ = builder.set_uniform_float("horizontal", &[0.0]);
+        let _ = builder.set_uniform_float("mirrored", &[0.0]);
 
         Self {
             genie_builder: Arc::new(RwLock::new(builder)),
@@ -33,6 +36,16 @@ impl GenieEffect {
             progress: Arc::new(RwLock::new(0.0)),
             offset: Arc::new(RwLock::new((0.0, 0.0))),
         }
+    }
+
+    /// Which way the window is sucked: sideways instead of downwards
+    /// (`horizontal`), and towards decreasing coordinates instead of increasing
+    /// ones (`mirrored`, i.e. a dock on the left edge). Set before the
+    /// animation starts; it holds until changed.
+    pub fn set_direction(&self, horizontal: bool, mirrored: bool) {
+        let mut builder = self.genie_builder.write().unwrap();
+        let _ = builder.set_uniform_float("horizontal", &[if horizontal { 1.0 } else { 0.0 }]);
+        let _ = builder.set_uniform_float("mirrored", &[if mirrored { 1.0 } else { 0.0 }]);
     }
 
     pub fn set_destination(&self, to_rect: skia::Rect, set_offset: bool) {
@@ -112,6 +125,20 @@ impl GenieEffect {
         }
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `GenieEffect::new` unwraps the shader compilation, so a typo in the
+    /// SkSL takes down the compositor at the first minimize.
+    #[test]
+    fn genie_shader_compiles() {
+        let effect = GenieEffect::new();
+        effect.set_direction(true, true);
+        effect.set_direction(false, false);
+    }
+}
+
 impl layers::prelude::Effect for GenieEffect {
     fn init(&self, layer: &Layer) {
         self.layer.write().unwrap().replace(layer.clone());

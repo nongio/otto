@@ -108,6 +108,15 @@ impl ContextMenuView {
         }
     }
 
+    /// Which point of the menu `show_at` puts at the given position.
+    ///
+    /// Defaults to `(0.5, 1.0)` — bottom-centre, i.e. the menu grows upwards
+    /// from the anchor. A dock on a screen side wants the menu to grow sideways
+    /// out of it instead.
+    pub fn set_anchor(&self, x: f32, y: f32) {
+        self.view_layer.set_anchor_point((x, y), None);
+    }
+
     /// Show the context menu at the given position with a fade-in animation
     pub fn show_at(&self, x: f32, y: f32) {
         println!("Showing context menu at ({}, {})", x, y);
