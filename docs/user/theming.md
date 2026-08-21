@@ -34,8 +34,12 @@ theme the usual way (`gsettings`, `~/.config/gtk-3.0/settings.ini`).
 accent_color = "blue"
 ```
 
-The accent tints selection borders in the workspace selector and the exposé
-window highlight. Available values:
+The accent tints selection borders in the workspace selector, the exposé window
+highlight, and the controls in Otto's own apps — toggles, sliders, focus rings
+and selected rows. Applications outside Otto can follow it too: it is published
+as `accent-color` in the `org.freedesktop.appearance` portal namespace.
+
+Changing it takes effect immediately; no restart is needed. Available values:
 
 `red`, `orange`, `yellow`, `green`, `mint`, `teal`, `cyan`, `blue`, `indigo`,
 `purple`, `pink`, `gray`, `brown`

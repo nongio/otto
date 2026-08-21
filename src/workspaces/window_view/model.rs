@@ -55,6 +55,46 @@ pub struct WindowViewBaseModel {
     pub active: bool,
 }
 
+/// State of a server-side decoration (the titlebar Otto draws above a client
+/// surface). Everything here feeds otto-kit's `WindowDecoration`, which is the
+/// component that actually paints it — the same one otto-kit clients use, so
+/// server- and client-drawn titlebars stay identical.
+#[derive(Clone, Debug, Default)]
+pub struct WindowDecorationModel {
+    /// Titlebar width in logical points
+    pub width: f32,
+    /// Titlebar height in logical points
+    pub height: f32,
+    pub title: String,
+    pub active: bool,
+    pub dark: bool,
+    /// Window frame corner radius; 0 while maximized or tiled
+    pub corner_radius: f32,
+    /// Pointer is over the traffic lights
+    pub controls_hovered: bool,
+    /// Index of the control being held down, if any: 0 close, 1 minimize,
+    /// 2 zoom. Kept as an index so the model stays free of otto-kit types.
+    pub pressed: Option<u8>,
+    /// The window is being screencast — the titlebar shows a sharing badge.
+    pub sharing: bool,
+    pub scale: f32,
+}
+
+impl Hash for WindowDecorationModel {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.width.to_bits().hash(state);
+        self.height.to_bits().hash(state);
+        self.title.hash(state);
+        self.active.hash(state);
+        self.dark.hash(state);
+        self.corner_radius.to_bits().hash(state);
+        self.controls_hovered.hash(state);
+        self.pressed.hash(state);
+        self.sharing.hash(state);
+        self.scale.to_bits().hash(state);
+    }
+}
+
 impl Hash for WindowViewBaseModel {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.w.to_bits().hash(state);

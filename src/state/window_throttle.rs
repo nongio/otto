@@ -20,10 +20,32 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
+use std::time::Instant;
+
 use smithay::reexports::wayland_server::backend::ObjectId;
 
 use crate::shell::WindowElement;
 use crate::workspaces::Workspaces;
+
+/// How long a scrolled window keeps full-rate frame callbacks after the last
+/// scroll event. Long enough to cover the momentum phase of a fling, which is
+/// the part the user actually watches.
+pub const POINTER_INTERACTION_GRACE: Duration = Duration::from_millis(2000);
+
+/// The set of windows the pointer is currently driving, from
+/// `Otto::pointer_interaction`. Empty once the grace period expires.
+///
+/// Takes the field rather than the whole compositor state so a backend can
+/// call it while holding a mutable borrow of its own backend data.
+pub fn interacting_ids(interaction: &Option<(ObjectId, Instant)>) -> HashSet<ObjectId> {
+    let mut ids = HashSet::new();
+    if let Some((id, at)) = interaction {
+        if at.elapsed() < POINTER_INTERACTION_GRACE {
+            ids.insert(id.clone());
+        }
+    }
+    ids
+}
 
 /// Per-window visibility state driving frame-callback rate and xdg activated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +67,10 @@ pub enum WindowThrottleState {
     /// workspace it is on — the remote viewer is looking at it even when the
     /// local user is not — but *not* activated, since it has no keyboard focus.
     Captured,
+    /// Being scrolled by the pointer right now. Full rate — the user is
+    /// watching it move — but not activated: scrolling a window does not give
+    /// it keyboard focus.
+    Interacting,
 }
 
 impl WindowThrottleState {
@@ -62,7 +88,9 @@ impl WindowThrottleState {
         match self {
             // Zero means "always send". The render-loop's own pacing (VBlank +
             // draw-deadline timer) limits the actual rate to the output refresh.
-            WindowThrottleState::Focused | WindowThrottleState::Captured => Duration::ZERO,
+            WindowThrottleState::Focused
+            | WindowThrottleState::Captured
+            | WindowThrottleState::Interacting => Duration::ZERO,
             // ~30 Hz — halves the work for unfocused visible windows without
             // making their animations visibly stutter.
             WindowThrottleState::Secondary => Duration::from_millis(33),
@@ -100,6 +128,9 @@ pub struct ClassifierContext<'a> {
     /// Windows with an active screencast stream. Outranks occlusion and
     /// workspace visibility — see [`WindowThrottleState::Captured`].
     pub captured_ids: &'a HashSet<ObjectId>,
+    /// Windows the pointer is scrolling right now — see
+    /// [`WindowThrottleState::Interacting`].
+    pub interacting_ids: &'a HashSet<ObjectId>,
 }
 
 /// Classify a single window given its own minimized flag and a context
@@ -116,6 +147,11 @@ pub fn classify_one(
     }
     if is_minimized {
         return WindowThrottleState::Minimized;
+    }
+    if ctx.interacting_ids.contains(window_id) {
+        // Being scrolled: visible, moving, and watched, whatever the stacking
+        // order says about who has focus.
+        return WindowThrottleState::Interacting;
     }
     if ctx.expose_active {
         // Expose override: every non-minimized window gets smooth previews.
@@ -158,6 +194,7 @@ pub fn classify_windows(
     occluded_ids: &HashSet<ObjectId>,
     expose_active: bool,
     captured_ids: &HashSet<ObjectId>,
+    interacting_ids: &HashSet<ObjectId>,
 ) -> HashMap<ObjectId, WindowThrottleState> {
     // Fullscreen and top-of-stack are per-output properties of each output's
     // CURRENT workspace: a fullscreen window on one screen must not demote
@@ -190,6 +227,7 @@ pub fn classify_windows(
             occluded_ids,
             expose_active,
             captured_ids,
+            interacting_ids,
         };
         let state = classify_one(&id, window.is_minimised(), &ctx);
         result.insert(id, state);
@@ -216,6 +254,8 @@ mod tests {
         // a singleton (equal to every other null()) so for multi-window
         // tests we need distinct ids. This scaffolding synthesises ids by
         // leaking small allocations — fine for tests, never used in prod.
+        use std::time::Instant;
+
         use smithay::reexports::wayland_server::backend::ObjectId;
         // Fall back to null for now; most tests can operate with the null
         // singleton plus boolean flags. Tests that need distinct ids will
@@ -237,6 +277,7 @@ mod tests {
             occluded_ids: &occ,
             expose_active: true,
             captured_ids: &empty_occluded(),
+            interacting_ids: &empty_occluded(),
         };
         assert_eq!(
             classify_one(&id, true, &ctx),
@@ -255,6 +296,7 @@ mod tests {
             occluded_ids: &occ,
             expose_active: true,
             captured_ids: &empty_occluded(),
+            interacting_ids: &empty_occluded(),
         };
         assert_eq!(
             classify_one(&id, false, &ctx),
@@ -273,6 +315,7 @@ mod tests {
             occluded_ids: &occ,
             expose_active: false,
             captured_ids: &empty_occluded(),
+            interacting_ids: &empty_occluded(),
         };
         assert_eq!(
             classify_one(&id, false, &ctx),
@@ -293,6 +336,7 @@ mod tests {
             occluded_ids: &occ,
             expose_active: false,
             captured_ids: &captured,
+            interacting_ids: &empty_occluded(),
         };
         assert_eq!(
             classify_one(&id, true, &ctx),
@@ -308,6 +352,49 @@ mod tests {
             !WindowThrottleState::Captured.is_activated(),
             "being captured must not make a window think it has focus"
         );
+    }
+
+    #[test]
+    fn a_scrolled_window_runs_at_full_rate_without_focus() {
+        let id = mk_id();
+        let occ = empty_occluded();
+        let mut interacting = HashSet::new();
+        interacting.insert(id.clone());
+        let ctx = ClassifierContext {
+            fullscreen_id: None,
+            // Something else is top of stack: this window is Secondary by
+            // stacking order, and would be fed frames at 30 Hz.
+            top_of_current: None,
+            occluded_ids: &occ,
+            expose_active: false,
+            captured_ids: &empty_occluded(),
+            interacting_ids: &interacting,
+        };
+        assert_eq!(
+            classify_one(&id, false, &ctx),
+            WindowThrottleState::Interacting,
+            "a window being scrolled is being watched, focus or not"
+        );
+        assert_eq!(
+            WindowThrottleState::Interacting.throttle(),
+            Duration::ZERO,
+            "scrolling must not run at the Secondary window's 30 Hz"
+        );
+        assert!(
+            !WindowThrottleState::Interacting.is_activated(),
+            "scrolling a window must not make it think it has keyboard focus"
+        );
+    }
+
+    #[test]
+    fn the_interaction_grace_expires() {
+        let id = mk_id();
+        let fresh = Some((id.clone(), Instant::now()));
+        assert!(interacting_ids(&fresh).contains(&id));
+
+        let stale = Some((id.clone(), Instant::now() - POINTER_INTERACTION_GRACE));
+        assert!(interacting_ids(&stale).is_empty());
+        assert!(interacting_ids(&None).is_empty());
     }
 
     // NOTE: the remaining tests (fullscreen-occludes-background, top-of-stack,

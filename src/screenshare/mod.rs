@@ -145,6 +145,33 @@ pub enum CompositorCommand {
     DestroySession { session_id: String },
     /// Focus an application by app_id (e.g. from notification click).
     FocusApp { app_id: String },
+    /// Change one setting, on the thread that can apply it to the running
+    /// system. See `docs/developer/settings-dbus-api.md`.
+    SetSetting {
+        id: String,
+        value: crate::settings::value::SettingValue,
+        response_tx: tokio::sync::oneshot::Sender<
+            Result<crate::settings::Status, crate::settings::SetError>,
+        >,
+    },
+    /// Drop one setting from the writable config file and re-read the layers.
+    ResetSetting {
+        id: String,
+        response_tx: tokio::sync::oneshot::Sender<
+            Result<crate::settings::Status, crate::settings::SetError>,
+        >,
+    },
+    /// Create a virtual output now, without a restart. Answers with the
+    /// PipeWire node the new output streams to.
+    AddVirtualOutput {
+        config: crate::config::VirtualOutputConfig,
+        response_tx: tokio::sync::oneshot::Sender<Result<u32, String>>,
+    },
+    /// Tear a virtual output down and unmap it.
+    RemoveVirtualOutput {
+        name: String,
+        response_tx: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
 }
 
 /// Information about an available output.
@@ -155,6 +182,14 @@ pub struct OutputInfo {
     pub width: u32,
     pub height: u32,
     pub refresh_rate: u32,
+    /// A PipeWire-backed output rather than a physical one. A client showing
+    /// an arrangement needs to tell them apart: only a virtual output can be
+    /// removed, and only a physical one has a connector behind it.
+    pub is_virtual: bool,
+    /// Position in the global compositor layout, in logical points.
+    pub x: i32,
+    pub y: i32,
+    pub scale: f64,
 }
 
 /// Information about a capturable window.
@@ -286,6 +321,54 @@ pub fn screencast_window_ids(
     ids
 }
 
+/// Whether this window is the target of an active screencast stream.
+///
+/// Drives the sharing badge on the server-side titlebar. Takes individual
+/// fields for the same borrow reason as [`window_for_identifier`], and answers
+/// `false` without resolving anything when nothing is being cast — the common
+/// case, hit on every commit of a decorated window.
+#[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
+pub fn is_window_screencast(
+    sessions: &HashMap<String, ScreencastSession>,
+    workspaces: &crate::workspaces::Workspaces,
+    foreign_toplevels: &HashMap<
+        smithay::reexports::wayland_server::backend::ObjectId,
+        crate::state::foreign_toplevel_shared::ForeignToplevelHandles,
+    >,
+    window_id: &smithay::reexports::wayland_server::backend::ObjectId,
+) -> bool {
+    if sessions.is_empty() {
+        return false;
+    }
+    screencast_window_ids(sessions, workspaces, foreign_toplevels).contains(window_id)
+}
+
+/// Push the current capture state onto every decorated window's titlebar.
+///
+/// The per-window flag is otherwise only recomputed when that window commits,
+/// which is fine while a share is running (a captured window paints) but not
+/// when one starts or stops: the windows that just gained or lost the badge may
+/// be idle. Call this whenever the set of streams changes.
+pub fn refresh_sharing_badges<B: crate::state::Backend + 'static>(state: &crate::state::Otto<B>) {
+    #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
+    let captured = screencast_window_ids(
+        &state.screenshare_sessions,
+        &state.workspaces,
+        &state.foreign_toplevels,
+    );
+    for window in state.workspaces.spaces_elements() {
+        let Some(view) = state.workspaces.get_window_view(&window.id()) else {
+            continue;
+        };
+        let mut model = view.decoration_state();
+        let sharing = captured.contains(&window.id());
+        if model.sharing != sharing {
+            model.sharing = sharing;
+            view.update_decoration(model);
+        }
+    }
+}
+
 /// Handle a command from the D-Bus service.
 fn handle_screenshare_command<B: crate::state::Backend + 'static>(
     state: &mut crate::state::Otto<B>,
@@ -318,7 +401,16 @@ fn handle_screenshare_command<B: crate::state::Backend + 'static>(
                         .current_mode()
                         .map(|m| (m.size.w as u32, m.size.h as u32, m.refresh as u32))
                         .unwrap_or((0, 0, 0));
+                    let position = state
+                        .workspaces
+                        .output_geometry(output)
+                        .map(|geometry| geometry.loc)
+                        .unwrap_or_default();
                     let info = OutputInfo {
+                        is_virtual: crate::virtual_output::is_virtual_output(output),
+                        x: position.x,
+                        y: position.y,
+                        scale: output.current_scale().fractional_scale(),
                         connector: output.name(),
                         name: output.name(),
                         width,
@@ -543,6 +635,8 @@ fn handle_screenshare_command<B: crate::state::Backend + 'static>(
                 },
             );
 
+            refresh_sharing_badges(state);
+
             // Send success response with node_id
             let _ = response_tx.send(Ok(node_id));
         }
@@ -574,6 +668,7 @@ fn handle_screenshare_command<B: crate::state::Backend + 'static>(
                     session_id
                 );
             }
+            refresh_sharing_badges(state);
         }
         CompositorCommand::GetPipeWireFd {
             session_id,
@@ -598,12 +693,120 @@ fn handle_screenshare_command<B: crate::state::Backend + 'static>(
             } else {
                 tracing::warn!("Session not found for destruction: {}", session_id);
             }
+            refresh_sharing_badges(state);
         }
         CompositorCommand::FocusApp { app_id } => {
             tracing::info!("FocusApp: {}", app_id);
             state.focus_app(&app_id);
         }
+        CompositorCommand::SetSetting {
+            id,
+            value,
+            response_tx,
+        } => {
+            let _ = response_tx.send(crate::settings::set(state, &id, value));
+        }
+        CompositorCommand::ResetSetting { id, response_tx } => {
+            let _ = response_tx.send(crate::settings::reset(state, &id));
+        }
+        CompositorCommand::AddVirtualOutput {
+            config,
+            response_tx,
+        } => {
+            let _ = response_tx.send(add_virtual_output(state, &config));
+        }
+        CompositorCommand::RemoveVirtualOutput { name, response_tx } => {
+            let _ = response_tx.send(remove_virtual_output(state, &name));
+        }
     }
+}
+
+/// Bring a virtual output up on the running compositor.
+///
+/// The same work `udev::init` does at startup, minus the config read — kept
+/// here rather than in the backend because `virtual_outputs` lives on `Otto`
+/// and both the gbm device and the format modifiers are already on `Backend`,
+/// so a backend without dmabuf simply gets a shared-memory stream.
+fn add_virtual_output<B: crate::state::Backend + 'static>(
+    state: &mut crate::state::Otto<B>,
+    config: &crate::config::VirtualOutputConfig,
+) -> Result<u32, String> {
+    if state
+        .virtual_outputs
+        .iter()
+        .any(|vout| vout.output.name() == config.name)
+    {
+        return Err(format!("a virtual output named `{}` exists", config.name));
+    }
+    // A virtual output shares a namespace with the physical ones: two outputs
+    // answering to the same name would make every by-name lookup ambiguous.
+    if state
+        .workspaces
+        .outputs()
+        .any(|output| output.name() == config.name)
+    {
+        return Err(format!("`{}` is already an output name", config.name));
+    }
+
+    let output = crate::virtual_output::VirtualOutputState::build_output(config);
+    let global = output.create_global::<crate::state::Otto<B>>(&state.display_handle);
+
+    let position: smithay::utils::Point<i32, smithay::utils::Logical> = config
+        .position
+        .map(|p| (p.x, p.y).into())
+        .unwrap_or_else(|| (0, 0).into());
+    state.workspaces.map_output(&output, position);
+
+    let gbm_device = state.backend_data.gbm_device();
+    let format_modifiers = state
+        .backend_data
+        .get_format_modifiers(smithay::backend::allocator::Fourcc::Argb8888);
+
+    match crate::virtual_output::VirtualOutputState::start(
+        output.clone(),
+        global,
+        config,
+        gbm_device,
+        format_modifiers,
+    ) {
+        Ok((vout_state, node_id)) => {
+            tracing::info!(
+                "Virtual output '{}' started at runtime (PipeWire node {})",
+                config.name,
+                node_id
+            );
+            state.virtual_outputs.push(vout_state);
+            Ok(node_id)
+        }
+        Err(e) => {
+            // Leave nothing half-created: the output was mapped before the
+            // stream could fail, and an output with no stream renders forever
+            // into nothing.
+            state.workspaces.unmap_output(&output);
+            Err(e)
+        }
+    }
+}
+
+/// Take a virtual output back down. Physical outputs are refused rather than
+/// silently ignored — unmapping one would black out a real screen.
+fn remove_virtual_output<B: crate::state::Backend + 'static>(
+    state: &mut crate::state::Otto<B>,
+    name: &str,
+) -> Result<(), String> {
+    let Some(index) = state
+        .virtual_outputs
+        .iter()
+        .position(|vout| vout.output.name() == name)
+    else {
+        return Err(format!("no virtual output named `{name}`"));
+    };
+
+    let vout = state.virtual_outputs.remove(index);
+    state.workspaces.unmap_output(&vout.output);
+    tracing::info!("Virtual output '{name}' removed");
+    // Dropping `vout` closes the PipeWire stream and releases the global.
+    Ok(())
 }
 
 /// Render render elements into a PipeWire dmabuf, over an opaque black clear.

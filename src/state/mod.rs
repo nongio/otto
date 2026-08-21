@@ -72,8 +72,9 @@ use smithay::{
         relative_pointer::RelativePointerManagerState,
         security_context::{SecurityContext, SecurityContextState},
         selection::{
-            data_device::DataDeviceState, primary_selection::PrimarySelectionState,
-            wlr_data_control::DataControlState,
+            data_device::DataDeviceState,
+            ext_data_control::DataControlState as ExtDataControlState,
+            primary_selection::PrimarySelectionState, wlr_data_control::DataControlState,
         },
         shell::{
             wlr_layer::WlrLayerShellState,
@@ -206,9 +207,22 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// saying "don't consider the session idle" (a video playing, a
     /// presentation). Consulted by auto-lock; see `Otto::idle_inhibited`.
     pub idle_inhibitors: HashSet<WlSurface>,
+    /// The window the pointer last scrolled, and when.
+    ///
+    /// A window being scrolled is being used, whether or not it holds
+    /// keyboard focus, so it keeps full-rate frame callbacks for a moment
+    /// afterwards — see [`crate::state::window_throttle`]. Without this a
+    /// click-to-focus desktop delivers a scroll to a `Secondary` window and
+    /// then feeds it frames at 30 Hz while the user watches it move.
+    pub pointer_interaction: Option<(ObjectId, std::time::Instant)>,
     pub output_manager_state: OutputManagerState,
     pub primary_selection_state: PrimarySelectionState,
     pub data_control_state: DataControlState,
+    /// `ext-data-control-v1`, the standardised successor to
+    /// `zwlr-data-control`. Both are advertised: older clipboard managers only
+    /// know the wlr one, newer ones only the ext one, and neither is a superset
+    /// of the other in the wild.
+    pub ext_data_control_state: ExtDataControlState,
     pub seat_state: SeatState<Otto<BackendData>>,
     pub keyboard_shortcuts_inhibit_state: KeyboardShortcutsInhibitState,
     pub shm_state: ShmState,
@@ -311,12 +325,15 @@ pub struct Otto<BackendData: Backend + 'static> {
     // foreign toplevel list - maps surface ObjectId to unified toplevel handles (both protocols)
     pub foreign_toplevels: HashMap<ObjectId, foreign_toplevel_shared::ForeignToplevelHandles>,
 
-    /// Toplevels mapped but not yet placed against their real size.
+    /// Toplevels mapped but not yet placed against their real size, and the
+    /// size the last commit reported for each (`None` until the first sized
+    /// commit).
     ///
     /// Initial placement runs before a client has configured, so it can only
-    /// guess at dimensions. Windows land here at map time and are re-placed on
-    /// their first sized commit — see `Otto::settle_initial_placement`.
-    pub pending_initial_placement: std::collections::HashSet<ObjectId>,
+    /// guess at dimensions. Windows land here at map time and are re-placed as
+    /// their real size arrives — see `Otto::settle_initial_placement`.
+    pub pending_initial_placement:
+        HashMap<ObjectId, Option<smithay::utils::Size<i32, smithay::utils::Logical>>>,
 
     // surface style protocol
     // Map from surface ID to list of surface styles augmenting that surface
@@ -327,6 +344,16 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// Tracks which parent ObjectId each surface layer was last appended to,
     /// so we can skip redundant append_layer calls that cause flicker.
     pub surface_layer_parents: HashMap<ObjectId, ObjectId>,
+    /// The sibling order each parent's children were last appended in,
+    /// bottom to top.
+    ///
+    /// `append_layer` puts a layer last, so the scene's sibling order is
+    /// whatever order the layers were first appended in — creation order. That
+    /// makes `wl_subsurface.place_above` invisible: a subsurface created later
+    /// stays on top of one a client has since raised above it. Re-appending
+    /// every commit would fix the order and cause flicker, so the order is
+    /// remembered and the children are re-appended only when it changes.
+    pub surface_children_order: HashMap<ObjectId, Vec<ObjectId>>,
     // Pre-warmed View caches: surface_id -> (layer_key -> NodeRef)
     // Built during surface creation, moved into Views when they're created
     pub view_warm_cache:
@@ -540,6 +567,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     ) -> Otto<BackendData> {
         let dh = display.handle();
 
+        // otto-kit draws the window decorations and reads the accent from its
+        // own store; fill it before anything renders so the titlebar controls
+        // start out the configured colour rather than otto-kit's fallback.
+        crate::theme::publish_accent();
+
         let clock = Clock::new();
 
         // init wayland clients
@@ -636,6 +668,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
         let data_control_state =
             DataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), |_| true);
+        let ext_data_control_state =
+            ExtDataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), |_| true);
         let mut seat_state = SeatState::new();
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
         let viewporter_state = ViewporterState::new::<Self>(&dh);
@@ -735,7 +769,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         });
         let _ = layers_engine.add_layer(&root_layer);
         let scene_element = SceneElement::with_engine(layers_engine.clone());
-        let (workspaces, remove_workspace_receiver) =
+        let (workspaces, remove_workspace_receiver, rename_workspace_receiver) =
             Workspaces::new(layers_engine.clone(), dh.clone());
         handle
             .insert_source(remove_workspace_receiver, |event, _, otto| {
@@ -752,6 +786,16 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 }
             })
             .expect("Failed to register workspace remove channel");
+        handle
+            .insert_source(rename_workspace_receiver, |event, _, otto| {
+                // A rename that ended without a `&mut Otto` at hand — the
+                // selector lost keyboard focus mid-edit.
+                if let ChannelEvent::Msg((output_name, index, name)) = event {
+                    otto.workspaces
+                        .rename_workspace(&output_name, index, Some(name));
+                }
+            })
+            .expect("Failed to register workspace rename channel");
 
         #[cfg(feature = "debugger")]
         layers_engine.start_debugger();
@@ -782,6 +826,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             session_lock_manager_state,
             idle_inhibit_manager_state,
             idle_inhibitors: HashSet::new(),
+            pointer_interaction: None,
             lock_state: crate::lock::LockState::Unlocked,
             lock_surfaces: Default::default(),
             lock_previous_focus: None,
@@ -792,6 +837,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             output_manager_state,
             primary_selection_state,
             data_control_state,
+            ext_data_control_state,
             seat_state,
             keyboard_shortcuts_inhibit_state,
             shm_state,
@@ -859,12 +905,13 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
             // foreign toplevel list
             foreign_toplevels: HashMap::new(),
-            pending_initial_placement: std::collections::HashSet::new(),
+            pending_initial_placement: HashMap::new(),
 
             // Surface style protocol
             surfaces_style: HashMap::new(),
             style_transactions: HashMap::new(),
             surface_layer_parents: HashMap::new(),
+            surface_children_order: HashMap::new(),
             surface_layers: HashMap::new(),
             view_warm_cache: HashMap::new(),
 
@@ -971,14 +1018,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             .primary_output()
             .is_some_and(|p| p.name() == output.name());
         if is_primary && !self.workspaces.dock.is_autohide_enabled() {
-            let dock_geom = self.workspaces.get_dock_geometry();
-            if dock_geom.size.h > 0 {
-                let dock_top = dock_geom.loc.y;
-                let available_bottom = usable_zone.loc.y + usable_zone.size.h;
-                if dock_top < available_bottom {
-                    usable_zone.size.h = dock_top - usable_zone.loc.y;
-                }
-            }
+            self.workspaces.subtract_dock(&mut usable_zone);
         }
 
         usable_zone
@@ -1466,8 +1506,42 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         }
     }
 
+    /// Full re-sync of a window's surface tree and all of its popups.
     pub fn update_window_view(&mut self, window: &WindowElement) {
+        self.update_window_view_for_commit(window, None);
+    }
+
+    /// Re-sync a window's scene layers after a commit.
+    ///
+    /// `committed` is the surface whose commit triggered this, when there is
+    /// one. It scopes the POPUP half of the sync: popups are children of the
+    /// window for bookkeeping, but a commit on the window's own content says
+    /// nothing about them, and walking their surface trees to write back
+    /// identical values is how a client repainting at frame rate ended up
+    /// dirtying its own tooltip at frame rate — which then drove a full-screen
+    /// backdrop rebuild per commit (see `udev::backdrop`). A popup is re-synced
+    /// only when the commit is its own, when it moved, or when `committed` is
+    /// `None` (an unscoped caller: geometry change, scanout demote, teardown).
+    ///
+    /// The window's own surface tree is always walked — the commit could have
+    /// landed on any surface in it — but `configure_surface_layer` skips
+    /// surfaces whose configuration is unchanged, so only what actually moved
+    /// or redrew reaches the scene.
+    pub fn update_window_view_for_commit(
+        &mut self,
+        window: &WindowElement,
+        committed: Option<&WlSurface>,
+    ) {
         let scale_factor = Config::with(|c| c.screen_scale);
+        // Which popup, if any, the commit belongs to: subsurfaces of a popup
+        // have that popup's surface as their root ancestor.
+        let committed_root: Option<ObjectId> = committed.map(|s| {
+            let mut root = s.clone();
+            while let Some(parent) = smithay::wayland::compositor::get_parent(&root) {
+                root = parent;
+            }
+            root.id()
+        });
         if let Some(window_surface) = window.wl_surface() {
             let id = window_surface.id();
 
@@ -1553,6 +1627,18 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     y: location.y as f32 + offset.y as f32,
                 };
 
+                // Nothing to do unless this popup itself committed or moved —
+                // see `update_window_view_for_commit`.
+                let popup_committed =
+                    committed_root.is_none() || committed_root.as_ref() == Some(&popup_id);
+                if !self.workspaces.popup_overlay.needs_sync(
+                    &popup_id,
+                    popup_position,
+                    popup_committed,
+                ) {
+                    continue;
+                }
+
                 // Collect surfaces for this popup
                 let mut popup_surfaces = Vec::new();
                 let popup_origin: smithay::utils::Point<f64, smithay::utils::Physical> =
@@ -1618,6 +1704,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     Option<ObjectId>,
                 ),
             > = std::collections::HashMap::new();
+            #[allow(clippy::mutable_key_type)]
+            let mut children_order: std::collections::HashMap<ObjectId, Vec<ObjectId>> =
+                std::collections::HashMap::new();
 
             smithay::wayland::compositor::with_surface_tree_downward(
                 &window_surface,
@@ -1659,6 +1748,18 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                         parent_id.clone(),
                     ) {
                         render_elements.push_front(window_view.clone());
+                        if let Some(parent_id) = parent_id.clone() {
+                            // `with_surface_tree_downward` walks the tree from
+                            // the screen down — nearest sibling first — and it
+                            // honours place_above / place_below. Reversing it
+                            // gives the order layers have to be appended in,
+                            // since `append_layer` puts a layer last and last
+                            // is topmost.
+                            children_order
+                                .entry(parent_id)
+                                .or_default()
+                                .insert(0, surface.id());
+                        }
                         surface_info.insert(
                             surface.id(),
                             (surface.clone(), *location, parent_id.clone()),
@@ -1710,6 +1811,27 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 }
             }
 
+            // Sibling order, when it has changed. `place_above` reorders
+            // Smithay's tree but nothing in the scene, because a layer is only
+            // appended when its *parent* changes — so without this a Quick View
+            // panel raised above a column stays underneath it.
+            for (parent_id, child_ids) in children_order.iter() {
+                if self.surface_children_order.get(parent_id) == Some(child_ids) {
+                    continue;
+                }
+                let Some(parent_layer) = self.surface_layers.get(parent_id).cloned() else {
+                    continue;
+                };
+                let parent_node = parent_layer.id();
+                for child_id in child_ids {
+                    if let Some(child_layer) = self.surface_layers.get(child_id) {
+                        let _ = self.layers_engine.append_layer(child_layer, parent_node);
+                    }
+                }
+                self.surface_children_order
+                    .insert(parent_id.clone(), child_ids.clone());
+            }
+
             if let Some(window_view) = self.workspaces.get_window_view(&id) {
                 let model = WindowViewBaseModel {
                     x: location.x as f32,
@@ -1722,8 +1844,48 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 };
                 window_view.view_base.update_state(&model);
 
+                // Server-side decoration: the titlebar occupies the top strip
+                // of the window and the client's surfaces start below it.
+                let decoration_height = window.decoration_height();
+                window_view.set_decorated(window.is_decorated());
+                if window.is_decorated() {
+                    window_view.update_decoration(crate::workspaces::WindowDecorationModel {
+                        width: window_geometry.size.w as f32 / scale_factor as f32,
+                        height: decoration_height as f32,
+                        title: window.xdg_title(),
+                        active: is_focused,
+                        dark: Config::with(|c| {
+                            matches!(c.theme_scheme, crate::theme::ThemeScheme::Dark)
+                        }),
+                        // Maximized and fullscreen windows sit flush
+                        // against the screen edges, so their frame — and
+                        // with it the bar — squares off.
+                        corner_radius: if window.is_maximized() || fullscreen {
+                            0.0
+                        } else {
+                            12.0
+                        },
+                        controls_hovered: window_view.decoration_state().controls_hovered,
+                        pressed: window_view.decoration_state().pressed,
+                        sharing: crate::screenshare::is_window_screencast(
+                            &self.screenshare_sessions,
+                            &self.workspaces,
+                            &self.foreign_toplevels,
+                            &window.id(),
+                        ),
+                        scale: scale_factor as f32,
+                    });
+                }
+
                 // Directly add root surface layer to content layer without using LayerTreeBuilder
                 let content_layer = &window_view.content_layer;
+                content_layer.set_position(
+                    layers::prelude::Point {
+                        x: 0.0,
+                        y: decoration_height as f32 * scale_factor as f32,
+                    },
+                    None,
+                );
 
                 if let Some(root_layer) = self.surface_layers.get(&id) {
                     // Use layers_engine to set parent-child relationship
@@ -1747,6 +1909,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                         window_geometry.size.w as f32,
                         window_geometry.size.h as f32,
                     ));
+                    // Same propagation, one level up: the workspace-selector
+                    // thumbnail follows the workspace's windows CONTAINER, so
+                    // the container has to be told too or the thumb of a
+                    // non-current workspace stays frozen while its windows
+                    // keep committing (see `damage_workspace_thumbnail`).
+                    self.workspaces.damage_workspace_thumbnail(&window.id());
                 }
 
                 self.workspaces.expose_update_if_needed();
@@ -2396,5 +2564,18 @@ pub trait Backend {
     /// Whether this backend prefers DMA-BUF for screenshare (zero-copy)
     fn prefers_dmabuf_screenshare(&self) -> bool {
         false
+    }
+
+    /// Re-apply the current `input.*` configuration to every connected input
+    /// device.
+    ///
+    /// Only the udev backend owns libinput devices; the windowed backends get
+    /// cooked events from their host compositor, which applies its own device
+    /// configuration, so there is nothing here for them to do.
+    fn reconfigure_input_devices(&mut self) {
+        tracing::debug!(
+            backend = self.backend_name(),
+            "Input settings stored; this backend has no libinput devices to reconfigure"
+        );
     }
 }

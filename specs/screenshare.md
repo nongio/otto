@@ -106,6 +106,16 @@ documented in `docs/developer/screenshare.md`.
   rejected with `Unavailable cursor mode <n>` before it ever reaches Otto.
 - Otto advertises `AvailableCursorModes` = `HIDDEN | EMBEDDED` (3). `METADATA` is not
   implemented and is not advertised.
+- The frontend binds those properties **once**, when it loads the implementation, and only
+  picks `otto.portal` when `XDG_CURRENT_DESKTOP` contains `otto` (its `UseIn=`). A frontend
+  that started before the backend claimed its bus name — or before that env reached
+  `systemd --user` — keeps reporting 0 and produces the same
+  `Unavailable cursor mode <n>` rejection even though the backend is correct. The session
+  script restarts `xdg-desktop-portal.service` after the backend is up
+  (`portal_frontend_reload` in `scripts/portal.sh`); `scripts/portal-refresh.sh` does the
+  same on demand after reinstalling the backend mid-session. Verify with
+  `busctl --user get-property org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop
+  org.freedesktop.portal.ScreenCast AvailableCursorModes` — it must not be 0.
 - Cursor modes keep the portal's bitmask numbering end to end — `HIDDEN` = 1, `EMBEDDED` = 2,
   `METADATA` = 4. The portal forwards the requested value verbatim as the compositor-side
   `cursor-mode` property of `CreateSession` / `RecordMonitor` / `RecordWindow`, and a missing
@@ -182,11 +192,18 @@ documented in `docs/developer/screenshare.md`.
 - The window's geometry origin is placed at (0, 0) of the stream buffer, so client-side
   decoration shadow margins are cropped out.
 - The buffer is cleared to opaque black before each frame.
-- The stream size is fixed at `RecordWindow` time to the window's geometry in physical
-  pixels, rounded **down to even** dimensions. A window that later grows is cropped to that
-  size; one that shrinks leaves the remainder black. The format is never renegotiated.
+- The stream size starts at the window's geometry in physical pixels, rounded **down to
+  even** dimensions, and follows the window when it is resized: the compositor requests the
+  new size each frame and the PipeWire thread renegotiates the format, debounced by 250 ms so
+  an interactive drag renegotiates once when it settles rather than every frame. Frames
+  rendered between the resize and the renegotiation land in the old-size buffers, so the
+  window is briefly cropped (grow) or letterboxed (shrink). Renegotiation frees the whole
+  buffer set; the compositor only ever blits into a buffer PipeWire currently owns, at that
+  buffer's own dimensions.
 - With cursor mode `EMBEDDED`, the cursor is drawn into the window stream at window-relative
-  coordinates, so it appears only while the pointer is over the captured window.
+  coordinates, so it appears only while the pointer is over the captured window, and only
+  while that window holds keyboard focus. An unfocused window's stream never shows the
+  cursor, even when the pointer passes over it.
 - Window streams are serviced from the render frame of whichever output currently hosts the
   window, so moving a window between outputs does not interrupt its stream. They force that
   output to composite (no direct scanout) and to keep painting when otherwise idle, exactly
@@ -195,6 +212,24 @@ documented in `docs/developer/screenshare.md`.
   it receives frame callbacks at full rate even when occluded, on an inactive workspace, or
   minimized, and is **not** reported as `activated` (it has no keyboard focus).
 - A locked session suspends all capture, window streams included.
+
+### Sharing indicator on the titlebar
+
+- A window that is the target of at least one active screencast stream shows a **sharing
+  badge** at the trailing end of its server-side titlebar: a tinted pill with a display
+  glyph, in the system green, dimmed along with the rest of the bar when the window is
+  unfocused. It mirrors the way macOS marks a shared window.
+- The badge is drawn by otto-kit's `WindowDecoration` (`sharing: bool`), so an otto-kit
+  client drawing its own titlebar renders the identical badge.
+- It is a trailing titlebar group, so it reserves its width and a long title is pushed clear
+  of it instead of running underneath.
+- The badge is not a control: it has no hit region and clicking it drags the window like any
+  other empty part of the bar.
+- The flag is recomputed on every commit of a decorated window, and pushed to **all** windows
+  whenever the set of streams changes (stream started, stream stopped, session destroyed) —
+  a window that gains or loses the badge may be idle and never commit on its own.
+- Only window streams raise it. A monitor stream leaves every titlebar unmarked.
+- Windows with client-side decorations get no badge; the compositor draws no bar for them.
 
 ### Output-selection override file
 
@@ -307,5 +342,6 @@ documented in `docs/developer/screenshare.md`.
   API?
 - Should a captured window that is resized renegotiate the stream format rather than being
   cropped, and is any consumer robust enough to make that worthwhile?
-- Should the compositor show a persistent indicator while a window is being cast, as it
-  arguably should for monitor casts too?
+- A window being cast now carries a titlebar badge (see *Sharing indicator on the titlebar*).
+  Should a monitor cast get an equivalent persistent indicator, and where — the topbar, since
+  there is no single window to mark?

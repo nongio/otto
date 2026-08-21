@@ -9,6 +9,7 @@ pub mod device;
 pub mod feedback;
 pub mod gamma;
 pub mod init;
+pub mod input_config;
 pub mod planes;
 pub mod render;
 pub mod types;
@@ -150,6 +151,10 @@ impl Backend for UdevData {
     fn request_redraw(&mut self) {
         self.render_requested
             .store(true, std::sync::atomic::Ordering::Release);
+    }
+    fn reconfigure_input_devices(&mut self) {
+        let config = crate::config::Config::current();
+        input_config::apply_to_all(&mut self.input_devices, &config.input);
     }
     fn invalidate_scene_prefetch(&mut self) {
         // Drop every surface's prefetched scene damage so the next draw runs

@@ -1,13 +1,27 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     hash::{Hash, Hasher},
-    sync::{Arc, RwLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, RwLock,
+    },
+    time::{Duration, Instant},
 };
 
 use layers::prelude::*;
+use otto_kit::components::{
+    label::TextAlign as KitTextAlign,
+    text_input::{
+        KeyMods, TextInput, TextInputKey, TextInputRenderer, TextInputResponse, TextInputState,
+        TextInputStyle,
+    },
+};
 use smithay::{
-    backend::input::ButtonState,
-    input::pointer::{CursorIcon, CursorImageStatus},
+    backend::input::{ButtonState, KeyState},
+    input::{
+        keyboard::{Keysym, ModifiersState},
+        pointer::{CursorIcon, CursorImageStatus},
+    },
     reexports::calloop::channel::Sender as CalloopSender,
     utils::Coordinate,
 };
@@ -15,16 +29,51 @@ use smithay::{
 use crate::{
     interactive_view::ViewInteractions,
     theme::{self, theme_colors},
-    utils::{
-        button_press_filter, button_press_scale, button_release_filter, button_release_scale,
-        draw_named_icon, draw_text_content,
-    },
+    utils::{button_press_scale, button_release_scale, draw_named_icon_any, draw_text_content},
 };
 
 use super::workspace::WorkspaceView;
 
 pub const WORKSPACE_SELECTOR_PREVIEW_WIDTH: f32 = 300.0;
 const WORKSPACE_SELECTOR_GAP: f32 = 50.0;
+/// Two clicks closer together than this on the same label open the rename
+/// editor.
+const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
+/// Fraction of the preview width the rename field spans.
+const RENAME_FIELD_WIDTH_RATIO: f32 = 0.8;
+/// Longest workspace name the field accepts.
+const WORKSPACE_NAME_MAX_CHARS: usize = 32;
+/// How long a newly added workspace takes to expand into the strip.
+const WORKSPACE_ENTER_SECS: f32 = 0.5;
+/// Grace period after a workspace appears during which the post-render hook
+/// leaves its width alone, so re-renders can't cut the enter animation short.
+const WORKSPACE_ENTER_SETTLE: Duration = Duration::from_millis(700);
+
+/// The width every workspace item occupies in the strip once settled.
+fn workspace_item_size() -> layers::types::Size {
+    layers::types::Size {
+        width: layers::taffy::style::Dimension::Length(
+            WORKSPACE_SELECTOR_PREVIEW_WIDTH + WORKSPACE_SELECTOR_GAP,
+        ),
+        height: layers::taffy::style::Dimension::Percent(1.0),
+    }
+}
+
+/// Collapsed width of a workspace item on its way out. Only the width changes —
+/// the height stays a percentage so a scale or fullscreen change mid-animation
+/// can't leave the departing item the wrong size.
+fn workspace_item_collapsed_size() -> layers::types::Size {
+    layers::types::Size {
+        width: layers::taffy::style::Dimension::Length(0.0),
+        height: layers::taffy::style::Dimension::Percent(1.0),
+    }
+}
+
+/// The gap closing as a workspace leaves. The siblings slide because taffy
+/// re-lays the row out against this width every frame.
+fn workspace_collapse_transition() -> Transition {
+    Transition::spring(0.5, 0.1)
+}
 
 #[derive(Clone, Debug)]
 pub struct WorkspaceDropTarget {
@@ -57,6 +106,26 @@ impl Hash for WorkspaceViewState {
     }
 }
 
+/// Snapshot of an in-progress in-place rename, carried in the view state so
+/// the label re-renders on every keystroke, caret move and blink.
+#[derive(Clone, Debug)]
+struct LabelEditState {
+    /// Global index of the workspace being renamed.
+    index: usize,
+    input: TextInputState,
+    style: TextInputStyle,
+    caret_visible: bool,
+}
+
+impl Hash for LabelEditState {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.index.hash(state);
+        self.input.hash(state);
+        self.style.hash(state);
+        self.caret_visible.hash(state);
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct WorkspaceSelectorViewState {
     workspaces: Vec<WorkspaceViewState>,
@@ -65,6 +134,11 @@ pub struct WorkspaceSelectorViewState {
     /// Fractional scale of the output this selector renders on. Drives label
     /// sizing and pointer hit-test coordinate conversion (per-output).
     scale: f32,
+    /// `Some` while a workspace label is being renamed on this output.
+    editing: Option<LabelEditState>,
+    /// Workspaces (by global index) collapsing out of the strip. They stay in
+    /// the tree until the compositor drops them, so the row can animate.
+    removing: Vec<usize>,
 }
 
 impl Hash for WorkspaceSelectorViewState {
@@ -73,7 +147,19 @@ impl Hash for WorkspaceSelectorViewState {
         self.current.hash(state);
         self.drop_hover_index.hash(state);
         self.scale.to_bits().hash(state);
+        self.editing.hash(state);
+        self.removing.hash(state);
     }
+}
+
+/// A live rename session: the widget plus which workspace it belongs to.
+struct LabelEdit {
+    index: usize,
+    input: TextInput,
+    /// Left edge of the field inside the label layer, in scene points. Pointer
+    /// x is translated by it before reaching the widget.
+    field_origin_x: f32,
+    caret_visible: bool,
 }
 
 #[derive(Clone)]
@@ -83,13 +169,12 @@ pub struct WorkspaceSelectorView {
     pub cursor_location: Arc<RwLock<Point>>,
     pub drop_targets: Arc<RwLock<Vec<WorkspaceDropTarget>>>,
     pub drop_hover_index: Arc<RwLock<Option<usize>>>,
-    known_indices: Arc<RwLock<HashSet<usize>>>,
+    /// When each workspace first appeared in this selector, so the enter
+    /// animation is left alone while it runs.
+    known_indices: Arc<RwLock<HashMap<usize, Instant>>>,
+    /// Workspaces the user asked to remove, collapsing out of the strip.
+    removing: Arc<RwLock<HashSet<usize>>>,
     pressed_action: Arc<RwLock<Option<String>>>,
-    /// Carries `(Some(output_name), workspace_position)` — removal is scoped to
-    /// the output this selector belongs to (workspaces are independent per
-    /// output). The `Option` lets the fullscreen-close path share the channel
-    /// with `None` for a lockstep removal.
-    remove_sender: CalloopSender<(Option<String>, usize)>,
     /// Global logical origin of the output this selector lives on. Pointer
     /// events arrive in global logical space; subtracting this yields
     /// output-local coordinates for hit-testing (all output subtrees render
@@ -98,6 +183,19 @@ pub struct WorkspaceSelectorView {
     /// Name of the output this selector belongs to. Add/remove act on this
     /// output only, so each display manages its own independent workspaces.
     output_name: Arc<RwLock<String>>,
+    /// The rename session, if a label is being edited on this output.
+    editing: Arc<RwLock<Option<LabelEdit>>>,
+    /// Mirrors `editing.is_some()` for the keyboard path, which must not take
+    /// the lock (and must see it from `Workspaces`, not from a selector).
+    editing_flag: Arc<AtomicBool>,
+    /// Last press: layer key, when, and how many clicks in a row — drives
+    /// double-click-to-rename and word/all selection inside the field.
+    last_click: Arc<RwLock<Option<(String, Instant, u32)>>>,
+    /// Modifier state from the last key event, for shift-extended selection.
+    modifiers: Arc<RwLock<ModifiersState>>,
+    /// Carries `(output_name, workspace_index, name)` for a rename that ends
+    /// without a `&mut Otto` at hand — losing keyboard focus mid-edit.
+    rename_sender: CalloopSender<(String, usize, String)>,
 }
 
 /// # WorkspaceSelectorView Layer Structure
@@ -120,13 +218,21 @@ impl WorkspaceSelectorView {
     pub fn new(
         _layers_engine: Arc<Engine>,
         layer: Layer,
+        // Carries `(Some(output_name), workspace_position)` — removal is scoped
+        // to the output this selector belongs to (workspaces are independent
+        // per output). The `Option` lets the fullscreen-close path share the
+        // channel with `None` for a lockstep removal.
         remove_sender: CalloopSender<(Option<String>, usize)>,
+        editing_flag: Arc<AtomicBool>,
+        rename_sender: CalloopSender<(String, usize, String)>,
     ) -> Self {
         let state = WorkspaceSelectorViewState {
             workspaces: Vec::new(),
             current: 0,
             drop_hover_index: None,
             scale: 1.0,
+            editing: None,
+            removing: Vec::new(),
         };
         let view = View::new(
             "workspace_selector_view",
@@ -141,16 +247,26 @@ impl WorkspaceSelectorView {
         let drop_targets = Arc::new(RwLock::new(Vec::new()));
         let drop_hover_index = Arc::new(RwLock::new(None));
         let pressed_action = Arc::new(RwLock::new(None));
+        let removing: Arc<RwLock<HashSet<usize>>> = Arc::new(RwLock::new(HashSet::new()));
+        let output_name = Arc::new(RwLock::new(String::new()));
 
         // Setup post-render hook to update drop targets and animate new workspaces
         let drop_targets_clone = drop_targets.clone();
-        let known_indices: Arc<RwLock<HashSet<usize>>> = Arc::new(RwLock::new(HashSet::new()));
+        let known_indices: Arc<RwLock<HashMap<usize, Instant>>> =
+            Arc::new(RwLock::new(HashMap::new()));
         let known_indices_for_hook = known_indices.clone();
+        // Indices whose collapse animation has already been started, so a
+        // re-render can't restart it (which would drop the completion callback
+        // that actually removes the workspace).
+        let collapsing: Arc<RwLock<HashSet<usize>>> = Arc::new(RwLock::new(HashSet::new()));
+        let output_name_for_hook: Arc<RwLock<String>> = output_name.clone();
+        let remove_sender_for_hook = remove_sender.clone();
 
         view.add_post_render_hook(move |state, view, _layer| {
             let targets: Vec<WorkspaceDropTarget> = state
                 .workspaces
                 .iter()
+                .filter(|w| !state.removing.contains(&w.index))
                 .filter_map(|w| {
                     let key = format!("workspace_selector_desktop_content_{}", w.index);
                     view.layer_by_key(&key).map(|layer| WorkspaceDropTarget {
@@ -161,46 +277,90 @@ impl WorkspaceSelectorView {
                 .collect();
             *drop_targets_clone.write().unwrap() = targets;
 
-            // Keep existing workspace items at full size, animate only new ones from width 0.
+            // This hook is the single owner of every item's width: the render
+            // function never declares it, so a re-render can't cut an enter or
+            // leave animation short, and an item that never gets removed can't
+            // be left collapsed to nothing.
             let mut known = known_indices_for_hook.write().unwrap();
+            let mut collapsing = collapsing.write().unwrap();
             for w in state.workspaces.iter() {
-                let is_new = !known.contains(&w.index);
-                known.insert(w.index);
+                let is_new = !known.contains_key(&w.index);
+                let appeared_at = *known.entry(w.index).or_insert_with(Instant::now);
+                let entering = appeared_at.elapsed() < WORKSPACE_ENTER_SETTLE;
+                let leaving = state.removing.contains(&w.index);
                 let workspace_width = w.workspace_width.max(1.0);
-                let preview_width = WORKSPACE_SELECTOR_PREVIEW_WIDTH;
-                let full_width = preview_width + WORKSPACE_SELECTOR_GAP;
 
                 let key = format!("workspace_selector_desktop_{}", w.index);
                 let wrap_key = format!("workspace_selector_desktop_wrap_{}", w.index);
-                if let Some(layer) = view.layer_by_key(&key) {
-                    if is_new {
-                        layer.set_size(layers::types::Size::points(0.0, 0.0), None);
+                // Arm the collapse exactly once per workspace.
+                let start_leaving = leaving && collapsing.insert(w.index);
 
+                if let Some(layer) = view.layer_by_key(&key) {
+                    if start_leaving {
+                        let index = w.index;
+                        let sender = remove_sender_for_hook.clone();
+                        let output = output_name_for_hook.read().unwrap().clone();
+                        let view_ref = view.clone();
+                        layer
+                            .set_size(
+                                workspace_item_collapsed_size(),
+                                workspace_collapse_transition(),
+                            )
+                            .then(move |_layer: &Layer, _| {
+                                // The channel carries a POSITION, so resolve it
+                                // now rather than at click time — an add or
+                                // remove elsewhere may have shifted it while
+                                // this item was collapsing.
+                                let pos = view_ref
+                                    .get_state()
+                                    .workspaces
+                                    .iter()
+                                    .position(|w| w.index == index);
+                                if let Some(pos) = pos {
+                                    let _ = sender.send((Some(output.clone()), pos));
+                                }
+                            });
+                    } else if is_new {
+                        layer.set_size(layers::types::Size::points(0.0, 0.0), None);
                         layer.set_size(
-                            layers::types::Size {
-                                width: layers::taffy::style::Dimension::Length(full_width),
-                                height: layers::taffy::style::Dimension::Percent(1.0),
-                            },
-                            Transition::ease_out(0.5),
+                            workspace_item_size(),
+                            Transition::ease_out(WORKSPACE_ENTER_SECS),
                         );
+                    } else if !leaving && !entering {
+                        layer.set_size(workspace_item_size(), None);
                     }
                 }
 
                 if let Some(wrap) = view.layer_by_key(&wrap_key) {
-                    if is_new {
+                    if start_leaving {
+                        // Crop the preview against the shrinking wrap instead of
+                        // scaling or fading it. Clipping is armed only for the
+                        // collapse: at rest the remove button and its shadow
+                        // overhang the wrap and must not be cut off.
+                        wrap.set_clip_children(true, None);
+                        // That overhang is why the button goes now rather than
+                        // fading with the pointer — it would be clipped in half
+                        // on the first frame of the collapse.
+                        if let Some(button) = view
+                            .layer_by_key(&format!("workspace_selector_desktop_remove_{}", w.index))
+                        {
+                            button.set_opacity(0.0_f32, None);
+                        }
+                    } else if is_new {
+                        wrap.set_clip_children(false, None);
                         let offset_x = workspace_width / 2.0;
                         wrap.set_position(Point::new(offset_x, 0.0), None);
-                        wrap.set_position(
-                            Point::new(WORKSPACE_SELECTOR_GAP / 2.0, 0.0),
-                            Transition::spring(1.2, 0.1),
-                        );
-                    } else {
-                        wrap.set_position(Point::new(WORKSPACE_SELECTOR_GAP / 2.0, 0.0), None);
+                        wrap.set_position(Point::new(0.0, 0.0), Transition::spring(1.2, 0.1));
+                    } else if !leaving {
+                        wrap.set_clip_children(false, None);
+                        wrap.set_position(Point::new(0.0, 0.0), None);
+                        wrap.set_opacity(1.0_f32, None);
                     }
                 }
             }
             // Forget removed indices so re-added workspaces animate again
-            known.retain(|idx| state.workspaces.iter().any(|w| w.index == *idx));
+            known.retain(|idx, _| state.workspaces.iter().any(|w| w.index == *idx));
+            collapsing.retain(|idx| state.removing.contains(idx));
         });
 
         Self {
@@ -211,10 +371,15 @@ impl WorkspaceSelectorView {
             drop_targets,
             drop_hover_index,
             known_indices,
+            removing,
             pressed_action,
-            remove_sender,
             output_origin: Arc::new(RwLock::new((0.0, 0.0))),
-            output_name: Arc::new(RwLock::new(String::new())),
+            output_name,
+            editing: Arc::new(RwLock::new(None)),
+            editing_flag,
+            last_click: Arc::new(RwLock::new(None)),
+            modifiers: Arc::new(RwLock::new(ModifiersState::default())),
+            rename_sender,
         }
     }
 
@@ -236,9 +401,7 @@ impl WorkspaceSelectorView {
                 .iter()
                 .enumerate()
                 .map(|(i, w)| WorkspaceViewState {
-                    name: w
-                        .get_name()
-                        .unwrap_or_else(|| format!("Workspace {}", i + 1)),
+                    name: w.display_name(i),
                     index: w.index,
                     workspace_node: Some(w.windows_layer.id()),
                     background_node: Some(w.workspace_background.id()),
@@ -248,11 +411,47 @@ impl WorkspaceSelectorView {
                     window_count: w.windows_list.read().unwrap().len(),
                 })
                 .collect();
-            known.retain(|idx| state.workspaces.iter().any(|w| w.index == *idx));
+            known.retain(|idx, _| state.workspaces.iter().any(|w| w.index == *idx));
+        }
+        {
+            // A workspace the compositor has dropped is no longer "removing";
+            // one it refused to drop (last workspace, fullscreen with windows)
+            // stays in the set until the collapse finishes, and the hook then
+            // restores its width.
+            let mut removing = self.removing.write().unwrap();
+            removing.retain(|idx| state.workspaces.iter().any(|w| w.index == *idx));
+            state.removing = {
+                let mut list: Vec<usize> = removing.iter().copied().collect();
+                list.sort_unstable();
+                list
+            };
         }
         state.current = current;
         state.scale = scale;
         self.view.update_state(&state);
+    }
+
+    /// Start collapsing `index` out of the strip. The compositor-side removal
+    /// is sent when the collapse finishes (see the post-render hook), so the
+    /// row can close the gap before the item leaves the tree.
+    fn begin_remove(&self, index: usize) {
+        {
+            let mut removing = self.removing.write().unwrap();
+            if !removing.insert(index) {
+                return;
+            }
+        }
+        let mut state = self.view.get_state();
+        if !state.removing.contains(&index) {
+            state.removing.push(index);
+            state.removing.sort_unstable();
+        }
+        self.view.update_state(&state);
+    }
+
+    /// Is this workspace on its way out of the strip?
+    fn is_removing(&self, index: usize) -> bool {
+        self.removing.read().unwrap().contains(&index)
     }
 
     /// Set the global logical origin of the output hosting this selector, so
@@ -290,12 +489,193 @@ impl WorkspaceSelectorView {
     pub fn get_drop_hover(&self) -> Option<usize> {
         *self.drop_hover_index.read().unwrap()
     }
+
+    /// Is a label being renamed on this output?
+    pub fn is_editing(&self) -> bool {
+        self.editing.read().unwrap().is_some()
+    }
+
+    /// The workspace whose label is being renamed, if any.
+    pub fn editing_index(&self) -> Option<usize> {
+        self.editing.read().unwrap().as_ref().map(|e| e.index)
+    }
+
+    /// Open the in-place editor on `index`, pre-filled with its current name
+    /// and fully selected — typing replaces the name, as everywhere else.
+    fn start_editing(&self, index: usize, name: String) {
+        let state = self.view.get_state();
+        let key = format!("workspace_selector_desktop_label_{index}");
+        let Some(label) = self.view.layer_by_key(&key) else {
+            return;
+        };
+        let bounds = label.render_bounds_transformed();
+        let field_width = rename_field_width(bounds.width());
+
+        let mut input = TextInput::editing(name, rename_field_style(state.scale));
+        input.state.max_chars = Some(WORKSPACE_NAME_MAX_CHARS);
+        input.set_size(field_width, bounds.height());
+
+        *self.editing.write().unwrap() = Some(LabelEdit {
+            index,
+            input,
+            field_origin_x: bounds.x() + (bounds.width() - field_width) / 2.0,
+            caret_visible: true,
+        });
+        self.editing_flag.store(true, Ordering::Relaxed);
+        self.sync_edit_state();
+    }
+
+    /// Push the live widget's state into the view so the label redraws.
+    fn sync_edit_state(&self) {
+        let snapshot = self
+            .editing
+            .read()
+            .unwrap()
+            .as_ref()
+            .map(|edit| LabelEditState {
+                index: edit.index,
+                input: edit.input.state.clone(),
+                style: edit.input.style.clone(),
+                caret_visible: edit.caret_visible,
+            });
+        let mut state = self.view.get_state();
+        state.editing = snapshot;
+        self.view.update_state(&state);
+    }
+
+    /// End the session and return `(workspace index, typed name)` — the caller
+    /// decides whether to keep the name (commit) or drop it (cancel).
+    fn end_editing(&self) -> Option<(usize, String)> {
+        let edit = self.editing.write().unwrap().take()?;
+        self.editing_flag.store(false, Ordering::Relaxed);
+        self.sync_edit_state();
+        Some((edit.index, edit.input.value().to_string()))
+    }
+
+    /// Toggle the caret for the blink timer. Returns false once the session is
+    /// over, so the timer can drop itself.
+    pub fn blink_caret(&self) -> bool {
+        {
+            let mut editing = self.editing.write().unwrap();
+            let Some(edit) = editing.as_mut() else {
+                return false;
+            };
+            edit.caret_visible = !edit.caret_visible;
+        }
+        self.sync_edit_state();
+        true
+    }
+
+    /// Feed a pointer press at scene-space `x` into the field, counting clicks
+    /// for word (2) and all (3) selection.
+    fn field_pointer_down(&self, x: f32, click_count: u32, shift: bool) {
+        {
+            let mut editing = self.editing.write().unwrap();
+            let Some(edit) = editing.as_mut() else {
+                return;
+            };
+            let local_x = x - edit.field_origin_x;
+            edit.input.on_pointer_down(local_x, click_count, shift);
+            edit.caret_visible = true;
+        }
+        self.sync_edit_state();
+    }
+
+    /// Extend the selection while the button is held.
+    fn field_pointer_drag(&self, x: f32) {
+        {
+            let mut editing = self.editing.write().unwrap();
+            let Some(edit) = editing.as_mut() else {
+                return;
+            };
+            let local_x = x - edit.field_origin_x;
+            edit.input.on_pointer_drag(local_x);
+        }
+        self.sync_edit_state();
+    }
+
+    fn field_pointer_up(&self) {
+        if let Some(edit) = self.editing.write().unwrap().as_mut() {
+            edit.input.on_pointer_up();
+        }
+    }
+
+    /// Count this press as part of a click run on `key`.
+    fn register_click(&self, key: &str) -> u32 {
+        let mut last = self.last_click.write().unwrap();
+        let count = match last.as_ref() {
+            Some((last_key, at, count))
+                if last_key == key && at.elapsed() < DOUBLE_CLICK_INTERVAL =>
+            {
+                count + 1
+            }
+            _ => 1,
+        };
+        *last = Some((key.to_string(), Instant::now(), count));
+        count
+    }
+}
+
+/// Width of the rename field inside a label layer `label_width` wide.
+fn rename_field_width(label_width: f32) -> f32 {
+    label_width * RENAME_FIELD_WIDTH_RATIO
+}
+
+/// The rename field's style for an output at `scale`, matching the label it
+/// replaces (same family and size, centered).
+fn rename_field_style(scale: f32) -> TextInputStyle {
+    TextInputStyle::with_theme(crate::theme::kit_theme())
+        .with_scale(scale)
+        .with_align(KitTextAlign::Center)
+        .with_text_style(otto_kit::typography::styles::TITLE_2)
+}
+
+/// Draw the rename field centered in the label layer it replaces.
+fn draw_rename_field(edit: LabelEditState) -> Option<ContentDrawFunction> {
+    let draw = move |canvas: &layers::skia::Canvas, w: f32, h: f32| -> layers::skia::Rect {
+        let field_width = rename_field_width(w);
+        canvas.save();
+        canvas.translate(((w - field_width) / 2.0, 0.0));
+        TextInputRenderer::render(
+            canvas,
+            &edit.input,
+            &edit.style,
+            field_width,
+            h,
+            edit.caret_visible,
+        );
+        canvas.restore();
+        layers::skia::Rect::from_xywh(0.0, 0.0, w, h)
+    };
+    Some(draw.into())
 }
 
 /// Is the scene-space point `(x, y)` inside this layer's transformed bounds?
 fn layer_contains(layer: &Layer, x: f32, y: f32) -> bool {
     let r = layer.render_bounds_transformed();
     x >= r.x() && x <= r.x() + r.width() && y >= r.y() && y <= r.y() + r.height()
+}
+
+/// The darkening applied to a workspace preview while it is pressed or is the
+/// drop target.
+fn press_darken_filter() -> Option<layers::skia::ColorFilter> {
+    let darken_color = layers::skia::Color::from_argb(100, 100, 100, 100);
+    let add = layers::skia::Color::from_argb(0, 0, 0, 0);
+    layers::skia::color_filters::lighting(darken_color, add)
+}
+
+/// Drop the darkening from both mirrors of a preview (windows and wallpaper).
+fn clear_preview_filter(
+    content_mirror: &Layer,
+    view: &View<WorkspaceSelectorViewState>,
+    workspace_index: usize,
+) {
+    content_mirror.set_color_filter(None);
+    if let Some(bg) = view
+        .layer_by_key(format!("workspace_selector_desktop_bg_mirror_{}", workspace_index).as_str())
+    {
+        bg.set_color_filter(None);
+    }
 }
 
 fn render_workspace_selector_view(
@@ -322,11 +702,11 @@ fn render_workspace_selector_view(
         .map(|(i, w)| {
             let workspace_index = w.index;
             let current = i == state.current;
-            let mut state_drop_hover_index: i32 = -1;
-            if let Some(drop_hover_index) = state.drop_hover_index {
-                state_drop_hover_index = drop_hover_index as i32;
-            }
-            let is_drop_hover = state_drop_hover_index - 1 == (i as i32) && !current;
+            // The hover carries the workspace *view* index (that is what the
+            // drop targets are keyed by). Comparing it to the position only
+            // held while the two ran one apart — adding and removing
+            // workspaces breaks that, and the wrong item lit up.
+            let is_drop_hover = state.drop_hover_index == Some(workspace_index) && !current;
 
             let mut border_width = 0.0;
             let border_color = crate::theme::accent_color();
@@ -336,9 +716,7 @@ fn render_workspace_selector_view(
             }
             let mut color_filter = None;
             if is_drop_hover {
-                let darken_color = layers::skia::Color::from_argb(100, 100, 100, 100);
-                let add = layers::skia::Color::from_argb(0, 0, 0, 0);
-                color_filter = layers::skia::color_filters::lighting(darken_color, add);
+                color_filter = press_darken_filter();
             }
             let workspace_width = w.workspace_width.max(1.0);
             let workspace_height = w.workspace_height.max(1.0);
@@ -367,13 +745,26 @@ fn render_workspace_selector_view(
                 position: taffy::Position::Absolute,
                 display: taffy::Display::Flex,
                 flex_direction: taffy::FlexDirection::Column,
-                align_items: Some(taffy::AlignItems::FlexStart),
+                // Centred, so the collapse crops the preview evenly from both
+                // sides instead of eating it from the right.
+                align_items: Some(taffy::AlignItems::Center),
                 justify_content: Some(taffy::AlignContent::Center),
+                // Half a gap of inset on each side, with an auto width, so the
+                // wrap is always the item's width minus one gap. During the
+                // collapse that keeps a full gap on both sides of the cropped
+                // preview instead of letting the neighbour crowd in — taffy
+                // clamps the width at zero once the item is narrower than a gap.
+                inset: taffy::Rect {
+                    left: taffy::LengthPercentageAuto::Length(WORKSPACE_SELECTOR_GAP / 2.0),
+                    right: taffy::LengthPercentageAuto::Length(WORKSPACE_SELECTOR_GAP / 2.0),
+                    top: taffy::LengthPercentageAuto::Auto,
+                    bottom: taffy::LengthPercentageAuto::Auto,
+                },
                 ..Default::default()
             })
             .size((
                 layers::types::Size {
-                    width: layers::taffy::style::Dimension::Length(preview_width),
+                    width: layers::taffy::style::Dimension::Auto,
                     height: layers::taffy::style::Dimension::Length(preview_height + label_height),
                 },
                 None,
@@ -485,9 +876,36 @@ fn render_workspace_selector_view(
                             .clip_children(true)
                             .clip_content(true)
                             .pointer_events(true)
-                            .on_pointer_press(button_press_filter())
-                            .on_pointer_release(button_release_filter())
-                            .on_pointer_out(button_release_filter())
+                            // The wallpaper is mirrored in a sibling layer, so darken
+                            // both on press — otherwise only the windows dim.
+                            .on_pointer_press({
+                                let view_ref = view.clone();
+                                move |layer: &Layer, _x, _y| {
+                                    let filter = press_darken_filter();
+                                    layer.set_color_filter(filter.clone());
+                                    if let Some(bg) = view_ref.layer_by_key(
+                                        format!(
+                                            "workspace_selector_desktop_bg_mirror_{}",
+                                            workspace_index
+                                        )
+                                        .as_str(),
+                                    ) {
+                                        bg.set_color_filter(filter);
+                                    }
+                                }
+                            })
+                            .on_pointer_release({
+                                let view_ref = view.clone();
+                                move |layer: &Layer, _x, _y| {
+                                    clear_preview_filter(layer, &view_ref, workspace_index);
+                                }
+                            })
+                            .on_pointer_out({
+                                let view_ref = view.clone();
+                                move |layer: &Layer, _x, _y| {
+                                    clear_preview_filter(layer, &view_ref, workspace_index);
+                                }
+                            })
                             .build()
                             .unwrap(),
                         ),
@@ -539,7 +957,10 @@ fn render_workspace_selector_view(
                             .background_color(theme_colors().materials_ultrathick)
                             .blend_mode(BlendMode::BackgroundBlur)
                             .border_corner_radius(BorderRadius::new_single(25.0))
-                            .content(draw_named_icon("close-symbolic"))
+                            .content(draw_named_icon_any(&[
+                                "close-symbolic",
+                                "window-close-symbolic",
+                            ]))
                             .shadow_color((Color::new_rgba(0.0, 0.0, 0.0, 0.2), None))
                             .shadow_offset(((0.0, 0.0).into(), None))
                             .shadow_radius((5.0, None))
@@ -559,18 +980,28 @@ fn render_workspace_selector_view(
                         position: taffy::Position::Relative,
                         ..Default::default()
                     })
+                    // A fixed width, not a percentage: the label is cropped
+                    // along with the preview while the item collapses instead
+                    // of re-centring its text in a shrinking box.
                     .size((
                         layers::types::Size {
-                            width: layers::taffy::style::Dimension::Percent(1.0),
+                            width: layers::taffy::style::Dimension::Length(preview_width),
                             height: layers::taffy::style::Dimension::Length(label_height),
                         },
                         None,
                     ))
-                    .content(draw_text_content(
-                        w.name.clone(),
-                        theme::text_styles::title_3_regular(),
-                        layers::skia::textlayout::TextAlign::Center,
-                    ))
+                    .content(
+                        match state.editing.as_ref().filter(|e| e.index == w.index) {
+                            // Renaming: the field takes the label's place, so the
+                            // row keeps its geometry and nothing below it moves.
+                            Some(edit) => draw_rename_field(edit.clone()),
+                            None => draw_text_content(
+                                w.name.clone(),
+                                theme::text_styles::title_3_regular(),
+                                layers::skia::textlayout::TextAlign::Center,
+                            ),
+                        },
+                    )
                     .build()
                     .unwrap(),
             ])
@@ -638,7 +1069,7 @@ fn render_workspace_selector_view(
                     },
                     None,
                 ))
-                .content(draw_named_icon("plus-symbolic"))
+                .content(draw_named_icon_any(&["plus-symbolic", "list-add-symbolic"]))
                 .image_cache(true)
                 .on_pointer_press(button_press_scale(0.9))
                 .on_pointer_release(button_release_scale())
@@ -647,6 +1078,126 @@ fn render_workspace_selector_view(
         ])
         .build()
         .unwrap()
+}
+
+/// How long the caret stays on (and off) while renaming.
+const CARET_BLINK_INTERVAL: Duration = Duration::from_millis(530);
+
+impl WorkspaceSelectorView {
+    /// Open the rename editor on `index`: grab the keyboard so keys reach the
+    /// field instead of the focused window, and start the caret blinking.
+    fn begin_rename<B: crate::state::Backend>(
+        &self,
+        index: usize,
+        otto: &mut crate::Otto<B>,
+        seat: &smithay::input::Seat<crate::Otto<B>>,
+        serial: smithay::utils::Serial,
+    ) {
+        let name = self
+            .view
+            .get_state()
+            .workspaces
+            .iter()
+            .find(|w| w.index == index)
+            .map(|w| w.name.clone())
+            .unwrap_or_default();
+        self.start_editing(index, name);
+        if !self.is_editing() {
+            return;
+        }
+
+        if let Some(keyboard) = seat.get_keyboard() {
+            let view = crate::interactive_view::InteractiveView {
+                view: Box::new(self.clone()),
+            };
+            keyboard.set_focus(
+                otto,
+                Some(crate::focus::KeyboardFocusTarget::View(view)),
+                serial,
+            );
+        }
+
+        let selector = self.clone();
+        let _ = otto.handle.insert_source(
+            smithay::reexports::calloop::timer::Timer::from_duration(CARET_BLINK_INTERVAL),
+            move |_, _, _| {
+                if selector.blink_caret() {
+                    smithay::reexports::calloop::timer::TimeoutAction::ToDuration(
+                        CARET_BLINK_INTERVAL,
+                    )
+                } else {
+                    smithay::reexports::calloop::timer::TimeoutAction::Drop
+                }
+            },
+        );
+    }
+
+    /// Close the editor, keeping the typed name when `commit`.
+    fn finish_rename<B: crate::state::Backend>(&self, otto: &mut crate::Otto<B>, commit: bool) {
+        let Some((index, value)) = self.end_editing() else {
+            return;
+        };
+        if commit {
+            let output = self.output_name.read().unwrap().clone();
+            otto.workspaces
+                .rename_workspace(&output, index, Some(value));
+        }
+        // The keyboard was ours for the duration of the edit — hand it back to
+        // the workspace the user is looking at.
+        //
+        // Deferred to an idle callback because Enter and Escape arrive from
+        // inside key delivery, which runs with the seat keyboard's internal
+        // lock held: setting focus there takes the same lock and deadlocks the
+        // compositor.
+        let current = self.view.get_state().current;
+        otto.handle.insert_idle(move |otto| {
+            otto.focus_top_window_or_clear(current);
+        });
+    }
+
+    /// Pointer location in this output's scene space. Events arrive in global
+    /// logical coordinates; output subtrees render at the scene origin.
+    fn scene_location(
+        &self,
+        location: smithay::utils::Point<f64, smithay::utils::Logical>,
+    ) -> Point {
+        let origin = *self.output_origin.read().unwrap();
+        let scale = self.view.get_state().scale as f64;
+        Point::new(
+            ((location.x - origin.0) * scale) as f32,
+            ((location.y - origin.1) * scale) as f32,
+        )
+    }
+
+    /// How many clicks in a row landed on `key`, according to the last press.
+    fn click_count_for(&self, key: &str) -> u32 {
+        self.last_click
+            .read()
+            .unwrap()
+            .as_ref()
+            .filter(|(last_key, _, _)| last_key == key)
+            .map(|(_, _, count)| *count)
+            .unwrap_or(0)
+    }
+
+    /// Translate a keysym into an edit the field understands. Keys with no
+    /// meaning here return `None` and are swallowed (the grab is exclusive).
+    fn key_for(keysym: Keysym, mods: &ModifiersState) -> Option<TextInputKey> {
+        let key = match keysym {
+            Keysym::Left => TextInputKey::Left,
+            Keysym::Right => TextInputKey::Right,
+            Keysym::Home => TextInputKey::Home,
+            Keysym::End => TextInputKey::End,
+            Keysym::BackSpace => TextInputKey::Backspace,
+            Keysym::Delete => TextInputKey::Delete,
+            Keysym::Return | Keysym::KP_Enter => TextInputKey::Enter,
+            Keysym::Escape => TextInputKey::Escape,
+            Keysym::a | Keysym::A if mods.ctrl => TextInputKey::SelectAll,
+            _ if mods.ctrl || mods.alt || mods.logo => return None,
+            _ => TextInputKey::Char(keysym.key_char()?),
+        };
+        Some(key)
+    }
 }
 
 impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSelectorView {
@@ -669,6 +1220,13 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
             .map(|l| l.hidden())
             .unwrap_or(true)
     }
+    /// Entering the strip carries a position but no motion event, so record it
+    /// here too — a click right after the pointer arrives must not act on the
+    /// last position the strip saw.
+    fn on_enter(&self, event: &smithay::input::pointer::MotionEvent) {
+        *self.cursor_location.write().unwrap() = self.scene_location(event.location);
+    }
+
     fn on_motion(
         &self,
         _seat: &smithay::input::Seat<crate::Otto<Backend>>,
@@ -676,11 +1234,19 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
         event: &smithay::input::pointer::MotionEvent,
     ) {
         let state = self.view.get_state().clone();
-        let origin = *self.output_origin.read().unwrap();
-        let local = (event.location.x - origin.0, event.location.y - origin.1);
-        let scale = state.scale as f64;
-        let location =
-            layers::types::Point::new((local.0 * scale) as f32, (local.1 * scale) as f32);
+        let location = self.scene_location(event.location);
+        // A drag inside the rename field extends the selection, and the cursor
+        // stays an I-beam over it.
+        if let Some(edit_index) = self.editing_index() {
+            let field_key = format!("workspace_selector_desktop_label_{edit_index}");
+            if self.view.hover_layer(&field_key, &location) {
+                self.field_pointer_drag(location.x);
+                data.set_cursor(&CursorImageStatus::Named(CursorIcon::Text));
+                *self.cursor_location.write().unwrap() = location;
+                return;
+            }
+        }
+
         let mut hover = false;
         if self
             .view
@@ -689,6 +1255,9 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
             hover = true;
         }
         for w in state.workspaces.iter() {
+            if self.is_removing(w.index) {
+                continue;
+            }
             if self.view.hover_layer(
                 &format!("workspace_selector_desktop_{}", w.index),
                 &location,
@@ -733,9 +1302,21 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
             }
 
             for w in state.workspaces.iter() {
+                // A workspace collapsing out of the strip is not a target: it
+                // is shrinking under the cursor and about to disappear.
+                if self.is_removing(w.index) {
+                    continue;
+                }
                 let remove_key = format!("workspace_selector_desktop_remove_{}", w.index);
                 if self.view.hover_layer(&remove_key, loc) {
                     return Some(remove_key);
+                }
+
+                // The label is checked before the workspace it belongs to:
+                // clicking it renames, clicking the preview switches.
+                let label_key = format!("workspace_selector_desktop_label_{}", w.index);
+                if self.view.hover_layer(&label_key, loc) {
+                    return Some(label_key);
                 }
 
                 let workspace_key = format!("workspace_selector_desktop_{}", w.index);
@@ -748,11 +1329,37 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
 
         match event.state {
             ButtonState::Pressed => {
+                let key = hovered_key(&location);
+
+                if let Some(edit_index) = self.editing_index() {
+                    let field_key = format!("workspace_selector_desktop_label_{edit_index}");
+                    if key.as_deref() == Some(field_key.as_str()) {
+                        // Inside the field: place the caret, or select a word
+                        // (2 clicks) / everything (3).
+                        let count = self.register_click(&field_key);
+                        let shift = self.modifiers.read().unwrap().shift;
+                        self.field_pointer_down(location.x, count, shift);
+                        *self.pressed_action.write().unwrap() = key;
+                        return;
+                    }
+                    // Anywhere else commits, then the click does its usual job.
+                    self.finish_rename(otto, true);
+                }
+
+                if let Some(key) = key.as_deref() {
+                    self.register_click(key);
+                }
                 let mut pressed = self.pressed_action.write().unwrap();
-                *pressed = hovered_key(&location);
+                *pressed = key;
             }
             ButtonState::Released => {
                 let release_key = hovered_key(&location);
+
+                if self.is_editing() {
+                    self.field_pointer_up();
+                    *self.pressed_action.write().unwrap() = None;
+                    return;
+                }
                 let mut pressed = self.pressed_action.write().unwrap();
                 if let (Some(pressed_key), Some(release_key)) = (pressed.clone(), release_key) {
                     if pressed_key == release_key {
@@ -765,36 +1372,20 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
                             .strip_prefix("workspace_selector_desktop_remove_")
                             .and_then(|idx| idx.parse::<usize>().ok())
                         {
-                            // remove workspace with animation, then notify Otto to remove it from state.
-                            // The channel carries a POSITION (lockstep index across outputs); layer
-                            // keys use the workspace's global index, so map back before sending.
-                            let remove_pos = get_position_worspace_by_index(index);
-                            let output_name = self.output_name.read().unwrap().clone();
-                            let parent_key = format!("workspace_selector_desktop_{}", index);
-                            let wrap_key = format!("workspace_selector_desktop_wrap_{}", index);
-                            if let (Some(parent_layer), Some(remove_pos)) =
-                                (self.view.layer_by_key(parent_key.as_str()), remove_pos)
-                            {
-                                let current_size = parent_layer.render_size();
-                                let remove_sender = self.remove_sender.clone();
-                                parent_layer
-                                    .set_size(
-                                        layers::types::Size::points(0.0, current_size.y),
-                                        Transition::spring(0.6, 0.1),
-                                    )
-                                    .then(move |_layer: &Layer, _| {
-                                        let _ = remove_sender
-                                            .send((Some(output_name.clone()), remove_pos));
-                                    });
-                            }
-                            if let Some(wrap_layer) = self.view.layer_by_key(wrap_key.as_str()) {
-                                let current_size = wrap_layer.render_size();
-                                wrap_layer.set_clip_children(true, None);
-                                wrap_layer.set_clip_content(true, None);
-                                wrap_layer.set_size(
-                                    layers::types::Size::points(0.0, current_size.y),
-                                    Transition::spring(0.4, 0.1),
-                                );
+                            // Collapse it out of the strip; the post-render hook
+                            // owns the animation and tells Otto to drop the
+                            // workspace once the gap has closed.
+                            self.begin_remove(index);
+                        } else if let Some(index) = release_key
+                            .strip_prefix("workspace_selector_desktop_label_")
+                            .and_then(|idx| idx.parse::<usize>().ok())
+                        {
+                            if self.click_count_for(&release_key) >= 2 {
+                                // Second click on the label: rename in place,
+                                // and don't switch workspace under the editor.
+                                self.begin_rename(index, otto, _seat, event.serial);
+                            } else if let Some(pos) = get_position_worspace_by_index(index) {
+                                otto.set_current_workspace_index(pos);
                             }
                         } else if let Some(index) = release_key
                             .strip_prefix("workspace_selector_desktop_")
@@ -809,6 +1400,58 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
                 }
                 *pressed = None;
             }
+        }
+    }
+
+    fn on_modifiers(&self, modifiers: ModifiersState) {
+        *self.modifiers.write().unwrap() = modifiers;
+    }
+
+    fn on_key_with_data(
+        &self,
+        event: &smithay::input::keyboard::KeysymHandle<'_>,
+        key_state: KeyState,
+        data: &mut crate::Otto<Backend>,
+    ) {
+        if key_state != KeyState::Pressed || !self.is_editing() {
+            return;
+        }
+        let mods = *self.modifiers.read().unwrap();
+        let Some(key) = Self::key_for(event.modified_sym(), &mods) else {
+            return;
+        };
+
+        let response = {
+            let mut editing = self.editing.write().unwrap();
+            let Some(edit) = editing.as_mut() else {
+                return;
+            };
+            edit.caret_visible = true;
+            edit.input.on_key(
+                key,
+                KeyMods {
+                    shift: mods.shift,
+                    ctrl: mods.ctrl,
+                },
+            )
+        };
+
+        match response {
+            TextInputResponse::Commit => self.finish_rename(data, true),
+            TextInputResponse::Cancel => self.finish_rename(data, false),
+            // Clipboard integration needs a data device on the seat; the field
+            // itself is ready for it (see `TextInputResponse::Clipboard`).
+            TextInputResponse::Clipboard(_) | TextInputResponse::Ignored => {}
+            TextInputResponse::Changed | TextInputResponse::Moved => self.sync_edit_state(),
+        }
+    }
+
+    /// Losing the keyboard (a window took focus, expose closed) commits what
+    /// was typed rather than dropping it.
+    fn on_keyboard_leave(&self) {
+        if let Some((index, value)) = self.end_editing() {
+            let output = self.output_name.read().unwrap().clone();
+            let _ = self.rename_sender.send((output, index, value));
         }
     }
 }

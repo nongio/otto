@@ -1,8 +1,83 @@
-use layers::{prelude::*, types::Size};
+use layers::{prelude::*, types::BlendMode, types::Size};
+use otto_kit::components::titlebar::{WindowControl, WindowDecoration};
 
 use crate::config::Config;
 
-use super::model::WindowViewBaseModel;
+use super::model::{WindowDecorationModel, WindowViewBaseModel};
+
+/// Map the model's control index back to otto-kit's enum. See
+/// [`WindowDecorationModel::pressed`] for why it is stored as an index.
+pub fn control_from_index(index: u8) -> Option<WindowControl> {
+    match index {
+        0 => Some(WindowControl::Close),
+        1 => Some(WindowControl::Minimize),
+        2 => Some(WindowControl::Zoom),
+        _ => None,
+    }
+}
+
+/// Build the otto-kit decoration for a model. Used both to draw the titlebar
+/// and to hit-test it, so the click targets can't drift from the pixels.
+pub fn decoration_for(state: &WindowDecorationModel) -> WindowDecoration {
+    WindowDecoration {
+        title: state.title.clone(),
+        width: state.width,
+        titlebar_height: state.height,
+        corner_radius: state.corner_radius,
+        active: state.active,
+        dark: state.dark,
+        controls_hovered: state.controls_hovered,
+        pressed: state.pressed.and_then(control_from_index),
+        sharing: state.sharing,
+        // The layer carries `BackgroundBlur`, so the compositor already blurs
+        // what is behind it — blurring again in the paint would double up.
+        backdrop_blur: 0.0,
+        ..Default::default()
+    }
+}
+
+/// The server-side titlebar. Drawn by otto-kit's `WindowDecoration`, the same
+/// component otto-kit clients draw their own titlebars with.
+#[profiling::function]
+pub fn view_window_decoration(
+    state: &WindowDecorationModel,
+    _view: &View<WindowDecorationModel>,
+) -> LayerTree {
+    let scale = state.scale.max(1.0);
+    let width_px = state.width * scale;
+    let height_px = state.height * scale;
+    let deco = decoration_for(state);
+
+    let draw = move |canvas: &layers::skia::Canvas, _w: f32, _h: f32| {
+        // The decoration is described in logical points; the layer is sized in
+        // physical pixels, so the whole paint scales up by the output scale.
+        canvas.save();
+        canvas.scale((scale, scale));
+        deco.draw(canvas);
+        canvas.restore();
+        layers::skia::Rect::from_wh(width_px, height_px)
+    };
+
+    LayerTreeBuilder::default()
+        .key("window_decoration")
+        .layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        })
+        .position((Point { x: 0.0, y: 0.0 }, None))
+        .size((
+            Size {
+                width: taffy::Dimension::Length(width_px),
+                height: taffy::Dimension::Length(height_px),
+            },
+            None,
+        ))
+        .blend_mode(BlendMode::BackgroundBlur)
+        .content(Some(draw))
+        .pointer_events(false)
+        .build()
+        .unwrap()
+}
 
 #[profiling::function]
 pub fn view_window_shadow(

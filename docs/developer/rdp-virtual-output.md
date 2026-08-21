@@ -88,6 +88,13 @@ WAYLAND_DISPLAY=wayland-1 otto-rdp --node <N> --output virtual-1 --listen 0.0.0.
 xfreerdp /v:<host>:3389 /sec:rdp
 ```
 
+## Sharing indicator
+
+While a client is being served, the bridge publishes a red dot in the top bar's
+tray with a `Stop Sharing` menu. It uses StatusNotifierItem + dbusmenu, so no
+bar-side code is involved, and it cannot go stale — see
+[Remote-Desktop Indicator](remote-desktop-indicator.md).
+
 ## Current limitations
 
 - **No auth**: trusted-network only. `--tls` enables TLS security with a

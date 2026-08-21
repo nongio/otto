@@ -19,11 +19,23 @@ vibrancy even though the content behind it lives on other planes.
   element when the kernel rejects a plane.
 - A buffer is re-rendered only when damage is recorded under its subtree; an
   idle desktop produces zero re-renders and zero page-flips.
-- The topmost non-animating window is offered for direct scanout of its
-  client buffer (shadow rendered separately by the windows buffer).
+- The topmost non-animating window is promoted onto a hardware plane of its
+  own, by whichever of two tiers fits it (see "Promotion tiers"): its raw
+  client buffer when that buffer already describes the finished window, or a
+  compositor-rendered buffer of its whole subtree when it does not.
 - `BackgroundBlur` layers in the overlay subtree sample a composite of the
   planes below them (background + windows/expose), so vibrancy reflects real
   content even across buffer boundaries.
+- The **middle** plane (windows, or exposé while it is up) is a blur consumer
+  too — a server-side titlebar blurs what is behind the window. It is handed
+  the *background-only* stage of the composite, and its titlebars opt into
+  `blur_include_content` so the real blur also picks up the windows the same
+  pass painted beneath them. That snapshot is cached and re-taken only when the
+  background changes: a consumer re-renders its whole buffer whenever its
+  backdrop's `unique_id` changes, so a per-rebuild snapshot would turn every
+  window animation into a full-plane redraw. For the same reason the middle
+  plane is deliberately *not* part of the rebuild `interest` set — window
+  damage is constant and must not drive composite rebuilds.
 - The composite is blurred **once, as a whole image**, before it is handed to
   the consumers; each `BackgroundBlur` layer then seeds the pre-blurred image
   directly and skips its own blur pass. Blurring within a layer's clipped
@@ -34,6 +46,13 @@ vibrancy even though the content behind it lives on other planes.
   blurred }` handed to a layer carries a `blurred` flag; in-scene blur
   consumers with no external backdrop (context menus, OSD) still run the real
   blur against live scene content.
+- The external backdrop reaches only layers whose *own* blend mode is
+  `BackgroundBlur`. A blur nested inside a **mirrored** subtree does not get it:
+  `Layer::as_content()` re-renders the leader's tree with no backdrop, so its
+  blur samples the destination canvas — i.e. whatever the mirror's own plane has
+  already painted. Anything relying on such a mirror (exposé's window previews,
+  whose decorations blur) must have its backdrop content painted into the same
+  plane; see [Exposé](../docs/developer/expose.md).
 - The whole-image blur carries a vibrancy tone map (saturation boost plus a
   gentle downward gain and a small bias), because skipping the layer's own blur
   pass also skips lay-rs' tone map. Without it a frosted panel over a flat
@@ -41,14 +60,35 @@ vibrancy even though the content behind it lives on other planes.
   map shifts the backdrop a few percent darker and a little more saturated so
   the material stays distinguishable on any background.
 - The blur composite is rebuilt only when a lower plane recorded damage
-  that intersects an active blur consumer's region (the dock strip, the
-  switcher strip, or the full output while overlay UI or expose is shown),
-  or when a promoted window committed a new buffer whose rect intersects
-  such a region (promoted commits produce no scene damage, so the commit
-  flag is the only change signal);
-  a rebuild triggers exactly one re-render of each blur-bearing plane. The
-  composite is downscaled (currently 1/4 resolution) — a low-res backdrop is
-  imperceptible after blurring but far cheaper.
+  that intersects an active blur consumer's region, or when a promoted
+  window committed a new buffer whose rect intersects such a region
+  (promoted commits produce no scene damage, so the commit flag is the only
+  change signal); a rebuild triggers exactly one re-render of each
+  blur-bearing plane. The consumer regions are: the dock strip, the switcher
+  strip, and — for the overlay plane — the layer-shell chrome surfaces'
+  rects (top bar, islands) plus the bounds of any mapped popup, each outset
+  by the blur sampling radius, in the steady state; the interest widens to
+  the full output only while something transient or unbounded is up (expose,
+  OSD, tiling overlay, DnD, a selector animation). A steady-state window
+  redrawing below the chrome band, or beside an open menu, therefore rebuilds
+  nothing.
+  Rebuilds caused by desktop damage (bg/middle planes, promoted commits) are
+  additionally rate-limited (currently one per 100 ms): a client committing
+  full-rect damage at frame rate under a blur consumer must not force the
+  composite plus a full-res re-render of every blur plane per commit — blur
+  is a low-frequency visual and the dirty flag carries the staleness to the
+  next allowed frame. The same limit covers popup repaints: a popup redrawing
+  its own content is exactly the frame-rate source the limit exists for. Only
+  the first build and a STRUCTURAL popup change — a popup mapping, unmapping,
+  becoming visible or moving — bypass it, so a popup's blur is correct on the
+  first frame it is visible. The limit is suspended entirely while the user is
+  actively driving
+  content (expose, a workspace swipe or its settle animation, and — via the
+  `pointer_interaction` stamp's 200 ms recency — a window being dragged,
+  resized or scrolled) — a 10 Hz blur under a 120 Hz motion reads as
+  judder, and those states are transient so they cannot re-open the idle
+  rebuild storm. The composite is downscaled (currently 1/4 resolution) — a low-res
+  backdrop is imperceptible after blurring but far cheaper.
   Damage skipped this way marks the composite dirty so a later-activating
   consumer still gets fresh content. Frames that bypass the plane path
   entirely while still consuming engine damage (fullscreen direct scanout,
@@ -62,7 +102,7 @@ vibrancy even though the content behind it lives on other planes.
 - Direct-scanout (promoted) windows are folded into the blur composite by
   blitting their client dmabuf — the same buffer KMS scans out, wrapped
   zero-copy through the renderer's dmabuf import cache — on top of the
-  windows-plane snapshot. Their content layer is hidden in the scene, so
+  windows-plane snapshot. Their content is not drawn in the scene, so
   without this the topmost window would be absent from every blur backdrop
   (dock bubbles/popups showing pre-window content), and promote/demote
   transitions would visibly flip the blur between with-window and
@@ -99,6 +139,10 @@ vibrancy even though the content behind it lives on other planes.
 - Likewise, an app switcher shown on one output does not block fullscreen
   direct scanout on another: the fullscreen-stability check consults the
   switcher's host output, not its global visibility.
+- The dock strip plane follows the dock's configured screen edge: a bottom
+  band for `dock.position = "bottom"`, a left or right column otherwise. The
+  strip is allocated against that edge, so moving the dock at runtime drops
+  and re-allocates the plane.
 - The dock and app-switcher strip planes themselves are pushed only to the
   CRTC of the output that actually hosts that chrome — always the primary
   for the dock, the switcher's current host output for the switcher; every
@@ -221,7 +265,11 @@ vibrancy even though the content behind it lives on other planes.
 - The promoted-window set is capped (currently 1): the hardware admits ~5
   simultaneous planes and bg/windows/dock/cursor take four — a second
   client plane evicts the windows plane, which costs more than
-  compositing the extra window.
+  compositing the extra window. The cap is shared across both tiers: at
+  most one window is promoted per output, by one tier or the other. Tier 2
+  is the more exposed of the two here, because unlike tier 1 it does not
+  also save the per-frame GPU pass — if its plane evicts the windows plane
+  it is a straight loss, so it must be measured, not assumed.
 - Scanout candidate selection uses only STABLE geometry (dock bar bounds,
   app-switcher/OSD view bounds, layer-shell Top/Overlay rects, window
   rects) — never per-frame scene state such as bubbled blur regions, which
@@ -246,6 +294,88 @@ vibrancy even though the content behind it lives on other planes.
   candidates that lose the plane auction, GPU-composite, and demote every
   plane below them (z-order). The demotion re-import restores the root
   surface's draw content.
+### Promotion tiers
+
+A hardware plane scans out a rectangle of pixels: it cannot clip to a shape,
+and it carries one buffer. Whether a window can use one therefore depends on
+whether its client buffer already contains the finished window. Two tiers
+answer that differently; they share every stability gate (topmost, not
+animating, no mapped popup, no overlapping chrome) and are mutually
+exclusive, because they compete for the same scarce plane slot.
+
+**Tier 1 — raw scanout.** The client's own dmabuf goes to the plane. Zero GPU
+work per client frame: the compositor never touches the pixels. Requires the
+buffer to be self-describing — a dmabuf (not SHM), no subsurface overlapping
+the root, and nothing the compositor draws for the window.
+
+**Tier 2 — subtree plane.** The window's whole lay-rs subtree is rendered into
+a buffer of its own, which is what goes to the plane. Costs one GPU pass per
+client frame, so it never displaces tier 1; what it buys over compositing is
+damage isolation — the shared windows plane no longer repaints when this
+window updates — and a page flip of its own. It takes the windows tier 1
+cannot: everything the compositor draws is simply drawn into the plane.
+
+`WindowElement::has_material` is the tier-1 disqualifier, kept current by the
+surface-style requests as they land. It covers everything the compositor
+paints or clips for a window that its buffer does not contain:
+
+- a background colour or a `BackgroundBlur` (`otto-surface-style` material),
+- a non-zero corner radius, and
+- a border.
+
+Corner radius is the sharpest case. The rounding exists only as a lay-rs clip
+in the composite path; the client's buffer has square corners. Scanning that
+buffer out raw put square corners on screen, intermittently — whenever an
+otto-kit window happened to satisfy the other tier-1 rules. Such a window now
+falls to tier 2, where the compositor draws the clip into the plane buffer.
+
+Tier 2's mechanics:
+
+- Promotion reparents the window's `window_layer` out of its workspace's
+  `windows_layer` and into the output's `promoted_plane` container. The
+  windows plane stops drawing the window purely because it is no longer in
+  that subtree — there is no hidden or blanked state to keep in sync, and
+  nothing to re-import on demotion. The container mirrors the current
+  workspace's `windows_layer` position, size and clipping, so the move is
+  geometrically a no-op. It is re-applied every frame, because other paths
+  (`raise_window_to_front` above all) reparent window layers without
+  knowing about promotion.
+- The plane buffer is the subtree's own bounds — shadow safe area included —
+  cropped to the output, and it is re-allocated whenever the window resizes.
+  A resize drops every swapchain slot, so the resize must happen before the
+  element renders in the same frame or the window blinks out of the stack.
+- The plane sits directly above the windows plane and below all chrome
+  planes. Its buffer is folded into the cross-plane backdrop composite right
+  after the middle plane, so the dock and menus blur it like any other
+  desktop content, and its damage joins the middle plane's for deciding when
+  that composite is rebuilt.
+- A tier-2 window carrying a `BackgroundBlur` is handed the composite-so-far
+  (bg + windows plane) as a RAW backdrop and blurs it itself, clipped to its
+  own shape — unlike the chrome planes, which seed a pre-blurred image.
+- Promotion uses the same 500 ms stability window as tier 1, and for one more
+  reason: it moves a live window subtree between scene containers, so a
+  candidate flickering in and out of eligibility would churn the plane every
+  frame. Demotion, like tier 1's, is immediate.
+- `touch /tmp/otto-no-window-plane` disables tier 2 alone, leaving tier 1
+  untouched, so the two can be measured against each other and against plain
+  compositing (`/tmp/otto-no-scanout` disables both).
+
+Tier 1 keeps its "base-only" handling of material windows — blanking the
+texture rather than hiding the layer — as the fallback for a window that
+acquires a material while already promoted the plain way. It is demoted on
+the next pass and re-promoted through tier 2.
+
+A material opts into `blur_include_content`, like the server-side titlebar:
+what a window's frost has to blur is usually the window BELOW it in the same
+plane, and a plane's seeded backdrop holds the content below that plane only,
+so seeding it alone would leave the window underneath sharp.
+- The vibrancy tone map applied to the seeded backdrop is lay-rs'
+  (`layers::drawing::vibrancy_color_filter`), not a second set of
+  constants here. A consumer seeding a pre-blurred backdrop skips lay-rs'
+  blur pass and the grading that goes with it; grading differently on this
+  side makes one material take on two tints depending on which path drew
+  it — a window's frost reading one way on its plane and another in
+  expose, where the previews blur in the scene.
 - A window leaving the scanout set is re-imported and the scene update is
   re-run that same frame, so the first composited frame shows current
   content (no one-frame shadow-only flicker).
@@ -334,6 +464,28 @@ vibrancy even though the content behind it lives on other planes.
   planes below (material is semi-opaque); acceptable by design.
 - The first frame after startup renders the overlay without a backdrop (the
   lower buffers don't exist yet); the composite arrives on the next frame.
+- Skia's cached GL state is reset (`DirectContext::reset`) at the start of
+  every plane render. Smithay executes raw GL on the same EGL context
+  between plane renders (dmabuf imports, composite frames, cursor uploads),
+  and Ganesh trusts its state cache across flushes — when the two disagree
+  (scissor, FBO binding, viewport) a plane's draws are silently dropped and
+  its buffer keeps the cleared color. A plane whose subtree then reports no
+  further damage scans that bad buffer out indefinitely: one lost render
+  during an exposé transition left the wallpaper of an empty workspace
+  permanently black (a workspace with a window recovered by accident — the
+  window's damage kept forcing healthy re-renders). Verified causally by
+  toggling the reset at runtime on one binary: disabled reproduced the
+  black 3/3, enabled ran 8/8 clean.
+- The background plane only (`honor_ancestor_visibility`) skips rendering
+  while an ancestor of its subtree root is hidden in the **scene arena**.
+  Exposé hides `workspaces_layer` — the background plane's parent — for its
+  whole lifetime, so a render in that window can only produce an empty
+  buffer, and `Layer::set_hidden` reaches the arena one engine update after
+  the model, leaving edge frames where the flags disagree. The skip leaves
+  `force_full` armed so the frame scheduled by the un-hide's engine damage
+  repaints the plane in full. This must stay opt-in: every other plane
+  subtree deliberately ignores ancestor visibility (exposé itself lives
+  under the hidden `workspaces_layer` and must keep rendering there).
 - Removed scene nodes attribute their damage to the nearest surviving
   ancestor, so a window close re-renders only the windows plane. Only
   removals with no surviving ancestor (whole-tree teardown) fall back to

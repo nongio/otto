@@ -132,4 +132,99 @@ mod workspace_selector_tests {
 
         handle.stop();
     }
+
+    /// The removal animation crops the preview against the collapsing item
+    /// rather than fading or scaling it — and the spacing on both sides of the
+    /// shrinking sliver stays a full gap, so the neighbour on the right never
+    /// crowds in while the preview is still visible.
+    #[test]
+    #[serial]
+    fn removal_crops_preview_and_keeps_spacing() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        handle.with_state(|state| {
+            state.workspaces.add_workspace_to_output("headless");
+            state.workspaces.add_workspace_to_output("headless");
+        });
+        handle.settle(200);
+        handle.toggle_expose();
+        handle.settle(300);
+
+        let indices = workspace_indices(&handle);
+        let current = handle.current_workspace_index();
+        let pos = indices
+            .iter()
+            .enumerate()
+            .position(|(pos, _)| pos != current && pos + 1 < indices.len())
+            .expect("a removable workspace with a right neighbour");
+        let (left, target, right) = (indices[0], indices[pos], indices[pos + 1]);
+
+        hover_layer_centre(
+            &handle,
+            &format!("workspace_selector_desktop_content_{target}"),
+        );
+        hover_layer_centre(
+            &handle,
+            &format!("workspace_selector_desktop_remove_{target}"),
+        );
+        handle.pointer_click();
+
+        let gap = 50.0_f32; // WORKSPACE_SELECTOR_GAP
+        let mut cropped = false;
+        for _ in 0..120 {
+            handle.tick(1.0 / 60.0);
+            // One snapshot per sample: the animation clock runs on wall time, so
+            // reading each layer from its own snapshot would compare frames.
+            let snap = handle.scene_snapshot();
+            let g = |key: String| {
+                find(&snap.nodes, &key).map(|n| {
+                    (
+                        n.global_bounds.x,
+                        n.global_bounds.width,
+                        n.global_bounds.x + n.global_bounds.width,
+                    )
+                })
+            };
+            let (Some(wrap), Some(preview), Some(l), Some(r)) = (
+                g(format!("workspace_selector_desktop_wrap_{target}")),
+                g(format!("workspace_selector_desktop_content_{target}")),
+                g(format!("workspace_selector_desktop_content_{left}")),
+                g(format!("workspace_selector_desktop_content_{right}")),
+            ) else {
+                break; // the workspace is gone: the collapse finished
+            };
+            if wrap.1 <= 0.0 {
+                break; // fully cropped; the rest of the collapse closes the gap
+            }
+            // The preview keeps its full width and is cropped by the wrap.
+            assert!(
+                preview.1 > wrap.1 - 1.0,
+                "preview should keep its size and be cropped, got preview {} wrap {}",
+                preview.1,
+                wrap.1
+            );
+            cropped |= preview.1 > wrap.1 + 1.0;
+            // The crop is centred: it takes as much off the left as the right.
+            let visible_start = preview.0.max(wrap.0);
+            let visible_end = preview.2.min(wrap.2);
+            assert!(
+                ((visible_start - preview.0) - (preview.2 - visible_end)).abs() < 2.0,
+                "crop should stay centred, took {} off the left and {} off the right",
+                visible_start - preview.0,
+                preview.2 - visible_end
+            );
+            assert!(
+                (visible_start - l.2 - gap).abs() < 2.0,
+                "spacing to the left neighbour should stay {gap}, got {}",
+                visible_start - l.2
+            );
+            assert!(
+                (r.0 - visible_end - gap).abs() < 2.0,
+                "spacing to the right neighbour should stay {gap}, got {}",
+                r.0 - visible_end
+            );
+        }
+        assert!(cropped, "the preview was never cropped by the collapse");
+
+        handle.stop();
+    }
 }

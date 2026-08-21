@@ -153,6 +153,20 @@ thread_local! {
     };
 }
 
+/// Which edge of a balloon its arrow sticks out of, i.e. which way it points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BalloonArrow {
+    Bottom,
+    Left,
+    Right,
+}
+
+/// A rounded rect with an arrow on one edge, filling `width` × `height` at
+/// `(x, y)` — arrow included.
+///
+/// Only the bottom-arrow shape is built by hand; the side variants are that
+/// same path rotated a quarter turn, which keeps the rounded arrow tip and the
+/// corner radii identical whichever way the balloon points.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_balloon_rect(
     x: f32,
@@ -162,9 +176,34 @@ pub fn draw_balloon_rect(
     corner_radius: f32,
     arrow_width: f32,
     arrow_height: f32,
-    arrow_position: f32, // Position of the arrow along the bottom edge (0.0 to 1.0)
+    arrow_position: f32, // Position of the arrow along the arrow edge (0.0 to 1.0)
     arrow_corner_radius: f32,
+    arrow: BalloonArrow,
 ) -> layers::skia::Path {
+    if arrow != BalloonArrow::Bottom {
+        // Build it pointing down in a frame with the axes swapped, then turn it.
+        let base = draw_balloon_rect(
+            0.0,
+            0.0,
+            height,
+            width,
+            corner_radius,
+            arrow_width,
+            arrow_height,
+            arrow_position,
+            arrow_corner_radius,
+            BalloonArrow::Bottom,
+        );
+        let (degrees, offset) = match arrow {
+            // Clockwise: down becomes left, and the path lands at negative x.
+            BalloonArrow::Left => (90.0, (x + width, y)),
+            // Counter-clockwise: down becomes right, negative y.
+            _ => (-90.0, (x, y + height)),
+        };
+        let rotated = base.with_transform(&layers::skia::Matrix::rotate_deg(degrees));
+        return rotated.with_transform(&layers::skia::Matrix::translate(offset));
+    }
+
     let mut builder = layers::skia::PathBuilder::new();
 
     // Calculate the arrow tip position
@@ -237,6 +276,30 @@ pub fn configure_surface_layer(
     shared_gravity: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
 ) {
     use crate::surface_style::ContentsGravity;
+
+    // Every setter below schedules a lay-rs change unconditionally — lay-rs
+    // does not compare the incoming value, and `set_draw_content` always
+    // raises NEEDS_PAINT. Re-running this for a surface that did not change
+    // therefore invents damage, and the sync above calls it for every surface
+    // of a window (plus its popups) on every commit of any one of them. Reduce
+    // the whole configuration to one key and skip the body when it matches
+    // what the layer already holds. `WindowViewSurface`'s `Hash` covers the
+    // commit counter and texture id, so real content changes still fall
+    // through; the node id is in the key too, since a surface whose layer was
+    // recreated needs configuring even with identical geometry.
+    // See `crate::surface_config_cache`.
+    {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        wvs.hash(&mut hasher);
+        (gravity as u8).hash(&mut hasher);
+        client_owns_size.hash(&mut hasher);
+        shared_gravity.is_some().hash(&mut hasher);
+        usize::from(layer.id()).hash(&mut hasher);
+        if !crate::surface_config_cache::record_if_changed(&wvs.id, hasher.finish()) {
+            return;
+        }
+    }
 
     // Position calculation: phy_dst is the buffer viewport offset, log_offset is from tree traversal
     let pos_x = wvs.phy_dst_x + wvs.log_offset_x;
@@ -427,6 +490,87 @@ pub fn configure_surface_layer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Not an assertion: writes the three balloon shapes to /tmp so they can be
+    /// eyeballed. Run with `cargo test --lib dump_balloons -- --ignored`.
+    #[test]
+    #[ignore]
+    fn dump_balloons() {
+        use layers::skia;
+        let mut surface = skia::surfaces::raster_n32_premul((900, 200)).unwrap();
+        let canvas = surface.canvas();
+        canvas.clear(skia::Color::WHITE);
+        let mut paint = skia::Paint::new(skia::Color4f::new(0.2, 0.2, 0.9, 1.0), None);
+        paint.set_anti_alias(true);
+        for (i, arrow) in [
+            BalloonArrow::Bottom,
+            BalloonArrow::Left,
+            BalloonArrow::Right,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let x = 20.0 + i as f32 * 290.0;
+            let path = draw_balloon_rect(x, 40.0, 200.0, 60.0, 5.0, 12.5, 10.0, 0.5, 1.5, arrow);
+            canvas.draw_path(&path, &paint);
+        }
+        let image = surface.image_snapshot();
+        let data = image
+            .encode(None, skia::EncodedImageFormat::PNG, None)
+            .unwrap();
+        std::fs::write("/tmp/balloons.png", data.as_bytes()).unwrap();
+    }
+
+    /// The balloon must fill exactly the rect it was asked for, arrow included,
+    /// whichever edge the arrow sticks out of — the tooltip layer is sized from
+    /// those same numbers, so a path that overflows or falls short of them puts
+    /// the balloon somewhere other than where the layout put the layer.
+    #[test]
+    fn balloon_fills_the_requested_rect_on_every_edge() {
+        for arrow in [
+            BalloonArrow::Bottom,
+            BalloonArrow::Left,
+            BalloonArrow::Right,
+        ] {
+            let path = draw_balloon_rect(50.0, 20.0, 200.0, 60.0, 5.0, 12.5, 10.0, 0.5, 1.5, arrow);
+            let bounds = path.compute_tight_bounds();
+            // The arrow tip is rounded off, so the edge it points at stops one
+            // arrow corner radius short of the rect.
+            let slack = 1.5;
+            assert!(
+                (bounds.x() - 50.0).abs() < slack
+                    && (bounds.y() - 20.0).abs() < slack
+                    && (bounds.width() - 200.0).abs() < slack
+                    && (bounds.height() - 60.0).abs() < slack,
+                "{arrow:?}: balloon bounds {bounds:?} should be 50,20 200x60"
+            );
+        }
+    }
+
+    /// Where the arrow tip is decides which way the tooltip points: the tip has
+    /// to sit on the named edge, halfway along it.
+    #[test]
+    fn the_arrow_tip_sits_on_its_own_edge() {
+        let (x, y, w, h) = (50.0_f32, 20.0_f32, 200.0_f32, 60.0_f32);
+        let cases = [
+            (BalloonArrow::Bottom, (x + w / 2.0, y + h)),
+            (BalloonArrow::Left, (x, y + h / 2.0)),
+            (BalloonArrow::Right, (x + w, y + h / 2.0)),
+        ];
+        for (arrow, (tip_x, tip_y)) in cases {
+            let path = draw_balloon_rect(x, y, w, h, 5.0, 12.5, 10.0, 0.5, 1.5, arrow);
+            let closest = path
+                .points()
+                .iter()
+                .map(|p| ((p.x - tip_x).powi(2) + (p.y - tip_y).powi(2)).sqrt())
+                .fold(f32::MAX, f32::min);
+            // The tip is rounded, so it stops just short of the exact corner.
+            assert!(
+                closest < 2.0,
+                "{arrow:?}: no point near the tip ({tip_x}, {tip_y}); closest was {closest} away"
+            );
+        }
+    }
 
     fn make_test_cache() -> FontCache {
         let font_mgr = layers::skia::FontMgr::new();

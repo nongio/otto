@@ -40,6 +40,11 @@ pub struct VirtualOutputDisplay {
     /// size is recorded here (synchronously, before the channel is ready) so the
     /// driver can size its surface and the encoder can letterbox native into it.
     pub gfx_shared: Option<std::sync::Arc<crate::egfx::GfxShared>>,
+    /// Raises the desktop's screen-sharing indicator while a client is served.
+    pub indicator: crate::indicator::Indicator,
+    /// Peer address of the connection currently being served, filled in by the
+    /// connection handler at accept time.
+    pub peer: std::sync::Arc<std::sync::Mutex<String>>,
 }
 
 pub struct Updates {
@@ -141,6 +146,13 @@ impl RdpServerDisplay for VirtualOutputDisplay {
         } else {
             tracing::info!("RDP client requested display updates — subscribing to frames");
         }
+
+        // A client asking for display updates is the first moment a remote
+        // party can actually see the screen — not the TCP accept, which a port
+        // scan also reaches. Raise the privacy signal here.
+        let peer = self.peer.lock().unwrap().clone();
+        self.indicator.show(&peer);
+
         Ok(Box::new(Updates {
             rx: self.frames.subscribe(),
             codec_rx: self.gfx_shared.as_ref().map(|s| s.codec_rx()),

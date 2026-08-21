@@ -55,6 +55,21 @@ outputs. It is also the single easiest thing to get subtly wrong:
   popups — and must still trigger a redraw.
 - Buffer age and partial updates mean reusing old pixels is only safe under
   specific conditions; getting it wrong shows up as stale rectangles.
+- **The scene sync can invent damage.** Mirroring a Wayland surface into its
+  `lay-rs` layer is write-only: `set_position`, `set_size` and
+  `set_draw_content` schedule `NEEDS_LAYOUT`/`NEEDS_PAINT` without comparing
+  the value first. The sync runs per WINDOW — a commit on any surface of a
+  window walks that window's whole surface tree *and every popup hanging off
+  it* — so writing back identical values made a client repainting at frame
+  rate dirty its own tooltip at frame rate, and popup damage drove a
+  full-screen backdrop rebuild per commit. Two guards keep it honest:
+  `configure_surface_layer` reduces each surface's configuration to a hash
+  (including the surface's `CommitCounter`) and skips the whole body when it
+  matches (`crate::surface_config_cache`), and
+  `PopupOverlayView::needs_sync` skips a popup entirely unless the commit is
+  its own or it moved. **Any new writer into the scene must be idempotent the
+  same way** — an unguarded setter is indistinguishable from real damage
+  downstream.
 
 **Translucent UI makes it worse.** The dock and the app switcher do not cover
 what is behind them, they *blend* with it. So a change in the background can

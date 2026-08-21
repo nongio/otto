@@ -365,6 +365,35 @@ impl HeadlessHandle {
         });
     }
 
+    /// Press the left button at the current pointer position.
+    pub fn pointer_press(&self) {
+        self.with_state(|state| {
+            state.synthetic_pointer_button(true);
+        });
+    }
+
+    /// Release the left button at the current pointer position.
+    pub fn pointer_release(&self) {
+        self.with_state(|state| {
+            state.synthetic_pointer_button(false);
+        });
+    }
+
+    /// Click, and report whether expose still counts as transitioning the
+    /// instant the click has been handled — sampled inside the same state
+    /// callback, so no frame can be processed in between.
+    ///
+    /// Anything that reads `is_expose_transitioning` to decide whether expose
+    /// is at rest (scanout promotion above all) must see `true` here: the close
+    /// animation has only just been scheduled.
+    pub fn click_and_sample_expose_transitioning(&self) -> bool {
+        self.query(|state| {
+            state.synthetic_pointer_button(true);
+            state.synthetic_pointer_button(false);
+            state.workspaces.is_expose_transitioning()
+        })
+    }
+
     /// Return the title of the currently hovered window in expose, if any.
     pub fn expose_selected_title(&self) -> Option<String> {
         self.query(|state| {

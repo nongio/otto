@@ -472,6 +472,10 @@ impl Otto<UdevData> {
                 .unwrap_or(false)
         });
         let scanout_output_name = scanout_output.map(|o| o.name());
+        // Both promotion tiers come out of one pass (see `PlaneCandidates`);
+        // the gates below can veto promotion entirely, in which case neither
+        // tier is filled.
+        let mut plane_candidates = crate::workspaces::PlaneCandidates::none();
         let raw_scanout_desired: Vec<smithay::reexports::wayland_server::backend::ObjectId> =
             if !planes_enabled
                 || self.backend_data.underrun_penalty >= 1
@@ -487,7 +491,8 @@ impl Otto<UdevData> {
             {
                 Vec::new()
             } else if let Some(output) = scanout_output {
-                self.workspaces.get_scanout_candidates(output)
+                plane_candidates = self.workspaces.get_plane_candidates(output);
+                plane_candidates.raw.clone()
             } else {
                 Vec::new()
             };
@@ -588,6 +593,66 @@ impl Otto<UdevData> {
             self.update_window_view(w);
         }
 
+        // ---- Tier 2: subtree plane ----
+        // Same stability window as tier 1, for the same reason and one more:
+        // promotion reparents a live window subtree out of the windows plane,
+        // so a candidate that keeps changing would move the window between
+        // scene containers every frame. Demotion, like tier 1's, is immediate.
+        if let Some(name) = scanout_output_name.as_deref() {
+            let want = plane_candidates.subtree.clone();
+            let settled = if let Some(surf) = self
+                .backend_data
+                .backends
+                .get_mut(&node)
+                .and_then(|d| d.surfaces.get_mut(&crtc))
+            {
+                if surf.subtree_candidate != want {
+                    surf.subtree_candidate = want.clone();
+                    surf.subtree_since = Some(Instant::now());
+                }
+                match want {
+                    None => None,
+                    Some(id) => {
+                        let already = self.workspaces.promoted_window_for_output(name);
+                        if already.as_ref() == Some(&id)
+                            || surf
+                                .subtree_since
+                                .is_some_and(|t| t.elapsed() >= PROMOTE_STABLE)
+                        {
+                            Some(id)
+                        } else {
+                            // Still settling — keep whatever is promoted now.
+                            already
+                        }
+                    }
+                }
+            } else {
+                None
+            };
+            if self.workspaces.set_promoted_window(name, settled.as_ref()) {
+                // The window moved between the windows plane and its own, so
+                // both buffers hold a frame that is now wrong: one still shows
+                // the window, the other does not show it yet.
+                if let Some(surf) = self
+                    .backend_data
+                    .backends
+                    .get_mut(&node)
+                    .and_then(|d| d.surfaces.get_mut(&crtc))
+                {
+                    for el in [
+                        surf.windows_dmabuf_element.as_ref(),
+                        surf.window_dmabuf_element.as_ref(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
+                        el.request_full_render();
+                    }
+                    surf.backdrop_dirty = true;
+                }
+            }
+        }
+
         // A workspace swipe — and the settle/snap animation after the finger
         // lifts — scrolls the scene content across the output without producing
         // per-plane subtree damage, so the plane pipeline keeps scanning out a
@@ -605,6 +670,7 @@ impl Otto<UdevData> {
         // is a lay-rs subtree inside the dock plane — both need the same
         // post-teardown full redraw, on their respective plane.
         let popup_teardown_gen = self.workspaces.popup_overlay.teardown_generation();
+        let popup_structure_gen = self.workspaces.popup_overlay.structure_generation();
         let popups_open = self.workspaces.popup_overlay.popup_count() > 0;
         let dock_menu_teardown_gen = self
             .workspaces
@@ -748,12 +814,43 @@ impl Otto<UdevData> {
                 &device_gbm,
                 crtc,
                 (mode.size.w, mode.size.h),
+                self.workspaces.dock.position(),
             );
         }
 
         // Every frame: point each plane element at its output's node.
         if let Some(ows) = self.workspaces.output_workspaces.get(&output.name()) {
             super::planes::wire_plane_nodes(surface, ows);
+        }
+        // The promoted-window plane also follows its window's size and
+        // position, so it is wired separately — and before anything renders,
+        // because a resize drops the swapchain.
+        if let Some(mode) = output.current_mode() {
+            super::planes::wire_window_plane(
+                surface,
+                &self.workspaces,
+                &output.name(),
+                (mode.size.w, mode.size.h),
+            );
+        } else {
+            surface.window_plane_active = false;
+        }
+
+        // Debug (`/tmp/otto-bgdbg`): hidden flags along the chain the background
+        // plane hangs off, so a black bg buffer can be told apart from a hidden
+        // ancestor inheriting down onto it.
+        if std::path::Path::new("/tmp/otto-bgdbg").exists() {
+            if let Some(ows) = self.workspaces.output_workspaces.get(&output.name()) {
+                tracing::info!(
+                    target: "otto::bgdbg",
+                    "VIS output={} workspaces={} bgplane={} winplane={} expose={}",
+                    ows.output_layer.hidden(),
+                    ows.workspaces_layer.hidden(),
+                    ows.background_plane.hidden(),
+                    ows.windows_plane.hidden(),
+                    ows.expose_layer.hidden(),
+                );
+            }
         }
 
         // Classify every window into its visibility state so post_repaint can
@@ -786,12 +883,16 @@ impl Otto<UdevData> {
             &self.foreign_toplevels,
         );
         #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
+        let interacting_ids =
+            crate::state::window_throttle::interacting_ids(&self.pointer_interaction);
+        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let window_throttle_states = crate::state::window_throttle::classify_windows(
             &self.workspaces,
             &all_window_elements,
             &occluded_ids,
             expose_active,
             &captured_ids,
+            &interacting_ids,
         );
 
         // ── Shadow-only / direct scanout window selection ─────────────────────
@@ -894,12 +995,40 @@ impl Otto<UdevData> {
         // (`blur_include_content`), and a partial repaint only paints — and only
         // clears — inside the damage clip: outside it the blur reads whatever
         // this swapchain slot held before, so an overlapped menu blurs
-        // intermittently. Redraw the whole plane while any popup is open;
-        // menus are transient, so this costs a handful of frames.
+        // intermittently. Every repaint of this plane while a popup is up
+        // therefore has to be a FULL repaint.
+        //
+        // What it must not do is cause a repaint. This used to call
+        // `request_full_render`, which also defeats the plane's no-damage
+        // skip — so an open menu re-rasterised the full-screen overlay plane
+        // on every frame for as long as it was open, whether or not anything
+        // in it had changed (measured: GPU busy 32% → 77% with a context menu
+        // up, at an unchanged frame and rebuild rate). A frame with no damage
+        // and no backdrop change repaints nothing, so there is nothing for a
+        // partial clip to get wrong, and the buffer is already whole.
+        // `/tmp/otto-popup-fullframe` restores the old per-frame behaviour if
+        // a blur artefact ever needs it back.
         if popups_open {
             if let Some(el) = &surface.overlay_dmabuf_element {
-                el.request_full_render();
+                if std::path::Path::new("/tmp/otto-popup-fullframe").exists() {
+                    el.request_full_render();
+                } else {
+                    el.request_full_clip_when_rendering();
+                }
             }
+        }
+        // A popup appeared, moved, or went away since this surface last drew.
+        // Discrete and rare, unlike popup repaints — the one popup signal that
+        // may bypass the backdrop rebuild rate limit, so the blur under a
+        // popup is correct on the first frame it is visible.
+        let popup_structural = surface.popup_structure_seen != popup_structure_gen;
+        surface.popup_structure_seen = popup_structure_gen;
+        if popup_structural {
+            // The generation is consumed here, before the frame decides
+            // whether to draw at all. Carry it as staleness too so a skipped
+            // frame cannot swallow the change outright — the rate limit may
+            // then delay the rebuild, but it will happen.
+            surface.backdrop_dirty = true;
         }
         if surface.popup_teardown_seen != popup_teardown_gen {
             surface.popup_teardown_seen = popup_teardown_gen;
@@ -985,6 +1114,82 @@ impl Otto<UdevData> {
         let frame_gen = self.backend_data.damage_generation;
         let scene_has_damage = scene_has_damage || surface.rendered_damage_gen < frame_gen;
 
+        // Steady state, the overlay plane's only blur consumers are the
+        // layer-shell chrome surfaces (top bar, islands). Their rects — not
+        // the whole output — are where lower-plane damage must reach to
+        // change what their blur shows, so the backdrop rebuild interest
+        // narrows to them: a terminal cursor blinking mid-screen must not
+        // rebuild the composite and force a full-res overlay re-render.
+        // Anything transient or unbounded (popups, OSD, expose/selector,
+        // tiling overlay, DnD) falls back to the full output while it lasts.
+        // `None` = full-output interest; rects are output-local physical px,
+        // outset by the blur sampling radius.
+        let overlay_interest: Option<Vec<layers::skia::Rect>> = {
+            // Popups are NOT in this list: they have known bounds, and
+            // `backdrop::popup_interest_rects` adds them to the interest set
+            // directly. Treating an open popup as full-output interest made
+            // any client commit anywhere on screen a rebuild trigger for as
+            // long as a tooltip was up.
+            let transient_active = self.dnd_icon.is_some()
+                || self.workspaces.osd.is_visible()
+                || self.workspaces.tiling_overlay.is_visible()
+                || self.workspaces.is_expose_transitioning()
+                || self.workspaces.get_show_all()
+                || self
+                    .workspaces
+                    .is_animating
+                    .load(std::sync::atomic::Ordering::Relaxed);
+            if transient_active {
+                None
+            } else {
+                use smithay::desktop::layer_map_for_output;
+                use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
+                // Layer chrome attaches to the PRIMARY output's overlay plane
+                // no matter which output it was mapped to (see
+                // `is_overlay_ui_active`) — a surface mapped elsewhere has no
+                // rect in this output's space, so the multi-output case keeps
+                // the full-screen interest.
+                let foreign_chrome = chrome_output
+                    && self.workspaces.outputs().any(|o| {
+                        *o != output
+                            && layer_map_for_output(o)
+                                .layers()
+                                .any(|l| matches!(l.layer(), WlrLayer::Top | WlrLayer::Overlay))
+                    });
+                if foreign_chrome {
+                    None
+                } else {
+                    // ~3σ of the full-res blur (sigma 40): content further
+                    // away cannot visibly change what the blur samples.
+                    const BLUR_PAD: f32 = 160.0;
+                    let out_scale = output.current_scale().fractional_scale() as f32;
+                    let map = layer_map_for_output(&output);
+                    let rects: Vec<layers::skia::Rect> = map
+                        .layers()
+                        .filter(|l| matches!(l.layer(), WlrLayer::Top | WlrLayer::Overlay))
+                        .filter_map(|l| map.layer_geometry(l))
+                        .map(|g| {
+                            let mut r = layers::skia::Rect::from_xywh(
+                                g.loc.x as f32 * out_scale,
+                                g.loc.y as f32 * out_scale,
+                                g.size.w as f32 * out_scale,
+                                g.size.h as f32 * out_scale,
+                            );
+                            r.outset((BLUR_PAD, BLUR_PAD));
+                            r
+                        })
+                        .collect();
+                    // No chrome rect at all while the plane is active is a
+                    // state this narrowing does not model — stay safe.
+                    if rects.is_empty() {
+                        None
+                    } else {
+                        Some(rects)
+                    }
+                }
+            }
+        };
+
         let result = render_output_frame(
             surface,
             &mut renderer,
@@ -1038,6 +1243,18 @@ impl Otto<UdevData> {
             } else {
                 None
             },
+            overlay_interest,
+            // Blur must track any content the user is actively driving:
+            // workspace swipes/settle animations, and a window being
+            // dragged, resized or scrolled (the grabs and the axis handler
+            // stamp `pointer_interaction`; 200 ms of recency covers the
+            // gaps between motion events without outliving the gesture).
+            swipe_active
+                || self
+                    .pointer_interaction
+                    .as_ref()
+                    .is_some_and(|(_, at)| at.elapsed() < std::time::Duration::from_millis(200)),
+            popup_structural,
         );
 
         let reschedule = match &result {
@@ -1105,6 +1322,18 @@ impl Otto<UdevData> {
             if outcome.rendered && !self.screenshare_sessions.is_empty() && !session_locked {
                 let scale = Scale::from(output.current_scale().fractional_scale());
 
+                // Window streams only draw the cursor while the captured
+                // window holds keyboard focus — otherwise the viewer sees a
+                // pointer that is busy somewhere else entirely.
+                let focused_window = self
+                    .seat
+                    .get_keyboard()
+                    .and_then(|keyboard| keyboard.current_focus())
+                    .and_then(|focus| match focus {
+                        crate::focus::KeyboardFocusTarget::Window(window) => Some(window),
+                        _ => None,
+                    });
+
                 // Get the source framebuffer that was just rendered to
                 // Blit to PipeWire buffers on main thread
                 for session in self.screenshare_sessions.values() {
@@ -1161,8 +1390,27 @@ impl Otto<UdevData> {
                             None => Point::from((0, 0)),
                         };
 
+                        // Follow the window's size: a resize renegotiates the
+                        // PipeWire format instead of cropping/letterboxing the
+                        // window into the size it had at RecordWindow time.
+                        // Even dimensions for the same reason as at start-up.
+                        if let Some(window) = &window_capture {
+                            let geometry =
+                                smithay::desktop::space::SpaceElement::geometry(window).size;
+                            let target_w =
+                                (((geometry.w as f64) * scale.x).round().max(0.0) as u32) & !1;
+                            let target_h =
+                                (((geometry.h as f64) * scale.y).round().max(0.0) as u32) & !1;
+                            stream.pipewire_stream.request_size(target_w, target_h);
+                        }
+
+                        let cursor_visible_for_target = match &window_capture {
+                            Some(window) => focused_window.as_ref() == Some(window),
+                            None => true,
+                        };
+
                         let cursor_elements: Vec<WorkspaceRenderElements<_>> =
-                            if should_render_cursor {
+                            if should_render_cursor && cursor_visible_for_target {
                                 let output_geometry = Rectangle::new(
                                     (0, 0).into(),
                                     output.current_mode().unwrap().size,
@@ -1255,12 +1503,13 @@ impl Otto<UdevData> {
 
                             if let Some(available) = pool.available.pop_front() {
                                 let size = match &window_capture {
-                                    // The stream's negotiated size, fixed at
-                                    // RecordWindow time — not the window's
-                                    // current size, which may have changed.
+                                    // The size of the buffer PipeWire handed
+                                    // us, which follows the window across
+                                    // renegotiations (see request_size above).
                                     Some(_) => {
-                                        let (w, h) = stream.pipewire_stream.stream_size();
-                                        (w as i32, h as i32).into()
+                                        use smithay::backend::allocator::Buffer;
+                                        let size = available.dmabuf.size();
+                                        (size.w, size.h).into()
                                     }
                                     None => output
                                         .current_mode()
@@ -2007,6 +2256,15 @@ pub(super) fn render_output_frame<'a>(
     // Popup subtree root, folded into the overlay plane's backdrop so a submenu
     // blurs the popup(s) beneath it. Only set for the primary/chrome output.
     popup_root: Option<layers::engine::NodeRef>,
+    // Where lower-plane damage must land to warrant a backdrop rebuild for
+    // the overlay plane's blur consumers. `None` = anywhere on the output.
+    overlay_interest: Option<Vec<layers::skia::Rect>>,
+    // A workspace swipe or its settle animation is running — the backdrop
+    // rebuild rate limit is suspended so the blur tracks the scroll.
+    fluid_animation: bool,
+    // A popup mapped, unmapped, became visible or moved this frame — the one
+    // popup signal allowed to bypass the backdrop rebuild rate limit.
+    popup_structural: bool,
 ) -> Result<RenderOutcome, SwapBuffersError> {
     // Start frame timing
     #[cfg(feature = "metrics")]
@@ -2268,6 +2526,9 @@ pub(super) fn render_output_frame<'a>(
                 popup_root,
                 &promoted_buffers,
                 scanout_commit,
+                fluid_animation,
+                popup_structural,
+                overlay_interest.as_deref(),
             );
 
             // Push top→bottom: dock, switcher (only while alive — an empty
@@ -2312,6 +2573,20 @@ pub(super) fn render_output_frame<'a>(
                 }
             } else {
                 surface.windows_warmed_for_expose = false;
+                // Tier 2 — the promoted window's own plane, directly above the
+                // windows plane and below every chrome plane pushed above.
+                // Rendered here rather than with the lower planes because it
+                // is not part of the backdrop the chrome planes blur (the
+                // backdrop composite folds it in from this buffer instead).
+                if surface.window_plane_active {
+                    if let Some(el) = &surface.window_dmabuf_element {
+                        el.render(renderer.as_mut());
+                    }
+                    push_ready(
+                        &surface.window_dmabuf_element,
+                        &mut workspace_render_elements,
+                    );
+                }
                 // Top-window direct scanout: the client's Wayland buffer goes
                 // to Smithay as a `ScanoutCandidate`. Smithay tries to bind
                 // it to an overlay; if that fails it composites the client
@@ -2416,6 +2691,20 @@ pub(super) fn render_output_frame<'a>(
                 &surface.scene_dmabuf_element,
                 &mut workspace_render_elements,
             );
+
+            if std::path::Path::new("/tmp/otto-bgdbg").exists() {
+                tracing::info!(
+                    target: "otto::bgdbg",
+                    "FRAME elements={} expose={} win_content={} dock={} switcher={} overlay={} scanout={}",
+                    workspace_render_elements.len(),
+                    expose_active,
+                    windows_plane_has_content,
+                    dock_visible,
+                    switcher_active,
+                    overlay_active,
+                    surface.shadow_only_windows.len(),
+                );
+            }
 
             #[cfg(feature = "debug-kms")]
             super::debug::maybe_save_planes(surface);

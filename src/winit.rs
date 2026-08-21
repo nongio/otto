@@ -228,7 +228,7 @@ pub fn run_winit() {
         let window_size = resolve_winit_window_size();
         match winit::init_from_attributes_with_gl_attr::<SkiaRenderer>(
             WindowAttributes::default()
-                .with_title("Screen Composer".to_string())
+                .with_title("Otto".to_string())
                 .with_inner_size(Size::new(window_size))
                 .with_visible(true),
             GlAttributes {
@@ -639,6 +639,9 @@ pub fn run_winit() {
                         {
                             let expose_active = state.workspaces.is_expose_transitioning()
                                 || state.workspaces.get_show_all();
+                            let interacting_ids = crate::state::window_throttle::interacting_ids(
+                                &state.pointer_interaction,
+                            );
                             let window_throttle_states =
                                 crate::state::window_throttle::classify_windows(
                                     &state.workspaces,
@@ -648,6 +651,7 @@ pub fn run_winit() {
                                     // Winit has no per-frame screenshare tap,
                                     // so nothing is ever capture-pinned here.
                                     &std::collections::HashSet::new(),
+                                    &interacting_ids,
                                 );
                             post_repaint(
                                 &output,

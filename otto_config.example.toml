@@ -242,6 +242,10 @@ sound_theme = "freedesktop"  # Uncomment to override auto-detection
 
 [dock]
 size = 1.0  # Dock size multiplier (0.5 - 2.0, default: 1.0)
+# Screen edge the dock is docked to: "bottom" (default), "left" or "right".
+# Side docks stack their icons vertically and reserve width instead of height.
+# Also changeable at runtime from the dock handle's right-click menu.
+position = "bottom"
 genie_scale = 0.5
 genie_span = 10.0
 # Optional icon colorization
@@ -268,3 +272,10 @@ bookmarks = [
 # Show the app switcher (cmd-tab panel) on the output the pointer is on
 # (default: true). When false it always appears on the primary output.
 follow_cursor = true
+
+[workspaces]
+# Custom workspace names, written by the workspace selector when you rename a
+# label (click it a second time to edit it in place). The key is
+# "<output>:<position>", position counting from 0. Workspaces with no entry here
+# are labelled "Workspace N".
+# names = { "eDP-1:0" = "Mail", "eDP-1:2" = "Code" }

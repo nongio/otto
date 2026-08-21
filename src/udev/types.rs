@@ -78,6 +78,11 @@ pub struct UdevData {
     pub(super) primary_gpu: DrmNode,
     pub(super) gpus: GpuManager<GbmGlesBackend<SkiaRenderer, DrmDeviceFd>>,
     pub backends: HashMap<DrmNode, BackendData>,
+    /// Every libinput device currently on the seat, kept so an `input.*`
+    /// change can reconfigure the hardware that is already connected.
+    /// libinput has no way to enumerate its devices, so the list is
+    /// maintained from the added/removed events instead.
+    pub input_devices: Vec<smithay::reexports::input::Device>,
     #[cfg(feature = "fps_ticker")]
     pub(super) fps_texture: Option<smithay::backend::renderer::multigpu::MultiTexture>,
     pub context_id: Option<ContextId<MultiTexture>>,
@@ -192,6 +197,24 @@ pub struct SurfaceData {
     /// KMS plane for all workspace windows (overlay plane above the background).
     pub(super) windows_dmabuf_element:
         Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
+    /// KMS plane for the single window promoted to a "subtree plane": its own
+    /// lay-rs subtree — client texture plus the compositor-drawn style, SSD
+    /// decorations and shadow — rendered into a window-sized buffer. Sits
+    /// directly above the windows plane. Unlike the other plane elements this
+    /// one is resized (and repositioned) to follow its window, and carries no
+    /// buffer at all while nothing is promoted.
+    pub(super) window_dmabuf_element:
+        Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
+    /// Subtree-plane promotion hysteresis, mirroring `promote_candidates` for
+    /// tier 1: the candidate last seen and since when. Promoting reparents a
+    /// live window subtree between scene containers, so it must only happen
+    /// for a candidate that has held still — a window flickering in and out of
+    /// eligibility would otherwise churn the plane every frame.
+    pub(super) subtree_candidate: Option<smithay::reexports::wayland_server::backend::ObjectId>,
+    pub(super) subtree_since: Option<std::time::Instant>,
+    /// Whether `window_dmabuf_element` currently holds a window (its buffer is
+    /// only pushed then). Mirrors `Workspaces::promoted_window_for_output`.
+    pub(super) window_plane_active: bool,
     /// KMS plane for the expose / window-selector view (overlay plane, mutually
     /// exclusive with windows_plane in practice — one is hidden when the other shows).
     pub(super) expose_dmabuf_element:
@@ -204,9 +227,13 @@ pub struct SurfaceData {
     /// overlay plane. Pushed only while the switcher is alive.
     pub(super) switcher_dmabuf_element:
         Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
-    /// Strip-sized KMS plane for the dock (bottom band). Topmost plane.
+    /// Strip-sized KMS plane for the dock (a band along the dock's own screen
+    /// edge). Topmost plane.
     pub(super) dock_dmabuf_element:
         Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
+    /// Which screen edge `dock_dmabuf_element` was allocated for, so the strip
+    /// can be rebuilt when the dock moves.
+    pub(super) dock_plane_position: Option<crate::config::DockPosition>,
     /// Downscaled composite of the planes below the overlay-UI plane
     /// (bg + windows/expose), seeding cross-plane backdrop blur (dock
     /// vibrancy). Rebuilt only when a lower plane changes under the
@@ -232,10 +259,35 @@ pub struct SurfaceData {
     /// Whether the backdrop images are already blurred — consumers seed them
     /// directly and skip their own shape-clipped blur (which would leave a rim).
     pub(super) backdrop_preblurred: bool,
+    /// Blurred *background-only* snapshot — the backdrop for the MIDDLE plane
+    /// (window titlebars, or exposé's hover label). Kept separate from
+    /// `backdrop_image` because it is cached across rebuilds: a consumer
+    /// re-renders its whole buffer whenever its backdrop's `unique_id`
+    /// changes, so re-snapshotting this on every rebuild would make any
+    /// window animation redraw the entire windows plane every frame.
+    pub(super) backdrop_bg_image: Option<layers::skia::Image>,
+    /// The unblurred twin of `backdrop_bg_image`, for the middle plane's
+    /// `blur_include_content` layers — a window titlebar blurs this plus the
+    /// windows the same pass already painted beneath it.
+    pub(super) backdrop_bg_raw: Option<layers::skia::Image>,
+    /// Whether `backdrop_bg_image` is already blurred.
+    pub(super) backdrop_bg_preblurred: bool,
+    /// The background changed since `backdrop_bg_image` was taken; refresh it
+    /// on the next rebuild. Tracked separately from `backdrop_dirty`, which
+    /// also fires for middle-plane damage.
+    pub(super) backdrop_bg_dirty: bool,
     /// Lower-plane damage occurred while no blur consumer needed the
     /// composite (or outside every active consumer's region); the next
     /// frame with an active consumer must rebuild even without new damage.
     pub(super) backdrop_dirty: bool,
+    /// When the composite was last rebuilt because of desktop (bg/middle/
+    /// promoted-window) damage. Those rebuilds are rate-limited: a client
+    /// committing at frame rate under a blur consumer (a maximized window's
+    /// full-rect damage reaching the top bar's band) must not force the
+    /// composite + a full-res re-render of every blur plane per commit.
+    /// Interactive triggers (popups, first build, consumer activation)
+    /// bypass this.
+    pub(super) last_desktop_rebuild: Option<std::time::Instant>,
     /// Last frame the expose / switcher / overlay UI was active — drives
     /// releasing their swapchains after prolonged inactivity
     /// (see `planes::maybe_release_plane`).
@@ -263,6 +315,12 @@ pub struct SurfaceData {
     /// trusting partial damage — otherwise faint marks survive in the plane
     /// buffer (and in the popup-bearing backdrop) where the popup used to be.
     pub(super) popup_teardown_seen: usize,
+    /// Last `PopupOverlayView::structure_generation()` this surface has drawn.
+    /// A difference means a popup appeared, moved, became visible or went away
+    /// since the last frame — the only popup signal allowed to bypass the
+    /// backdrop rebuild rate limit (popup *repaints* go through it like any
+    /// other damage; see `udev::backdrop::decide_rebuild`).
+    pub(super) popup_structure_seen: usize,
     /// Same, for the dock's own context menu — it lives in the dock plane's
     /// subtree, so its teardown forces a full redraw of that plane.
     pub(super) dock_menu_teardown_seen: usize,
@@ -283,6 +341,7 @@ pub struct SurfaceData {
     /// planes frame scans out pre-composite ghosts (e.g. the window that
     /// was just minimized).
     pub(super) was_force_composite: bool,
+
     /// Keep rendering forced-composite frames until this instant even after
     /// the trigger (minimize animation) ended: the settle work (reparent,
     /// rescale, unhide) lands from an async task over several engine

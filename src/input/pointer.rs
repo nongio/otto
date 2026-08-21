@@ -491,6 +491,26 @@ impl<BackendData: Backend> Otto<BackendData> {
             ));
         }
 
+        // Server-side titlebars. The strip belongs to the compositor, not to
+        // the client, so it is checked before the window's surface tree — the
+        // client's surfaces start below it anyway.
+        if under.is_none() {
+            if let Some((window, loc)) = self.workspaces.element_under(pos) {
+                let deco_height = window.decoration_height();
+                if deco_height > 0 && !window.is_minimised() {
+                    let local_y = pos.y - loc.y as f64;
+                    if local_y >= 0.0 && local_y < deco_height as f64 {
+                        let view = crate::workspaces::WindowDecorationView::new(window.clone());
+                        // The offset is the window's origin: Smithay subtracts
+                        // it from the event, so the view sees titlebar-local
+                        // coordinates — the space `WindowDecoration` hit-tests
+                        // in.
+                        return Some((view.into(), loc.to_f64()));
+                    }
+                }
+            }
+        }
+
         // Check windows
         if under.is_none() {
             if let Some((focus, location)) =
@@ -548,15 +568,60 @@ impl<BackendData: Backend> Otto<BackendData> {
         under
     }
 
+    /// Fractional scale of the output the pointer is currently on, 1.0 if it is
+    /// not over any output.
+    pub(crate) fn pointer_output_scale(&self) -> f64 {
+        let pointer_location = self.pointer.current_location();
+        self.workspaces
+            .outputs()
+            .find(|o| {
+                self.workspaces
+                    .output_geometry(o)
+                    .map(|geo| geo.contains(pointer_location.to_i32_round()))
+                    .unwrap_or(false)
+            })
+            .map(|o| o.current_scale().fractional_scale())
+            .unwrap_or(1.0)
+    }
+
     pub(crate) fn on_pointer_axis<B: InputBackend>(&mut self, evt: B::PointerAxisEvent) {
+        // Remember which window is being scrolled. A window the user is
+        // scrolling is a window the user is watching, so it keeps full-rate
+        // frame callbacks even without keyboard focus — see
+        // `Otto::pointer_interacting_ids`.
+        let scrolled = self
+            .workspaces
+            .element_under(self.pointer.current_location())
+            .and_then(|(w, _)| w.wl_surface().as_ref().map(|s| s.id()))
+            .and_then(|id| self.workspaces.get_window_for_surface(&id).map(|w| w.id()));
+        if let Some(id) = scrolled {
+            self.pointer_interaction = Some((id, std::time::Instant::now()));
+        }
+
+        // Touchpad (and other continuous) scrolling reports the finger travel in
+        // device pixels, exactly like pointer motion does — so it needs the same
+        // conversion to logical pixels before it goes to the client, or scrolling
+        // runs `scale` times too fast on a HiDPI output. The v120 fallback below
+        // is already a logical-pixel figure and must not be scaled.
         let scroll_speed = Config::with(|c| c.input.scroll_speed);
-        let horizontal_amount = evt.amount(input::Axis::Horizontal).unwrap_or_else(|| {
-            evt.amount_v120(input::Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.
-        }) * scroll_speed;
+        let continuous_speed = match evt.source() {
+            AxisSource::Finger | AxisSource::Continuous => {
+                scroll_speed / self.pointer_output_scale()
+            }
+            _ => scroll_speed,
+        };
+        let horizontal_amount = evt
+            .amount(input::Axis::Horizontal)
+            .map(|amount| amount * continuous_speed)
+            .unwrap_or_else(|| {
+                evt.amount_v120(input::Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120. * scroll_speed
+            });
         let vertical_amount = evt
             .amount(input::Axis::Vertical)
-            .unwrap_or_else(|| evt.amount_v120(input::Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.)
-            * scroll_speed;
+            .map(|amount| amount * continuous_speed)
+            .unwrap_or_else(|| {
+                evt.amount_v120(input::Axis::Vertical).unwrap_or(0.0) * 15.0 / 120. * scroll_speed
+            });
         let horizontal_amount_discrete = evt.amount_v120(input::Axis::Horizontal);
         let vertical_amount_discrete = evt.amount_v120(input::Axis::Vertical);
 
@@ -705,17 +770,7 @@ impl crate::Otto<crate::udev::UdevData> {
         evt: B::PointerMotionEvent,
     ) {
         let mut pointer_location = self.pointer.current_location();
-        let current_scale = self
-            .workspaces
-            .outputs()
-            .find(|o| {
-                self.workspaces
-                    .output_geometry(o)
-                    .map(|geo| geo.contains(pointer_location.to_i32_round()))
-                    .unwrap_or(false)
-            })
-            .map(|o| o.current_scale().fractional_scale())
-            .unwrap_or(1.0);
+        let current_scale = self.pointer_output_scale();
         let logical_delta = {
             let p = evt.delta();
             Point::from((p.x / current_scale, p.y / current_scale))
