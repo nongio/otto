@@ -1,0 +1,25 @@
+[package]
+name = "otto-launcher"
+version = "0.1.0"
+edition = "2021"
+description = "A keyboard-driven launcher for Otto — type to filter apps and windows, Enter to run"
+
+[dependencies]
+otto-kit = { path = "../otto-kit" }
+taffy = "0.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+wayland-client = "0.31"
+smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+freedesktop-desktop-entry = "0.7.5"
+shell-words = "1.1"
+
+[dependencies.laye-rs]
+git = "https://github.com/nongio/layers"
+tag = "v1.13.0"
+features = ["export-taffy"]
+
+[dependencies.skia-safe]
+version = "=0.93"
+features = ["gl", "textlayout", "svg", "skottie"]

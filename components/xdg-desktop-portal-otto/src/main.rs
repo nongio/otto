@@ -13,7 +13,8 @@ use zbus::ConnectionBuilder;
 
 use xdg_desktop_portal_otto::otto_client::OttoClient;
 use xdg_desktop_portal_otto::portal::{
-    desktop_path, AccessPortal, ScreenCastPortal, SettingsPortal,
+    desktop_path, spawn_change_relay, AccessPortal, FileChooserPortal, ScreenCastPortal,
+    ScreenshotPortal, SettingsPortal,
 };
 
 /// Well-known D-Bus name for the Otto portal backend.
@@ -40,10 +41,25 @@ async fn main() -> Result<()> {
         .at(desktop_path(), settings_portal)
         .await?;
 
-    let access_portal = AccessPortal::new(sc_client);
+    // Settings changes are pushed to applications rather than polled.
+    spawn_change_relay(connection.clone(), sc_client.clone()).await?;
+
+    let access_portal = AccessPortal::new(sc_client.clone());
     connection
         .object_server()
         .at(desktop_path(), access_portal)
+        .await?;
+
+    let file_chooser_portal = FileChooserPortal::new(sc_client.clone());
+    connection
+        .object_server()
+        .at(desktop_path(), file_chooser_portal)
+        .await?;
+
+    let screenshot_portal = ScreenshotPortal::new(sc_client);
+    connection
+        .object_server()
+        .at(desktop_path(), screenshot_portal)
         .await?;
 
     // Claim the name only once every interface is exported, and claim it even
@@ -73,7 +89,7 @@ async fn main() -> Result<()> {
 
     info!(
         name = DBUS_NAME,
-        "ScreenCast, Settings and Access portal backends running"
+        "ScreenCast, Settings, Access, FileChooser and Screenshot portal backends running"
     );
 
     // Wait for a shutdown signal, or for a newer instance to take the name —
