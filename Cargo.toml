@@ -162,10 +162,15 @@ members = [
     "components/otto-lock",
     "components/otto-bar",
     "components/otto-islands",
+    "components/otto-launcher",
+    "components/otto-settings",
+    "components/otto-files",
+    "components/otto-quickview",
     "sample-clients/client-rainbow",
     "sample-clients/submenu",
     "sample-clients/submenu-gtk",
-    "sample-clients/deadlock-test",]
+    "sample-clients/deadlock-test",
+]
 
 
 [package.metadata.deb]

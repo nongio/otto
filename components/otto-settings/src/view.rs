@@ -1,0 +1,1348 @@
+//! Window layout: titlebar, sidebar, and the selected pane.
+
+use otto_kit::components::color_picker::{self, WellInteraction};
+use otto_kit::components::dropdown::{self, DropdownInteraction};
+use otto_kit::components::titlebar::{
+    Titlebar, TitlebarGroup, WindowControls, WindowControlsState,
+};
+use otto_kit::prelude::*;
+use skia_safe::{ClipOp, Contains, Point, RRect};
+
+use crate::glyphs;
+use crate::model::{self, Control, Pane, Row};
+use crate::settings_client::{self, Value};
+use crate::widgets;
+use std::collections::HashMap;
+
+/// The size the window asks for on first map. After that the compositor is in
+/// charge, and everything draws against [`Settings::width`]/`height` instead —
+/// these two are a starting point, not a layout constant.
+pub const WINDOW_W: f32 = 900.0;
+pub const WINDOW_H: f32 = 640.0;
+/// Below this the sidebar and a content column stop both fitting.
+pub const MIN_W: f32 = 560.0;
+pub const MIN_H: f32 = 360.0;
+pub const CORNER: f32 = 12.0;
+const TITLEBAR_H: f32 = 38.0;
+const SIDEBAR_W: f32 = 214.0;
+const CONTENT_PAD: f32 = 26.0;
+const ROW_H: f32 = 42.0;
+const ROW_H_DETAIL: f32 = 56.0;
+const GROUP_GAP: f32 = 22.0;
+/// Top padding of the pane content, in content-local points (origin at the
+/// pane viewport's top-left, i.e. `(SIDEBAR_W, TITLEBAR_H)`).
+const CONTENT_TOP_PAD: f32 = 16.0;
+/// Height the displays arrangement canvas adds ahead of the groups: the
+/// 168pt area plus the 30pt gap `render_arrangement` leaves below it. Kept
+/// as one constant, alongside that function, so [`Settings::pane_content_height`]
+/// cannot drift from what it actually draws.
+const ARRANGEMENT_HEIGHT: f32 = 168.0 + 30.0;
+
+/// The scrollable pane viewport: everything right of the sidebar, below the
+/// titlebar, in window-local coordinates. Where the pane's subsurfaces are
+/// placed, and what the popup anchors are measured against.
+pub fn pane_viewport(width: f32, height: f32) -> Rect {
+    Rect::from_ltrb(SIDEBAR_W, TITLEBAR_H, width, height)
+}
+
+/// The same viewport in the pane's *own* coordinates, origin at its top-left.
+///
+/// This is the space the pane's subsurfaces live in, so it is also the space
+/// the [`ScrollView`](otto_kit::components::scroll::ScrollView) driving them
+/// has to be told about: `ScrollSurfaces` positions the scrollbar from the
+/// thumb rect the view computes, relative to the pane, not to the window.
+pub fn pane_viewport_local(width: f32, height: f32) -> Rect {
+    let viewport = pane_viewport(width, height);
+    Rect::from_wh(viewport.width(), viewport.height())
+}
+
+/// The flat ground the pane's content sits on. Forms want a high-contrast,
+/// opaque backdrop rather than the sidebar's material.
+pub fn pane_background(dark: bool) -> Color {
+    if dark {
+        Color::from_rgb(0x24, 0x26, 0x2B)
+    } else {
+        Color::from_rgb(0xFA, 0xFA, 0xFA)
+    }
+}
+
+/// The titlebar band over the content area: the pane's ground, thinned just
+/// enough that the compositor's blur shows through it. It stays much more
+/// opaque than the sidebar — the band is a hairline away from a wall of form
+/// text and cannot start competing with it.
+pub fn titlebar_material(dark: bool) -> Color {
+    if dark {
+        Color::from_argb(0xE6, 0x24, 0x26, 0x2B)
+    } else {
+        Color::from_argb(0xE6, 0xFA, 0xFA, 0xFA)
+    }
+}
+
+/// Sidebar row geometry. Drawing and hit-testing both go through this so the
+/// clickable area cannot drift away from the painted one.
+fn sidebar_item_rect(index: usize) -> Rect {
+    const FIRST_ITEM_Y: f32 = TITLEBAR_H + 10.0 + 26.0 + 12.0;
+    const ITEM_H: f32 = 30.0;
+    const ITEM_STEP: f32 = 32.0;
+    Rect::from_xywh(
+        8.0,
+        FIRST_ITEM_Y + index as f32 * ITEM_STEP,
+        SIDEBAR_W - 16.0,
+        ITEM_H,
+    )
+}
+
+/// The pane whose sidebar row contains `(x, y)`, if any.
+pub fn pane_at(x: f32, y: f32) -> Option<usize> {
+    (0..model::panes().len()).find(|&i| sidebar_item_rect(i).contains(Point::new(x, y)))
+}
+
+/// The pop-up button's rect within a row, given the row's trailing edge and
+/// vertical centre. Drawing, hit-testing and popup anchoring all come through
+/// here so a click can never land somewhere different from what was drawn.
+fn select_rect(right: f32, cy: f32) -> Rect {
+    Rect::from_xywh(
+        right - widgets::SELECT_W,
+        cy - dropdown::field::HEIGHT / 2.0,
+        widgets::SELECT_W,
+        dropdown::field::HEIGHT,
+    )
+}
+
+/// The colour well's rect within a row. Its width follows the hex text, so
+/// the control is measured rather than fixed; drawing, hit-testing and popup
+/// anchoring all come through here.
+fn well_rect(right: f32, cy: f32, color: Color) -> Rect {
+    let width = color_picker::well::measure(color);
+    Rect::from_xywh(right - width, cy - 22.0 / 2.0, width, 22.0)
+}
+
+/// Padding `Titlebar` is given, which is also where it places its leading
+/// group — so the traffic lights end up at `(TITLEBAR_PAD, TITLEBAR_PAD)`.
+const TITLEBAR_PAD: f32 = (TITLEBAR_H - 12.0) / 2.0;
+
+/// The traffic lights for hit-testing, in window-local coordinates.
+///
+/// The drawn group is positioned by `Titlebar` itself and so is built at the
+/// origin; only the hit-test needs the absolute offset. Getting this wrong in
+/// the other direction — handing the *positioned* group to `Titlebar` — makes
+/// it apply the padding twice and the dots sit low.
+fn window_controls_hit() -> WindowControls {
+    WindowControls::new().at(TITLEBAR_PAD, TITLEBAR_PAD)
+}
+
+/// What a press in the titlebar means.
+pub enum TitlebarHit {
+    /// One of the traffic lights.
+    Control(otto_kit::components::titlebar::WindowControl),
+    /// Bare titlebar: the press starts a window move.
+    Drag,
+}
+
+/// What a window-local point hits in the titlebar, if anything.
+pub fn titlebar_hit(x: f32, y: f32, width: f32) -> Option<TitlebarHit> {
+    if y < 0.0 || y > TITLEBAR_H || x < 0.0 || x > width {
+        return None;
+    }
+    match window_controls_hit().control_at(x, y) {
+        Some(control) => Some(TitlebarHit::Control(control)),
+        None => Some(TitlebarHit::Drag),
+    }
+}
+
+/// The traffic light under a window-local point, if any — the hover test,
+/// which unlike [`titlebar_hit`] does not care about the draggable bar.
+pub fn titlebar_control_at(
+    x: f32,
+    y: f32,
+    width: f32,
+) -> Option<otto_kit::components::titlebar::WindowControl> {
+    match titlebar_hit(x, y, width) {
+        Some(TitlebarHit::Control(control)) => Some(control),
+        _ => None,
+    }
+}
+
+/// A colour well the pointer landed on, with everything needed to open it.
+pub struct ColorHit {
+    pub id: &'static str,
+    /// The well's rect in window-local coordinates, for anchoring the popup.
+    pub rect: Rect,
+    pub current: Color,
+}
+
+/// A pop-up button the pointer landed on, with everything needed to open it.
+pub struct SelectHit {
+    pub id: &'static str,
+    /// The field's rect in window-local coordinates, for anchoring the menu.
+    pub rect: Rect,
+    pub current: String,
+}
+
+/// A click that landed on a control bound to a setting.
+pub struct Hit {
+    pub id: &'static str,
+    /// The value the click implies — a toggle's opposite, or the slider value
+    /// at the pointer.
+    pub value: Value,
+    /// Whether continuing to move the pointer should keep changing the value.
+    pub draggable: bool,
+}
+
+/// One group of a pane, placed by [`Settings::pane_layout`].
+struct GroupLayout<'a> {
+    title: Option<&'static str>,
+    /// Top of the title's 24pt band, where the group has a title.
+    title_y: Option<f32>,
+    /// The grouped-list card behind the rows.
+    card: Rect,
+    rows: Vec<(&'a Row, Rect)>,
+}
+
+impl GroupLayout<'_> {
+    /// Everything the group paints, title band included.
+    fn bounds(&self) -> Rect {
+        match self.title_y {
+            Some(top) => Rect::from_ltrb(self.card.left, top, self.card.right, self.card.bottom),
+            None => self.card,
+        }
+    }
+}
+
+/// A whole pane placed in content-local coordinates.
+struct PaneLayout<'a> {
+    /// The displays arrangement canvas, on the pane that has one.
+    arrangement: Option<Rect>,
+    groups: Vec<GroupLayout<'a>>,
+    /// Where the walk ended — the pane's content height.
+    height: f32,
+}
+
+/// Does `rect` fall inside the band of content being asked for?
+///
+/// Only the vertical extent is compared: a pane is a single column that
+/// always spans the full content width, so a horizontal test would reject
+/// nothing and would misjudge anything (a badge, a restart pill) that a
+/// measured control pushes past the nominal right edge. The comparison is
+/// inclusive so a row ending exactly on the band's top edge survives, and
+/// with it the separator hairline it draws on that edge.
+fn intersects_band(rect: Rect, band: Rect) -> bool {
+    rect.bottom >= band.top && rect.top <= band.bottom
+}
+
+pub struct Settings {
+    /// The surface's current size in logical points, from the last configure.
+    pub width: f32,
+    pub height: f32,
+    pub panes: Vec<Pane>,
+    pub selected: usize,
+    pub theme: Theme,
+    pub dark: bool,
+    /// Identifier of the row whose dropdown is currently open, so its field
+    /// draws in the open state while the menu is up.
+    pub open_dropdown: Option<&'static str>,
+    /// Same, for the row whose colour picker is open.
+    pub open_picker: Option<&'static str>,
+    /// Knob positions for switches that are mid-flip, keyed by setting id.
+    /// A row not listed here draws its switch at rest — see
+    /// [`Settings::with_toggle_flips`].
+    pub toggle_flips: HashMap<&'static str, f32>,
+    /// Whether the surface carries compositor background blur, so the sidebar
+    /// can be painted as a translucent material rather than a flat fill.
+    pub blurred: bool,
+    /// Pointer state of the traffic lights: the app draws its own decoration,
+    /// so revealing the glyphs on hover is the app's job too.
+    pub controls: WindowControlsState,
+}
+
+impl Settings {
+    pub fn new(selected: usize, dark: bool) -> Self {
+        Self {
+            width: WINDOW_W,
+            height: WINDOW_H,
+            panes: model::panes(),
+            selected,
+            theme: if dark { Theme::dark() } else { Theme::light() },
+            dark,
+            open_dropdown: None,
+            open_picker: None,
+            toggle_flips: HashMap::new(),
+            blurred: false,
+            controls: WindowControlsState::new(),
+        }
+    }
+
+    /// The surface has compositor blur behind it.
+    pub fn with_blur(mut self, blurred: bool) -> Self {
+        self.blurred = blurred;
+        self
+    }
+
+    /// Draw against the surface's actual size rather than the size it was
+    /// created at. Clamped so a very small surface still lays out.
+    pub fn with_size(mut self, width: f32, height: f32) -> Self {
+        self.width = width.max(MIN_W);
+        self.height = height.max(MIN_H);
+        self
+    }
+
+    /// The scrollable pane viewport at this window's current size, in
+    /// window-local coordinates.
+    pub fn viewport(&self) -> Rect {
+        pane_viewport(self.width, self.height)
+    }
+
+    /// The same viewport in the pane's own coordinates — see
+    /// [`pane_viewport_local`].
+    pub fn local_viewport(&self) -> Rect {
+        pane_viewport_local(self.width, self.height)
+    }
+
+    /// Where each mid-flip switch's knob currently is, 0.0 off to 1.0 on.
+    ///
+    /// The value itself is already in the store by the time a flip runs — the
+    /// change is applied on press, not when the animation lands — so this is
+    /// purely how the switch is drawn on the way there.
+    pub fn with_toggle_flips(mut self, flips: HashMap<&'static str, f32>) -> Self {
+        self.toggle_flips = flips;
+        self
+    }
+
+    /// Mark one row's dropdown as open.
+    pub fn with_open_dropdown(mut self, id: Option<&'static str>) -> Self {
+        self.open_dropdown = id;
+        self
+    }
+
+    /// Carry the traffic lights' hover/press state into this frame.
+    pub fn with_controls(mut self, controls: WindowControlsState) -> Self {
+        self.controls = controls;
+        self
+    }
+
+    /// Mark one row's colour picker as open.
+    pub fn with_open_picker(mut self, id: Option<&'static str>) -> Self {
+        self.open_picker = id;
+        self
+    }
+
+    fn fill(&self, color: Color) -> Paint {
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(color);
+        paint
+    }
+
+    /// Render with the pane content unscrolled — what `--png` previews and
+    /// any caller without an interactive scroll position want.
+    pub fn render(&self, canvas: &Canvas) {
+        self.render_with_scroll(canvas, 0.0);
+    }
+
+    /// Render with the pane content's vertical scroll at `pane_scroll_offset`
+    /// (content-local points, as tracked by an externally-owned
+    /// [`ScrollView`](otto_kit::components::scroll::ScrollView)). The window
+    /// chrome — titlebar, sidebar — never scrolls.
+    pub fn render_with_scroll(&self, canvas: &Canvas, pane_scroll_offset: f32) {
+        let mut scroll = ScrollState::new(self.viewport());
+        scroll.set_content_length(self.pane_content_height());
+        scroll.set_offset(pane_scroll_offset);
+        // A still render has no gesture to fade the overlay bar in, so show
+        // it outright — a screenshot of a scrolled pane should say so.
+        scroll.set_scrollbar_opacity(1.0);
+        self.render_with_scroll_state(canvas, &scroll);
+    }
+
+    /// Render from a live [`ScrollState`] — the interactive path, where the
+    /// offset comes with an overscroll bounce and a fading scrollbar that
+    /// [`ScrollView`](otto_kit::components::scroll::ScrollView) is animating.
+    pub fn render_with_scroll_state(&self, canvas: &Canvas, scroll: &ScrollState) {
+        canvas.save();
+        canvas.clip_rrect(self.frame(), ClipOp::Intersect, true);
+
+        self.render_ground(canvas);
+        self.render_sidebar(canvas);
+
+        let content_width = self.width - SIDEBAR_W;
+        ScrollRenderer::draw(canvas, scroll, &self.theme, |canvas, content| {
+            self.render_pane(canvas, content_width, content);
+        });
+
+        self.render_titlebar(canvas);
+        self.render_divider(canvas, SIDEBAR_W);
+
+        canvas.restore();
+    }
+
+    /// Everything the window surface itself paints: the two grounds, the
+    /// sidebar, the titlebar and the divider — and no pane content.
+    ///
+    /// The pane scrolls in its own compositor-cropped subsurfaces (see
+    /// `main.rs`), which sit over the whole viewport. Painting the content
+    /// here as well would only be overdraw the window would have to repaint on
+    /// every frame of a scroll, which is the cost the subsurfaces exist to
+    /// remove.
+    pub fn render_chrome(&self, canvas: &Canvas) {
+        canvas.save();
+        canvas.clip_rrect(self.frame(), ClipOp::Intersect, true);
+
+        self.render_ground(canvas);
+        self.render_sidebar(canvas);
+        self.render_titlebar(canvas);
+        // The pane surface starts exactly at `SIDEBAR_W`, so a hairline
+        // centred there would lose its right half underneath it. Nudging it
+        // half a point left keeps the whole stroke on the window's own side.
+        self.render_divider(canvas, SIDEBAR_W - 0.5);
+
+        canvas.restore();
+    }
+
+    /// The pane's content for one band of it, in content-local coordinates —
+    /// what the pane's own surface paints. See [`Self::render_pane`] for the
+    /// coordinate space and for what `band` licenses.
+    pub fn render_content(&self, canvas: &Canvas, band: Rect) {
+        self.render_pane(canvas, self.width - SIDEBAR_W, band);
+    }
+
+    /// The window's rounded outline, which everything is clipped to.
+    fn frame(&self) -> RRect {
+        RRect::new_rect_xy(Rect::from_wh(self.width, self.height), CORNER, CORNER)
+    }
+
+    /// The two backdrops: the opaque content area and the sidebar's material.
+    ///
+    /// The content area is painted even though the pane's own surface covers
+    /// it — it is what shows through wherever that surface does not reach, in
+    /// particular the gap a rubber-band overscroll opens at either end.
+    fn render_ground(&self, canvas: &Canvas) {
+        // Only below the titlebar: the band itself is a translucent material
+        // (see `render_titlebar`), so it must not have an opaque ground under
+        // it.
+        canvas.draw_rect(
+            Rect::from_ltrb(SIDEBAR_W, TITLEBAR_H, self.width, self.height),
+            &self.fill(pane_background(self.dark)),
+        );
+
+        // The sidebar is a translucent material over whatever the compositor
+        // blurs behind the surface. It only reads as a material if the
+        // surface actually carries `BackgroundBlur` — otherwise this is a
+        // tint over the raw desktop. See `main.rs`, where the blend mode is
+        // set.
+        canvas.draw_rect(
+            Rect::from_wh(SIDEBAR_W, self.height),
+            &self.fill(if self.blurred {
+                self.theme.material_sidebar
+            } else if self.dark {
+                Color::from_rgb(0x1C, 0x1E, 0x22)
+            } else {
+                Color::from_rgb(0xEE, 0xEE, 0xF0)
+            }),
+        );
+    }
+
+    /// Sidebar/content divider, drawn last so it sits above both.
+    fn render_divider(&self, canvas: &Canvas, x: f32) {
+        let mut hairline = Paint::default();
+        hairline.set_color(self.theme.fill_tertiary);
+        hairline.set_stroke_width(1.0);
+        canvas.draw_line(Point::new(x, 0.0), Point::new(x, self.height), &hairline);
+    }
+
+    /// Place the selected pane's content in content-local coordinates.
+    ///
+    /// Drawing, measuring and hit-testing all go through this one walk, so
+    /// the painted geometry, the height the scroll view is told about and the
+    /// clickable rects cannot drift apart.
+    fn pane_layout(&self, content_width: f32) -> PaneLayout<'_> {
+        let pane = &self.panes[self.selected];
+        let x0 = CONTENT_PAD;
+        let x1 = content_width - CONTENT_PAD;
+        let mut y = CONTENT_TOP_PAD;
+
+        let arrangement = (pane.name == "Displays").then(|| {
+            let area = Rect::from_ltrb(x0, y, x1, y + ARRANGEMENT_HEIGHT);
+            y += ARRANGEMENT_HEIGHT;
+            area
+        });
+
+        let mut groups = Vec::with_capacity(pane.groups.len());
+        for group in &pane.groups {
+            let title_y = group.title.map(|_| {
+                let top = y;
+                y += 24.0;
+                top
+            });
+
+            let card_top = y;
+            let rows: Vec<_> = group
+                .rows
+                .iter()
+                .map(|row| {
+                    let height = Self::row_height(row);
+                    let rect = Rect::from_ltrb(x0, y, x1, y + height);
+                    y += height;
+                    (row, rect)
+                })
+                .collect();
+            let card = Rect::from_ltrb(x0, card_top, x1, y);
+            y += GROUP_GAP;
+
+            groups.push(GroupLayout {
+                title: group.title,
+                title_y,
+                card,
+                rows,
+            });
+        }
+
+        PaneLayout {
+            arrangement,
+            groups,
+            height: y,
+        }
+    }
+
+    /// Total height of the selected pane's content, in the same
+    /// content-local coordinate space `render_pane` draws in.
+    pub fn pane_content_height(&self) -> f32 {
+        self.pane_layout(self.width - SIDEBAR_W).height
+    }
+
+    /// Every row of the selected pane, with the rect it is drawn in, in
+    /// content-local coordinates.
+    fn row_rects(&self, content_width: f32) -> Vec<(&Row, Rect)> {
+        self.pane_layout(content_width)
+            .groups
+            .into_iter()
+            .flat_map(|group| group.rows)
+            .collect()
+    }
+
+    /// The setting a click lands on, given a window-local point and the pane's
+    /// current scroll offset. Returns the row's identifier, the value the
+    /// click implies, and whether the caller should keep tracking a drag.
+    pub fn hit(&self, x: f32, y: f32, scroll_offset: f32) -> Option<Hit> {
+        let viewport = self.viewport();
+        if !viewport.contains(Point::new(x, y)) {
+            return None;
+        }
+
+        let content_width = self.width - SIDEBAR_W;
+        let local = Point::new(x - viewport.left, y - viewport.top + scroll_offset);
+
+        let (row, rect) = self
+            .row_rects(content_width)
+            .into_iter()
+            .find(|(_, rect)| rect.contains(local))?;
+        let id = row.id?;
+        let right = rect.right - 14.0;
+        let cy = rect.center_y();
+
+        match &row.control {
+            Control::Toggle(on) => {
+                let toggle = Rect::from_xywh(
+                    right - widgets::TOGGLE_W,
+                    cy - widgets::TOGGLE_H / 2.0,
+                    widgets::TOGGLE_W,
+                    widgets::TOGGLE_H,
+                );
+                toggle.contains(local).then(|| Hit {
+                    id,
+                    value: Value::Bool(!on),
+                    draggable: false,
+                })
+            }
+            Control::Slider {
+                min, max, readout, ..
+            } => {
+                let readout_w = styles::BODY.font().measure_str(readout, None).0;
+                let track_x = right - readout_w - 12.0 - widgets::SLIDER_W;
+                // Generous vertically: the track is 4pt tall, which is not a
+                // realistic click target.
+                let track = Rect::from_xywh(track_x, cy - 12.0, widgets::SLIDER_W, 24.0);
+                track.contains(local).then(|| {
+                    let t = ((local.x - track_x) / widgets::SLIDER_W).clamp(0.0, 1.0);
+                    Hit {
+                        id,
+                        value: settings_client::number_for(id, min + t * (max - min)),
+                        draggable: true,
+                    }
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// The identifier of the file row whose "Choose…" button a click lands
+    /// on. Separate from [`Self::hit`] for the same reason a dropdown is: it
+    /// does not carry a new value, it starts something that will produce one.
+    pub fn file_hit(&self, x: f32, y: f32, scroll_offset: f32) -> Option<&'static str> {
+        let viewport = self.viewport();
+        if !viewport.contains(Point::new(x, y)) {
+            return None;
+        }
+
+        let content_width = self.width - SIDEBAR_W;
+        let local = Point::new(x - viewport.left, y - viewport.top + scroll_offset);
+
+        let (row, rect) = self
+            .row_rects(content_width)
+            .into_iter()
+            .find(|(_, rect)| rect.contains(local))?;
+        let id = row.id?;
+        if !matches!(row.control, Control::File(_)) {
+            return None;
+        }
+        widgets::choose_rect(rect.right - 14.0, rect.center_y())
+            .contains(local)
+            .then_some(id)
+    }
+
+    /// The pop-up button a click lands on, if any. Separate from [`Self::hit`]
+    /// because a dropdown does not change a value on press — it opens a menu,
+    /// and the value changes when something in that menu is chosen.
+    pub fn select_hit(&self, x: f32, y: f32, scroll_offset: f32) -> Option<SelectHit> {
+        let viewport = self.viewport();
+        if !viewport.contains(Point::new(x, y)) {
+            return None;
+        }
+
+        let content_width = self.width - SIDEBAR_W;
+        let local = Point::new(x - viewport.left, y - viewport.top + scroll_offset);
+
+        let (row, rect) = self
+            .row_rects(content_width)
+            .into_iter()
+            .find(|(_, rect)| rect.contains(local))?;
+        let id = row.id?;
+        let Control::Select(current) = &row.control else {
+            return None;
+        };
+
+        let field = select_rect(rect.right - 14.0, rect.center_y());
+        if !dropdown::field::hit_test(field, local.x, local.y) {
+            return None;
+        }
+
+        // Back into window-local coordinates for the popup's anchor rect: the
+        // menu is positioned against the surface, not against scrolled content.
+        Some(SelectHit {
+            id,
+            rect: Rect::from_xywh(
+                field.left + viewport.left,
+                field.top + viewport.top - scroll_offset,
+                field.width(),
+                field.height(),
+            ),
+            current: current.clone(),
+        })
+    }
+
+    /// The colour well a click lands on, if any. Like a dropdown, a well does
+    /// not change a value on press — it opens a picker.
+    pub fn color_hit(&self, x: f32, y: f32, scroll_offset: f32) -> Option<ColorHit> {
+        let viewport = self.viewport();
+        if !viewport.contains(Point::new(x, y)) {
+            return None;
+        }
+
+        let content_width = self.width - SIDEBAR_W;
+        let local = Point::new(x - viewport.left, y - viewport.top + scroll_offset);
+
+        let (row, rect) = self
+            .row_rects(content_width)
+            .into_iter()
+            .find(|(_, rect)| rect.contains(local))?;
+        let id = row.id?;
+        let Control::Color(argb) = &row.control else {
+            return None;
+        };
+
+        let color = Color::from(*argb);
+        let well = well_rect(rect.right - 14.0, rect.center_y(), color);
+        if !color_picker::well::hit_test(well, local.x, local.y) {
+            return None;
+        }
+
+        Some(ColorHit {
+            id,
+            rect: Rect::from_xywh(
+                well.left + viewport.left,
+                well.top + viewport.top - scroll_offset,
+                well.width(),
+                well.height(),
+            ),
+            current: color,
+        })
+    }
+
+    /// The value a drag to `x` implies, for a slider already being dragged.
+    pub fn drag_value(&self, id: &str, x: f32) -> Option<Value> {
+        let content_width = self.width - SIDEBAR_W;
+        let local_x = x - SIDEBAR_W;
+
+        let (row, rect) = self
+            .row_rects(content_width)
+            .into_iter()
+            .find(|(row, _)| row.id == Some(id))?;
+
+        match &row.control {
+            Control::Slider {
+                min, max, readout, ..
+            } => {
+                let readout_w = styles::BODY.font().measure_str(readout, None).0;
+                let track_x = rect.right - 14.0 - readout_w - 12.0 - widgets::SLIDER_W;
+                let t = ((local_x - track_x) / widgets::SLIDER_W).clamp(0.0, 1.0);
+                let raw = min + t * (max - min);
+                Some(settings_client::number_for(
+                    id,
+                    settings_client::snap(id, raw),
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    fn render_titlebar(&self, canvas: &Canvas) {
+        // The band over the content is slightly translucent, so the frosted
+        // backdrop carries across the whole top of the window instead of
+        // stopping at the sidebar's edge. Without compositor blur it would be
+        // a tint over the raw desktop, so paint it flat there.
+        canvas.draw_rect(
+            Rect::from_ltrb(SIDEBAR_W, 0.0, self.width, TITLEBAR_H),
+            &self.fill(if self.blurred {
+                titlebar_material(self.dark)
+            } else {
+                pane_background(self.dark)
+            }),
+        );
+
+        // Traffic lights sit over the sidebar; the pane name titles the bar.
+        Titlebar::new()
+            .at(0.0, 0.0)
+            .with_width(self.width)
+            .with_height(TITLEBAR_H)
+            .with_corner_radius(CORNER)
+            .with_padding(TITLEBAR_PAD)
+            .with_background(Color::TRANSPARENT)
+            .with_leading(
+                TitlebarGroup::new().add(
+                    self.controls
+                        .apply(WindowControls::new().with_active(true).with_dark(self.dark)),
+                ),
+            )
+            .render(canvas);
+
+        widgets::text_centered_y(
+            canvas,
+            self.panes[self.selected].name,
+            SIDEBAR_W + CONTENT_PAD,
+            TITLEBAR_H / 2.0,
+            styles::TITLE_3_EMPHASIZED,
+            self.theme.text_primary,
+        );
+
+        // Hairline under the bar, separating it from the pane. Like the
+        // vertical divider it is nudged half a point onto the window's own
+        // side, since the pane's surface starts exactly at `TITLEBAR_H` and
+        // would take the lower half of a centred stroke with it. It stops at
+        // the sidebar, which runs the full height of the window.
+        let mut hairline = Paint::default();
+        hairline.set_color(self.theme.fill_tertiary);
+        hairline.set_stroke_width(1.0);
+        canvas.draw_line(
+            Point::new(SIDEBAR_W, TITLEBAR_H - 0.5),
+            Point::new(self.width, TITLEBAR_H - 0.5),
+            &hairline,
+        );
+    }
+
+    fn render_sidebar(&self, canvas: &Canvas) {
+        // Search field
+        let field = Rect::from_xywh(12.0, TITLEBAR_H + 10.0, SIDEBAR_W - 24.0, 26.0);
+        let rrect = RRect::new_rect_xy(field, 7.0, 7.0);
+        canvas.draw_rrect(rrect, &self.fill(self.theme.fill_tertiary));
+        self.magnifier(canvas, field.left + 10.0, field.center_y());
+        widgets::text_centered_y(
+            canvas,
+            "Search",
+            field.left + 24.0,
+            field.center_y(),
+            styles::BODY,
+            self.theme.text_tertiary,
+        );
+
+        for (i, pane) in self.panes.iter().enumerate() {
+            let item = sidebar_item_rect(i);
+            let selected = i == self.selected;
+            if selected {
+                canvas.draw_rrect(
+                    RRect::new_rect_xy(item, 7.0, 7.0),
+                    &self.fill(self.theme.material_selection_focused),
+                );
+            }
+            let tint = if selected {
+                Color::WHITE
+            } else {
+                self.theme.text_primary
+            };
+
+            glyphs::draw(
+                canvas,
+                pane.icon,
+                item.left + 17.0,
+                item.center_y(),
+                15.0,
+                tint,
+            );
+
+            widgets::text_centered_y(
+                canvas,
+                pane.name,
+                item.left + 33.0,
+                item.center_y(),
+                if selected {
+                    styles::BODY_EMPHASIZED
+                } else {
+                    styles::BODY
+                },
+                tint,
+            );
+        }
+    }
+
+    fn magnifier(&self, canvas: &Canvas, cx: f32, cy: f32) {
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_style(skia_safe::PaintStyle::Stroke);
+        paint.set_stroke_width(1.3);
+        paint.set_color(self.theme.text_tertiary);
+        canvas.draw_circle(Point::new(cx - 0.5, cy - 0.5), 4.0, &paint);
+        canvas.draw_line(
+            Point::new(cx + 2.5, cy + 2.5),
+            Point::new(cx + 5.0, cy + 5.0),
+            &paint,
+        );
+    }
+
+    /// Draws in content-local coordinates: `(0, 0)` is the pane viewport's
+    /// top-left, i.e. `(SIDEBAR_W, TITLEBAR_H)`. The caller is responsible
+    /// for the clip and scroll translation (see [`Self::render_with_scroll`]).
+    ///
+    /// `content` is the band of that space the caller wants painted. Anything
+    /// lying entirely outside it is skipped — text a scrolled-away row would
+    /// have shaped is the expensive part of a frame, and it is invisible. A
+    /// caller that wants the whole pane passes a band tall enough to hold it.
+    fn render_pane(&self, canvas: &Canvas, content_width: f32, content: Rect) {
+        let layout = self.pane_layout(content_width);
+        let x0 = CONTENT_PAD;
+        let x1 = content_width - CONTENT_PAD;
+
+        if let Some(area) = layout.arrangement {
+            if intersects_band(area, content) {
+                self.render_arrangement(canvas, x0, x1, area.top);
+            }
+        }
+
+        for group in &layout.groups {
+            if std::env::var_os("OTTO_PANE_DEBUG").is_some() {
+                eprintln!(
+                    "[groupdbg] {:?} bounds {:?} band {:?} drawn={}",
+                    group.title,
+                    group.bounds(),
+                    content,
+                    intersects_band(group.bounds(), content)
+                );
+            }
+            if !intersects_band(group.bounds(), content) {
+                continue;
+            }
+
+            if let (Some(title), Some(title_y)) = (group.title, group.title_y) {
+                widgets::text_centered_y(
+                    canvas,
+                    title,
+                    x0 + 2.0,
+                    title_y + 9.0,
+                    styles::SUBHEADLINE_EMPHASIZED,
+                    self.theme.text_secondary,
+                );
+            }
+
+            // Grouped-list card behind the rows.
+            let rrect = RRect::new_rect_xy(group.card, 9.0, 9.0);
+            canvas.draw_rrect(
+                rrect,
+                &self.fill(if self.dark {
+                    Color::from_argb(0x14, 0xFF, 0xFF, 0xFF)
+                } else {
+                    Color::WHITE
+                }),
+            );
+            let mut border = Paint::default();
+            border.set_anti_alias(true);
+            border.set_style(skia_safe::PaintStyle::Stroke);
+            border.set_stroke_width(1.0);
+            border.set_color(self.theme.fill_tertiary);
+            canvas.draw_rrect(rrect, &border);
+
+            for (i, (row, rect)) in group.rows.iter().enumerate() {
+                if !intersects_band(*rect, content) {
+                    continue;
+                }
+                self.render_row(canvas, row, x0, x1, rect.top, rect.height());
+                if i + 1 < group.rows.len() {
+                    widgets::separator(canvas, x0 + 14.0, x1, rect.bottom, &self.theme);
+                }
+            }
+        }
+    }
+
+    fn row_height(row: &Row) -> f32 {
+        if row.detail.is_some() {
+            ROW_H_DETAIL
+        } else {
+            ROW_H
+        }
+    }
+
+    fn render_row(&self, canvas: &Canvas, row: &Row, x0: f32, x1: f32, y: f32, h: f32) {
+        let cy = y + h / 2.0;
+        let label_x = x0 + 14.0;
+        let right = x1 - 14.0;
+
+        match row.detail.as_deref() {
+            Some(detail) => {
+                widgets::text_centered_y(
+                    canvas,
+                    row.label,
+                    label_x,
+                    cy - 9.0,
+                    styles::BODY,
+                    self.theme.text_primary,
+                );
+                widgets::text_centered_y(
+                    canvas,
+                    detail,
+                    label_x,
+                    cy + 9.0,
+                    styles::SUBHEADLINE,
+                    self.theme.text_secondary,
+                );
+            }
+            None => widgets::text_centered_y(
+                canvas,
+                row.label,
+                label_x,
+                cy,
+                styles::BODY,
+                self.theme.text_primary,
+            ),
+        }
+
+        if row.overridden {
+            let label_w = styles::BODY.font().measure_str(row.label, None).0;
+            let badge_y = if row.detail.is_some() { cy - 9.0 } else { cy };
+            widgets::revert_badge(canvas, label_x + label_w + 12.0, badge_y, &self.theme);
+        }
+
+        match &row.control {
+            Control::Toggle(on) => {
+                let fraction = row
+                    .id
+                    .and_then(|id| self.toggle_flips.get(id).copied())
+                    .unwrap_or_else(|| toggle::knob_fraction_for(*on));
+                widgets::toggle(canvas, right - widgets::TOGGLE_W, cy, fraction, &self.theme)
+            }
+            Control::Slider {
+                value,
+                min,
+                max,
+                readout,
+            } => {
+                let readout_w = styles::BODY.font().measure_str(readout, None).0;
+                let x = right - readout_w - 12.0 - widgets::SLIDER_W;
+                widgets::slider(canvas, x, cy, *value, *min, *max, readout, &self.theme);
+            }
+            Control::Select(value) => {
+                let open = row.id.is_some() && row.id == self.open_dropdown;
+                // The control holds the configuration token; the field shows
+                // the schema's human name for it where there is one.
+                let shown = match row.id {
+                    Some(id) => settings_client::display_choice(id, value),
+                    None => value.clone(),
+                };
+                dropdown::field::draw(
+                    canvas,
+                    select_rect(right, cy),
+                    &shown,
+                    if open {
+                        DropdownInteraction::Open
+                    } else {
+                        DropdownInteraction::Normal
+                    },
+                    &self.theme,
+                );
+            }
+            Control::Color(argb) => {
+                let color = Color::from(*argb);
+                let open = row.id.is_some() && row.id == self.open_picker;
+                color_picker::well::draw(
+                    canvas,
+                    well_rect(right, cy, color),
+                    color,
+                    if open {
+                        WellInteraction::Open
+                    } else {
+                        WellInteraction::Normal
+                    },
+                    &self.theme,
+                );
+            }
+            Control::Text(value) => widgets::text_field(canvas, right, cy, value, &self.theme),
+            Control::File(value) => widgets::file_field(canvas, right, cy, value, &self.theme),
+            Control::Value(value) => {
+                // Shortcut rows read as key combinations; everything else is
+                // plain secondary text.
+                if value.contains('+') {
+                    widgets::key_combo(canvas, right, cy, value, &self.theme)
+                } else {
+                    widgets::text_right(
+                        canvas,
+                        value,
+                        right,
+                        cy,
+                        styles::BODY,
+                        self.theme.text_secondary,
+                    )
+                }
+            }
+        }
+
+        // The pill trails the text it belongs to — the detail line if there is
+        // one, otherwise the label — so it can never sit on top of either.
+        if row.restart_required {
+            let (text, style, pill_cy) = match row.detail.as_deref() {
+                Some(detail) => (detail, styles::SUBHEADLINE, cy + 9.0),
+                None => (row.label, styles::BODY, cy),
+            };
+            let after_text = label_x + style.font().measure_str(text, None).0 + 10.0;
+            // A row that also carries the override badge has to clear that too.
+            let x = if row.overridden && row.detail.is_none() {
+                after_text + 14.0
+            } else {
+                after_text
+            };
+            widgets::restart_pill(canvas, x, pill_cy);
+        }
+    }
+
+    /// Displays arrangement canvas, drawn from `y` down. It occupies
+    /// [`ARRANGEMENT_HEIGHT`], which is what the pane walk reserves for it.
+    fn render_arrangement(&self, canvas: &Canvas, x0: f32, x1: f32, y: f32) {
+        let outputs = model::outputs();
+        let area = Rect::from_ltrb(x0, y, x1, y + 168.0);
+        let rrect = RRect::new_rect_xy(area, 9.0, 9.0);
+        canvas.draw_rrect(
+            rrect,
+            &self.fill(if self.dark {
+                Color::from_argb(0x14, 0xFF, 0xFF, 0xFF)
+            } else {
+                Color::from_argb(0x08, 0x00, 0x00, 0x00)
+            }),
+        );
+
+        // Fit the desktop bounding box into the area with a margin.
+        let min_x = outputs.iter().map(|o| o.x).fold(f32::MAX, f32::min);
+        let min_y = outputs.iter().map(|o| o.y).fold(f32::MAX, f32::min);
+        let max_x = outputs
+            .iter()
+            .map(|o| o.x + o.width)
+            .fold(f32::MIN, f32::max);
+        let max_y = outputs
+            .iter()
+            .map(|o| o.y + o.height)
+            .fold(f32::MIN, f32::max);
+        let margin = 22.0;
+        let scale = ((area.width() - margin * 2.0) / (max_x - min_x))
+            .min((area.height() - margin * 2.0) / (max_y - min_y));
+        let ox = area.left + (area.width() - (max_x - min_x) * scale) / 2.0 - min_x * scale;
+        let oy = area.top + (area.height() - (max_y - min_y) * scale) / 2.0 - min_y * scale;
+
+        widgets::dashed_rect(
+            canvas,
+            Rect::from_ltrb(
+                ox + min_x * scale - 6.0,
+                oy + min_y * scale - 6.0,
+                ox + max_x * scale + 6.0,
+                oy + max_y * scale + 6.0,
+            ),
+            self.theme.fill_tertiary,
+        );
+
+        for output in &outputs {
+            let rect = Rect::from_xywh(
+                ox + output.x * scale,
+                oy + output.y * scale,
+                output.width * scale,
+                output.height * scale,
+            );
+            let rrect = RRect::new_rect_xy(rect, 4.0, 4.0);
+            canvas.draw_rrect(
+                rrect,
+                &self.fill(if self.dark {
+                    Color::from_rgb(0x33, 0x39, 0x45)
+                } else {
+                    Color::from_rgb(0xD5, 0xDC, 0xE6)
+                }),
+            );
+            // Selection is the accent ring; being primary is the bar strip.
+            // They are different states and a display can have either.
+            let mut border = Paint::default();
+            border.set_anti_alias(true);
+            border.set_style(skia_safe::PaintStyle::Stroke);
+            border.set_stroke_width(if output.selected { 2.0 } else { 1.0 });
+            border.set_color(if output.selected {
+                self.theme.accent
+            } else {
+                self.theme.fill_primary
+            });
+            canvas.draw_rrect(rrect, &border);
+
+            if output.primary {
+                let strip = Rect::from_ltrb(rect.left, rect.top, rect.right, rect.top + 4.0);
+                canvas.save();
+                canvas.clip_rrect(rrect, ClipOp::Intersect, true);
+                canvas.draw_rect(strip, &self.fill(self.theme.text_secondary));
+                canvas.restore();
+            }
+
+            let style = styles::SUBHEADLINE;
+            let width = style.font().measure_str(output.name, None).0;
+            widgets::text_centered_y(
+                canvas,
+                output.name,
+                rect.center_x() - width / 2.0,
+                rect.center_y(),
+                style,
+                self.theme.text_primary,
+            );
+        }
+
+        widgets::text_centered_y(
+            canvas,
+            "Drag a display to rearrange it",
+            x0 + 2.0,
+            area.bottom + 12.0,
+            styles::SUBHEADLINE,
+            self.theme.text_tertiary,
+        );
+    }
+}
+
+/// Rounded window with a drop shadow, drawn on a desktop backdrop.
+pub fn render_on_desktop(canvas: &Canvas, settings: &Settings, x: f32, y: f32) {
+    let frame = Rect::from_xywh(x, y, settings.width, settings.height);
+    let rrect = RRect::new_rect_xy(frame, CORNER, CORNER);
+
+    let mut shadow = Paint::default();
+    shadow.set_anti_alias(true);
+    shadow.set_color(Color::from_argb(0x59, 0, 0, 0));
+    shadow.set_mask_filter(skia_safe::MaskFilter::blur(
+        skia_safe::BlurStyle::Normal,
+        18.0,
+        false,
+    ));
+    canvas.save();
+    canvas.translate((0.0, 10.0));
+    canvas.draw_rrect(rrect, &shadow);
+    canvas.restore();
+
+    canvas.save();
+    canvas.translate((x, y));
+    settings.render(canvas);
+    canvas.restore();
+
+    // Hairline edge so the window reads as separate from the wallpaper.
+    let mut edge = Paint::default();
+    edge.set_anti_alias(true);
+    edge.set_style(skia_safe::PaintStyle::Stroke);
+    edge.set_stroke_width(1.0);
+    edge.set_color(Color::from_argb(0x2E, 0xFF, 0xFF, 0xFF));
+    canvas.draw_rrect(rrect, &edge);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use skia_safe::PictureRecorder;
+
+    /// The pane with the most content, so there is something to scroll past.
+    fn tallest_pane() -> Settings {
+        (0..model::panes().len())
+            .map(|i| Settings::new(i, false))
+            .max_by(|a, b| a.pane_content_height().total_cmp(&b.pane_content_height()))
+            .expect("at least one pane")
+    }
+
+    /// Draw ops `render_pane` emits for one band of content.
+    fn ops_for_band(settings: &Settings, band: Rect) -> usize {
+        let content_width = settings.width - SIDEBAR_W;
+        let mut recorder = PictureRecorder::new();
+        let canvas = recorder.begin_recording(
+            Rect::from_wh(content_width, settings.pane_content_height()),
+            false,
+        );
+        settings.render_pane(canvas, content_width, band);
+        recorder
+            .finish_recording_as_picture(None)
+            .expect("recorded picture")
+            .approximate_op_count()
+    }
+
+    /// The pixel at window-local `(x, y)` after `draw` has painted a window.
+    fn pixel_at(settings: &Settings, draw: impl FnOnce(&Canvas), x: i32, y: i32) -> [u8; 4] {
+        let mut surface =
+            skia_safe::surfaces::raster_n32_premul((settings.width as i32, settings.height as i32))
+                .expect("raster surface");
+        surface.canvas().clear(Color::TRANSPARENT);
+        draw(surface.canvas());
+        let info = skia_safe::ImageInfo::new(
+            (1, 1),
+            skia_safe::ColorType::RGBA8888,
+            skia_safe::AlphaType::Premul,
+            None,
+        );
+        let mut pixel = [0u8; 4];
+        assert!(surface.read_pixels(&info, &mut pixel, 4, (x, y)));
+        pixel
+    }
+
+    #[test]
+    fn the_chrome_paints_the_ground_under_the_pane_but_none_of_its_content() {
+        // The pane's own surface paints the content now, so anything the
+        // window paints inside the viewport is overdraw it would have to
+        // repaint on every frame of a scroll.
+        let settings = Settings::new(0, false);
+        let card = settings.pane_layout(settings.width - SIDEBAR_W).groups[0].card;
+        let x = (SIDEBAR_W + card.left + 40.0) as i32;
+        let y = (TITLEBAR_H + card.top + 20.0) as i32;
+
+        let whole = pixel_at(&settings, |canvas| settings.render(canvas), x, y);
+        let chrome = pixel_at(&settings, |canvas| settings.render_chrome(canvas), x, y);
+        let ground = pane_background(false);
+
+        assert_ne!(whole, chrome, "the all-in-one render paints a card here");
+        assert_eq!(chrome, [ground.r(), ground.g(), ground.b(), 0xFF]);
+    }
+
+    #[test]
+    fn the_chrome_still_paints_the_sidebar_and_the_titlebar() {
+        let settings = Settings::new(0, false);
+        let item = sidebar_item_rect(0);
+        for (x, y) in [
+            (item.center_x() as i32, item.center_y() as i32),
+            (SIDEBAR_W as i32 + 60, (TITLEBAR_H / 2.0) as i32),
+        ] {
+            assert_eq!(
+                pixel_at(&settings, |canvas| settings.render(canvas), x, y),
+                pixel_at(&settings, |canvas| settings.render_chrome(canvas), x, y),
+            );
+        }
+    }
+
+    #[test]
+    fn the_panes_own_viewport_is_the_windows_with_its_origin_at_zero() {
+        // What the surfaces the pane lives in are placed and sized against.
+        let settings = Settings::new(0, false);
+        let window = settings.viewport();
+        assert_eq!(
+            settings.local_viewport(),
+            Rect::from_wh(window.width(), window.height())
+        );
+    }
+
+    #[test]
+    fn the_content_pass_draws_the_band_it_is_given() {
+        // The band closure hands `render_content` a rect in content space and
+        // expects exactly what the all-in-one path would have drawn for it.
+        let settings = tallest_pane();
+        let viewport = settings.viewport();
+        let band = Rect::from_xywh(0.0, 400.0, viewport.width(), viewport.height());
+
+        let mut recorder = PictureRecorder::new();
+        let canvas = recorder.begin_recording(
+            Rect::from_wh(viewport.width(), settings.pane_content_height()),
+            false,
+        );
+        settings.render_content(canvas, band);
+        let ops = recorder
+            .finish_recording_as_picture(None)
+            .expect("recorded picture")
+            .approximate_op_count();
+
+        assert_eq!(ops, ops_for_band(&settings, band));
+        assert!(ops > 0, "the band should hold something to draw");
+    }
+
+    fn rows_in_band(settings: &Settings, band: Rect) -> usize {
+        settings
+            .row_rects(settings.width - SIDEBAR_W)
+            .into_iter()
+            .filter(|(_, rect)| intersects_band(*rect, band))
+            .count()
+    }
+
+    #[test]
+    fn a_pane_taller_than_its_viewport_draws_only_the_visible_band() {
+        let settings = tallest_pane();
+        let viewport = settings.viewport();
+        assert!(
+            settings.pane_content_height() > viewport.height(),
+            "the test needs a pane that overflows"
+        );
+
+        let whole = Rect::from_wh(viewport.width(), settings.pane_content_height());
+        let visible = Rect::from_xywh(0.0, 0.0, viewport.width(), viewport.height());
+
+        assert!(ops_for_band(&settings, visible) < ops_for_band(&settings, whole));
+        assert!(rows_in_band(&settings, visible) < rows_in_band(&settings, whole));
+    }
+
+    #[test]
+    fn scrolling_draws_a_different_set_of_rows_not_a_larger_one() {
+        let settings = tallest_pane();
+        let viewport = settings.viewport();
+        let max_offset = settings.pane_content_height() - viewport.height();
+
+        let top = Rect::from_xywh(0.0, 0.0, viewport.width(), viewport.height());
+        let bottom = Rect::from_xywh(0.0, max_offset, viewport.width(), viewport.height());
+
+        let whole = Rect::from_wh(viewport.width(), settings.pane_content_height());
+        assert!(ops_for_band(&settings, bottom) < ops_for_band(&settings, whole));
+
+        // The last row is out of the first band and in the last one, which is
+        // what makes this a band and not a prefix.
+        let rows = settings.row_rects(settings.width - SIDEBAR_W);
+        let last = rows.last().expect("rows").1;
+        assert!(!intersects_band(last, top));
+        assert!(intersects_band(last, bottom));
+    }
+
+    #[test]
+    fn hit_testing_still_reaches_a_row_that_is_only_visible_when_scrolled() {
+        let settings = tallest_pane();
+        let viewport = settings.viewport();
+        let offset = settings.pane_content_height() - viewport.height();
+
+        let (_, rect) = settings
+            .row_rects(settings.width - SIDEBAR_W)
+            .into_iter()
+            .rfind(|(row, _)| matches!(row.control, Control::Toggle(_)))
+            .expect("a toggle somewhere in the pane");
+
+        let x = viewport.left + rect.right - 14.0 - widgets::TOGGLE_W / 2.0;
+        let y = viewport.top + rect.center_y() - offset;
+        assert!(settings.hit(x, y, offset).is_some());
+    }
+}

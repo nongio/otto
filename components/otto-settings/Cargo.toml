@@ -1,0 +1,15 @@
+[package]
+name = "otto-settings"
+version = "0.1.0"
+edition = "2021"
+description = "Settings application for Otto — see specs/settings-app.md"
+
+[dependencies]
+otto-kit = { path = "../otto-kit" }
+smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
+zbus = "4"
+serde = { version = "1", features = ["derive"] }
+
+[dependencies.skia-safe]
+version = "=0.93"
+features = ["gl", "textlayout", "svg"]

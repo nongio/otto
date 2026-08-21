@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Files
+GenericName=File Manager
+Comment=Browse and manage files
+Exec=otto-files %f
+TryExec=otto-files
+Icon=system-file-manager
+Terminal=false
+Categories=System;FileTools;FileManager;
+Keywords=files;folders;browser;manager;explorer;finder;otto;
+MimeType=inode/directory;
+StartupNotify=true
+StartupWMClass=otto-files

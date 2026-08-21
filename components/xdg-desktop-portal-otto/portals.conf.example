@@ -5,6 +5,8 @@
 # Use GTK portal as default fallback for most portals
 default=gtk
 
-# Use Otto portal for screen sharing and settings
+# Use Otto portal for screen sharing, settings, dialogs and screenshots
 org.freedesktop.impl.portal.ScreenCast=otto
 org.freedesktop.impl.portal.Settings=otto
+org.freedesktop.impl.portal.Access=otto
+org.freedesktop.impl.portal.Screenshot=otto
