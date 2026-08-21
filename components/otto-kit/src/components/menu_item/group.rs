@@ -38,6 +38,11 @@ impl MenuItemGroup {
         self
     }
 
+    pub fn with_style(mut self, style: MenuItemStyle) -> Self {
+        self.style = style;
+        self
+    }
+
     #[allow(clippy::should_implement_trait)]
     pub fn add(mut self, item: MenuItem) -> Self {
         self.items.push(item);

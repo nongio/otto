@@ -29,7 +29,7 @@ use smithay::{
         wayland_server::{backend::ObjectId, protocol::wl_surface::WlSurface, Resource},
     },
     render_elements,
-    utils::{user_data::UserDataMap, IsAlive, Logical, Physical, Point, Rectangle, Scale},
+    utils::{user_data::UserDataMap, IsAlive, Logical, Physical, Point, Rectangle, Scale, Size},
     wayland::{
         compositor::SurfaceData as WlSurfaceData,
         dmabuf::DmabufFeedback,
@@ -55,11 +55,20 @@ pub struct WindowElementInner {
     pub mirror_layer: Layer,
     pub workspace_index: AtomicUsize,
     pub fullscreen_workspace_index: AtomicUsize,
+    /// Server-side decorated: Otto draws a titlebar above the client surface
+    /// and the window's geometry grows by [`WindowElement::DECORATION_HEIGHT`].
+    pub is_decorated: AtomicBool,
     /// Set when this window is currently being direct-scanned-out to a KMS plane.
     /// While true, surface commits should skip scene-graph damage propagation
     /// (the buffer goes directly to the display, no compositing needed).
     /// Set/cleared by the udev render path each frame.
     pub is_scanned_out: AtomicBool,
+    /// Set when the client asked, through `otto-surface-style`, for pixels the
+    /// compositor paints on its behalf: a background colour under the surface,
+    /// or a `BackgroundBlur` frosting what is behind it. A KMS plane carries
+    /// the client buffer alone, so promotion has to leave those pixels behind
+    /// in the windows plane. See [`WindowElement::has_material`].
+    pub has_material: AtomicBool,
     /// Cached stable ID derived from the wl_surface on first call.
     /// Survives after the wl_surface is destroyed (e.g. on window close).
     cached_id: OnceLock<ObjectId>,
@@ -83,9 +92,50 @@ impl WindowElement {
             app_id: "".to_string(),
             base_layer,
             mirror_layer,
+            is_decorated: AtomicBool::new(false),
             is_scanned_out: AtomicBool::new(false),
+            has_material: AtomicBool::new(false),
             cached_id: OnceLock::new(),
         }))
+    }
+
+    /// Height of the server-side titlebar, in logical points. Mirrors
+    /// otto-kit's `WindowDecoration::DEFAULT_HEIGHT` — the decoration is drawn
+    /// by that shared component, so the two must agree.
+    pub const DECORATION_HEIGHT: i32 = 34;
+
+    /// Whether Otto draws this window's titlebar.
+    pub fn is_decorated(&self) -> bool {
+        self.0
+            .is_decorated
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Mark the window server-side decorated. Returns the previous value so
+    /// callers can react to the transition (re-layout, re-configure).
+    pub fn set_decorated(&self, decorated: bool) -> bool {
+        self.0
+            .is_decorated
+            .swap(decorated, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Vertical space the decoration takes above the client surface: the
+    /// titlebar height when decorated, 0 otherwise.
+    pub fn decoration_height(&self) -> i32 {
+        if self.is_decorated() {
+            Self::DECORATION_HEIGHT
+        } else {
+            0
+        }
+    }
+
+    /// The size to configure the client with for a window rect measured in
+    /// decorated (space) coordinates. The titlebar strip belongs to Otto, so
+    /// the client only ever gets what is left below it — configuring it with
+    /// the full rect makes a maximized or tiled window overshoot its zone by
+    /// exactly the bar's height.
+    pub fn client_size(&self, size: Size<i32, Logical>) -> Size<i32, Logical> {
+        Size::from((size.w, (size.h - self.decoration_height()).max(1)))
     }
 
     /// True if this window is currently being direct-scanned-out (its buffer
@@ -103,6 +153,30 @@ impl WindowElement {
         self.0
             .is_scanned_out
             .swap(scanned_out, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// True when the compositor paints part of this window itself — a
+    /// background colour or a backdrop blur requested through
+    /// `otto-surface-style`.
+    ///
+    /// Those pixels live on the window's own scene layer, not in the client
+    /// buffer, so a promoted window would lose them: direct scanout puts the
+    /// buffer on a KMS plane; the promotion path reads this to blank only the
+    /// window's texture, so the material keeps rendering in the windows plane
+    /// under it, rather than hiding the whole layer.
+    pub fn has_material(&self) -> bool {
+        self.0
+            .has_material
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Record whether the compositor paints a material for this window.
+    /// Returns the previous value, so a caller can demote the window on the
+    /// transition into it.
+    pub fn set_has_material(&self, material: bool) -> bool {
+        self.0
+            .has_material
+            .swap(material, std::sync::atomic::Ordering::Relaxed)
     }
     pub fn id(&self) -> ObjectId {
         self.0
@@ -122,14 +196,10 @@ impl WindowElement {
         location: Point<f64, Logical>,
         window_type: WindowSurfaceType,
     ) -> Option<(PointerFocusTarget<B>, Point<i32, Logical>)> {
-        // let state = self.decoration_state();
-
-        // let offset = if state.is_ssd {
-        //     Point::from((0, HEADER_BAR_HEIGHT))
-        // } else {
-        //     Point::default()
-        // };
-        let offset = Point::default();
+        // Client surfaces start below the titlebar, so window-local points
+        // have to be lifted by the decoration before they mean anything to the
+        // client's surface tree.
+        let offset: Point<i32, Logical> = Point::from((0, self.decoration_height()));
 
         let surface_under = self
             .0
@@ -477,27 +547,29 @@ impl IsAlive for WindowElement {
 
 impl SpaceElement for WindowElement {
     fn geometry(&self) -> Rectangle<i32, Logical> {
-        // if self.decoration_state().is_ssd {
-        //     geo.size.h += HEADER_BAR_HEIGHT;
-        // }
-        SpaceElement::geometry(&self.0.window)
+        let mut geo = SpaceElement::geometry(&self.0.window);
+        geo.size.h += self.decoration_height();
+        geo
     }
     fn bbox(&self) -> Rectangle<i32, Logical> {
-        // if self.decoration_state().is_ssd {
-        //     bbox.size.h += HEADER_BAR_HEIGHT;
-        // }
-        SpaceElement::bbox(&self.0.window)
+        let mut bbox = SpaceElement::bbox(&self.0.window);
+        bbox.size.h += self.decoration_height();
+        bbox
     }
     fn is_in_input_region(&self, point: &Point<f64, Logical>) -> bool {
-        // if self.decoration_state().is_ssd {
-        //     point.y < HEADER_BAR_HEIGHT as f64
-        //         || SpaceElement::is_in_input_region(
-        //             &self.window,
-        //             &(*point - Point::from((0.0, HEADER_BAR_HEIGHT as f64))),
-        //         )
-        // } else {
-        SpaceElement::is_in_input_region(&self.0.window, point)
-        // }
+        let offset = self.decoration_height() as f64;
+        if offset > 0.0 {
+            // The titlebar strip is part of the window for input purposes —
+            // that is what makes it clickable at all — and everything below it
+            // is the client's own input region, shifted down by the bar.
+            point.y < offset
+                || SpaceElement::is_in_input_region(
+                    &self.0.window,
+                    &(*point - Point::from((0.0, offset))),
+                )
+        } else {
+            SpaceElement::is_in_input_region(&self.0.window, point)
+        }
     }
     fn z_index(&self) -> u8 {
         SpaceElement::z_index(&self.0.window)

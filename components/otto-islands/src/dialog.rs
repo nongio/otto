@@ -358,7 +358,7 @@ pub fn draw_dialog(canvas: &Canvas, view: &DialogView, selected: &[usize], layou
     // subtitle and body stay lighter than the title, just not ghostly.
     let dim = at_least_opaque(theme.text_secondary, 0xC0);
     let dim2 = at_least_opaque(theme.text_tertiary, 0x99);
-    let accent = theme.accent_blue;
+    let accent = theme.accent;
     // Labels drawn on top of the accent fill stay white in both schemes.
     let on_accent = Color::WHITE;
 

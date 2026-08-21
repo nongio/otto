@@ -3,7 +3,7 @@ use skia_safe::{Canvas, Color, Font, Paint, Point};
 use crate::common::Renderable;
 use crate::typography::TextStyle;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TextAlign {
     Left,
     Center,
@@ -38,6 +38,33 @@ impl Label {
         self.x = x;
         self.y = y;
         self
+    }
+
+    /// Place the label so its optical centre sits on `cy`.
+    ///
+    /// The centre has to come from the font's own metrics. A guess
+    /// proportional to the point size lands the text visibly high, because
+    /// ascent and descent are not symmetric about the baseline — so anything
+    /// centred in a row, a button, or a titlebar should come through here
+    /// rather than offset `at()` by hand.
+    pub fn centered_on(mut self, x: f32, cy: f32) -> Self {
+        let (_, metrics) = self.font.metrics();
+        let baseline = cy - (metrics.ascent + metrics.descent) / 2.0;
+
+        self.x = x;
+        // `render` puts the baseline at `y + size * 0.8`, so back that out.
+        self.y = baseline - self.font.size() * 0.8;
+        self
+    }
+
+    /// Place the label so its optical centre sits on `(cx, cy)`.
+    ///
+    /// The horizontal centre comes from the measured string, so it stays
+    /// correct when the style changes — unlike offsetting `centered_on` by a
+    /// guessed per-character width.
+    pub fn centered_at(self, cx: f32, cy: f32) -> Self {
+        let (text_width, _) = self.font.measure_str(&self.text, None);
+        self.centered_on(cx - text_width / 2.0, cy)
     }
 
     pub fn with_style(mut self, style: TextStyle) -> Self {

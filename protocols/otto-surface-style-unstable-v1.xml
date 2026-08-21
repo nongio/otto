@@ -25,7 +25,7 @@
     THIS SOFTWARE.
   </copyright>
 
-  <interface name="otto_surface_style_manager_v1" version="1">
+  <interface name="otto_surface_style_manager_v1" version="3">
     <description summary="declarative animations and compositing for Wayland">
       Otto surface style protocol provides declarative animations and advanced
       compositing features. Clients can augment wayland surfaces with animations
@@ -81,7 +81,7 @@
   </interface>
 
 
-  <interface name="otto_surface_style_v1" version="1">
+  <interface name="otto_surface_style_v1" version="3">
     <description summary="style compositing and animation support">
       A style surface augments a wl_surface and provides additional compositing
       and animation capabilities. It can have transforms, effects, and visual
@@ -210,6 +210,107 @@
       <arg name="radius" type="fixed" summary="corner radius in pixels"/>
     </request>
 
+    <enum name="output_placement">
+      <description summary="how a surface's position is resolved">
+        Positions set through set_position are relative to the surface's parent.
+        A surface that has to sit in a fixed place on the display cannot express
+        that: a client is never told where its own window is, so it cannot work
+        out the offset. This enum lets it ask the compositor, which knows both,
+        to resolve the position against the output instead.
+      </description>
+      <entry name="parent" value="0" summary="position is relative to the parent (default)"/>
+      <entry name="output_centered" value="1" summary="centred on the output the surface is shown on"/>
+    </enum>
+
+    <request name="set_output_placement" since="3">
+      <description summary="centre the surface on its output (animatable)">
+        WARNING: this is the wrong request for a subsurface. It moves the style
+        surface's own layer, which carries only what the compositor paints —
+        background, blur, shadow, rounded corners. A subsurface's buffer is
+        placed by wl_subsurface.set_position, which the compositor does not
+        touch, so centring the layer leaves a card's frame in the middle of the
+        display and its contents back over the window. Use request_output_frame
+        and set the position yourself: that moves both. This request is only
+        appropriate for a surface whose layer carries its pixels.
+
+        Resolve this surface's position against the output rather than against
+        its parent. With output_centered the compositor keeps the surface
+        centred on the output it is shown on, following it across moves of the
+        parent, resizes of the surface, and changes of output or mode.
+
+        Setting the placement back to parent restores the position last set
+        through set_position.
+      </description>
+      <arg name="placement" type="uint" enum="output_placement"/>
+    </request>
+
+    <request name="request_output_frame" since="3">
+      <description summary="ask where this surface's output is">
+        Ask the compositor for the geometry of the output this surface is shown
+        on, answered with an output_frame event.
+
+        A client is never told where its own window sits, so it cannot place a
+        surface anywhere but relative to its parent. This is the missing piece:
+        the answer is expressed in the same coordinates the client already
+        passes to set_position, so centring a surface on the display is
+        arithmetic the client can do itself — and, unlike having the compositor
+        move the surface, it moves the client's own content with it.
+
+        The rect is the output's *usable* area: what is left after the dock and
+        any layer-shell exclusive zones have taken their share. A surface
+        centred in it sits where the eye expects, rather than low on the screen
+        because the dock took the bottom.
+
+        The answer is a snapshot. A client that cares about the surface moving
+        between outputs, the mode changing, or the reserved areas changing,
+        asks again.
+      </description>
+    </request>
+
+    <event name="output_frame" since="3">
+      <description summary="where this surface's output is">
+        The output this surface is shown on, relative to this surface's parent,
+        in the same physical pixels this interface's set_position and set_size
+        use. Centring is then x + (width - surface_width) / 2.
+
+        Mind the units when the surface is a subsurface: this interface works in
+        physical pixels, while wl_subsurface.set_position works in surface-local
+        coordinates. Divide by the surface's scale before passing a position to
+        wl_subsurface, or the surface lands at the scale factor times the offset
+        you meant.
+
+        Sent in reply to request_output_frame.
+      </description>
+      <arg name="x" type="fixed" summary="output's left edge, in this surface's coordinates"/>
+      <arg name="y" type="fixed" summary="output's top edge, in this surface's coordinates"/>
+      <arg name="width" type="fixed" summary="output width in pixels"/>
+      <arg name="height" type="fixed" summary="output height in pixels"/>
+    </event>
+
+    <request name="set_output_relative_size" since="3">
+      <description summary="size the surface as a fraction of its output (animatable)">
+        Set the surface's size as a fraction of the output it is shown on —
+        0.5 being half the output's width or height. The compositor recomputes
+        it when the output or its mode changes, so a panel keeps its share of
+        the display without the client tracking modes.
+
+        Fractions are clamped to 0.0 - 1.0. A fraction of 0.0 leaves that axis
+        to whatever set_size last established, so one axis can be output
+        relative while the other is fixed.
+
+        The minimums are a floor in surface-local pixels, applied after the
+        fraction: a panel that is a sensible share of a large display is
+        useless on a small one, and this is where that is expressed. Pass 0.0
+        for no floor.
+
+        Like set_size, this marks the bounds as client owned.
+      </description>
+      <arg name="width" type="fixed" summary="fraction of the output width (0.0-1.0)"/>
+      <arg name="height" type="fixed" summary="fraction of the output height (0.0-1.0)"/>
+      <arg name="min_width" type="fixed" summary="floor in pixels, 0.0 for none"/>
+      <arg name="min_height" type="fixed" summary="floor in pixels, 0.0 for none"/>
+    </request>
+
     <request name="set_border">
       <description summary="set border style (animatable)">
         Set the style surface's border. The border is drawn inside the surface bounds.
@@ -253,11 +354,13 @@
     </enum>
 
     <enum name="clip_mode">
-      <description summary="content clipping mode">
-        Defines whether content is clipped to the style surface bounds.
+      <description summary="clipping mode">
+        Defines whether content is clipped to the style surface bounds. Used by
+        both set_masks_to_bounds (the surface's own content) and
+        set_clip_children (the surface's descendant surfaces).
       </description>
-      <entry name="disabled" value="0" summary="do not clip content"/>
-      <entry name="enabled" value="1" summary="clip content to surface bounds"/>
+      <entry name="disabled" value="0" summary="do not clip"/>
+      <entry name="enabled" value="1" summary="clip to surface bounds"/>
     </enum>
 
     <enum name="contents_gravity">
@@ -295,7 +398,33 @@
         Set whether content is clipped to this surface's bounds.
       </description>
       <arg name="clip_mode" type="uint" enum="clip_mode"/>
-    </request> 
+    </request>
+
+    <request name="set_clip_children" since="2">
+      <description summary="set child clipping mode">
+        Set whether the surfaces descending from the augmented wl_surface — its
+        subsurfaces, and their subsurfaces in turn — are clipped to this
+        surface's style bounds. Content of a descendant that falls outside the
+        bounds is not rendered.
+
+        This is independent of set_masks_to_bounds: a surface can clip its
+        children while leaving its own content unclipped, and the other way
+        round. The two requests do not imply each other and neither one
+        overrides the other.
+
+        The clipping rectangle is the style node's size, as set by set_size,
+        together with the corner radius set by set_corner_radius. That size is
+        the client's to choose and need not match the surface's buffer size, so
+        a client can keep a small fixed viewport while a subsurface behind it
+        carries a much larger buffer that is moved around by set_position — the
+        usual way to build a scrolling view whose cropping the compositor
+        performs.
+
+        Changes take effect immediately, or with the enclosing transaction when
+        one is active. The default is disabled.
+      </description>
+      <arg name="clip_mode" type="uint" enum="clip_mode"/>
+    </request>
 
     <request name="set_contents_gravity">
       <description summary="set how the buffer texture is rendered within layer bounds">

@@ -11,6 +11,7 @@ fn streams_value_encodes_required_metadata() {
     let mapping_id = "mapping".to_string();
     let descriptor = StreamDescriptor {
         node_id: 42,
+        source_type: SOURCE_TYPE_MONITOR,
         stream_id: "screen-1".to_string(),
         mapping_id: Some(mapping_id.clone()),
         width: Some(1920),

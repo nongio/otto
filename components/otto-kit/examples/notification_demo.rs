@@ -52,7 +52,7 @@ impl App for NotificationDemoApp {
                     Self::draw_notification(
                         canvas,
                         "message-circle",
-                        theme.accent_blue,
+                        theme.accent,
                         Some("Messages"),
                         "New Message from Alice",
                         "Hey, are you available for a quick call?",

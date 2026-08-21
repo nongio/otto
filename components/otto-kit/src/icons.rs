@@ -85,68 +85,139 @@ pub fn cached_file_icon(path: &str, size: i32) -> Option<skia::Image> {
     icon
 }
 
+/// Look up the first icon in `names` that the theme actually has, at `size`.
+///
+/// Callers pass a most-specific-first chain — `["image-png",
+/// "image-x-generic"]` — so a theme shipping only generic icons still
+/// resolves. The whole chain is cached under one key, including the miss, so a
+/// directory listing does not re-walk the theme for every row.
+///
+/// Unlike [`named_icon_sized`] this never reads `AppContext`, so it is callable
+/// from a bare draw closure — which is what lets the compositor draw the same
+/// icons server-side.
+pub fn cached_icon_chain(names: &[&str], size: i32) -> Option<skia::Image> {
+    cached_icon_chain_at(names, size, size)
+}
+
+/// The size at which a theme's icons are its full, colourful artwork.
+///
+/// Themes commonly ship monochrome outline art in their small fixed
+/// directories (Fluent's `16/places/folder.svg` is a grey glyph) and the real
+/// icon only in `scalable`, whose `MinSize` starts above those. Asking for
+/// anything from this size up lands on the scalable tier.
+pub const FULL_COLOUR_SIZE: i32 = 64;
+
+/// [`cached_icon_chain`], with the theme lookup size separated from the size
+/// the icon is rasterised at.
+///
+/// A 16px row still wants the colourful icon, just small — so it looks the
+/// chain up at [`FULL_COLOUR_SIZE`] and renders that file at 16. Passing the
+/// same value for both is the plain [`cached_icon_chain`] behaviour, which is
+/// what a caller wants when it does want the theme's small-size art.
+pub fn cached_icon_chain_at(names: &[&str], size: i32, lookup_size: i32) -> Option<skia::Image> {
+    if names.is_empty() {
+        return None;
+    }
+    let cache_key = format!("chain:{}@{size}/{lookup_size}", names.join("|"));
+    let ic = icon_cache();
+
+    {
+        let cache = ic.read().unwrap();
+        if let Some(entry) = cache.get(&cache_key) {
+            return entry.clone();
+        }
+    }
+
+    // Deliberately not `find_icon_in_theme`: that one substitutes a generic
+    // icon when a name misses, so the first entry in a chain would always
+    // "succeed" and the rest would never be consulted.
+    let theme = crate::icon_theme::current_icon_theme();
+    let icon = names
+        .iter()
+        .find_map(|name| exact_icon_in_theme(name, lookup_size, theme.as_deref()))
+        .and_then(|path| image_from_path(&path, (size, size)));
+
+    ic.write().unwrap().insert(cache_key, icon.clone());
+    icon
+}
+
 // ---------------------------------------------------------------------------
 // Icon theme lookup
 // ---------------------------------------------------------------------------
 
-/// Find an icon file path using XDG icon theme directories.
+/// Find an icon file path in the XDG icon theme directories.
 ///
-/// Searches the compositor's configured icon theme (from the portal) first,
-/// then falls back to auto-detection.
+/// Searches the desktop's configured icon theme first (from the portal), then
+/// hicolor, then the other standard locations.
+///
+/// An `icon_name` that is already an absolute path — some desktop entries, and
+/// most Waydroid ones, write one — is used as it stands.
 pub fn find_icon(icon_name: &str, size: i32, scale: i32) -> Option<String> {
+    if icon_name.starts_with('/') {
+        return std::path::Path::new(icon_name)
+            .is_file()
+            .then(|| icon_name.to_string());
+    }
     let theme = crate::icon_theme::current_icon_theme();
-    let result = find_icon_in_theme(icon_name, size, scale, theme.as_deref());
-
-    // xdgkit may return a fallback icon (e.g. application-default-icon) even
-    // when the requested icon doesn't exist.  Reject results whose filename
-    // doesn't match what we asked for.
-    result.filter(|path| {
-        std::path::Path::new(path)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .map(|stem| stem.starts_with(icon_name))
-            .unwrap_or(false)
-    })
+    find_icon_in_theme(icon_name, size, scale, theme.as_deref())
 }
 
-/// Find an icon in a specific theme (or auto-detect if `theme_name` is None).
+/// Look up exactly this icon name, with no generic substitution on a miss.
+///
+/// [`find_icon_in_theme`] deliberately falls back to a generic icon so a
+/// single lookup never draws an empty square. That behaviour is wrong when the
+/// caller has its own fallback chain, so this is the honest form: a miss is a
+/// `None`.
+pub fn exact_icon_in_theme(icon_name: &str, size: i32, theme_name: Option<&str>) -> Option<String> {
+    if icon_name.starts_with('/') {
+        return std::path::Path::new(icon_name)
+            .is_file()
+            .then(|| icon_name.to_string());
+    }
+    let mut lookup = freedesktop_icons::lookup(icon_name)
+        .with_size(size.clamp(1, i32::from(u16::MAX)) as u16)
+        .with_scale(1);
+    if let Some(theme) = theme_name {
+        lookup = lookup.with_theme(theme);
+    }
+    lookup
+        .with_cache()
+        .find()
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+/// Find an icon in a specific theme (or the default one if `theme_name` is
+/// `None`).
+///
+/// Backed by `freedesktop-icons`, which builds the theme index once and keeps
+/// it. The obvious alternative, xdgkit, re-walks every icon directory on the
+/// system for every single lookup — a third of a second each, and twice that
+/// for a miss, which is unusable anywhere a screenful of icons is wanted at
+/// once. It also missed icons that are plainly there.
 pub fn find_icon_in_theme(
     icon_name: &str,
     size: i32,
     scale: i32,
     theme_name: Option<&str>,
 ) -> Option<String> {
-    let dir_list = xdgkit::icon_finder::generate_dir_list();
-
-    let result = if let Some(name) = theme_name {
-        // Try specified theme first
-        let theme_dir = dir_list.iter().find(|dir| dir.theme == name).cloned();
-
-        if let Some(theme_dir) = theme_dir {
-            let theme = xdgkit::icon_theme::IconTheme::from_pathbuff(theme_dir.index());
-            xdgkit::icon_finder::multiple_find_icon(
-                icon_name.to_string(),
-                size,
-                scale,
-                dir_list.clone(),
-                theme,
-            )
-            .map(|p| p.to_string_lossy().into_owned())
-        } else {
-            tracing::warn!("Icon theme '{name}' not found, falling back to auto-detection");
-            xdgkit::icon_finder::find_icon(icon_name.to_string(), size, scale)
-                .map(|p| p.to_string_lossy().into_owned())
+    let lookup = |name: &str| {
+        let mut lookup = freedesktop_icons::lookup(name)
+            .with_size(size.clamp(1, i32::from(u16::MAX)) as u16)
+            .with_scale(scale.clamp(1, i32::from(u16::MAX)) as u16);
+        if let Some(theme) = theme_name {
+            lookup = lookup.with_theme(theme);
         }
-    } else {
-        xdgkit::icon_finder::find_icon(icon_name.to_string(), size, scale)
-            .map(|p| p.to_string_lossy().into_owned())
+        lookup
+            .with_cache()
+            .find()
+            .map(|path| path.to_string_lossy().into_owned())
     };
 
-    // Fallbacks
-    result.or_else(|| {
+    lookup(icon_name).or_else(|| {
+        // A generic icon is better than an empty square — but only for names
+        // that are not already the generic ones, or a miss would recurse.
         if icon_name != "application-default-icon" && icon_name != "application-x-executable" {
-            find_icon("application-default-icon", size, scale)
-                .or_else(|| find_icon("application-x-executable", size, scale))
+            lookup("application-default-icon").or_else(|| lookup("application-x-executable"))
         } else {
             None
         }
@@ -164,17 +235,22 @@ pub fn image_from_path(path: &str, size: impl Into<skia::ISize>) -> Option<skia:
     let image_path = std::path::Path::new(path);
 
     if image_path.extension().and_then(std::ffi::OsStr::to_str) == Some("svg") {
-        load_svg_image(path, size.into())
+        let svg_data = std::fs::read(image_path).ok()?;
+        svg_image_from_bytes(&svg_data, size.into())
     } else {
         let image_data = std::fs::read(image_path).ok()?;
         skia::Image::from_encoded(skia::Data::new_copy(&image_data))
     }
 }
 
-/// Rasterize an SVG file at the given size using resvg.
-fn load_svg_image(path: &str, size: skia::ISize) -> Option<skia::Image> {
-    let svg_data = std::fs::read(path).ok()?;
-
+/// Rasterize SVG bytes at the given size using resvg.
+///
+/// Public so callers can rasterize icons embedded with `include_bytes!` —
+/// bundling a fixed, small icon set at compile time sidesteps the runtime
+/// resource-path and icon-theme lookups entirely, which matters for icons
+/// that must always render (e.g. OSD glyphs) regardless of the compositor's
+/// working directory or the desktop's installed icon theme.
+pub fn svg_image_from_bytes(svg_data: &[u8], size: skia::ISize) -> Option<skia::Image> {
     let pixmap_size = resvg::tiny_skia::IntSize::from_wh(size.width as u32, size.height as u32)?;
 
     let options = usvg::Options {
@@ -183,7 +259,7 @@ fn load_svg_image(path: &str, size: skia::ISize) -> Option<skia::Image> {
         default_size: usvg::Size::from_wh(pixmap_size.width() as f32, pixmap_size.height() as f32)?,
         ..Default::default()
     };
-    let rtree = usvg::Tree::from_data(&svg_data, &options).ok()?;
+    let rtree = usvg::Tree::from_data(svg_data, &options).ok()?;
     let svg_size = rtree.size().to_int_size();
 
     let mut pixmap = resvg::tiny_skia::Pixmap::new(pixmap_size.width(), pixmap_size.height())?;
@@ -204,4 +280,39 @@ fn load_svg_image(path: &str, size: skia::ISize) -> Option<skia::Image> {
         skia::Data::new_copy(pixmap.data()),
         pixmap_size.width() as usize * 4,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    /// The distinction `cached_icon_chain` depends on: an exact lookup must
+    /// report a miss, where `find_icon_in_theme` deliberately substitutes a
+    /// generic icon. Without this, the first name in a fallback chain always
+    /// "succeeds" and the rest are never consulted.
+    #[test]
+    fn an_exact_lookup_reports_a_miss() {
+        let missing = "otto-kit-no-such-icon-9f3a";
+        assert_eq!(
+            super::exact_icon_in_theme(missing, 16, None),
+            None,
+            "exact lookup must not substitute"
+        );
+    }
+
+    /// A chain falls through to the entry the theme actually has. Skipped where
+    /// no icon theme is installed, since that is an environment fact rather
+    /// than a defect.
+    #[test]
+    fn a_chain_falls_through_to_what_exists() {
+        let theme = crate::icon_theme::current_icon_theme();
+        let Some(known) = ["folder", "text-x-generic", "application-x-executable"]
+            .into_iter()
+            .find(|n| super::exact_icon_in_theme(n, 16, theme.as_deref()).is_some())
+        else {
+            return;
+        };
+        assert!(
+            super::cached_icon_chain(&["otto-kit-no-such-icon-9f3a", known], 16).is_some(),
+            "the second entry in the chain should have resolved"
+        );
+    }
 }

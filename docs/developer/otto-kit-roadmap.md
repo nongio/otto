@@ -102,6 +102,15 @@ offset, draws a scrollbar, and handles `on_wheel` alongside pointer drag. Axis
 events already reached apps (`pointer_frame` forwards raw `PointerEvent`s
 untouched); the missing piece was the component.
 
+It also owns the *feel*: `ScrollView` samples input into a velocity and
+coasts under friction after the gesture ends, resists past either end and
+springs back (a fling into an end bounces off it), and fades its overlay
+scrollbar in while scrolling, out when idle, and wider under the pointer. A
+host drives all of that by calling `ScrollView::tick` each loop iteration
+while `is_animating()` — see `on_update`/`idle_timeout` in `otto-settings`.
+Continuous sources go to `on_wheel`; a notched wheel (`discrete != 0`) goes to
+`on_wheel_discrete`, which steps without flinging.
+
 **4. Focus and keyboard navigation — open.** There is still no focus ring, no
 tab order, and no shared notion of which control has keyboard focus.
 Individual components track their own (`TextInput`, `SourceList`, `MenuBar`),

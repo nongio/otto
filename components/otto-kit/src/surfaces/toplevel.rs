@@ -1,10 +1,15 @@
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+
 use smithay_client_toolkit::{
     compositor::{CompositorState, SurfaceData},
     reexports::client::{protocol::wl_surface, QueueHandle},
     shell::{
         xdg::{
             window::{Window, WindowConfigure, WindowData, WindowDecorations, WindowHandler},
-            XdgShell,
+            XdgShell, XdgSurface,
         },
         WaylandSurface,
     },
@@ -30,6 +35,10 @@ pub struct ToplevelSurface {
     base_surface: BaseWaylandSurface,
     window: Window,
     configured: bool,
+    /// Whether the last configure carried the maximized state. Shared rather
+    /// than copied: the surface is cloned into the handles the app holds, and
+    /// all of them have to see the same answer.
+    maximized: Arc<AtomicBool>,
 }
 
 impl ToplevelSurface {
@@ -98,15 +107,22 @@ impl ToplevelSurface {
             + WindowHandler
             + 'static,
     {
-        // Create the window
+        // otto-kit apps draw their own titlebar with the `Titlebar` component,
+        // so ask for client-side decorations explicitly. `ServerDefault` would
+        // leave the choice to the compositor, and Otto's default is a
+        // server-side titlebar — which the app would then draw its own on top
+        // of.
         let window = xdg_shell.create_window(
             compositor.create_surface(qh),
-            WindowDecorations::ServerDefault,
+            WindowDecorations::RequestClient,
             qh,
         );
 
         window.set_title(title.to_string());
-        window.set_min_size(Some((width as u32, height as u32)));
+        // Deliberately no minimum: pinning it to the size the window was
+        // created at makes the window unshrinkable, which reads as "resizing
+        // is broken". An app with a real floor sets one via
+        // `Window::set_min_size`.
 
         let wl_surface = window.wl_surface().clone();
 
@@ -128,6 +144,7 @@ impl ToplevelSurface {
             base_surface,
             window,
             configured: false,
+            maximized: Arc::new(AtomicBool::new(false)),
         };
 
         Ok(toplevel)
@@ -142,6 +159,9 @@ impl ToplevelSurface {
         configure: WindowConfigure,
         _serial: u32,
     ) -> Result<(), SurfaceError> {
+        self.maximized
+            .store(configure.is_maximized(), Ordering::Relaxed);
+
         // Get configured size or use initial size
         let (width, height) = match configure.new_size {
             (Some(w), Some(h)) => (w.get() as i32, h.get() as i32),
@@ -158,12 +178,33 @@ impl ToplevelSurface {
             self.base_surface.resize(width, height);
         }
 
+        self.set_window_geometry(width, height);
+
         Ok(())
+    }
+
+    /// Pin the window's geometry to the toplevel surface itself.
+    ///
+    /// Without this the compositor falls back to the bounding box of the whole
+    /// surface tree, so any subsurface that reaches outside the window — the
+    /// oversized band a `ScrollView` scrolls behind its clip — makes the window
+    /// grow, taking its shadow and its layout box with it.
+    fn set_window_geometry(&self, width: i32, height: i32) {
+        if width > 0 && height > 0 {
+            self.window
+                .xdg_surface()
+                .set_window_geometry(0, 0, width, height);
+        }
     }
 
     /// Check if surface is configured
     pub fn is_configured(&self) -> bool {
         self.configured
+    }
+
+    /// Whether the compositor's last configure said the window is maximized.
+    pub fn is_maximized(&self) -> bool {
+        self.maximized.load(Ordering::Relaxed)
     }
 
     /// Get the underlying XDG window
@@ -214,6 +255,7 @@ impl ToplevelSurface {
     /// Resize the surface manually
     pub fn resize(&mut self, width: i32, height: i32) {
         self.base_surface.resize(width, height);
+        self.set_window_geometry(width, height);
     }
 
     /// Get the window object (used by Menu component)
@@ -245,6 +287,15 @@ impl ToplevelSurface {
         self.base_surface
             .dirty
             .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether a frame committed on this surface has yet to be presented.
+    ///
+    /// A window that redraws continuously should hold off while this is
+    /// true: painting again only queues a buffer the compositor has not
+    /// asked for. See [`BaseWaylandSurface::frame_in_flight`].
+    pub fn frame_in_flight(&self) -> bool {
+        self.base_surface.frame_in_flight()
     }
 
     /// Check if surface needs rendering

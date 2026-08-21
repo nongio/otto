@@ -40,6 +40,9 @@ profiling = { version = "1.0" }
 renderdoc = { version = "0.11.0", optional = true }
 serde = "1.0.213"
 toml = "0.8.19"
+# Comment-preserving TOML editing: settings are persisted one key at a time into
+# a hand-editable file (see src/config/file.rs).
+toml_edit = "0.22"
 once_cell = "1.20"
 paste = "1.0.15"
 zbus = "4"
@@ -52,7 +55,7 @@ otto-kit = { path = "components/otto-kit" }
 
 [dependencies.laye-rs]
 git = "https://github.com/nongio/layers"
-branch = "feat/subtree-buffer-render"
+tag = "v1.13.0"
 # local development: path = "../layers"
 features = ["export-taffy"]
 
@@ -162,8 +165,8 @@ members = [
     "sample-clients/client-rainbow",
     "sample-clients/submenu",
     "sample-clients/submenu-gtk",
-    "sample-clients/deadlock-test",
-]
+    "sample-clients/deadlock-test",]
+
 
 [package.metadata.deb]
 maintainer = "Riccardo Canalicchio <riccardo.canalicchio@gmail.com>"
@@ -185,6 +188,7 @@ assets = [
     ["target/release/otto-bar", "usr/bin/", "755"],
     ["target/release/otto-islands", "usr/bin/", "755"],
     ["target/release/otto-lock", "usr/bin/", "755"],
+    ["target/release/otto-settings", "usr/bin/", "755"],
     ["target/release/otto-greeter", "usr/bin/", "755"],
     ["target/release/otto-rdp", "usr/bin/", "755"],
     ["target/release/xdg-desktop-portal-otto", "usr/libexec/", "755"],
@@ -192,6 +196,7 @@ assets = [
     ["LICENSE", "usr/share/doc/otto/", "644"],
     ["otto_config.example.toml", "etc/otto/config.toml", "644"],
     ["resources/otto.desktop", "usr/share/wayland-sessions/", "644"],
+    ["resources/otto-settings.desktop", "usr/share/applications/", "644"],
     ["components/xdg-desktop-portal-otto/otto.portal", "usr/share/xdg-desktop-portal/portals/", "644"],
     ["components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service", "usr/share/dbus-1/services/", "644"],
     ["components/xdg-desktop-portal-otto/portals.conf.example", "usr/share/doc/otto/", "644"],
@@ -205,6 +210,8 @@ assets = [
 assets = [
     { source = "target/release/otto", dest = "/usr/bin/otto", mode = "755" },
     { source = "target/release/otto-bar", dest = "/usr/bin/otto-bar", mode = "755" },
+    { source = "target/release/otto-settings", dest = "/usr/bin/otto-settings", mode = "755" },
+    { source = "resources/otto-settings.desktop", dest = "/usr/share/applications/otto-settings.desktop", mode = "644" },
     { source = "target/release/otto-islands", dest = "/usr/bin/otto-islands", mode = "755" },
     { source = "target/release/otto-lock", dest = "/usr/bin/otto-lock", mode = "755" },
     { source = "target/release/otto-greeter", dest = "/usr/bin/otto-greeter", mode = "755" },

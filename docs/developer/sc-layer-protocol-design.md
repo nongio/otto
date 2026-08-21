@@ -59,11 +59,24 @@ a style object to a `wl_surface`; `begin_transaction` and
 `set_z_position`, `set_size`, `set_scale`, `set_rotation`, `set_anchor_point`,
 `set_transform`. Appearance: `set_opacity`, `set_background_color`,
 `set_corner_radius`, `set_border`, `set_shadow`, `set_blend_mode`.
-Layout and clipping: `set_hidden`, `set_masks_to_bounds`,
+Layout and clipping: `set_hidden`, `set_masks_to_bounds` (clip this surface's
+own content to its style bounds), `set_clip_children` (clip its *subsurfaces*
+to those bounds — the two are independent, and the bounds are the style node's
+size, which a client can own separately from its buffer size),
 `set_contents_gravity` (how the surface buffer fills the layer — resize,
 aspect-fit, aspect-fill), `set_z_order` (whether the style renders above or
 below the surface's own content). Plus `cancel_animation` and
 `cancel_all_animations`.
+
+**Version 3 added output placement** — `request_output_frame` with its
+`output_frame` event, plus `set_output_placement` and
+`set_output_relative_size`. These let a surface be placed and sized against the
+output rather than its parent, which is how Quick View sits centred on the
+display while remaining a subsurface of the file browser's window. Reach for
+`request_output_frame`; the other two move only the layer the compositor paints,
+which is the wrong half of a subsurface. Full rules, the recipe and the
+recognisable failure modes are in
+[specs/surface-output-placement.md](../../specs/surface-output-placement.md).
 
 **`otto_style_transaction_v1`** — `set_duration`, `set_delay`,
 `set_timing_function`, `enable_completion_event`, `commit`, and a `completed`
@@ -89,6 +102,23 @@ otto_surface_style_v1_set_position(style, wl_fixed_from_int(100), wl_fixed_from_
 otto_surface_style_v1_set_opacity(style, wl_fixed_from_double(0.5));
 
 otto_style_transaction_v1_commit(tx);
+```
+
+Placing a surface against the output is the client's arithmetic, not the
+compositor's:
+
+```c
+// Right: ask, then place both halves yourself.
+otto_surface_style_v1_request_output_frame(style);
+// ... in the output_frame handler, with x/width in physical pixels:
+double left = x + (width - panel_width) / 2;
+otto_surface_style_v1_set_position(style, wl_fixed_from_double(left), ...);
+wl_subsurface_set_position(sub, (int)(left / scale), ...);   // note the scale
+
+// Wrong, for a subsurface: this centres the frame and leaves the contents
+// behind, because it moves the layer and not the buffer.
+otto_surface_style_v1_set_output_placement(style,
+    OTTO_SURFACE_STYLE_V1_OUTPUT_PLACEMENT_OUTPUT_CENTERED);
 ```
 
 The gesture case is the one that justifies springs. Set the position directly
@@ -121,6 +151,21 @@ if tx.wants_completion {
 ```
 
 See `src/surface_style/handlers/transactions.rs`.
+
+## Working on the XML
+
+Two traps, both of which look like the code being wrong rather than the build:
+
+- **Cargo does not track the protocol XML as an input.** `generate_client_code!`
+  reads it when the macro expands, so editing
+  `protocols/otto-surface-style-unstable-v1.xml` changes nothing until something
+  forces otto-kit to rebuild. `touch components/otto-kit/src/protocols/mod.rs`
+  after every XML edit.
+- **Both ends have to agree on the version.** A request added `since="3"` needs
+  the compositor to advertise 3 *and* the client to bind at least 3
+  (`globals.bind(&qh, 1..=3, ())` in otto-kit's app runner). Bind too low and
+  the compositor kills the client with "invalid version ... (2, need at least
+  3)" the moment it uses the request.
 
 ## Not built
 

@@ -136,9 +136,22 @@ impl SubsurfaceSurface {
         self.base_surface.resize(width, height);
     }
 
-    /// Set position relative to parent surface
-    pub fn set_position(&self, _x: i32, _y: i32) {
-        // Note: position is managed via surface style, not wl_subsurface.
+    /// Set position relative to the parent surface, in logical points.
+    ///
+    /// Where a surface is *drawn* can be driven from the surface style
+    /// instead, and a component that animates a subsurface around should do
+    /// that — the style is animatable and this is not. But the two are separate
+    /// things: the compositor hit-tests the pointer against the wl position,
+    /// and reports coordinates relative to it, so a surface moved only by its
+    /// style receives events for wherever it *used* to be. Anything that reads
+    /// pointer positions has to keep this in step with the style.
+    ///
+    /// Subsurface position is part of the parent's state: it takes effect when
+    /// the parent commits, even for a desynchronised subsurface.
+    pub fn set_position(&self, x: i32, y: i32) {
+        if let Some(ref sub) = self.subsurface {
+            sub.set_position(x, y);
+        }
     }
 
     /// Place this subsurface above a sibling surface in the stacking order.
