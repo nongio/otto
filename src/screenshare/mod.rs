@@ -257,6 +257,42 @@ pub fn window_for_identifier(
     Some((window.clone(), output))
 }
 
+/// Capture size and pacing for a window stream: `(width_px, height_px, refresh_millihz)`.
+///
+/// Resolved once, at `RecordWindow` time: the PipeWire format is never
+/// renegotiated, so a window that later grows is cropped to this size and one
+/// that shrinks leaves the remainder black.
+///
+/// Dimensions are physical pixels rounded **down to even** — several PipeWire
+/// consumers, and every YUV encoder downstream, reject odd sizes. A window that
+/// rounds down to zero in either axis is not capturable.
+#[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
+pub fn window_capture_size(
+    workspaces: &crate::workspaces::Workspaces,
+    foreign_toplevels: &HashMap<
+        smithay::reexports::wayland_server::backend::ObjectId,
+        crate::state::foreign_toplevel_shared::ForeignToplevelHandles,
+    >,
+    identifier: &str,
+) -> Result<(u32, u32, u32), String> {
+    let (window, output) = window_for_identifier(workspaces, foreign_toplevels, identifier)
+        .ok_or_else(|| format!("Window not found: {identifier}"))?;
+
+    let scale = output.current_scale().fractional_scale();
+    let size = smithay::desktop::space::SpaceElement::geometry(&window).size;
+    let w = (((size.w as f64) * scale).round() as u32) & !1;
+    let h = (((size.h as f64) * scale).round() as u32) & !1;
+    if w == 0 || h == 0 {
+        return Err(format!("Window {identifier} has zero size"));
+    }
+
+    let refresh = output
+        .current_mode()
+        .map(|m| m.refresh as u32)
+        .unwrap_or(60000);
+    Ok((w, h, refresh))
+}
+
 /// Ids of windows with an active screencast stream.
 ///
 /// Drives [`crate::state::window_throttle::WindowThrottleState::Captured`] so a
@@ -287,7 +323,10 @@ pub fn screencast_window_ids(
 }
 
 /// Handle a command from the D-Bus service.
-fn handle_screenshare_command<B: crate::state::Backend + 'static>(
+///
+/// Public so the headless test harness can drive the same control plane the
+/// D-Bus service drives, without a session bus.
+pub fn handle_screenshare_command<B: crate::state::Backend + 'static>(
     state: &mut crate::state::Otto<B>,
     cmd: CompositorCommand,
 ) {
@@ -395,25 +434,7 @@ fn handle_screenshare_command<B: crate::state::Backend + 'static>(
                         (w, h, refresh)
                     }),
                 StreamTarget::Window(id) => {
-                    window_for_identifier(&state.workspaces, &state.foreign_toplevels, id)
-                        .ok_or_else(|| format!("Window not found: {id}"))
-                        .and_then(|(window, output)| {
-                            let scale = output.current_scale().fractional_scale();
-                            let size =
-                                smithay::desktop::space::SpaceElement::geometry(&window).size;
-                            // Even dimensions: several PipeWire consumers (and
-                            // every YUV encoder downstream) reject odd sizes.
-                            let w = (((size.w as f64) * scale).round() as u32) & !1;
-                            let h = (((size.h as f64) * scale).round() as u32) & !1;
-                            if w == 0 || h == 0 {
-                                return Err(format!("Window {id} has zero size"));
-                            }
-                            let refresh = output
-                                .current_mode()
-                                .map(|m| m.refresh as u32)
-                                .unwrap_or(60000);
-                            Ok((w, h, refresh))
-                        })
+                    window_capture_size(&state.workspaces, &state.foreign_toplevels, id)
                 }
             };
 

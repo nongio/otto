@@ -392,6 +392,223 @@ impl HeadlessHandle {
                 .collect()
         })
     }
+
+    /// Logical-pixel geometry of the mapped window with this title, as the
+    /// space knows it. `None` if no such window is mapped.
+    pub fn window_logical_size(&self, title: &str) -> Option<(i32, i32)> {
+        let title = title.to_string();
+        self.query(move |state| {
+            let window = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)?;
+            let size = smithay::desktop::space::SpaceElement::geometry(window).size;
+            Some((size.w, size.h))
+        })
+    }
+
+    // ── Screencast control plane ─────────────────────────────────────────
+    //
+    // The D-Bus service (`org.otto.ScreenCast`) is not started headlessly —
+    // it needs a session bus, and a stream needs a PipeWire daemon and a GPU.
+    // What these helpers drive is everything below that: the same
+    // `CompositorCommand`s the D-Bus thread posts, handled by the same
+    // compositor-side handler, against real client windows.
+
+    /// Run one screencast command against compositor state, as the D-Bus
+    /// thread's calloop channel would.
+    fn screencast_command(&self, cmd: crate::screenshare::CompositorCommand) {
+        self.with_state(move |state| {
+            crate::screenshare::handle_screenshare_command(state, cmd);
+        });
+    }
+
+    /// `org.otto.ScreenCast.ListOutputs` — the connectors a session may record.
+    pub fn screencast_list_outputs(&self) -> Vec<crate::screenshare::OutputInfo> {
+        self.query(|state| {
+            let (tx, mut rx) = tokio::sync::oneshot::channel();
+            crate::screenshare::handle_screenshare_command(
+                state,
+                crate::screenshare::CompositorCommand::ListOutputs { response_tx: tx },
+            );
+            rx.try_recv().expect("ListOutputs answered synchronously")
+        })
+    }
+
+    /// `org.otto.ScreenCast.ListWindows` — the capturable toplevels, each named
+    /// by its `ext-foreign-toplevel-list-v1` identifier.
+    pub fn screencast_list_windows(&self) -> Vec<crate::screenshare::WindowInfo> {
+        self.query(|state| {
+            let (tx, mut rx) = tokio::sync::oneshot::channel();
+            crate::screenshare::handle_screenshare_command(
+                state,
+                crate::screenshare::CompositorCommand::ListWindows { response_tx: tx },
+            );
+            rx.try_recv().expect("ListWindows answered synchronously")
+        })
+    }
+
+    /// `org.otto.ScreenCast.CreateSession`. `session_id` is the D-Bus object
+    /// path the service would have minted.
+    pub fn screencast_create_session(&self, session_id: &str, cursor_mode: u32) {
+        self.screencast_command(crate::screenshare::CompositorCommand::CreateSession {
+            session_id: session_id.to_string(),
+            cursor_mode,
+        });
+    }
+
+    /// `org.otto.ScreenCast.Session.Stop` / session destruction.
+    pub fn screencast_destroy_session(&self, session_id: &str) {
+        self.screencast_command(crate::screenshare::CompositorCommand::DestroySession {
+            session_id: session_id.to_string(),
+        });
+    }
+
+    /// `RecordMonitor` / `RecordWindow`, up to and including PipeWire.
+    ///
+    /// Only the rejection paths (unknown target, unknown session, already
+    /// recording) are reachable without a PipeWire daemon — a target that
+    /// resolves goes on to open a real stream.
+    pub fn screencast_start_recording(
+        &self,
+        session_id: &str,
+        target: crate::screenshare::StreamTarget,
+    ) -> Result<u32, String> {
+        let session_id = session_id.to_string();
+        self.query(move |state| {
+            let (tx, mut rx) = tokio::sync::oneshot::channel();
+            crate::screenshare::handle_screenshare_command(
+                state,
+                crate::screenshare::CompositorCommand::StartRecording {
+                    session_id,
+                    target,
+                    cursor_mode: crate::screenshare::CURSOR_MODE_EMBEDDED,
+                    response_tx: tx,
+                },
+            );
+            rx.try_recv()
+                .expect("StartRecording answered synchronously")
+        })
+    }
+
+    /// Record a target with the PipeWire connection left out.
+    ///
+    /// Produces exactly the compositor-side state a successful
+    /// `RecordMonitor`/`RecordWindow` leaves behind — a session stream keyed by
+    /// [`crate::screenshare::StreamTarget::key`], sized as that call would size
+    /// it — but with an unstarted [`crate::screenshare::PipeWireStream`], so
+    /// everything downstream of "this target is being cast" (throttling, forced
+    /// repaint, teardown) is exercisable without a PipeWire daemon or a GPU.
+    ///
+    /// Returns the capture size the real call would have negotiated.
+    pub fn screencast_attach_stream(
+        &self,
+        session_id: &str,
+        target: crate::screenshare::StreamTarget,
+    ) -> Result<(u32, u32), String> {
+        let session_id = session_id.to_string();
+        self.query(move |state| {
+            use crate::screenshare::{ActiveStream, PipeWireStream, StreamConfig, StreamTarget};
+
+            let (width, height, refresh) = match &target {
+                StreamTarget::Output(connector) => state
+                    .workspaces
+                    .outputs()
+                    .find(|o| o.name() == *connector)
+                    .and_then(|o| o.current_mode())
+                    .map(|m| (m.size.w as u32, m.size.h as u32, m.refresh as u32))
+                    .ok_or_else(|| format!("Output not found: {connector}"))?,
+                StreamTarget::Window(id) => crate::screenshare::window_capture_size(
+                    &state.workspaces,
+                    &state.foreign_toplevels,
+                    id,
+                )?,
+            };
+
+            let session = state
+                .screenshare_sessions
+                .get_mut(&session_id)
+                .ok_or_else(|| format!("Session not found: {session_id}"))?;
+
+            session.streams.insert(
+                target.key(),
+                ActiveStream {
+                    target,
+                    pipewire_stream: PipeWireStream::new(StreamConfig {
+                        width,
+                        height,
+                        framerate_num: (refresh / 1000).min(60),
+                        framerate_denom: 1,
+                        gbm_device: None,
+                        capabilities: Default::default(),
+                    }),
+                    pending_frame: None,
+                },
+            );
+
+            Ok((width, height))
+        })
+    }
+
+    /// Stream keys (`output:<connector>` / `window:<identifier>`) currently
+    /// active in a session. `None` if the session does not exist.
+    pub fn screencast_stream_keys(&self, session_id: &str) -> Option<Vec<String>> {
+        let session_id = session_id.to_string();
+        self.query(move |state| {
+            let session = state.screenshare_sessions.get(&session_id)?;
+            let mut keys: Vec<String> = session.streams.keys().cloned().collect();
+            keys.sort();
+            Some(keys)
+        })
+    }
+
+    /// The capture size `RecordWindow` would fix a window's stream at:
+    /// `(width_px, height_px, refresh_millihz)`.
+    pub fn screencast_window_capture_size(
+        &self,
+        identifier: &str,
+    ) -> Result<(u32, u32, u32), String> {
+        let identifier = identifier.to_string();
+        self.query(move |state| {
+            crate::screenshare::window_capture_size(
+                &state.workspaces,
+                &state.foreign_toplevels,
+                &identifier,
+            )
+        })
+    }
+
+    /// Frame-callback throttle state of every mapped window, keyed by title.
+    ///
+    /// Classified exactly as the udev render loop does, screencast streams
+    /// included — a captured window is `Captured` no matter what covers it.
+    pub fn window_throttle_states(
+        &self,
+    ) -> std::collections::HashMap<String, crate::state::window_throttle::WindowThrottleState> {
+        self.query(|state| {
+            #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
+            let captured_ids = crate::screenshare::screencast_window_ids(
+                &state.screenshare_sessions,
+                &state.workspaces,
+                &state.foreign_toplevels,
+            );
+            let windows: Vec<crate::shell::WindowElement> =
+                state.workspaces.spaces_elements().cloned().collect();
+            let refs: Vec<&crate::shell::WindowElement> = windows.iter().collect();
+            #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
+            let states = crate::state::window_throttle::classify_windows(
+                &state.workspaces,
+                &refs,
+                &Default::default(),
+                state.workspaces.get_show_all(),
+                &captured_ids,
+            );
+            windows
+                .iter()
+                .filter_map(|w| states.get(&w.id()).map(|s| (w.xdg_title(), *s)))
+                .collect()
+        })
+    }
 }
 
 impl Otto<HeadlessData> {

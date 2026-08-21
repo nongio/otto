@@ -165,7 +165,21 @@ impl TestClient {
         width: u32,
         height: u32,
     ) -> Arc<Mutex<TestToplevel>> {
-        self.create_toplevel_inner(title, width, height, false)
+        self.create_toplevel_inner(title, None, width, height, false)
+    }
+
+    /// Create a toplevel that also announces an `app_id`, the way a real
+    /// application does. The id is set before the first commit, so it is
+    /// already there when the compositor maps the window and registers it with
+    /// the foreign-toplevel protocols.
+    pub fn create_toplevel_with_app_id(
+        &mut self,
+        title: &str,
+        app_id: &str,
+        width: u32,
+        height: u32,
+    ) -> Arc<Mutex<TestToplevel>> {
+        self.create_toplevel_inner(title, Some(app_id), width, height, false)
     }
 
     /// Create a toplevel that asks to be maximized before its first commit,
@@ -177,12 +191,13 @@ impl TestClient {
         width: u32,
         height: u32,
     ) -> Arc<Mutex<TestToplevel>> {
-        self.create_toplevel_inner(title, width, height, true)
+        self.create_toplevel_inner(title, None, width, height, true)
     }
 
     fn create_toplevel_inner(
         &mut self,
         title: &str,
+        app_id: Option<&str>,
         width: u32,
         height: u32,
         maximized: bool,
@@ -211,6 +226,9 @@ impl TestClient {
         toplevel_state.lock().unwrap().xdg_surface = Some(xdg_surface.clone());
         let toplevel = xdg_surface.get_toplevel(&self.qh, toplevel_state.clone());
         toplevel.set_title(title.to_string());
+        if let Some(app_id) = app_id {
+            toplevel.set_app_id(app_id.to_string());
+        }
         if maximized {
             toplevel.set_maximized();
         }
