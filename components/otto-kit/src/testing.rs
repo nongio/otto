@@ -28,7 +28,11 @@ use wayland_client::{
     },
     Connection, Dispatch, EventQueue, QueueHandle,
 };
-use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
+use wayland_protocols::xdg::shell::client::{
+    xdg_popup, xdg_positioner, xdg_surface, xdg_toplevel, xdg_wm_base,
+};
+
+use crate::protocols::{otto_surface_style_manager_v1, otto_surface_style_v1};
 
 /// Shared state for the test client's Wayland event dispatching.
 #[derive(Debug)]
@@ -37,6 +41,9 @@ pub struct TestClientState {
     pub wl_shm: Option<wl_shm::WlShm>,
     pub wl_seat: Option<wl_seat::WlSeat>,
     pub xdg_wm_base: Option<xdg_wm_base::XdgWmBase>,
+    /// The compositor-side material protocol, when the compositor advertises it.
+    pub otto_surface_style_manager:
+        Option<otto_surface_style_manager_v1::OttoSurfaceStyleManagerV1>,
     pub shm_formats: Vec<wl_shm::Format>,
 }
 
@@ -47,6 +54,7 @@ impl TestClientState {
             wl_shm: None,
             wl_seat: None,
             xdg_wm_base: None,
+            otto_surface_style_manager: None,
             shm_formats: Vec::new(),
         }
     }
@@ -115,6 +123,38 @@ impl TestClient {
             .create_surface(&self.qh, ())
     }
 
+    /// Ask the compositor to give a surface a translucent, blurred material,
+    /// the way a real otto-kit app dresses its popups.
+    ///
+    /// Returns the style object so the caller can keep it alive — dropping it
+    /// destroys the style and the surface goes back to plain. Returns `None`
+    /// when the compositor does not advertise `otto_surface_style_manager_v1`.
+    pub fn request_material(
+        &self,
+        surface: &wl_surface::WlSurface,
+    ) -> Option<otto_surface_style_v1::OttoSurfaceStyleV1> {
+        let manager = self.state.otto_surface_style_manager.as_ref()?;
+        let style = manager.get_surface_style(surface, &self.qh, ());
+        style.set_background_color(0.9, 0.9, 0.9, 0.85);
+        style.set_blend_mode(otto_surface_style_v1::BlendMode::BackgroundBlur);
+        Some(style)
+    }
+
+    /// Ask the compositor to round the surface's corners, the way every
+    /// otto-kit window does. The client's buffer keeps its square corners —
+    /// the rounding is a clip the compositor applies — which is exactly why
+    /// such a window cannot be scanned out raw.
+    pub fn request_rounded(
+        &self,
+        surface: &wl_surface::WlSurface,
+    ) -> Option<otto_surface_style_v1::OttoSurfaceStyleV1> {
+        let manager = self.state.otto_surface_style_manager.as_ref()?;
+        let style = manager.get_surface_style(surface, &self.qh, ());
+        style.set_corner_radius(36.0);
+        style.set_masks_to_bounds(otto_surface_style_v1::ClipMode::Enabled);
+        Some(style)
+    }
+
     /// Create an XDG toplevel window and attach a minimal SHM buffer.
     ///
     /// Returns a shared reference to the toplevel state which tracks
@@ -124,6 +164,28 @@ impl TestClient {
         title: &str,
         width: u32,
         height: u32,
+    ) -> Arc<Mutex<TestToplevel>> {
+        self.create_toplevel_inner(title, width, height, false)
+    }
+
+    /// Create a toplevel that asks to be maximized before its first commit,
+    /// the way a browser restoring a maximized window from its last session
+    /// does. The request arrives before the surface has ever been mapped.
+    pub fn create_maximized_toplevel(
+        &mut self,
+        title: &str,
+        width: u32,
+        height: u32,
+    ) -> Arc<Mutex<TestToplevel>> {
+        self.create_toplevel_inner(title, width, height, true)
+    }
+
+    fn create_toplevel_inner(
+        &mut self,
+        title: &str,
+        width: u32,
+        height: u32,
+        maximized: bool,
     ) -> Arc<Mutex<TestToplevel>> {
         let surface = self.create_surface();
 
@@ -137,15 +199,21 @@ impl TestClient {
             configured: false,
             width: width as i32,
             height: height as i32,
+            maximized: false,
             closed: false,
             title: title.to_string(),
             surface: surface.clone(),
             buffer: None,
+            xdg_surface: None,
         }));
 
         let xdg_surface = xdg_wm_base.get_xdg_surface(&surface, &self.qh, toplevel_state.clone());
+        toplevel_state.lock().unwrap().xdg_surface = Some(xdg_surface.clone());
         let toplevel = xdg_surface.get_toplevel(&self.qh, toplevel_state.clone());
         toplevel.set_title(title.to_string());
+        if maximized {
+            toplevel.set_maximized();
+        }
 
         // Commit to trigger the initial configure
         surface.commit();
@@ -168,20 +236,114 @@ impl TestClient {
 
         toplevel_state
     }
+
+    /// Create an XDG popup anchored to `parent`, the way a client puts up a
+    /// tooltip or a context menu, and attach a minimal SHM buffer.
+    ///
+    /// `x`/`y` are the anchor rect's origin in the parent's surface-local
+    /// coordinates.
+    pub fn create_popup(
+        &mut self,
+        parent: &Arc<Mutex<TestToplevel>>,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+    ) -> Arc<Mutex<TestPopup>> {
+        let surface = self.create_surface();
+        let xdg_wm_base = self
+            .state
+            .xdg_wm_base
+            .as_ref()
+            .expect("xdg_wm_base not bound");
+
+        let positioner = xdg_wm_base.create_positioner(&self.qh, ());
+        positioner.set_size(width as i32, height as i32);
+        positioner.set_anchor_rect(x, y, 1, 1);
+        positioner.set_anchor(xdg_positioner::Anchor::BottomLeft);
+        positioner.set_gravity(xdg_positioner::Gravity::BottomRight);
+
+        let popup_state = Arc::new(Mutex::new(TestPopup {
+            configured: false,
+            width: width as i32,
+            height: height as i32,
+            done: false,
+            surface: surface.clone(),
+            buffer: None,
+        }));
+
+        let xdg_surface = xdg_wm_base.get_xdg_surface(&surface, &self.qh, popup_state.clone());
+        let parent_xdg = parent
+            .lock()
+            .unwrap()
+            .xdg_surface
+            .clone()
+            .expect("parent toplevel has no xdg_surface");
+        let _popup = xdg_surface.get_popup(
+            Some(&parent_xdg),
+            &positioner,
+            &self.qh,
+            popup_state.clone(),
+        );
+        positioner.destroy();
+
+        // Commit to trigger the initial configure, then attach and commit.
+        surface.commit();
+        let buffer = ShmBuffer::new(
+            self.state.wl_shm.as_ref().expect("wl_shm not bound"),
+            &self.qh,
+            width,
+            height,
+        );
+        surface.attach(Some(buffer.buffer()), 0, 0);
+        popup_state.lock().unwrap().buffer = Some(buffer.buffer().clone());
+        let _ = self.roundtrip();
+        surface.commit();
+
+        popup_state
+    }
+}
+
+/// Tracks the state of a test XDG popup.
+#[derive(Debug)]
+pub struct TestPopup {
+    pub configured: bool,
+    pub width: i32,
+    pub height: i32,
+    /// The compositor dismissed the popup.
+    pub done: bool,
+    pub surface: wl_surface::WlSurface,
+    pub buffer: Option<wl_buffer::WlBuffer>,
+}
+
+impl TestPopup {
+    /// Re-attach the buffer, damage the whole surface and commit — a popup
+    /// redrawing its own content.
+    pub fn commit_frame(&self) {
+        self.surface.attach(self.buffer.as_ref(), 0, 0);
+        self.surface.damage(0, 0, self.width, self.height);
+        self.surface.commit();
+    }
 }
 
 /// Tracks the state of a test XDG toplevel.
 #[derive(Debug)]
 pub struct TestToplevel {
     pub configured: bool,
+    /// Size the compositor last configured, which is not the size of the
+    /// attached buffer: this client never resizes itself.
     pub width: i32,
     pub height: i32,
+    /// Whether the last configure carried the `maximized` state.
+    pub maximized: bool,
     pub closed: bool,
     pub title: String,
     /// The toplevel's wl_surface, so tests can push further commits.
     pub surface: wl_surface::WlSurface,
     /// The buffer attached at map time, so tests can re-attach it.
     pub buffer: Option<wl_buffer::WlBuffer>,
+    /// The toplevel's xdg_surface, so tests can hang popups off it.
+    pub xdg_surface: Option<xdg_surface::XdgSurface>,
 }
 
 impl TestToplevel {
@@ -268,6 +430,10 @@ impl Dispatch<wl_registry::WlRegistry, ()> for TestClientState {
                 }
                 "xdg_wm_base" => {
                     state.xdg_wm_base = Some(registry.bind(name, version.min(6), qh, ()));
+                }
+                "otto_surface_style_manager_v1" => {
+                    state.otto_surface_style_manager =
+                        Some(registry.bind(name, version.min(2), qh, ()));
                 }
                 _ => {}
             }
@@ -380,6 +546,30 @@ impl Dispatch<xdg_wm_base::XdgWmBase, ()> for TestClientState {
     }
 }
 
+impl Dispatch<otto_surface_style_manager_v1::OttoSurfaceStyleManagerV1, ()> for TestClientState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &otto_surface_style_manager_v1::OttoSurfaceStyleManagerV1,
+        _event: otto_surface_style_manager_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<otto_surface_style_v1::OttoSurfaceStyleV1, ()> for TestClientState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &otto_surface_style_v1::OttoSurfaceStyleV1,
+        _event: otto_surface_style_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
 impl Dispatch<xdg_surface::XdgSurface, Arc<Mutex<TestToplevel>>> for TestClientState {
     fn event(
         _state: &mut Self,
@@ -406,15 +596,77 @@ impl Dispatch<xdg_toplevel::XdgToplevel, Arc<Mutex<TestToplevel>>> for TestClien
         _qh: &QueueHandle<Self>,
     ) {
         match event {
-            xdg_toplevel::Event::Configure { width, height, .. } => {
+            xdg_toplevel::Event::Configure {
+                width,
+                height,
+                states,
+            } => {
+                let mut tl = data.lock().unwrap();
                 if width > 0 && height > 0 {
-                    let mut tl = data.lock().unwrap();
                     tl.width = width;
                     tl.height = height;
                 }
+                // States arrive as a flat array of little-endian u32 enum values.
+                tl.maximized = states
+                    .chunks_exact(4)
+                    .map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
+                    .any(|s| s == u32::from(xdg_toplevel::State::Maximized));
             }
             xdg_toplevel::Event::Close => {
                 data.lock().unwrap().closed = true;
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<xdg_positioner::XdgPositioner, ()> for TestClientState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &xdg_positioner::XdgPositioner,
+        _event: xdg_positioner::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<xdg_surface::XdgSurface, Arc<Mutex<TestPopup>>> for TestClientState {
+    fn event(
+        _state: &mut Self,
+        xdg_surface: &xdg_surface::XdgSurface,
+        event: xdg_surface::Event,
+        data: &Arc<Mutex<TestPopup>>,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let xdg_surface::Event::Configure { serial } = event {
+            xdg_surface.ack_configure(serial);
+            data.lock().unwrap().configured = true;
+        }
+    }
+}
+
+impl Dispatch<xdg_popup::XdgPopup, Arc<Mutex<TestPopup>>> for TestClientState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &xdg_popup::XdgPopup,
+        event: xdg_popup::Event,
+        data: &Arc<Mutex<TestPopup>>,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            xdg_popup::Event::Configure { width, height, .. } => {
+                let mut p = data.lock().unwrap();
+                if width > 0 && height > 0 {
+                    p.width = width;
+                    p.height = height;
+                }
+            }
+            xdg_popup::Event::PopupDone => {
+                data.lock().unwrap().done = true;
             }
             _ => {}
         }

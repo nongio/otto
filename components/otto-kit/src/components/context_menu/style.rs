@@ -38,6 +38,18 @@ pub struct ContextMenuStyle {
     /// Delay/duration for menu close fade-out
     pub close_delay: f32,
 
+    // === Typography ===
+    /// Point size for item labels and shortcuts. `None` keeps the toolkit's
+    /// menu default (13pt), which is what the bar's and the dock's menus use.
+    /// A menu that is not a menu-bar menu — a pop-up button's, say — can ask
+    /// for a larger one so its text matches the form it drops out of.
+    pub item_font_size: Option<f32>,
+
+    /// Height of a non-separator row. `None` keeps each item's own height.
+    /// Set it alongside `item_font_size`: a larger font in a 22pt row reads
+    /// as cramped rather than as bigger.
+    pub item_height: Option<f32>,
+
     // === Scale ===
     /// Display scale factor (e.g. screen_scale * 0.8)
     /// Applied to all dimensions: sizes, padding, fonts.
@@ -58,6 +70,8 @@ impl Hash for ContextMenuStyle {
         self.show_delay_mouse.to_bits().hash(state);
         self.show_delay_keyboard.to_bits().hash(state);
         self.close_delay.to_bits().hash(state);
+        self.item_font_size.map(|v| v.to_bits()).hash(state);
+        self.item_height.map(|v| v.to_bits()).hash(state);
         self.draw_scale.to_bits().hash(state);
         // For theme, we can hash the relevant colors
         // self.theme.material_titlebar.hash(state);
@@ -77,8 +91,13 @@ impl Default for ContextMenuStyle {
             show_delay_mouse: 0.2,
             show_delay_keyboard: 0.0, // Instant on keyboard
             close_delay: 0.15,
+            item_font_size: None,
+            item_height: None,
             draw_scale: 1.0,
-            theme: Theme::light(),
+            // Follow the system color scheme. A menu is a popup built on the
+            // spot, so reading the watcher here is enough — by the time one
+            // opens, the portal has long since answered.
+            theme: crate::AppContext::current_theme(),
         }
     }
 }
@@ -138,12 +157,44 @@ impl ContextMenuStyle {
         self
     }
 
+    /// Set the label point size and the row height together — see
+    /// [`ContextMenuStyle::item_font_size`] for why they travel as a pair.
+    pub fn with_item_metrics(mut self, font_size: f32, item_height: f32) -> Self {
+        self.item_font_size = Some(font_size);
+        self.item_height = Some(item_height);
+        self
+    }
+
     pub fn with_draw_scale(mut self, scale: f32) -> Self {
         self.draw_scale = scale;
         self
     }
 
     // === Utility Methods ===
+
+    /// The item style this menu draws its rows with: the theme's own tones,
+    /// plus whatever typography the menu asked for.
+    pub fn item_style(&self) -> crate::components::menu_item::MenuItemStyle {
+        let mut item_style = crate::components::menu_item::MenuItemStyle::from_theme(&self.theme);
+        if let Some(size) = self.item_font_size {
+            item_style.font_size = size;
+            item_style.shortcut_font_size = size;
+        }
+        if let Some(height) = self.item_height {
+            item_style.line_height = height;
+        }
+        item_style
+    }
+
+    /// How tall `item` is in this menu. Separators keep their own height —
+    /// they are a rule, not a row, and stretching them with the text would
+    /// only add space.
+    pub fn item_height_of(&self, item: &crate::components::menu_item::MenuItem) -> f32 {
+        match self.item_height {
+            Some(height) if !item.is_separator() => height,
+            _ => item.height,
+        }
+    }
 
     /// Scale a logical pixel value by draw_scale
     pub fn scale(&self, value: f32) -> f32 {

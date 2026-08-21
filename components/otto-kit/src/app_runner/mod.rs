@@ -7,7 +7,6 @@ pub mod context;
 mod handlers;
 
 pub use context::AppContext;
-use wayland_client::backend::ObjectId;
 
 use crate::protocols::{
     otto_dock_item_v1, otto_dock_manager_v1, otto_style_transaction_v1,
@@ -39,6 +38,11 @@ use wayland_protocols::ext::session_lock::v1::client::{
     ext_session_lock_manager_v1::ExtSessionLockManagerV1,
     ext_session_lock_surface_v1::{self, ExtSessionLockSurfaceV1},
     ext_session_lock_v1::{self, ExtSessionLockV1},
+};
+use wayland_protocols::wp::pointer_gestures::zv1::client::{
+    zwp_pointer_gesture_hold_v1::{self, ZwpPointerGestureHoldV1},
+    zwp_pointer_gesture_pinch_v1::{self, ZwpPointerGesturePinchV1},
+    zwp_pointer_gestures_v1::ZwpPointerGesturesV1,
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::ZwlrLayerShellV1, zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
@@ -136,6 +140,65 @@ pub trait App {
     /// Called when keyboard focus is lost from a surface
     /// Override this to handle focus loss (e.g., close menus)
     fn on_keyboard_leave(&mut self, _ctx: &AppContext, _surface: &wl_surface::WlSurface) {
+        // Default: do nothing
+    }
+
+    /// The theme changed underfoot: the user picked a different accent, colour
+    /// scheme or icon theme and the portal said so.
+    ///
+    /// An app that paints from `AppContext::current_theme()` has to repaint the
+    /// surfaces it caches — for a window that draws its own chrome, that means
+    /// asking for a frame, which nothing else will do while the app is idle.
+    fn on_theme_changed(&mut self, _ctx: &AppContext) {
+        // Default: do nothing
+    }
+
+    /// Fingers came to rest on the touchpad without scrolling
+    /// (`zwp_pointer_gesture_hold_v1`).
+    ///
+    /// This is how a user stops a view that is still gliding: laying a hand on
+    /// the trackpad sends no motion and no button, so nothing else in the
+    /// pointer stream reports it.
+    fn on_pointer_hold_begin(&mut self, _ctx: &AppContext, _fingers: u32) {
+        // Default: do nothing
+    }
+
+    /// The hold ended — the fingers lifted, or the gesture turned into a
+    /// scroll or a swipe and was cancelled.
+    fn on_pointer_hold_end(&mut self, _ctx: &AppContext, _cancelled: bool) {
+        // Default: do nothing
+    }
+
+    /// Two fingers came down and the compositor read them as a pinch
+    /// (`zwp_pointer_gesture_pinch_v1`).
+    ///
+    /// Nothing is known about where the pinch is: the protocol reports the
+    /// focal point only as a delta from wherever it began, so an app that
+    /// wants to zoom about it has to have kept the pointer's last position
+    /// itself.
+    fn on_pointer_pinch_begin(&mut self, _ctx: &AppContext, _fingers: u32) {
+        // Default: do nothing
+    }
+
+    /// The pinch moved. `scale` is measured against the gesture's *start*,
+    /// not the last update — 1.0 is "back where it began" — and `dx`/`dy` are
+    /// how far the focal point has travelled since then, in surface
+    /// coordinates. Both are absolute rather than incremental, so a dropped
+    /// update costs nothing.
+    fn on_pointer_pinch_update(
+        &mut self,
+        _ctx: &AppContext,
+        _dx: f64,
+        _dy: f64,
+        _scale: f64,
+        _rotation: f64,
+    ) {
+        // Default: do nothing
+    }
+
+    /// The pinch ended — the fingers lifted, or the compositor decided the
+    /// gesture was something else after all and cancelled it.
+    fn on_pointer_pinch_end(&mut self, _ctx: &AppContext, _cancelled: bool) {
         // Default: do nothing
     }
 
@@ -262,6 +325,32 @@ impl App for DefaultApp {
     fn on_pointer_event(&mut self, ctx: &AppContext, events: &[PointerEvent]) {
         self.inner.on_pointer_event(ctx, events)
     }
+    fn on_theme_changed(&mut self, ctx: &AppContext) {
+        self.inner.on_theme_changed(ctx)
+    }
+    fn on_pointer_hold_begin(&mut self, ctx: &AppContext, fingers: u32) {
+        self.inner.on_pointer_hold_begin(ctx, fingers)
+    }
+    fn on_pointer_hold_end(&mut self, ctx: &AppContext, cancelled: bool) {
+        self.inner.on_pointer_hold_end(ctx, cancelled)
+    }
+    fn on_pointer_pinch_begin(&mut self, ctx: &AppContext, fingers: u32) {
+        self.inner.on_pointer_pinch_begin(ctx, fingers)
+    }
+    fn on_pointer_pinch_update(
+        &mut self,
+        ctx: &AppContext,
+        dx: f64,
+        dy: f64,
+        scale: f64,
+        rotation: f64,
+    ) {
+        self.inner
+            .on_pointer_pinch_update(ctx, dx, dy, scale, rotation)
+    }
+    fn on_pointer_pinch_end(&mut self, ctx: &AppContext, cancelled: bool) {
+        self.inner.on_pointer_pinch_end(ctx, cancelled)
+    }
     fn on_update(&mut self, ctx: &AppContext) {
         self.inner.on_update(ctx)
     }
@@ -360,7 +449,10 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         let seat_state = SeatState::new(&globals, &qh);
         let output_state = OutputState::new(&globals, &qh);
         let registry_state = RegistryState::new(&globals);
-        let surface_style_manager = globals.bind(&qh, 1..=1, ()).ok();
+        // Version 2 added `set_clip_children`, which a scrolling view needs to
+        // make a pane a fixed clipping window for the subsurface moving inside
+        // it. An older compositor still binds at 1 and simply lacks it.
+        let surface_style_manager = globals.bind(&qh, 1..=3, ()).ok();
         let wlr_layer_shell: Option<ZwlrLayerShellV1> = globals.bind(&qh, 1..=4, ()).ok();
         let otto_dock_manager = globals.bind(&qh, 1..=1, ()).ok();
         let session_lock_manager = globals.bind(&qh, 1..=1, ()).ok();
@@ -369,6 +461,10 @@ impl<A: App + 'static> AppRunnerWithType<A> {
             globals.bind(&qh, 1..=2, ()).ok();
         let fractional_scale_manager: Option<wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1> =
             globals.bind(&qh, 1..=1, ()).ok();
+        // Hold gestures arrived in version 3; pinch has been there since 1.
+        // Binding at 3 is what the hold hooks need, and a compositor offering
+        // less simply leaves both unbound rather than half-working.
+        let pointer_gestures: Option<ZwpPointerGesturesV1> = globals.bind(&qh, 3..=3, ()).ok();
 
         // Get display pointer for creating surfaces
         let display_ptr = conn.backend().display_ptr() as *mut std::ffi::c_void;
@@ -376,6 +472,17 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         // Note: Layers renderer is now initialized via AppContext::enable_layer_engine()
 
         // Move states into the context data structure (box it to prevent movement)
+        // Clipboard support. A compositor without `wl_data_device_manager` is
+        // legal; the clipboard API then reports failure rather than panicking.
+        let data_device_manager =
+            smithay_client_toolkit::data_device_manager::DataDeviceManagerState::bind(
+                &globals, &qh,
+            )
+            .ok();
+        if data_device_manager.is_none() {
+            tracing::debug!("no wl_data_device_manager; clipboard unavailable");
+        }
+
         let context = Box::new(AppContextData {
             connection: conn.clone(),
             compositor_state,
@@ -390,6 +497,9 @@ impl<A: App + 'static> AppRunnerWithType<A> {
             session_lock_manager,
             cursor_shape_manager,
             fractional_scale_manager,
+            pointer_gestures,
+            data_device_manager,
+            data_device: None,
             display_ptr,
         });
 
@@ -398,6 +508,8 @@ impl<A: App + 'static> AppRunnerWithType<A> {
             app: self.app,
             registry_state,
             context_data: context,
+            hold_gestures: Vec::new(),
+            pinch_gestures: Vec::new(),
             exit: false,
         };
 
@@ -405,13 +517,11 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         // Box ensures context_data won't move even when app_data is moved
         AppContext::init::<A>(&app_data.context_data, &qh);
 
-        // Start background watchers if a tokio runtime is available
-        if tokio::runtime::Handle::try_current().is_ok() {
-            crate::color_scheme::spawn_color_scheme_watcher();
-            crate::icon_theme::spawn_icon_theme_watcher();
-        } else {
-            tracing::debug!("no tokio runtime found, skipping portal watchers");
-        }
+        // Background watchers. They find their own home — an app with a plain
+        // `fn main` follows the portal just like an async one does.
+        crate::color_scheme::spawn_color_scheme_watcher();
+        crate::accent::spawn_accent_watcher();
+        crate::icon_theme::spawn_icon_theme_watcher();
 
         // Call the app's ready callback
         let ctx = AppContext::new(&app_data.context_data);
@@ -452,6 +562,9 @@ impl<A: App + 'static> AppRunnerInitialized<A> {
 
         // Ensure wakeup pipe exists before entering the loop.
         let wake_fd = AppContext::wakeup_read_fd();
+        // The watchers may already have answered before the first pass, and a
+        // first-run notification is wasted work: the app paints anyway.
+        let mut theme_generation_seen = crate::portal_runtime::theme_generation();
 
         while !self.app_data.exit {
             // 1. Drain any events already queued (no I/O).
@@ -461,6 +574,13 @@ impl<A: App + 'static> AppRunnerInitialized<A> {
             AppContext::update_windows();
 
             let ctx = AppContext::new(&self.app_data.context_data);
+            // A watcher may have changed the theme since the last pass. It
+            // runs off this thread, so this is where the app hears about it.
+            let generation = crate::portal_runtime::theme_generation();
+            if generation != theme_generation_seen {
+                theme_generation_seen = generation;
+                self.app_data.app.on_theme_changed(&ctx);
+            }
             self.app_data.app.on_update(&ctx);
 
             if self.app_data.exit {
@@ -556,6 +676,13 @@ pub struct AppData<A: App + 'static> {
     app: A,
     registry_state: RegistryState,
     pub(super) context_data: Box<AppContextData>, // Box prevents movement after pointer is stored
+    /// One per seat pointer. Held only to keep the protocol objects alive —
+    /// destroying them would silently end the hold events.
+    hold_gestures: Vec<ZwpPointerGestureHoldV1>,
+    /// The same, for pinch. Kept apart from the holds because the two are
+    /// separate protocol objects with separate lifetimes, not because either
+    /// list is ever read.
+    pinch_gestures: Vec<ZwpPointerGesturePinchV1>,
     exit: bool,
 }
 
@@ -652,8 +779,17 @@ impl<A: App + 'static> OutputHandler for AppData<A> {
 }
 
 impl<A: App + 'static> WindowHandler for AppData<A> {
-    fn request_close(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _window: &StkWindow) {
-        // Ask the app if it wants to close
+    fn request_close(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, window: &StkWindow) {
+        use smithay_client_toolkit::shell::WaylandSurface;
+        use wayland_client::Proxy;
+
+        // An application with more than one window is asked about each of
+        // them separately. A secondary window that has claimed its own close
+        // takes it here; only a close nobody claimed is the application's,
+        // and only that one can end the process.
+        if AppContext::dispatch_close_request(&window.wl_surface().id()) {
+            return;
+        }
         if self.app.on_close() {
             self.exit = true;
         }
@@ -663,11 +799,18 @@ impl<A: App + 'static> WindowHandler for AppData<A> {
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _window: &StkWindow,
+        window: &StkWindow,
         configure: WindowConfigure,
         serial: u32,
     ) {
-        AppContext::set_current_configure(ObjectId::null(), configure.clone(), serial);
+        use smithay_client_toolkit::shell::WaylandSurface;
+        use wayland_client::Proxy;
+
+        // Named, not null. Every registered handler is called for every
+        // configure, so the id is the only thing that tells a window its own
+        // configure from another window's — and an application with two of
+        // them was otherwise resizing both to whatever the last one was told.
+        AppContext::set_current_configure(window.wl_surface().id(), configure.clone(), serial);
         AppContext::dispatch_configure_handlers();
 
         let ctx = AppContext::new(&self.context_data);
@@ -701,10 +844,29 @@ impl<A: App + 'static> SeatHandler for AppData<A> {
             eprintln!("Failed to create keyboard");
         }
 
-        if capability == Capability::Pointer
-            && self.context_data.seat_state.get_pointer(qh, &seat).is_err()
-        {
-            eprintln!("Failed to create pointer");
+        if capability == Capability::Pointer {
+            match self.context_data.seat_state.get_pointer(qh, &seat) {
+                Ok(pointer) => {
+                    // One hold object per pointer, kept alive for the seat's
+                    // lifetime: dropping it destroys the protocol object and
+                    // the events stop.
+                    if let Some(gestures) = &self.context_data.pointer_gestures {
+                        self.hold_gestures
+                            .push(gestures.get_hold_gesture(&pointer, qh, ()));
+                        self.pinch_gestures
+                            .push(gestures.get_pinch_gesture(&pointer, qh, ()));
+                    }
+                }
+                Err(_) => eprintln!("Failed to create pointer"),
+            }
+        }
+
+        // The clipboard lives on a seat, so the data device cannot be created
+        // until one exists. Created once, on the first seat.
+        if self.context_data.data_device.is_none() {
+            if let Some(manager) = &self.context_data.data_device_manager {
+                self.context_data.data_device = Some(manager.get_data_device(qh, &seat));
+            }
         }
     }
 
@@ -748,6 +910,8 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
         surface: &wl_surface::WlSurface,
         _serial: u32,
     ) {
+        use wayland_client::Proxy;
+        AppContext::dispatch_keyboard_leave(&surface.id());
         let ctx = AppContext::new(&self.context_data);
         self.app.on_keyboard_leave(&ctx, surface);
     }
@@ -821,6 +985,10 @@ impl<A: App + 'static> PointerHandler for AppData<A> {
         AppContext::dispatch_pointer_callbacks(events);
         let ctx = AppContext::new(&self.context_data);
         self.app.on_pointer_event(&ctx, events);
+        // Everything that had a claim on this batch has now had it, which is
+        // when a popup can tell an outside press from a press on the control
+        // that owns it.
+        AppContext::dispatch_pointer_batch_end();
     }
 }
 
@@ -985,6 +1153,179 @@ smithay_client_toolkit::delegate_xdg_shell!(@<A: App + 'static> AppData<A>);
 smithay_client_toolkit::delegate_xdg_window!(@<A: App + 'static> AppData<A>);
 smithay_client_toolkit::delegate_xdg_popup!(@<A: App + 'static> AppData<A>);
 smithay_client_toolkit::delegate_registry!(@<A: App + 'static> AppData<A>);
+smithay_client_toolkit::delegate_data_device!(@<A: App + 'static> AppData<A>);
+
+// -- Clipboard -------------------------------------------------------------
+//
+// Three traits, because `wl_data_device` carries clipboard and drag-and-drop
+// on the same object. Only the clipboard half is implemented: the drag
+// callbacks are deliberately empty, and dropping a file onto an otto-kit window
+// does nothing rather than doing something half-defined.
+
+impl<A: App + 'static> smithay_client_toolkit::data_device_manager::data_device::DataDeviceHandler
+    for AppData<A>
+{
+    fn enter(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
+        _x: f64,
+        _y: f64,
+        _surface: &wl_surface::WlSurface,
+    ) {
+    }
+
+    fn leave(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
+    ) {
+    }
+
+    fn motion(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
+        _x: f64,
+        _y: f64,
+    ) {
+    }
+
+    fn drop_performed(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
+    ) {
+    }
+
+    /// The clipboard changed. Record what it offers so a later paste knows
+    /// which types it can ask for.
+    fn selection(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
+    ) {
+        use smithay_client_toolkit::data_device_manager::data_device::DataDevice;
+
+        let Some(device) = self.context_data.data_device.as_ref() else {
+            return;
+        };
+        if device.inner() != data_device {
+            return;
+        }
+
+        match DataDevice::data(device).selection_offer() {
+            Some(offer) => {
+                let mimes = offer.with_mime_types(<[String]>::to_vec);
+                crate::clipboard::set_available(mimes);
+                crate::app_runner::context::set_current_offer(Some(offer.inner().clone()));
+            }
+            None => {
+                crate::clipboard::set_available(Vec::new());
+                crate::app_runner::context::set_current_offer(None);
+            }
+        }
+    }
+}
+
+impl<A: App + 'static> smithay_client_toolkit::data_device_manager::data_source::DataSourceHandler
+    for AppData<A>
+{
+    fn accept_mime(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _source: &wayland_client::protocol::wl_data_source::WlDataSource,
+        _mime: Option<String>,
+    ) {
+    }
+
+    /// Somebody pasted. Write the payload and close the pipe — the reader waits
+    /// on EOF, so failing to close would hang it until its own timeout.
+    fn send_request(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _source: &wayland_client::protocol::wl_data_source::WlDataSource,
+        mime: String,
+        fd: smithay_client_toolkit::data_device_manager::WritePipe,
+    ) {
+        use std::io::Write;
+
+        let Some(bytes) = crate::clipboard::offered_bytes(&mime) else {
+            tracing::debug!(%mime, "paste asked for a type we do not offer");
+            return;
+        };
+        let mut file = std::fs::File::from(std::os::fd::OwnedFd::from(fd));
+        if let Err(err) = file.write_all(&bytes) {
+            tracing::warn!(%err, %mime, "could not write the clipboard payload");
+        }
+        // `file` closes here, which is the EOF the reader is waiting for.
+    }
+
+    /// Someone else claimed the clipboard. Our payload is dead; drop it rather
+    /// than keeping bytes nobody can ask for.
+    fn cancelled(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _source: &wayland_client::protocol::wl_data_source::WlDataSource,
+    ) {
+        crate::app_runner::context::drop_current_source();
+    }
+
+    fn dnd_dropped(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _source: &wayland_client::protocol::wl_data_source::WlDataSource,
+    ) {
+    }
+
+    fn dnd_finished(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _source: &wayland_client::protocol::wl_data_source::WlDataSource,
+    ) {
+    }
+
+    fn action(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _source: &wayland_client::protocol::wl_data_source::WlDataSource,
+        _action: wayland_client::protocol::wl_data_device_manager::DndAction,
+    ) {
+    }
+}
+
+impl<A: App + 'static> smithay_client_toolkit::data_device_manager::data_offer::DataOfferHandler
+    for AppData<A>
+{
+    fn source_actions(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _offer: &mut smithay_client_toolkit::data_device_manager::data_offer::DragOffer,
+        _actions: wayland_client::protocol::wl_data_device_manager::DndAction,
+    ) {
+    }
+
+    fn selected_action(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _offer: &mut smithay_client_toolkit::data_device_manager::data_offer::DragOffer,
+        _action: wayland_client::protocol::wl_data_device_manager::DndAction,
+    ) {
+    }
+}
 
 // ============================================================================
 // Otto Protocol Handlers (merged from wayland_handlers.rs)
@@ -1008,12 +1349,24 @@ impl<A: App + 'static> Dispatch<otto_surface_style_manager_v1::OttoSurfaceStyleM
 impl<A: App + 'static> Dispatch<otto_surface_style_v1::OttoSurfaceStyleV1, ()> for AppData<A> {
     fn event(
         _state: &mut Self,
-        _proxy: &otto_surface_style_v1::OttoSurfaceStyleV1,
-        _event: otto_surface_style_v1::Event,
+        proxy: &otto_surface_style_v1::OttoSurfaceStyleV1,
+        event: otto_surface_style_v1::Event,
         _data: &(),
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+        use wayland_client::Proxy;
+
+        let otto_surface_style_v1::Event::OutputFrame {
+            x,
+            y,
+            width,
+            height,
+        } = event;
+        AppContext::set_output_frame(
+            &proxy.id(),
+            (x as f32, y as f32, width as f32, height as f32),
+        );
     }
 }
 
@@ -1100,7 +1453,66 @@ impl<A: App + 'static>
 // Delegate noop for protocols we don't handle
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_client::protocol::wl_subcompositor::WlSubcompositor);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_client::protocol::wl_subsurface::WlSubsurface);
+// Regions are write-only: a client builds one, hands it to `set_input_region`
+// or `set_opaque_region`, and never hears from it again.
+wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_client::protocol::wl_region::WlRegion);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore ZwlrLayerShellV1);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::WpCursorShapeDeviceV1);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
+wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore ZwpPointerGesturesV1);
+
+impl<A: App + 'static> Dispatch<ZwpPointerGesturePinchV1, ()> for AppData<A> {
+    fn event(
+        state: &mut Self,
+        _pinch: &ZwpPointerGesturePinchV1,
+        event: zwp_pointer_gesture_pinch_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        let ctx = AppContext::new(&state.context_data);
+        match event {
+            zwp_pointer_gesture_pinch_v1::Event::Begin { fingers, .. } => {
+                state.app.on_pointer_pinch_begin(&ctx, fingers);
+            }
+            zwp_pointer_gesture_pinch_v1::Event::Update {
+                dx,
+                dy,
+                scale,
+                rotation,
+                ..
+            } => {
+                state
+                    .app
+                    .on_pointer_pinch_update(&ctx, dx, dy, scale, rotation);
+            }
+            zwp_pointer_gesture_pinch_v1::Event::End { cancelled, .. } => {
+                state.app.on_pointer_pinch_end(&ctx, cancelled != 0);
+            }
+            _ => {}
+        }
+    }
+}
+
+impl<A: App + 'static> Dispatch<ZwpPointerGestureHoldV1, ()> for AppData<A> {
+    fn event(
+        state: &mut Self,
+        _hold: &ZwpPointerGestureHoldV1,
+        event: zwp_pointer_gesture_hold_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        let ctx = AppContext::new(&state.context_data);
+        match event {
+            zwp_pointer_gesture_hold_v1::Event::Begin { fingers, .. } => {
+                state.app.on_pointer_hold_begin(&ctx, fingers);
+            }
+            zwp_pointer_gesture_hold_v1::Event::End { cancelled, .. } => {
+                state.app.on_pointer_hold_end(&ctx, cancelled != 0);
+            }
+            _ => {}
+        }
+    }
+}

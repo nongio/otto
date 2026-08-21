@@ -22,7 +22,7 @@ impl ContextMenuRenderer {
         let s = style.draw_scale;
 
         // Calculate height from items (item heights are in logical pixels)
-        let height: f32 = items.iter().map(|item| item.height).sum();
+        let height: f32 = items.iter().map(|item| style.item_height_of(item)).sum();
         let height = (height + style.vertical_padding * 2.0) * s;
 
         // Use provided width or compute from content, then scale
@@ -39,10 +39,10 @@ impl ContextMenuRenderer {
     /// Measures every label (and shortcut) with the actual font, adds padding
     /// for icons and submenu arrows, and returns the widest row in logical pixels.
     pub fn compute_optimal_width(items: &[MenuItem], style: &ContextMenuStyle) -> f32 {
-        use crate::components::menu_item::{MenuItemKind, MenuItemStyle};
+        use crate::components::menu_item::MenuItemKind;
 
-        let font = crate::typography::styles::BODY_MEDIUM.font();
-        let item_style = MenuItemStyle::default();
+        let item_style = style.item_style();
+        let font = item_style.font();
         let icon_size: f32 = 16.0;
         let icon_gap: f32 = 6.0;
         let submenu_arrow_space: f32 = 20.0;
@@ -147,6 +147,7 @@ impl ContextMenuRenderer {
             .enumerate()
             .map(|(i, item_data)| {
                 let mut data = item_data.clone();
+                data.height = style.item_height_of(item_data);
                 if Some(i) == selected {
                     data.set_visual_state(VisualState::Hovered);
                 }
@@ -158,6 +159,7 @@ impl ContextMenuRenderer {
         MenuItemGroup::new()
             .at(0.0, 0.0)
             .with_width(width - style.horizontal_padding * 2.0)
+            .with_style(style.item_style())
             .items(menu_items_with_state)
             .render(canvas);
 
@@ -194,8 +196,11 @@ impl ContextMenuRenderer {
         }
 
         // Check if inside vertical bounds (with padding)
-        let total_height =
-            style.vertical_padding + items.iter().map(|item| item.height).sum::<f32>();
+        let total_height = style.vertical_padding
+            + items
+                .iter()
+                .map(|item| style.item_height_of(item))
+                .sum::<f32>();
         if y < style.vertical_padding || y > total_height {
             return None;
         }
@@ -204,7 +209,7 @@ impl ContextMenuRenderer {
         let mut current_y = style.vertical_padding;
 
         for (i, item) in items.iter().enumerate() {
-            let item_bottom = current_y + item.height;
+            let item_bottom = current_y + style.item_height_of(item);
 
             if y >= current_y && y < item_bottom {
                 return if item.is_separator() { None } else { Some(i) };

@@ -36,7 +36,7 @@ pub fn spawn_icon_theme_watcher() {
         return;
     }
 
-    tokio::spawn(async move {
+    crate::portal_runtime::spawn("icon-theme-watcher", async move {
         if let Err(e) = run_watcher().await {
             tracing::warn!("icon-theme watcher stopped: {e}");
         }
@@ -77,6 +77,7 @@ async fn run_watcher() -> Result<(), zbus::Error> {
             if let Some(theme) = extract_string(val) {
                 tracing::debug!("icon-theme initial value: {theme}");
                 *ICON_THEME.write().unwrap() = theme;
+                crate::portal_runtime::theme_changed();
             }
         }
         Err(e) => tracing::debug!("icon-theme read failed (portal absent?): {e}"),
@@ -94,6 +95,7 @@ async fn run_watcher() -> Result<(), zbus::Error> {
             if let Some(theme) = extract_string(args.value) {
                 tracing::debug!("icon-theme changed to: {theme}");
                 *ICON_THEME.write().unwrap() = theme;
+                crate::portal_runtime::theme_changed();
             }
         }
     }

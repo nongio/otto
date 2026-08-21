@@ -56,8 +56,9 @@ Context menus are hierarchical popup menus that display items for user selection
 
 20. Exactly zero or one item is selected (highlighted) across the entire menu tree at any time. When a submenu is visible, its items can be selected but the parent menu's item is not highlighted.
 21. When a submenu opens, the root popup retains keyboard focus. Submenu popups do not request a keyboard grab — they forward keyboard events to the root menu.
-22. When the root menu loses keyboard focus (e.g., the user clicks outside the menu, or the focused window changes), the menu closes immediately.
+22. When the root menu loses keyboard focus (e.g., the user clicks outside the menu, or the focused window changes), the menu closes immediately. The focused surface while the grab is active is the root *popup*, so it is that surface's `wl_keyboard.leave` that closes the menu — the parent's `leave`, which fires as the grab hands focus to the popup, must be ignored.
 23. Right-clicking outside the menu also closes it.
+23a. A press anywhere on the owning client's *own* surfaces that is not part of the menu tree — elsewhere in the parent window, another window of the same app — also closes the menu. The compositor's popup grab is "owner-events": it dismisses the popup only when the press lands on a *different* client, so same-client outside clicks are the menu's own responsibility. The dismissal is applied at the *end* of the pointer batch the press arrived in — after every other pointer callback and the app's own `on_pointer_event` — so that a control which owns the menu (a dropdown field toggling itself shut) gets to handle its own press first and the menu is never closed out from under a reopen. Deferring to the next batch instead would leave the menu up whenever no further pointer event follows.
 
 ### Submenu Lifecycle
 
@@ -104,6 +105,7 @@ Context menus are hierarchical popup menus that display items for user selection
 - **Only one item selected tree-wide:** This matches standard desktop menu behavior (e.g., macOS, GNOME). It avoids visual confusion from multiple highlights and makes keyboard navigation intuitive (UP/DOWN move between the current depth's items, and moving between depths clears parent selections).
 - **Submenu delay on mouse hover:** A configurable delay (not instant open) prevents submenus from opening unintentionally when the user is just moving through the menu. This is standard UX from macOS and GNOME.
 - **No scrolling:** Most menus fit on screen. If a menu is too tall, the xdg_positioner flips or adjusts position. Full scroll support is deferred as a non-goal.
+- **Client-side dismissal on same-client clicks:** `xdg_popup.grab` is an owner-events grab — the compositor keeps delivering input to the grabbing client and only dismisses the popup when input goes to another client. This is what lets a menu span several of its own surfaces. The cost is that "click elsewhere in my own window closes the menu" cannot come from the compositor and has to be implemented by the menu, which is why `ContextMenu` watches every pointer batch, not only the ones landing on its own popups, and acts on what it saw through `AppContext::register_pointer_batch_end_callback` once the batch is fully spoken for. This was invisible while every menu hung off a layer-shell surface (there is nothing else of that client to click); it surfaced the first time a menu was parented to an ordinary toplevel.
 - **Keyboard focus held by root popup:** This simplifies input handling and ensures the menu behaves as a cohesive unit, even with multiple popup surfaces.
 
 ## Open Questions

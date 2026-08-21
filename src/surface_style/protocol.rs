@@ -85,6 +85,41 @@ pub struct SurfaceStyle {
     /// When true, the client has called set_size at least once and now owns the layer bounds.
     /// The compositor will no longer override size/position from the buffer.
     pub client_owns_size: bool,
+
+    /// Alpha of the background colour the compositor paints under the surface.
+    /// Zero — the default — means the client's buffer is all there is to draw.
+    pub background_alpha: f32,
+
+    /// Whether this style asks the compositor to blur what is behind the
+    /// surface (`BlendMode::BackgroundBlur`).
+    ///
+    /// Together with [`Self::background_alpha`] this says whether the
+    /// compositor paints pixels of its own for the surface — see
+    /// [`WindowElement::has_material`](crate::shell::WindowElement::has_material),
+    /// which those two feed and which keeps such a window off a scanout plane.
+    pub background_blur: bool,
+
+    /// Whether the compositor clips the surface to a shape its buffer does not
+    /// have: a non-zero corner radius, or `masks_to_bounds` on a layer whose
+    /// bounds are rounded. The client's buffer still has square corners — the
+    /// rounding exists only as a clip in the composite path — so such a window
+    /// must never be scanned out raw.
+    pub rounded: bool,
+
+    /// Whether the compositor paints a border around the surface. Like
+    /// [`Self::rounded`], it lives outside the client's buffer.
+    pub bordered: bool,
+
+    /// Whether this surface's position is resolved against the output rather
+    /// than against its parent — `set_output_placement`. A client cannot work
+    /// this out for itself: it is never told where its own window sits, so a
+    /// surface that has to be centred on the display can only ask.
+    pub output_centered: bool,
+
+    /// The size last applied in surface pixels, from `set_size` or
+    /// `set_output_relative_size`. Centring needs the size the layer is
+    /// *becoming*, which the rendered bounds do not know until the next frame.
+    pub last_size_px: Option<(f32, f32)>,
 }
 
 impl PartialEq for SurfaceStyle {

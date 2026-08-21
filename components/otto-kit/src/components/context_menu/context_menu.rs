@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -38,6 +38,15 @@ pub struct ContextMenu {
     // Callbacks - wrapped in Rc<RefCell<>> so they can be set after construction
     on_item_click: ItemClickCallback,
     on_close: CloseCallback,
+
+    /// A fade-out is in flight. Guards against stacking a second close
+    /// transaction (and a second `on_close`) on top of one already running.
+    closing: Rc<Cell<bool>>,
+
+    /// A press landed on one of our client's surfaces that is not part of this
+    /// menu. Acted on at the *next* pointer batch — see
+    /// [`ContextMenu::register_pointer_handler`].
+    dismiss_pending: Rc<Cell<bool>>,
 }
 
 impl ContextMenu {
@@ -61,11 +70,14 @@ impl ContextMenu {
             on_item_click: Rc::new(RefCell::new(None)),
             on_close: Rc::new(RefCell::new(None)),
             registered_surfaces: Rc::new(RefCell::new(HashMap::new())),
+            closing: Rc::new(Cell::new(false)),
+            dismiss_pending: Rc::new(Cell::new(false)),
         };
 
         // Register pointer handler only for root menu
         if register_handler {
             s.register_pointer_handler();
+            s.register_keyboard_leave_handler();
         }
         s
     }
@@ -82,6 +94,8 @@ impl ContextMenu {
             on_item_click: Rc::new(RefCell::new(None)),
             on_close: Rc::new(RefCell::new(None)),
             registered_surfaces: Rc::new(RefCell::new(HashMap::new())),
+            closing: Rc::new(Cell::new(false)),
+            dismiss_pending: Rc::new(Cell::new(false)),
         }
     }
 
@@ -100,6 +114,23 @@ impl ContextMenu {
         self
     }
 
+    /// Fires whenever the menu closes without an item having been chosen —
+    /// ESC, clicking outside, or losing keyboard focus. Additive: existing
+    /// callers that never set this see no behaviour change, since the
+    /// callback defaults to `None`.
+    ///
+    /// A caller that anchors this menu to its own field (a pop-up button,
+    /// say) can use this to know when to stop drawing that field as "open"
+    /// without polling — `is_visible()` alone can't tell "closed by the
+    /// user" apart from "never opened".
+    pub fn on_close<F>(self, callback: F) -> Self
+    where
+        F: Fn() + 'static,
+    {
+        *self.on_close.borrow_mut() = Some(Rc::new(callback));
+        self
+    }
+
     // === Surface Management ===
 
     /// Show the menu with an explicit grab serial (recommended for GNOME)
@@ -109,6 +140,10 @@ impl ContextMenu {
         positioner: &smithay_client_toolkit::shell::xdg::XdgPositioner,
         serial: u32,
     ) {
+        // A stale `closing` (e.g. a fade-out whose completion event never
+        // arrived) must not wedge the menu permanently open.
+        self.closing.set(false);
+        self.dismiss_pending.set(false);
         self.show_menu_at_depth(0, parent, positioner, Some(serial));
     }
 
@@ -125,6 +160,8 @@ impl ContextMenu {
         layer_surface: &wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
         positioner: &smithay_client_toolkit::shell::xdg::XdgPositioner,
     ) {
+        self.closing.set(false);
+        self.dismiss_pending.set(false);
         self.show_menu_at_depth_for_layer(0, layer_surface, positioner);
     }
 
@@ -347,6 +384,8 @@ impl ContextMenu {
     /// Hide the menu immediately (closes all popups)
     pub fn hide(&self) {
         tracing::debug!("context_menu: hide()");
+        self.closing.set(false);
+        self.dismiss_pending.set(false);
         let mut reg = self.registered_surfaces.borrow_mut();
         for popup in self.popups.borrow().iter() {
             if let Some(p) = popup.borrow().as_ref() {
@@ -356,14 +395,24 @@ impl ContextMenu {
         }
         drop(reg);
         self.state.borrow_mut().reset();
+        if let Some(callback) = self.on_close.borrow().as_ref() {
+            callback();
+        }
     }
 
     /// Hide the menu with fade-out animation
     pub fn hide_animated(&self) {
+        if self.closing.get() {
+            // A fade-out is already running; stacking another transaction would
+            // fire `on_close` twice and re-null already-nulled popups.
+            return;
+        }
         tracing::debug!("context_menu: hide_animated()");
         let close_delay = self.style.borrow().close_delay as f64;
 
         if let Some(scene) = AppContext::surface_style_manager() {
+            self.closing.set(true);
+            self.dismiss_pending.set(false);
             let qh = AppContext::queue_handle();
 
             let animation = scene.begin_transaction(qh, ());
@@ -382,14 +431,26 @@ impl ContextMenu {
             // Register callback to destroy popups after animation completes
             let popups = self.popups.clone();
             let state = self.state.clone();
+            let on_close = self.on_close.clone();
+            let closing = self.closing.clone();
+            let registered_surfaces = self.registered_surfaces.clone();
             let transaction_id = animation.id();
             AppContext::register_transaction_completion_callback(
                 transaction_id,
                 Box::new(move || {
                     for popup in popups.borrow().iter() {
+                        if let Some(p) = popup.borrow().as_ref() {
+                            registered_surfaces
+                                .borrow_mut()
+                                .remove(&p.wl_surface().id());
+                        }
                         *popup.borrow_mut() = None;
                     }
                     state.borrow_mut().reset();
+                    closing.set(false);
+                    if let Some(callback) = on_close.borrow().as_ref() {
+                        callback();
+                    }
                 }),
             );
 
@@ -619,6 +680,26 @@ impl ContextMenu {
 
     // === Event Handling ===
 
+    /// Close the menu when the surface holding keyboard focus loses it.
+    ///
+    /// With an active popup grab the focused surface is the popup itself, so a
+    /// `leave` on one of our own surfaces means focus went somewhere we do not
+    /// own — another window, or the compositor releasing the grab (expose,
+    /// gestures). A `leave` on the parent toplevel is *not* interesting: that is
+    /// exactly what happens when the grab hands focus to the popup as it opens.
+    fn register_keyboard_leave_handler(&mut self) {
+        let menu = self.clone();
+        AppContext::register_keyboard_leave_callback(move |surface_id| {
+            if !menu.registered_surfaces.borrow().contains_key(surface_id) {
+                return;
+            }
+            if menu.is_visible() {
+                tracing::debug!("context_menu: keyboard leave on own surface → close");
+                menu.hide_animated();
+            }
+        });
+    }
+
     /// Register pointer event handler (called only by root menu)
     fn register_pointer_handler(&mut self) {
         let registered_surfaces = self.registered_surfaces.clone();
@@ -627,13 +708,24 @@ impl ContextMenu {
         let popups = self.popups.clone();
         let on_item_click = self.on_item_click.clone();
         let parent_xdg = self.parent_xdg.clone();
+        let menu = self.clone();
+        let dismiss_pending = self.dismiss_pending.clone();
 
         AppContext::register_pointer_callback(move |events| {
             for event in events {
                 let surface_id = event.surface.id();
-                let depth = registered_surfaces.borrow().get(&surface_id).cloned();
                 // Look up depth for this surface
-                if let Some(depth) = depth {
+                let depth = registered_surfaces.borrow().get(&surface_id).cloned();
+                let Some(depth) = depth else {
+                    // Not one of ours. A press here while the menu is up is an
+                    // outside click; arm the dismissal for the end of this
+                    // batch.
+                    if matches!(event.kind, PointerEventKind::Press { .. }) && menu.is_visible() {
+                        dismiss_pending.set(true);
+                    }
+                    continue;
+                };
+                {
                     let (x, y) = event.position;
 
                     match event.kind {
@@ -663,6 +755,29 @@ impl ContextMenu {
                         _ => {}
                     }
                 }
+            }
+        });
+
+        // Act on an armed dismissal once the whole batch is spoken for. The
+        // compositor's popup grab is "owner-events": a press on another
+        // surface of *our own* client is delivered to us rather than
+        // dismissing the popup, so closing on an outside click is our job,
+        // not the compositor's.
+        //
+        // Running at the end of the batch rather than inside the callback
+        // above matters twice over. Our callback runs before the app's own
+        // handling, and the press may well be on the control that owns this
+        // menu (a dropdown field toggling itself shut) — letting the app have
+        // the batch first means we never close a menu it is about to reopen.
+        // And unlike deferring to the *next* batch, this needs no second
+        // event to arrive: a press whose release goes somewhere else still
+        // dismisses.
+        let menu = self.clone();
+        let dismiss_pending = self.dismiss_pending.clone();
+        AppContext::register_pointer_batch_end_callback(move || {
+            if dismiss_pending.replace(false) && menu.is_visible() && !menu.closing.get() {
+                tracing::debug!("context_menu: press outside menu surfaces → close");
+                menu.hide_animated();
             }
         });
     }
@@ -1110,9 +1225,13 @@ impl ContextMenu {
         self.registered_surfaces.borrow().contains_key(&id)
     }
 
-    /// Handle keyboard focus lost - closes the menu
+    /// Handle keyboard focus lost - closes the menu.
+    ///
+    /// Menus opened through [`ContextMenu::show`] / [`ContextMenu::show_for_layer`]
+    /// already do this for themselves (see `register_keyboard_leave_handler`);
+    /// this stays for hosts that route focus themselves.
     pub fn handle_keyboard_leave(&mut self) {
-        self.hide();
+        self.hide_animated();
     }
 
     /// Check if menu should close and fire callback
@@ -1120,9 +1239,8 @@ impl ContextMenu {
         let should = self.state.borrow().should_close();
         tracing::debug!("context_menu: check_close should_close={should}");
         if should {
-            if let Some(callback) = self.on_close.borrow().as_ref() {
-                callback();
-            }
+            // `hide()` itself fires `on_close` — a single point for it,
+            // whichever path (ESC, outside click, keyboard leave) closed us.
             self.hide();
         }
     }

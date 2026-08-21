@@ -7,7 +7,7 @@ edition = "2021"
 rustix = { version = "0.38", features = ["fs", "process"], optional = true }
 smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
 wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 wayland-egl = "0.32"
 wayland-cursor = "0.31"
@@ -20,7 +20,7 @@ tracing = "0.1"
 tokio = { version = "1", features = ["full"] }
 zbus = { version = "4", default-features = false, features = ["tokio"] }
 futures-util = "0.3"
-xdgkit = "3.2.5"
+freedesktop-icons = "0.2.4"
 resvg = "0.44.0"
 usvg = "0.44.0"
 lazy_static = "1.4"
@@ -35,7 +35,7 @@ debugger = ["laye-rs/debugger"]
 
 [dependencies.laye-rs]
 git = "https://github.com/nongio/layers"
-branch = "feat/subtree-buffer-render"
+tag = "v1.13.0"
 # local development: path = "../../../layers"
 features = ["export-taffy"]
 
@@ -58,4 +58,9 @@ path = "examples/dock_application_layer.rs"
 [[example]]
 name = "center_gravity_test"
 path = "examples/center_gravity_test.rs"
+
+[[bench]]
+name = "pane_paint"
+path = "benches/pane_paint.rs"
+harness = false
 

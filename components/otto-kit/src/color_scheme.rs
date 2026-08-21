@@ -31,7 +31,7 @@ pub fn spawn_color_scheme_watcher() {
         return;
     }
 
-    tokio::spawn(async move {
+    crate::portal_runtime::spawn("color-scheme-watcher", async move {
         if let Err(e) = run_watcher().await {
             tracing::warn!("color-scheme watcher stopped: {e}");
         }
@@ -78,6 +78,7 @@ async fn run_watcher() -> Result<(), zbus::Error> {
             let val: Value<'_> = owned.into();
             if let Some(v) = extract_u32(val) {
                 COLOR_SCHEME_VALUE.store(v, Ordering::Relaxed);
+                crate::portal_runtime::theme_changed();
                 tracing::debug!("color-scheme initial value: {v}");
             }
         }
@@ -96,6 +97,7 @@ async fn run_watcher() -> Result<(), zbus::Error> {
             if let Some(v) = extract_u32(args.value) {
                 tracing::debug!("color-scheme changed to: {v}");
                 COLOR_SCHEME_VALUE.store(v, Ordering::Relaxed);
+                crate::portal_runtime::theme_changed();
             }
         }
     }

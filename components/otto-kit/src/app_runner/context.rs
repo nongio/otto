@@ -30,6 +30,57 @@ thread_local! {
     static FRAME_REQUEST_FN: RefCell<Option<Box<dyn Fn(&wl_surface::WlSurface)>>> = const { RefCell::new(None) };
     static CURRENT_CONFIGURE: RefCell<Option<(ObjectId, WindowConfigure, u32)>> = const { RefCell::new(None) };
     static WINDOWS: RefCell<Vec<crate::components::window::Window>> = const { RefCell::new(Vec::new()) };
+    /// Per-window handlers for the compositor's "please close" request, keyed
+    /// by the window's own surface. A window that registers one owns its
+    /// close: the application is not asked, and the process does not exit.
+    #[allow(clippy::type_complexity)]
+    static CLOSE_HANDLERS: RefCell<HashMap<ObjectId, Box<dyn FnMut()>>> = RefCell::new(HashMap::new());
+}
+
+/// The data source backing our claim on the clipboard, and the offer backing
+/// the current selection.
+///
+/// `Mutex` rather than `thread_local!` only because they are read from the
+/// clipboard module's plain functions; every write still happens on the UI
+/// thread through the dispatch handlers.
+static CURRENT_SOURCE: std::sync::Mutex<
+    Option<smithay_client_toolkit::data_device_manager::data_source::CopyPasteSource>,
+> = std::sync::Mutex::new(None);
+static CURRENT_OFFER: std::sync::Mutex<
+    Option<wayland_client::protocol::wl_data_offer::WlDataOffer>,
+> = std::sync::Mutex::new(None);
+
+/// Release our claim on the clipboard. Called when the compositor cancels the
+/// source, which is how it says someone else copied.
+pub(crate) fn drop_current_source() {
+    *CURRENT_SOURCE.lock().unwrap() = None;
+    crate::clipboard::clear_offered();
+}
+
+/// Record the offer that now owns the selection.
+pub(crate) fn set_current_offer(
+    offer: Option<wayland_client::protocol::wl_data_offer::WlDataOffer>,
+) {
+    *CURRENT_OFFER.lock().unwrap() = offer;
+}
+
+/// A pipe for receiving a selection: `(read, write)`.
+fn rustix_pipe() -> Option<(std::fs::File, std::fs::File)> {
+    use std::os::fd::FromRawFd;
+    let mut fds = [0 as libc::c_int; 2];
+    // SAFETY: `pipe2` fills both entries or returns an error; the descriptors
+    // are immediately owned by `File`, which closes them.
+    let rc = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) };
+    if rc != 0 {
+        tracing::warn!("could not create a pipe for the clipboard");
+        return None;
+    }
+    unsafe {
+        Some((
+            std::fs::File::from_raw_fd(fds[0]),
+            std::fs::File::from_raw_fd(fds[1]),
+        ))
+    }
 }
 
 // -- Callback registries --
@@ -38,10 +89,16 @@ thread_local! {
     static CONFIGURE_HANDLERS: RefCell<Vec<Box<dyn FnMut()>>> = const { RefCell::new(Vec::new()) };
     #[allow(clippy::type_complexity)]
     static POINTER_CALLBACKS: RefCell<Vec<Box<dyn FnMut(&[smithay_client_toolkit::seat::pointer::PointerEvent])>>> = const { RefCell::new(Vec::new()) };
+    /// Run after every pointer callback *and* the app's own `on_pointer_event`
+    /// for a batch. See [`AppContext::register_pointer_batch_end_callback`].
+    static POINTER_BATCH_END_CALLBACKS: RefCell<Vec<Box<dyn FnMut()>>> = const { RefCell::new(Vec::new()) };
     static FRAME_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnMut()>>> = RefCell::new(HashMap::new());
     /// Surfaces that have committed a frame the compositor has not yet said it
     /// presented. See [`AppContext::frame_in_flight`].
     static FRAMES_IN_FLIGHT: RefCell<HashSet<ObjectId>> = RefCell::new(HashSet::new());
+    /// The last `output_frame` a style surface was told, keyed by the style
+    /// object. See [`AppContext::output_frame`].
+    static OUTPUT_FRAMES: RefCell<HashMap<ObjectId, (f32, f32, f32, f32)>> = RefCell::new(HashMap::new());
     #[allow(clippy::type_complexity)]
     static POPUP_CONFIGURE_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnOnce(u32)>>> = RefCell::new(HashMap::new());
     static POPUP_DONE_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnOnce()>>> = RefCell::new(HashMap::new());
@@ -52,6 +109,10 @@ thread_local! {
     #[allow(clippy::type_complexity)]
     static LOCK_SURFACE_CONFIGURE_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnMut(i32, i32, u32)>>> = RefCell::new(HashMap::new());
     static TRANSACTION_COMPLETION_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnOnce()>>> = RefCell::new(HashMap::new());
+    /// Called with the `wl_surface` that just lost keyboard focus. Components
+    /// that must not outlive the focus (menus, popovers) subscribe here.
+    #[allow(clippy::type_complexity)]
+    static KEYBOARD_LEAVE_CALLBACKS: RefCell<Vec<Box<dyn FnMut(&ObjectId)>>> = const { RefCell::new(Vec::new()) };
 }
 
 // -- Cursor shape state --
@@ -140,6 +201,15 @@ pub struct AppContextData {
     pub session_lock_manager: Option<wayland_protocols::ext::session_lock::v1::client::ext_session_lock_manager_v1::ExtSessionLockManagerV1>,
     pub cursor_shape_manager: Option<wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
     pub fractional_scale_manager: Option<wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
+    /// `None` on a compositor without pointer gestures at version 3, where a
+    /// touchpad hold is simply not reported.
+    pub pointer_gestures: Option<wayland_protocols::wp::pointer_gestures::zv1::client::zwp_pointer_gestures_v1::ZwpPointerGesturesV1>,
+    /// Clipboard and drag-and-drop. `None` on a compositor without
+    /// `wl_data_device_manager`, which is legal — clipboard calls then fail
+    /// cleanly rather than panicking.
+    pub data_device_manager:
+        Option<smithay_client_toolkit::data_device_manager::DataDeviceManagerState>,
+    pub data_device: Option<smithay_client_toolkit::data_device_manager::data_device::DataDevice>,
     pub display_ptr: *mut std::ffi::c_void,
 }
 
@@ -271,6 +341,67 @@ impl<'a> AppContext<'a> {
     /// whose effect the client will still be around to see. A request the
     /// client is about to exit on — a locker handing the session back — has to
     /// go out where it is made.
+    /// Claim the clipboard, offering `mime_types`.
+    ///
+    /// The payload itself lives in [`crate::clipboard`]; this only creates the
+    /// source and hands it to the compositor. Returns `false` when there is no
+    /// data device — no seat, or a compositor without the protocol.
+    pub fn set_selection(mime_types: Vec<String>, serial: u32) -> bool {
+        Self::with_global(|ctx| {
+            let (Some(manager), Some(device)) =
+                (&ctx.data.data_device_manager, &ctx.data.data_device)
+            else {
+                tracing::debug!("no data device; cannot claim the selection");
+                return false;
+            };
+
+            let qh = Self::queue_handle();
+            let types: Vec<&str> = mime_types.iter().map(String::as_str).collect();
+            let source = manager.create_copy_paste_source(qh, types);
+            source.set_selection(device, serial);
+
+            // Hold the source alive: dropping it destroys the wl_data_source
+            // and the selection with it. It is released when the compositor
+            // cancels it, which is what `cancelled` does.
+            *CURRENT_SOURCE.lock().unwrap() = Some(source);
+
+            // Push it out now. Waiting for the run loop's next flush would
+            // leave the clipboard unclaimed for a frame, and a paste in that
+            // window would see the previous owner's data.
+            if let Err(err) = ctx.data.connection.flush() {
+                tracing::warn!(%err, "could not flush after claiming the selection");
+            }
+            true
+        })
+    }
+
+    /// Ask the current selection's owner for `mime`, returning the read end of
+    /// the pipe. The caller reads it — see [`crate::clipboard::read`].
+    pub fn receive_selection(mime: &str) -> Option<std::fs::File> {
+        use std::os::fd::AsFd;
+        Self::with_global(|ctx| {
+            let offer = CURRENT_OFFER.lock().unwrap();
+            let offer = offer.as_ref()?;
+
+            // A pipe, one end to the compositor, the other read here.
+            let (read_fd, write_fd) = match rustix_pipe() {
+                Some(pair) => pair,
+                None => return None,
+            };
+
+            offer.receive(mime.to_string(), write_fd.as_fd());
+            // The write end must be closed here or the read never sees EOF:
+            // the source client holds the only other copy.
+            drop(write_fd);
+
+            // The request has to reach the compositor before we block reading.
+            if let Err(err) = ctx.data.connection.flush() {
+                tracing::warn!(%err, "could not flush before reading the selection");
+            }
+            Some(read_fd)
+        })
+    }
+
     pub fn flush() {
         Self::with_global(|ctx| {
             if let Err(err) = ctx.data.connection.flush() {
@@ -560,10 +691,87 @@ impl<'a> AppContext<'a> {
         });
     }
 
+    /// Run `callback` once at the end of every pointer batch, after every
+    /// registered pointer callback and after the app's own
+    /// `on_pointer_event`.
+    ///
+    /// This is where a popup decides whether a press landed outside it: the
+    /// decision has to be made *after* the owner of the control under the
+    /// pointer has had the batch, so a field toggling its own menu shut is
+    /// not undone, and it must not wait for a later batch, which may never
+    /// come.
+    pub fn register_pointer_batch_end_callback<F>(callback: F)
+    where
+        F: FnMut() + 'static,
+    {
+        POINTER_BATCH_END_CALLBACKS.with(|callbacks| {
+            callbacks.borrow_mut().push(Box::new(callback));
+        });
+    }
+
+    /// Subscribe to keyboard-focus loss. The callback receives the id of the
+    /// `wl_surface` that lost focus — note that with an active popup grab that
+    /// is the *popup's* surface, not the toplevel's.
+    pub fn register_keyboard_leave_callback<F>(callback: F)
+    where
+        F: FnMut(&ObjectId) + 'static,
+    {
+        KEYBOARD_LEAVE_CALLBACKS.with(|callbacks| {
+            callbacks.borrow_mut().push(Box::new(callback));
+        });
+    }
+
     pub fn register_window(window: crate::components::window::Window) {
         WINDOWS.with(|windows| {
-            windows.borrow_mut().push(window);
+            let mut windows = windows.borrow_mut();
+            // A window closed while it was registered leaves a husk behind —
+            // no surface, nothing to draw — so it is swept up here rather
+            // than being walked over on every update for the rest of the
+            // process's life.
+            windows.retain(crate::components::window::Window::is_alive);
+            windows.push(window);
         });
+    }
+
+    /// Claim the compositor's close request for one window.
+    ///
+    /// Without a handler a close request is the *application's* — the runner
+    /// asks `App::on_close` and, if it agrees, exits. That is right for the
+    /// window an application is, and wrong for every secondary window it
+    /// opens: closing an inspector is not quitting.
+    pub fn register_close_handler<F>(surface_id: ObjectId, handler: F)
+    where
+        F: FnMut() + 'static,
+    {
+        CLOSE_HANDLERS.with(|handlers| {
+            handlers.borrow_mut().insert(surface_id, Box::new(handler));
+        });
+    }
+
+    pub fn unregister_close_handler(surface_id: &ObjectId) {
+        CLOSE_HANDLERS.with(|handlers| {
+            handlers.borrow_mut().remove(surface_id);
+        });
+    }
+
+    /// Run the close handler for `surface_id`, if it has one. Returns whether
+    /// the window took the request.
+    pub(crate) fn dispatch_close_request(surface_id: &ObjectId) -> bool {
+        // Taken out of the map for the call: a handler that closes its own
+        // window unregisters itself, and doing that while the map is borrowed
+        // would panic.
+        let handler = CLOSE_HANDLERS.with(|handlers| handlers.borrow_mut().remove(surface_id));
+        let Some(mut handler) = handler else {
+            return false;
+        };
+        handler();
+        // Unless the handler already dropped the window, it is still up and
+        // still owns its next close request.
+        CLOSE_HANDLERS.with(|handlers| {
+            let mut handlers = handlers.borrow_mut();
+            handlers.entry(surface_id.clone()).or_insert(handler);
+        });
+        true
     }
 
     pub fn register_popup_configure_callback<F>(surface_id: ObjectId, callback: F)
@@ -655,6 +863,36 @@ impl<'a> AppContext<'a> {
 
     pub fn request_initial_frame(surface: &wl_surface::WlSurface) {
         Self::request_frame(surface);
+    }
+
+    /// Record the output geometry the compositor reported for a style surface.
+    pub fn set_output_frame(style: &ObjectId, frame: (f32, f32, f32, f32)) {
+        OUTPUT_FRAMES.with(|frames| {
+            frames.borrow_mut().insert(style.clone(), frame);
+        });
+    }
+
+    /// Forget what the compositor last said, so [`AppContext::output_frame`]
+    /// reads `None` until a fresh answer arrives.
+    ///
+    /// The answer is relative to the surface's parent, so moving the window
+    /// invalidates it. A caller that is about to ask again clears it first,
+    /// which is how it can tell the new reply from the old one.
+    pub fn clear_output_frame(style: &ObjectId) {
+        OUTPUT_FRAMES.with(|frames| {
+            frames.borrow_mut().remove(style);
+        });
+    }
+
+    /// Where the output is, in the coordinates this surface's positions are
+    /// set in — `None` until the compositor has answered a
+    /// `request_output_frame`.
+    ///
+    /// This is the one thing a Wayland client cannot work out for itself: it
+    /// is never told where its own window sits, so a surface that has to be
+    /// placed against the display rather than against its parent has to ask.
+    pub fn output_frame(style: &ObjectId) -> Option<(f32, f32, f32, f32)> {
+        OUTPUT_FRAMES.with(|frames| frames.borrow().get(style).copied())
     }
 
     /// Ask for a frame callback and remember that one is outstanding.
@@ -775,6 +1013,35 @@ impl<'a> AppContext<'a> {
         });
     }
 
+    pub(crate) fn dispatch_pointer_batch_end() {
+        POINTER_BATCH_END_CALLBACKS.with(|callbacks| {
+            // Taken out of the RefCell first: a callback closing a popup can
+            // register further callbacks, and would otherwise borrow this
+            // list while it is still borrowed here.
+            let mut taken = std::mem::take(&mut *callbacks.borrow_mut());
+            for callback in taken.iter_mut() {
+                callback();
+            }
+            let mut slot = callbacks.borrow_mut();
+            taken.append(&mut slot);
+            *slot = taken;
+        });
+    }
+
+    pub(crate) fn dispatch_keyboard_leave(surface_id: &ObjectId) {
+        KEYBOARD_LEAVE_CALLBACKS.with(|callbacks| {
+            // Copy out of the RefCell borrow first: a callback may close a menu,
+            // which can register further callbacks.
+            let mut taken = std::mem::take(&mut *callbacks.borrow_mut());
+            for callback in taken.iter_mut() {
+                callback(surface_id);
+            }
+            let mut slot = callbacks.borrow_mut();
+            taken.append(&mut slot);
+            *slot = taken;
+        });
+    }
+
     pub(crate) fn dispatch_popup_configure(surface_id: &ObjectId, serial: u32) {
         POPUP_CONFIGURE_CALLBACKS.with(|callbacks| {
             if let Some(callback) = callbacks.borrow_mut().remove(surface_id) {
@@ -831,7 +1098,9 @@ impl<'a> AppContext<'a> {
 
     pub fn update_windows() {
         WINDOWS.with(|windows| {
-            for window in windows.borrow_mut().iter_mut() {
+            let mut windows = windows.borrow_mut();
+            windows.retain(crate::components::window::Window::is_alive);
+            for window in windows.iter_mut() {
                 window.update();
             }
         });
@@ -865,6 +1134,8 @@ impl<'a> AppContext<'a> {
         // Clean up callback registries
         CONFIGURE_HANDLERS.with(|h| h.borrow_mut().clear());
         POINTER_CALLBACKS.with(|c| c.borrow_mut().clear());
+        POINTER_BATCH_END_CALLBACKS.with(|c| c.borrow_mut().clear());
+        KEYBOARD_LEAVE_CALLBACKS.with(|c| c.borrow_mut().clear());
         FRAME_CALLBACKS.with(|c| c.borrow_mut().clear());
         POPUP_CONFIGURE_CALLBACKS.with(|c| c.borrow_mut().clear());
         POPUP_DONE_CALLBACKS.with(|c| c.borrow_mut().clear());

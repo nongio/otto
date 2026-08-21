@@ -24,7 +24,10 @@ impl ColorScheme {
 #[derive(Debug, Clone)]
 pub struct Theme {
     // Accent colors
-    pub accent_blue: Color,
+    /// The user's accent, from `org.freedesktop.appearance accent-color`.
+    /// Blue until the portal answers — and blue is also Otto's default, so a
+    /// missing portal looks like the default rather than like a failure.
+    pub accent: Color,
     pub accent_gray: Color,
 
     // Fill colors (backgrounds)
@@ -53,10 +56,21 @@ pub struct Theme {
 }
 
 impl Theme {
-    /// Light theme
+    /// Light theme, with the user's accent folded in.
     pub fn light() -> Self {
+        Self::light_palette().with_system_accent()
+    }
+
+    /// Dark theme, with the user's accent folded in.
+    pub fn dark() -> Self {
+        Self::dark_palette().with_system_accent()
+    }
+
+    /// The light palette exactly as designed, with Otto's own blue as the
+    /// accent. Callers wanting the user's choice want `light`.
+    pub fn light_palette() -> Self {
         Self {
-            accent_blue: Color::from_argb(0xFF, 0x0A, 0x84, 0xFF),
+            accent: Color::from_argb(0xFF, 0x0A, 0x84, 0xFF),
             accent_gray: Color::from_argb(0xFF, 0x8E, 0x8E, 0x93),
 
             fill_primary: Color::from_argb(0x35, 0x00, 0x00, 0x00),
@@ -69,7 +83,11 @@ impl Theme {
             text_tertiary: Color::from_argb(0x40, 0x00, 0x00, 0x00),
 
             material_titlebar: Color::from_argb(0xCC, 0xEA, 0xEA, 0xEA),
-            material_sidebar: Color::from_argb(0xAF, 0xEA, 0xEA, 0xEA),
+            // Sidebars sit over compositor blur, but they are a window's own
+            // ground and carry small text: at 0x8C the backdrop read straight
+            // through and the wallpaper competed with the rows. Keep enough
+            // tint that the blur reads as frost, not as a see-through hole.
+            material_sidebar: Color::from_argb(0xDE, 0xF2, 0xF2, 0xF2),
             material_medium: Color::from_argb(0x7A, 0xF6, 0xF6, 0xF6),
             material_popup: Color::from_argb(0xD8, 0xF6, 0xF6, 0xF6),
             material_highlight: Color::from_argb(0x9E, 0xF7, 0xF7, 0xF7),
@@ -79,10 +97,10 @@ impl Theme {
         }
     }
 
-    /// Dark theme
-    pub fn dark() -> Self {
+    /// The dark palette exactly as designed. See `light_palette`.
+    pub fn dark_palette() -> Self {
         Self {
-            accent_blue: Color::from_argb(0xFF, 0x0A, 0x84, 0xFF),
+            accent: Color::from_argb(0xFF, 0x0A, 0x84, 0xFF),
             accent_gray: Color::from_argb(0xFF, 0x8E, 0x8E, 0x93),
 
             // Semi-transparent whites for layering on dark backgrounds
@@ -97,7 +115,7 @@ impl Theme {
 
             // Dark translucent surfaces
             material_titlebar: Color::from_argb(0xBF, 0x28, 0x28, 0x28),
-            material_sidebar: Color::from_argb(0xA8, 0x1E, 0x1E, 0x1E),
+            material_sidebar: Color::from_argb(0xF0, 0x1E, 0x1E, 0x1E),
             material_medium: Color::from_argb(0x83, 0x28, 0x28, 0x28),
             material_popup: Color::from_argb(0xD8, 0x28, 0x28, 0x28),
             material_highlight: Color::from_argb(0xA2, 0x69, 0x67, 0x67),
@@ -114,6 +132,32 @@ impl Theme {
             ColorScheme::Dark => Self::dark(),
             _ => Self::light(),
         }
+    }
+
+    /// Apply the accent the portal reported, if it reported one.
+    ///
+    /// This lives in `light`/`dark` rather than only in `for_scheme` because
+    /// plenty of call sites pick a palette directly from a `dark` flag they
+    /// already have; folding it in higher up left those windows blue while
+    /// everything around them followed the user.
+    fn with_system_accent(mut self) -> Self {
+        if let Some(accent) = crate::accent::current_accent() {
+            self.with_accent(accent);
+        }
+        self
+    }
+
+    /// Re-tint everything that follows the accent.
+    ///
+    /// The focused-selection material is the accent at its own alpha, not a
+    /// colour of its own — leaving it blue is what made a re-tinted list row
+    /// clash with the toggle right beside it.
+    pub fn with_accent(&mut self, accent: Color) -> &mut Self {
+        let alpha = self.material_selection_focused.a();
+        self.accent = accent;
+        self.material_selection_focused =
+            Color::from_argb(alpha, accent.r(), accent.g(), accent.b());
+        self
     }
 }
 

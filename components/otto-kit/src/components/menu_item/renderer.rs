@@ -1,5 +1,5 @@
 use super::{MenuItem, MenuItemIcon, MenuItemStyle, VisualState};
-use crate::typography;
+
 use crate::{components::icon::Icon, Renderable};
 use skia_safe::{Canvas, Font, Paint, Point, RRect, Rect};
 
@@ -62,8 +62,8 @@ impl MenuItemRenderer {
         };
 
         // Create font
-        let font = typography::styles::BODY_MEDIUM.font();
-        let shortcut_font = typography::styles::BODY_MEDIUM.font();
+        let font = style.font();
+        let shortcut_font = style.shortcut_font();
 
         // Draw label (offset by icon if present)
         let icon_size = 16.0;

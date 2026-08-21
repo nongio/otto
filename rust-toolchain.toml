@@ -1,0 +1,9 @@
+# Matches the toolchain CI runs (.github/workflows/ci.yml).
+#
+# The workspace's own MSRV is the `rust-version` in Cargo.toml, but building
+# every member needs more: otto-rdp pulls kstring in through gstreamer, which
+# requires 1.96. Without this pin, `cargo build -p otto-rdp` fails resolution on
+# an older default toolchain instead of compiling.
+[toolchain]
+channel = "1.97.0"
+components = ["rustfmt", "clippy"]

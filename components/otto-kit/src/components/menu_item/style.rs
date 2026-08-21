@@ -46,8 +46,41 @@ impl Default for MenuItemStyle {
 }
 
 impl MenuItemStyle {
+    /// The font labels are drawn with: the toolkit's menu face at this
+    /// style's own point size, so a menu that asked for larger text gets it
+    /// everywhere it is measured as well as everywhere it is drawn.
+    pub fn font(&self) -> skia_safe::Font {
+        crate::typography::TextStyle {
+            size: self.font_size,
+            ..crate::typography::styles::BODY_MEDIUM
+        }
+        .font()
+    }
+
+    /// The font shortcuts are drawn with.
+    pub fn shortcut_font(&self) -> skia_safe::Font {
+        crate::typography::TextStyle {
+            size: self.shortcut_font_size,
+            ..crate::typography::styles::BODY_MEDIUM
+        }
+        .font()
+    }
+
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A style using the theme's own text and fill tones, so menu items stay
+    /// legible in dark mode — `default()` is fixed to a light appearance and
+    /// draws near-invisible dark text on a dark menu background.
+    pub fn from_theme(theme: &crate::theme::Theme) -> Self {
+        Self {
+            text_color_normal: theme.text_primary,
+            text_color_disabled: theme.text_tertiary,
+            shortcut_color_normal: theme.text_tertiary,
+            separator_color: theme.fill_secondary,
+            ..Self::default()
+        }
     }
 
     // === Builder API ===
