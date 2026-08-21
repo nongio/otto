@@ -4190,6 +4190,12 @@ impl Workspaces {
             self.expose_update_if_needed_workspace(*src);
         }
         self.expose_update_if_needed_workspace(workspace_index);
+
+        // The window changed workspace, so everything derived from the model
+        // — the selector previews' window counts, the app switcher's z-order,
+        // the dock's app list — is now stale. Without this the stale state
+        // survives until some unrelated window maps or closes.
+        self.update_workspace_model();
     }
 
     /// Per-output variant of `defer_remove_workspace_at`: remove workspace `n`

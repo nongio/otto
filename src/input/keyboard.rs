@@ -334,7 +334,10 @@ impl<BackendData: Backend> Otto<BackendData> {
         action
     }
 
-    fn dismiss_app_switcher(&mut self) {
+    /// Commit the app switcher's selection: hide the panel and focus the app
+    /// it landed on. `pub(crate)` so the headless harness can finish an
+    /// alt-tab the way releasing the modifier does.
+    pub(crate) fn dismiss_app_switcher(&mut self) {
         if self.workspaces.app_switcher.alive() {
             self.workspaces.app_switcher.hide();
             if let Some(app_id) = self.workspaces.app_switcher.get_current_app_id() {

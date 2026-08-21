@@ -53,6 +53,12 @@ Otto supports multiple workspaces across multiple outputs (physical monitors and
 - If the removed workspace was the last in the list and was active, the current workspace index is clamped to the new last workspace.
 - Other outputs are unaffected.
 
+**Moving a window between workspaces:**
+
+- The window is unmapped from every space that held it and mapped into the target workspace on its own output; its scene layer follows into that workspace's view.
+- Both workspaces' exposé grids are re-laid out, the one it left and the one it landed on.
+- The workspace model is rebuilt, so everything derived from it follows the move immediately: the selector previews' window counts, the app switcher's ordering, and the dock's app list. None of these may wait for an unrelated window to open or close before catching up.
+
 **Fullscreen guard:** A workspace that is in fullscreen mode and still contains windows cannot be removed.
 
 ### Navigation
@@ -100,6 +106,8 @@ Otto supports multiple workspaces across multiple outputs (physical monitors and
 - A change to the host geometry re-renders the panel immediately, whether it came from the panel moving to another output or from that output's mode or scale changing while the panel sits on it. Recording new host metrics is what triggers the re-render, so the panel is never left laid out for the screen it used to be on.
 - Only the host output pushes a switcher plane, counts the panel as a scanout occluder, and treats it as blocking fullscreen direct scanout; every other output is unaffected while the switcher is up.
 - The panel still lists windows from every output (it mirrors the global z-index app list); selecting one focuses it on the output that owns it, which may be a different output from the one showing the switcher.
+- Apps are listed front to back: the app owning the topmost window first, so the first alt-tab step lands on the app that was in use before the current one. Apps whose windows are all on a non-current workspace sort behind the apps on the workspace in front of the user. An app appears once, at the position of its frontmost window.
+- Committing a switch (releasing the modifier) focuses the selected app, which raises its window and re-sorts the list behind it, so stepping again returns to the app just left.
 - If the host output is unplugged while hosting the panel, the panel returns to the primary output rather than being left detached from the scene.
 
 ### Expose Mode (Show All Workspaces)

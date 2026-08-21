@@ -427,6 +427,103 @@ impl HeadlessHandle {
         })
     }
 
+    // ── Windows, stacking and the switchers ──────────────────────────────
+
+    /// Titles of the current workspace's windows, bottom of the stack first.
+    pub fn window_stack_titles(&self) -> Vec<String> {
+        self.query(|state| {
+            let index = state.workspaces.get_current_workspace_index();
+            let Some(workspace) = state.workspaces.get_workspace_at(index) else {
+                return Vec::new();
+            };
+            let ids = workspace.windows_list.read().unwrap().clone();
+            ids.iter()
+                .filter_map(|id| state.workspaces.windows_map.get(id))
+                .map(|w| w.xdg_title())
+                .collect()
+        })
+    }
+
+    /// Title of the topmost non-minimized window on the current workspace.
+    pub fn top_window_title(&self) -> Option<String> {
+        self.query(|state| {
+            let index = state.workspaces.get_current_workspace_index();
+            let id = state.workspaces.get_top_window_of_workspace(index)?;
+            state.workspaces.windows_map.get(&id).map(|w| w.xdg_title())
+        })
+    }
+
+    /// Move the window with this title to another workspace on its own output.
+    pub fn move_window_to_workspace(&self, title: &str, workspace_index: usize) {
+        let title = title.to_string();
+        self.with_state(move |state| {
+            let Some(window) = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .cloned()
+            else {
+                return;
+            };
+            state
+                .workspaces
+                .move_window_to_workspace(&window, workspace_index, (0, 0));
+        });
+    }
+
+    /// `(workspace index, window count)` behind each workspace-selector
+    /// preview, for the output the selector belongs to.
+    pub fn workspace_preview_window_counts(&self) -> Vec<(usize, usize)> {
+        self.query(|state| {
+            state
+                .workspaces
+                .output_selector(OUTPUT_NAME)
+                .map(|selector| selector.preview_window_counts())
+                .unwrap_or_default()
+        })
+    }
+
+    // ── App switcher ─────────────────────────────────────────────────────
+    //
+    // The panel's app list is rebuilt off the workspace model by a background
+    // task, so tests poll it (see `app_switcher_apps`) rather than assuming it
+    // has caught up.
+
+    /// App identifiers as the switcher lists them, left to right.
+    pub fn app_switcher_apps(&self) -> Vec<String> {
+        self.query(|state| {
+            state
+                .workspaces
+                .app_switcher
+                .view
+                .get_state()
+                .apps
+                .iter()
+                .map(|app| app.identifier.clone())
+                .collect()
+        })
+    }
+
+    /// The app the switcher's selection is on.
+    pub fn app_switcher_selection(&self) -> Option<String> {
+        self.query(|state| state.workspaces.app_switcher.get_current_app_id())
+    }
+
+    /// One alt-tab step: open the switcher if needed and advance.
+    pub fn app_switcher_next(&self) {
+        self.with_state(|state| state.handle_app_switcher_next());
+    }
+
+    /// One shift-alt-tab step.
+    pub fn app_switcher_previous(&self) {
+        self.with_state(|state| state.handle_app_switcher_prev());
+    }
+
+    /// Release the modifier: hide the panel and focus the selected app.
+    pub fn app_switcher_commit(&self) {
+        self.with_state(|state| state.dismiss_app_switcher());
+    }
+
     // ── Screencast control plane ─────────────────────────────────────────
     //
     // The D-Bus service (`org.otto.ScreenCast`) is not started headlessly —

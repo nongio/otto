@@ -196,6 +196,13 @@ topmost in the layer tree, rather than the one the pointer is actually over.
   than pixels; fractional scaling shifts raster output.
 - During a drag the dragged window is intentionally absent from the grid.
   Expect a gap until the drop completes or is cancelled.
+- `tests/workspace_selector.rs` covers the preview layout end to end against a
+  headless compositor: opening a window while exposé is up re-lays out the
+  grid, closing it restores the previous layout, and a workspace move updates
+  the preview counts on both workspaces. `tests/app_switcher.rs` covers
+  click-to-raise, alt-tab and the switcher's ordering. Run them with
+  `cargo test --features headless --test workspace_selector` (and
+  `--test app_switcher`).
 - **Debug lever:** `echo ActionName > /tmp/otto-action` (polled once per frame
   in the udev backend, `src/udev/init.rs`) runs a builtin shortcut action as if
   its key had been pressed — useful for driving `ExposeShowAll`,
