@@ -55,6 +55,12 @@ jobs:
         run: cargo test --features headless --test headless_basic
       - name: Run screencast integration tests
         run: cargo test --features headless --test screenshare
+      - name: Run RDP bridge integration tests
+        run: cargo test --features headless --test rdp_bridge
+      - name: Run RDP bridge unit tests
+        run: cargo test -p otto-rdp
+      - name: Run portal backend tests
+        run: cargo test -p xdg-desktop-portal-otto
       - name: Run font matching tests
         run: cargo test --lib -p otto -- workspaces::utils::tests --ignored
   

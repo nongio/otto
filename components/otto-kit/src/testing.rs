@@ -23,8 +23,8 @@ use std::{
 
 use wayland_client::{
     protocol::{
-        wl_buffer, wl_callback, wl_compositor, wl_registry, wl_seat, wl_shm, wl_shm_pool,
-        wl_surface,
+        wl_buffer, wl_callback, wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm,
+        wl_shm_pool, wl_surface,
     },
     Connection, Dispatch, EventQueue, QueueHandle,
 };
@@ -45,6 +45,14 @@ pub struct TestClientState {
     pub otto_surface_style_manager:
         Option<otto_surface_style_manager_v1::OttoSurfaceStyleManagerV1>,
     pub shm_formats: Vec<wl_shm::Format>,
+    /// The seat's keyboard, once the compositor announces the capability.
+    pub wl_keyboard: Option<wl_keyboard::WlKeyboard>,
+    /// Keys delivered to this client, as `(evdev code, pressed)` in arrival
+    /// order — what a remote input injector's key presses look like from the
+    /// application's side.
+    pub keys: Vec<(u32, bool)>,
+    /// Whether the compositor has given this client's surface keyboard focus.
+    pub keyboard_focused: bool,
 }
 
 impl TestClientState {
@@ -56,6 +64,9 @@ impl TestClientState {
             xdg_wm_base: None,
             otto_surface_style_manager: None,
             shm_formats: Vec::new(),
+            wl_keyboard: None,
+            keys: Vec::new(),
+            keyboard_focused: false,
         }
     }
 }
@@ -515,13 +526,47 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for TestClientState {
 
 impl Dispatch<wl_seat::WlSeat, ()> for TestClientState {
     fn event(
-        _state: &mut Self,
-        _proxy: &wl_seat::WlSeat,
-        _event: wl_seat::Event,
+        state: &mut Self,
+        seat: &wl_seat::WlSeat,
+        event: wl_seat::Event,
+        _data: &(),
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        // Take the keyboard as soon as the seat announces one, so tests can
+        // observe what actually reaches the application.
+        if let wl_seat::Event::Capabilities {
+            capabilities: wayland_client::WEnum::Value(caps),
+        } = event
+        {
+            if caps.contains(wl_seat::Capability::Keyboard) && state.wl_keyboard.is_none() {
+                state.wl_keyboard = Some(seat.get_keyboard(qh, ()));
+            }
+        }
+    }
+}
+
+impl Dispatch<wl_keyboard::WlKeyboard, ()> for TestClientState {
+    fn event(
+        state: &mut Self,
+        _proxy: &wl_keyboard::WlKeyboard,
+        event: wl_keyboard::Event,
         _data: &(),
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+        match event {
+            wl_keyboard::Event::Enter { .. } => state.keyboard_focused = true,
+            wl_keyboard::Event::Leave { .. } => state.keyboard_focused = false,
+            wl_keyboard::Event::Key { key, state: s, .. } => {
+                let pressed = matches!(
+                    s,
+                    wayland_client::WEnum::Value(wl_keyboard::KeyState::Pressed)
+                );
+                state.keys.push((key, pressed));
+            }
+            _ => {}
+        }
     }
 }
 

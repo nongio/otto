@@ -51,6 +51,42 @@ pub struct Updates {
     codec_rx: Option<tokio::sync::watch::Receiver<crate::egfx::Codec>>,
 }
 
+/// Lay the native picture out inside the desktop served to a client.
+///
+/// `desktop` is the client's own box verbatim (or the `--desktop` override),
+/// because clients scale a size-matched desktop to fill their view but render
+/// any other size unscaled in a corner. The native picture is aspect-fit inside
+/// it — never upscaled — and centered, leaving black bars. `input_box` stays the
+/// client's reported box: mouse coordinates arrive in that space and are mapped
+/// back through the picture rect by [`InputForwarder::map_abs`].
+///
+/// On the EGFX path the desktop is rounded down to even dimensions: H.264
+/// macroblocks (and the AVC420 encoder) cannot represent odd sizes, and the
+/// encoded picture has to match the desktop exactly.
+fn served_layout(
+    native: (u32, u32),
+    box_size: (u32, u32),
+    desktop_override: Option<(u32, u32)>,
+    egfx_mode: bool,
+) -> crate::pipewire_capture::ServedLayout {
+    let (nw, nh) = (native.0 as f64, native.1 as f64);
+    let (dw, dh) = desktop_override.unwrap_or(box_size);
+    let (dw, dh) = if egfx_mode {
+        (dw & !1, dh & !1)
+    } else {
+        (dw, dh)
+    };
+    let scale = (dw as f64 / nw).min(dh as f64 / nh).min(1.0);
+    let iw = (((nw * scale).round() as u32).max(1)).min(dw);
+    let ih = (((nh * scale).round() as u32).max(1)).min(dh);
+    crate::pipewire_capture::ServedLayout {
+        desktop: (dw, dh),
+        img_off: ((dw - iw) / 2, (dh - ih) / 2),
+        img_size: (iw, ih),
+        input_box: box_size,
+    }
+}
+
 #[async_trait::async_trait]
 impl RdpServerDisplay for VirtualOutputDisplay {
     async fn size(&mut self) -> DesktopSize {
@@ -70,8 +106,6 @@ impl RdpServerDisplay for VirtualOutputDisplay {
     /// and the bars are black. Mouse coordinates arrive in this same box
     /// space and are mapped back through the picture rect.
     async fn request_initial_size(&mut self, client_size: DesktopSize) -> DesktopSize {
-        let (nw, nh) = (self.size.0 as f64, self.size.1 as f64);
-
         // The client's box must be honored VERBATIM — clients (notably
         // mobile apps with a fixed resolution list) scale a size-matched
         // desktop to fill their screen but render any other size, even one
@@ -88,23 +122,9 @@ impl RdpServerDisplay for VirtualOutputDisplay {
         // that stretch a size-mismatched desktop to fill their view stretch
         // uniformly when the desktop's aspect matches the view's — the
         // override should therefore be the device's screen resolution.
-        let (dw, dh) = self.desktop_override.unwrap_or(box_size);
-        // The H.264 encoder (and AVC420 macroblocks) need even dimensions;
-        // round the desktop down so the encoded picture matches it exactly.
-        let (dw, dh) = if self.egfx_mode {
-            (dw & !1, dh & !1)
-        } else {
-            (dw, dh)
-        };
-        let scale = (dw as f64 / nw).min(dh as f64 / nh).min(1.0);
-        let iw = (((nw * scale).round() as u32).max(1)).min(dw);
-        let ih = (((nh * scale).round() as u32).max(1)).min(dh);
-        let layout = crate::pipewire_capture::ServedLayout {
-            desktop: (dw, dh),
-            img_off: ((dw - iw) / 2, (dh - ih) / 2),
-            img_size: (iw, ih),
-            input_box: box_size,
-        };
+        let layout = served_layout(self.size, box_size, self.desktop_override, self.egfx_mode);
+        let (dw, dh) = layout.desktop;
+        let (iw, ih) = layout.img_size;
 
         self.served = (dw, dh);
         // Always record the layout — the input path maps mouse coordinates
@@ -361,5 +381,119 @@ fn button(btn: u32, pressed: bool) -> InputCommand {
     InputCommand::Button {
         button: btn,
         pressed,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipewire_capture::TargetSize;
+
+    const NATIVE: (u32, u32) = (1920, 1080);
+
+    fn forwarder(served: TargetSize) -> InputForwarder {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        InputForwarder {
+            tx,
+            native: NATIVE,
+            served,
+        }
+    }
+
+    /// A client whose box matches the output's aspect gets its box verbatim,
+    /// filled edge to edge — no bars, nothing to map around.
+    #[test]
+    fn a_matching_aspect_fills_the_desktop() {
+        let layout = served_layout(NATIVE, (1280, 720), None, false);
+        assert_eq!(layout.desktop, (1280, 720));
+        assert_eq!(layout.img_size, (1280, 720));
+        assert_eq!(layout.img_off, (0, 0));
+        assert_eq!(layout.input_box, (1280, 720));
+    }
+
+    /// A squarer box keeps the picture's aspect and centers it, leaving equal
+    /// black bars above and below.
+    #[test]
+    fn a_mismatched_aspect_is_letterboxed_and_centred() {
+        let layout = served_layout(NATIVE, (800, 800), None, false);
+        assert_eq!(layout.desktop, (800, 800));
+        assert_eq!(layout.img_size, (800, 450), "16:9 inside an 800px-wide box");
+        assert_eq!(layout.img_off, (0, 175), "bars split evenly");
+    }
+
+    /// A client bigger than the output is not served an upscaled picture — the
+    /// native image sits pillar- and letter-boxed in the middle.
+    #[test]
+    fn a_larger_client_never_upscales_the_picture() {
+        let layout = served_layout((1280, 720), (3840, 2160), None, false);
+        assert_eq!(layout.desktop, (3840, 2160));
+        assert_eq!(layout.img_size, (1280, 720));
+        assert_eq!(layout.img_off, (1280, 720));
+    }
+
+    /// H.264 cannot encode odd dimensions, so the EGFX desktop rounds down —
+    /// but mouse coordinates still arrive in the box the client reported, so
+    /// `input_box` keeps the odd size.
+    #[test]
+    fn the_egfx_desktop_is_rounded_down_to_even() {
+        let layout = served_layout(NATIVE, (1281, 721), None, true);
+        assert_eq!(layout.desktop, (1280, 720));
+        assert_eq!(layout.input_box, (1281, 721));
+
+        let bitmap = served_layout(NATIVE, (1281, 721), None, false);
+        assert_eq!(
+            bitmap.desktop,
+            (1281, 721),
+            "the bitmap path serves odd sizes as-is"
+        );
+    }
+
+    /// `--desktop` replaces the served size, but not the space mouse
+    /// coordinates arrive in.
+    #[test]
+    fn the_desktop_override_leaves_the_input_box_alone() {
+        let layout = served_layout(NATIVE, (800, 600), Some((1600, 1200)), false);
+        assert_eq!(layout.desktop, (1600, 1200));
+        assert_eq!(layout.input_box, (800, 600));
+    }
+
+    /// The remote cursor lands where the user pointed: the middle of the
+    /// client's box is the middle of the output.
+    #[test]
+    fn the_centre_of_the_client_box_is_the_centre_of_the_output() {
+        let served = TargetSize::native();
+        served.set(served_layout(NATIVE, (800, 800), None, false));
+        assert_eq!(forwarder(served).map_abs(400, 400), (960, 540));
+    }
+
+    /// A click in a black bar has no picture under it; it clamps to the
+    /// nearest edge of the picture rather than mapping off-screen.
+    #[test]
+    fn positions_in_the_bars_clamp_to_the_picture_edge() {
+        let served = TargetSize::native();
+        served.set(served_layout(NATIVE, (800, 800), None, false));
+        let forwarder = forwarder(served);
+
+        assert_eq!(forwarder.map_abs(400, 10), (960, 0), "top bar");
+        assert_eq!(forwarder.map_abs(400, 790), (960, 1078), "bottom bar");
+    }
+
+    /// Every position maps inside the output, corner included.
+    #[test]
+    fn the_far_corner_stays_inside_the_output() {
+        let served = TargetSize::native();
+        served.set(served_layout(NATIVE, (800, 800), None, false));
+        let (x, y) = forwarder(served).map_abs(799, 799);
+        assert!(x < NATIVE.0, "{x} inside {}", NATIVE.0);
+        assert!(y < NATIVE.1, "{y} inside {}", NATIVE.1);
+    }
+
+    /// Before any client has negotiated a layout, coordinates pass through
+    /// unscaled and are clamped to the output.
+    #[test]
+    fn coordinates_pass_through_until_a_client_negotiates() {
+        let forwarder = forwarder(TargetSize::native());
+        assert_eq!(forwarder.map_abs(100, 200), (100, 200));
+        assert_eq!(forwarder.map_abs(5000, 5000), (1919, 1079));
     }
 }

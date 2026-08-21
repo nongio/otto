@@ -569,3 +569,31 @@ pub fn scancode_to_evdev(code: u8, extended: bool) -> Option<u32> {
     };
     Some(key)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::scancode_to_evdev;
+
+    /// Set-1 scancodes without the 0xE0 prefix are already evdev codes.
+    #[test]
+    fn base_scancodes_pass_through() {
+        assert_eq!(scancode_to_evdev(0x1E, false), Some(30)); // KEY_A
+        assert_eq!(scancode_to_evdev(0x48, false), Some(72)); // KEY_KP8
+    }
+
+    /// The same byte means something else behind the 0xE0 prefix — keypad 8
+    /// versus the arrow key above it.
+    #[test]
+    fn extended_scancodes_are_remapped() {
+        assert_eq!(scancode_to_evdev(0x48, true), Some(103)); // KEY_UP
+        assert_eq!(scancode_to_evdev(0x1D, true), Some(97)); // KEY_RIGHTCTRL
+        assert_eq!(scancode_to_evdev(0x5B, true), Some(125)); // KEY_LEFTMETA
+    }
+
+    /// An extended scancode with no evdev equivalent is dropped rather than
+    /// injected as some unrelated key.
+    #[test]
+    fn unknown_extended_scancodes_are_dropped() {
+        assert_eq!(scancode_to_evdev(0x7F, true), None);
+    }
+}

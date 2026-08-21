@@ -338,6 +338,89 @@ mod screenshare_tests {
         handle.stop();
     }
 
+    /// Switching to another workspace does not interrupt a window's capture:
+    /// the identifier still resolves, the stream keeps its size, and the window
+    /// stays at full frame rate while it is off screen.
+    #[test]
+    #[serial]
+    fn a_cast_window_survives_a_workspace_switch() {
+        let handle = start();
+        let mut client = connect(&handle);
+        map_window(&handle, &mut client, "Shared", "org.otto.Shared");
+        let id = identifier_of(&handle, "Shared");
+
+        handle.screencast_create_session(SESSION, 2);
+        let (width, height) = handle
+            .screencast_attach_stream(SESSION, StreamTarget::Window(id.clone()))
+            .expect("window stream should attach");
+
+        handle.with_state(|state| {
+            state.workspaces.add_workspace_to_output(OUTPUT);
+        });
+        handle.settle(300);
+        handle.set_workspace(1);
+        handle.settle(300);
+
+        assert_eq!(
+            handle
+                .screencast_window_capture_size(&id)
+                .map(|(w, h, _)| (w, h)),
+            Ok((width, height)),
+            "the stream keeps the size it negotiated"
+        );
+        assert_eq!(
+            handle.window_throttle_states().get("Shared"),
+            Some(&WindowThrottleState::Captured),
+            "a window off the current workspace is still being watched remotely"
+        );
+
+        handle.stop();
+    }
+
+    /// A minimized window should stay capturable — the spec asks for full frame
+    /// rate "even when occluded, on an inactive workspace, or minimized".
+    ///
+    /// Ignored: minimizing unmaps the window from every space, and both
+    /// `ListWindows` and `window_for_identifier` walk `spaces_elements()`, so
+    /// today a minimized window disappears from the picker and its stream stops
+    /// resolving. See `specs/screenshare.md` (Window capture).
+    #[test]
+    #[serial]
+    #[ignore = "known gap: minimizing unmaps the window, so its capture stops resolving"]
+    fn a_minimized_window_stays_capturable() {
+        let handle = start();
+        let mut client = connect(&handle);
+        map_window(&handle, &mut client, "Shared", "org.otto.Shared");
+        let id = identifier_of(&handle, "Shared");
+
+        handle.screencast_create_session(SESSION, 2);
+        handle
+            .screencast_attach_stream(SESSION, StreamTarget::Window(id.clone()))
+            .expect("window stream should attach");
+
+        handle.with_state(|state| {
+            let window = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == "Shared")
+                .cloned()
+                .expect("window mapped");
+            state.workspaces.minimize_window(&window);
+        });
+        handle.settle(400);
+
+        assert!(
+            handle.screencast_window_capture_size(&id).is_ok(),
+            "a minimized window must still resolve for its stream"
+        );
+        assert_eq!(
+            handle.window_throttle_states().get("Shared"),
+            Some(&WindowThrottleState::Captured),
+        );
+
+        handle.stop();
+    }
+
     /// Destroying the session drops its streams, and the window it was casting
     /// goes back to being throttled like any other background window.
     #[test]

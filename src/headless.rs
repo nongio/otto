@@ -393,6 +393,26 @@ impl HeadlessHandle {
         })
     }
 
+    /// Where the window with this title sits on screen, in logical pixels:
+    /// `(x, y, width, height)`. `None` if no such window is mapped.
+    pub fn window_logical_geometry(&self, title: &str) -> Option<(i32, i32, i32, i32)> {
+        let title = title.to_string();
+        self.query(move |state| {
+            let window = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .cloned()?;
+            let geometry = state.workspaces.element_geometry(&window)?;
+            Some((
+                geometry.loc.x,
+                geometry.loc.y,
+                geometry.size.w,
+                geometry.size.h,
+            ))
+        })
+    }
+
     /// Logical-pixel geometry of the mapped window with this title, as the
     /// space knows it. `None` if no such window is mapped.
     pub fn window_logical_size(&self, title: &str) -> Option<(i32, i32)> {
