@@ -356,6 +356,25 @@ values. Restart it after restarting the backend.
 
 ---
 
+## Testing
+
+The two ends of the pipeline are not reachable from a test: the D-Bus service
+needs a session bus, and a stream needs a PipeWire daemon and a GPU. Everything
+between them is, and `tests/screenshare.rs` covers it against a headless
+compositor and real Wayland clients — source enumeration, window identity,
+stream sizing, the rejection paths of `RecordMonitor`/`RecordWindow`, and the
+`Captured` frame pacing a live capture forces.
+
+```sh
+cargo test --features headless --test screenshare
+```
+
+`HeadlessHandle` exposes the control plane as `screencast_*` helpers, which post
+the same `CompositorCommand`s the D-Bus thread posts. `screencast_attach_stream`
+is the one piece of scaffolding: it records a target with the PipeWire
+connection left out, so throttling, forced repaint and teardown are testable
+without a daemon.
+
 ## File map
 
 | File | Purpose |
@@ -367,6 +386,7 @@ values. Restart it after restarting the backend.
 | `src/state/window_throttle.rs` | Frame pacing, including the `Captured` state |
 | `src/skia_renderer.rs` | `Blit<Dmabuf>` — the shared GPU blit |
 | `src/udev/render.rs` | Per-frame delivery, render triggers |
+| `tests/screenshare.rs` | Headless end-to-end tests for the control plane |
 | `src/winit.rs` | Starts the D-Bus service only; no frame delivery |
 | `components/xdg-desktop-portal-otto/` | Portal backend: picker, restore, session bookkeeping |
 

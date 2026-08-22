@@ -95,6 +95,28 @@ tray with a `Stop Sharing` menu. It uses StatusNotifierItem + dbusmenu, so no
 bar-side code is involved, and it cannot go stale — see
 [Remote-Desktop Indicator](remote-desktop-indicator.md).
 
+## Testing
+
+The RDP wire protocol itself needs a real client (and a VA-API encoder), so it
+stays a manual check. What is covered automatically:
+
+```sh
+cargo test -p otto-rdp                            # the bridge's own logic
+cargo test --features headless --test rdp_bridge  # what it asks of Otto
+```
+
+`cargo test -p otto-rdp` covers the decisions a client's connection turns on —
+the served layout (client box verbatim, aspect-fit picture, even rounding on
+the EGFX path), the mouse mapping back through that letterbox, AVC-vs-bitmap
+transport selection from the advertised capability sets, and the RDP→evdev
+scancode table.
+
+`tests/rdp_bridge.rs` drives a headless compositor as the bridge does: it binds
+the same globals in the same versions, reads the output's logical geometry from
+`xdg-output`, and injects pointer motion, a click and keystrokes through
+`zwlr_virtual_pointer_v1` / `zwp_virtual_keyboard_v1`, asserting they land on
+the right window and reach the application.
+
 ## Current limitations
 
 - **No auth**: trusted-network only. `--tls` enables TLS security with a

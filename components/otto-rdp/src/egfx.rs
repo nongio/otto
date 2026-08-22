@@ -465,3 +465,47 @@ impl Driver {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// V8.1 opts *in* to AVC420: without the flag the client gets bitmaps.
+    #[test]
+    fn v8_1_opts_in_to_avc() {
+        assert!(cap_enables_avc(&CapabilitySet::V8_1 {
+            flags: CapabilitiesV81Flags::AVC420_ENABLED | CapabilitiesV81Flags::SMALL_CACHE,
+        }));
+        assert!(!cap_enables_avc(&CapabilitySet::V8_1 {
+            flags: CapabilitiesV81Flags::SMALL_CACHE,
+        }));
+    }
+
+    /// V10 and later opt *out*: silence means AVC is fine. Microsoft's mobile
+    /// clients set `AVC_DISABLED`, and confirming AVC to them drops the
+    /// connection — so this is the flag that decides their transport.
+    #[test]
+    fn v10_and_later_opt_out_of_avc() {
+        assert!(cap_enables_avc(&CapabilitySet::V10 {
+            flags: CapabilitiesV10Flags::SMALL_CACHE,
+        }));
+        assert!(!cap_enables_avc(&CapabilitySet::V10 {
+            flags: CapabilitiesV10Flags::AVC_DISABLED,
+        }));
+        assert!(cap_enables_avc(&CapabilitySet::V10_7 {
+            flags: CapabilitiesV107Flags::empty(),
+        }));
+        assert!(!cap_enables_avc(&CapabilitySet::V10_7 {
+            flags: CapabilitiesV107Flags::AVC_DISABLED,
+        }));
+    }
+
+    /// Versions with no AVC concept at all never take the hardware path.
+    #[test]
+    fn versions_without_avc_fall_back_to_bitmaps() {
+        assert!(!cap_enables_avc(&CapabilitySet::V8 {
+            flags: CapabilitiesV8Flags::empty(),
+        }));
+        assert!(!cap_enables_avc(&CapabilitySet::V10_1));
+    }
+}

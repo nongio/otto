@@ -4516,6 +4516,12 @@ impl Workspaces {
         }
         self.invalidate_expose_layout(&name, workspace_index);
         self.expose_update_if_needed_workspace(workspace_index);
+
+        // The window changed workspace, so everything derived from the model
+        // — the selector previews' window counts, the app switcher's z-order,
+        // the dock's app list — is now stale. Without this the stale state
+        // survives until some unrelated window maps or closes.
+        self.update_workspace_model();
     }
 
     /// Drop the cached exposé grid of one workspace, so the next layout pass

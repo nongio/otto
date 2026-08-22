@@ -454,6 +454,18 @@ impl WorkspaceSelectorView {
         self.removing.read().unwrap().contains(&index)
     }
 
+    /// `(workspace index, window count)` for every preview, in the order they
+    /// are laid out. What the previews are currently drawn from — stale here
+    /// means a preview showing a window that has since moved or closed.
+    pub fn preview_window_counts(&self) -> Vec<(usize, usize)> {
+        self.view
+            .get_state()
+            .workspaces
+            .iter()
+            .map(|w| (w.index, w.window_count))
+            .collect()
+    }
+
     /// Set the global logical origin of the output hosting this selector, so
     /// pointer events (delivered in global logical space) can be converted to
     /// output-local coordinates for hit-testing.

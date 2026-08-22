@@ -14,9 +14,19 @@ fn cursor_mode_accepts_supported_values() {
         validate_cursor_mode(CURSOR_MODE_EMBEDDED).unwrap(),
         CURSOR_MODE_EMBEDDED
     );
+}
+
+/// `AvailableCursorModes` is `HIDDEN | EMBEDDED` — metadata cursors are not
+/// implemented, so asking for one is out of contract, not a silent downgrade.
+/// See `specs/screenshare.md` (Portal implementation properties and cursor
+/// modes).
+#[test]
+fn cursor_mode_rejects_the_unadvertised_metadata_mode() {
+    let err = validate_cursor_mode(CURSOR_MODE_METADATA)
+        .expect_err("metadata cursor mode is not advertised");
     assert_eq!(
-        validate_cursor_mode(CURSOR_MODE_METADATA).unwrap(),
-        CURSOR_MODE_METADATA
+        err.name().as_str(),
+        "org.freedesktop.DBus.Error.InvalidArgs"
     );
 }
 
