@@ -199,7 +199,8 @@ Otto picks the backend for your environment:
 
 Otto reads TOML configuration files, in this order (later files override earlier ones):
 
-1. **System**: `/etc/otto/config.toml`
+1. **System**: `/etc/otto/config.toml` (not shipped; copy it from
+   `/etc/otto/config.example.toml`, which the packages do install)
 2. **User**: `$XDG_CONFIG_HOME/otto/config.toml` (defaults to `~/.config/otto/config.toml`)
 3. **Local override**: `./otto_config.toml` (current directory, for development)
 4. **Backend-specific**: `./otto_config.{backend}.toml` (highest priority)

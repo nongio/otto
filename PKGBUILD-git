@@ -1,7 +1,7 @@
 # Maintainer: Riccardo Canalicchio <riccardo.canalicchio@gmail.com>
 
 pkgname=otto-git
-pkgver=0.0.0
+pkgver=0.15.0.r84.gf3db0e34
 pkgrel=1
 pkgdesc="A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail, inspired by familiar macOS interactions."
 url="https://github.com/nongio/otto"
@@ -14,7 +14,7 @@ makedepends=("git" "rust" "cargo" "libdisplay-info" "clang")
 optdepends=("xdg-desktop-portal: Desktop integration" "fprintd: fingerprint unlock for otto-lock and otto-greeter" "greetd: login manager otto --login hosts a greeter for" "gst-plugin-pipewire: otto-rdp video capture" "gst-plugins-bad: otto-rdp hardware H.264 (VA-API)")
 source=()
 sha256sums=()
-backup=("etc/otto/config.toml" "etc/pam.d/otto-lock")
+backup=("etc/pam.d/otto-lock")
 
 pkgver() {
     cd "$startdir"
@@ -60,7 +60,12 @@ package() {
     install -Dm644 components/xdg-desktop-portal-otto/portals.conf.example "$pkgdir/usr/share/doc/otto/portals.conf.example"
 
     # Install configuration
-    install -Dm644 otto_config.example.toml "$pkgdir/etc/otto/config.toml"
+    # An example, not the config: the package must never own
+    # /etc/otto/config.toml. Owning it means a reinstall or a switch between
+    # the otto, otto-git and otto-nightly-bin packages moves whatever the
+    # administrator wrote there aside as a .pacsave and drops the stock file
+    # in its place. Copy this to config.toml to use it.
+    install -Dm644 otto_config.example.toml "$pkgdir/etc/otto/config.example.toml"
     # PAM stack otto-lock authenticates against; without it PAM falls through
     # to `other`, which denies everything.
     install -Dm644 components/otto-lock/otto-lock.pam "$pkgdir/etc/pam.d/otto-lock"

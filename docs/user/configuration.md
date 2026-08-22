@@ -9,6 +9,12 @@ Otto searches for configuration files in the following order (later files overri
 1. **System config**: `/etc/otto/config.toml`
    - System-wide defaults managed by administrators
    - Lowest priority
+   - **Not created by the package.** Otto's packages install a commented
+     example at `/etc/otto/config.example.toml` and never write
+     `config.toml` itself, so nothing an administrator puts there can be
+     moved aside by an upgrade or by switching between the `otto`,
+     `otto-git` and `otto-nightly-bin` packages. Copy the example to
+     `config.toml` to start from it.
 
 2. **User config**: `$XDG_CONFIG_HOME/otto/config.toml`
    - Per-user configuration (defaults to `~/.config/otto/config.toml`)
