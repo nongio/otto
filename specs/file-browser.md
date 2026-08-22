@@ -94,6 +94,21 @@ A client-decorated toplevel. Layout:
   View anchor, so what is painted and what is clickable cannot disagree. This
   is what the 10,000-file goal above rests on — measuring and shaping the text
   of a row nobody can see is most of the cost of a frame.
+- **Thumbnails in place of icons** — an entry whose thumbnail is available is
+  drawn as itself rather than as its type's icon, in list rows and grid cells
+  alike. The picture is **fitted, never cropped**: it keeps its own proportions
+  inside the box the icon would have had and sits on the same baseline, so a
+  panorama and a portrait line up with the icons around them, and it is never
+  enlarged past its own pixels. A hairline closes its edge, without which a
+  photograph with a pale sky has no boundary against the window. Everything
+  with no thumbnail — every folder, and every file where none was found —
+  keeps its icon, so the two are always mixed and must agree on geometry.
+- **Only what is on screen is fetched, a few at a time** — the visible range of
+  the pane the user is looking at, capped at four outstanding fetches. A folder
+  of ten thousand pictures therefore costs what a folder of thirty costs. A
+  fetch that finds nothing is remembered for the window's lifetime so it is not
+  retried every frame, and a thumbnail landing invalidates only the panes that
+  could show it, through the pane content key.
 - **Row density** — rows are compact and **abut with no gap between them**, in
   list and column views alike: a listing is scanned rather than read, and the
   fewer pixels between one name and the next, the more of the directory the
@@ -428,6 +443,18 @@ These three are defined here and consumed by the picker, by quick view, and by
 anything else that grows a need for them.
 
 ### 1. The thumbnail cache
+
+**Implemented: the reading half.** `otto_files::thumbcache` resolves, validates
+and reads shared-cache entries, and `otto_files::thumbnails` is the per-window
+store and scheduler over it. The browser consumes what every other file manager
+has already written — verified against the real cache on a developer machine,
+where all 4,686 checkable entries agreed on the key and every live source file
+resolved. **Otto does not yet write into the cache**: generation happens in
+process and is kept in memory only, so the *Writing*, *Eviction* and *Other
+Otto components may write into it* rules below describe the intended end state,
+not current behaviour. Publishing into a cache the whole desktop reads is a
+promise about the bytes and their size, and it is deliberately a separate step
+from consuming it.
 
 **It is the freedesktop shared thumbnail cache, not an Otto-private one.**
 Location, keying and validity follow the freedesktop thumbnail managing
