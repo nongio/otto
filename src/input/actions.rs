@@ -504,6 +504,7 @@ impl<BackendData: Backend> Otto<BackendData> {
             // to release pointer grabs that would intercept events
             self.dismiss_all_popups();
             self.demote_all_scanout_windows();
+            self.enter_expose_focus();
             self.workspaces.expose_set_visible(true);
         }
     }

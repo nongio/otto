@@ -260,6 +260,14 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// flies back to where the drag started and are swept up when the next drag
     /// begins. See [`crate::state::dnd_grab_handler`].
     pub pending_dnd_cleanup: Option<WlSurface>,
+    /// Where the drag icon sits relative to the cursor.
+    ///
+    /// A client anchors the icon by the point it was grabbed by — `wl_surface
+    /// .offset`, or the deprecated x and y of `attach` — which arrives as
+    /// `buffer_delta` on each commit and is *relative*, so it accumulates over
+    /// the drag rather than replacing what came before. Without this the icon
+    /// hangs by its top-left corner whatever the client asks for.
+    pub dnd_icon_offset: utils::Point<i32, utils::Logical>,
 
     // input-related fields
     pub suppressed_keys: Vec<Keysym>,
@@ -917,6 +925,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             virtual_pointer_manager_state,
             dnd_icon: None,
             pending_dnd_cleanup: None,
+            dnd_icon_offset: (0, 0).into(),
             suppressed_keys: Vec::new(),
             current_modifiers: ModifiersState::default(),
             pressed_cmd_keys: HashSet::new(),
@@ -1449,10 +1458,15 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 }
             }
 
-            self.workspaces
-                .dnd_view
-                .layer
-                .set_position((cursor_position.x as f32, cursor_position.y as f32), None);
+            // The cursor, shifted by wherever the client anchored the icon.
+            let anchor = self.dnd_icon_offset.to_f64().to_physical(scale);
+            self.workspaces.dnd_view.layer.set_position(
+                (
+                    (cursor_position.x + anchor.x) as f32,
+                    (cursor_position.y + anchor.y) as f32,
+                ),
+                None,
+            );
         }
     }
 

@@ -240,9 +240,12 @@ as the same kind of surface as the bar's menus and the launcher's card, because
 it is.
 
 Dismissal: space, Escape, the close control, a click outside the panel, or the
-host closing it for any reason of its own. There is no focus-loss rule — the
-host's window losing focus is the host's business, and a preview inside it
-simply goes when the host says so.
+host closing it for any reason of its own. The embedded panel has no focus-loss
+rule of its own — the host's window losing focus is the host's business, and a
+preview inside it simply goes when the host says so. The file browser makes
+exactly that call: it closes on `wl_keyboard.leave` for its toplevel, which is
+also the only signal a client gets that expose opened, since a subsurface is out
+of reach of the compositor's popup dismissal.
 
 ### Opening and dismissing
 

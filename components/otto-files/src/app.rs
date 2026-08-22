@@ -1,4 +1,4 @@
-use crate::{model, pane_surfaces, perf, picker, quickview, scene, view};
+use crate::{model, pane_surfaces, perf, picker, quickview, scene, thumbcache, thumbnails, view};
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -19,7 +19,7 @@ use smithay_client_toolkit::seat::keyboard::KeyEvent;
 use smithay_client_toolkit::seat::pointer::PointerEventKind;
 use smithay_client_toolkit::shell::xdg::window::WindowConfigure;
 use smithay_client_toolkit::shell::xdg::{XdgPositioner, XdgSurface};
-use wayland_client::protocol::wl_keyboard;
+use wayland_client::protocol::{wl_keyboard, wl_surface};
 
 /// `BTN_RIGHT` from `linux/input-event-codes.h` — a right-click opens the
 /// context menu instead of doing whatever the same spot does on the left
@@ -180,6 +180,13 @@ struct Browser {
     /// Bumped for every preview decode started, independent of Quick View's
     /// own generation counter — the two panels can be open at once.
     preview_generation_seed: u64,
+    /// Thumbnails for the entries on screen, in place of their type icons.
+    ///
+    /// Only the visible ones are ever fetched, and only a few at a time — see
+    /// [`thumbnails::Store`]. The store is asked what it wants on every update
+    /// and the host runs the work off the UI thread, the same shape the
+    /// preview column's decodes take.
+    thumbs: thumbnails::Store,
     /// A decode is in flight. Keeps the frame loop alive so its result is
     /// painted without waiting for the next input.
     quickview_pending: bool,
@@ -426,6 +433,7 @@ impl Browser {
             quickview: None,
             preview: None,
             preview_generation_seed: 0,
+            thumbs: thumbnails::Store::new(),
             quickview_pending: false,
             quickview_closing: None,
             quickview_auto: std::env::var_os("OTTO_FILES_QV_AUTO").is_some(),
@@ -673,6 +681,81 @@ impl Browser {
         if self.pan.scroll_to(target) {
             self.dirty = true;
         }
+    }
+
+    /// Ask the thumbnail store what the visible entries still need.
+    ///
+    /// Called once per update, the same place the preview column's target is
+    /// synced. Returns the jobs the host is to run off the UI thread; an empty
+    /// vector — the usual answer — means everything on screen is already
+    /// settled.
+    ///
+    /// Only the pane the user is looking at is considered. In Miller view the
+    /// parent columns are 16-pixel rows of icons where a thumbnail buys almost
+    /// nothing, and fetching for every column at once would spend the whole
+    /// in-flight budget on panes the eye is not on.
+    fn sync_thumbnails(&mut self) -> Vec<thumbnails::Job> {
+        let depth = self.active.min(self.columns.len().saturating_sub(1));
+        let entries = self.visible(depth);
+        if entries.is_empty() {
+            return Vec::new();
+        }
+
+        let area = view::content_viewport(self.size.0, self.content_h(), self.mode);
+        let scroll = self.columns[depth].scroll.offset();
+        let range = match self.mode {
+            view::ViewMode::Grid => view::grid_visible_range(area, entries.len(), scroll, area),
+            view::ViewMode::List => {
+                view::RowStrip::list(self.size.0, entries.len(), scroll).visible(area)
+            }
+            // A Miller pane's rows sit a little way down the pane and are
+            // panned sideways with the stack, so its own strip and its own
+            // viewport are what describe them — a list's strip would be off by
+            // the inset and would not know the pane can be panned off screen
+            // entirely.
+            view::ViewMode::Columns => {
+                let full = view::miller_pane_rect(
+                    depth,
+                    self.content_h(),
+                    self.pan.offset(),
+                    self.miller_w,
+                );
+                let band = view::pane_viewport(
+                    self.size.0,
+                    self.content_h(),
+                    view::ViewMode::Columns,
+                    depth,
+                    self.pan.offset(),
+                    self.miller_w,
+                );
+                view::RowStrip::miller(full, entries.len(), scroll).visible(band)
+            }
+        };
+
+        // The box a thumbnail will be drawn in decides how much detail to ask
+        // for: a grid cell is worth a real picture, a list row is 16 points of
+        // it.
+        let box_edge = match self.mode {
+            view::ViewMode::Grid => view::GRID_ICON,
+            view::ViewMode::List | view::ViewMode::Columns => view::ICON_SIZE,
+        };
+        let scale = AppContext::scale_factor().max(1) as f32;
+        let size = thumbcache::Size::for_box(box_edge, scale);
+
+        let requests = entries
+            .get(range.clone())
+            .unwrap_or_default()
+            .iter()
+            // A directory has no picture of its own, and asking for one means
+            // a sandboxed worker per folder in a folder of folders.
+            .filter(|entry| !entry.is_dir)
+            .map(|entry| thumbnails::Request {
+                path: entry.path.clone(),
+                modified: entry.modified,
+                may_generate: entry.kind.thumbnailable(),
+            })
+            .collect::<Vec<_>>();
+        self.thumbs.wanted(requests, size)
     }
 
     /// Show a preview decode that arrived, unless the selection has moved on
@@ -1053,8 +1136,18 @@ impl Browser {
             return;
         }
 
+        self.spawn_window(&entry.path);
+    }
+
+    /// Open a second browser window on `path`.
+    ///
+    /// A window is a process here — the app shell is built around a single
+    /// toplevel — so this re-executes this binary with the directory on its
+    /// command line. Shared by Ctrl+double-click and by the New Window
+    /// shortcut, which differ only in which directory they name.
+    fn spawn_window(&mut self, path: &Path) {
         let exe = match std::env::current_exe() {
-            Ok(path) => path,
+            Ok(exe) => exe,
             Err(err) => {
                 self.status = Some(format!("Couldn\u{2019}t open a new window: {err}"));
                 self.dirty = true;
@@ -1062,7 +1155,7 @@ impl Browser {
             }
         };
         let spawned = std::process::Command::new(exe)
-            .arg(&entry.path)
+            .arg(path)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -1080,6 +1173,45 @@ impl Browser {
                 self.dirty = true;
             }
         }
+    }
+
+    /// Open a new window on the default location — Ctrl+N.
+    ///
+    /// The default location, not this window's directory: a new window is a
+    /// fresh start, and starting somewhere arbitrary — wherever the window
+    /// that happened to have focus was pointed — is what makes a new window
+    /// feel like a copy of the old one rather than a new one. Ctrl+double-click
+    /// is the gesture for "that directory, in another window".
+    fn open_new_window(&mut self) {
+        let Some(path) = self.new_window_target() else {
+            return;
+        };
+        self.spawn_window(&path);
+    }
+
+    /// Where a new window would open, or `None` when one makes no sense.
+    ///
+    /// Split from the spawning so the choice can be tested without launching
+    /// a process: everything interesting about Ctrl+N is which directory it
+    /// names, and that is all this answers.
+    fn new_window_target(&self) -> Option<PathBuf> {
+        // The picker answers one request in one window: a second browser
+        // window would have nothing to do with the request and no way to
+        // answer it.
+        if self.picker.is_some() {
+            return None;
+        }
+        Some(Self::default_location())
+    }
+
+    /// Where a window with nowhere in particular to be starts.
+    ///
+    /// The home directory for now. It is a single function rather than a
+    /// literal at each call site because this is the thing a preference would
+    /// replace — when there is one, it is read here and everywhere that opens
+    /// a fresh window follows.
+    fn default_location() -> PathBuf {
+        model::home_dir().unwrap_or_else(|| PathBuf::from("/"))
     }
 
     /// Descend into the selection: in Miller view the child column already
@@ -2647,6 +2779,7 @@ impl Browser {
             }),
             footer: self.footer_h(),
             quickview_close_hovered: self.quickview_close_hovered,
+            thumbs: Some(&self.thumbs),
             drop_target: self.drop_target.as_ref().map(DropTarget::highlight),
         }
     }
@@ -2882,7 +3015,7 @@ impl App for FilesApp {
     /// [`AppContext::request_wakeup`] — and this is where that wakeup turns
     /// into a frame.
     fn on_update(&mut self, _ctx: &AppContext) {
-        let (repaint, preview_target, scrolled_only) = {
+        let (repaint, preview_target, scrolled_only, thumb_jobs) = {
             let mut browser = self.state.lock().unwrap();
             let changed = browser.poll();
             // Momentum, the overscroll bounce and the scrollbar's fade all
@@ -2896,6 +3029,12 @@ impl App for FilesApp {
             // checked centrally here rather than threaded through every place
             // the selection can change.
             let preview_target = browser.sync_preview_target();
+            // What the entries on screen still need a picture for. Same place
+            // and same reasoning as the preview target above: everything that
+            // can change what is visible — a scroll, a directory landing, a
+            // switch of view mode — has already happened by the time this
+            // runs.
+            let thumb_jobs = browser.sync_thumbnails();
             // A sideways pan moves the columns, and the hairlines between them
             // are drawn in the window, not in the column surfaces — so while
             // the stack is panning the window has to keep up or the dividers
@@ -2914,10 +3053,13 @@ impl App for FilesApp {
                 || std::mem::take(&mut browser.dirty)
                 || animating
                 || preview_target.is_some();
-            (repaint, preview_target, scrolled_only)
+            (repaint, preview_target, scrolled_only, thumb_jobs)
         };
         if let Some((path, generation)) = preview_target {
             self.start_preview(path, generation);
+        }
+        for job in thumb_jobs {
+            self.start_thumbnail(job);
         }
 
         // One lock, taken once. A `self.state.lock()` in an `if` condition
@@ -3041,6 +3183,32 @@ impl App for FilesApp {
     /// belongs to and again whenever the window takes focus.
     fn on_modifiers(&mut self, _ctx: &AppContext, modifiers: Modifiers) {
         *self.modifiers.lock().unwrap() = modifiers;
+    }
+
+    /// Quick View is a preview of what the window has selected, so it belongs
+    /// to the window's focus: once the keyboard goes somewhere else the panel
+    /// is a card floating over a background window with nothing to preview.
+    ///
+    /// This is also how expose reaches us. The panel is a subsurface, not a
+    /// popup, so the compositor's `dismiss_all_popups` on the way into Show All
+    /// cannot take it down — but Otto drops keyboard focus entering expose, and
+    /// that lands here.
+    ///
+    /// Only the browser's own toplevel counts. A leave on the Get Info panel is
+    /// focus moving between two of our windows, not away from the browser.
+    fn on_keyboard_leave(&mut self, _ctx: &AppContext, surface: &wl_surface::WlSurface) {
+        use wayland_client::Proxy;
+        let ours = self
+            .window
+            .as_ref()
+            .and_then(|window| window.wl_surface())
+            .is_some_and(|main| main.id() == surface.id());
+        if !ours {
+            return;
+        }
+        if self.state.lock().unwrap().close_quickview() {
+            self.render();
+        }
     }
 
     fn on_key_event(
@@ -3302,6 +3470,12 @@ impl App for FilesApp {
                     browser.show_hidden = !browser.show_hidden;
                     browser.dirty = true;
                 }
+                Keysym::n if ctrl => browser.open_new_window(),
+                // What a double-click does, from the keyboard: descend into a
+                // directory, or activate a file. Return is not free for this —
+                // it renames, the way it does on the desktop this follows — so
+                // opening needs a chord of its own.
+                Keysym::o if ctrl => browser.open_selection(),
                 Keysym::_1 if ctrl => {
                     browser.mode = ViewMode::List;
                     browser.dirty = true;
@@ -3503,6 +3677,32 @@ impl FilesApp {
         });
     }
 
+    /// Fetch one thumbnail off the UI thread.
+    ///
+    /// The shared cache makes most of these a single file read; the rest end
+    /// in the sandboxed decoder, which is why this is never run inline. The
+    /// result is recorded whatever it is — a miss is worth remembering, or the
+    /// same file is asked for again on the very next frame.
+    fn start_thumbnail(&self, job: thumbnails::Job) {
+        let state = Arc::clone(&self.state);
+        tokio::task::spawn_blocking(move || {
+            let found = thumbnails::fetch(&job);
+            let mut browser = state.lock().unwrap();
+            let before = browser.thumbs.epoch();
+            browser.thumbs.finish(job.path, job.modified, found);
+            // A picture landing changes what the panes draw; a miss changes
+            // only what will be asked for next, and repainting for it would
+            // render the same pixels again. The store's epoch is what tells
+            // the two apart.
+            browser.dirty |= browser.thumbs.epoch() != before;
+            drop(browser);
+            // Same reason the preview decodes wake the loop: a window that has
+            // stopped committing frames has no frame callback to notice a
+            // thumbnail landed.
+            AppContext::request_wakeup();
+        });
+    }
+
     /// Keep repainting while a directory read is outstanding.
     ///
     /// Two constraints force this shape. A worker thread cannot ask for a
@@ -3544,6 +3744,9 @@ impl FilesApp {
                     || browser.quickview_pending
                     || opening
                     || preview_pending
+                    // …and while thumbnails are being fetched, so they appear
+                    // as they land rather than at the next keystroke.
+                    || browser.thumbs.is_busy()
             };
             if repaint {
                 window.request_frame();
@@ -4811,6 +5014,66 @@ mod typeahead_tests {
         }
         assert!(!browser.columns[0].loading(), "listing never arrived");
         (browser, dir)
+    }
+
+    /// Ctrl+O is bound to the same call a double-click makes, so on a folder
+    /// it descends. Worth pinning because Return is *not* this — it renames —
+    /// and it would be an easy mistake to give opening back to Return and
+    /// leave the chord doing nothing.
+    #[test]
+    fn opening_a_folder_descends_into_it() {
+        let dir = TempDir::holding(&["a.txt"]);
+        let sub = dir.0.join("sub");
+        std::fs::create_dir_all(sub.join("inner")).expect("child dir");
+
+        let mut browser = Browser::new(dir.0.clone());
+        for _ in 0..500 {
+            if browser.columns[0].poll() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        // List view: descending replaces the column, so the deepest path is
+        // the plainest statement of where the window ended up.
+        browser.mode = ViewMode::List;
+        let index = browser
+            .visible(0)
+            .iter()
+            .position(|e| e.name == "sub")
+            .expect("the folder is listed");
+        browser.select(0, index);
+
+        assert_eq!(browser.current_path(), dir.0);
+        browser.open_selection();
+        assert_eq!(browser.current_path(), sub);
+    }
+
+    /// Ctrl+N opens a new window at the default location, not wherever this
+    /// window happens to be pointed — a new window is a fresh start. Where the
+    /// window is browsing must not move the target.
+    #[test]
+    fn a_new_window_opens_at_the_default_location() {
+        let (mut browser, dir) = browser_over(&["one.txt", "two.txt"]);
+        let default = Browser::default_location();
+        assert_eq!(browser.new_window_target(), Some(default.clone()));
+
+        // Navigating somewhere else leaves it alone. `dir` is a temporary
+        // directory, so it is never the default location, and a target that
+        // followed the window would show up here.
+        let child = dir.0.join("sub");
+        std::fs::create_dir_all(&child).expect("child dir");
+        browser.navigate_to(&child);
+        for _ in 0..500 {
+            if browser.columns.last_mut().is_some_and(|c| c.poll()) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(browser.new_window_target(), Some(default));
+        assert_ne!(
+            browser.new_window_target().as_deref(),
+            Some(child.as_path())
+        );
     }
 
     fn at_cursor(browser: &Browser) -> Option<String> {

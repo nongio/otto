@@ -401,6 +401,20 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
     }
 
+    /// Entering Show All: the keyboard belongs to expose, not to whatever
+    /// window happened to be in front.
+    ///
+    /// Two things depend on this. Keys pressed while the previews are up no
+    /// longer leak into the window underneath them, which is what a modal
+    /// overview is supposed to mean. And clients hear about it: `wl_keyboard`
+    /// `leave` is the only signal a client gets that expose opened, which is
+    /// how apps take down transient chrome of their own — `dismiss_all_popups`
+    /// reaches popups, but nothing else. Focus comes back on the way out, in
+    /// `close_expose_show_all_and_focus_top` and its gesture twin.
+    pub fn enter_expose_focus(&mut self) {
+        self.clear_keyboard_focus();
+    }
+
     pub fn clear_keyboard_focus(&mut self) {
         if let Some(keyboard) = self.seat.get_keyboard() {
             let serial = SERIAL_COUNTER.next_serial();

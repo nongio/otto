@@ -33,6 +33,8 @@ impl<BackendData: Backend> WaylandDndGrabHandler for Otto<BackendData> {
         }
 
         self.dnd_icon = icon;
+        // Each drag anchors itself from scratch.
+        self.dnd_icon_offset = (0, 0).into();
         let p = self.get_cursor_position();
         let p = (p.x as f32, p.y as f32).into();
         self.workspaces.dnd_view.set_initial_position(p);

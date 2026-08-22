@@ -317,6 +317,10 @@ where
         return false;
     }
 
+    // The previous drag's icon, now that this one is starting: see
+    // `clear_payload` for why it outlived its own drag.
+    DRAG_ICON.with(|slot| slot.borrow_mut().take());
+
     // No icon is not a reason to refuse the drag: the gesture works without
     // one, and the cursor still says copy or move.
     let icon = DragIcon::new(size.0, size.1);
@@ -375,13 +379,14 @@ pub(crate) fn payload_for(mime: &str) -> Option<Vec<u8>> {
         .map(|(_, bytes)| bytes.clone())
 }
 
-/// The drag ended — dropped, cancelled, or refused. The payload goes with it,
-/// and so does the picture that was under the cursor.
+/// The drag ended — dropped, cancelled, or refused. The payload goes with it.
+///
+/// The icon does *not*. The compositor may still be animating it — Otto flies a
+/// refused drag's icon back to where it started — and destroying the surface
+/// here leaves it animating nothing. It is kept until the next drag needs one,
+/// by which time whatever the compositor was doing with it is long over.
 pub(crate) fn clear_payload() {
     DRAG_PAYLOAD.lock().unwrap().clear();
-    // `try_with`: the drag can end while the thread's locals are being torn
-    // down, and failing to drop an icon then is not worth a panic.
-    let _ = DRAG_ICON.try_with(|slot| slot.borrow_mut().take());
 }
 
 /// Is this application the source of a drag in flight?

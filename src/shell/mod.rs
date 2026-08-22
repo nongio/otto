@@ -191,6 +191,26 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
         on_commit_buffer_handler::<Self>(surface);
         self.backend_data.early_import(surface);
 
+        // A drag icon's commit can carry an anchor: the offset that puts the
+        // point the user grabbed under the cursor, rather than the icon's
+        // corner. It is relative to the last one, so it accumulates, and it is
+        // taken here because the compositor is the only place that sees it —
+        // nothing else in the pipeline reads `buffer_delta` for a role-less
+        // surface.
+        if self.dnd_icon.as_ref() == Some(surface) {
+            let delta = with_states(surface, |states| {
+                states
+                    .cached_state
+                    .get::<SurfaceAttributes>()
+                    .current()
+                    .buffer_delta
+                    .take()
+            });
+            if let Some(delta) = delta {
+                self.dnd_icon_offset += delta;
+            }
+        }
+
         let sync = is_sync_subsurface(surface);
         let surface_id = surface.id();
 
