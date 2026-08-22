@@ -491,8 +491,12 @@ rather than as a new object invented for the drag. Icons are drawn plain and
 only the *name* is highlighted: the accent pill behind a name says "this one is
 coming" without the picture turning into a second selection rectangle over the
 one still showing in the window. The thumbnail travels with it where there is
-one. Up to eight are drawn; a count badge at the cursor's bottom right says how
-many are coming in total.
+one. Up to fifty are drawn — the fifty nearest the entry grabbed, put back in
+listing order so the pile stacks the way the eye saw it — and a count badge at
+the cursor's bottom right says how many are coming in total. The cap bounds the
+drag surface as much as the clutter: the picture is one surface the size of the
+bounding box of what it holds, so drawing the whole of a select-all would ask
+for one as tall as the listing.
 
 The badge is the palette's **red**, not the accent. The names travelling under
 it are already highlighted in the accent, and a badge in that same colour reads

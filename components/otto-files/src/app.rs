@@ -2597,8 +2597,6 @@ impl Browser {
     /// What to draw under the cursor: the first selected entry's name and icon
     /// chain, and how many entries are travelling in total.
     ///
-    /// One entry stands for the group. Stacking every icon is a nicer picture
-    /// and a much bigger one, and the count already says how much is coming.
     /// The pictures a drag from `(x, y)` carries, laid out where they are on
     /// screen right now — plus the box that holds them, and where the grab sits
     /// inside it.
@@ -2606,7 +2604,7 @@ impl Browser {
     /// The drag image is one surface, not one per file, so the whole spread has
     /// to fit in a single box: its size is the bounding box of the entries at
     /// the moment the drag begins, which is what lets them start where they
-    /// were and gather from there. The nearest [`view::DRAG_GATHER_MAX`] to the
+    /// were and gather from there. The nearest [`view::DRAG_ITEMS_MAX`] to the
     /// grab are the ones shown; the badge still counts them all.
     fn drag_items(&self, x: f32, y: f32) -> Option<(Vec<view::DragItem>, (f32, f32), (f32, f32))> {
         let (depth, grabbed) = self.entry_at(x, y)?;

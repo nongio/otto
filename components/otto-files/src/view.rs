@@ -770,9 +770,12 @@ pub struct DragItem {
 
 /// How many pictures a drag shows at most.
 ///
-/// A hundred files would mean a hundred pictures nobody looks at and a drag
-/// surface the size of the window to hold them. The badge counts them all.
-pub const DRAG_ITEMS_MAX: usize = 8;
+/// The cap is about the surface as much as the clutter: the drag image is one
+/// surface whose size is the bounding box of the pictures, so an uncapped
+/// selection would ask for one as tall as the listing. Since the ones shown
+/// are those nearest the grab, the box stays within this many rows of it
+/// however large the selection is. The badge counts them all.
+pub const DRAG_ITEMS_MAX: usize = 50;
 
 /// The count badge's box, and how far it sits off the cursor.
 const DRAG_BADGE_H: f32 = 20.0;
