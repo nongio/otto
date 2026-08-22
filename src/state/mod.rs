@@ -590,20 +590,51 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 .expect("Failed to init wayland socket source");
             info!(name = socket_name, "Listening on wayland socket");
 
-            // Export WAYLAND_DISPLAY to systemd user session for portal services
-            if let Err(e) = std::process::Command::new("systemctl")
-                .args([
-                    "--user",
-                    "set-environment",
-                    &format!("WAYLAND_DISPLAY={}", socket_name),
-                ])
-                .output()
-            {
-                warn!(error = ?e, "Failed to export WAYLAND_DISPLAY to systemd");
+            // Export WAYLAND_DISPLAY so bus-activated helpers — the portal
+            // backend, the file picker, the islands — can find us. Without it
+            // they are started by the systemd user manager with whatever
+            // WAYLAND_DISPLAY it happens to hold and fail with `NoCompositor`.
+            //
+            // Only the backend that *is* the session does this. A nested Otto
+            // (`--winit`, `--x11`) is a client of somebody else's compositor,
+            // and its socket is not where the session's helpers should
+            // connect; exporting from one leaves the value pointing at a
+            // socket that disappears when the dev run ends, which breaks
+            // every bus-activated helper in the real session until the next
+            // login. Both are also handed to dbus, because a session whose
+            // dbus-daemon is not the systemd one activates from its own
+            // environment and never reads systemd's.
+            let owns_the_session = matches!(backend_data.backend_name(), "udev");
+            if !owns_the_session {
+                info!(
+                    backend = backend_data.backend_name(),
+                    name = socket_name,
+                    "Nested backend: not exporting WAYLAND_DISPLAY to the session"
+                );
             } else {
+                let assignment = format!("WAYLAND_DISPLAY={socket_name}");
+                let exports = [
+                    ("systemctl", vec!["--user", "set-environment", &assignment]),
+                    (
+                        "dbus-update-activation-environment",
+                        vec!["--systemd", &assignment],
+                    ),
+                ];
+                for (program, args) in exports {
+                    match std::process::Command::new(program).args(&args).output() {
+                        Ok(out) if out.status.success() => {}
+                        Ok(out) => warn!(
+                            program,
+                            status = ?out.status,
+                            stderr = %String::from_utf8_lossy(&out.stderr).trim(),
+                            "Failed to export WAYLAND_DISPLAY"
+                        ),
+                        Err(e) => warn!(program, error = ?e, "Failed to export WAYLAND_DISPLAY"),
+                    }
+                }
                 info!(
                     name = socket_name,
-                    "Exported WAYLAND_DISPLAY to systemd user session"
+                    "Exported WAYLAND_DISPLAY to the systemd and dbus activation environments"
                 );
             }
 

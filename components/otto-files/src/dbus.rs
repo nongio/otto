@@ -161,20 +161,6 @@ impl FilePickerService {
             }
         };
 
-        // Save mode is specified but not built. Saying so is the contract's
-        // `response = 2`: the application learns it got no file, rather than
-        // being shown an Open dialog that returns a file it cannot write.
-        if request.mode != picker::Mode::Open {
-            tracing::warn!(?request.mode, "save modes are not implemented yet");
-            let ended = Outcome::ended();
-            return (
-                ended.response,
-                ended.uris,
-                ended.current_filter,
-                ended.choices,
-            );
-        }
-
         tracing::info!(
             app_id = %request.app_id,
             handle = %request.handle,
@@ -263,6 +249,12 @@ fn parse_request(wire: WireRequest) -> Result<Request, &'static str> {
     let mode = picker::Mode::from_wire(mode).ok_or("unknown mode")?;
     if handle.is_empty() {
         return Err("empty request handle");
+    }
+    // `SaveFiles` is "write these names into a folder the user picks". With
+    // no names there is nothing to write, and answering `0` with an empty
+    // list is the one thing the contract forbids.
+    if mode == picker::Mode::SaveFiles && files.is_empty() {
+        return Err("save-multiple with no files");
     }
 
     let filters: Vec<Filter> = filters.into_iter().map(Filter::from_wire).collect();

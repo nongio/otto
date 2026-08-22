@@ -9,9 +9,7 @@ use std::path::{Path, PathBuf};
 
 use otto_kit::filetype;
 
-/// What the request wants done. `Save` and `SaveFiles` are carried from the
-/// first version so the wire contract never has to change to gain them; the
-/// picker refuses them for now rather than pretending.
+/// What the request wants done.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Open,
@@ -20,6 +18,13 @@ pub enum Mode {
 }
 
 impl Mode {
+    /// Whether the mode names the file being written, and so wants a name
+    /// field. `SaveFiles` does not: the application already named every file
+    /// and the user only chooses the directory they land in.
+    pub fn names_a_file(self) -> bool {
+        matches!(self, Self::Save)
+    }
+
     pub fn from_wire(mode: u32) -> Option<Self> {
         match mode {
             0 => Some(Self::Open),
@@ -175,6 +180,22 @@ impl Request {
         }
     }
 
+    /// What the name field starts with in save mode: the name the
+    /// application proposed, or failing that the base name of the file being
+    /// re-saved. Empty when it proposed neither — the field is then the one
+    /// thing standing between the user and a nameless file, so it starts
+    /// blank rather than inventing something.
+    pub fn initial_name(&self) -> String {
+        if !self.current_name.is_empty() {
+            return self.current_name.clone();
+        }
+        self.current_file
+            .as_deref()
+            .and_then(Path::file_name)
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
     /// Where to open, in the spec's order of preference: the directory of
     /// `current_file`, then `current_folder`, then the directory this
     /// `app_id` last accepted from, then home. A candidate that is not a
@@ -192,6 +213,94 @@ impl Request {
         }
         crate::model::home_dir().unwrap_or_else(|| PathBuf::from("/"))
     }
+}
+
+/// The byte range of a save name that should start selected: the stem, so
+/// typing replaces the base name and leaves the extension alone. The same
+/// rule an in-place rename uses, and for the same reason — the application
+/// chose that extension and the user almost never means to change it.
+pub fn name_stem_range(name: &str) -> std::ops::Range<usize> {
+    match name.rfind('.') {
+        Some(0) | None => 0..name.len(),
+        Some(dot) => 0..dot,
+    }
+}
+
+/// What accepting the save field should do.
+///
+/// Pure on purpose: the caller does the one `stat` and passes the answer in,
+/// so every branch of the rule below is testable without a filesystem.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SaveAction {
+    /// The name cannot be used. Accept stays disabled and this says why.
+    Blocked(&'static str),
+    /// The name is a directory that already exists: navigate into it and
+    /// clear the field, rather than refusing a name the user may still want.
+    Descend,
+    /// A file is already there. Confirm before answering.
+    Replace,
+    /// Nothing is in the way: answer with the path.
+    Write,
+}
+
+/// Decide what a typed save name means.
+///
+/// `existing` is what is at the target path today: `None` for nothing,
+/// `Some(true)` for a directory, `Some(false)` for anything else. "Anything
+/// else" deliberately includes a symlink, a socket and a device node: the
+/// contract is that the picker returns a path, and every one of those is a
+/// path the application is about to overwrite, so every one is worth a
+/// confirmation.
+pub fn save_action(name: &str, existing: Option<bool>) -> SaveAction {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return SaveAction::Blocked("Enter a name");
+    }
+    // A name is one path component. `/` would silently write somewhere the
+    // user is not looking, which is worse than refusing it.
+    if trimmed.contains('/') {
+        return SaveAction::Blocked("A name cannot contain \u{201c}/\u{201d}");
+    }
+    if trimmed == "." || trimmed == ".." {
+        return SaveAction::Blocked("That name is reserved");
+    }
+    match existing {
+        Some(true) => SaveAction::Descend,
+        Some(false) => SaveAction::Replace,
+        None => SaveAction::Write,
+    }
+}
+
+/// Whether a directory can be written into.
+///
+/// `access(2)` semantics: ask the kernel about the effective user rather than
+/// reading the mode bits, which get the answer wrong for every group and ACL
+/// case. A read-only mount still reports writable bits and fails the write
+/// anyway, which is why accept has to survive the application's own `open`
+/// failing too — this catches the common case (someone else's home, `/proc`,
+/// a mounted disc) early enough to say so before the user types a name.
+pub fn is_writable_dir(dir: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(dir) else {
+        return false;
+    };
+    metadata.is_dir() && probe_writable(dir)
+}
+
+#[cfg(unix)]
+fn probe_writable(dir: &Path) -> bool {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(path) = CString::new(dir.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `path` is a NUL-terminated C string that outlives the call, and
+    // `access` only reads it.
+    unsafe { libc::access(path.as_ptr(), libc::W_OK | libc::X_OK) == 0 }
+}
+
+#[cfg(not(unix))]
+fn probe_writable(_dir: &Path) -> bool {
+    true
 }
 
 /// How a request ended.
@@ -387,6 +496,118 @@ mod tests {
         let f = Filter::from_wire(("Folders".into(), vec![(1, "inode/directory".into())]));
         assert!(f.matches_directories);
         assert!(f.globs.is_empty());
+    }
+
+    #[test]
+    fn a_name_with_nothing_in_the_way_is_simply_written() {
+        assert_eq!(save_action("notes.txt", None), SaveAction::Write);
+    }
+
+    #[test]
+    fn an_existing_file_is_confirmed_before_it_is_answered_with() {
+        assert_eq!(save_action("notes.txt", Some(false)), SaveAction::Replace);
+    }
+
+    #[test]
+    fn an_existing_directory_is_navigated_into_rather_than_replaced() {
+        assert_eq!(save_action("Documents", Some(true)), SaveAction::Descend);
+    }
+
+    #[test]
+    fn an_empty_or_whitespace_name_blocks_accept() {
+        assert!(matches!(save_action("", None), SaveAction::Blocked(_)));
+        assert!(matches!(save_action("   ", None), SaveAction::Blocked(_)));
+    }
+
+    #[test]
+    fn a_name_cannot_reach_out_of_the_directory_being_viewed() {
+        assert!(matches!(
+            save_action("../.bashrc", None),
+            SaveAction::Blocked(_)
+        ));
+        assert!(matches!(
+            save_action("sub/file.txt", None),
+            SaveAction::Blocked(_)
+        ));
+        assert!(matches!(save_action("..", None), SaveAction::Blocked(_)));
+    }
+
+    #[test]
+    fn a_name_is_trimmed_before_it_is_judged() {
+        assert_eq!(save_action("  notes.txt  ", None), SaveAction::Write);
+    }
+
+    #[test]
+    fn the_save_field_starts_on_the_proposed_name() {
+        let mut r = request();
+        r.current_name = "untitled.png".into();
+        assert_eq!(r.initial_name(), "untitled.png");
+    }
+
+    #[test]
+    fn re_saving_starts_on_the_file_being_re_saved() {
+        let mut r = request();
+        r.current_file = Some(PathBuf::from("/home/someone/report.pdf"));
+        assert_eq!(r.initial_name(), "report.pdf");
+    }
+
+    #[test]
+    fn a_proposed_name_wins_over_the_file_being_re_saved() {
+        let mut r = request();
+        r.current_name = "copy.pdf".into();
+        r.current_file = Some(PathBuf::from("/home/someone/report.pdf"));
+        assert_eq!(r.initial_name(), "copy.pdf");
+    }
+
+    #[test]
+    fn a_request_proposing_nothing_starts_the_field_empty() {
+        assert_eq!(request().initial_name(), "");
+    }
+
+    #[test]
+    fn the_save_field_preselects_the_stem_and_spares_the_extension() {
+        assert_eq!(name_stem_range("untitled.png"), 0..8);
+        // A leading dot is not an extension separator.
+        assert_eq!(name_stem_range(".bashrc"), 0..7);
+        assert_eq!(name_stem_range("Makefile"), 0..8);
+        // The *last* dot, so `archive.tar.gz` keeps `.gz` and no more.
+        assert_eq!(name_stem_range("archive.tar.gz"), 0..11);
+    }
+
+    #[test]
+    fn a_directory_nobody_may_write_to_is_not_writable() {
+        // `/proc` exists everywhere this runs and is not writable by anyone,
+        // root included, which is what makes it a stable negative.
+        assert!(!is_writable_dir(Path::new("/proc")));
+        assert!(!is_writable_dir(Path::new("/definitely/not/here")));
+        // A file is not a directory, however writable it is.
+        assert!(!is_writable_dir(Path::new("/etc/hostname")));
+    }
+
+    #[test]
+    fn a_temporary_directory_is_writable() {
+        assert!(is_writable_dir(&std::env::temp_dir()));
+    }
+
+    fn request() -> Request {
+        Request {
+            mode: Mode::Save,
+            handle: "req1".into(),
+            app_id: String::new(),
+            parent_window: String::new(),
+            title: String::new(),
+            accept_label: String::new(),
+            multiple: false,
+            directory: false,
+            modal: true,
+            current_name: String::new(),
+            current_folder: None,
+            current_file: None,
+            files: Vec::new(),
+            filters: Vec::new(),
+            current_filter: 0,
+            choices: Vec::new(),
+        }
     }
 
     #[test]

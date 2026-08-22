@@ -259,8 +259,8 @@ anchor-based multi-select rules and rubber-band selection. See
 | --- | --- |
 | Space | quick view of the selection (see below) |
 | Return / F2 | rename the entry at the cursor, inline, with the extension unselected — in every view mode, icon view included |
-| Delete | move the selection to trash |
-| Shift+Delete | delete the selection permanently, after confirmation |
+| Delete / Ctrl+Delete / Ctrl+Backspace | move the selection to trash — the modified forms because the chord people reach for is Cmd+Delete, and on a keyboard whose big key is Backspace that arrives as Ctrl+Backspace. Plain Backspace goes up a directory instead, and always has |
+| Shift+Delete | delete the selection permanently, after confirmation — **not built**; the chord is deliberately inert rather than trashing, which is the wrong answer to a keystroke that means "and I mean it" |
 | Ctrl+C / Ctrl+X / Ctrl+V | copy / cut / paste |
 | Ctrl+Z | undo the last operation |
 | Ctrl+N | new window |

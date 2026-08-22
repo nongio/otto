@@ -163,6 +163,22 @@ struct Browser {
     /// than the browser. `None` is the browser, and every difference between
     /// the two shells reads off this one field.
     picker: Option<picker::Session>,
+    /// The save field, in `Save` mode only. It is the picker's keyboard
+    /// focus: printable keys go here rather than to type-ahead, because in a
+    /// Save dialog what the user is doing is naming a file.
+    save_name: Option<TextInput>,
+    /// The replace-confirmation sheet, while it is up. Modal over the whole
+    /// window: the request is not answered until it is.
+    confirm: Option<ConfirmSheet>,
+    /// The last answer [`Browser::save_action`] gave, and what it was asked
+    /// about.
+    ///
+    /// The action row asks on every repaint, and answering costs three
+    /// syscalls against a directory that may be a stalled network mount —
+    /// which is exactly what this window is not allowed to block on. Keyed on
+    /// the question, so it is recomputed when the directory or the name
+    /// changes and never merely because the window redrew.
+    save_probe: RefCell<Option<(PathBuf, String, picker::SaveAction)>>,
     /// The action row's hover and press state, tracked like the traffic
     /// lights': a button arms on press and fires on release over the same
     /// button, so a press dragged off it changes nothing.
@@ -247,6 +263,43 @@ struct RenameSession {
     input: TextInput,
 }
 
+/// The uncached half of [`Browser::save_action`]: three syscalls, and the
+/// only place in the picker that touches the filesystem on the UI thread.
+fn probe_save_action(dir: &Path, name: &str) -> picker::SaveAction {
+    if !picker::is_writable_dir(dir) {
+        return picker::SaveAction::Blocked("You do not have permission to save here");
+    }
+    picker::save_action(name, existing_kind(&dir.join(name.trim())))
+}
+
+/// What is at `path` today: `None` for nothing, `Some(true)` for a directory,
+/// `Some(false)` for anything else.
+///
+/// `symlink_metadata`, not `metadata`: a dangling symlink is *something* in
+/// the way, and a symlink to a directory is still a name the application
+/// would be overwriting rather than a folder to descend into.
+fn existing_kind(path: &Path) -> Option<bool> {
+    std::fs::symlink_metadata(path)
+        .ok()
+        .map(|meta| meta.is_dir())
+}
+
+/// The replace confirmation a save-mode accept puts up when something is
+/// already at the path the user named.
+///
+/// It holds the paths it is about to answer with, not a promise to recompute
+/// them: between the sheet appearing and the user pressing Replace the
+/// directory may change underneath, and answering with what the user was
+/// actually shown is the honest thing.
+struct ConfirmSheet {
+    /// The question, already worded for the number of files involved.
+    message: String,
+    detail: String,
+    /// What accepting answers with.
+    paths: Vec<PathBuf>,
+    pressed: Option<view::ConfirmButton>,
+}
+
 /// The byte range an in-place rename should start with selected: the stem,
 /// so typing replaces the base name and leaves the extension alone — the way
 /// Finder and Explorer both do it. A directory has no extension to protect,
@@ -309,6 +362,9 @@ impl Browser {
             controls: WindowControlsState::new(),
             dirty: true,
             picker: None,
+            save_name: None,
+            confirm: None,
+            save_probe: RefCell::new(None),
             footer_hover: None,
             footer_pressed: None,
             quickview_close_hovered: false,
@@ -326,6 +382,14 @@ impl Browser {
         // time reads as a file dialog, where the Miller stack reads as the
         // browser. The user can still switch views.
         browser.mode = ViewMode::List;
+        if session.request.mode.names_a_file() {
+            let name = session.request.initial_name();
+            let selection = picker::name_stem_range(&name);
+            let mut input =
+                TextInput::editing(name, view::save_field_style(AppContext::current_theme()));
+            input.state.select_range(selection);
+            browser.save_name = Some(input);
+        }
         browser.picker = Some(session);
         browser.pan = ScrollView::horizontal(view::content_viewport(
             browser.size.0,
@@ -338,10 +402,15 @@ impl Browser {
     /// How much of the window height the action row takes — zero in the
     /// browser, which has none.
     fn footer_h(&self) -> f32 {
-        if self.picker.is_some() {
-            view::FOOTER_H
-        } else {
-            0.0
+        match &self.picker {
+            // Save mode stacks a name row on top of the buttons; the buttons
+            // themselves stay anchored to the window bottom, so every rect
+            // below the name row is unchanged by this.
+            Some(session) if session.request.mode.names_a_file() => {
+                view::FOOTER_H + view::FOOTER_NAME_H
+            }
+            Some(_) => view::FOOTER_H,
+            None => 0.0,
         }
     }
 
@@ -742,6 +811,16 @@ impl Browser {
         self.active = depth;
         self.columns.truncate(depth + 1);
 
+        // Clicking a file in a Save dialog puts its name in the field. That
+        // is how a user says "overwrite this one" without retyping it, and it
+        // is why the replace confirmation exists at all. A directory is a
+        // place to go, not a name to save under, so it leaves the field be.
+        if !entry.is_dir {
+            if let Some(input) = self.save_name.as_mut() {
+                input.set_value(entry.name.clone());
+            }
+        }
+
         // Only Miller view reveals a directory's contents on a plain select —
         // that eager next pane is the point of the view. List and Grid show
         // one directory at a time, so selecting there must not also swap it
@@ -1001,15 +1080,257 @@ impl Browser {
         Some(picked)
     }
 
-    /// Return the current selection to the application and close the window.
-    fn picker_accept(&mut self) {
-        let Some(paths) = self.picker_selection() else {
-            return;
+    // --- The save modes ----------------------------------------------------
+
+    /// The directory a save-mode accept writes into.
+    ///
+    /// `Save` always uses the directory being *viewed*: the name field says
+    /// what to call the file, the listing says where it goes, and a folder
+    /// merely selected in that listing is somewhere the user is looking at,
+    /// not somewhere they have gone. `SaveFiles` follows the directory-mode
+    /// rule instead — the whole request is "which folder", so a selected one
+    /// is the answer.
+    fn save_directory(&self) -> Option<PathBuf> {
+        let session = self.picker.as_ref()?;
+        let depth = self.active.min(self.columns.len().saturating_sub(1));
+        let column = self.columns.get(depth)?;
+
+        if session.request.mode == picker::Mode::SaveFiles {
+            let picked: Vec<&Entry> = self
+                .visible(depth)
+                .into_iter()
+                .filter(|e| e.is_dir && column.selection.contains(&e.name))
+                .collect();
+            if let [only] = picked.as_slice() {
+                return Some(only.path.clone());
+            }
+        }
+        Some(column.path.clone())
+    }
+
+    /// What the accept button would do in `Save` mode, and why it is disabled
+    /// when it is.
+    ///
+    /// The directory check comes first: a name is never the problem when the
+    /// folder cannot be written to at all, and saying "Enter a name" about a
+    /// read-only folder would send the user off correcting the wrong thing.
+    fn save_action(&self) -> picker::SaveAction {
+        let Some(dir) = self.save_directory() else {
+            return picker::SaveAction::Blocked("Nowhere to save");
         };
+        let name = self
+            .save_name
+            .as_ref()
+            .map(TextInput::value)
+            .unwrap_or("")
+            .to_string();
+
+        if let Some((cached_dir, cached_name, action)) = self.save_probe.borrow().as_ref() {
+            if *cached_dir == dir && *cached_name == name {
+                return action.clone();
+            }
+        }
+        let action = probe_save_action(&dir, &name);
+        *self.save_probe.borrow_mut() = Some((dir, name, action.clone()));
+        action
+    }
+
+    /// Ask the filesystem again, ignoring the memo.
+    ///
+    /// Accept uses this: between the last repaint and the click, someone else
+    /// may have created the file the user is about to be told is not there,
+    /// and the confirmation exists precisely to catch that.
+    fn save_action_now(&self) -> picker::SaveAction {
+        self.save_probe.borrow_mut().take();
+        self.save_action()
+    }
+
+    /// Whether the accept button is live, for the frame.
+    fn picker_accept_enabled(&self) -> bool {
+        match self.picker.as_ref().map(|s| s.request.mode) {
+            Some(picker::Mode::Save) => {
+                !matches!(self.save_action(), picker::SaveAction::Blocked(_))
+            }
+            Some(picker::Mode::SaveFiles) => self
+                .save_directory()
+                .is_some_and(|dir| picker::is_writable_dir(&dir)),
+            Some(picker::Mode::Open) => self.picker_selection().is_some(),
+            None => false,
+        }
+    }
+
+    /// The reason the accept button is disabled, shown beside the name field.
+    /// `None` while it is enabled — there is then nothing to explain.
+    fn save_problem(&self) -> Option<&'static str> {
+        match self.picker.as_ref()?.request.mode {
+            picker::Mode::Save => match self.save_action() {
+                // "Enter a name" is not a complaint about an empty field the
+                // user has not filled in yet; it is the placeholder's job.
+                picker::SaveAction::Blocked("Enter a name") => None,
+                picker::SaveAction::Blocked(reason) => Some(reason),
+                _ => None,
+            },
+            picker::Mode::SaveFiles => self
+                .save_directory()
+                .filter(|dir| !picker::is_writable_dir(dir))
+                .map(|_| "You do not have permission to save here"),
+            picker::Mode::Open => None,
+        }
+    }
+
+    /// `Save`: resolve the name field against the directory being viewed.
+    fn save_accept(&mut self) {
+        match self.save_action_now() {
+            picker::SaveAction::Blocked(_) => {}
+            picker::SaveAction::Descend => {
+                // The name names a folder that is already there. Going into it
+                // is what the user meant; clearing the field is what stops the
+                // next Return from bouncing straight back out of it.
+                let Some(dir) = self.save_directory() else {
+                    return;
+                };
+                let name = self
+                    .save_name
+                    .as_ref()
+                    .map(|i| i.value().trim().to_string())
+                    .unwrap_or_default();
+                self.navigate_to(&dir.join(name));
+                if let Some(input) = self.save_name.as_mut() {
+                    input.set_value(String::new());
+                }
+                self.dirty = true;
+            }
+            picker::SaveAction::Replace => {
+                let Some(target) = self.save_target() else {
+                    return;
+                };
+                let name = target
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                self.confirm = Some(ConfirmSheet {
+                    message: format!("\u{201c}{name}\u{201d} already exists. Replace it?"),
+                    detail: "Replacing it overwrites its current contents.".to_string(),
+                    paths: vec![target],
+                    pressed: None,
+                });
+                self.dirty = true;
+            }
+            picker::SaveAction::Write => {
+                let Some(target) = self.save_target() else {
+                    return;
+                };
+                self.answer_with(vec![target]);
+            }
+        }
+    }
+
+    /// The single path `Save` would answer with.
+    fn save_target(&self) -> Option<PathBuf> {
+        let name = self.save_name.as_ref()?.value().trim();
+        if name.is_empty() {
+            return None;
+        }
+        Some(self.save_directory()?.join(name))
+    }
+
+    /// `SaveFiles`: one path per name the request carried, all in the chosen
+    /// directory.
+    ///
+    /// Each name is reduced to its final component. The spec's "no name
+    /// mangling" is about not inventing `file (1).txt` when something is in
+    /// the way; it is not a licence for an application to reach out of the
+    /// directory the user chose by sending `../../.bashrc`.
+    fn save_files_targets(&self) -> Vec<PathBuf> {
+        let Some(dir) = self.save_directory() else {
+            return Vec::new();
+        };
+        let Some(session) = self.picker.as_ref() else {
+            return Vec::new();
+        };
+        session
+            .request
+            .files
+            .iter()
+            .filter_map(|name| Path::new(name).file_name().map(|n| dir.join(n)))
+            .collect()
+    }
+
+    fn save_files_accept(&mut self) {
+        let targets = self.save_files_targets();
+        if targets.is_empty() {
+            return;
+        }
+        let clashes: Vec<&PathBuf> = targets
+            .iter()
+            .filter(|p| existing_kind(p).is_some())
+            .collect();
+        if clashes.is_empty() {
+            self.answer_with(targets);
+            return;
+        }
+        // One sheet for all of them, not one per file: the user is answering
+        // a single question about a single batch.
+        let message = if clashes.len() == 1 {
+            let name = clashes[0]
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            format!("\u{201c}{name}\u{201d} already exists. Replace it?")
+        } else {
+            format!(
+                "{} of these files already exist. Replace them?",
+                clashes.len()
+            )
+        };
+        self.confirm = Some(ConfirmSheet {
+            message,
+            detail: "Replacing them overwrites their current contents.".to_string(),
+            paths: targets,
+            pressed: None,
+        });
+        self.dirty = true;
+    }
+
+    /// Answer the request with `paths` and let the window go.
+    fn answer_with(&mut self, paths: Vec<PathBuf>) {
         if let Some(session) = self.picker.as_mut() {
             session.accept(&paths);
         }
         self.dirty = true;
+    }
+
+    /// Replace, from the confirmation sheet: answer with what the sheet was
+    /// showing. The picker still creates nothing — the application writes.
+    fn confirm_replace(&mut self) {
+        let Some(sheet) = self.confirm.take() else {
+            return;
+        };
+        self.answer_with(sheet.paths);
+    }
+
+    /// Dismiss the sheet without answering. The request stays open and the
+    /// user is back in the dialog, which is what "Cancel" means here — it
+    /// cancels the replacement, not the save.
+    fn confirm_dismiss(&mut self) {
+        if self.confirm.take().is_some() {
+            self.dirty = true;
+        }
+    }
+
+    /// Return the current selection to the application and close the window.
+    fn picker_accept(&mut self) {
+        match self.picker.as_ref().map(|s| s.request.mode) {
+            Some(picker::Mode::Save) => self.save_accept(),
+            Some(picker::Mode::SaveFiles) => self.save_files_accept(),
+            Some(picker::Mode::Open) => {
+                let Some(paths) = self.picker_selection() else {
+                    return;
+                };
+                self.answer_with(paths);
+            }
+            None => {}
+        }
     }
 
     /// Cancel the request. The window closes and the application is told the
@@ -2072,7 +2393,9 @@ impl Browser {
             preview,
             action_row: self.picker.as_ref().map(|session| view::FooterData {
                 accept_label: &session.accept_label,
-                accept_enabled: self.picker_selection().is_some(),
+                accept_enabled: self.picker_accept_enabled(),
+                save_name: session.request.mode.names_a_file(),
+                save_problem: self.save_problem(),
                 filters: &session.filter_labels,
                 current_filter: session.current_filter,
                 filter_open: session.filter_open,
@@ -2253,6 +2576,37 @@ impl App for FilesApp {
                 canvas.translate((rect.left, rect.top));
                 session.input.render_at(canvas, rect.width(), rect.height());
                 canvas.restore();
+            }
+
+            // The save field's value, over the box the action row drew for
+            // it — the same two-step the in-place rename takes, and for the
+            // same reason: the text input owns its caret and selection and
+            // paints them itself.
+            if browser.save_name.is_some() {
+                let (width, window_h) = (browser.size.0, browser.size.1);
+                let rect = view::footer_name_rect(width, window_h);
+                let input = browser.save_name.as_mut().unwrap();
+                input.set_size(rect.width(), rect.height());
+                canvas.save();
+                canvas.translate((rect.left, rect.top));
+                input.render_at(canvas, rect.width(), rect.height());
+                canvas.restore();
+            }
+
+            // Last of all, because it is modal and dims everything above.
+            if let Some(sheet) = browser.confirm.as_ref() {
+                let (width, window_h) = (browser.size.0, browser.size.1);
+                view::draw_confirm(
+                    canvas,
+                    &theme,
+                    width,
+                    window_h,
+                    &view::ConfirmData {
+                        message: &sheet.message,
+                        detail: &sheet.detail,
+                        pressed: sheet.pressed,
+                    },
+                );
             }
         });
 
@@ -2473,6 +2827,20 @@ impl App for FilesApp {
         {
             let mut browser = self.state.lock().unwrap();
 
+            // The confirmation sheet is modal, so it takes the keyboard
+            // whole: Return is the answer it is asking for and Escape backs
+            // out of it. Nothing else reaches the window behind it.
+            if browser.confirm.is_some() {
+                match event.keysym {
+                    Keysym::Return | Keysym::KP_Enter => browser.confirm_replace(),
+                    Keysym::Escape => browser.confirm_dismiss(),
+                    _ => {}
+                }
+                drop(browser);
+                self.render();
+                return;
+            }
+
             // An in-place rename owns the keyboard outright: every key is
             // text-field input, not a browser shortcut.
             if browser.rename.is_some() {
@@ -2510,6 +2878,62 @@ impl App for FilesApp {
                 return;
             }
 
+            // In Save mode the name field holds the keyboard focus: what the
+            // user is doing is naming a file, so printable keys are the name
+            // rather than type-ahead, and Backspace edits it rather than
+            // walking up a directory.
+            //
+            // What the field does *not* take is vertical motion. Up, Down and
+            // the page keys still drive the listing, so a user can pick the
+            // file they mean to overwrite without ever leaving the field —
+            // which is the whole point of it holding focus.
+            if browser.save_name.is_some() {
+                let editing = match event.keysym {
+                    Keysym::Return | Keysym::KP_Enter => {
+                        browser.picker_accept();
+                        drop(browser);
+                        self.render();
+                        return;
+                    }
+                    Keysym::Escape => {
+                        browser.picker_cancel();
+                        drop(browser);
+                        self.render();
+                        return;
+                    }
+                    Keysym::Up
+                    | Keysym::Down
+                    | Keysym::Page_Up
+                    | Keysym::Page_Down
+                    | Keysym::Tab => None,
+                    Keysym::Left => Some(TextInputKey::Left),
+                    Keysym::Right => Some(TextInputKey::Right),
+                    Keysym::Home => Some(TextInputKey::Home),
+                    Keysym::End => Some(TextInputKey::End),
+                    Keysym::BackSpace => Some(TextInputKey::Backspace),
+                    Keysym::Delete => Some(TextInputKey::Delete),
+                    Keysym::a if ctrl => Some(TextInputKey::SelectAll),
+                    // A chord that is not the field's own is the window's:
+                    // Ctrl+W and friends still reach the shortcuts below.
+                    _ if ctrl => None,
+                    _ => event
+                        .utf8
+                        .as_ref()
+                        .and_then(|s| s.chars().next())
+                        .map(TextInputKey::Char),
+                };
+                if let Some(key) = editing {
+                    let mods = KeyMods { shift, ctrl };
+                    if let Some(input) = browser.save_name.as_mut() {
+                        input.on_key(key, mods);
+                    }
+                    browser.dirty = true;
+                    drop(browser);
+                    self.render();
+                    return;
+                }
+            }
+
             // Set by the type-ahead arm below: every other key ends the
             // word being typed, the way a second of silence does.
             let mut typing = false;
@@ -2542,6 +2966,23 @@ impl App for FilesApp {
                 }
                 // The Linux convention, alongside Return: both rename.
                 Keysym::F2 => browser.start_rename(),
+                // Move to Trash. Plain Delete is the spec's binding; the
+                // modified forms are there because the chord people reach for
+                // is Cmd+Delete, and on a keyboard whose big key is Backspace
+                // that arrives as Ctrl+BackSpace. Plain Backspace is *not*
+                // one of them — it goes up a directory, and always has.
+                //
+                // Shift is excluded deliberately: Shift+Delete is spelled for
+                // permanent deletion, which is not built. Trashing instead
+                // would be the wrong answer to a keystroke that means "and I
+                // mean it", so the chord does nothing until it does the right
+                // thing.
+                Keysym::Delete | Keysym::KP_Delete if !shift && browser.picker.is_none() => {
+                    browser.move_selected_to_trash()
+                }
+                Keysym::BackSpace if ctrl && !shift && browser.picker.is_none() => {
+                    browser.move_selected_to_trash()
+                }
                 Keysym::BackSpace => browser.go_up(),
                 Keysym::Home => browser.move_cursor(-100_000, shift),
                 Keysym::End => browser.move_cursor(100_000, shift),
@@ -3228,6 +3669,63 @@ impl FilesApp {
                     }
                     drop(browser);
                     continue;
+                }
+
+                // The confirmation sheet is modal: it answers its own two
+                // buttons and swallows everything else, so a click meant for
+                // it can never land on the listing behind it.
+                if browser.confirm.is_some() {
+                    let window_h = browser.size.1;
+                    let hit = view::confirm_at(x, y, width, window_h);
+                    match event.kind {
+                        PointerEventKind::Press { button, .. } if button != BTN_RIGHT => {
+                            if let Some(sheet) = browser.confirm.as_mut() {
+                                sheet.pressed = hit;
+                            }
+                            browser.dirty = true;
+                        }
+                        PointerEventKind::Release { button, .. } if button != BTN_RIGHT => {
+                            let armed = browser
+                                .confirm
+                                .as_mut()
+                                .and_then(|sheet| sheet.pressed.take());
+                            if armed.is_some() && armed == hit {
+                                match armed {
+                                    Some(view::ConfirmButton::Replace) => {
+                                        browser.confirm_replace()
+                                    }
+                                    Some(view::ConfirmButton::Cancel) => browser.confirm_dismiss(),
+                                    None => {}
+                                }
+                            }
+                            browser.dirty = true;
+                        }
+                        PointerEventKind::Motion { .. } => {
+                            AppContext::set_cursor_shape(CursorShape::Default);
+                        }
+                        _ => {}
+                    }
+                    drop(browser);
+                    window_for_events.request_frame();
+                    continue;
+                }
+
+                // A click in the name field places the caret in it. The field
+                // never loses focus to the listing, so there is no focus to
+                // take here — only a caret to move.
+                if browser.save_name.is_some()
+                    && matches!(event.kind, PointerEventKind::Press { button, .. } if button != BTN_RIGHT)
+                {
+                    let field = view::footer_name_rect(width, browser.size.1);
+                    if field.contains(skia_safe::Point::new(x, y)) {
+                        if let Some(input) = browser.save_name.as_mut() {
+                            input.on_pointer_down(x - field.left, 1, shift);
+                        }
+                        browser.dirty = true;
+                        drop(browser);
+                        window_for_events.request_frame();
+                        continue;
+                    }
                 }
 
                 // The picker's action row, and the filter menu it opens,

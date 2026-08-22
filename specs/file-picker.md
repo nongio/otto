@@ -1,6 +1,6 @@
 # File Picker
 
-**Status:** v1 in progress — `OpenFile` implemented end to end; save modes not started
+**Status:** v1 in progress — `OpenFile`, `SaveFile` and `SaveFiles` implemented end to end
 **Wire contract:** `org.otto.FilePicker1`, defined inline below
 **Related specs:** [file-browser.md](./file-browser.md),
 [portal-access-dialog.md](./portal-access-dialog.md),
@@ -20,8 +20,8 @@ presentations. Only the chrome around them differs.
 
 ### What is implemented
 
-`OpenFile` works end to end: an application's portal request opens a picker
-window, and the file the user chooses comes back as a `file://` URI.
+All three modes work end to end: an application's portal request opens a
+picker window, and the path the user chooses comes back as a `file://` URI.
 
 - `otto-files` is now a **library plus a binary**. `otto-files --picker` claims
   `org.otto.FilePicker1` and serves requests; `otto-files [path]` is the
@@ -36,14 +36,23 @@ window, and the file the user chooses comes back as a `file://` URI.
 - Quick View works in the picker exactly as it does in the browser.
 - URIs are encoded by `otto_quickview::uri::path_to_uri`, which lives beside the
   decoder every consumer already uses, so the round trip is tested as a pair.
+- **Save modes.** `SaveFile` shows the name field, pre-filled and with the stem
+  preselected; `SaveFiles` asks only for a directory. Both put up the replace
+  confirmation when something is already at the target, both refuse a name that
+  is not a single path component, and both grey out accept — with the reason
+  written under the field — when the directory cannot be written to. The name
+  field holds the keyboard focus, so printable keys name the file rather than
+  driving type-ahead; Up, Down and the page keys still move the listing, and
+  clicking a file copies its name into the field.
 
 ### What is not
 
-- **Save modes.** `SaveFile` and `SaveFiles` are carried through the whole wire
-  contract and refused at the service with `response = 2`, so an application
-  learns it got no file rather than being shown an Open dialog that returns a
-  file it cannot write. The name field, the replace-confirmation sheet and
-  "New Folder" are the work remaining.
+- **"New Folder" in the picker.** The browser has it; the picker does not yet,
+  so a save into a directory that does not exist means creating it elsewhere
+  first. The picker's Non-Goals already say it should have it.
+- **Drag-selection inside the name field.** A click places the caret and
+  Ctrl+A selects the lot, but dragging across the text does not extend a
+  selection the way it does in an in-place rename.
 - **Concurrent requests open one window at a time.** A second application's
   request queues behind the first and is served when it finishes. Neither is
   dropped and neither hangs, but the second user waits. The app shell is built
@@ -251,16 +260,28 @@ One window per request. Layout:
 - **Directory mode**: only directories are selectable. Files are still shown,
   greyed, so the user can see where they are. Accept with nothing selected
   accepts the directory currently being viewed.
-- **Save**: accept is enabled when the name field is non-empty and does not
-  contain `/`. If the resulting path exists as a file, a confirmation sheet
+- **Save**: the file goes into the directory being *viewed* — a folder merely
+  selected in the listing is somewhere the user is looking, not somewhere they
+  have gone. Accept is enabled when the name field is non-empty and does not
+  contain `/`; `.` and `..` are refused for the same reason `/` is. If the resulting path exists as a file, a confirmation sheet
   appears — Replace / Cancel — and the request resolves only after the user
   answers. If it exists as a directory, accept instead navigates into it and
   clears the name field. If the target directory is not writable, accept is
   disabled and the reason is shown.
-- **Save-multiple**: the user picks a directory; the picker returns one URI per
-  entry in `files`, all inside that directory, with no name mangling. If any of
+- **Save-multiple**: the user picks a directory — the selected one if exactly
+  one is selected, otherwise the one being viewed; the picker returns one URI
+  per entry in `files`, all inside that directory, with no name mangling. Each
+  name is reduced to its final component first: "no name mangling" is about not
+  inventing `file (1).txt`, not a licence for an application to reach out of the
+  chosen directory with `../`. If any of
   them already exists, one confirmation sheet lists them all and offers Replace
   All / Cancel.
+- What counts as "already there" is decided with `symlink_metadata`: a dangling
+  symlink is still something in the way, and a symlink to a directory is a name
+  being overwritten rather than a folder to descend into.
+- A request in save-multiple mode carrying no `files` at all is malformed and is
+  refused at the service with `response = 2`. There is nothing to write, and
+  answering `0` with an empty list is the one thing the contract forbids.
 - Accepting a symlink returns the symlink's own path, not its target. Following
   is the requesting application's decision.
 - The picker does not create, truncate or open the file in save mode. It

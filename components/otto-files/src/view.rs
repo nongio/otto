@@ -796,6 +796,74 @@ pub fn footer_at(
     None
 }
 
+/// The name row's band, above the buttons: a labelled field and, under it,
+/// room for the one line that says why accept is disabled.
+pub const FOOTER_NAME_H: f32 = 58.0;
+const FOOTER_NAME_LABEL_W: f32 = 76.0;
+const FOOTER_NAME_FIELD_H: f32 = 30.0;
+
+/// The whole name band. Only ever asked for in `Save` mode; in every other
+/// mode the window has no such band and the caller does not draw one.
+pub fn footer_name_band(width: f32, window_height: f32) -> Rect {
+    let bottom = window_height - FOOTER_H;
+    Rect::from_ltrb(0.0, bottom - FOOTER_NAME_H, width, bottom)
+}
+
+/// The text field itself, which the [`TextInput`] is rendered into.
+///
+/// [`TextInput`]: otto_kit::components::text_input::TextInput
+pub fn footer_name_rect(width: f32, window_height: f32) -> Rect {
+    let band = footer_name_band(width, window_height);
+    let left = SIDEBAR_W + FOOTER_PAD + FOOTER_NAME_LABEL_W;
+    Rect::from_ltrb(
+        left,
+        band.top + 8.0,
+        (width - FOOTER_PAD).max(left + 40.0),
+        band.top + 8.0 + FOOTER_NAME_FIELD_H,
+    )
+}
+
+/// The name row's ground and label. The value is drawn afterwards, by the
+/// text input that owns it.
+fn draw_name_row(canvas: &Canvas, f: &Frame, footer: &FooterData<'_>, window_h: f32) {
+    let theme = f.theme;
+    let field = footer_name_rect(f.width, window_h);
+
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(content_ground());
+    canvas.draw_rrect(RRect::new_rect_xy(field, 6.0, 6.0), &paint);
+    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_stroke_width(1.0);
+    paint.set_color(theme.fill_tertiary);
+    canvas.draw_rrect(RRect::new_rect_xy(field, 6.0, 6.0), &paint);
+
+    Label::new("Save As:")
+        .with_style(styles::BODY)
+        .with_color(theme.text_secondary)
+        .centered_on(SIDEBAR_W + FOOTER_PAD, field.center_y())
+        .render(canvas);
+
+    if let Some(problem) = footer.save_problem {
+        Label::new(problem)
+            .with_style(styles::CALLOUT)
+            .with_color(warning_color())
+            .centered_on(field.left, field.bottom + 11.0)
+            .render(canvas);
+    }
+}
+
+/// The tone a blocking message is written in. Not on [`Theme`] because
+/// nothing else in the picker needs it yet; the day a second caller does, it
+/// moves there rather than being copied.
+fn warning_color() -> Color {
+    if matches!(current_color_scheme(), ColorScheme::Dark) {
+        Color::from_argb(0xFF, 0xFF, 0x45, 0x3A)
+    } else {
+        Color::from_argb(0xFF, 0xD7, 0x00, 0x15)
+    }
+}
+
 fn draw_footer(canvas: &Canvas, f: &Frame) {
     let Some(footer) = &f.action_row else {
         return;
@@ -810,10 +878,14 @@ fn draw_footer(canvas: &Canvas, f: &Frame) {
     paint.set_color(theme.fill_tertiary);
     paint.set_stroke_width(1.0);
     canvas.draw_line(
-        Point::new(0.0, window_h - FOOTER_H),
-        Point::new(f.width, window_h - FOOTER_H),
+        Point::new(0.0, window_h - f.footer),
+        Point::new(f.width, window_h - f.footer),
         &paint,
     );
+
+    if footer.save_name {
+        draw_name_row(canvas, f, footer, window_h);
+    }
 
     if !footer.filters.is_empty() {
         draw_filter_control(canvas, f, footer, window_h);
@@ -1209,6 +1281,15 @@ pub struct FooterData<'a> {
     pub filter_open: bool,
     pub hovered: Option<FooterButton>,
     pub pressed: Option<FooterButton>,
+    /// Save mode: draw the name row above the buttons. The field's own text
+    /// is not here — the [`TextInput`] renders itself over this rect after
+    /// the chrome, the way an in-place rename does.
+    ///
+    /// [`TextInput`]: otto_kit::components::text_input::TextInput
+    pub save_name: bool,
+    /// Why accept is disabled, shown under the name field. `None` when there
+    /// is nothing to explain.
+    pub save_problem: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1271,6 +1352,138 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
     if f.action_row.is_some() {
         draw_footer(canvas, f);
     }
+}
+
+// ---------------------------------------------------------------------------
+// The replace confirmation
+// ---------------------------------------------------------------------------
+//
+// A card over a dimmed window, drawn after everything else — it is modal, and
+// the dim is what says so. Geometry first, drawing second, and the hit test
+// reads the same rects the paint does.
+
+const CONFIRM_W: f32 = 396.0;
+const CONFIRM_H: f32 = 172.0;
+const CONFIRM_PAD: f32 = 20.0;
+const CONFIRM_BTN_H: f32 = 30.0;
+const CONFIRM_BTN_W: f32 = 104.0;
+
+/// What the sheet says and how its buttons are lit.
+pub struct ConfirmData<'a> {
+    pub message: &'a str,
+    pub detail: &'a str,
+    pub pressed: Option<ConfirmButton>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmButton {
+    Replace,
+    Cancel,
+}
+
+/// The card, centred on the whole window rather than the file area: it is a
+/// question about the dialog, not about the listing.
+pub fn confirm_card_rect(width: f32, window_height: f32) -> Rect {
+    let w = CONFIRM_W.min(width - 32.0);
+    let left = ((width - w) / 2.0).max(0.0);
+    let top = ((window_height - CONFIRM_H) / 2.0).max(0.0);
+    Rect::from_ltrb(left, top, left + w, top + CONFIRM_H)
+}
+
+/// Replace, hard against the card's bottom-right — the affirmative answer in
+/// the position every other accept button in the picker takes.
+pub fn confirm_replace_rect(width: f32, window_height: f32) -> Rect {
+    let card = confirm_card_rect(width, window_height);
+    Rect::from_ltrb(
+        card.right - CONFIRM_PAD - CONFIRM_BTN_W,
+        card.bottom - CONFIRM_PAD - CONFIRM_BTN_H,
+        card.right - CONFIRM_PAD,
+        card.bottom - CONFIRM_PAD,
+    )
+}
+
+pub fn confirm_cancel_rect(width: f32, window_height: f32) -> Rect {
+    let replace = confirm_replace_rect(width, window_height);
+    Rect::from_ltrb(
+        replace.left - 10.0 - CONFIRM_BTN_W,
+        replace.top,
+        replace.left - 10.0,
+        replace.bottom,
+    )
+}
+
+/// What the sheet has under `(x, y)`.
+///
+/// Returns `Some` for the two buttons only. The caller still has to treat a
+/// click anywhere else as swallowed rather than falling through to the
+/// listing: the sheet is modal, and a stray click must not select a file
+/// behind it.
+pub fn confirm_at(x: f32, y: f32, width: f32, window_height: f32) -> Option<ConfirmButton> {
+    let point = Point::new(x, y);
+    if confirm_replace_rect(width, window_height).contains(point) {
+        return Some(ConfirmButton::Replace);
+    }
+    if confirm_cancel_rect(width, window_height).contains(point) {
+        return Some(ConfirmButton::Cancel);
+    }
+    None
+}
+
+/// Draw the sheet over the finished window.
+pub fn draw_confirm(
+    canvas: &Canvas,
+    theme: &Theme,
+    width: f32,
+    window_height: f32,
+    data: &ConfirmData<'_>,
+) {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+
+    // The dim, not a blur: the window behind is already on its own surfaces
+    // and a blur here would cost a full read-back every frame the sheet is up.
+    paint.set_color(Color::from_argb(0x66, 0, 0, 0));
+    canvas.draw_rect(Rect::from_ltrb(0.0, 0.0, width, window_height), &paint);
+
+    let card = confirm_card_rect(width, window_height);
+    paint.set_color(header_material());
+    canvas.draw_rrect(RRect::new_rect_xy(card, 14.0, 14.0), &paint);
+
+    Label::new(data.message)
+        .with_style(styles::BODY_EMPHASIZED)
+        .with_color(theme.text_primary)
+        .with_width(card.width() - CONFIRM_PAD * 2.0)
+        .centered_on(card.left + CONFIRM_PAD, card.top + CONFIRM_PAD + 10.0)
+        .render(canvas);
+
+    Label::new(data.detail)
+        .with_style(styles::CALLOUT)
+        .with_color(theme.text_secondary)
+        .with_width(card.width() - CONFIRM_PAD * 2.0)
+        .centered_on(card.left + CONFIRM_PAD, card.top + CONFIRM_PAD + 40.0)
+        .render(canvas);
+
+    draw_footer_button(
+        canvas,
+        confirm_cancel_rect(width, window_height),
+        "Cancel",
+        theme.fill_secondary,
+        theme.text_primary,
+        data.pressed == Some(ConfirmButton::Cancel),
+        true,
+    );
+    // Replacing a file is the destructive answer, so it is not the accent —
+    // the accent means "the safe thing you probably want", and here that is
+    // Cancel.
+    draw_footer_button(
+        canvas,
+        confirm_replace_rect(width, window_height),
+        "Replace",
+        warning_color(),
+        Color::WHITE,
+        data.pressed == Some(ConfirmButton::Replace),
+        true,
+    );
 }
 
 /// The preview pane's content, as a closure the scene records into its own
@@ -2239,6 +2452,16 @@ pub fn content_ground() -> Color {
 pub fn rename_field_style(theme: Theme) -> TextInputStyle {
     let mut style = TextInputStyle::with_theme(theme);
     style.background = content_ground();
+    style
+}
+
+/// The picker's name field. The row underneath draws the box and its border,
+/// so the input itself paints no ground of its own — two rounded rects on
+/// top of each other, one of them a hair off, is exactly the sort of seam a
+/// dialog gets judged on.
+pub fn save_field_style(theme: Theme) -> TextInputStyle {
+    let mut style = TextInputStyle::with_theme(theme);
+    style.background = Color::TRANSPARENT;
     style
 }
 
