@@ -93,6 +93,14 @@ impl SettingsInterface {
         Config::with(|config| config.icon_theme.clone().unwrap_or_default())
     }
 
+    /// Returns the configured sound theme name (e.g. "freedesktop", "ocean").
+    ///
+    /// Empty means no preference, which leaves the app to auto-detect — the
+    /// same contract `GetIconTheme` has.
+    async fn get_sound_theme(&self) -> String {
+        Config::with(|config| config.audio.sound_theme.clone().unwrap_or_default())
+    }
+
     /// The schema: one dictionary per setting. Clients ignore keys they do not
     /// know, so the schema can grow without breaking them.
     async fn describe(&self) -> Vec<HashMap<String, OwnedValue>> {

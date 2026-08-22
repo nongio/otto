@@ -537,6 +537,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         crate::color_scheme::spawn_color_scheme_watcher();
         crate::accent::spawn_accent_watcher();
         crate::icon_theme::spawn_icon_theme_watcher();
+        crate::sound::spawn_theme_watcher();
 
         // Call the app's ready callback
         let ctx = AppContext::new(&app_data.context_data);

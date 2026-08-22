@@ -41,6 +41,17 @@ impl SettingsPortal {
         );
 
         namespaces.insert("org.freedesktop.appearance".to_string(), appearance);
+
+        // The appearance namespace has no sound key, so the theme goes out
+        // under the one GTK and libcanberra already read.
+        let sound_theme = self.read_sound_theme().await?;
+        let mut sound = HashMap::new();
+        sound.insert(
+            "theme-name".to_string(),
+            Value::from(sound_theme).try_into().unwrap(),
+        );
+        namespaces.insert("org.gnome.desktop.sound".to_string(), sound);
+
         Ok(namespaces)
     }
 
@@ -55,6 +66,10 @@ impl SettingsPortal {
             ("org.freedesktop.appearance", "icon-theme") => {
                 let icon_theme = self.read_icon_theme().await?;
                 Ok(Value::from(icon_theme).try_into().unwrap())
+            }
+            ("org.gnome.desktop.sound", "theme-name") => {
+                let sound_theme = self.read_sound_theme().await?;
+                Ok(Value::from(sound_theme).try_into().unwrap())
             }
             _ => Err(fdo::Error::Failed(format!(
                 "Unknown setting: {}.{}",
@@ -104,6 +119,15 @@ impl SettingsPortal {
         proxy.get_icon_theme().await.map_err(|err| {
             error!(?err, "Failed to read icon theme from compositor");
             fdo::Error::Failed(format!("Failed to read icon theme: {err}"))
+        })
+    }
+
+    /// Reads the sound theme name from the compositor.
+    async fn read_sound_theme(&self) -> fdo::Result<String> {
+        let proxy = self.get_settings_proxy().await?;
+        proxy.get_sound_theme().await.map_err(|err| {
+            error!(?err, "Failed to read sound theme from compositor");
+            fdo::Error::Failed(format!("Failed to read sound theme: {err}"))
         })
     }
 
@@ -186,13 +210,14 @@ pub async fn spawn_change_relay(connection: Connection, client: OttoClient) -> z
             // Otto's identifiers are not the portal's keys, so only the ones
             // with a counterpart here are forwarded.
             for id in args.values.keys() {
-                let key = match id.as_str() {
-                    "accent_color" => "accent-color",
-                    "theme_scheme" => "color-scheme",
-                    "icon_theme" => "icon-theme",
+                let (namespace, key) = match id.as_str() {
+                    "accent_color" => ("org.freedesktop.appearance", "accent-color"),
+                    "theme_scheme" => ("org.freedesktop.appearance", "color-scheme"),
+                    "icon_theme" => ("org.freedesktop.appearance", "icon-theme"),
+                    "audio.sound_theme" => ("org.gnome.desktop.sound", "theme-name"),
                     _ => continue,
                 };
-                let Ok(value) = portal.get_setting("org.freedesktop.appearance", key).await else {
+                let Ok(value) = portal.get_setting(namespace, key).await else {
                     continue;
                 };
                 let iface = connection
@@ -203,7 +228,7 @@ pub async fn spawn_change_relay(connection: Connection, client: OttoClient) -> z
                     Ok(iface) => {
                         if let Err(err) = SettingsPortal::setting_changed(
                             iface.signal_context(),
-                            "org.freedesktop.appearance",
+                            namespace,
                             key,
                             Value::from(value),
                         )
