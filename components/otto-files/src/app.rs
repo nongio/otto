@@ -1136,8 +1136,18 @@ impl Browser {
             return;
         }
 
+        self.spawn_window(&entry.path);
+    }
+
+    /// Open a second browser window on `path`.
+    ///
+    /// A window is a process here — the app shell is built around a single
+    /// toplevel — so this re-executes this binary with the directory on its
+    /// command line. Shared by Ctrl+double-click and by the New Window
+    /// shortcut, which differ only in which directory they name.
+    fn spawn_window(&mut self, path: &Path) {
         let exe = match std::env::current_exe() {
-            Ok(path) => path,
+            Ok(exe) => exe,
             Err(err) => {
                 self.status = Some(format!("Couldn\u{2019}t open a new window: {err}"));
                 self.dirty = true;
@@ -1145,7 +1155,7 @@ impl Browser {
             }
         };
         let spawned = std::process::Command::new(exe)
-            .arg(&entry.path)
+            .arg(path)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -1163,6 +1173,35 @@ impl Browser {
                 self.dirty = true;
             }
         }
+    }
+
+    /// Open a new window on the directory this one is showing — Ctrl+N.
+    ///
+    /// The *current* directory rather than a fixed home, because the reason to
+    /// want a second window is almost always to have two places open at once,
+    /// and one of the two is where you already are. A new window at home would
+    /// have to be navigated back to here first.
+    fn open_new_window(&mut self) {
+        let Some(path) = self.new_window_target() else {
+            return;
+        };
+        self.spawn_window(&path);
+    }
+
+    /// Where a new window would open, or `None` when one makes no sense.
+    ///
+    /// Split from the spawning so the choice can be tested without launching
+    /// a process: everything interesting about Ctrl+N is which directory it
+    /// names, and that is all this answers.
+    fn new_window_target(&self) -> Option<PathBuf> {
+        // The picker answers one request in one window: a second browser
+        // window would have nothing to do with the request and no way to
+        // answer it.
+        if self.picker.is_some() {
+            return None;
+        }
+        let path = self.current_path();
+        (!path.as_os_str().is_empty()).then_some(path)
     }
 
     /// Descend into the selection: in Miller view the child column already
@@ -3395,6 +3434,7 @@ impl App for FilesApp {
                     browser.show_hidden = !browser.show_hidden;
                     browser.dirty = true;
                 }
+                Keysym::n if ctrl => browser.open_new_window(),
                 Keysym::_1 if ctrl => {
                     browser.mode = ViewMode::List;
                     browser.dirty = true;
@@ -4933,6 +4973,35 @@ mod typeahead_tests {
         }
         assert!(!browser.columns[0].loading(), "listing never arrived");
         (browser, dir)
+    }
+
+    /// Ctrl+N opens a new window *here*, not at a fixed home: the reason to
+    /// want a second window is to have two directories open at once, and one
+    /// of them is the one already on screen. Navigating moves the target with
+    /// it.
+    #[test]
+    fn a_new_window_opens_on_the_directory_in_view() {
+        let (mut browser, dir) = browser_over(&["one.txt", "two.txt"]);
+        assert_eq!(
+            browser.new_window_target().as_deref(),
+            Some(dir.0.as_path())
+        );
+
+        // Descend, and the target follows the deepest column rather than
+        // staying at the directory the window was opened on.
+        let child = dir.0.join("sub");
+        std::fs::create_dir_all(&child).expect("child dir");
+        browser.navigate_to(&child);
+        for _ in 0..500 {
+            if browser.columns.last_mut().is_some_and(|c| c.poll()) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(
+            browser.new_window_target().as_deref(),
+            Some(child.as_path())
+        );
     }
 
     fn at_cursor(browser: &Browser) -> Option<String> {
