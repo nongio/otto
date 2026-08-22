@@ -543,6 +543,15 @@ press, which is a different distance every time. An accepted drop is not
 animated: the files are where they were asked to go and the listing says so, and
 an icon flying away as well is a flourish over an answer already given.
 
+The picture is taken down **when the flight lands**, not when the next drag
+sweeps it up. An icon has to outlive its own drag — that is what the flight is
+— but tying its teardown to the next drag leaves it, and the buffer behind it,
+in the scene for the rest of a session in which the user drags once. The
+teardown rides an animation of its own rather than the flight's `on_finish`: a
+later `set_position` on that layer replaces the transaction and drops its
+handlers without a word. The next drag still sweeps, as a safety net for a
+flight that never lands and for an icon whose client exited mid-air.
+
 **A drop does not move the view.** The reload a drop causes keeps every pane
 scrolled exactly where it was, and the entry that landed is not scrolled to.
 

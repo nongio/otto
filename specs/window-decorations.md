@@ -59,6 +59,9 @@ appears, and discarded if the surface dies first.
 - The strip is hit-tested ahead of the client's own surfaces. A press on the
   bar away from the controls starts a window move; a press on a control acts on
   release, as a button does.
+- Two presses on the bar away from the controls, within 400 ms and 6 px of each
+  other, zoom the window instead: maximized windows are restored, others are
+  maximized, and that press starts no move.
 - The window's geometry in the layout includes the strip, so mapping,
   maximizing and tiling all account for its height.
 

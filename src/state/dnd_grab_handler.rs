@@ -128,7 +128,7 @@ impl<BackendData: Backend> DndGrabHandler for Otto<BackendData> {
                 .into();
 
             view.layer.set_scale((1.0, 1.0), Some(flight.clone()));
-            view.layer.set_position(home, Some(flight));
+            view.layer.set_position(home, Some(flight.clone()));
             view.layer.set_opacity(
                 0.0_f32,
                 Some(Transition {
@@ -139,8 +139,35 @@ impl<BackendData: Backend> DndGrabHandler for Otto<BackendData> {
                     timing: TimingFunction::ease_out_quad(SNAP_BACK * 0.4),
                 }),
             );
-            // Swept up when the next drag starts rather than now: removing the
-            // content layers here would leave an empty layer to fly home.
+            // Torn down when the flight lands, rather than at the next drag:
+            // the picture has to survive the animation, but waiting for a
+            // drag that may never come leaves it — and the buffer behind it —
+            // in the scene for the rest of the session.
+            //
+            // The teardown rides an animation of its own rather than the
+            // position transaction's `on_finish`: a later `set_position` on
+            // this layer replaces that transaction and drops its handlers
+            // silently, which is how the fullscreen overlay once stranded a
+            // window forever. This animation is nobody else's to replace.
+            let doomed = view.content_layer.children();
+            let animation = self
+                .layers_engine
+                .add_animation_from_transition(&flight, false);
+            self.layers_engine.on_animation_finish(
+                animation,
+                move |_: f32| {
+                    for layer in &doomed {
+                        layer.remove();
+                    }
+                },
+                true,
+            );
+            self.layers_engine.start_animation(animation, 0.0);
+
+            // Still handed to the next drag: the layers are gone by then, but
+            // the compositor's surface-to-layer map still has the entries, and
+            // walking the tree is what takes those out. A safety net for a
+            // flight that never lands, too.
             self.pending_dnd_cleanup = dnd_surface;
         }
 

@@ -4,9 +4,12 @@
 //! this view asks that same struct what is under the pointer, so a click can
 //! never land somewhere different from what was drawn.
 
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    time::{Duration, Instant},
 };
 
 use otto_kit::components::titlebar::WindowControl;
@@ -24,6 +27,11 @@ use crate::{
 
 const BTN_LEFT: u32 = 0x110;
 
+/// How long after a press on the bar a second one still counts as a double
+/// click, and how far it may wander in the meantime.
+const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
+const DOUBLE_CLICK_SLOP: f32 = 6.0;
+
 /// A window's titlebar, as an input target.
 #[derive(Clone)]
 pub struct WindowDecorationView {
@@ -31,6 +39,9 @@ pub struct WindowDecorationView {
     /// A press that started on the bar (rather than on a control) — the drag
     /// that follows moves the window.
     press_on_bar: Arc<AtomicBool>,
+    /// When and where the last press on the bar landed, for double-click
+    /// detection.
+    last_press: Arc<Mutex<Option<(Instant, (f32, f32))>>>,
 }
 
 impl WindowDecorationView {
@@ -38,6 +49,7 @@ impl WindowDecorationView {
         Self {
             window,
             press_on_bar: Arc::new(AtomicBool::new(false)),
+            last_press: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -66,6 +78,39 @@ impl WindowDecorationView {
     ) -> Option<crate::workspaces::WindowView> {
         let id = self.window.wl_surface().map(|s| s.id())?;
         data.workspaces.get_window_view(&id).clone()
+    }
+
+    /// Whether a press at this titlebar-local point closes a double click,
+    /// remembering it either way.
+    fn take_double_click(&self, x: f32, y: f32) -> bool {
+        let now = Instant::now();
+        let mut last = self.last_press.lock().unwrap();
+        let doubled = last.is_some_and(|(at, (px, py))| {
+            now.duration_since(at) < DOUBLE_CLICK_INTERVAL
+                && (x - px).abs() <= DOUBLE_CLICK_SLOP
+                && (y - py).abs() <= DOUBLE_CLICK_SLOP
+        });
+        // A double click consumes its history, so a third press starts over.
+        *last = if doubled { None } else { Some((now, (x, y))) };
+        doubled
+    }
+
+    /// Toggle the window between maximized and its restored size.
+    ///
+    /// Deferred to an idle callback: callers run with the pointer's inner
+    /// lock held, and (un)maximizing moves the focus, which takes it again.
+    fn toggle_maximized<B: crate::state::Backend>(&self, data: &mut crate::Otto<B>) {
+        let Some(toplevel) = self.window.toplevel().cloned() else {
+            return;
+        };
+        let maximized = self.window.is_maximized();
+        data.handle.insert_idle(move |state| {
+            if maximized {
+                smithay::wayland::shell::xdg::XdgShellHandler::unmaximize_request(state, toplevel);
+            } else {
+                smithay::wayland::shell::xdg::XdgShellHandler::maximize_request(state, toplevel);
+            }
+        });
     }
 
     /// Mutate the decoration model in place, repainting only on a real change.
@@ -160,7 +205,12 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowDecorat
         match event.state {
             ButtonState::Pressed => {
                 if let Some(control) = control {
+                    self.last_press.lock().unwrap().take();
                     self.update_model(data, true, Some(Self::control_index(control)));
+                } else if self.take_double_click(x, y) {
+                    // Two clicks on the bar zoom the window instead of moving
+                    // it, so no move grab is started for this press.
+                    self.toggle_maximized(data);
                 } else {
                     // Anywhere else on the bar starts a window move.
                     //
@@ -193,13 +243,16 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowDecorat
                 if was_pressed.is_none() || was_pressed != control {
                     return;
                 }
+                if was_pressed == Some(WindowControl::Zoom) {
+                    self.toggle_maximized(data);
+                    return;
+                }
                 let Some(toplevel) = self.window.toplevel().cloned() else {
                     return;
                 };
                 // Deferred for the same reason as the move grab above: this
-                // runs with the pointer's inner lock held, and minimizing or
-                // maximizing moves the focus, which takes that lock again.
-                let maximized = self.window.is_maximized();
+                // runs with the pointer's inner lock held, and minimizing
+                // moves the focus, which takes that lock again.
                 data.handle.insert_idle(move |state| match was_pressed {
                     Some(WindowControl::Close) => toplevel.send_close(),
                     Some(WindowControl::Minimize) => {
@@ -207,18 +260,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowDecorat
                             state, toplevel,
                         );
                     }
-                    Some(WindowControl::Zoom) => {
-                        if maximized {
-                            smithay::wayland::shell::xdg::XdgShellHandler::unmaximize_request(
-                                state, toplevel,
-                            );
-                        } else {
-                            smithay::wayland::shell::xdg::XdgShellHandler::maximize_request(
-                                state, toplevel,
-                            );
-                        }
-                    }
-                    None => {}
+                    _ => {}
                 });
             }
         }
