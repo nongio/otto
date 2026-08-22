@@ -636,6 +636,70 @@ mod real_cache {
         assert_eq!(matched, checked, "names disagree with the shared cache");
     }
 
+    /// End to end against a real file: take a thumbnail the desktop has
+    /// already made, find the file it was made from, and ask [`lookup`] for it
+    /// exactly as the browser would — mtime included.
+    ///
+    /// This is the test that would have caught a validity check comparing the
+    /// wrong two things, which unit tests over synthetic PNGs cannot: it uses
+    /// the real file's real mtime.
+    #[test]
+    #[ignore]
+    fn serves_a_real_file_from_the_real_cache() {
+        let Some(root) = cache_root() else {
+            eprintln!("no cache root; skipping");
+            return;
+        };
+
+        let mut served = 0usize;
+        let mut looked_at = 0usize;
+        for size in [Size::Large, Size::Normal] {
+            let Ok(entries) = std::fs::read_dir(root.join(size.dir_name())) else {
+                continue;
+            };
+            for entry in entries.flatten().take(400) {
+                let Ok(bytes) = std::fs::read(entry.path()) else {
+                    continue;
+                };
+                let Some(uri) = png_text(&bytes, "Thumb::URI") else {
+                    continue;
+                };
+                let Some(source) = path_from_uri(&uri) else {
+                    continue;
+                };
+                // Only files still on disk and still unmodified can be
+                // expected to resolve.
+                let Ok(meta) = std::fs::metadata(&source) else {
+                    continue;
+                };
+                let modified = meta.modified().ok();
+                let Some(recorded) = png_text(&bytes, "Thumb::MTime") else {
+                    continue;
+                };
+                let Some(actual) = mtime_secs(modified) else {
+                    continue;
+                };
+                if !same_mtime(&recorded, actual) {
+                    continue; // The file moved on; the cache is stale for it.
+                }
+
+                looked_at += 1;
+                let found = lookup(&source, modified, size);
+                assert!(
+                    found.is_some(),
+                    "cache has a current thumbnail for {} but lookup missed it",
+                    source.display()
+                );
+                let image = found.unwrap();
+                assert!(image.width() > 0 && image.height() > 0);
+                served += 1;
+            }
+        }
+
+        eprintln!("served {served} of {looked_at} live files from the shared cache");
+        assert!(looked_at > 0, "no live source files to check against");
+    }
+
     /// The inverse of [`uri_for`], for the test's own use: percent-decode a
     /// `file://` URI back to a path.
     fn path_from_uri(uri: &str) -> Option<PathBuf> {

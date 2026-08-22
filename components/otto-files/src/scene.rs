@@ -101,6 +101,9 @@ struct PaneKey {
     /// and costs one column a re-record; scrolling within a row does not.
     range: (usize, usize),
     entries: u64,
+    /// The thumbnail store's epoch, which moves when a picture lands. See
+    /// where this is filled in for why it belongs in the key.
+    thumbs: u64,
     /// Selection, cursor, cut marks and an in-place rename, over the visible
     /// rows only.
     marks: u64,
@@ -468,6 +471,11 @@ impl PaneLayer {
         let key = PaneKey {
             range,
             entries: hash_entries(&pane.entries, range),
+            // A thumbnail landing changes what this pane draws without
+            // changing anything else the key is made of, so the store's epoch
+            // rides along: it moves exactly when a picture arrives, and a pane
+            // that would show it rebuilds while the rest replay.
+            thumbs: f.thumbs.map(|store| store.epoch()).unwrap_or(0),
             marks: hash_marks(pane, range, f, depth),
             active,
             status: status.clone(),

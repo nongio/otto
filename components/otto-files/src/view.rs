@@ -1180,6 +1180,21 @@ pub struct Frame<'a> {
     /// Pointer is over Quick View's close button, so it lights up — the same
     /// hover behaviour the sheet's close dot has.
     pub quickview_close_hovered: bool,
+    /// Thumbnails for the entries on screen, where any have been found. A
+    /// file with one is drawn as itself instead of as its type's icon.
+    ///
+    /// `None` where there is no store to ask — the geometry tests, and any
+    /// host drawing a listing without one. Every entry then falls back to its
+    /// icon, which is what an entry with no thumbnail does anyway, so nothing
+    /// downstream has to care which case it is in.
+    pub thumbs: Option<&'a crate::thumbnails::Store>,
+}
+
+impl Frame<'_> {
+    /// The thumbnail to draw for an entry, if one is ready.
+    fn thumbnail(&self, entry: &Entry) -> Option<&skia_safe::Image> {
+        self.thumbs?.image(&entry.path, entry.modified)
+    }
 }
 
 /// The picker's action row.
@@ -1732,6 +1747,7 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
                 cell,
                 pane.is_selected(index),
                 f.renaming == Some((f.panes.len() - 1, index)),
+                f.thumbnail(pane.entries[index]),
             );
         }
     }
@@ -1751,6 +1767,7 @@ pub fn draw_grid_cell(
     cell: Rect,
     selected: bool,
     renaming: bool,
+    thumb: Option<&skia_safe::Image>,
 ) {
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
@@ -1780,18 +1797,22 @@ pub fn draw_grid_cell(
         );
     }
 
-    let chain = entry.icon_chain();
-    let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
-    if let Some(image) =
-        icons::cached_icon_chain_at(&refs, GRID_ICON as i32, icons::FULL_COLOUR_SIZE)
-    {
-        let dst = Rect::from_xywh(
-            cell.center_x() - GRID_ICON / 2.0,
-            icon_top,
-            GRID_ICON,
-            GRID_ICON,
-        );
-        canvas.draw_image_rect(&image, None, dst, &Paint::default());
+    let box_rect = Rect::from_xywh(
+        cell.center_x() - GRID_ICON / 2.0,
+        icon_top,
+        GRID_ICON,
+        GRID_ICON,
+    );
+    if let Some(image) = thumb {
+        draw_thumbnail(canvas, image, box_rect, false);
+    } else {
+        let chain = entry.icon_chain();
+        let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
+        if let Some(image) =
+            icons::cached_icon_chain_at(&refs, GRID_ICON as i32, icons::FULL_COLOUR_SIZE)
+        {
+            canvas.draw_image_rect(&image, None, box_rect, &Paint::default());
+        }
     }
 
     // Two lines at most, the second elided — a long name must not push the
@@ -2014,7 +2035,14 @@ fn draw_list(canvas: &Canvas, f: &Frame) {
         let cut = f.cut.contains(&entry.path);
         let centre = rect.center_y();
 
-        draw_entry_icon(canvas, entry, rect.left + CONTENT_PAD, rect.center_y(), cut);
+        draw_entry_icon(
+            canvas,
+            entry,
+            rect.left + CONTENT_PAD,
+            rect.center_y(),
+            cut,
+            f.thumbnail(entry),
+        );
 
         if f.renaming != Some((depth, index)) {
             let name_x = rect.left + CONTENT_PAD + ICON_SIZE + 10.0;
@@ -2233,13 +2261,26 @@ pub fn row_colors(theme: &Theme, selected: bool) -> (Color, Color) {
     }
 }
 
-fn draw_entry_icon(canvas: &Canvas, entry: &Entry, left: f32, center_y: f32, cut: bool) {
+fn draw_entry_icon(
+    canvas: &Canvas,
+    entry: &Entry,
+    left: f32,
+    center_y: f32,
+    cut: bool,
+    thumb: Option<&skia_safe::Image>,
+) {
+    let box_rect = Rect::from_xywh(left, center_y - ICON_SIZE / 2.0, ICON_SIZE, ICON_SIZE);
+    if let Some(image) = thumb {
+        draw_thumbnail(canvas, image, box_rect, cut);
+        return;
+    }
+
     let chain = entry.icon_chain();
     let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
     if let Some(image) =
         icons::cached_icon_chain_at(&refs, ICON_SIZE as i32, icons::FULL_COLOUR_SIZE)
     {
-        let dst = Rect::from_xywh(left, center_y - ICON_SIZE / 2.0, ICON_SIZE, ICON_SIZE);
+        let dst = box_rect;
         let mut paint = Paint::default();
         if cut {
             // A cut entry is still there — it does not move until the paste —
@@ -2248,6 +2289,59 @@ fn draw_entry_icon(canvas: &Canvas, entry: &Entry, left: f32, center_y: f32, cut
         }
         canvas.draw_image_rect(&image, None, dst, &paint);
     }
+}
+
+/// A thumbnail, fitted into the box an icon would have had.
+///
+/// Fitted rather than filled: a thumbnail is the file, and cropping it to a
+/// square would be showing the user the middle of their photograph and calling
+/// it the photograph. The picture keeps its own proportions and is centred in
+/// the box, so a panorama and a portrait both sit on the same baseline as the
+/// icons around them.
+///
+/// The hairline matters more than it looks. A photograph with a white sky and
+/// no border does not end anywhere — it bleeds into the window and stops
+/// reading as an object in a grid — and one drawn hard against a dark
+/// background reads as a hole. A single low-contrast edge is enough to close
+/// it, and is cheaper than the drop shadow the same problem is usually solved
+/// with.
+fn draw_thumbnail(canvas: &Canvas, image: &skia_safe::Image, box_rect: Rect, cut: bool) {
+    let (w, h) = (image.width() as f32, image.height() as f32);
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    // Never enlarged past its own pixels: a 32-pixel favicon blown up to fill
+    // a grid cell is a blurry square where a crisp icon would have been.
+    let scale = (box_rect.width() / w).min(box_rect.height() / h).min(1.0);
+    let (dst_w, dst_h) = (w * scale, h * scale);
+    let dst = Rect::from_xywh(
+        box_rect.center_x() - dst_w / 2.0,
+        // Sat on the box's bottom edge rather than its middle, so a row of
+        // mixed shapes shares a baseline the way the icons they replace do.
+        box_rect.bottom - dst_h,
+        dst_w,
+        dst_h,
+    );
+
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    if cut {
+        // Dimmed exactly as the icon it stands in for would be.
+        paint.set_alpha(110);
+    }
+    canvas.draw_image_rect(image, None, dst, &paint);
+
+    let mut edge = Paint::default();
+    edge.set_anti_alias(true);
+    edge.set_style(skia_safe::paint::Style::Stroke);
+    edge.set_stroke_width(1.0);
+    edge.set_color(skia_safe::Color::from_argb(
+        if cut { 20 } else { 46 },
+        0,
+        0,
+        0,
+    ));
+    canvas.draw_rect(dst.with_inset((0.5, 0.5)), &edge);
 }
 
 /// The keyboard cursor when it is not itself part of the selection.
@@ -3317,6 +3411,9 @@ mod geometry_tests {
             can_go_forward: false,
             nav_pressed: None,
             preview: None,
+            // No store: this measures the cost of drawing rows, and every
+            // entry falling back to its icon is the case being counted.
+            thumbs: None,
         };
 
         let mut recorder = skia_safe::PictureRecorder::new();

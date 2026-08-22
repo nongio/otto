@@ -2081,6 +2081,7 @@ impl Browser {
             }),
             footer: self.footer_h(),
             quickview_close_hovered: self.quickview_close_hovered,
+            thumbs: Some(&self.thumbs),
         }
     }
 }
