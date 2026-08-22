@@ -228,6 +228,9 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         // Create the rendering layer for sc_layers to find
         self.get_or_create_layer_for_surface(surface.wl_surface());
 
+        // A freshly mapped window is the most recent one for its app.
+        self.workspaces.note_window_focused(&surface_id);
+
         let keyboard = self.seat.get_keyboard().unwrap();
         keyboard.set_focus(self, Some(window_element.into()), Serial::from(0));
 
@@ -237,6 +240,23 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
     fn toplevel_destroyed(&mut self, toplevel: ToplevelSurface) {
         let id = toplevel.wl_surface().id();
+
+        // Read this BEFORE unmapping: once the surface is gone Smithay drops the
+        // keyboard focus, and we can no longer tell whether the window that just
+        // closed was the focused one.
+        let was_focused = self
+            .seat
+            .get_keyboard()
+            .map(|keyboard| match keyboard.current_focus() {
+                Some(KeyboardFocusTarget::Window(window)) => {
+                    window.wl_surface().map(|s| s.id()) == Some(id.clone())
+                }
+                // Focus already cleared by the surface going away.
+                None => true,
+                // A layer surface or popup owns the keyboard — don't steal it.
+                Some(_) => false,
+            })
+            .unwrap_or(false);
 
         // Cascade destroy all sc-layers attached to this window
         if let Some(layers) = self.surfaces_style.remove(&id) {
@@ -298,20 +318,8 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             self.surfaces_style.remove(&surface_id);
         }
 
-        if let Some(keyboard) = self.seat.get_keyboard() {
-            if let Some(focus) = keyboard.current_focus() {
-                if focus.same_client_as(&id) {
-                    let current_space_elements: Vec<_> = self
-                        .workspaces
-                        .space()
-                        .map(|s| s.elements().cloned().collect::<Vec<_>>())
-                        .unwrap_or_default();
-                    let top_element = current_space_elements.last().cloned();
-                    if let Some(window_element) = top_element {
-                        keyboard.set_focus(self, Some(window_element.into()), Serial::from(0));
-                    }
-                }
-            }
+        if was_focused {
+            self.focus_next_window_after_close();
         }
     }
 

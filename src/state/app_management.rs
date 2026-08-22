@@ -160,6 +160,25 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
     }
 
+    /// Hand focus to the next window after the focused one is closed.
+    ///
+    /// Called from the window-destroyed paths (xdg + XWayland): the closed
+    /// window is already unmapped, so the top of the focused output's current
+    /// workspace is the window that should become active — activated state,
+    /// window-view shadow and keyboard focus all follow.
+    pub fn focus_next_window_after_close(&mut self) {
+        if self.is_session_locked() {
+            return;
+        }
+        let index = self
+            .workspaces
+            .focused_output_workspaces()
+            .map(|ows| ows.current_workspace)
+            .unwrap_or_else(|| self.workspaces.get_current_workspace_index());
+        self.focus_top_window_or_clear(index);
+        self.workspaces.update_workspace_model();
+    }
+
     pub fn set_current_workspace_index(&mut self, index: usize) {
         // Use the focused output from the model cache — safe to call from button handlers
         // (avoids re-acquiring the pointer lock, which would deadlock inside a Smithay handler).
@@ -293,6 +312,10 @@ impl<BackendData: Backend> Otto<BackendData> {
                 return;
             }
         }
+
+        // Cross-workspace navigation (app switcher, cycle-windows) needs to know
+        // which window of an app was used last; per-workspace stacking cannot say.
+        self.workspaces.note_window_focused(&window.id());
 
         let keyboard = self.seat.get_keyboard().unwrap();
         let serial = SERIAL_COUNTER.next_serial();

@@ -88,8 +88,7 @@ impl<BackendData: Backend> DndGrabHandler for Otto<BackendData> {
             if let Some(ref surface) = dnd_surface {
                 self.cleanup_dnd_layers(surface);
             }
-            view.layer
-                .set_opacity(0.0_f32, Some(Transition::default()));
+            view.layer.set_opacity(0.0_f32, Some(Transition::default()));
             view.layer
                 .set_scale((1.2, 1.2), Some(Transition::default()));
         } else {

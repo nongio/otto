@@ -82,6 +82,11 @@ pub struct DragState {
     pub original_anchor: layers::types::Point,
     pub original_parent: Layer,
     pub current_drop_target: Option<usize>,
+    /// Unscaled size of the preview, so the drag backdrop patch can be sized
+    /// from the live scale without waiting for a render to publish bounds.
+    pub base_size: (f32, f32),
+    /// Anchor point the drag runs with (the grab point inside the preview).
+    pub anchor: layers::types::Point,
 }
 
 #[derive(Clone)]
@@ -90,6 +95,13 @@ pub struct WindowSelectorView {
     pub window_selector_windows_container: layers::prelude::Layer,
     pub window_selector_view: layers::prelude::Layer,
     pub drag_overlay_layer: layers::prelude::Layer,
+    /// Wallpaper patch painted under the dragged preview inside the drag
+    /// overlay — the preview's titlebar blurs whatever the same pass already
+    /// painted behind it, and the overlay plane holds nothing.
+    pub drag_backdrop_layer: layers::prelude::Layer,
+    /// Rounded rect (screen space) the patch is clipped to, plus its corner
+    /// radius. `None` while no drag is running.
+    drag_backdrop_rect: Arc<RwLock<Option<(skia::Rect, f32)>>>,
     pub view: layers::prelude::View<WindowSelectorState>,
     pub windows: std::sync::Arc<RwLock<HashMap<ObjectId, Layer>>>,
     pub cursor_location: Arc<RwLock<Option<(f32, f32)>>>,
@@ -113,6 +125,9 @@ pub struct WindowSelectorView {
 /// │   ├── window_selector_windows_container
 /// │   ├── window_selector_view (view(view_window_selector))
 /// │   │   └── window_selector_label
+/// └── drag_overlay_layer (shared overlay layer, only while dragging)
+///     ├── drag_backdrop (exposé content clipped to the dragged preview)
+///     └── the dragged preview
 /// ```
 ///
 /// - `window_selector_root`: The root layer for the window selector view.
@@ -234,6 +249,67 @@ impl WindowSelectorView {
 
         let _ = window_selector_root.add_sublayer(&window_selector_windows_container);
 
+        // Exposé backdrop patch for the drag overlay.
+        //
+        // A dragged preview leaves the exposé subtree for the shared overlay
+        // layer, so it can float above the workspace selector strip it is
+        // being dropped onto. That plane is empty behind it: the preview is a
+        // mirror, and `Layer::as_content()` re-renders the mirrored subtree
+        // with no backdrop, so the titlebar's `BackgroundBlur` blurs
+        // transparent pixels and comes out flat — the same failure the exposé
+        // wallpaper mirror above exists to prevent. Re-draw the exposé content
+        // (wallpaper, then the other previews) under the dragged preview,
+        // clipped to the rounded rect the preview covers, so the blur samples
+        // exactly what it sampled before the drag started — including the
+        // previews the dragged window passes over. The dragged preview is not
+        // in the container any more, so it cannot mirror itself. The clip
+        // keeps the patch entirely hidden behind the preview.
+        let drag_backdrop_rect: Arc<RwLock<Option<(skia::Rect, f32)>>> = Arc::new(RwLock::new(None));
+        let drag_backdrop_layer = layers_engine.new_layer();
+        drag_backdrop_layer.set_key(format!("window_selector_drag_backdrop_{}", index));
+        drag_backdrop_layer.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        drag_backdrop_layer.set_size(layers::types::Size::percent(1.0, 1.0), None);
+        drag_backdrop_layer.set_picture_cached(false);
+        drag_backdrop_layer.set_pointer_events(false);
+        drag_backdrop_layer.set_hidden(true);
+        {
+            let background_content = background_layer.as_content();
+            let layer_shell_content = layer_shell_background.as_content();
+            let previews_content = window_selector_windows_container.as_content();
+            let rect_ref = drag_backdrop_rect.clone();
+            // The patch moves every frame, so the area it covered on the
+            // previous frame has to be repainted too or it trails behind the
+            // preview.
+            let previous_damage = Arc::new(RwLock::new(skia::Rect::new_empty()));
+            drag_backdrop_layer.set_draw_content(
+                move |canvas: &layers::skia::Canvas, w: f32, h: f32| {
+                    let clip = *rect_ref.read().unwrap();
+                    let mut damage = *previous_damage.read().unwrap();
+                    let Some((rect, radius)) = clip else {
+                        *previous_damage.write().unwrap() = skia::Rect::new_empty();
+                        return damage;
+                    };
+                    let restore_point = canvas.save();
+                    canvas.clip_rrect(
+                        skia::RRect::new_rect_xy(rect, radius, radius),
+                        skia::ClipOp::Intersect,
+                        true,
+                    );
+                    (background_content.0)(canvas, w, h);
+                    (layer_shell_content.0)(canvas, w, h);
+                    (previews_content.0)(canvas, w, h);
+                    canvas.restore_to_count(restore_point);
+
+                    damage.join(rect);
+                    *previous_damage.write().unwrap() = rect;
+                    damage
+                },
+            );
+        }
+
         let _ = window_selector_root.add_sublayer(&window_selector_view);
 
         Self {
@@ -242,6 +318,8 @@ impl WindowSelectorView {
             window_selector_windows_container,
             window_selector_view,
             drag_overlay_layer,
+            drag_backdrop_layer,
+            drag_backdrop_rect,
             windows: std::sync::Arc::new(RwLock::new(HashMap::new())),
             cursor_location: Arc::new(RwLock::new(None)),
             press_location: Arc::new(RwLock::new(None)),
@@ -385,7 +463,36 @@ impl WindowSelectorView {
             state.window_layer.set_position(position, None);
             drop(drag_state);
             self.update_drag_scale(pointer_location);
+            self.update_drag_backdrop();
         }
+    }
+
+    /// Follow the dragged preview with the wallpaper patch underneath it.
+    ///
+    /// Computed from the values the drag itself just wrote (position, scale)
+    /// rather than from `render_bounds_transformed`, which only catches up
+    /// after the next render and would leave the patch a frame behind — long
+    /// enough for a rim of unclipped wallpaper to show past the preview.
+    fn update_drag_backdrop(&self) {
+        let drag_state = self.drag_state.read().unwrap();
+        let Some(state) = drag_state.as_ref() else {
+            return;
+        };
+        let scale = state.window_layer.scale();
+        let position = state.window_layer.position();
+        let (w, h) = (state.base_size.0 * scale.x, state.base_size.1 * scale.y);
+        let rect = skia::Rect::from_xywh(
+            position.x - state.anchor.x * w,
+            position.y - state.anchor.y * h,
+            w,
+            h,
+        );
+        // Matches the preview's own rounded frame (12pt, see the decoration
+        // model), so no corner of the patch peeks out from behind it.
+        let radius = 12.0 * Config::with(|config| config.screen_scale) as f32 * scale.x;
+        drop(drag_state);
+        *self.drag_backdrop_rect.write().unwrap() = Some((rect, radius));
+        self.drag_backdrop_layer.redraw();
     }
 
     fn stop_dragging(&self) -> Option<DragState> {
@@ -400,6 +507,12 @@ impl WindowSelectorView {
             .set_anchor_point_preserving_position(state.original_anchor);
         state.window_layer.set_position(restored_position, None);
         let _ = state.original_parent.add_sublayer(&state.window_layer);
+
+        // The preview is back in the exposé subtree, where the exposé
+        // wallpaper mirror is behind it again: the patch has nothing left to
+        // do and must not linger in the overlay plane.
+        *self.drag_backdrop_rect.write().unwrap() = None;
+        self.drag_backdrop_layer.set_hidden(true);
 
         Some(state)
     }
@@ -524,7 +637,12 @@ impl WindowSelectorView {
         let original_scale = window_layer.scale();
         let original_anchor = window_layer.anchor_point();
 
-        // Move window to drag overlay
+        // Move window to drag overlay, over the wallpaper patch its titlebar
+        // blur samples (appended first, so it stays underneath).
+        let _ = self
+            .drag_overlay_layer
+            .add_sublayer(&self.drag_backdrop_layer);
+        self.drag_backdrop_layer.set_hidden(false);
         let _ = self.drag_overlay_layer.add_sublayer(&window_layer);
 
         // Remove from state grid
@@ -552,6 +670,11 @@ impl WindowSelectorView {
             original_anchor,
             original_parent: self.window_selector_windows_container.clone(),
             current_drop_target: None,
+            base_size: (
+                render_size.width / original_scale.x.max(f32::EPSILON),
+                render_size.height / original_scale.y.max(f32::EPSILON),
+            ),
+            anchor: anchor_point,
         };
 
         *self.drag_state.write().unwrap() = Some(drag_state);
