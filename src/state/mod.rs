@@ -264,6 +264,14 @@ pub struct Otto<BackendData: Backend + 'static> {
     // input-related fields
     pub suppressed_keys: Vec<Keysym>,
     pub current_modifiers: ModifiersState,
+    /// Physical Cmd keys (`<LWIN>`/`<RWIN>`) currently held down.
+    ///
+    /// `altwin:ctrl_win` maps those keys onto the Control modifier, so by the
+    /// time a key reaches us Cmd+C and Ctrl+C are the same event. The keycode
+    /// is the one thing xkb leaves untouched, so tracking it here is what lets
+    /// shortcut matching tell the two apart. See
+    /// [`crate::input::keyboard::shortcut_modifiers`].
+    pub pressed_cmd_keys: HashSet<u32>,
     pub app_switcher_hold_modifiers: Option<ModifiersState>,
     pub cursor_status: Arc<Mutex<CursorImageStatus>>,
     pub cursor_manager: CursorManager,
@@ -911,6 +919,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             pending_dnd_cleanup: None,
             suppressed_keys: Vec::new(),
             current_modifiers: ModifiersState::default(),
+            pressed_cmd_keys: HashSet::new(),
             app_switcher_hold_modifiers: None,
             cursor_status,
             cursor_manager,

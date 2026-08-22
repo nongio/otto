@@ -48,6 +48,32 @@ man xkeyboard-config           # the full reference
 
 Layout changes apply at startup. Edit and restart the session to change them.
 
+### Mac-style modifiers
+
+`altwin:ctrl_win` maps the Cmd keys onto Ctrl, so `Cmd+C`, `Cmd+V` and `Cmd+X`
+reach applications as the `Ctrl+C`/`Ctrl+V`/`Ctrl+X` they expect. The catch is
+that Cmd and the real Ctrl key then produce the same event, and a binding like
+`Ctrl+W` fires from both — closing the window when you meant `^W` to delete a
+word in a terminal.
+
+With this option set, Otto reads the physical keycode behind the modifier and
+matches shortcuts on **Cmd alone**. The real Ctrl key is left to the focused
+application:
+
+| You press | Otto | Application receives |
+|-----------|------|----------------------|
+| `Cmd+W` | matches a `Ctrl+W` binding | — (Otto consumed it) |
+| `Ctrl+W` | no match | `^W` — deletes a word in a terminal |
+| `Cmd+C` | no match unless you bound one | `Ctrl+C` — copies |
+
+Bindings are still written as `Ctrl+...` in the config; they simply follow the
+Cmd key. Nothing changes for layouts without this option, where Ctrl behaves
+normally.
+
+Note that the built-in `Ctrl+Alt+Backspace` follows the same rule and becomes
+`Cmd+Alt+Backspace`. VT switching (`Ctrl+Alt+F1`) is read from raw keycodes and
+keeps working from either key.
+
 ## Key repeat
 
 ```toml

@@ -28,6 +28,52 @@ pub static DBG_SAVE_OVERLAY: std::sync::atomic::AtomicBool =
 
 use super::actions::KeyAction;
 
+/// The Cmd keys, in the xkb keycode convention (evdev code + 8).
+const KEY_LEFTMETA: u32 = 125 + 8;
+const KEY_RIGHTMETA: u32 = 126 + 8;
+
+/// Whether a keycode is one of the physical Cmd keys.
+pub fn is_cmd_keycode(keycode: u32) -> bool {
+    keycode == KEY_LEFTMETA || keycode == KEY_RIGHTMETA
+}
+
+/// Whether the layout folds the Cmd keys into the Control modifier.
+///
+/// `altwin:ctrl_win` maps `<LWIN>`/`<RWIN>` to `Control_L`/`Control_R` so that
+/// Cmd+C reaches clients as Ctrl+C, the way every toolkit expects. The cost is
+/// that Cmd and the real Ctrl key become the same event, which is what
+/// [`shortcut_modifiers`] undoes for shortcut matching.
+fn cmd_is_ctrl(config: &Config) -> bool {
+    config
+        .input
+        .xkb_options
+        .iter()
+        .any(|option| option == "altwin:ctrl_win")
+}
+
+/// The modifiers a shortcut is matched against.
+///
+/// Under `altwin:ctrl_win` both Cmd and the real Ctrl key raise
+/// `modifiers.ctrl`, so a binding like `Ctrl+W` fires from either — closing the
+/// window when the user meant `^W` in a terminal. Otto's shortcuts belong to
+/// Cmd; the real Ctrl key belongs to the focused client. Report `ctrl` only
+/// while a Cmd key is physically held.
+///
+/// Only the *matching* is affected. The event forwarded to the client still
+/// carries a plain Control modifier from either key, so `^W`/`^C` keep working
+/// in a terminal and Cmd+C/V/X keep working everywhere else.
+pub fn shortcut_modifiers(
+    modifiers: ModifiersState,
+    cmd_held: bool,
+    cmd_is_ctrl: bool,
+) -> ModifiersState {
+    let mut modifiers = modifiers;
+    if cmd_is_ctrl {
+        modifiers.ctrl = modifiers.ctrl && cmd_held;
+    }
+    modifiers
+}
+
 pub fn capture_app_switcher_hold_modifiers(
     mut modifiers: ModifiersState,
 ) -> Option<ModifiersState> {
@@ -146,6 +192,28 @@ impl<BackendData: Backend> Otto<BackendData> {
         let mut suppressed_keys = self.suppressed_keys.clone();
         let keyboard = self.seat.get_keyboard().unwrap();
         let mut updated_modifiers: Option<ModifiersState> = None;
+
+        // Self-heal a release we never saw — a VT switch or a focus change can
+        // swallow one, and a Cmd key stuck down would keep every real Ctrl
+        // press matching Otto's shortcuts. No key that raises Control is held
+        // once the modifier bit clears, so the set has to be empty too.
+        if !keyboard.modifier_state().ctrl {
+            self.pressed_cmd_keys.clear();
+        }
+
+        // Which physical Cmd keys are down, tracked from raw keycodes because
+        // the modifier bit alone cannot say which key produced it.
+        if is_cmd_keycode(keycode.raw()) {
+            match state {
+                KeyState::Pressed => {
+                    self.pressed_cmd_keys.insert(keycode.raw());
+                }
+                KeyState::Released => {
+                    self.pressed_cmd_keys.remove(&keycode.raw());
+                }
+            }
+        }
+        let cmd_held = !self.pressed_cmd_keys.is_empty();
 
         // VT switching must never be swallowable. An exclusive layer surface
         // (a greeter, a lock screen) otherwise receives every key including
@@ -285,7 +353,9 @@ impl<BackendData: Backend> Otto<BackendData> {
 
                     let shortcut_action = Config::with(|config| {
                         if matches!(state, KeyState::Pressed) && !inhibited {
-                            process_keyboard_shortcut(config, *modifiers, keysym)
+                            let modifiers =
+                                shortcut_modifiers(*modifiers, cmd_held, cmd_is_ctrl(config));
+                            process_keyboard_shortcut(config, modifiers, keysym)
                         } else {
                             None
                         }
@@ -388,6 +458,56 @@ impl<BackendData: Backend> Otto<BackendData> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `altwin:ctrl_win` makes Cmd and the real Ctrl key indistinguishable by
+    /// modifier alone, so a `Ctrl+W` binding closed the window when the user
+    /// meant `^W` in a terminal. Shortcuts follow Cmd; the real Ctrl key is the
+    /// client's.
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn cmd_drives_shortcuts_and_real_ctrl_does_not() {
+        let mut mods = ModifiersState::default();
+        mods.ctrl = true;
+
+        // Cmd+W: the Control bit came from a Cmd key, so `Ctrl+W` matches.
+        assert!(shortcut_modifiers(mods, true, true).ctrl);
+
+        // Ctrl+W: no Cmd key held, so no binding matches and the key is
+        // forwarded to the focused client as `^W`.
+        assert!(!shortcut_modifiers(mods, false, true).ctrl);
+    }
+
+    /// Without the remap the Cmd keys raise `logo`, never `ctrl`, so gating on
+    /// a held Cmd key would leave a stock config with no working Ctrl
+    /// shortcuts at all.
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn ctrl_is_untouched_without_the_remap() {
+        let mut mods = ModifiersState::default();
+        mods.ctrl = true;
+        assert!(shortcut_modifiers(mods, false, false).ctrl);
+    }
+
+    /// Only `ctrl` is reinterpreted — the other modifiers still combine with it.
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn other_modifiers_survive() {
+        let mut mods = ModifiersState::default();
+        mods.ctrl = true;
+        mods.shift = true;
+        mods.alt = true;
+        let result = shortcut_modifiers(mods, true, true);
+        assert!(result.ctrl && result.shift && result.alt);
+    }
+
+    #[test]
+    fn cmd_keycodes_are_the_win_keys() {
+        assert!(is_cmd_keycode(125 + 8));
+        assert!(is_cmd_keycode(126 + 8));
+        // The real Ctrl keys, which must keep falling through to the client.
+        assert!(!is_cmd_keycode(29 + 8));
+        assert!(!is_cmd_keycode(97 + 8));
+    }
 
     #[test]
     #[allow(clippy::field_reassign_with_default)]
