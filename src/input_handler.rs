@@ -56,6 +56,7 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
 
                     crate::shell::fixup_positions(&mut self.workspaces, current_location);
                     self.backend_data.reset_buffers(&output);
+                    self.workspaces.log_output_topology("scale up");
                     #[cfg(feature = "xwayland")]
                     self.update_xwayland_scale();
                 }
@@ -79,6 +80,7 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
                     let current_location = self.pointer.current_location();
                     crate::shell::fixup_positions(&mut self.workspaces, current_location);
                     self.backend_data.reset_buffers(&output);
+                    self.workspaces.log_output_topology("scale down");
                     #[cfg(feature = "xwayland")]
                     self.update_xwayland_scale();
                 }
@@ -104,6 +106,7 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
 
                     crate::shell::fixup_positions(&mut self.workspaces, current_location);
                     self.backend_data.reset_buffers(&output);
+                    self.workspaces.log_output_topology("rotate output");
                 }
                 KeyAction::ApplicationSwitchNext => {
                     self.handle_app_switcher_next();
@@ -286,6 +289,7 @@ impl Otto<UdevData> {
                         );
                         pointer.frame(self);
                         self.backend_data.reset_buffers(&output);
+                        self.workspaces.log_output_topology("scale up");
                     }
                 }
                 KeyAction::ScaleDown => {
@@ -331,6 +335,7 @@ impl Otto<UdevData> {
                         );
                         pointer.frame(self);
                         self.backend_data.reset_buffers(&output);
+                        self.workspaces.log_output_topology("scale down");
                     }
                 }
                 KeyAction::RotateOutput => {
@@ -354,6 +359,7 @@ impl Otto<UdevData> {
                         let current_location = self.pointer.current_location();
                         crate::shell::fixup_positions(&mut self.workspaces, current_location);
                         self.backend_data.reset_buffers(&output);
+                        self.workspaces.log_output_topology("rotate output");
                     }
                 }
                 KeyAction::ApplicationSwitchNext => {

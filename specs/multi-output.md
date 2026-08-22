@@ -101,6 +101,12 @@ Otto can drive more than one output (physical monitor or virtual/screenshare out
 - When the pointer moves from inside an output's geometry to outside it, that output renders exactly one further frame with the cursor omitted (a "farewell" frame) so its hardware cursor plane is cleared instead of continuing to display the cursor at its last position. No further cursor-related frames are forced after that single farewell frame while the pointer remains outside.
 - An output whose geometry the pointer re-enters resumes drawing the cursor on the next frame, with no farewell frame needed on entry (only on exit).
 
+### Output Topology Diagnostics
+
+- Every transition that changes the live output set — mapping a new output, re-mapping an existing one (mode/resize/resume), unmapping, suspending (lid close), resuming the session after a VT switch, and the scale/rotation keybindings — logs a dump of the whole topology on the `otto::outputs` target at `info` level. Enable it with `RUST_LOG=otto::outputs=info`.
+- The dump names the transition that triggered it and then, per live output: its logical geometry as returned by `Workspaces::output_geometry` (the same value maximize geometry and pointer clamping consume), current mode, fractional scale, transform, whether it is physical / virtual-interactive / virtual-non-interactive, and which one is primary. Suspended outputs are listed with the position and primary status they will be restored to.
+- Two inconsistencies are called out explicitly, because they are states no caller expects and both are silent otherwise: `MISSING-GEOMETRY` for a live output with no space mapped (any `output_geometry(..).unwrap()` on it would panic), and `ORPHANED` for workspace data belonging to an output that is neither live nor suspended.
+
 ## Constraints & Edge Cases
 
 - **Config position is honored for physical outputs, with overlap rejection:** a configured position for a physical display is used as-is as long as it doesn't overlap any already-mapped output's geometry; if it would overlap, the configured position is ignored (with a warning) and that output falls back to automatic left-to-right placement instead. Outputs can never be made to overlap through configuration alone.

@@ -239,6 +239,7 @@ pub fn run_udev() {
                 if let Err(err) = libinput_context.resume() {
                     error!("Failed to resume libinput context: {:?}", err);
                 }
+                data.workspaces.log_output_topology("session activate");
 
                 // Coming back from another VT, the primary plane has no content
                 // and nothing in the scene has changed — so resetting the DRM
