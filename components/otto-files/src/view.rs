@@ -543,6 +543,213 @@ pub fn preview_pane_rect(columns_len: usize, height: f32, pan: f32, miller_w: f3
     Rect::from_ltrb(left, HEADER_H, left + PREVIEW_W, height)
 }
 
+/// What a drag hovering the window would drop onto, so it can be outlined.
+///
+/// Carries only what the view needs to find the rect again — the path the drop
+/// would land in is the application's business, not the drawing's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropHighlight {
+    /// A directory row or cell, which the files would go *into*.
+    Row { depth: usize, index: usize },
+    /// A pane's own directory: the drag is over its background, not any row.
+    Pane { depth: usize },
+    /// A sidebar place.
+    Place { index: usize },
+}
+
+/// `rect` cut down to `clip`, or `None` when the two do not meet.
+fn clipped_to(rect: Rect, clip: Rect) -> Option<Rect> {
+    let mut out = rect;
+    out.intersect(clip).then_some(out)
+}
+
+/// Where [`DropHighlight`] should be outlined, in window coordinates.
+///
+/// Runs the hit tests backwards — same strips, same pane rects — so the
+/// outline lands exactly on the thing the drop will act on, in every view.
+pub fn drop_highlight_rect(f: &Frame, target: DropHighlight) -> Option<Rect> {
+    match target {
+        DropHighlight::Place { index } => (index < f.places.len()).then(|| place_rect(index)),
+        DropHighlight::Pane { depth } => {
+            let viewport = content_viewport(f.width, f.height, f.mode);
+            let pane = match f.mode {
+                ViewMode::Columns => miller_pane_rect(depth, f.height, f.pan, f.miller_w),
+                // One pane fills the content area in the flat views.
+                _ => viewport,
+            };
+            // Held off the pane's own edges. Flush against them the outline's
+            // corners land exactly on the header line and the window's bottom,
+            // where the curve has nowhere to happen and the ring reads as a
+            // square — and a column panned half off screen loses two corners
+            // to the clip entirely.
+            clipped_to(pane, viewport)
+                .map(|rect| rect.with_inset((PANE_OUTLINE_INSET, PANE_OUTLINE_INSET)))
+        }
+        DropHighlight::Row { depth, index } => {
+            let pane = f.panes.get(depth)?;
+            let rect = match f.mode {
+                ViewMode::Grid => grid_cell_rect(
+                    content_viewport(f.width, f.height, ViewMode::Grid),
+                    index,
+                    pane.scroll,
+                ),
+                ViewMode::List => {
+                    RowStrip::list(f.width, pane.entries.len(), pane.scroll).rect(index)
+                }
+                ViewMode::Columns => {
+                    let full = miller_pane_rect(depth, f.height, f.pan, f.miller_w);
+                    RowStrip::miller(full, pane.entries.len(), pane.scroll).rect(index)
+                }
+            };
+            // A row scrolled out from under the pointer has no outline rather
+            // than one drawn over the header.
+            clipped_to(rect, content_viewport(f.width, f.height, f.mode))
+        }
+    }
+}
+
+/// Outline what the drop would land in.
+///
+/// Drawn on the window canvas after the panes, which puts it over the rows in
+/// every view — including Miller, whose rows are the scene's own layers,
+/// composited under this canvas. The exception is `OTTO_FILES_PANE_SUBS=1`,
+/// where the columns are subsurfaces *over* this canvas and the outline is
+/// hidden behind them; that mode is opt-in and its own drop feedback is a
+/// separate piece of work.
+fn draw_drop_highlight(canvas: &Canvas, f: &Frame) {
+    let Some(target) = f.drop_target else {
+        return;
+    };
+    let Some(rect) = drop_highlight_rect(f, target) else {
+        return;
+    };
+    if rect.is_empty() {
+        return;
+    }
+
+    let accent = accent_light(f.theme);
+    let radius = match target {
+        DropHighlight::Place { .. } => 6.0,
+        DropHighlight::Row { .. } => 8.0,
+        DropHighlight::Pane { .. } => 10.0,
+    };
+    // The ring alone. A wash inside it as well says the same thing twice, and
+    // over a pane it tints a whole column of rows to point at one target.
+    let mut ring = Paint::default();
+    ring.set_anti_alias(true);
+    ring.set_style(skia_safe::paint::Style::Stroke);
+    // Inset by half the stroke: a centred stroke on the rect's own edge would
+    // spill a pixel outside it, over the neighbouring row.
+    ring.set_stroke_width(2.0);
+    ring.set_color(accent);
+    canvas.draw_rrect(
+        RRect::new_rect_xy(rect.with_inset((1.0, 1.0)), radius, radius),
+        &ring,
+    );
+}
+
+/// One list-view row's rect, in window coordinates.
+///
+/// The strip the hit test uses, read forwards — so a caller that knows which
+/// row was hit can find out where it is without rebuilding a frame.
+pub fn list_row_rect(width: f32, count: usize, index: usize, scroll: f32) -> Rect {
+    RowStrip::list(width, count, scroll).rect(index)
+}
+
+/// One Miller row's rect, in window coordinates.
+pub fn miller_row_rect(
+    depth: usize,
+    height: f32,
+    pan: f32,
+    miller_w: f32,
+    count: usize,
+    index: usize,
+    scroll: f32,
+) -> Rect {
+    let pane = miller_pane_rect(depth, height, pan, miller_w);
+    RowStrip::miller(pane, count, scroll).rect(index)
+}
+
+/// How far a pane's drop outline is held inside the pane's own edges, so the
+/// whole rounded rectangle is on screen.
+const PANE_OUTLINE_INSET: f32 = 5.0;
+
+/// The picture carried under the cursor while files are being dragged.
+///
+/// Sized for one row's worth of content: an icon, the name beside it, and a
+/// count when more than one file is travelling. Its top-left corner is where
+/// the pointer is, so the card reads as something held rather than something
+/// the cursor is inside.
+pub const DRAG_IMAGE_W: f32 = 240.0;
+pub const DRAG_IMAGE_H: f32 = 36.0;
+
+/// Draw the drag image. `count` is the whole selection; `name` and
+/// `icon_chain` describe the one shown.
+pub fn draw_drag_image(
+    canvas: &Canvas,
+    theme: &Theme,
+    name: &str,
+    icon_chain: &[String],
+    count: usize,
+) {
+    let card = Rect::from_wh(DRAG_IMAGE_W, DRAG_IMAGE_H);
+
+    // Translucent, so what is underneath still reads through it: this is a
+    // thing being carried over the desktop, not a window.
+    let mut fill = Paint::default();
+    fill.set_anti_alias(true);
+    fill.set_color(theme.material_selection_focused.with_a(0xD0));
+    canvas.draw_rrect(RRect::new_rect_xy(card, 8.0, 8.0), &fill);
+
+    let refs: Vec<&str> = icon_chain.iter().map(String::as_str).collect();
+    let icon_side = 20.0;
+    if let Some(image) =
+        icons::cached_icon_chain_at(&refs, icon_side as i32, icons::FULL_COLOUR_SIZE)
+    {
+        let dst = Rect::from_xywh(
+            10.0,
+            card.center_y() - icon_side / 2.0,
+            icon_side,
+            icon_side,
+        );
+        canvas.draw_image_rect(&image, None, dst, &Paint::default());
+    }
+
+    // The badge is measured first: the name is truncated to what is left, so a
+    // long name cannot run underneath the count.
+    let badge_w = (count > 1).then(|| {
+        let digits = count.to_string().len() as f32;
+        18.0 + digits * 7.0
+    });
+    let name_right = DRAG_IMAGE_W - 10.0 - badge_w.map_or(0.0, |w| w + 8.0);
+
+    let font = styles::BODY.font();
+    Label::new(ellipsize(&font, name, (name_right - 38.0).max(20.0)))
+        .with_style(styles::BODY)
+        .with_color(Color::WHITE)
+        .centered_on(38.0, card.center_y())
+        .render(canvas);
+
+    if let Some(badge_w) = badge_w {
+        let badge = Rect::from_xywh(
+            DRAG_IMAGE_W - 10.0 - badge_w,
+            card.center_y() - 9.0,
+            badge_w,
+            18.0,
+        );
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(Color::from_argb(0xFF, 0xFF, 0xFF, 0xFF));
+        canvas.draw_rrect(RRect::new_rect_xy(badge, 9.0, 9.0), &paint);
+
+        Label::new(&count.to_string())
+            .with_style(styles::FOOTNOTE_EMPHASIZED)
+            .with_color(theme.material_selection_focused)
+            .centered_on(badge.center_x(), badge.center_y())
+            .render(canvas);
+    }
+}
+
 /// Which pane and row is under `(x, y)` in Miller view.
 pub fn miller_at(
     x: f32,
@@ -911,6 +1118,17 @@ fn draw_footer(canvas: &Canvas, f: &Frame) {
     );
 }
 
+/// The accent, lightened towards white.
+///
+/// A drop outline is a hint about where something would land, not a selection —
+/// which is painted in the accent at full strength — so it says the same colour
+/// more quietly.
+fn accent_light(theme: &Theme) -> Color {
+    let base = accent(theme);
+    let lift = |channel: u8| (channel as f32 + (255.0 - channel as f32) * 0.45) as u8;
+    Color::from_argb(base.a(), lift(base.r()), lift(base.g()), lift(base.b()))
+}
+
 /// The user's accent colour, or the theme's own selection tone when the
 /// desktop has not set one.
 fn accent(theme: &Theme) -> Color {
@@ -1260,6 +1478,10 @@ pub struct Frame<'a> {
     /// icon, which is what an entry with no thumbnail does anyway, so nothing
     /// downstream has to care which case it is in.
     pub thumbs: Option<&'a crate::thumbnails::Store>,
+    /// What a drag now over the window would drop onto, outlined while it is
+    /// over one. `None` when there is no drag, or it is over nothing that
+    /// takes files.
+    pub drop_target: Option<DropHighlight>,
 }
 
 impl Frame<'_> {
@@ -1340,6 +1562,10 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
         ViewMode::Columns => draw_miller(canvas, f),
         ViewMode::Grid => draw_grid(canvas, f),
     }
+
+    // After the panes and before the chrome: over the rows it points at, under
+    // the sidebar divider and the footer.
+    draw_drop_highlight(canvas, f);
 
     paint.set_color(theme.fill_tertiary);
     paint.set_stroke_width(1.0);
@@ -3709,6 +3935,7 @@ mod geometry_tests {
             action_row: None,
             footer: 0.0,
             quickview_close_hovered: false,
+            drop_target: None,
             width: 1100.0,
             height,
             theme: &theme,

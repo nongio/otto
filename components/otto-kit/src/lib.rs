@@ -8,6 +8,7 @@ pub mod color_scheme;
 pub mod common;
 pub mod components;
 pub mod desktop_entry;
+pub mod dnd;
 pub mod filetype;
 pub mod icon_theme;
 pub mod icons;
