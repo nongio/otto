@@ -2591,6 +2591,13 @@ pub fn draw_quickview(
             icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE)
         },
     );
+
+    // The pan's bars, inside the same clip as the picture they belong to.
+    // Nothing is drawn unless there is a zoomed picture with something under
+    // the fold: a state with no content past its viewport has no thumb.
+    let (horizontal, vertical) = session.pan_bars();
+    ScrollRenderer::draw(canvas, horizontal, f.theme, |_, _| {});
+    ScrollRenderer::draw(canvas, vertical, f.theme, |_, _| {});
     canvas.restore();
 }
 

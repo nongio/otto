@@ -185,6 +185,19 @@ struct Browser {
     quickview_pinch: Option<f32>,
 }
 
+/// What a pointer event over the Quick View panel is, as far as the pan's
+/// scrollbars are concerned. The two handlers that can deliver one — the
+/// toplevel's and the panel's own surface — funnel into
+/// [`Browser::quickview_pan_pointer`] through this, so a bar behaves the same
+/// whichever of them the compositor picked.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QuickviewPointer {
+    Press,
+    Motion,
+    Release,
+    Leave,
+}
+
 /// A snapshot of the column stack, for the Back/Forward pair. The whole
 /// breadcrumb is kept, not just the deepest path, so returning to a Miller
 /// view location restores every pane that was open, not just the last one.
@@ -595,7 +608,9 @@ impl Browser {
     /// Whether any pane still has motion to run — momentum, an overscroll
     /// bounce, or a scrollbar fading out.
     fn scroll_animating(&self) -> bool {
-        self.pan.is_animating() || self.columns.iter().any(|c| c.scroll.is_animating())
+        self.pan.is_animating()
+            || self.columns.iter().any(|c| c.scroll.is_animating())
+            || self.quickview_pan_animating()
     }
 
     /// Advance every pane's scrolling by one tick. Returns whether anything
@@ -610,6 +625,9 @@ impl Browser {
                 moved |= column.scroll.tick();
             }
         }
+        // The open preview's picture pans on scroll views of its own, and
+        // they fling and spring like any other.
+        moved |= self.tick_quickview_pan();
         moved
     }
 
@@ -1595,17 +1613,7 @@ impl Browser {
             Some(session) => session.opened_at,
             None => std::time::Instant::now(),
         };
-        self.quickview = Some(quickview::Session {
-            preview,
-            name,
-            first_row: 0,
-            // Fit, whatever the last file was left at. A zoom belongs to the
-            // picture it was made on, not to the panel.
-            zoom: otto_kit::preview::Zoom::FIT,
-            anchor,
-            opened_at,
-            closing: None,
-        });
+        self.quickview = Some(quickview::Session::new(preview, name, anchor, opened_at));
         // Re-opening cancels whatever was on its way out: two panels in flight
         // at once would cross over each other.
         self.quickview_closing = None;
@@ -1654,7 +1662,7 @@ impl Browser {
     /// surface — because the choice between panning and scrolling has to come
     /// out the same whichever of the two the compositor happened to deliver
     /// the event to.
-    fn quickview_wheel(&mut self, dx: f32, dy: f32, panel: Rect) {
+    fn quickview_wheel(&mut self, dx: f32, dy: f32, panel: Rect, stop: bool, discrete: bool) {
         let content = view::quickview_content_rect(panel);
         let pannable = self
             .quickview
@@ -1664,18 +1672,16 @@ impl Browser {
             return;
         };
         if pannable {
-            // The picture follows the fingers the way the content of a
-            // scrolled view does: pushing down brings what is below into
-            // view, which moves the image up.
-            //
-            // At the same speed, too. A Wayland axis delta is the finger's
-            // own travel in logical points, which every scroll view in the
-            // toolkit multiplies before it moves anything — applied raw here
-            // the picture crawled, and one two-finger gesture meant two
-            // different things depending on whether a preview was open.
-            let speed = otto_kit::components::scroll::wheel_scale();
-            session.pan_by(-dx * speed, -dy * speed, content);
+            // A picture is scrolled, not dragged: the deltas go to the pan's
+            // own scroll views, which amplify them the way every other scroll
+            // view in the toolkit does, keep gliding when the fingers lift,
+            // and resist the ends.
+            session.pan_wheel(dx, dy, content, stop, discrete);
         } else {
+            // A gesture that ended moved nothing on its own.
+            if stop {
+                return;
+            }
             // The content's box, not the card's: the rows are laid out below
             // the title strip, so scrolling has to measure against the same
             // rect the preview was drawn into.
@@ -1683,6 +1689,64 @@ impl Browser {
             session.scroll_by(rows, content);
         }
         self.dirty = true;
+    }
+
+    /// Route a pointer event over the panel to the pan's scrollbars.
+    ///
+    /// Returns whether the bar took the press: the panel dismisses on a click
+    /// outside and the close dot on a click inside, and a bar dragged over a
+    /// zoomed picture must do neither.
+    fn quickview_pan_pointer(
+        &mut self,
+        kind: QuickviewPointer,
+        point: skia_safe::Point,
+        panel: Rect,
+    ) -> bool {
+        let content = view::quickview_content_rect(panel);
+        let Some(session) = self.quickview.as_mut() else {
+            return false;
+        };
+        let (handled, moved) = match kind {
+            QuickviewPointer::Press => {
+                let hit = session.pan_pointer_down(point.x, point.y, content);
+                (hit, hit)
+            }
+            QuickviewPointer::Motion => {
+                (false, session.pan_pointer_move(point.x, point.y, content))
+            }
+            QuickviewPointer::Release => {
+                session.pan_pointer_up();
+                (false, false)
+            }
+            QuickviewPointer::Leave => {
+                session.pan_pointer_up();
+                session.pan_pointer_leave();
+                (false, false)
+            }
+        };
+        self.dirty |= moved;
+        handled
+    }
+
+    /// Advance the open preview's pan by one frame. Returns whether it moved.
+    fn tick_quickview_pan(&mut self) -> bool {
+        let panel = self
+            .quickview_panel
+            .unwrap_or_else(|| quickview::panel_rect(self.size.0, self.size.1));
+        let content = view::quickview_content_rect(panel);
+        let Some(session) = self.quickview.as_mut() else {
+            return false;
+        };
+        let moved = session.tick_pan(content);
+        self.dirty |= moved;
+        moved
+    }
+
+    /// Whether the open preview's pan still has frames to run.
+    fn quickview_pan_animating(&self) -> bool {
+        self.quickview
+            .as_ref()
+            .is_some_and(quickview::Session::pan_animating)
     }
 
     /// Dismiss the preview. Returns whether one was open.
@@ -2669,8 +2733,17 @@ impl FilesApp {
                     PointerEventKind::Press { .. } if over => {
                         browser.close_quickview();
                     }
+                    PointerEventKind::Press { .. } => {
+                        // A scrollbar over a zoomed picture takes the press
+                        // before anything else does.
+                        browser.quickview_pan_pointer(QuickviewPointer::Press, point, panel);
+                    }
+                    PointerEventKind::Release { .. } => {
+                        browser.quickview_pan_pointer(QuickviewPointer::Release, point, panel);
+                    }
                     PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
                         browser.quickview_focus(point, panel);
+                        browser.quickview_pan_pointer(QuickviewPointer::Motion, point, panel);
                         if browser.quickview_close_hovered != over {
                             browser.quickview_close_hovered = over;
                             browser.dirty = true;
@@ -2678,6 +2751,7 @@ impl FilesApp {
                     }
                     PointerEventKind::Leave { .. } => {
                         browser.quickview_focus = None;
+                        browser.quickview_pan_pointer(QuickviewPointer::Leave, point, panel);
                         if browser.quickview_close_hovered {
                             browser.quickview_close_hovered = false;
                             browser.dirty = true;
@@ -2692,9 +2766,10 @@ impl FilesApp {
                             horizontal.absolute as f32,
                             vertical.absolute as f32,
                             panel,
+                            vertical.stop || horizontal.stop,
+                            vertical.discrete != 0 || horizontal.discrete != 0,
                         );
                     }
-                    _ => {}
                 }
                 drop(browser);
                 AppContext::request_wakeup();
@@ -2913,13 +2988,24 @@ impl FilesApp {
                         PointerEventKind::Press { .. } => {
                             // The button first: it sits inside the panel, so
                             // the "click outside dismisses" rule below would
-                            // never reach it.
+                            // never reach it. Then the pan's scrollbars,
+                            // which are inside it too.
                             if over_close || !panel.contains(point) {
                                 browser.close_quickview();
+                            } else {
+                                browser.quickview_pan_pointer(
+                                    QuickviewPointer::Press,
+                                    point,
+                                    panel,
+                                );
                             }
+                        }
+                        PointerEventKind::Release { .. } => {
+                            browser.quickview_pan_pointer(QuickviewPointer::Release, point, panel);
                         }
                         PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
                             browser.quickview_focus(point, panel);
+                            browser.quickview_pan_pointer(QuickviewPointer::Motion, point, panel);
                             if browser.quickview_close_hovered != over_close {
                                 browser.quickview_close_hovered = over_close;
                                 browser.dirty = true;
@@ -2927,6 +3013,7 @@ impl FilesApp {
                         }
                         PointerEventKind::Leave { .. } => {
                             browser.quickview_focus = None;
+                            browser.quickview_pan_pointer(QuickviewPointer::Leave, point, panel);
                             if browser.quickview_close_hovered {
                                 browser.quickview_close_hovered = false;
                                 browser.dirty = true;
@@ -2941,9 +3028,10 @@ impl FilesApp {
                                 horizontal.absolute as f32,
                                 vertical.absolute as f32,
                                 panel,
+                                vertical.stop || horizontal.stop,
+                                vertical.discrete != 0 || horizontal.discrete != 0,
                             );
                         }
-                        _ => {}
                     }
                     drop(browser);
                     continue;

@@ -194,13 +194,33 @@ them does nothing rather than something surprising.
   including an image at fit, which has nothing to pan to. Panning stops with
   the picture still covering the box it is looked at through: it can never be
   dragged off and leave the panel empty.
+- **The pan is a scroll view**, one per axis, sharing the picture's box as
+  their viewport. Panning a picture *is* scrolling — the box shows part of
+  something bigger — so it gets what every other scroll in the toolkit gets: a
+  gesture that goes on gliding after the fingers lift, the same distance
+  covered per point of finger travel, ends that stretch and spring back, an
+  overlay bar per axis that can be grabbed to move the picture, and a notched
+  wheel that steps without throwing.
+- **The bars come up with the zoom**, not only with a pan. Zooming in is the
+  moment the picture stops fitting, and how much of it is now off the sides is
+  what a bar is there to say; they fade out again on their own. Only an axis
+  with slack raises one.
+- **The stretch travels in `Zoom::band`**, apart from `offset`, because
+  nothing may clamp it: `clamp_zoom` holds the offset to the picture's own
+  slack and carries the band through untouched, and only the drawing adds it
+  in. So a picture pulled past its stop is drawn past it, while everything
+  that asks how far there is left to pan still gets an answer inside the
+  picture's limits. A zoom snapped back to fit drops the band with it.
 - **Zoom belongs to the picture, not to the panel.** Changing file or closing
   the preview puts it back to fit.
 
 The geometry — the clamp, the snap, the pan limits and the focal-point
 transform — lives in `otto_kit::preview` beside the layout, not in the host, so
 the browser and the file picker cannot end up with different ideas of how far a
-picture zooms. The host owns only the state: one `Zoom` per open session.
+picture zooms. The host owns only the state: one `Zoom` per open session, and
+the two scroll views that move it. The views own the pan while a gesture or a
+fling is running and the `Zoom` is read back from them after every step; a
+pinch, which places the picture without scrolling it, writes the other way.
 
 ### The panel
 

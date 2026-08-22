@@ -444,7 +444,10 @@ impl PaneSurfaces {
         let key = hash_rect(panel)
             ^ generation.rotate_left(17)
             ^ (session.first_row as u64) << 1
-            ^ hash_zoom(session.zoom).rotate_left(33);
+            ^ hash_zoom(session.zoom).rotate_left(33)
+            // The pan's bars fade in and out over a picture that is not
+            // moving, so their presentation is part of what the panel draws.
+            ^ hash_bars(session).rotate_left(7);
         if pane.key == key {
             return painted;
         }
@@ -737,12 +740,38 @@ fn column_key(f: &Frame, depth: usize) -> u64 {
 /// The zoom, as a repaint key contribution. Bit patterns rather than values,
 /// like [`hash_rect`]: a float has no `Hash`, and rounding one to compare it
 /// would let a slow pinch stall.
+/// How the pan's scrollbars are presented — how faded in each is, and how
+/// far each has widened under the pointer.
+fn hash_bars(session: &quickview::Session) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let (horizontal, vertical) = session.pan_bars();
+    let mut hasher = DefaultHasher::new();
+    for state in [horizontal, vertical] {
+        for value in [
+            state.scrollbar_opacity(),
+            state.scrollbar_expansion(),
+            state.offset(),
+        ] {
+            value.to_bits().hash(&mut hasher);
+        }
+    }
+    hasher.finish()
+}
+
 fn hash_zoom(zoom: otto_kit::preview::Zoom) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
     let mut hasher = DefaultHasher::new();
-    for value in [zoom.scale, zoom.offset.0, zoom.offset.1] {
+    for value in [
+        zoom.scale,
+        zoom.offset.0,
+        zoom.offset.1,
+        zoom.band.0,
+        zoom.band.1,
+    ] {
         value.to_bits().hash(&mut hasher);
     }
     hasher.finish()
