@@ -242,6 +242,14 @@ rectangle and not the caller's window.
 - **No anchor** — with an empty `anchor` there is nothing to grow out of, so the
   card scales in place from ~0.96, which is the launcher's entrance. Same code
   path, different starting rect.
+- **Chrome fades in with the card** — the title strip and the close dot are
+  absolute (30 pt tall, a 17 pt dot) while the card grows from the file's own
+  row, so on the first frames they would *be* the card. They stay away below
+  two strips' height (or 140 pt of width) and reach full strength by four
+  strips (240 pt), both ends well under the smallest panel that ever rests, so
+  a panel at rest always has its titlebar. The content's box is unchanged
+  either way — the strip's room is reserved whether or not the strip is drawn
+  — so nothing under it moves when it appears.
 - **Dismissal reverses it**, and faster: ~160 ms back toward the anchor,
   ease-in, with the opacity going in the same 90 ms. Leaving does not bounce —
   there is nothing to settle into. If the anchor is no longer valid (the caller

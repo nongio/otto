@@ -2418,7 +2418,7 @@ pub fn quickview_content_rect(panel: Rect) -> Rect {
 }
 
 /// Paint the close button. Split out so the panel's own draw stays readable.
-fn draw_quickview_close(canvas: &Canvas, theme: &Theme, panel: Rect, hovered: bool) {
+fn draw_quickview_close(canvas: &Canvas, theme: &Theme, panel: Rect, hovered: bool, opacity: f32) {
     let close = quickview_close_rect(panel);
     let centre = Point::new(close.center_x(), close.center_y());
 
@@ -2427,11 +2427,14 @@ fn draw_quickview_close(canvas: &Canvas, theme: &Theme, panel: Rect, hovered: bo
     // A tint of the theme's own fill rather than the traffic lights' red:
     // this dismisses a preview, it does not close a window, and borrowing
     // the window-close colour would overstate it.
-    paint.set_color(if hovered {
-        theme.fill_primary
-    } else {
-        theme.fill_secondary
-    });
+    paint.set_color(fade(
+        if hovered {
+            theme.fill_primary
+        } else {
+            theme.fill_secondary
+        },
+        opacity,
+    ));
     canvas.draw_circle(centre, close.width() / 2.0, &paint);
 
     // The glyph is always drawn, unlike the traffic lights' reveal-on-hover:
@@ -2441,7 +2444,7 @@ fn draw_quickview_close(canvas: &Canvas, theme: &Theme, panel: Rect, hovered: bo
     glyph.set_style(skia_safe::paint::Style::Stroke);
     glyph.set_stroke_width(1.5);
     glyph.set_stroke_cap(skia_safe::PaintCap::Round);
-    glyph.set_color(theme.text_secondary);
+    glyph.set_color(fade(theme.text_secondary, opacity));
     let r = close.width() * 0.24;
     canvas.draw_line(
         (centre.x - r, centre.y - r),
@@ -2453,6 +2456,47 @@ fn draw_quickview_close(canvas: &Canvas, theme: &Theme, panel: Rect, hovered: bo
         (centre.x - r, centre.y + r),
         &glyph,
     );
+}
+
+/// How much of the panel's chrome is drawn at the size the panel is now.
+///
+/// The strip and the close dot are absolute: 30 points tall and 17 points
+/// across whatever the card measures. At rest that is chrome around a
+/// preview; on the first frames of the entrance the card is the file's own
+/// row, and the same 30 points are the entire card — so what the eye catches
+/// is an enormous titlebar with a huge dot in it, growing, rather than a
+/// preview opening. The card's *content* has no such floor: it is laid out
+/// into whatever box it is given and simply arrives small.
+///
+/// So the chrome fades in as the card grows into a size that can carry it,
+/// and both ends of the ramp are reached well below [`PANEL_MIN`] — a panel
+/// at rest, however small the window, always has its titlebar.
+fn quickview_chrome_opacity(panel: Rect) -> f32 {
+    // Two strips tall before any of it shows, four before all of it does.
+    const HEIGHT_FROM: f32 = crate::quickview::TITLEBAR_H * 2.0;
+    const HEIGHT_TO: f32 = crate::quickview::TITLEBAR_H * 4.0;
+    // Width matters too: a card wide enough for the dot but not for a name
+    // is a card the strip has nothing to say in.
+    const WIDTH_FROM: f32 = 140.0;
+    const WIDTH_TO: f32 = 240.0;
+
+    fn ramp(value: f32, from: f32, to: f32) -> f32 {
+        ((value - from) / (to - from)).clamp(0.0, 1.0)
+    }
+
+    ramp(panel.height(), HEIGHT_FROM, HEIGHT_TO).min(ramp(panel.width(), WIDTH_FROM, WIDTH_TO))
+}
+
+/// A colour at a fraction of its own alpha. Scaled, never replaced: the
+/// theme's fills are translucent by design and forcing one opaque to fade it
+/// in would make it darker at the end than it is at rest.
+fn fade(color: Color, opacity: f32) -> Color {
+    Color::from_argb(
+        (color.a() as f32 * opacity) as u8,
+        color.r(),
+        color.g(),
+        color.b(),
+    )
 }
 
 pub fn draw_quickview(
@@ -2486,46 +2530,51 @@ pub fn draw_quickview(
     edge.set_color(f.theme.fill_tertiary);
     canvas.draw_rrect(RRect::new_rect_xy(panel, 12.0, 12.0), &edge);
 
-    // Clipped to the panel: mid-entrance the content is drawn at its resting
-    // metrics inside a smaller card, exactly as the compositor-run version
-    // scales one buffer rather than re-laying-out the content.
-    // The title strip first, so the content's clip can exclude it.
-    let strip = quickview_titlebar_rect(panel);
-    let mut strip_paint = Paint::default();
-    strip_paint.set_anti_alias(true);
-    strip_paint.set_color(f.theme.fill_quaternary);
-    canvas.save();
-    // Clipped to the panel so the strip's own corners follow the card's.
-    canvas.clip_rrect(RRect::new_rect_xy(panel, 12.0, 12.0), None, true);
-    canvas.draw_rect(strip, &strip_paint);
-    canvas.restore();
+    // The chrome, but only once the card is big enough to be a card with
+    // chrome on it rather than a titlebar with a card behind it. The content
+    // keeps its place either way — the strip's room is reserved whether or
+    // not the strip is drawn — so what appears mid-entrance appears where it
+    // will rest, and nothing under it moves when it does.
+    let chrome = quickview_chrome_opacity(panel);
+    if chrome > 0.0 {
+        // The title strip first, so the content's clip can exclude it.
+        let strip = quickview_titlebar_rect(panel);
+        let mut strip_paint = Paint::default();
+        strip_paint.set_anti_alias(true);
+        strip_paint.set_color(fade(f.theme.fill_quaternary, chrome));
+        canvas.save();
+        // Clipped to the panel so the strip's own corners follow the card's.
+        canvas.clip_rrect(RRect::new_rect_xy(panel, 12.0, 12.0), None, true);
+        canvas.draw_rect(strip, &strip_paint);
+        canvas.restore();
 
-    let mut rule = Paint::default();
-    rule.set_anti_alias(true);
-    rule.set_color(f.theme.fill_tertiary);
-    rule.set_stroke_width(1.0);
-    canvas.draw_line(
-        Point::new(strip.left, strip.bottom),
-        Point::new(strip.right, strip.bottom),
-        &rule,
-    );
+        let mut rule = Paint::default();
+        rule.set_anti_alias(true);
+        rule.set_color(fade(f.theme.fill_tertiary, chrome));
+        rule.set_stroke_width(1.0);
+        canvas.draw_line(
+            Point::new(strip.left, strip.bottom),
+            Point::new(strip.right, strip.bottom),
+            &rule,
+        );
 
-    // The name, centred in the strip and clamped so a long one cannot run
-    // under the close button.
-    if !session.name.is_empty() {
-        // The same size the browser's own header gives a title. The strip is
-        // a titlebar and the name is what it is for, so it is read at the
-        // distance a window title is read at rather than a caption's.
-        let font = styles::BODY_EMPHASIZED.font();
-        let room = strip.width() - 80.0;
-        Label::new(ellipsize(&font, &session.name, room.max(40.0)))
-            .with_style(styles::BODY_EMPHASIZED)
-            .with_color(f.theme.text_secondary)
-            .centered_at(strip.center_x(), strip.center_y())
-            .render(canvas);
+        // The name, centred in the strip and clamped so a long one cannot run
+        // under the close button.
+        if !session.name.is_empty() {
+            // The same size the browser's own header gives a title. The strip
+            // is a titlebar and the name is what it is for, so it is read at
+            // the distance a window title is read at rather than a caption's.
+            let font = styles::BODY_EMPHASIZED.font();
+            let room = strip.width() - 80.0;
+            Label::new(ellipsize(&font, &session.name, room.max(40.0)))
+                .with_style(styles::BODY_EMPHASIZED)
+                .with_color(fade(f.theme.text_secondary, chrome))
+                .centered_at(strip.center_x(), strip.center_y())
+                .render(canvas);
+        }
+
+        draw_quickview_close(canvas, f.theme, panel, f.quickview_close_hovered, chrome);
     }
-
-    draw_quickview_close(canvas, f.theme, panel, f.quickview_close_hovered);
 
     let content = quickview_content_rect(panel);
     canvas.save();
@@ -2911,6 +2960,46 @@ pub(crate) fn entry_icon_rect(rect: Rect, mode: ViewMode) -> Rect {
 #[cfg(test)]
 mod geometry_tests {
     use super::*;
+
+    /// The first frames of the entrance are a card the size of the file's own
+    /// row. The chrome is absolute, so drawing it there would fill the card
+    /// with titlebar; it stays away until the card can carry it.
+    #[test]
+    fn a_tiny_card_carries_no_chrome() {
+        let row = Rect::from_xywh(240.0, 180.0, 260.0, 24.0);
+        assert_eq!(quickview_chrome_opacity(row), 0.0);
+    }
+
+    /// And every panel that is actually at rest has it in full, however
+    /// small the window it rests in — both ends of the ramp sit below the
+    /// smallest panel the browser will lay out.
+    #[test]
+    fn a_resting_panel_always_has_its_titlebar() {
+        for (w, h) in [(1100.0, 700.0), (320.0, 240.0), (480.0, 360.0)] {
+            let panel = crate::quickview::panel_rect(w, h);
+            assert_eq!(
+                quickview_chrome_opacity(panel),
+                1.0,
+                "{w}x{h} window, panel {panel:?}"
+            );
+        }
+    }
+
+    /// In between it ramps rather than popping, so the strip arrives with the
+    /// card instead of appearing on top of one already in motion.
+    #[test]
+    fn the_chrome_fades_in_as_the_card_grows() {
+        let resting = crate::quickview::panel_rect(1100.0, 700.0);
+        let row = Rect::from_xywh(240.0, 180.0, 260.0, 24.0);
+        let mut last = 0.0;
+        for step in 0..=20 {
+            let t = step as f32 / 20.0;
+            let opacity = quickview_chrome_opacity(crate::quickview::entrance_at(row, resting, t));
+            assert!(opacity >= last - 0.001, "went backwards at t={t}");
+            last = opacity;
+        }
+        assert_eq!(last, 1.0);
+    }
 
     /// The panel opens centred, and moving it moves the whole card — the
     /// close dot and the permission grid travel with it, because every piece
