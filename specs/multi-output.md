@@ -31,6 +31,15 @@ Otto can drive more than one output (physical monitor or virtual/screenshare out
 - Virtual (screenshare) outputs are placed according to their configured position, following the same overlap rule as physical outputs; if unconfigured, a virtual output defaults to the same origin as the first output, which overlaps it (see Constraints).
 - Re-laying-out (e.g. after a mode change, hotplug, or resume) recomputes every output's global position from scratch and re-applies it, so positions stay consistent across changes.
 
+### Pointer Reach (clamping across outputs)
+
+- The pointer is clamped to the bounding box of the *pointer-reachable* outputs: every physical output plus any virtual output marked `interactive`. A non-interactive virtual output never contributes to the reachable area, on any input path.
+- The reachable area is the real bounding box of those outputs' global geometries, not the sum of their widths, so arrangements that are vertically stacked, negatively positioned (an output placed to the left of the origin), or non-adjacent are all fully reachable and none of them lets the pointer escape into empty space.
+- The vertical clamp is taken from the outputs that actually span the pointer's clamped x, not from the tallest output overall: over a short external screen beside a taller laptop panel, the pointer stops at that screen's bottom edge. Where the clamped x falls in a horizontal gap between outputs (a layout with a hole), the vertical range falls back to the whole layout's extent.
+- Absolute pointer input (tablets, RDP/remote drivers) is normalized against the same reachable bounding box that clamping uses, so the full input range maps onto exactly the area the pointer can occupy.
+- Outputs whose geometry cannot be resolved yet are ignored rather than assumed: a half-updated output set observed mid-hotplug shrinks the reachable area for that moment instead of panicking or clamping against a stale geometry.
+- The same clamp applies on every path — physical relative motion, physical absolute motion, and virtual-pointer motion.
+
 ### Output-Local Rendering (scene space)
 
 - Every output's render scene subtree — the per-output container layer holding its background, windows, expose, overlay UI, dock, and switcher layers — is positioned at scene coordinate (0,0) and sized to that output's own physical extent. Output subtrees intentionally overlap one another in scene space.
@@ -67,6 +76,8 @@ Otto can drive more than one output (physical monitor or virtual/screenshare out
   - A new frame is composited only when no earlier frame is still awaiting its fence, and it is rendered into a spare buffer while the previous frame's fence drains.
 - The stream's buffer pool provides more than one buffer (a small pool rather than a single shared buffer) so that a spare is always available to composite the next frame into while the previous frame's fence is still draining, which keeps the stream's frame rate up despite the deferred wait.
 - The deferred fence adds up to one frame of latency to the outgoing stream (a frame is queued the tick after it finishes rendering rather than the same tick), which is accepted as the cost of keeping local input responsive.
+- A frame's fence must be *submitted* to the GPU when it is created, by flushing the command stream after inserting it. A native (exportable) EGL fence is only appended to the command stream; it does not flush on its own, and until it is submitted it can never signal. Polling such a fence with the non-blocking test above therefore never succeeds and the output stops compositing entirely — its stream keeps delivering whatever the pool hands out (untouched, transparent-black buffers) and only recovers if some unrelated render happens to flush the shared context. This is not hypothetical: it is why a virtual output stayed blank while the desktop was idle and came back to life only while the pointer was moving over a physical output.
+- As a backstop, a frame that has waited far longer than any plausible GPU render is released to the stream anyway rather than being held indefinitely. Since no new frame is composited while one is pending, holding forever means the output never produces another frame; one possibly-incomplete frame is the lesser failure, and it is logged.
 - Remote virtual-pointer input aimed at a virtual output (e.g. an `otto-rdp` client driving a wlr-virtual-pointer) must request a redraw of the output so that remote pointer moves and clicks actually produce a new composited frame; without an explicit redraw request the off-vblank output has nothing to pace it and the remote input would not be reflected in the stream.
 
 ### Damage Delivery Across Outputs

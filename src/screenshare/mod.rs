@@ -624,6 +624,7 @@ pub fn handle_screenshare_command<B: crate::state::Backend + 'static>(
                 framerate_denom: 1,
                 gbm_device,
                 capabilities,
+                label: None,
             };
             let mut pipewire_stream = PipeWireStream::new(config);
 

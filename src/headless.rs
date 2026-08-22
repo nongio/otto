@@ -687,6 +687,7 @@ impl HeadlessHandle {
                         framerate_denom: 1,
                         gbm_device: None,
                         capabilities: Default::default(),
+                        label: None,
                     }),
                     pending_frame: None,
                 },

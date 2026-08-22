@@ -56,23 +56,17 @@ WL=$(grep -a "Listening on wayland socket" "$OTTO_LOG" | strip | grep -oP 'name=
 WL="${WL:-wayland-1}"
 
 if [ "$MODE" = "virtual" ]; then
-  NODE=$(grep -a "Virtual output 'virtual-1' started" "$OTTO_LOG" | strip | grep -oP 'PipeWire node \K[0-9]+' | head -1)
-  if [ -z "$NODE" ]; then
-    echo "!! virtual-1 has no PipeWire node (is it enabled in otto_config.toml?)"
-    cleanup
-  fi
-  ARGS=(--node "$NODE" --output virtual-1)
-  echo "serving virtual-1 (PipeWire node $NODE)"
+  ARGS=(--output virtual-1)
+  echo "serving virtual-1 (bridge resolves the PipeWire node itself)"
 else
   ARGS=(--connector eDP-1)
   echo "serving physical eDP-1"
 fi
 
 # ── bridge ────────────────────────────────────────────────────────────────
-# --tls unless OTTO_RDP_NOTLS=1: mstsc and the Windows App / iOS / Android
-# clients REQUIRE it (they won't run graphics over plain-RDP security).
+# TLS is on by default; OTTO_RDP_NOTLS=1 switches to the plain-RDP layer.
 # OTTO_RDP_BITMAP=1 forces the legacy RemoteFX/RLE path (isolates H.264 issues).
-[ -z "${OTTO_RDP_NOTLS:-}" ] && ARGS+=(--tls)
+[ -n "${OTTO_RDP_NOTLS:-}" ] && ARGS+=(--no-tls)
 [ -n "${OTTO_RDP_BITMAP:-}" ] && ARGS+=(--bitmap)
 echo "starting bridge -> $RDP_LOG   (args: ${ARGS[*]})"
 # For an EGFX/DVC PDU trace on a failed connect, run with e.g.
