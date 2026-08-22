@@ -136,6 +136,11 @@ struct Browser {
     nav_pressed: Option<view::NavButton>,
     /// An in-place rename in progress. List view only, for now.
     rename: Option<RenameSession>,
+    /// The type-ahead buffer and when it was last appended to: typing
+    /// printable characters walks the cursor to the entry that starts with
+    /// them, without filtering the view or showing anything. Distinct from
+    /// search, which is Ctrl+F and changes what is displayed.
+    typeahead: Option<(String, std::time::Instant)>,
     /// A Back/Forward step landed and its panes are still being read. The
     /// remembered cursor is an index into a list that does not exist until
     /// those reads finish, so it is re-derived — and scrolled into view —
@@ -268,6 +273,7 @@ impl Browser {
             last_row_click: None,
             last_boundary_click: None,
             rename: None,
+            typeahead: None,
             pending_restore: false,
             back: Vec::new(),
             forward: Vec::new(),
@@ -1163,6 +1169,67 @@ impl Browser {
             self.select(self.active, next);
         }
         self.reveal_cursor();
+    }
+
+    /// Move the cursor to the first entry whose name starts with the
+    /// type-ahead buffer, case-insensitively.
+    ///
+    /// Nothing is filtered and nothing is drawn: the only sign it happened is
+    /// the selection moving, which is the whole point of the gesture —
+    /// reaching a file in a long directory without leaving the keyboard.
+    /// The buffer expires after a second of silence, so the next burst of
+    /// typing starts a fresh name rather than extending a stale one.
+    ///
+    /// Repeating one character with nothing in between cycles through the
+    /// entries beginning with it, rather than looking for a doubled letter
+    /// that almost no name has.
+    fn typeahead(&mut self, ch: char) {
+        const EXPIRY: std::time::Duration = std::time::Duration::from_secs(1);
+
+        let names: Vec<String> = self
+            .visible(self.active)
+            .iter()
+            .map(|entry| entry.name.to_lowercase())
+            .collect();
+        if names.is_empty() {
+            return;
+        }
+
+        let now = std::time::Instant::now();
+        let live = self
+            .typeahead
+            .take()
+            .filter(|(_, last)| now.duration_since(*last) < EXPIRY)
+            .map(|(buffer, _)| buffer);
+        let typed = ch.to_lowercase().to_string();
+        let cycling = live.as_deref() == Some(typed.as_str());
+        let buffer = match live {
+            Some(buffer) if cycling => buffer,
+            Some(mut buffer) => {
+                buffer.push_str(&typed);
+                buffer
+            }
+            None => typed,
+        };
+
+        // Cycling resumes just past the cursor and wraps; a buffer that grew
+        // answers from the top, so the same keys always land on the same file.
+        let from = match (cycling, self.columns[self.active].cursor) {
+            (true, Some(cursor)) => cursor + 1,
+            _ => 0,
+        };
+        let hit = (0..names.len())
+            .map(|step| (from + step) % names.len())
+            .find(|&index| names[index].starts_with(&buffer));
+
+        // Kept even when nothing matched: the miss is part of the word being
+        // typed, and dropping it would make the next character search for a
+        // prefix the user never asked for.
+        self.typeahead = Some((buffer, now));
+        if let Some(index) = hit {
+            self.select(self.active, index);
+            self.reveal_cursor();
+        }
     }
 
     /// Scroll the active pane the shortest distance that brings the cursor
@@ -2366,6 +2433,10 @@ impl App for FilesApp {
                 return;
             }
 
+            // Set by the type-ahead arm below: every other key ends the
+            // word being typed, the way a second of silence does.
+            let mut typing = false;
+
             match event.keysym {
                 Keysym::Down => {
                     let step = browser.row_step();
@@ -2464,19 +2535,35 @@ impl App for FilesApp {
                     browser.show_hidden = !browser.show_hidden;
                     browser.dirty = true;
                 }
-                Keysym::_1 => {
+                Keysym::_1 if ctrl => {
                     browser.mode = ViewMode::List;
                     browser.dirty = true;
                 }
-                Keysym::_2 => {
+                Keysym::_2 if ctrl => {
                     browser.mode = ViewMode::Grid;
                     browser.dirty = true;
                 }
-                Keysym::_3 => {
+                Keysym::_3 if ctrl => {
                     browser.mode = ViewMode::Columns;
                     browser.dirty = true;
                 }
-                _ => {}
+                // Anything else printable is type-ahead. It comes last so
+                // that every shortcut above keeps the key it already had.
+                _ => {
+                    if let Some(ch) = event
+                        .utf8
+                        .as_deref()
+                        .filter(|_| !ctrl)
+                        .and_then(|text| text.chars().next())
+                        .filter(|ch| !ch.is_control() && *ch != ' ')
+                    {
+                        browser.typeahead(ch);
+                        typing = true;
+                    }
+                }
+            }
+            if !typing {
+                browser.typeahead = None;
             }
 
             // The preview follows the cursor: arrow-keying through a folder
@@ -3711,5 +3798,134 @@ mod rename_tests {
     #[test]
     fn an_extensionless_file_selects_the_whole_name() {
         assert_eq!(rename_selection("README", false), 0..6);
+    }
+}
+
+#[cfg(test)]
+mod typeahead_tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    /// A real directory of empty files, swept up when the test ends.
+    ///
+    /// The listing comes off a worker thread reading the filesystem, so
+    /// type-ahead can only be exercised against something actually on disk.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn holding(names: &[&str]) -> Self {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+            let path = std::env::temp_dir().join(format!(
+                "otto-files-typeahead-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).expect("temp dir");
+            for name in names {
+                std::fs::write(path.join(name), b"").expect("temp file");
+            }
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A browser over `names`, with the first listing already in.
+    fn browser_over(names: &[&str]) -> (Browser, TempDir) {
+        let dir = TempDir::holding(names);
+        let mut browser = Browser::new(dir.0.clone());
+        // The frame loop is what normally polls the loader; a test has to.
+        for _ in 0..500 {
+            if browser.columns[0].poll() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(!browser.columns[0].loading(), "listing never arrived");
+        (browser, dir)
+    }
+
+    fn at_cursor(browser: &Browser) -> Option<String> {
+        let index = browser.columns[browser.active].cursor?;
+        Some(browser.visible(browser.active)[index].name.clone())
+    }
+
+    /// Names chosen so that a prefix, a second character and a repeat all
+    /// have somewhere different to land.
+    const NAMES: &[&str] = &[
+        "Alpha.txt",
+        "apple.txt",
+        "Banana.txt",
+        "beta.txt",
+        "Photo.png",
+    ];
+
+    #[test]
+    fn a_character_selects_the_first_entry_starting_with_it() {
+        let (mut browser, _dir) = browser_over(NAMES);
+        browser.typeahead('b');
+        // Matching ignores case, so a lowercase key reaches a capitalised name.
+        assert_eq!(at_cursor(&browser).as_deref(), Some("Banana.txt"));
+    }
+
+    #[test]
+    fn a_second_character_narrows_the_same_word() {
+        let (mut browser, _dir) = browser_over(NAMES);
+        browser.typeahead('a');
+        assert_eq!(at_cursor(&browser).as_deref(), Some("Alpha.txt"));
+        browser.typeahead('p');
+        assert_eq!(at_cursor(&browser).as_deref(), Some("apple.txt"));
+    }
+
+    #[test]
+    fn repeating_one_character_cycles_and_wraps() {
+        let (mut browser, _dir) = browser_over(NAMES);
+        browser.typeahead('b');
+        assert_eq!(at_cursor(&browser).as_deref(), Some("Banana.txt"));
+        browser.typeahead('b');
+        assert_eq!(at_cursor(&browser).as_deref(), Some("beta.txt"));
+        // Past the last match it comes back round rather than stopping dead.
+        browser.typeahead('b');
+        assert_eq!(at_cursor(&browser).as_deref(), Some("Banana.txt"));
+    }
+
+    #[test]
+    fn a_second_of_silence_starts_a_new_word() {
+        let (mut browser, _dir) = browser_over(NAMES);
+        browser.typeahead('a');
+        assert_eq!(at_cursor(&browser).as_deref(), Some("Alpha.txt"));
+        // Backdated rather than slept through: the expiry is a second, and no
+        // test should take one.
+        let (buffer, _) = browser.typeahead.take().expect("buffer");
+        browser.typeahead = Some((buffer, std::time::Instant::now() - Duration::from_secs(2)));
+        browser.typeahead('p');
+        assert_eq!(at_cursor(&browser).as_deref(), Some("Photo.png"));
+    }
+
+    #[test]
+    fn a_name_that_matches_nothing_leaves_the_cursor_alone() {
+        let (mut browser, _dir) = browser_over(NAMES);
+        browser.typeahead('b');
+        browser.typeahead('z');
+        assert_eq!(at_cursor(&browser).as_deref(), Some("Banana.txt"));
+        // The miss stays in the buffer: it is part of the word being typed.
+        assert_eq!(
+            browser.typeahead.as_ref().map(|(b, _)| b.as_str()),
+            Some("bz")
+        );
+    }
+
+    #[test]
+    fn an_empty_directory_is_not_a_panic() {
+        let (mut browser, _dir) = browser_over(&[]);
+        browser.typeahead('a');
+        assert_eq!(at_cursor(&browser), None);
     }
 }

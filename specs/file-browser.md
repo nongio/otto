@@ -250,7 +250,7 @@ anchor-based multi-select rules and rubber-band selection. See
 | Ctrl+Z | undo the last operation |
 | Ctrl+N | new window |
 | Ctrl+I | show info for the selection |
-| Ctrl+1 / Ctrl+2 | list / icon view |
+| Ctrl+1 / Ctrl+2 / Ctrl+3 | list / icon / column view |
 | Escape | cancel an inline rename, else clear the search field, else clear the selection |
 
 Return renames, in every view mode; F2 is an alias for it, for the Linux

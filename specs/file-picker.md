@@ -51,8 +51,9 @@ window, and the file the user chooses comes back as a `file://` URI.
   queueing. This is the one deliberate departure from *Concurrent requests*
   below.
 - **Choices** (`a(ssa(ss)s)`) are carried over the wire and not yet rendered.
-- **Search, type-ahead and the location popup.** The toolbar's location control
-  says where you are; it does not yet open the ancestor menu.
+- **Search and the location popup.** The toolbar's location control says where
+  you are; it does not yet open the ancestor menu. Type-ahead is built: typing
+  printable characters walks the cursor, as *Keyboard* below describes.
 - **Per-`app_id` directory memory.** `Request::starting_directory` takes the
   remembered directory as an argument and is always passed `None`; nothing is
   persisted yet.
