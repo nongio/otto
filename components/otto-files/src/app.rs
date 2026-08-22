@@ -1,4 +1,4 @@
-use crate::{model, pane_surfaces, perf, picker, quickview, scene, view};
+use crate::{model, pane_surfaces, perf, picker, quickview, scene, thumbcache, thumbnails, view};
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -98,6 +98,13 @@ struct Browser {
     /// Bumped for every preview decode started, independent of Quick View's
     /// own generation counter — the two panels can be open at once.
     preview_generation_seed: u64,
+    /// Thumbnails for the entries on screen, in place of their type icons.
+    ///
+    /// Only the visible ones are ever fetched, and only a few at a time — see
+    /// [`thumbnails::Store`]. The store is asked what it wants on every update
+    /// and the host runs the work off the UI thread, the same shape the
+    /// preview column's decodes take.
+    thumbs: thumbnails::Store,
     /// A decode is in flight. Keeps the frame loop alive so its result is
     /// painted without waiting for the next input.
     quickview_pending: bool,
@@ -289,6 +296,7 @@ impl Browser {
             quickview: None,
             preview: None,
             preview_generation_seed: 0,
+            thumbs: thumbnails::Store::new(),
             quickview_pending: false,
             quickview_closing: None,
             quickview_auto: std::env::var_os("OTTO_FILES_QV_AUTO").is_some(),
@@ -520,6 +528,65 @@ impl Browser {
         if self.pan.scroll_to(target) {
             self.dirty = true;
         }
+    }
+
+    /// Ask the thumbnail store what the visible entries still need.
+    ///
+    /// Called once per update, the same place the preview column's target is
+    /// synced. Returns the jobs the host is to run off the UI thread; an empty
+    /// vector — the usual answer — means everything on screen is already
+    /// settled.
+    ///
+    /// Only the pane the user is looking at is considered. In Miller view the
+    /// parent columns are 16-pixel rows of icons where a thumbnail buys almost
+    /// nothing, and fetching for every column at once would spend the whole
+    /// in-flight budget on panes the eye is not on.
+    fn sync_thumbnails(&mut self) -> Vec<thumbnails::Job> {
+        let depth = self.active.min(self.columns.len().saturating_sub(1));
+        let entries = self.visible(depth);
+        if entries.is_empty() {
+            return Vec::new();
+        }
+
+        let area = view::content_viewport(self.size.0, self.content_h(), self.mode);
+        let scroll = self.columns[depth].scroll.offset();
+        let range = match self.mode {
+            view::ViewMode::Grid => view::grid_visible_range(area, entries.len(), scroll, area),
+            view::ViewMode::List => {
+                view::RowStrip::list(self.size.0, entries.len(), scroll).visible(area)
+            }
+            // A Miller pane's rows are the same height as a list's, so the
+            // same strip describes them; the pane's own width is what differs,
+            // and the vertical extent is all this needs.
+            view::ViewMode::Columns => {
+                view::RowStrip::list(self.size.0, entries.len(), scroll).visible(area)
+            }
+        };
+
+        // The box a thumbnail will be drawn in decides how much detail to ask
+        // for: a grid cell is worth a real picture, a list row is 16 points of
+        // it.
+        let box_edge = match self.mode {
+            view::ViewMode::Grid => view::GRID_ICON,
+            view::ViewMode::List | view::ViewMode::Columns => view::ICON_SIZE,
+        };
+        let scale = AppContext::scale_factor().max(1) as f32;
+        let size = thumbcache::Size::for_box(box_edge, scale);
+
+        let requests = entries
+            .get(range.clone())
+            .unwrap_or_default()
+            .iter()
+            // A directory has no picture of its own, and asking for one means
+            // a sandboxed worker per folder in a folder of folders.
+            .filter(|entry| !entry.is_dir)
+            .map(|entry| thumbnails::Request {
+                path: entry.path.clone(),
+                modified: entry.modified,
+                may_generate: entry.kind.thumbnailable(),
+            })
+            .collect::<Vec<_>>();
+        self.thumbs.wanted(requests, size)
     }
 
     /// Show a preview decode that arrived, unless the selection has moved on
@@ -2214,7 +2281,7 @@ impl App for FilesApp {
     /// [`AppContext::request_wakeup`] — and this is where that wakeup turns
     /// into a frame.
     fn on_update(&mut self, _ctx: &AppContext) {
-        let (repaint, preview_target, scrolled_only) = {
+        let (repaint, preview_target, scrolled_only, thumb_jobs) = {
             let mut browser = self.state.lock().unwrap();
             let changed = browser.poll();
             // Momentum, the overscroll bounce and the scrollbar's fade all
@@ -2228,6 +2295,12 @@ impl App for FilesApp {
             // checked centrally here rather than threaded through every place
             // the selection can change.
             let preview_target = browser.sync_preview_target();
+            // What the entries on screen still need a picture for. Same place
+            // and same reasoning as the preview target above: everything that
+            // can change what is visible — a scroll, a directory landing, a
+            // switch of view mode — has already happened by the time this
+            // runs.
+            let thumb_jobs = browser.sync_thumbnails();
             // A sideways pan moves the columns, and the hairlines between them
             // are drawn in the window, not in the column surfaces — so while
             // the stack is panning the window has to keep up or the dividers
@@ -2246,10 +2319,13 @@ impl App for FilesApp {
                 || std::mem::take(&mut browser.dirty)
                 || animating
                 || preview_target.is_some();
-            (repaint, preview_target, scrolled_only)
+            (repaint, preview_target, scrolled_only, thumb_jobs)
         };
         if let Some((path, generation)) = preview_target {
             self.start_preview(path, generation);
+        }
+        for job in thumb_jobs {
+            self.start_thumbnail(job);
         }
 
         // One lock, taken once. A `self.state.lock()` in an `if` condition
@@ -2732,6 +2808,32 @@ impl FilesApp {
         });
     }
 
+    /// Fetch one thumbnail off the UI thread.
+    ///
+    /// The shared cache makes most of these a single file read; the rest end
+    /// in the sandboxed decoder, which is why this is never run inline. The
+    /// result is recorded whatever it is — a miss is worth remembering, or the
+    /// same file is asked for again on the very next frame.
+    fn start_thumbnail(&self, job: thumbnails::Job) {
+        let state = Arc::clone(&self.state);
+        tokio::task::spawn_blocking(move || {
+            let found = thumbnails::fetch(&job);
+            let mut browser = state.lock().unwrap();
+            let before = browser.thumbs.epoch();
+            browser.thumbs.finish(job.path, job.modified, found);
+            // A picture landing changes what the panes draw; a miss changes
+            // only what will be asked for next, and repainting for it would
+            // render the same pixels again. The store's epoch is what tells
+            // the two apart.
+            browser.dirty |= browser.thumbs.epoch() != before;
+            drop(browser);
+            // Same reason the preview decodes wake the loop: a window that has
+            // stopped committing frames has no frame callback to notice a
+            // thumbnail landed.
+            AppContext::request_wakeup();
+        });
+    }
+
     /// Keep repainting while a directory read is outstanding.
     ///
     /// Two constraints force this shape. A worker thread cannot ask for a
@@ -2773,6 +2875,9 @@ impl FilesApp {
                     || browser.quickview_pending
                     || opening
                     || preview_pending
+                    // …and while thumbnails are being fetched, so they appear
+                    // as they land rather than at the next keystroke.
+                    || browser.thumbs.is_busy()
             };
             if repaint {
                 window.request_frame();
