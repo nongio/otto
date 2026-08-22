@@ -12,7 +12,20 @@ use skia_safe::{Canvas, Color, Paint, RRect, Rect};
 pub const MINI_H: f32 = 28.0;
 pub const COMPACT_H: f32 = 36.0;
 pub const CARD_W: f32 = 300.0;
+/// Height of a card whose body fits on one line and which has no actions.
+/// A longer body or an action row grows it — see [`card_height`].
 pub const CARD_H: f32 = 68.0;
+/// Baseline-to-baseline distance between wrapped body lines.
+const BODY_LINE_H: f32 = 14.0;
+/// A notification that runs longer than this is ellipsised: past three lines
+/// the island stops being a glance and wants opening in the app instead.
+const MAX_BODY_LINES: usize = 3;
+const CARD_PAD: f32 = 10.0;
+const CARD_ICON: f32 = 24.0;
+const CARD_CLOSE_ZONE: f32 = 40.0;
+/// Height of the inline action button row, and the gap above it.
+const ACTION_ROW_H: f32 = 18.0;
+const ACTION_ROW_GAP: f32 = 8.0;
 /// Corner radius of an open notification — noticeably squarer than the fully
 /// rounded pill/circle it grew out of.
 pub const CARD_RADIUS: f32 = 12.0;
@@ -141,10 +154,24 @@ pub fn draw_card(canvas: &Canvas, activity: &Activity, w: f32, h: f32) {
     let title = truncate_text(&activity.title, &title_font, max_w);
     canvas.draw_str(&title, (text_x, pad + 13.0), &title_font, &title_paint);
 
-    // Body — or, when the notification has inline actions, a row of action
-    // buttons in the same slot (there isn't room for both in a 60px card).
+    // Body, wrapped over as many lines as the card was sized for. The card
+    // grows to fit it, so the text is readable on arrival rather than cut off
+    // after a few words.
+    if !activity.body.is_empty() {
+        let body_font = body_font();
+        let mut body_paint = Paint::default();
+        body_paint.set_anti_alias(true);
+        body_paint.set_color(Color::from_argb(180, 255, 255, 255));
+        for (i, line) in card_body_lines(&activity.body, w).iter().enumerate() {
+            let y = BODY_TOP_BASELINE + i as f32 * BODY_LINE_H;
+            canvas.draw_str(line, (text_x, y), &body_font, &body_paint);
+        }
+    }
+
+    // Inline action buttons, on their own row under the body.
     if !activity.actions.is_empty() {
-        for (bx, by, bw, bh, _id, label) in action_button_rects(&activity.actions, text_x, max_w) {
+        for (bx, by, bw, bh, _id, label) in card_action_rects(&activity.body, &activity.actions, w)
+        {
             let mut btn_bg = Paint::default();
             btn_bg.set_anti_alias(true);
             btn_bg.set_color(Color::from_argb(50, 255, 255, 255));
@@ -164,18 +191,6 @@ pub fn draw_card(canvas: &Canvas, activity: &Activity, w: f32, h: f32) {
             btn_paint.set_color(Color::WHITE);
             canvas.draw_str(&label, (bx + 8.0, by + bh - 5.0), &btn_font, &btn_paint);
         }
-    } else if !activity.body.is_empty() {
-        let body_font = TextStyle {
-            family: "Inter",
-            weight: 400,
-            size: 11.0,
-        }
-        .font();
-        let mut body_paint = Paint::default();
-        body_paint.set_anti_alias(true);
-        body_paint.set_color(Color::from_argb(180, 255, 255, 255));
-        let body = truncate_text(&activity.body, &body_font, max_w);
-        canvas.draw_str(&body, (text_x, pad + 28.0), &body_font, &body_paint);
     }
 
     // Elapsed time
@@ -284,10 +299,10 @@ pub fn action_button_rects(
     actions: &[NotificationAction],
     text_x: f32,
     max_w: f32,
+    y: f32,
 ) -> Vec<(f32, f32, f32, f32, String, String)> {
-    const BTN_H: f32 = 18.0;
+    const BTN_H: f32 = ACTION_ROW_H;
     const GAP: f32 = 6.0;
-    let y = 10.0 + 28.0; // pad + 28.0, same row the body text would occupy
     let font = TextStyle {
         family: "Inter",
         weight: 600,
@@ -307,6 +322,111 @@ pub fn action_button_rects(
         x += bw + GAP;
     }
     rects
+}
+
+fn body_font() -> skia_safe::Font {
+    TextStyle {
+        family: "Inter",
+        weight: 400,
+        size: 11.0,
+    }
+    .font()
+}
+
+/// Where the text column starts, and how wide it is — shared by drawing, the
+/// wrap measurement, and hit-testing so all three agree.
+fn card_text_column(w: f32) -> (f32, f32) {
+    let text_x = CARD_PAD + CARD_ICON + 8.0;
+    (text_x, w - text_x - CARD_CLOSE_ZONE)
+}
+
+/// Break `text` into at most `max_lines` lines that each fit `max_width`.
+/// The last line is ellipsised if there is more text than fits. Words longer
+/// than the column are broken mid-word rather than overflowing.
+fn wrap_text(text: &str, font: &skia_safe::Font, max_width: f32, max_lines: usize) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut line = String::new();
+
+    for word in text.split_whitespace() {
+        let candidate = if line.is_empty() {
+            word.to_string()
+        } else {
+            format!("{line} {word}")
+        };
+        if font.measure_str(&candidate, None).0 <= max_width {
+            line = candidate;
+            continue;
+        }
+        if !line.is_empty() {
+            lines.push(std::mem::take(&mut line));
+            if lines.len() == max_lines {
+                break;
+            }
+        }
+        // The word alone doesn't fit the column: let truncate_text break it.
+        if font.measure_str(word, None).0 > max_width {
+            lines.push(truncate_text(word, font, max_width));
+            if lines.len() == max_lines {
+                break;
+            }
+        } else {
+            line = word.to_string();
+        }
+    }
+    if !line.is_empty() && lines.len() < max_lines {
+        lines.push(line);
+    }
+
+    // Anything left over means we ran out of lines — mark the last one.
+    let drawn: usize = lines.iter().map(|l| l.split_whitespace().count()).sum();
+    if drawn < text.split_whitespace().count() {
+        if let Some(last) = lines.last_mut() {
+            *last = truncate_text(&format!("{last} …"), font, max_width);
+        }
+    }
+    lines
+}
+
+/// The body lines a card will draw at width `w`.
+fn card_body_lines(body: &str, w: f32) -> Vec<String> {
+    if body.is_empty() {
+        return Vec::new();
+    }
+    let (_, max_w) = card_text_column(w);
+    wrap_text(body, &body_font(), max_w, MAX_BODY_LINES)
+}
+
+/// How tall this notification's card needs to be: the one-line card, plus a
+/// line for each extra body line, plus the action row when it has actions.
+/// Layout, drawing, and hit-testing all size the card through this.
+pub fn card_height(activity: &Activity) -> f32 {
+    let lines = card_body_lines(&activity.body, CARD_W).len().max(1);
+    let mut h = CARD_H + (lines as f32 - 1.0) * BODY_LINE_H;
+    if !activity.actions.is_empty() {
+        h += ACTION_ROW_H + ACTION_ROW_GAP;
+    }
+    h
+}
+
+/// Baseline of the first body line.
+const BODY_TOP_BASELINE: f32 = CARD_PAD + 28.0;
+
+/// Top of the inline action row, sitting below the last body line.
+fn action_row_y(body: &str, w: f32) -> f32 {
+    let lines = card_body_lines(body, w).len().max(1);
+    BODY_TOP_BASELINE + (lines as f32 - 1.0) * BODY_LINE_H + ACTION_ROW_GAP
+}
+
+/// The inline action buttons of a card of width `w`, in card-local
+/// coordinates. Drawing and hit-testing both go through this so a button is
+/// clickable exactly where it was painted.
+pub fn card_action_rects(
+    body: &str,
+    actions: &[NotificationAction],
+    w: f32,
+) -> Vec<(f32, f32, f32, f32, String, String)> {
+    let (text_x, max_w) = card_text_column(w);
+    action_button_rects(actions, text_x, max_w, action_row_y(body, w))
 }
 
 fn truncate_text(text: &str, font: &skia_safe::Font, max_width: f32) -> String {

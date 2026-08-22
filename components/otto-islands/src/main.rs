@@ -38,14 +38,15 @@ const GAP: f32 = 6.0;
 const DIALOG_TOP: f32 = BAR_HEIGHT + 14.0;
 /// Seconds of inactivity before the focused island shrinks to Mini.
 const FOCUS_TIMEOUT_SECS: f64 = 4.0;
+/// Seconds a newly-arrived notification stays open, long enough to be read
+/// before it settles back into its app's stack.
+const ARRIVAL_READ_SECS: u64 = 6;
 /// Seconds a destroyed surface is kept alive so its exit animation can play.
 const DESTROY_DELAY_SECS: f64 = 0.8;
 /// Per-island delay added as the push travels outward from whichever island
 /// grew, so the row ripples instead of moving in lockstep.
 const CASCADE_STAGGER_SECS: f64 = 0.035;
-/// Expanded-card metrics shared between drawing and hit-testing.
-const CARD_PAD: f32 = 10.0;
-const CARD_ICON: f32 = 24.0;
+/// Width of the card's right-hand Close zone, used to hit-test a close click.
 const CARD_CLOSE_ZONE: f32 = 40.0;
 
 // ---------------------------------------------------------------------------
@@ -87,14 +88,22 @@ struct Island {
     mode: IslandMode,
     /// When this notification arrived (newest sits at the front of its stack).
     created_at: std::time::Instant,
-    /// When set, the island temporarily shows as Compact until this instant.
+    /// When set, this is a fresh arrival announcing itself until this instant:
+    /// it opens Expanded so it can be read, then settles into its stack.
     peek_until: Option<std::time::Instant>,
+    /// Whether the user opened this island themselves. Only a user-opened
+    /// island stays Expanded indefinitely; one that opened on arrival closes
+    /// again when its window runs out.
+    opened_by_user: bool,
     /// Last layout target (w, h, x, y) — skip animation when unchanged.
     last_layout: (f32, f32, f32, f32),
     /// Last drawn content — skip redraw when unchanged.
     last_content: Option<IslandContent>,
     /// Inline actions, cached for hit-testing without locking state.
     actions: Vec<crate::activity::NotificationAction>,
+    /// Body text, cached alongside the actions: the action row sits under the
+    /// wrapped body, so hit-testing has to know how many lines it took.
+    body: String,
 }
 
 /// A presented Access-style dialog panel (one subsurface, drawn as a whole).
@@ -259,12 +268,16 @@ impl IslandApp {
                 surface,
                 mode: IslandMode::Mini,
                 created_at: activity.created_at,
-                // A new notification announces itself as Compact for a few
+                // A new notification announces itself Expanded for a few
                 // seconds, then settles back into its app's stack.
-                peek_until: Some(std::time::Instant::now() + Duration::from_secs(3)),
+                peek_until: Some(
+                    std::time::Instant::now() + Duration::from_secs(ARRIVAL_READ_SECS),
+                ),
                 last_layout: (0.0, 0.0, 0.0, 0.0),
                 last_content: None,
                 actions: activity.actions.clone(),
+                body: activity.body.clone(),
+                opened_by_user: false,
             });
             self.last_interaction = std::time::Instant::now();
         }
@@ -274,6 +287,7 @@ impl IslandApp {
             if let Some(a) = notifications.iter().find(|a| a.id == island.activity_id) {
                 island.actions = a.actions.clone();
                 island.icon = a.icon.clone();
+                island.body = a.body.clone();
             }
         }
 
@@ -284,22 +298,37 @@ impl IslandApp {
             }
         }
 
+        // The newest still-announcing arrival, which opens Expanded so it can
+        // be read on sight.
+        let arriving = self
+            .islands
+            .iter()
+            .filter(|i| i.peek_until.is_some())
+            .max_by_key(|i| i.created_at)
+            .map(|i| i.activity_id);
+
+        // An island the user opened themselves is never taken over: a new
+        // arrival must not yank away whatever is being read right now, so it
+        // announces itself Compact instead.
+        let user_expanded = self
+            .islands
+            .iter()
+            .any(|i| i.mode == IslandMode::Expanded && i.opened_by_user);
+        let expand_id = if user_expanded { None } else { arriving };
+
         // Exactly one island may be Compact at a time. The pointer wins it,
-        // then whatever was last clicked, then the newest still-peeking
-        // arrival — so a burst of notifications doesn't blow the row up into
-        // a wall of pills.
-        let compact_id = self.hovered_island.or(self.focused_island).or_else(|| {
-            self.islands
-                .iter()
-                .filter(|i| i.peek_until.is_some())
-                .max_by_key(|i| i.created_at)
-                .map(|i| i.activity_id)
-        });
+        // then whatever was last clicked, then the arrival when it could not
+        // open — so a burst of notifications doesn't blow the row up into a
+        // wall of pills.
+        let compact_id = self.hovered_island.or(self.focused_island).or(arriving);
 
         for island in &mut self.islands {
-            if island.mode == IslandMode::Expanded {
-                // Only user interaction (click / focus loss) closes it.
-            } else if Some(island.activity_id) == compact_id {
+            let id = Some(island.activity_id);
+            if island.mode == IslandMode::Expanded && island.opened_by_user {
+                // User-opened: only user interaction (click / focus loss) closes it.
+            } else if id == expand_id {
+                island.mode = IslandMode::Expanded;
+            } else if id == compact_id {
                 island.mode = IslandMode::Compact;
             } else {
                 island.mode = IslandMode::Mini;
@@ -381,7 +410,14 @@ impl IslandApp {
                 let (w, h) = match island.mode {
                     IslandMode::Mini => (MINI_H, MINI_H),
                     IslandMode::Compact => (renderer::pill_width(&title_of(island)), COMPACT_H),
-                    IslandMode::Expanded => (renderer::CARD_W, renderer::CARD_H),
+                    IslandMode::Expanded => {
+                        let h = notifications
+                            .iter()
+                            .find(|a| a.id == island.activity_id)
+                            .map(renderer::card_height)
+                            .unwrap_or(renderer::CARD_H);
+                        (renderer::CARD_W, h)
+                    }
                 };
                 sizes.push((idx, w, h));
             }
@@ -686,10 +722,8 @@ impl IslandApp {
                 // Only an expanded island draws action buttons.
                 let action_id = if island.mode == IslandMode::Expanded && !island.actions.is_empty()
                 {
-                    let text_x = CARD_PAD + CARD_ICON + 8.0;
-                    let max_w = w - text_x - CARD_CLOSE_ZONE;
                     let (local_x, local_y) = (px - x, py - y);
-                    renderer::action_button_rects(&island.actions, text_x, max_w)
+                    renderer::card_action_rects(&island.body, &island.actions, w)
                         .into_iter()
                         .find(|(bx, by, bw, bh, _, _)| {
                             local_x >= *bx
@@ -736,6 +770,7 @@ impl IslandApp {
             for island in &mut self.islands {
                 if island.mode == IslandMode::Expanded {
                     island.mode = IslandMode::Compact;
+                    island.opened_by_user = false;
                 }
             }
             let island = &mut self.islands[idx];
@@ -744,6 +779,7 @@ impl IslandApp {
                 IslandMode::Mini => IslandMode::Compact,
                 _ => IslandMode::Expanded,
             };
+            island.opened_by_user = island.mode == IslandMode::Expanded;
             tracing::info!(app_id = %island.app_id, mode = ?island.mode, "click: island opened");
             self.focused_island = Some(activity_id);
             let mut state = self.state.lock().unwrap();
@@ -1027,13 +1063,17 @@ impl App for IslandApp {
 
         let now = std::time::Instant::now();
 
-        // Peek timeout: a newly-arrived notification stops announcing itself
-        // and settles back into its app's stack.
+        // Arrival timeout: a newly-arrived notification stops announcing
+        // itself and settles back into its app's stack. The window is held
+        // open while the pointer is on that island, so it never collapses out
+        // from under someone reading it.
         let mut dirty_after_peek = false;
         for island in &mut self.islands {
             if let Some(until) = island.peek_until {
-                if now >= until {
-                    tracing::info!(app_id = %island.app_id, "peek expired → Mini");
+                if self.hovered_island == Some(island.activity_id) {
+                    island.peek_until = Some(now + Duration::from_secs(ARRIVAL_READ_SECS));
+                } else if now >= until {
+                    tracing::info!(app_id = %island.app_id, "arrival window expired → Mini");
                     island.peek_until = None;
                     dirty_after_peek = true;
                 }
