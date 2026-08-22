@@ -9,7 +9,7 @@ use otto_kit::components::scroll::{ScrollRenderer, ScrollState};
 use otto_kit::components::titlebar::{WindowControl, WindowControls, WindowControlsState};
 use otto_kit::icons;
 use otto_kit::prelude::*;
-use skia_safe::{ClipOp, Contains, Font, Paint, PathBuilder, Point, RRect};
+use skia_safe::{ClipOp, Contains, Paint, PathBuilder, Point, RRect};
 
 use crate::model::{self, Column, Entry, Place, SortKey};
 
@@ -1956,6 +1956,14 @@ pub fn preview_content(
             panel.right,
             (caption.top - PREVIEW_GAP).max(panel.top),
         );
+        // Nothing the previewer produced may leave the stage. The decoders
+        // bound what they return, and each drawing path lays itself out to
+        // fit, but the content is a *file's* — an archive with hundreds of
+        // long entry names, a text file with no line breaks — and the one
+        // place that must not depend on the file being reasonable is the one
+        // where overflow would draw over the caption below it.
+        canvas.save();
+        canvas.clip_rect(stage, None, false);
         match &decoded {
             // A decoder that gave up (an unreadable archive, a format with no
             // previewer) is not a blank panel, and neither is one still
@@ -2007,6 +2015,7 @@ pub fn preview_content(
                 );
             }
         }
+        canvas.restore();
     }
 }
 
@@ -2563,27 +2572,11 @@ fn split_label(name: &str, per_line: usize) -> (String, String) {
 /// Truncate `text` with a trailing ellipsis so it measures no wider than
 /// `max_width` under `font` — a long file name must stop before it runs into
 /// the next column rather than drawing straight through it.
-pub fn ellipsize(font: &Font, text: &str, max_width: f32) -> String {
-    if font.measure_str(text, None).0 <= max_width {
-        return text.to_string();
-    }
-    let ellipsis = "…";
-    let budget = (max_width - font.measure_str(ellipsis, None).0).max(0.0);
-
-    let chars: Vec<char> = text.chars().collect();
-    let mut lo = 0usize;
-    let mut hi = chars.len();
-    while lo < hi {
-        let mid = (lo + hi + 1) / 2;
-        let candidate: String = chars[..mid].iter().collect();
-        if font.measure_str(&candidate, None).0 <= budget {
-            lo = mid;
-        } else {
-            hi = mid - 1;
-        }
-    }
-    format!("{}{ellipsis}", chars[..lo].iter().collect::<String>())
-}
+///
+/// The toolkit's, re-exported: the preview panel crops archive listings by the
+/// same rule, and two implementations of "how wide is too wide" would
+/// eventually disagree.
+pub use otto_kit::typography::ellipsize;
 
 /// The width the Name column needs to show every given name in full — what a
 /// double-click on the Name/Size divider fits it to, the way Finder does.

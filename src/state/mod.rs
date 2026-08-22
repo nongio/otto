@@ -1657,14 +1657,18 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             // it as inactive unconditionally makes the shadow flick for one frame
             // whenever this runs on a still-focused window (e.g. on scanout demote,
             // where the window is demoted but keeps focus).
+            //
+            // Read through `focused_window_surface` so that a popup counts as
+            // focus on the window that opened it: a menu takes the keyboard
+            // for as long as it is up, and matching the focus target directly
+            // would gray out the titlebar and lighten the shadow of the very
+            // window being used.
             let is_focused = self
                 .seat
                 .get_keyboard()
                 .and_then(|k| k.current_focus())
-                .map(|focus| {
-                    matches!(&focus, crate::focus::KeyboardFocusTarget::Window(w) if w.id() == window.id())
-                })
-                .unwrap_or(false);
+                .and_then(|focus| crate::state::seat_handler::focused_window_surface(Some(&focus)))
+                .is_some_and(|surface| window.wl_surface().as_deref() == Some(&surface));
 
             // Ensure all surfaces in the tree have rendering layers before building render elements
             // This only creates layers for surfaces that don't already have them

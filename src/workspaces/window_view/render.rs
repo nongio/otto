@@ -29,9 +29,12 @@ pub fn decoration_for(state: &WindowDecorationModel) -> WindowDecoration {
         controls_hovered: state.controls_hovered,
         pressed: state.pressed.and_then(control_from_index),
         sharing: state.sharing,
-        // The layer carries `BackgroundBlur`, so the compositor already blurs
-        // what is behind it — blurring again in the paint would double up.
+        // The layer carries `BackgroundBlur` while the window is focused, so
+        // the compositor already blurs what is behind it — blurring again in
+        // the paint would double up. An unfocused window has no blur, so its
+        // bar is filled in rather than left translucent over the desktop.
         backdrop_blur: 0.0,
+        blurred: state.active,
         ..Default::default()
     }
 }
@@ -72,7 +75,14 @@ pub fn view_window_decoration(
             },
             None,
         ))
-        .blend_mode(BlendMode::BackgroundBlur)
+        // A full-window-width gaussian per frame, for a window nobody is
+        // looking at, buys nothing: an unfocused bar is opaque, so there is
+        // nothing to see through it either way.
+        .blend_mode(if state.active {
+            BlendMode::BackgroundBlur
+        } else {
+            BlendMode::Normal
+        })
         .content(Some(draw))
         .pointer_events(false)
         .build()

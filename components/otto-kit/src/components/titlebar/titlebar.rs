@@ -168,6 +168,19 @@ impl TitlebarMaterial {
         self
     }
 
+    /// The same material with its tint filled in to full opacity.
+    ///
+    /// The tints are translucent because they are meant to sit over a blurred
+    /// backdrop. With nothing blurred behind the bar — an unfocused window,
+    /// whose blur has been dropped — translucency is not a softer version of
+    /// the same bar: it is the desktop showing through, which costs the title
+    /// and the controls their contrast against it.
+    pub fn opaque(mut self) -> Self {
+        let tint = self.tint;
+        self.tint = Color::from_argb(0xFF, tint.r(), tint.g(), tint.b());
+        self
+    }
+
     pub fn with_gradient(mut self, gradient: f32) -> Self {
         self.gradient = gradient;
         self

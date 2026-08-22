@@ -212,6 +212,10 @@ pub const ROW_HEIGHT: f32 = 26.0;
 pub const LINE_HEIGHT: f32 = 17.0;
 /// Width reserved for a row's size column.
 pub const SIZE_COLUMN: f32 = 84.0;
+
+/// Clear space between a row's name and the size beside it, so a cropped name
+/// stops short of the number rather than touching it.
+const NAME_GAP: f32 = 8.0;
 /// Gutter width for line numbers.
 pub const GUTTER: f32 = 46.0;
 pub const HERO: f32 = 128.0;
@@ -604,6 +608,12 @@ fn draw_rows(
     let mut image_paint = Paint::default();
     image_paint.set_anti_alias(true);
 
+    // The same clip the text preview takes. A listing is content of unknown
+    // length in both directions, and a row that ends up half outside the panel
+    // must be cut off by it rather than drawn across whatever is next to it.
+    canvas.save();
+    canvas.clip_rect(geometry.content, None, false);
+
     for (index, rect) in geometry.row_rects.iter().enumerate() {
         let Some(row) = rows.get(first_row + index) else {
             break;
@@ -628,7 +638,12 @@ fn draw_rows(
         }
 
         let cy = rect.center_y();
-        Label::new(row.name.clone())
+        // The size column is reserved whether or not this row has a size in
+        // it: cropping every name to the same edge keeps the listing a column,
+        // where cropping only the rows that need it would leave a ragged one.
+        let name_font = styles::SUBHEADLINE.font();
+        let room = (rect.right - SIZE_COLUMN - NAME_GAP - text_left).max(0.0);
+        Label::new(crate::typography::ellipsize(&name_font, &row.name, room))
             .with_style(styles::SUBHEADLINE)
             .with_color(theme.text_primary)
             .centered_on(text_left, cy)
@@ -644,6 +659,8 @@ fn draw_rows(
                 .render(canvas);
         }
     }
+
+    canvas.restore();
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -823,6 +840,56 @@ mod tests {
             geometry.row_at(second.left + 1.0, bounds.bottom + 10.0),
             None
         );
+    }
+
+    /// A zip full of long entry names must stay inside its panel. Without a
+    /// bound the name is drawn at its natural width and runs straight through
+    /// the size column and out of the preview.
+    #[test]
+    fn a_long_row_name_is_cropped_to_the_room_it_has() {
+        let font = styles::SUBHEADLINE.font();
+        let name = "a-very-long-archive-entry-name-that-keeps-going.tar.gz";
+        let room = 120.0;
+
+        let cropped = crate::typography::ellipsize(&font, name, room);
+
+        assert!(cropped.ends_with('\u{2026}'), "not cropped: {cropped:?}");
+        assert!(
+            font.measure_str(&cropped, None).0 <= room,
+            "cropped to {:?}, still {} wide for {room}",
+            cropped,
+            font.measure_str(&cropped, None).0
+        );
+    }
+
+    /// The crop leaves short names exactly as they are — an ellipsis on a name
+    /// that fits is a lie about the file.
+    #[test]
+    fn a_name_that_fits_is_left_alone() {
+        let font = styles::SUBHEADLINE.font();
+        assert_eq!(crate::typography::ellipsize(&font, "a.txt", 500.0), "a.txt");
+    }
+
+    /// Every row a listing draws is inside the panel it was laid out against,
+    /// which is what the clip in `draw_rows` is there to guarantee even when
+    /// the arithmetic above it changes.
+    #[test]
+    fn a_listing_lays_every_row_inside_its_panel() {
+        let preview = Preview::Rows {
+            rows: vec![Row::default(); 500],
+            truncated: true,
+            summary: String::new(),
+        };
+        let bounds = Rect::from_xywh(0.0, 0.0, 260.0, 300.0);
+        let geometry = layout(bounds, &preview, 0, Zoom::FIT);
+
+        assert!(!geometry.row_rects.is_empty(), "nothing was laid out");
+        for rect in &geometry.row_rects {
+            assert!(
+                bounds.contains(*rect),
+                "{rect:?} escapes the panel {bounds:?}"
+            );
+        }
     }
 
     #[test]

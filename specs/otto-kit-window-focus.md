@@ -38,6 +38,15 @@ configure said (`activated`). It is per window, not per process: an application
 showing two windows has at most one of them focused, and each follows its own
 configures.
 
+**Server-decorated windows get the same treatment**, decided compositor-side
+from the keyboard focus rather than from a configure, and drawn by the same
+components. A window with Otto's own title bar and a kit window side by side
+must not disagree about what an unfocused window looks like — including the
+blur: an unfocused title bar stops blurring what is behind it and is filled in
+to full opacity, exactly as a client's own panels are. The compositor
+additionally lightens an unfocused window's drop shadow, which a client cannot
+do for itself.
+
 **Focused.** The window is at full strength:
 
 - The title is drawn in the primary text colour, secondary text in the
@@ -110,6 +119,3 @@ presentable.
 - macOS reveals the traffic-light glyphs on hover even in a background window,
   which makes closing one a single click without focusing it first. Kit windows
   currently reveal them only while focused. Worth matching?
-- Otto's own server-side title bar does not yet dim when its window loses the
-  focus, so a server-decorated window and a kit window disagree about what an
-  unfocused window looks like.

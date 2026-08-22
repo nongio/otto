@@ -48,6 +48,11 @@ pub struct WindowDecoration {
     /// `background_blur` — the compositor blurs behind it and blurring again
     /// here would double up.
     pub backdrop_blur: f32,
+    /// Whether anything is blurred behind the bar — either the compositor
+    /// blurring under the surface, or [`Self::backdrop_blur`] doing it here.
+    /// With nothing behind it the material is filled in instead of left
+    /// translucent; see [`TitlebarMaterial::opaque`].
+    pub blurred: bool,
     /// Type style of the title
     pub title_style: TextStyle,
 }
@@ -67,6 +72,7 @@ impl Default for WindowDecoration {
             disabled: Vec::new(),
             sharing: false,
             backdrop_blur: 0.0,
+            blurred: true,
             title_style: Self::DEFAULT_TITLE_STYLE,
         }
     }
@@ -118,6 +124,11 @@ impl WindowDecoration {
 
     pub fn with_backdrop_blur(mut self, sigma: f32) -> Self {
         self.backdrop_blur = sigma;
+        self
+    }
+
+    pub fn with_blurred(mut self, blurred: bool) -> Self {
+        self.blurred = blurred;
         self
     }
 
@@ -189,7 +200,12 @@ impl WindowDecoration {
             (true, true) => TitlebarMaterial::dark_active(),
             (true, false) => TitlebarMaterial::dark_inactive(),
         };
-        base.with_backdrop_blur(self.backdrop_blur)
+        let base = base.with_backdrop_blur(self.backdrop_blur);
+        if self.blurred {
+            base
+        } else {
+            base.opaque()
+        }
     }
 
     fn title_color(&self) -> Color {

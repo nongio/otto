@@ -204,6 +204,39 @@ The hairlines between columns are still drawn in the window, so a sideways pan
 — unlike a vertical scroll — does still repaint it, or they would be left
 behind while the columns slide.
 
+### The preview column
+
+Column view ends in a preview of the single selected entry, when there is room
+for one. It is laid out from the bottom up — the facts, then the name above
+them, and whatever is left over is the preview's — so the name and the facts sit
+on the same line whatever the file is, instead of riding up and down with the
+size of the thing above them.
+
+**Everything is cropped to fit.** The name and each fact are truncated with an
+ellipsis to the column's width, and the stage above them is clipped, so no
+preview can draw over the caption or out of the column. This is not left to the
+decoders being well behaved: the content belongs to a *file* — an archive with
+hundreds of long entry names, a text file with no line breaks — and the crop is
+what makes the column's size a property of the column rather than of whatever
+was selected. In a listing (an archive's contents) the size column is reserved
+on every row whether or not that row has a size, so the names crop to a common
+edge and the listing reads as a column instead of a ragged one.
+
+**A card falls back to a picture.** A metadata card is a title, a subtitle and a
+table of facts, and this column already carries every one of those in the
+caption below — drawn as a card it says the same things twice, in the space
+meant for the thing itself. What the card has that the caption does not is its
+artwork: cover art, an embedded thumbnail, an mp4's poster frame. That is shown
+as the picture it is, and a card with none falls back to the file's own icon,
+drawn large.
+
+**A decoder that gave up is not a blank panel**, and neither is one still
+running: the file's own icon is still true, and drawn large it is a preview of a
+kind rather than a placeholder apologising for itself.
+
+**Selecting does not pan to it.** The preview opens where it is; the stack is
+aligned by navigation, not by a selection changing what the last column holds.
+
 ### Places
 
 The sidebar's places come from three sources:

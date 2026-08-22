@@ -128,6 +128,37 @@ impl TextStyle {
 }
 
 /// Design system typography scale (based on macOS HIG)
+/// Truncate `text` with a trailing ellipsis so it measures no wider than
+/// `max_width` under `font`.
+///
+/// Text that runs past its column does not merely look wrong — it draws over
+/// whatever is beside it, so anything laid out in a fixed width should come
+/// through here rather than trusting the content to be short.
+///
+/// Binary search on the character count: a long name is measured a handful of
+/// times instead of once per character, and measuring is the expensive part.
+pub fn ellipsize(font: &Font, text: &str, max_width: f32) -> String {
+    if font.measure_str(text, None).0 <= max_width {
+        return text.to_string();
+    }
+    const ELLIPSIS: &str = "\u{2026}";
+    let budget = (max_width - font.measure_str(ELLIPSIS, None).0).max(0.0);
+
+    let chars: Vec<char> = text.chars().collect();
+    let mut lo = 0usize;
+    let mut hi = chars.len();
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        let candidate: String = chars[..mid].iter().collect();
+        if font.measure_str(&candidate, None).0 <= budget {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    format!("{}{ELLIPSIS}", chars[..lo].iter().collect::<String>())
+}
+
 pub mod styles {
     use super::*;
 
