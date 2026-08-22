@@ -708,11 +708,27 @@ impl Browser {
             view::ViewMode::List => {
                 view::RowStrip::list(self.size.0, entries.len(), scroll).visible(area)
             }
-            // A Miller pane's rows are the same height as a list's, so the
-            // same strip describes them; the pane's own width is what differs,
-            // and the vertical extent is all this needs.
+            // A Miller pane's rows sit a little way down the pane and are
+            // panned sideways with the stack, so its own strip and its own
+            // viewport are what describe them — a list's strip would be off by
+            // the inset and would not know the pane can be panned off screen
+            // entirely.
             view::ViewMode::Columns => {
-                view::RowStrip::list(self.size.0, entries.len(), scroll).visible(area)
+                let full = view::miller_pane_rect(
+                    depth,
+                    self.content_h(),
+                    self.pan.offset(),
+                    self.miller_w,
+                );
+                let band = view::pane_viewport(
+                    self.size.0,
+                    self.content_h(),
+                    view::ViewMode::Columns,
+                    depth,
+                    self.pan.offset(),
+                    self.miller_w,
+                );
+                view::RowStrip::miller(full, entries.len(), scroll).visible(band)
             }
         };
 

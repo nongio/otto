@@ -461,7 +461,7 @@ impl RowStrip {
 
     /// One Miller pane's strip. Rows start a little way down the pane so the
     /// first one does not touch the header hairline.
-    fn miller(pane: Rect, count: usize, scroll: f32) -> Self {
+    pub(crate) fn miller(pane: Rect, count: usize, scroll: f32) -> Self {
         Self {
             top: pane.top + MILLER_ROW_INSET - scroll,
             left: pane.left,
@@ -2744,7 +2744,7 @@ fn draw_entry_icon(
 /// background reads as a hole. A single low-contrast edge is enough to close
 /// it, and is cheaper than the drop shadow the same problem is usually solved
 /// with.
-fn draw_thumbnail(canvas: &Canvas, image: &skia_safe::Image, box_rect: Rect, cut: bool) {
+pub(crate) fn draw_thumbnail(canvas: &Canvas, image: &skia_safe::Image, box_rect: Rect, cut: bool) {
     let (w, h) = (image.width() as f32, image.height() as f32);
     if w <= 0.0 || h <= 0.0 {
         return;
