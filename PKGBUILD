@@ -16,7 +16,7 @@ sha256sums=("SKIP")
 # Files pacman must never clobber: a modified config becomes .pacnew on
 # upgrade and .pacsave on removal, instead of being silently overwritten or
 # deleted when swapping between the otto-bin/otto-git/otto-nightly-bin variants.
-backup=("etc/otto/config.toml" "etc/pam.d/otto-lock")
+backup=("etc/pam.d/otto-lock")
 
 package() {
     cd "$srcdir/otto-$pkgver"
@@ -40,7 +40,12 @@ package() {
     install -Dm644 components/xdg-desktop-portal-otto/portals.conf.example "$pkgdir/usr/share/doc/otto/portals.conf.example"
     
     # Install configuration
-    install -Dm644 otto_config.example.toml "$pkgdir/etc/otto/config.toml"
+    # An example, not the config: the package must never own
+    # /etc/otto/config.toml. Owning it means a reinstall or a switch between
+    # the otto, otto-git and otto-nightly-bin packages moves whatever the
+    # administrator wrote there aside as a .pacsave and drops the stock file
+    # in its place. Copy this to config.toml to use it.
+    install -Dm644 otto_config.example.toml "$pkgdir/etc/otto/config.example.toml"
     # PAM stack otto-lock authenticates against; without it PAM falls through
     # to `other`, which denies everything.
     install -Dm644 components/otto-lock/otto-lock.pam "$pkgdir/etc/pam.d/otto-lock"

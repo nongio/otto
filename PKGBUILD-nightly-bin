@@ -14,7 +14,7 @@ optdepends=("xdg-desktop-portal: Desktop integration" "fprintd: fingerprint unlo
 source=("otto-nightly-x86_64.tar.gz::https://github.com/nongio/otto/releases/download/nightly/otto-nightly-x86_64.tar.gz")
 sha256sums=("SKIP")
 noextract=("otto-nightly-x86_64.tar.gz")
-backup=("etc/otto/config.toml" "etc/pam.d/otto-lock")
+backup=("etc/pam.d/otto-lock")
 
 prepare() {
     tar -xzf "$srcdir/otto-nightly-x86_64.tar.gz" -C "$srcdir"
@@ -48,7 +48,12 @@ package() {
     install -Dm644 components/xdg-desktop-portal-otto/portals.conf.example "$pkgdir/usr/share/doc/otto/portals.conf.example"
 
     # Install configuration
-    install -Dm644 otto_config.example.toml "$pkgdir/etc/otto/config.toml"
+    # An example, not the config: the package must never own
+    # /etc/otto/config.toml. Owning it means a reinstall or a switch between
+    # the otto, otto-git and otto-nightly-bin packages moves whatever the
+    # administrator wrote there aside as a .pacsave and drops the stock file
+    # in its place. Copy this to config.toml to use it.
+    install -Dm644 otto_config.example.toml "$pkgdir/etc/otto/config.example.toml"
     # PAM stack otto-lock authenticates against; without it PAM falls through
     # to `other`, which denies everything.
     install -Dm644 components/otto-lock/otto-lock.pam "$pkgdir/etc/pam.d/otto-lock"

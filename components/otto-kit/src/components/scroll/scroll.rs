@@ -711,6 +711,18 @@ impl ScrollView {
         self.idle = 0.0;
     }
 
+    /// Bring the overlay bar up and start its hold, without moving anything.
+    ///
+    /// For a host whose *content* changed under the view rather than being
+    /// scrolled — a picture zoomed in, a pane resized, a listing that grew.
+    /// The bar says how much of the content is in view, so a change in how
+    /// much that is has just as much to report as a scroll does, and the
+    /// answer arriving invisibly is the same bar being useless. It fades out
+    /// again on its own, like any other.
+    pub fn flash_scrollbar(&mut self) {
+        self.wake();
+    }
+
     /// Is `(x, y)`, in canvas-local space, over the scrollbar thumb?
     pub fn hit_test_thumb(&self, x: f32, y: f32) -> bool {
         ScrollRenderer::hit_test_thumb(&self.state, x, y)

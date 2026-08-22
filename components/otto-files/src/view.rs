@@ -461,7 +461,7 @@ impl RowStrip {
 
     /// One Miller pane's strip. Rows start a little way down the pane so the
     /// first one does not touch the header hairline.
-    fn miller(pane: Rect, count: usize, scroll: f32) -> Self {
+    pub(crate) fn miller(pane: Rect, count: usize, scroll: f32) -> Self {
         Self {
             top: pane.top + MILLER_ROW_INSET - scroll,
             left: pane.left,
@@ -541,6 +541,203 @@ pub fn miller_pane_rect(depth: usize, height: f32, pan: f32, miller_w: f32) -> R
 pub fn preview_pane_rect(columns_len: usize, height: f32, pan: f32, miller_w: f32) -> Rect {
     let left = SIDEBAR_W + columns_len as f32 * miller_w - pan;
     Rect::from_ltrb(left, HEADER_H, left + PREVIEW_W, height)
+}
+
+/// What a drag hovering the window would drop onto, so it can be outlined.
+///
+/// Carries only what the view needs to find the rect again — the path the drop
+/// would land in is the application's business, not the drawing's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropHighlight {
+    /// A directory row or cell, which the files would go *into*.
+    Row { depth: usize, index: usize },
+    /// A pane's own directory: the drag is over its background, not any row.
+    Pane { depth: usize },
+    /// A sidebar place.
+    Place { index: usize },
+}
+
+/// `rect` cut down to `clip`, or `None` when the two do not meet.
+fn clipped_to(rect: Rect, clip: Rect) -> Option<Rect> {
+    let mut out = rect;
+    out.intersect(clip).then_some(out)
+}
+
+/// Where [`DropHighlight`] should be outlined, in window coordinates.
+///
+/// Runs the hit tests backwards — same strips, same pane rects — so the
+/// outline lands exactly on the thing the drop will act on, in every view.
+pub fn drop_highlight_rect(f: &Frame, target: DropHighlight) -> Option<Rect> {
+    match target {
+        DropHighlight::Place { index } => (index < f.places.len()).then(|| place_rect(index)),
+        DropHighlight::Pane { depth } => {
+            let viewport = content_viewport(f.width, f.height, f.mode);
+            let pane = match f.mode {
+                ViewMode::Columns => miller_pane_rect(depth, f.height, f.pan, f.miller_w),
+                // One pane fills the content area in the flat views.
+                _ => viewport,
+            };
+            // On the pane's own edges, where the divider between columns runs.
+            // Held inside them the ring crosses the rows instead of bounding
+            // them, which reads as a box drawn over the content rather than as
+            // the column being picked out. Square corners need no room to
+            // curve, so there is nothing to hold it off the edge for.
+            clipped_to(pane, viewport)
+        }
+        DropHighlight::Row { depth, index } => {
+            let pane = f.panes.get(depth)?;
+            let rect = match f.mode {
+                ViewMode::Grid => grid_cell_rect(
+                    content_viewport(f.width, f.height, ViewMode::Grid),
+                    index,
+                    pane.scroll,
+                ),
+                ViewMode::List => {
+                    RowStrip::list(f.width, pane.entries.len(), pane.scroll).rect(index)
+                }
+                ViewMode::Columns => {
+                    let full = miller_pane_rect(depth, f.height, f.pan, f.miller_w);
+                    RowStrip::miller(full, pane.entries.len(), pane.scroll).rect(index)
+                }
+            };
+            // A row scrolled out from under the pointer has no outline rather
+            // than one drawn over the header.
+            clipped_to(rect, content_viewport(f.width, f.height, f.mode))
+        }
+    }
+}
+
+/// Outline what the drop would land in.
+///
+/// Drawn on the window canvas after the panes, which puts it over the rows in
+/// every view — including Miller, whose rows are the scene's own layers,
+/// composited under this canvas. The exception is `OTTO_FILES_PANE_SUBS=1`,
+/// where the columns are subsurfaces *over* this canvas and the outline is
+/// hidden behind them; that mode is opt-in and its own drop feedback is a
+/// separate piece of work.
+fn draw_drop_highlight(canvas: &Canvas, f: &Frame) {
+    let Some(target) = f.drop_target else {
+        return;
+    };
+    let Some(rect) = drop_highlight_rect(f, target) else {
+        return;
+    };
+    if rect.is_empty() {
+        return;
+    }
+
+    // The ring alone. A wash inside it as well says the same thing twice, and
+    // over a pane it tints a whole column of rows to point at one target.
+    //
+    // Square, following the shape of what it outlines: a Miller column has
+    // square edges, and a rounded ring drawn around one reads as a different
+    // object floating over it rather than as that column being picked out.
+    let mut ring = Paint::default();
+    ring.set_anti_alias(true);
+    ring.set_style(skia_safe::paint::Style::Stroke);
+    // Inset by half the stroke: a centred stroke on the rect's own edge would
+    // spill a pixel outside it, over the neighbouring row.
+    ring.set_stroke_width(2.0);
+    ring.set_color(accent_light(f.theme));
+    canvas.draw_rect(rect.with_inset((1.0, 1.0)), &ring);
+}
+
+/// One list-view row's rect, in window coordinates.
+///
+/// The strip the hit test uses, read forwards — so a caller that knows which
+/// row was hit can find out where it is without rebuilding a frame.
+pub fn list_row_rect(width: f32, count: usize, index: usize, scroll: f32) -> Rect {
+    RowStrip::list(width, count, scroll).rect(index)
+}
+
+/// One Miller row's rect, in window coordinates.
+pub fn miller_row_rect(
+    depth: usize,
+    height: f32,
+    pan: f32,
+    miller_w: f32,
+    count: usize,
+    index: usize,
+    scroll: f32,
+) -> Rect {
+    let pane = miller_pane_rect(depth, height, pan, miller_w);
+    RowStrip::miller(pane, count, scroll).rect(index)
+}
+
+/// The picture carried under the cursor while files are being dragged.
+///
+/// Sized for one row's worth of content: an icon, the name beside it, and a
+/// count when more than one file is travelling. Its top-left corner is where
+/// the pointer is, so the card reads as something held rather than something
+/// the cursor is inside.
+pub const DRAG_IMAGE_W: f32 = 240.0;
+pub const DRAG_IMAGE_H: f32 = 36.0;
+
+/// Draw the drag image. `count` is the whole selection; `name` and
+/// `icon_chain` describe the one shown.
+pub fn draw_drag_image(
+    canvas: &Canvas,
+    theme: &Theme,
+    name: &str,
+    icon_chain: &[String],
+    count: usize,
+) {
+    let card = Rect::from_wh(DRAG_IMAGE_W, DRAG_IMAGE_H);
+
+    // Translucent, so what is underneath still reads through it: this is a
+    // thing being carried over the desktop, not a window.
+    let mut fill = Paint::default();
+    fill.set_anti_alias(true);
+    fill.set_color(theme.material_selection_focused.with_a(0xD0));
+    canvas.draw_rrect(RRect::new_rect_xy(card, 8.0, 8.0), &fill);
+
+    let refs: Vec<&str> = icon_chain.iter().map(String::as_str).collect();
+    let icon_side = 20.0;
+    if let Some(image) =
+        icons::cached_icon_chain_at(&refs, icon_side as i32, icons::FULL_COLOUR_SIZE)
+    {
+        let dst = Rect::from_xywh(
+            10.0,
+            card.center_y() - icon_side / 2.0,
+            icon_side,
+            icon_side,
+        );
+        canvas.draw_image_rect(&image, None, dst, &Paint::default());
+    }
+
+    // The badge is measured first: the name is truncated to what is left, so a
+    // long name cannot run underneath the count.
+    let badge_w = (count > 1).then(|| {
+        let digits = count.to_string().len() as f32;
+        18.0 + digits * 7.0
+    });
+    let name_right = DRAG_IMAGE_W - 10.0 - badge_w.map_or(0.0, |w| w + 8.0);
+
+    let font = styles::BODY.font();
+    Label::new(ellipsize(&font, name, (name_right - 38.0).max(20.0)))
+        .with_style(styles::BODY)
+        .with_color(Color::WHITE)
+        .centered_on(38.0, card.center_y())
+        .render(canvas);
+
+    if let Some(badge_w) = badge_w {
+        let badge = Rect::from_xywh(
+            DRAG_IMAGE_W - 10.0 - badge_w,
+            card.center_y() - 9.0,
+            badge_w,
+            18.0,
+        );
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(Color::from_argb(0xFF, 0xFF, 0xFF, 0xFF));
+        canvas.draw_rrect(RRect::new_rect_xy(badge, 9.0, 9.0), &paint);
+
+        Label::new(&count.to_string())
+            .with_style(styles::FOOTNOTE_EMPHASIZED)
+            .with_color(theme.material_selection_focused)
+            .centered_on(badge.center_x(), badge.center_y())
+            .render(canvas);
+    }
 }
 
 /// Which pane and row is under `(x, y)` in Miller view.
@@ -796,6 +993,74 @@ pub fn footer_at(
     None
 }
 
+/// The name row's band, above the buttons: a labelled field and, under it,
+/// room for the one line that says why accept is disabled.
+pub const FOOTER_NAME_H: f32 = 58.0;
+const FOOTER_NAME_LABEL_W: f32 = 76.0;
+const FOOTER_NAME_FIELD_H: f32 = 30.0;
+
+/// The whole name band. Only ever asked for in `Save` mode; in every other
+/// mode the window has no such band and the caller does not draw one.
+pub fn footer_name_band(width: f32, window_height: f32) -> Rect {
+    let bottom = window_height - FOOTER_H;
+    Rect::from_ltrb(0.0, bottom - FOOTER_NAME_H, width, bottom)
+}
+
+/// The text field itself, which the [`TextInput`] is rendered into.
+///
+/// [`TextInput`]: otto_kit::components::text_input::TextInput
+pub fn footer_name_rect(width: f32, window_height: f32) -> Rect {
+    let band = footer_name_band(width, window_height);
+    let left = SIDEBAR_W + FOOTER_PAD + FOOTER_NAME_LABEL_W;
+    Rect::from_ltrb(
+        left,
+        band.top + 8.0,
+        (width - FOOTER_PAD).max(left + 40.0),
+        band.top + 8.0 + FOOTER_NAME_FIELD_H,
+    )
+}
+
+/// The name row's ground and label. The value is drawn afterwards, by the
+/// text input that owns it.
+fn draw_name_row(canvas: &Canvas, f: &Frame, footer: &FooterData<'_>, window_h: f32) {
+    let theme = f.theme;
+    let field = footer_name_rect(f.width, window_h);
+
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(content_ground());
+    canvas.draw_rrect(RRect::new_rect_xy(field, 6.0, 6.0), &paint);
+    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_stroke_width(1.0);
+    paint.set_color(theme.fill_tertiary);
+    canvas.draw_rrect(RRect::new_rect_xy(field, 6.0, 6.0), &paint);
+
+    Label::new("Save As:")
+        .with_style(styles::BODY)
+        .with_color(theme.text_secondary)
+        .centered_on(SIDEBAR_W + FOOTER_PAD, field.center_y())
+        .render(canvas);
+
+    if let Some(problem) = footer.save_problem {
+        Label::new(problem)
+            .with_style(styles::CALLOUT)
+            .with_color(warning_color())
+            .centered_on(field.left, field.bottom + 11.0)
+            .render(canvas);
+    }
+}
+
+/// The tone a blocking message is written in. Not on [`Theme`] because
+/// nothing else in the picker needs it yet; the day a second caller does, it
+/// moves there rather than being copied.
+fn warning_color() -> Color {
+    if matches!(current_color_scheme(), ColorScheme::Dark) {
+        Color::from_argb(0xFF, 0xFF, 0x45, 0x3A)
+    } else {
+        Color::from_argb(0xFF, 0xD7, 0x00, 0x15)
+    }
+}
+
 fn draw_footer(canvas: &Canvas, f: &Frame) {
     let Some(footer) = &f.action_row else {
         return;
@@ -810,10 +1075,14 @@ fn draw_footer(canvas: &Canvas, f: &Frame) {
     paint.set_color(theme.fill_tertiary);
     paint.set_stroke_width(1.0);
     canvas.draw_line(
-        Point::new(0.0, window_h - FOOTER_H),
-        Point::new(f.width, window_h - FOOTER_H),
+        Point::new(0.0, window_h - f.footer),
+        Point::new(f.width, window_h - f.footer),
         &paint,
     );
+
+    if footer.save_name {
+        draw_name_row(canvas, f, footer, window_h);
+    }
 
     if !footer.filters.is_empty() {
         draw_filter_control(canvas, f, footer, window_h);
@@ -837,6 +1106,17 @@ fn draw_footer(canvas: &Canvas, f: &Frame) {
         footer.pressed == Some(FooterButton::Accept),
         footer.accept_enabled,
     );
+}
+
+/// The accent, lightened towards white.
+///
+/// A drop outline is a hint about where something would land, not a selection —
+/// which is painted in the accent at full strength — so it says the same colour
+/// more quietly.
+fn accent_light(theme: &Theme) -> Color {
+    let base = accent(theme);
+    let lift = |channel: u8| (channel as f32 + (255.0 - channel as f32) * 0.45) as u8;
+    Color::from_argb(base.a(), lift(base.r()), lift(base.g()), lift(base.b()))
 }
 
 /// The user's accent colour, or the theme's own selection tone when the
@@ -1180,6 +1460,25 @@ pub struct Frame<'a> {
     /// Pointer is over Quick View's close button, so it lights up — the same
     /// hover behaviour the sheet's close dot has.
     pub quickview_close_hovered: bool,
+    /// Thumbnails for the entries on screen, where any have been found. A
+    /// file with one is drawn as itself instead of as its type's icon.
+    ///
+    /// `None` where there is no store to ask — the geometry tests, and any
+    /// host drawing a listing without one. Every entry then falls back to its
+    /// icon, which is what an entry with no thumbnail does anyway, so nothing
+    /// downstream has to care which case it is in.
+    pub thumbs: Option<&'a crate::thumbnails::Store>,
+    /// What a drag now over the window would drop onto, outlined while it is
+    /// over one. `None` when there is no drag, or it is over nothing that
+    /// takes files.
+    pub drop_target: Option<DropHighlight>,
+}
+
+impl Frame<'_> {
+    /// The thumbnail to draw for an entry, if one is ready.
+    fn thumbnail(&self, entry: &Entry) -> Option<&skia_safe::Image> {
+        self.thumbs?.image(&entry.path, entry.modified)
+    }
 }
 
 /// The picker's action row.
@@ -1194,6 +1493,15 @@ pub struct FooterData<'a> {
     pub filter_open: bool,
     pub hovered: Option<FooterButton>,
     pub pressed: Option<FooterButton>,
+    /// Save mode: draw the name row above the buttons. The field's own text
+    /// is not here — the [`TextInput`] renders itself over this rect after
+    /// the chrome, the way an in-place rename does.
+    ///
+    /// [`TextInput`]: otto_kit::components::text_input::TextInput
+    pub save_name: bool,
+    /// Why accept is disabled, shown under the name field. `None` when there
+    /// is nothing to explain.
+    pub save_problem: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1245,6 +1553,10 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
         ViewMode::Grid => draw_grid(canvas, f),
     }
 
+    // After the panes and before the chrome: over the rows it points at, under
+    // the sidebar divider and the footer.
+    draw_drop_highlight(canvas, f);
+
     paint.set_color(theme.fill_tertiary);
     paint.set_stroke_width(1.0);
     canvas.draw_line(
@@ -1256,6 +1568,138 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
     if f.action_row.is_some() {
         draw_footer(canvas, f);
     }
+}
+
+// ---------------------------------------------------------------------------
+// The replace confirmation
+// ---------------------------------------------------------------------------
+//
+// A card over a dimmed window, drawn after everything else — it is modal, and
+// the dim is what says so. Geometry first, drawing second, and the hit test
+// reads the same rects the paint does.
+
+const CONFIRM_W: f32 = 396.0;
+const CONFIRM_H: f32 = 172.0;
+const CONFIRM_PAD: f32 = 20.0;
+const CONFIRM_BTN_H: f32 = 30.0;
+const CONFIRM_BTN_W: f32 = 104.0;
+
+/// What the sheet says and how its buttons are lit.
+pub struct ConfirmData<'a> {
+    pub message: &'a str,
+    pub detail: &'a str,
+    pub pressed: Option<ConfirmButton>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmButton {
+    Replace,
+    Cancel,
+}
+
+/// The card, centred on the whole window rather than the file area: it is a
+/// question about the dialog, not about the listing.
+pub fn confirm_card_rect(width: f32, window_height: f32) -> Rect {
+    let w = CONFIRM_W.min(width - 32.0);
+    let left = ((width - w) / 2.0).max(0.0);
+    let top = ((window_height - CONFIRM_H) / 2.0).max(0.0);
+    Rect::from_ltrb(left, top, left + w, top + CONFIRM_H)
+}
+
+/// Replace, hard against the card's bottom-right — the affirmative answer in
+/// the position every other accept button in the picker takes.
+pub fn confirm_replace_rect(width: f32, window_height: f32) -> Rect {
+    let card = confirm_card_rect(width, window_height);
+    Rect::from_ltrb(
+        card.right - CONFIRM_PAD - CONFIRM_BTN_W,
+        card.bottom - CONFIRM_PAD - CONFIRM_BTN_H,
+        card.right - CONFIRM_PAD,
+        card.bottom - CONFIRM_PAD,
+    )
+}
+
+pub fn confirm_cancel_rect(width: f32, window_height: f32) -> Rect {
+    let replace = confirm_replace_rect(width, window_height);
+    Rect::from_ltrb(
+        replace.left - 10.0 - CONFIRM_BTN_W,
+        replace.top,
+        replace.left - 10.0,
+        replace.bottom,
+    )
+}
+
+/// What the sheet has under `(x, y)`.
+///
+/// Returns `Some` for the two buttons only. The caller still has to treat a
+/// click anywhere else as swallowed rather than falling through to the
+/// listing: the sheet is modal, and a stray click must not select a file
+/// behind it.
+pub fn confirm_at(x: f32, y: f32, width: f32, window_height: f32) -> Option<ConfirmButton> {
+    let point = Point::new(x, y);
+    if confirm_replace_rect(width, window_height).contains(point) {
+        return Some(ConfirmButton::Replace);
+    }
+    if confirm_cancel_rect(width, window_height).contains(point) {
+        return Some(ConfirmButton::Cancel);
+    }
+    None
+}
+
+/// Draw the sheet over the finished window.
+pub fn draw_confirm(
+    canvas: &Canvas,
+    theme: &Theme,
+    width: f32,
+    window_height: f32,
+    data: &ConfirmData<'_>,
+) {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+
+    // The dim, not a blur: the window behind is already on its own surfaces
+    // and a blur here would cost a full read-back every frame the sheet is up.
+    paint.set_color(Color::from_argb(0x66, 0, 0, 0));
+    canvas.draw_rect(Rect::from_ltrb(0.0, 0.0, width, window_height), &paint);
+
+    let card = confirm_card_rect(width, window_height);
+    paint.set_color(header_material());
+    canvas.draw_rrect(RRect::new_rect_xy(card, 14.0, 14.0), &paint);
+
+    Label::new(data.message)
+        .with_style(styles::BODY_EMPHASIZED)
+        .with_color(theme.text_primary)
+        .with_width(card.width() - CONFIRM_PAD * 2.0)
+        .centered_on(card.left + CONFIRM_PAD, card.top + CONFIRM_PAD + 10.0)
+        .render(canvas);
+
+    Label::new(data.detail)
+        .with_style(styles::CALLOUT)
+        .with_color(theme.text_secondary)
+        .with_width(card.width() - CONFIRM_PAD * 2.0)
+        .centered_on(card.left + CONFIRM_PAD, card.top + CONFIRM_PAD + 40.0)
+        .render(canvas);
+
+    draw_footer_button(
+        canvas,
+        confirm_cancel_rect(width, window_height),
+        "Cancel",
+        theme.fill_secondary,
+        theme.text_primary,
+        data.pressed == Some(ConfirmButton::Cancel),
+        true,
+    );
+    // Replacing a file is the destructive answer, so it is not the accent —
+    // the accent means "the safe thing you probably want", and here that is
+    // Cancel.
+    draw_footer_button(
+        canvas,
+        confirm_replace_rect(width, window_height),
+        "Replace",
+        warning_color(),
+        Color::WHITE,
+        data.pressed == Some(ConfirmButton::Replace),
+        true,
+    );
 }
 
 /// The preview pane's content, as a closure the scene records into its own
@@ -1732,6 +2176,7 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
                 cell,
                 pane.is_selected(index),
                 f.renaming == Some((f.panes.len() - 1, index)),
+                f.thumbnail(pane.entries[index]),
             );
         }
     }
@@ -1751,6 +2196,7 @@ pub fn draw_grid_cell(
     cell: Rect,
     selected: bool,
     renaming: bool,
+    thumb: Option<&skia_safe::Image>,
 ) {
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
@@ -1780,18 +2226,22 @@ pub fn draw_grid_cell(
         );
     }
 
-    let chain = entry.icon_chain();
-    let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
-    if let Some(image) =
-        icons::cached_icon_chain_at(&refs, GRID_ICON as i32, icons::FULL_COLOUR_SIZE)
-    {
-        let dst = Rect::from_xywh(
-            cell.center_x() - GRID_ICON / 2.0,
-            icon_top,
-            GRID_ICON,
-            GRID_ICON,
-        );
-        canvas.draw_image_rect(&image, None, dst, &Paint::default());
+    let box_rect = Rect::from_xywh(
+        cell.center_x() - GRID_ICON / 2.0,
+        icon_top,
+        GRID_ICON,
+        GRID_ICON,
+    );
+    if let Some(image) = thumb {
+        draw_thumbnail(canvas, image, box_rect, false);
+    } else {
+        let chain = entry.icon_chain();
+        let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
+        if let Some(image) =
+            icons::cached_icon_chain_at(&refs, GRID_ICON as i32, icons::FULL_COLOUR_SIZE)
+        {
+            canvas.draw_image_rect(&image, None, box_rect, &Paint::default());
+        }
     }
 
     // Two lines at most, the second elided — a long name must not push the
@@ -2014,7 +2464,14 @@ fn draw_list(canvas: &Canvas, f: &Frame) {
         let cut = f.cut.contains(&entry.path);
         let centre = rect.center_y();
 
-        draw_entry_icon(canvas, entry, rect.left + CONTENT_PAD, rect.center_y(), cut);
+        draw_entry_icon(
+            canvas,
+            entry,
+            rect.left + CONTENT_PAD,
+            rect.center_y(),
+            cut,
+            f.thumbnail(entry),
+        );
 
         if f.renaming != Some((depth, index)) {
             let name_x = rect.left + CONTENT_PAD + ICON_SIZE + 10.0;
@@ -2214,6 +2671,16 @@ pub fn rename_field_style(theme: Theme) -> TextInputStyle {
     style
 }
 
+/// The picker's name field. The row underneath draws the box and its border,
+/// so the input itself paints no ground of its own — two rounded rects on
+/// top of each other, one of them a hair off, is exactly the sort of seam a
+/// dialog gets judged on.
+pub fn save_field_style(theme: Theme) -> TextInputStyle {
+    let mut style = TextInputStyle::with_theme(theme);
+    style.background = Color::TRANSPARENT;
+    style
+}
+
 /// The header band: [`content_ground`] with a little alpha taken out of it.
 /// Much more opaque than the sidebar — the title sits here and the file list
 /// starts a hairline below, so the backdrop may only be hinted at.
@@ -2233,13 +2700,26 @@ pub fn row_colors(theme: &Theme, selected: bool) -> (Color, Color) {
     }
 }
 
-fn draw_entry_icon(canvas: &Canvas, entry: &Entry, left: f32, center_y: f32, cut: bool) {
+fn draw_entry_icon(
+    canvas: &Canvas,
+    entry: &Entry,
+    left: f32,
+    center_y: f32,
+    cut: bool,
+    thumb: Option<&skia_safe::Image>,
+) {
+    let box_rect = Rect::from_xywh(left, center_y - ICON_SIZE / 2.0, ICON_SIZE, ICON_SIZE);
+    if let Some(image) = thumb {
+        draw_thumbnail(canvas, image, box_rect, cut);
+        return;
+    }
+
     let chain = entry.icon_chain();
     let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
     if let Some(image) =
         icons::cached_icon_chain_at(&refs, ICON_SIZE as i32, icons::FULL_COLOUR_SIZE)
     {
-        let dst = Rect::from_xywh(left, center_y - ICON_SIZE / 2.0, ICON_SIZE, ICON_SIZE);
+        let dst = box_rect;
         let mut paint = Paint::default();
         if cut {
             // A cut entry is still there — it does not move until the paste —
@@ -2248,6 +2728,59 @@ fn draw_entry_icon(canvas: &Canvas, entry: &Entry, left: f32, center_y: f32, cut
         }
         canvas.draw_image_rect(&image, None, dst, &paint);
     }
+}
+
+/// A thumbnail, fitted into the box an icon would have had.
+///
+/// Fitted rather than filled: a thumbnail is the file, and cropping it to a
+/// square would be showing the user the middle of their photograph and calling
+/// it the photograph. The picture keeps its own proportions and is centred in
+/// the box, so a panorama and a portrait both sit on the same baseline as the
+/// icons around them.
+///
+/// The hairline matters more than it looks. A photograph with a white sky and
+/// no border does not end anywhere — it bleeds into the window and stops
+/// reading as an object in a grid — and one drawn hard against a dark
+/// background reads as a hole. A single low-contrast edge is enough to close
+/// it, and is cheaper than the drop shadow the same problem is usually solved
+/// with.
+pub(crate) fn draw_thumbnail(canvas: &Canvas, image: &skia_safe::Image, box_rect: Rect, cut: bool) {
+    let (w, h) = (image.width() as f32, image.height() as f32);
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    // Never enlarged past its own pixels: a 32-pixel favicon blown up to fill
+    // a grid cell is a blurry square where a crisp icon would have been.
+    let scale = (box_rect.width() / w).min(box_rect.height() / h).min(1.0);
+    let (dst_w, dst_h) = (w * scale, h * scale);
+    let dst = Rect::from_xywh(
+        box_rect.center_x() - dst_w / 2.0,
+        // Sat on the box's bottom edge rather than its middle, so a row of
+        // mixed shapes shares a baseline the way the icons they replace do.
+        box_rect.bottom - dst_h,
+        dst_w,
+        dst_h,
+    );
+
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    if cut {
+        // Dimmed exactly as the icon it stands in for would be.
+        paint.set_alpha(110);
+    }
+    canvas.draw_image_rect(image, None, dst, &paint);
+
+    let mut edge = Paint::default();
+    edge.set_anti_alias(true);
+    edge.set_style(skia_safe::paint::Style::Stroke);
+    edge.set_stroke_width(1.0);
+    edge.set_color(skia_safe::Color::from_argb(
+        if cut { 20 } else { 46 },
+        0,
+        0,
+        0,
+    ));
+    canvas.draw_rect(dst.with_inset((0.5, 0.5)), &edge);
 }
 
 /// The keyboard cursor when it is not itself part of the selection.
@@ -2591,6 +3124,13 @@ pub fn draw_quickview(
             icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE)
         },
     );
+
+    // The pan's bars, inside the same clip as the picture they belong to.
+    // Nothing is drawn unless there is a zoomed picture with something under
+    // the fold: a state with no content past its viewport has no thumb.
+    let (horizontal, vertical) = session.pan_bars();
+    ScrollRenderer::draw(canvas, horizontal, f.theme, |_, _| {});
+    ScrollRenderer::draw(canvas, vertical, f.theme, |_, _| {});
     canvas.restore();
 }
 
@@ -3045,6 +3585,104 @@ mod geometry_tests {
     use crate::model::Entry;
     use otto_kit::filetype::Kind;
 
+    /// A solid-red image of the given shape, standing in for a thumbnail.
+    fn red_image(w: i32, h: i32) -> skia_safe::Image {
+        let info = skia_safe::ImageInfo::new(
+            (w, h),
+            skia_safe::ColorType::RGBA8888,
+            skia_safe::AlphaType::Premul,
+            None,
+        );
+        let pixels: Vec<u8> = (0..w * h).flat_map(|_| [255u8, 0, 0, 255]).collect();
+        skia_safe::images::raster_from_data(
+            &info,
+            skia_safe::Data::new_copy(&pixels),
+            w as usize * 4,
+        )
+        .expect("raster image")
+    }
+
+    /// Draw one grid cell into a bitmap and hand back the pixels, so a test
+    /// can ask what actually landed rather than what was meant to.
+    fn grid_cell_pixels(thumb: Option<&skia_safe::Image>) -> (skia_safe::Surface, Rect) {
+        let cell = Rect::from_xywh(0.0, 0.0, CELL_W, CELL_H);
+        let mut surface =
+            skia_safe::surfaces::raster_n32_premul((CELL_W as i32, CELL_H as i32)).unwrap();
+        let theme = Theme::light();
+        let entry = &entries(1)[0];
+        surface.canvas().clear(skia_safe::Color::WHITE);
+        draw_grid_cell(surface.canvas(), &theme, entry, cell, false, false, thumb);
+        (surface, cell)
+    }
+
+    fn pixel_at(surface: &mut skia_safe::Surface, x: i32, y: i32) -> (u8, u8, u8) {
+        let info = skia_safe::ImageInfo::new(
+            (1, 1),
+            skia_safe::ColorType::RGBA8888,
+            skia_safe::AlphaType::Unpremul,
+            None,
+        );
+        let mut px = [0u8; 4];
+        assert!(
+            surface.image_snapshot().read_pixels(
+                &info,
+                &mut px,
+                4,
+                (x, y),
+                skia_safe::image::CachingHint::Allow
+            ),
+            "reading pixel at {x},{y}"
+        );
+        (px[0], px[1], px[2])
+    }
+
+    /// A thumbnail is drawn where the icon would have been — the picture
+    /// reaches the box, rather than the type icon being drawn over or under
+    /// it.
+    #[test]
+    fn a_grid_cell_with_a_thumbnail_draws_the_picture() {
+        let image = red_image(64, 64);
+        let (mut surface, cell) = grid_cell_pixels(Some(&image));
+
+        // Centre of the icon box: a square thumbnail fills it, so this is red.
+        let x = cell.center_x() as i32;
+        let y = (cell.top + 8.0 + GRID_ICON / 2.0) as i32;
+        let (r, g, b) = pixel_at(&mut surface, x, y);
+        assert!(
+            r > 200 && g < 60 && b < 60,
+            "expected the thumbnail at the icon box's centre, got ({r},{g},{b})"
+        );
+    }
+
+    /// Fitted, not filled: a wide picture keeps its proportions, so the box's
+    /// top corners stay empty rather than being covered by a stretched or
+    /// cropped image.
+    #[test]
+    fn a_wide_thumbnail_keeps_its_shape() {
+        // Twice as wide as tall: fitted to the box's width, it occupies the
+        // bottom half of the box and leaves the top half alone.
+        let image = red_image(128, 64);
+        let (mut surface, cell) = grid_cell_pixels(Some(&image));
+
+        let icon_top = cell.top + 8.0;
+        let x = cell.center_x() as i32;
+
+        // Just below the box's bottom edge minus a quarter of its height: in
+        // the picture.
+        let inside = (icon_top + GRID_ICON * 0.75) as i32;
+        let (r, _, _) = pixel_at(&mut surface, x, inside);
+        assert!(r > 200, "expected picture in the lower half of the box");
+
+        // The top of the box: above a half-height picture sitting on the
+        // box's baseline, so still the background.
+        let above = (icon_top + 2.0) as i32;
+        let (r, g, b) = pixel_at(&mut surface, x, above);
+        assert!(
+            r > 200 && g > 200 && b > 200,
+            "a fitted wide picture must not reach the top of the box, got ({r},{g},{b})"
+        );
+    }
+
     fn entries(n: usize) -> Vec<Entry> {
         (0..n)
             .map(|i| Entry {
@@ -3287,6 +3925,7 @@ mod geometry_tests {
             action_row: None,
             footer: 0.0,
             quickview_close_hovered: false,
+            drop_target: None,
             width: 1100.0,
             height,
             theme: &theme,
@@ -3310,6 +3949,9 @@ mod geometry_tests {
             can_go_forward: false,
             nav_pressed: None,
             preview: None,
+            // No store: this measures the cost of drawing rows, and every
+            // entry falling back to its icon is the case being counted.
+            thumbs: None,
         };
 
         let mut recorder = skia_safe::PictureRecorder::new();

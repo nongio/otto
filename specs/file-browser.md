@@ -81,9 +81,10 @@ A client-decorated toplevel. Layout:
 - **Path bar** — clickable ancestor segments; ancestors collapse into an
   overflow control when the path is too long for the width.
 - **Sidebar** — places: the XDG user directories that exist, the user's
-  bookmarks, Trash, and currently mounted volumes. A directory can be dragged
-  onto the sidebar to bookmark it once drag and drop exists; until then,
-  bookmarking is a menu action on the selection.
+  bookmarks, Trash, and currently mounted volumes. A place takes a drop, which
+  files into that place's directory; dragging a directory onto the sidebar to
+  *bookmark* it is a separate gesture and is not yet built, so bookmarking is
+  still a menu action on the selection.
 - **File view** — the shared list / icon / column presentation. List and icon
   ship in v1. Every scrolling pane draws **only the rows its scroll view is
   asking for**: the visible band, taken from the scroll view's own content
@@ -94,6 +95,24 @@ A client-decorated toplevel. Layout:
   View anchor, so what is painted and what is clickable cannot disagree. This
   is what the 10,000-file goal above rests on — measuring and shaping the text
   of a row nobody can see is most of the cost of a frame.
+- **Thumbnails in place of icons** — an entry whose thumbnail is available is
+  drawn as itself rather than as its type's icon, in all three presentations:
+  list rows, grid cells, and the column view's rows. The three take different
+  routes to the screen — the first two draw immediately, while a Miller column
+  records its rows into a cached picture — so a thumbnail reaching one of them
+  says nothing about the others, and column view is what the browser opens in. The picture is **fitted, never cropped**: it keeps its own proportions
+  inside the box the icon would have had and sits on the same baseline, so a
+  panorama and a portrait line up with the icons around them, and it is never
+  enlarged past its own pixels. A hairline closes its edge, without which a
+  photograph with a pale sky has no boundary against the window. Everything
+  with no thumbnail — every folder, and every file where none was found —
+  keeps its icon, so the two are always mixed and must agree on geometry.
+- **Only what is on screen is fetched, a few at a time** — the visible range of
+  the pane the user is looking at, capped at four outstanding fetches. A folder
+  of ten thousand pictures therefore costs what a folder of thirty costs. A
+  fetch that finds nothing is remembered for the window's lifetime so it is not
+  retried every frame, and a thumbnail landing invalidates only the panes that
+  could show it, through the pane content key.
 - **Row density** — rows are compact and **abut with no gap between them**, in
   list and column views alike: a listing is scanned rather than read, and the
   fewer pixels between one name and the next, the more of the directory the
@@ -199,7 +218,13 @@ or renamed in place.
 
 Double-click, or Enter on the selection:
 
-- A directory is navigated into, in this window.
+- A directory is navigated into, in this window. **Ctrl+double-click opens it
+  in a new window instead** — a second `otto-files` process pointed at that
+  directory, since the app shell is one toplevel per process. The Ctrl+click
+  that starts the pair still toggles the row into the selection the way a
+  single Ctrl+click does; the second click opens rather than toggling back out.
+  In the picker, which answers one request in one window, Ctrl+click only ever
+  toggles.
 - A file is opened in its default application, resolved from the file's MIME
   type through the desktop's associations. The application is started
   detached — a new session, its stdio closed — so it outlives the browser.
@@ -244,13 +269,14 @@ anchor-based multi-select rules and rubber-band selection. See
 | --- | --- |
 | Space | quick view of the selection (see below) |
 | Return / F2 | rename the entry at the cursor, inline, with the extension unselected — in every view mode, icon view included |
-| Delete | move the selection to trash |
-| Shift+Delete | delete the selection permanently, after confirmation |
+| Delete / Ctrl+Delete / Ctrl+Backspace | move the selection to trash — the modified forms because the chord people reach for is Cmd+Delete, and on a keyboard whose big key is Backspace that arrives as Ctrl+Backspace. Plain Backspace goes up a directory instead, and always has |
+| Shift+Delete | delete the selection permanently, after confirmation — **not built**; the chord is deliberately inert rather than trashing, which is the wrong answer to a keystroke that means "and I mean it" |
 | Ctrl+C / Ctrl+X / Ctrl+V | copy / cut / paste |
 | Ctrl+Z | undo the last operation |
-| Ctrl+N | new window |
+| Ctrl+N | new window, at the **default location** (the home directory for now, a preference later) rather than at this window's directory — a new window is a fresh start, and inheriting wherever the focused window was pointed makes it read as a copy of that window. Ctrl+double-click is the gesture for "that directory, in another window". Nothing in the picker, which answers one request in one window |
+| Ctrl+O | open the entry at the cursor — exactly what a double-click does: descend into a directory, or activate a file (in the picker, accept it). Return is not free for this, since it renames |
 | Ctrl+I | show info for the selection |
-| Ctrl+1 / Ctrl+2 | list / icon view |
+| Ctrl+1 / Ctrl+2 / Ctrl+3 | list / icon / column view |
 | Escape | cancel an inline rename, else clear the search field, else clear the selection |
 
 Return renames, in every view mode; F2 is an alias for it, for the Linux
@@ -270,7 +296,9 @@ progress, and can cancel it.
 - **New folder** — creates `untitled folder`, disambiguating with a numeric
   suffix, and immediately enters inline rename on it.
 - **Copy and move** — the clipboard holds paths and a copy/cut intent. Paste
-  into a directory starts the operation. A move within one filesystem is a
+  into a directory starts the operation, and so does a drop on one: a drag is
+  the same operation reached with the pointer, and both run through the same
+  code with the same conflict rules. A move within one filesystem is a
   rename syscall and is instantaneous; a move across filesystems is copy,
   verify, then unlink the source, and the source is unlinked only after the
   destination is fully written and fsynced.
@@ -306,6 +334,56 @@ progress, and can cancel it.
   reports which files were done, which failed and why, and offers to continue
   with the rest or to stop. It does not abort silently and it does not retry
   in a loop.
+
+### Drag and drop
+
+Files are dragged out of the browser and dropped onto it, including onto itself.
+Both directions speak `wl_data_device`, so a drag to another application is the
+same gesture as one within the window.
+
+**Starting a drag.** A press on a row arms; travelling `6pt` with the button
+still down starts. Below that the press stays an ordinary click, so an unsteady
+hand still selects and a double-click still opens. The whole selection travels,
+not the row under the pointer: dragging one of several selected files takes all
+of them. The payload is the same three types a copy puts on the clipboard —
+`x-special/gnome-copied-files`, `text/uri-list`, `text/plain` — which is what
+makes the drag legible to other file managers and to text editors.
+
+**Taking a drop.** Every target resolves to a *directory*: a directory row or
+cell, a pane's background, or a sidebar place. Dropping on a file is not a
+thing, so a hit on one lands in the directory that file is in. The target is
+outlined while the drag is over it — a wash and an accent ring, drawn over the
+rows — and resolved again at the drop's own position rather than trusting the
+last motion, since a release may land somewhere no motion reported.
+
+**The conversation is per-position.** The browser answers every enter and every
+motion, even to say no: a target that accepts once and goes quiet has told the
+source it stopped accepting. Over anything that is not a directory, or under a
+drag carrying no files, it answers `None`, and the cursor says the drop will be
+refused.
+
+**A drop is a paste.** It runs `paste` with the same `KeepBoth` conflict rule,
+so a drop cannot destroy an existing file, and a directory dropped into itself
+is refused with a message by the same check the clipboard path uses. Files
+dropped back into the directory they already live in are skipped when the action
+is a move — there is nothing to do — but kept when it is a copy, which is how a
+duplicate is made.
+
+**A move is performed by the receiver.** The source deletes nothing when the
+drop finishes. A foreign target that accepted `text/uri-list` has not
+necessarily written those files anywhere, and deleting on its say-so would lose
+them; the receiving file manager has the paths and can do the move itself.
+
+**A drop from this window is served from memory.** Source and target are one
+thread, so asking for the payload over the pipe would block that thread waiting
+for a write only it could make. The drag's own payload is read directly instead,
+and the source is still told the transfer finished.
+
+**No drag icon yet.** The compositor carries and animates one, and the gesture
+works without it — the cursor changes to say copy or move — but nothing is drawn
+under the pointer. With `OTTO_FILES_PANE_SUBS=1` the Miller columns are
+subsurfaces over the window's own canvas, so the drop outline is hidden behind
+them; that mode is opt-in and needs its own drop feedback.
 
 ### Get Info
 
@@ -381,6 +459,18 @@ What the browser does:
   so both routes feed one decision about what the gesture means.
 - Enter still opens the selection in its default application. The previewer
   never launches anything.
+- **Losing the keyboard closes the panel.** A preview is a preview of what
+  *this* window has selected; once focus is on another window there is nothing
+  for it to be a preview of, and a card left floating over a background window
+  is just litter. The signal is `wl_keyboard.leave` on the browser's own
+  toplevel — a leave on the Get Info panel is focus moving between two of the
+  browser's windows and does not count.
+- **This is also how expose reaches it.** The panel is a subsurface, not a
+  popup, so the compositor's popup dismissal on the way into Show All cannot
+  take it down. Otto drops keyboard focus when expose opens (see
+  `Otto::enter_expose_focus`), and the browser closes on that leave like any
+  other. Restoring the panel on the way back is deliberately not done: expose
+  ends by focusing a window, which is a fresh start.
 
 Quick view **consumes** the thumbnail cache and the file-type detection defined
 below, and may **produce** into the thumbnail cache under the same rules. It
@@ -428,6 +518,18 @@ These three are defined here and consumed by the picker, by quick view, and by
 anything else that grows a need for them.
 
 ### 1. The thumbnail cache
+
+**Implemented: the reading half.** `otto_files::thumbcache` resolves, validates
+and reads shared-cache entries, and `otto_files::thumbnails` is the per-window
+store and scheduler over it. The browser consumes what every other file manager
+has already written — verified against the real cache on a developer machine,
+where all 4,686 checkable entries agreed on the key and every live source file
+resolved. **Otto does not yet write into the cache**: generation happens in
+process and is kept in memory only, so the *Writing*, *Eviction* and *Other
+Otto components may write into it* rules below describe the intended end state,
+not current behaviour. Publishing into a cache the whole desktop reads is a
+promise about the bytes and their size, and it is deliberately a separate step
+from consuming it.
 
 **It is the freedesktop shared thumbnail cache, not an Otto-private one.**
 Location, keying and validity follow the freedesktop thumbnail managing
@@ -637,14 +739,18 @@ to "delete" something and breaks restore. The alternative that is correct
 requires `.Trash-$uid` handling with its own security rules. Refusing clearly is
 better than either, and it is a small, self-contained thing to add later.
 
-**Drag and drop is absent, not deferred quietly.** otto-kit has no
-`wl_data_device` support of any kind, so this is a toolkit project first. It is
-named here so its absence is understood as a known gap rather than an oversight.
+**Drag and drop moves by default and copies when asked.** A drag between two
+directories on one filesystem is a move — what every other file manager does —
+and the browser says so by asking the compositor for `move`, preferring it out
+of `copy | move`. It is a *preference*, not a decision: the compositor picks
+the action from what both sides offer, and a source that only offers a copy
+gets a copy. The negotiated action is read at the drop, never assumed from what
+was asked for, because assuming it is how files get moved that were meant to be
+copied.
 
 ## Out of scope for v1, explicitly
 
-Column view (the model supports it; the renderer is v2). Drag and drop, in or
-out. Tabs. Split views. Network and virtual filesystems. Mounting and ejecting.
+Column view (the model supports it; the renderer is v2). Tabs. Split views. Network and virtual filesystems. Mounting and ejecting.
 Content search and any index. Batch rename. Archive browsing or extraction.
 File comparison. Tags, labels, colours, or any metadata Otto would have to store
 itself. Custom per-directory view settings beyond sort order. Templates. Running

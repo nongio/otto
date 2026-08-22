@@ -1,4 +1,4 @@
-use crate::{model, pane_surfaces, perf, picker, quickview, scene, view};
+use crate::{model, pane_surfaces, perf, picker, quickview, scene, thumbcache, thumbnails, view};
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -10,6 +10,7 @@ use otto_kit::components::context_menu::ContextMenu;
 use otto_kit::components::scroll::{Axis, ScrollView};
 use otto_kit::components::titlebar::{WindowControl, WindowControlsState};
 use otto_kit::components::window::resize;
+use otto_kit::dnd::DndAction;
 use otto_kit::prelude::*;
 use otto_kit::CursorShape;
 use skia_safe::Contains;
@@ -18,7 +19,7 @@ use smithay_client_toolkit::seat::keyboard::KeyEvent;
 use smithay_client_toolkit::seat::pointer::PointerEventKind;
 use smithay_client_toolkit::shell::xdg::window::WindowConfigure;
 use smithay_client_toolkit::shell::xdg::{XdgPositioner, XdgSurface};
-use wayland_client::protocol::wl_keyboard;
+use wayland_client::protocol::{wl_keyboard, wl_surface};
 
 /// `BTN_RIGHT` from `linux/input-event-codes.h` — a right-click opens the
 /// context menu instead of doing whatever the same spot does on the left
@@ -31,6 +32,80 @@ use view::ViewMode;
 /// How soon a second press on the same column divider must land to count as
 /// a double-click rather than the start of a fresh drag.
 const DOUBLE_CLICK_WINDOW: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// How far the pointer must travel, with the button still down, before a press
+/// on a row becomes a drag rather than a click. Below this a hand that shifts
+/// while clicking still selects, and a double-click still opens.
+const DRAG_THRESHOLD: f32 = 6.0;
+
+/// Where a drag hovering the window would put the files, and what to outline.
+///
+/// Every variant resolves to a directory: dropping *onto* a file is not a
+/// thing, so a hit on one is a hit on the pane behind it.
+#[derive(Debug, Clone, PartialEq)]
+enum DropTarget {
+    /// A directory row or cell — the files go inside it.
+    Entry {
+        depth: usize,
+        index: usize,
+        path: PathBuf,
+    },
+    /// The pane's own directory, hit through its background.
+    Pane { depth: usize, path: PathBuf },
+    /// A sidebar place.
+    Place { index: usize, path: PathBuf },
+}
+
+impl DropTarget {
+    /// The directory the drop lands in.
+    fn path(&self) -> &PathBuf {
+        match self {
+            Self::Entry { path, .. } | Self::Pane { path, .. } | Self::Place { path, .. } => path,
+        }
+    }
+
+    fn highlight(&self) -> view::DropHighlight {
+        match *self {
+            Self::Entry { depth, index, .. } => view::DropHighlight::Row { depth, index },
+            Self::Pane { depth, .. } => view::DropHighlight::Pane { depth },
+            Self::Place { index, .. } => view::DropHighlight::Place { index },
+        }
+    }
+}
+
+/// Answer the drag source at one position, and light up whatever would take
+/// the drop.
+///
+/// Called for every enter and every motion, because that is what the protocol
+/// asks for: the answer is per-position, and a target that goes quiet has said
+/// no. See [`otto_kit::dnd::accept`].
+fn hover_drag(state: &Arc<Mutex<Browser>>, x: f32, y: f32) {
+    use otto_kit::dnd;
+
+    let mut browser = state.lock().unwrap();
+    let target = browser.drop_target_at(x, y);
+    let mime = dnd::first_offered(clipboard::file_mime_preference());
+
+    match (&target, mime) {
+        (Some(_), Some(mime)) => dnd::accept(
+            Some(&mime),
+            DndAction::Copy | DndAction::Move,
+            // Move by default, copy on request — what every other file manager
+            // does. The compositor still has the last word, and a source that
+            // only offers a copy gets one.
+            DndAction::Move,
+        ),
+        // Over nothing that takes files, or a drag carrying none.
+        _ => dnd::accept(None, DndAction::empty(), DndAction::empty()),
+    }
+
+    if browser.drop_target != target {
+        browser.drop_target = target;
+        browser.dirty = true;
+        drop(browser);
+        AppContext::request_wakeup();
+    }
+}
 
 /// The browser's whole state. Shared with the draw and input callbacks, which
 /// outlive any borrow this struct could hand out.
@@ -85,6 +160,13 @@ struct Browser {
     /// What a cut or copy put aside. Internal to this application — see
     /// [`model::Clipboard`].
     clipboard: model::Clipboard,
+    /// A press on part of the selection that has not moved far enough to be a
+    /// drag yet: where it landed, and the serial that will authorise the drag
+    /// if it does. Cleared on release, so a click that never moves is a click.
+    drag_armed: Option<(f32, f32, u32)>,
+    /// Where a drag now over the window would drop. Drawn outlined, and read
+    /// again when the drop arrives.
+    drop_target: Option<DropTarget>,
     /// The last operation's outcome, shown in the header until the next action.
     status: Option<String>,
     /// The open preview, if one is up.
@@ -98,6 +180,13 @@ struct Browser {
     /// Bumped for every preview decode started, independent of Quick View's
     /// own generation counter — the two panels can be open at once.
     preview_generation_seed: u64,
+    /// Thumbnails for the entries on screen, in place of their type icons.
+    ///
+    /// Only the visible ones are ever fetched, and only a few at a time — see
+    /// [`thumbnails::Store`]. The store is asked what it wants on every update
+    /// and the host runs the work off the UI thread, the same shape the
+    /// preview column's decodes take.
+    thumbs: thumbnails::Store,
     /// A decode is in flight. Keeps the frame loop alive so its result is
     /// painted without waiting for the next input.
     quickview_pending: bool,
@@ -136,6 +225,11 @@ struct Browser {
     nav_pressed: Option<view::NavButton>,
     /// An in-place rename in progress. List view only, for now.
     rename: Option<RenameSession>,
+    /// The type-ahead buffer and when it was last appended to: typing
+    /// printable characters walks the cursor to the entry that starts with
+    /// them, without filtering the view or showing anything. Distinct from
+    /// search, which is Ctrl+F and changes what is displayed.
+    typeahead: Option<(String, std::time::Instant)>,
     /// A Back/Forward step landed and its panes are still being read. The
     /// remembered cursor is an index into a list that does not exist until
     /// those reads finish, so it is re-derived — and scrolled into view —
@@ -151,6 +245,22 @@ struct Browser {
     /// than the browser. `None` is the browser, and every difference between
     /// the two shells reads off this one field.
     picker: Option<picker::Session>,
+    /// The save field, in `Save` mode only. It is the picker's keyboard
+    /// focus: printable keys go here rather than to type-ahead, because in a
+    /// Save dialog what the user is doing is naming a file.
+    save_name: Option<TextInput>,
+    /// The replace-confirmation sheet, while it is up. Modal over the whole
+    /// window: the request is not answered until it is.
+    confirm: Option<ConfirmSheet>,
+    /// The last answer [`Browser::save_action`] gave, and what it was asked
+    /// about.
+    ///
+    /// The action row asks on every repaint, and answering costs three
+    /// syscalls against a directory that may be a stalled network mount —
+    /// which is exactly what this window is not allowed to block on. Keyed on
+    /// the question, so it is recomputed when the directory or the name
+    /// changes and never merely because the window redrew.
+    save_probe: RefCell<Option<(PathBuf, String, picker::SaveAction)>>,
     /// The action row's hover and press state, tracked like the traffic
     /// lights': a button arms on press and fires on release over the same
     /// button, so a press dragged off it changes nothing.
@@ -183,6 +293,19 @@ struct Browser {
     /// asking for is this times that — and applying it incrementally instead
     /// would compound rounding across a gesture that can run for seconds.
     quickview_pinch: Option<f32>,
+}
+
+/// What a pointer event over the Quick View panel is, as far as the pan's
+/// scrollbars are concerned. The two handlers that can deliver one — the
+/// toplevel's and the panel's own surface — funnel into
+/// [`Browser::quickview_pan_pointer`] through this, so a bar behaves the same
+/// whichever of them the compositor picked.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QuickviewPointer {
+    Press,
+    Motion,
+    Release,
+    Leave,
 }
 
 /// A snapshot of the column stack, for the Back/Forward pair. The whole
@@ -222,6 +345,43 @@ struct RenameSession {
     input: TextInput,
 }
 
+/// The uncached half of [`Browser::save_action`]: three syscalls, and the
+/// only place in the picker that touches the filesystem on the UI thread.
+fn probe_save_action(dir: &Path, name: &str) -> picker::SaveAction {
+    if !picker::is_writable_dir(dir) {
+        return picker::SaveAction::Blocked("You do not have permission to save here");
+    }
+    picker::save_action(name, existing_kind(&dir.join(name.trim())))
+}
+
+/// What is at `path` today: `None` for nothing, `Some(true)` for a directory,
+/// `Some(false)` for anything else.
+///
+/// `symlink_metadata`, not `metadata`: a dangling symlink is *something* in
+/// the way, and a symlink to a directory is still a name the application
+/// would be overwriting rather than a folder to descend into.
+fn existing_kind(path: &Path) -> Option<bool> {
+    std::fs::symlink_metadata(path)
+        .ok()
+        .map(|meta| meta.is_dir())
+}
+
+/// The replace confirmation a save-mode accept puts up when something is
+/// already at the path the user named.
+///
+/// It holds the paths it is about to answer with, not a promise to recompute
+/// them: between the sheet appearing and the user pressing Replace the
+/// directory may change underneath, and answering with what the user was
+/// actually shown is the honest thing.
+struct ConfirmSheet {
+    /// The question, already worded for the number of files involved.
+    message: String,
+    detail: String,
+    /// What accepting answers with.
+    paths: Vec<PathBuf>,
+    pressed: Option<view::ConfirmButton>,
+}
+
 /// The byte range an in-place rename should start with selected: the stem,
 /// so typing replaces the base name and leaves the extension alone — the way
 /// Finder and Explorer both do it. A directory has no extension to protect,
@@ -255,6 +415,7 @@ impl Browser {
             last_row_click: None,
             last_boundary_click: None,
             rename: None,
+            typeahead: None,
             pending_restore: false,
             back: Vec::new(),
             forward: Vec::new(),
@@ -267,9 +428,12 @@ impl Browser {
             gesture_axis: None,
             size: (view::WINDOW_W, view::WINDOW_H),
             clipboard: model::Clipboard::default(),
+            drag_armed: None,
+            drop_target: None,
             quickview: None,
             preview: None,
             preview_generation_seed: 0,
+            thumbs: thumbnails::Store::new(),
             quickview_pending: false,
             quickview_closing: None,
             quickview_auto: std::env::var_os("OTTO_FILES_QV_AUTO").is_some(),
@@ -282,6 +446,9 @@ impl Browser {
             controls: WindowControlsState::new(),
             dirty: true,
             picker: None,
+            save_name: None,
+            confirm: None,
+            save_probe: RefCell::new(None),
             footer_hover: None,
             footer_pressed: None,
             quickview_close_hovered: false,
@@ -299,6 +466,14 @@ impl Browser {
         // time reads as a file dialog, where the Miller stack reads as the
         // browser. The user can still switch views.
         browser.mode = ViewMode::List;
+        if session.request.mode.names_a_file() {
+            let name = session.request.initial_name();
+            let selection = picker::name_stem_range(&name);
+            let mut input =
+                TextInput::editing(name, view::save_field_style(AppContext::current_theme()));
+            input.state.select_range(selection);
+            browser.save_name = Some(input);
+        }
         browser.picker = Some(session);
         browser.pan = ScrollView::horizontal(view::content_viewport(
             browser.size.0,
@@ -311,10 +486,15 @@ impl Browser {
     /// How much of the window height the action row takes — zero in the
     /// browser, which has none.
     fn footer_h(&self) -> f32 {
-        if self.picker.is_some() {
-            view::FOOTER_H
-        } else {
-            0.0
+        match &self.picker {
+            // Save mode stacks a name row on top of the buttons; the buttons
+            // themselves stay anchored to the window bottom, so every rect
+            // below the name row is unchanged by this.
+            Some(session) if session.request.mode.names_a_file() => {
+                view::FOOTER_H + view::FOOTER_NAME_H
+            }
+            Some(_) => view::FOOTER_H,
+            None => 0.0,
         }
     }
 
@@ -503,6 +683,81 @@ impl Browser {
         }
     }
 
+    /// Ask the thumbnail store what the visible entries still need.
+    ///
+    /// Called once per update, the same place the preview column's target is
+    /// synced. Returns the jobs the host is to run off the UI thread; an empty
+    /// vector — the usual answer — means everything on screen is already
+    /// settled.
+    ///
+    /// Only the pane the user is looking at is considered. In Miller view the
+    /// parent columns are 16-pixel rows of icons where a thumbnail buys almost
+    /// nothing, and fetching for every column at once would spend the whole
+    /// in-flight budget on panes the eye is not on.
+    fn sync_thumbnails(&mut self) -> Vec<thumbnails::Job> {
+        let depth = self.active.min(self.columns.len().saturating_sub(1));
+        let entries = self.visible(depth);
+        if entries.is_empty() {
+            return Vec::new();
+        }
+
+        let area = view::content_viewport(self.size.0, self.content_h(), self.mode);
+        let scroll = self.columns[depth].scroll.offset();
+        let range = match self.mode {
+            view::ViewMode::Grid => view::grid_visible_range(area, entries.len(), scroll, area),
+            view::ViewMode::List => {
+                view::RowStrip::list(self.size.0, entries.len(), scroll).visible(area)
+            }
+            // A Miller pane's rows sit a little way down the pane and are
+            // panned sideways with the stack, so its own strip and its own
+            // viewport are what describe them — a list's strip would be off by
+            // the inset and would not know the pane can be panned off screen
+            // entirely.
+            view::ViewMode::Columns => {
+                let full = view::miller_pane_rect(
+                    depth,
+                    self.content_h(),
+                    self.pan.offset(),
+                    self.miller_w,
+                );
+                let band = view::pane_viewport(
+                    self.size.0,
+                    self.content_h(),
+                    view::ViewMode::Columns,
+                    depth,
+                    self.pan.offset(),
+                    self.miller_w,
+                );
+                view::RowStrip::miller(full, entries.len(), scroll).visible(band)
+            }
+        };
+
+        // The box a thumbnail will be drawn in decides how much detail to ask
+        // for: a grid cell is worth a real picture, a list row is 16 points of
+        // it.
+        let box_edge = match self.mode {
+            view::ViewMode::Grid => view::GRID_ICON,
+            view::ViewMode::List | view::ViewMode::Columns => view::ICON_SIZE,
+        };
+        let scale = AppContext::scale_factor().max(1) as f32;
+        let size = thumbcache::Size::for_box(box_edge, scale);
+
+        let requests = entries
+            .get(range.clone())
+            .unwrap_or_default()
+            .iter()
+            // A directory has no picture of its own, and asking for one means
+            // a sandboxed worker per folder in a folder of folders.
+            .filter(|entry| !entry.is_dir)
+            .map(|entry| thumbnails::Request {
+                path: entry.path.clone(),
+                modified: entry.modified,
+                may_generate: entry.kind.thumbnailable(),
+            })
+            .collect::<Vec<_>>();
+        self.thumbs.wanted(requests, size)
+    }
+
     /// Show a preview decode that arrived, unless the selection has moved on
     /// since — the same staleness guard Quick View uses.
     fn finish_preview(&mut self, generation: u64, preview: otto_kit::preview::Preview) {
@@ -595,7 +850,9 @@ impl Browser {
     /// Whether any pane still has motion to run — momentum, an overscroll
     /// bounce, or a scrollbar fading out.
     fn scroll_animating(&self) -> bool {
-        self.pan.is_animating() || self.columns.iter().any(|c| c.scroll.is_animating())
+        self.pan.is_animating()
+            || self.columns.iter().any(|c| c.scroll.is_animating())
+            || self.quickview_pan_animating()
     }
 
     /// Advance every pane's scrolling by one tick. Returns whether anything
@@ -610,6 +867,9 @@ impl Browser {
                 moved |= column.scroll.tick();
             }
         }
+        // The open preview's picture pans on scroll views of its own, and
+        // they fling and spring like any other.
+        moved |= self.tick_quickview_pan();
         moved
     }
 
@@ -650,6 +910,16 @@ impl Browser {
 
         self.active = depth;
         self.columns.truncate(depth + 1);
+
+        // Clicking a file in a Save dialog puts its name in the field. That
+        // is how a user says "overwrite this one" without retyping it, and it
+        // is why the replace confirmation exists at all. A directory is a
+        // place to go, not a name to save under, so it leaves the field be.
+        if !entry.is_dir {
+            if let Some(input) = self.save_name.as_mut() {
+                input.set_value(entry.name.clone());
+            }
+        }
 
         // Only Miller view reveals a directory's contents on a plain select —
         // that eager next pane is the point of the view. List and Grid show
@@ -827,6 +1097,123 @@ impl Browser {
         }
     }
 
+    /// Record a Ctrl+click on a row/cell. The first one toggles the row into
+    /// or out of the selection; a second one on the same row within the
+    /// double-click window opens it in a *new window* instead of toggling it
+    /// back out, so Ctrl+double-click reads as "open this one elsewhere"
+    /// rather than as two selection changes.
+    ///
+    /// The picker never takes this path: it answers one request in one
+    /// window, so there Ctrl+click only ever toggles.
+    fn note_ctrl_row_click(&mut self, depth: usize, index: usize) {
+        let now = std::time::Instant::now();
+        let double_click = self.picker.is_none()
+            && self.last_row_click.is_some_and(|(d, i, at)| {
+                d == depth && i == index && now.duration_since(at) < DOUBLE_CLICK_WINDOW
+            });
+        if double_click {
+            self.last_row_click = None;
+            self.open_in_new_window(depth, index);
+        } else {
+            self.toggle_select(depth, index);
+            self.last_row_click = Some((depth, index, now));
+        }
+    }
+
+    /// Open one directory in a second browser window — Ctrl+double-click.
+    ///
+    /// A window is a process here: the app shell is built around a single
+    /// toplevel, so the second window is a second `otto-files` handed the
+    /// directory on its command line. Anything that is not a directory falls
+    /// back to plain activation, which is all a new window could do with it.
+    fn open_in_new_window(&mut self, depth: usize, index: usize) {
+        let Some(entry) = self.visible(depth).get(index).map(|e| (*e).clone()) else {
+            return;
+        };
+        if !entry.is_dir {
+            self.select(depth, index);
+            self.open_selection();
+            return;
+        }
+
+        self.spawn_window(&entry.path);
+    }
+
+    /// Open a second browser window on `path`.
+    ///
+    /// A window is a process here — the app shell is built around a single
+    /// toplevel — so this re-executes this binary with the directory on its
+    /// command line. Shared by Ctrl+double-click and by the New Window
+    /// shortcut, which differ only in which directory they name.
+    fn spawn_window(&mut self, path: &Path) {
+        let exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(err) => {
+                self.status = Some(format!("Couldn\u{2019}t open a new window: {err}"));
+                self.dirty = true;
+                return;
+            }
+        };
+        let spawned = std::process::Command::new(exe)
+            .arg(path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        match spawned {
+            // Reap it on a thread of its own: the child outlives this call and
+            // nothing else here would ever wait on it.
+            Ok(mut child) => {
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+            }
+            Err(err) => {
+                self.status = Some(format!("Couldn\u{2019}t open a new window: {err}"));
+                self.dirty = true;
+            }
+        }
+    }
+
+    /// Open a new window on the default location — Ctrl+N.
+    ///
+    /// The default location, not this window's directory: a new window is a
+    /// fresh start, and starting somewhere arbitrary — wherever the window
+    /// that happened to have focus was pointed — is what makes a new window
+    /// feel like a copy of the old one rather than a new one. Ctrl+double-click
+    /// is the gesture for "that directory, in another window".
+    fn open_new_window(&mut self) {
+        let Some(path) = self.new_window_target() else {
+            return;
+        };
+        self.spawn_window(&path);
+    }
+
+    /// Where a new window would open, or `None` when one makes no sense.
+    ///
+    /// Split from the spawning so the choice can be tested without launching
+    /// a process: everything interesting about Ctrl+N is which directory it
+    /// names, and that is all this answers.
+    fn new_window_target(&self) -> Option<PathBuf> {
+        // The picker answers one request in one window: a second browser
+        // window would have nothing to do with the request and no way to
+        // answer it.
+        if self.picker.is_some() {
+            return None;
+        }
+        Some(Self::default_location())
+    }
+
+    /// Where a window with nowhere in particular to be starts.
+    ///
+    /// The home directory for now. It is a single function rather than a
+    /// literal at each call site because this is the thing a preference would
+    /// replace — when there is one, it is read here and everywhere that opens
+    /// a fresh window follows.
+    fn default_location() -> PathBuf {
+        model::home_dir().unwrap_or_else(|| PathBuf::from("/"))
+    }
+
     /// Descend into the selection: in Miller view the child column already
     /// exists, so this only moves the keyboard into it.
     fn open_selection(&mut self) {
@@ -910,15 +1297,257 @@ impl Browser {
         Some(picked)
     }
 
-    /// Return the current selection to the application and close the window.
-    fn picker_accept(&mut self) {
-        let Some(paths) = self.picker_selection() else {
-            return;
+    // --- The save modes ----------------------------------------------------
+
+    /// The directory a save-mode accept writes into.
+    ///
+    /// `Save` always uses the directory being *viewed*: the name field says
+    /// what to call the file, the listing says where it goes, and a folder
+    /// merely selected in that listing is somewhere the user is looking at,
+    /// not somewhere they have gone. `SaveFiles` follows the directory-mode
+    /// rule instead — the whole request is "which folder", so a selected one
+    /// is the answer.
+    fn save_directory(&self) -> Option<PathBuf> {
+        let session = self.picker.as_ref()?;
+        let depth = self.active.min(self.columns.len().saturating_sub(1));
+        let column = self.columns.get(depth)?;
+
+        if session.request.mode == picker::Mode::SaveFiles {
+            let picked: Vec<&Entry> = self
+                .visible(depth)
+                .into_iter()
+                .filter(|e| e.is_dir && column.selection.contains(&e.name))
+                .collect();
+            if let [only] = picked.as_slice() {
+                return Some(only.path.clone());
+            }
+        }
+        Some(column.path.clone())
+    }
+
+    /// What the accept button would do in `Save` mode, and why it is disabled
+    /// when it is.
+    ///
+    /// The directory check comes first: a name is never the problem when the
+    /// folder cannot be written to at all, and saying "Enter a name" about a
+    /// read-only folder would send the user off correcting the wrong thing.
+    fn save_action(&self) -> picker::SaveAction {
+        let Some(dir) = self.save_directory() else {
+            return picker::SaveAction::Blocked("Nowhere to save");
         };
+        let name = self
+            .save_name
+            .as_ref()
+            .map(TextInput::value)
+            .unwrap_or("")
+            .to_string();
+
+        if let Some((cached_dir, cached_name, action)) = self.save_probe.borrow().as_ref() {
+            if *cached_dir == dir && *cached_name == name {
+                return action.clone();
+            }
+        }
+        let action = probe_save_action(&dir, &name);
+        *self.save_probe.borrow_mut() = Some((dir, name, action.clone()));
+        action
+    }
+
+    /// Ask the filesystem again, ignoring the memo.
+    ///
+    /// Accept uses this: between the last repaint and the click, someone else
+    /// may have created the file the user is about to be told is not there,
+    /// and the confirmation exists precisely to catch that.
+    fn save_action_now(&self) -> picker::SaveAction {
+        self.save_probe.borrow_mut().take();
+        self.save_action()
+    }
+
+    /// Whether the accept button is live, for the frame.
+    fn picker_accept_enabled(&self) -> bool {
+        match self.picker.as_ref().map(|s| s.request.mode) {
+            Some(picker::Mode::Save) => {
+                !matches!(self.save_action(), picker::SaveAction::Blocked(_))
+            }
+            Some(picker::Mode::SaveFiles) => self
+                .save_directory()
+                .is_some_and(|dir| picker::is_writable_dir(&dir)),
+            Some(picker::Mode::Open) => self.picker_selection().is_some(),
+            None => false,
+        }
+    }
+
+    /// The reason the accept button is disabled, shown beside the name field.
+    /// `None` while it is enabled — there is then nothing to explain.
+    fn save_problem(&self) -> Option<&'static str> {
+        match self.picker.as_ref()?.request.mode {
+            picker::Mode::Save => match self.save_action() {
+                // "Enter a name" is not a complaint about an empty field the
+                // user has not filled in yet; it is the placeholder's job.
+                picker::SaveAction::Blocked("Enter a name") => None,
+                picker::SaveAction::Blocked(reason) => Some(reason),
+                _ => None,
+            },
+            picker::Mode::SaveFiles => self
+                .save_directory()
+                .filter(|dir| !picker::is_writable_dir(dir))
+                .map(|_| "You do not have permission to save here"),
+            picker::Mode::Open => None,
+        }
+    }
+
+    /// `Save`: resolve the name field against the directory being viewed.
+    fn save_accept(&mut self) {
+        match self.save_action_now() {
+            picker::SaveAction::Blocked(_) => {}
+            picker::SaveAction::Descend => {
+                // The name names a folder that is already there. Going into it
+                // is what the user meant; clearing the field is what stops the
+                // next Return from bouncing straight back out of it.
+                let Some(dir) = self.save_directory() else {
+                    return;
+                };
+                let name = self
+                    .save_name
+                    .as_ref()
+                    .map(|i| i.value().trim().to_string())
+                    .unwrap_or_default();
+                self.navigate_to(&dir.join(name));
+                if let Some(input) = self.save_name.as_mut() {
+                    input.set_value(String::new());
+                }
+                self.dirty = true;
+            }
+            picker::SaveAction::Replace => {
+                let Some(target) = self.save_target() else {
+                    return;
+                };
+                let name = target
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                self.confirm = Some(ConfirmSheet {
+                    message: format!("\u{201c}{name}\u{201d} already exists. Replace it?"),
+                    detail: "Replacing it overwrites its current contents.".to_string(),
+                    paths: vec![target],
+                    pressed: None,
+                });
+                self.dirty = true;
+            }
+            picker::SaveAction::Write => {
+                let Some(target) = self.save_target() else {
+                    return;
+                };
+                self.answer_with(vec![target]);
+            }
+        }
+    }
+
+    /// The single path `Save` would answer with.
+    fn save_target(&self) -> Option<PathBuf> {
+        let name = self.save_name.as_ref()?.value().trim();
+        if name.is_empty() {
+            return None;
+        }
+        Some(self.save_directory()?.join(name))
+    }
+
+    /// `SaveFiles`: one path per name the request carried, all in the chosen
+    /// directory.
+    ///
+    /// Each name is reduced to its final component. The spec's "no name
+    /// mangling" is about not inventing `file (1).txt` when something is in
+    /// the way; it is not a licence for an application to reach out of the
+    /// directory the user chose by sending `../../.bashrc`.
+    fn save_files_targets(&self) -> Vec<PathBuf> {
+        let Some(dir) = self.save_directory() else {
+            return Vec::new();
+        };
+        let Some(session) = self.picker.as_ref() else {
+            return Vec::new();
+        };
+        session
+            .request
+            .files
+            .iter()
+            .filter_map(|name| Path::new(name).file_name().map(|n| dir.join(n)))
+            .collect()
+    }
+
+    fn save_files_accept(&mut self) {
+        let targets = self.save_files_targets();
+        if targets.is_empty() {
+            return;
+        }
+        let clashes: Vec<&PathBuf> = targets
+            .iter()
+            .filter(|p| existing_kind(p).is_some())
+            .collect();
+        if clashes.is_empty() {
+            self.answer_with(targets);
+            return;
+        }
+        // One sheet for all of them, not one per file: the user is answering
+        // a single question about a single batch.
+        let message = if clashes.len() == 1 {
+            let name = clashes[0]
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            format!("\u{201c}{name}\u{201d} already exists. Replace it?")
+        } else {
+            format!(
+                "{} of these files already exist. Replace them?",
+                clashes.len()
+            )
+        };
+        self.confirm = Some(ConfirmSheet {
+            message,
+            detail: "Replacing them overwrites their current contents.".to_string(),
+            paths: targets,
+            pressed: None,
+        });
+        self.dirty = true;
+    }
+
+    /// Answer the request with `paths` and let the window go.
+    fn answer_with(&mut self, paths: Vec<PathBuf>) {
         if let Some(session) = self.picker.as_mut() {
             session.accept(&paths);
         }
         self.dirty = true;
+    }
+
+    /// Replace, from the confirmation sheet: answer with what the sheet was
+    /// showing. The picker still creates nothing — the application writes.
+    fn confirm_replace(&mut self) {
+        let Some(sheet) = self.confirm.take() else {
+            return;
+        };
+        self.answer_with(sheet.paths);
+    }
+
+    /// Dismiss the sheet without answering. The request stays open and the
+    /// user is back in the dialog, which is what "Cancel" means here — it
+    /// cancels the replacement, not the save.
+    fn confirm_dismiss(&mut self) {
+        if self.confirm.take().is_some() {
+            self.dirty = true;
+        }
+    }
+
+    /// Return the current selection to the application and close the window.
+    fn picker_accept(&mut self) {
+        match self.picker.as_ref().map(|s| s.request.mode) {
+            Some(picker::Mode::Save) => self.save_accept(),
+            Some(picker::Mode::SaveFiles) => self.save_files_accept(),
+            Some(picker::Mode::Open) => {
+                let Some(paths) = self.picker_selection() else {
+                    return;
+                };
+                self.answer_with(paths);
+            }
+            None => {}
+        }
     }
 
     /// Cancel the request. The window closes and the application is told the
@@ -1145,6 +1774,67 @@ impl Browser {
             self.select(self.active, next);
         }
         self.reveal_cursor();
+    }
+
+    /// Move the cursor to the first entry whose name starts with the
+    /// type-ahead buffer, case-insensitively.
+    ///
+    /// Nothing is filtered and nothing is drawn: the only sign it happened is
+    /// the selection moving, which is the whole point of the gesture —
+    /// reaching a file in a long directory without leaving the keyboard.
+    /// The buffer expires after a second of silence, so the next burst of
+    /// typing starts a fresh name rather than extending a stale one.
+    ///
+    /// Repeating one character with nothing in between cycles through the
+    /// entries beginning with it, rather than looking for a doubled letter
+    /// that almost no name has.
+    fn typeahead(&mut self, ch: char) {
+        const EXPIRY: std::time::Duration = std::time::Duration::from_secs(1);
+
+        let names: Vec<String> = self
+            .visible(self.active)
+            .iter()
+            .map(|entry| entry.name.to_lowercase())
+            .collect();
+        if names.is_empty() {
+            return;
+        }
+
+        let now = std::time::Instant::now();
+        let live = self
+            .typeahead
+            .take()
+            .filter(|(_, last)| now.duration_since(*last) < EXPIRY)
+            .map(|(buffer, _)| buffer);
+        let typed = ch.to_lowercase().to_string();
+        let cycling = live.as_deref() == Some(typed.as_str());
+        let buffer = match live {
+            Some(buffer) if cycling => buffer,
+            Some(mut buffer) => {
+                buffer.push_str(&typed);
+                buffer
+            }
+            None => typed,
+        };
+
+        // Cycling resumes just past the cursor and wraps; a buffer that grew
+        // answers from the top, so the same keys always land on the same file.
+        let from = match (cycling, self.columns[self.active].cursor) {
+            (true, Some(cursor)) => cursor + 1,
+            _ => 0,
+        };
+        let hit = (0..names.len())
+            .map(|step| (from + step) % names.len())
+            .find(|&index| names[index].starts_with(&buffer));
+
+        // Kept even when nothing matched: the miss is part of the word being
+        // typed, and dropping it would make the next character search for a
+        // prefix the user never asked for.
+        self.typeahead = Some((buffer, now));
+        if let Some(index) = hit {
+            self.select(self.active, index);
+            self.reveal_cursor();
+        }
     }
 
     /// Scroll the active pane the shortest distance that brings the cursor
@@ -1385,6 +2075,164 @@ impl Browser {
         }
     }
 
+    /// Whether this window does drag and drop at all.
+    ///
+    /// The picker does not: it is a transient serving someone else's request,
+    /// and file management belongs to the browser — see
+    /// [`specs/file-picker.md`]. Dropping files into the directory it happens
+    /// to be showing would be exactly that.
+    fn dnd_enabled(&self) -> bool {
+        self.picker.is_none()
+    }
+
+    /// Where a drag at `(x, y)` would put its files, if anywhere.
+    ///
+    /// Everything resolves to a directory. A hit on a *file* row is not a
+    /// target of its own — the files go beside it, into the directory it is
+    /// in — which is why a miss falls through to the pane rather than
+    /// rejecting the drop.
+    fn drop_target_at(&self, x: f32, y: f32) -> Option<DropTarget> {
+        if !self.dnd_enabled() {
+            return None;
+        }
+        if let Some(index) = view::place_at(x, y, self.places.len()) {
+            return Some(DropTarget::Place {
+                index,
+                path: self.places[index].path.clone(),
+            });
+        }
+        // The rest of the sidebar takes nothing: it is chrome, not a place.
+        if x < view::SIDEBAR_W {
+            return None;
+        }
+
+        if let Some((depth, index)) = self.entry_at(x, y) {
+            if let Some(entry) = self.visible(depth).get(index) {
+                if entry.is_dir {
+                    return Some(DropTarget::Entry {
+                        depth,
+                        index,
+                        path: entry.path.clone(),
+                    });
+                }
+            }
+        }
+
+        let content = view::content_viewport(self.size.0, self.content_h(), self.mode);
+        if x < content.left || x >= content.right || y < content.top || y >= content.bottom {
+            return None;
+        }
+        let depth = self.pane_under(x, y);
+        Some(DropTarget::Pane {
+            depth,
+            path: self.columns[depth].path.clone(),
+        })
+    }
+
+    /// Put `paths` into the current drop target, moving them or copying them.
+    ///
+    /// Runs on the UI thread, like [`Browser::paste`], and inherits the same
+    /// caveat: fine for a deliberate gesture on a known set of files, and due
+    /// to move to the worker pool with the rest of the file operations.
+    fn apply_drop(&mut self, paths: Vec<PathBuf>, move_them: bool) {
+        let Some(target) = self.drop_target.take() else {
+            return;
+        };
+        self.dirty = true;
+        let dest = target.path().clone();
+
+        // Files dragged back into the directory they already live in: a move
+        // there is a no-op, and doing it through `paste` would rename them
+        // out of the way of themselves. A *copy* onto the same directory is a
+        // real request — that is how a duplicate is made — so it is kept.
+        let paths: Vec<PathBuf> = paths
+            .into_iter()
+            .filter(|path| !move_them || path.parent() != Some(dest.as_path()))
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+
+        // Keep Both for the same reason the paste path does: with no conflict
+        // sheet to ask with, the only safe default is the one that cannot
+        // destroy anything. A directory dropped into itself is refused by
+        // `paste` itself, with a message.
+        let result = model::paste(
+            &model::Clipboard {
+                paths,
+                cut: move_them,
+            },
+            &dest,
+            model::OnConflict::KeepBoth,
+        );
+
+        let summary = result.summary();
+        self.status = (!summary.is_empty()).then_some(summary);
+        self.reload_all();
+    }
+
+    /// What to draw under the cursor: the first selected entry's name and icon
+    /// chain, and how many entries are travelling in total.
+    ///
+    /// One entry stands for the group. Stacking every icon is a nicer picture
+    /// and a much bigger one, and the count already says how much is coming.
+    fn drag_image(&self) -> (String, Vec<String>, usize) {
+        let entries = self.selected_entries();
+        let count = entries.len();
+        match entries.first() {
+            Some(entry) => (entry.name.clone(), entry.icon_chain(), count),
+            None => (String::new(), Vec::new(), 0),
+        }
+    }
+
+    /// Where inside the drag image the cursor should sit, given a grab at
+    /// `(x, y)`.
+    ///
+    /// The point of the gesture is that the thing stays where it was grabbed,
+    /// so this is the click's offset within the row it landed on — clamped to
+    /// the image, which is narrower than a row, so a grab far along a wide row
+    /// still ends up holding its right-hand edge rather than thin air.
+    fn grab_anchor(&self, x: f32, y: f32) -> (f32, f32) {
+        let Some((depth, index)) = self.entry_at(x, y) else {
+            return (0.0, 0.0);
+        };
+        let (width, height) = (self.size.0, self.content_h());
+        let count = self.visible_len(depth);
+        let scroll = self.columns[depth].scroll.offset();
+
+        let rect = match self.mode {
+            ViewMode::Grid => view::grid_cell_rect(
+                view::content_viewport(width, height, ViewMode::Grid),
+                index,
+                scroll,
+            ),
+            ViewMode::List => view::list_row_rect(width, count, index, scroll),
+            ViewMode::Columns => view::miller_row_rect(
+                depth,
+                height,
+                self.pan.offset(),
+                self.miller_w,
+                count,
+                index,
+                scroll,
+            ),
+        };
+
+        (
+            (x - rect.left).clamp(0.0, view::DRAG_IMAGE_W),
+            (y - rect.top).clamp(0.0, view::DRAG_IMAGE_H),
+        )
+    }
+
+    /// The paths a drag started now would carry: the whole selection, so
+    /// dragging one of several selected files takes all of them.
+    fn drag_paths(&self) -> Vec<PathBuf> {
+        self.selected_entries()
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect()
+    }
+
     /// Point the browser at what a right-click at `(x, y)` should act on,
     /// and build the menu for it.
     ///
@@ -1595,17 +2443,7 @@ impl Browser {
             Some(session) => session.opened_at,
             None => std::time::Instant::now(),
         };
-        self.quickview = Some(quickview::Session {
-            preview,
-            name,
-            first_row: 0,
-            // Fit, whatever the last file was left at. A zoom belongs to the
-            // picture it was made on, not to the panel.
-            zoom: otto_kit::preview::Zoom::FIT,
-            anchor,
-            opened_at,
-            closing: None,
-        });
+        self.quickview = Some(quickview::Session::new(preview, name, anchor, opened_at));
         // Re-opening cancels whatever was on its way out: two panels in flight
         // at once would cross over each other.
         self.quickview_closing = None;
@@ -1654,7 +2492,7 @@ impl Browser {
     /// surface — because the choice between panning and scrolling has to come
     /// out the same whichever of the two the compositor happened to deliver
     /// the event to.
-    fn quickview_wheel(&mut self, dx: f32, dy: f32, panel: Rect) {
+    fn quickview_wheel(&mut self, dx: f32, dy: f32, panel: Rect, stop: bool, discrete: bool) {
         let content = view::quickview_content_rect(panel);
         let pannable = self
             .quickview
@@ -1664,18 +2502,16 @@ impl Browser {
             return;
         };
         if pannable {
-            // The picture follows the fingers the way the content of a
-            // scrolled view does: pushing down brings what is below into
-            // view, which moves the image up.
-            //
-            // At the same speed, too. A Wayland axis delta is the finger's
-            // own travel in logical points, which every scroll view in the
-            // toolkit multiplies before it moves anything — applied raw here
-            // the picture crawled, and one two-finger gesture meant two
-            // different things depending on whether a preview was open.
-            let speed = otto_kit::components::scroll::wheel_scale();
-            session.pan_by(-dx * speed, -dy * speed, content);
+            // A picture is scrolled, not dragged: the deltas go to the pan's
+            // own scroll views, which amplify them the way every other scroll
+            // view in the toolkit does, keep gliding when the fingers lift,
+            // and resist the ends.
+            session.pan_wheel(dx, dy, content, stop, discrete);
         } else {
+            // A gesture that ended moved nothing on its own.
+            if stop {
+                return;
+            }
             // The content's box, not the card's: the rows are laid out below
             // the title strip, so scrolling has to measure against the same
             // rect the preview was drawn into.
@@ -1683,6 +2519,64 @@ impl Browser {
             session.scroll_by(rows, content);
         }
         self.dirty = true;
+    }
+
+    /// Route a pointer event over the panel to the pan's scrollbars.
+    ///
+    /// Returns whether the bar took the press: the panel dismisses on a click
+    /// outside and the close dot on a click inside, and a bar dragged over a
+    /// zoomed picture must do neither.
+    fn quickview_pan_pointer(
+        &mut self,
+        kind: QuickviewPointer,
+        point: skia_safe::Point,
+        panel: Rect,
+    ) -> bool {
+        let content = view::quickview_content_rect(panel);
+        let Some(session) = self.quickview.as_mut() else {
+            return false;
+        };
+        let (handled, moved) = match kind {
+            QuickviewPointer::Press => {
+                let hit = session.pan_pointer_down(point.x, point.y, content);
+                (hit, hit)
+            }
+            QuickviewPointer::Motion => {
+                (false, session.pan_pointer_move(point.x, point.y, content))
+            }
+            QuickviewPointer::Release => {
+                session.pan_pointer_up();
+                (false, false)
+            }
+            QuickviewPointer::Leave => {
+                session.pan_pointer_up();
+                session.pan_pointer_leave();
+                (false, false)
+            }
+        };
+        self.dirty |= moved;
+        handled
+    }
+
+    /// Advance the open preview's pan by one frame. Returns whether it moved.
+    fn tick_quickview_pan(&mut self) -> bool {
+        let panel = self
+            .quickview_panel
+            .unwrap_or_else(|| quickview::panel_rect(self.size.0, self.size.1));
+        let content = view::quickview_content_rect(panel);
+        let Some(session) = self.quickview.as_mut() else {
+            return false;
+        };
+        let moved = session.tick_pan(content);
+        self.dirty |= moved;
+        moved
+    }
+
+    /// Whether the open preview's pan still has frames to run.
+    fn quickview_pan_animating(&self) -> bool {
+        self.quickview
+            .as_ref()
+            .is_some_and(quickview::Session::pan_animating)
     }
 
     /// Dismiss the preview. Returns whether one was open.
@@ -1874,7 +2768,9 @@ impl Browser {
             preview,
             action_row: self.picker.as_ref().map(|session| view::FooterData {
                 accept_label: &session.accept_label,
-                accept_enabled: self.picker_selection().is_some(),
+                accept_enabled: self.picker_accept_enabled(),
+                save_name: session.request.mode.names_a_file(),
+                save_problem: self.save_problem(),
                 filters: &session.filter_labels,
                 current_filter: session.current_filter,
                 filter_open: session.filter_open,
@@ -1883,6 +2779,8 @@ impl Browser {
             }),
             footer: self.footer_h(),
             quickview_close_hovered: self.quickview_close_hovered,
+            thumbs: Some(&self.thumbs),
+            drop_target: self.drop_target.as_ref().map(DropTarget::highlight),
         }
     }
 }
@@ -1894,16 +2792,18 @@ impl Browser {
 struct FilesApp {
     window: Option<Window>,
     state: Arc<Mutex<Browser>>,
-    /// Control held. Tracked from the key stream rather than inferred from the
-    /// text a chord produces: Ctrl+I is historically a TAB character and Ctrl+H
-    /// a backspace, so reading `utf8` to detect them is both obscure and
-    /// unreliable — it depends on the keymap producing the control character at
-    /// all, which it may not.
+    /// The modifier state, as the compositor reports it in
+    /// `wl_keyboard.modifiers` — not inferred from the text a chord produces
+    /// (Ctrl+I is historically a TAB character and Ctrl+H a backspace, so
+    /// reading `utf8` to detect them is both obscure and unreliable), and not
+    /// tracked from `Control_L`/`Control_R` presses either: those miss a
+    /// modifier that was already held when the window took focus, and any
+    /// chord the compositor swallowed before the key reached us.
     ///
-    /// Shared rather than a plain field because the pointer callback needs them
+    /// Shared rather than a plain field because the pointer callback needs it
     /// too — Ctrl+click and Shift+click are the pointer half of the same
     /// selection rules — and that callback outlives any borrow of `self`.
-    modifiers: Arc<Mutex<(bool, bool)>>,
+    modifiers: Arc<Mutex<Modifiers>>,
     /// The right-click menu, built once — see `ContextMenu::new`'s docs for
     /// why it cannot be built lazily from inside a pointer handler. `None`
     /// until `on_app_ready` constructs it, which is the earliest point
@@ -2055,6 +2955,37 @@ impl App for FilesApp {
                 session.input.render_at(canvas, rect.width(), rect.height());
                 canvas.restore();
             }
+
+            // The save field's value, over the box the action row drew for
+            // it — the same two-step the in-place rename takes, and for the
+            // same reason: the text input owns its caret and selection and
+            // paints them itself.
+            if browser.save_name.is_some() {
+                let (width, window_h) = (browser.size.0, browser.size.1);
+                let rect = view::footer_name_rect(width, window_h);
+                let input = browser.save_name.as_mut().unwrap();
+                input.set_size(rect.width(), rect.height());
+                canvas.save();
+                canvas.translate((rect.left, rect.top));
+                input.render_at(canvas, rect.width(), rect.height());
+                canvas.restore();
+            }
+
+            // Last of all, because it is modal and dims everything above.
+            if let Some(sheet) = browser.confirm.as_ref() {
+                let (width, window_h) = (browser.size.0, browser.size.1);
+                view::draw_confirm(
+                    canvas,
+                    &theme,
+                    width,
+                    window_h,
+                    &view::ConfirmData {
+                        message: &sheet.message,
+                        detail: &sheet.detail,
+                        pressed: sheet.pressed,
+                    },
+                );
+            }
         });
 
         // Also when only Quick View wants a surface: the columns stay in the
@@ -2065,6 +2996,7 @@ impl App for FilesApp {
             ));
         }
 
+        self.install_dnd(&window);
         self.install_quickview_pointer();
         self.install_info_window_pointer();
         self.install_pointer(&window, self.context_menu.clone().unwrap());
@@ -2083,7 +3015,7 @@ impl App for FilesApp {
     /// [`AppContext::request_wakeup`] — and this is where that wakeup turns
     /// into a frame.
     fn on_update(&mut self, _ctx: &AppContext) {
-        let (repaint, preview_target, scrolled_only) = {
+        let (repaint, preview_target, scrolled_only, thumb_jobs) = {
             let mut browser = self.state.lock().unwrap();
             let changed = browser.poll();
             // Momentum, the overscroll bounce and the scrollbar's fade all
@@ -2097,6 +3029,12 @@ impl App for FilesApp {
             // checked centrally here rather than threaded through every place
             // the selection can change.
             let preview_target = browser.sync_preview_target();
+            // What the entries on screen still need a picture for. Same place
+            // and same reasoning as the preview target above: everything that
+            // can change what is visible — a scroll, a directory landing, a
+            // switch of view mode — has already happened by the time this
+            // runs.
+            let thumb_jobs = browser.sync_thumbnails();
             // A sideways pan moves the columns, and the hairlines between them
             // are drawn in the window, not in the column surfaces — so while
             // the stack is panning the window has to keep up or the dividers
@@ -2115,10 +3053,13 @@ impl App for FilesApp {
                 || std::mem::take(&mut browser.dirty)
                 || animating
                 || preview_target.is_some();
-            (repaint, preview_target, scrolled_only)
+            (repaint, preview_target, scrolled_only, thumb_jobs)
         };
         if let Some((path, generation)) = preview_target {
             self.start_preview(path, generation);
+        }
+        for job in thumb_jobs {
+            self.start_thumbnail(job);
         }
 
         // One lock, taken once. A `self.state.lock()` in an `if` condition
@@ -2238,6 +3179,38 @@ impl App for FilesApp {
         self.render();
     }
 
+    /// The authoritative modifier state, sent before the key event it
+    /// belongs to and again whenever the window takes focus.
+    fn on_modifiers(&mut self, _ctx: &AppContext, modifiers: Modifiers) {
+        *self.modifiers.lock().unwrap() = modifiers;
+    }
+
+    /// Quick View is a preview of what the window has selected, so it belongs
+    /// to the window's focus: once the keyboard goes somewhere else the panel
+    /// is a card floating over a background window with nothing to preview.
+    ///
+    /// This is also how expose reaches us. The panel is a subsurface, not a
+    /// popup, so the compositor's `dismiss_all_popups` on the way into Show All
+    /// cannot take it down — but Otto drops keyboard focus entering expose, and
+    /// that lands here.
+    ///
+    /// Only the browser's own toplevel counts. A leave on the Get Info panel is
+    /// focus moving between two of our windows, not away from the browser.
+    fn on_keyboard_leave(&mut self, _ctx: &AppContext, surface: &wl_surface::WlSurface) {
+        use wayland_client::Proxy;
+        let ours = self
+            .window
+            .as_ref()
+            .and_then(|window| window.wl_surface())
+            .is_some_and(|main| main.id() == surface.id());
+        if !ours {
+            return;
+        }
+        if self.state.lock().unwrap().close_quickview() {
+            self.render();
+        }
+    }
+
     fn on_key_event(
         &mut self,
         _ctx: &AppContext,
@@ -2247,23 +3220,43 @@ impl App for FilesApp {
     ) {
         use smithay_client_toolkit::seat::keyboard::Keysym;
 
-        // Track the modifiers on both edges, before the press-only guard.
-        let pressed = key_state == wl_keyboard::KeyState::Pressed;
-        if matches!(event.keysym, Keysym::Control_L | Keysym::Control_R) {
-            self.modifiers.lock().unwrap().0 = pressed;
+        // A modifier key on its own is not a shortcut and not type-ahead:
+        // the state it changed already arrived in `on_modifiers`.
+        if matches!(
+            event.keysym,
+            Keysym::Control_L
+                | Keysym::Control_R
+                | Keysym::Shift_L
+                | Keysym::Shift_R
+                | Keysym::Alt_L
+                | Keysym::Alt_R
+                | Keysym::Super_L
+                | Keysym::Super_R
+        ) {
             return;
         }
-        if matches!(event.keysym, Keysym::Shift_L | Keysym::Shift_R) {
-            self.modifiers.lock().unwrap().1 = pressed;
+        if key_state != wl_keyboard::KeyState::Pressed {
             return;
         }
-        if !pressed {
-            return;
-        }
-        let (ctrl, shift) = *self.modifiers.lock().unwrap();
+        let mods = *self.modifiers.lock().unwrap();
+        let (ctrl, shift) = (mods.ctrl, mods.shift);
 
         {
             let mut browser = self.state.lock().unwrap();
+
+            // The confirmation sheet is modal, so it takes the keyboard
+            // whole: Return is the answer it is asking for and Escape backs
+            // out of it. Nothing else reaches the window behind it.
+            if browser.confirm.is_some() {
+                match event.keysym {
+                    Keysym::Return | Keysym::KP_Enter => browser.confirm_replace(),
+                    Keysym::Escape => browser.confirm_dismiss(),
+                    _ => {}
+                }
+                drop(browser);
+                self.render();
+                return;
+            }
 
             // An in-place rename owns the keyboard outright: every key is
             // text-field input, not a browser shortcut.
@@ -2302,6 +3295,66 @@ impl App for FilesApp {
                 return;
             }
 
+            // In Save mode the name field holds the keyboard focus: what the
+            // user is doing is naming a file, so printable keys are the name
+            // rather than type-ahead, and Backspace edits it rather than
+            // walking up a directory.
+            //
+            // What the field does *not* take is vertical motion. Up, Down and
+            // the page keys still drive the listing, so a user can pick the
+            // file they mean to overwrite without ever leaving the field —
+            // which is the whole point of it holding focus.
+            if browser.save_name.is_some() {
+                let editing = match event.keysym {
+                    Keysym::Return | Keysym::KP_Enter => {
+                        browser.picker_accept();
+                        drop(browser);
+                        self.render();
+                        return;
+                    }
+                    Keysym::Escape => {
+                        browser.picker_cancel();
+                        drop(browser);
+                        self.render();
+                        return;
+                    }
+                    Keysym::Up
+                    | Keysym::Down
+                    | Keysym::Page_Up
+                    | Keysym::Page_Down
+                    | Keysym::Tab => None,
+                    Keysym::Left => Some(TextInputKey::Left),
+                    Keysym::Right => Some(TextInputKey::Right),
+                    Keysym::Home => Some(TextInputKey::Home),
+                    Keysym::End => Some(TextInputKey::End),
+                    Keysym::BackSpace => Some(TextInputKey::Backspace),
+                    Keysym::Delete => Some(TextInputKey::Delete),
+                    Keysym::a if ctrl => Some(TextInputKey::SelectAll),
+                    // A chord that is not the field's own is the window's:
+                    // Ctrl+W and friends still reach the shortcuts below.
+                    _ if ctrl => None,
+                    _ => event
+                        .utf8
+                        .as_ref()
+                        .and_then(|s| s.chars().next())
+                        .map(TextInputKey::Char),
+                };
+                if let Some(key) = editing {
+                    let mods = KeyMods { shift, ctrl };
+                    if let Some(input) = browser.save_name.as_mut() {
+                        input.on_key(key, mods);
+                    }
+                    browser.dirty = true;
+                    drop(browser);
+                    self.render();
+                    return;
+                }
+            }
+
+            // Set by the type-ahead arm below: every other key ends the
+            // word being typed, the way a second of silence does.
+            let mut typing = false;
+
             match event.keysym {
                 Keysym::Down => {
                     let step = browser.row_step();
@@ -2330,6 +3383,23 @@ impl App for FilesApp {
                 }
                 // The Linux convention, alongside Return: both rename.
                 Keysym::F2 => browser.start_rename(),
+                // Move to Trash. Plain Delete is the spec's binding; the
+                // modified forms are there because the chord people reach for
+                // is Cmd+Delete, and on a keyboard whose big key is Backspace
+                // that arrives as Ctrl+BackSpace. Plain Backspace is *not*
+                // one of them — it goes up a directory, and always has.
+                //
+                // Shift is excluded deliberately: Shift+Delete is spelled for
+                // permanent deletion, which is not built. Trashing instead
+                // would be the wrong answer to a keystroke that means "and I
+                // mean it", so the chord does nothing until it does the right
+                // thing.
+                Keysym::Delete | Keysym::KP_Delete if !shift && browser.picker.is_none() => {
+                    browser.move_selected_to_trash()
+                }
+                Keysym::BackSpace if ctrl && !shift && browser.picker.is_none() => {
+                    browser.move_selected_to_trash()
+                }
                 Keysym::BackSpace => browser.go_up(),
                 Keysym::Home => browser.move_cursor(-100_000, shift),
                 Keysym::End => browser.move_cursor(100_000, shift),
@@ -2400,19 +3470,45 @@ impl App for FilesApp {
                     browser.show_hidden = !browser.show_hidden;
                     browser.dirty = true;
                 }
-                Keysym::_1 => {
+                Keysym::n if ctrl => browser.open_new_window(),
+                // What a double-click does, from the keyboard: descend into a
+                // directory, or activate a file. Return is not free for this —
+                // it renames, the way it does on the desktop this follows — so
+                // opening needs a chord of its own.
+                Keysym::o if ctrl => browser.open_selection(),
+                Keysym::_1 if ctrl => {
                     browser.mode = ViewMode::List;
                     browser.dirty = true;
                 }
-                Keysym::_2 => {
+                Keysym::_2 if ctrl => {
                     browser.mode = ViewMode::Grid;
                     browser.dirty = true;
                 }
-                Keysym::_3 => {
+                Keysym::_3 if ctrl => {
                     browser.mode = ViewMode::Columns;
                     browser.dirty = true;
                 }
-                _ => {}
+                // Anything else printable is type-ahead. It comes last so
+                // that every shortcut above keeps the key it already had.
+                _ => {
+                    // Only an unmodified key is a letter of a name. A chord
+                    // this app does not bind is still a chord — it belongs to
+                    // whoever does bind it, not to the buffer.
+                    let chord = ctrl || mods.alt || mods.logo;
+                    if let Some(ch) = event
+                        .utf8
+                        .as_deref()
+                        .filter(|_| !chord)
+                        .and_then(|text| text.chars().next())
+                        .filter(|ch| !ch.is_control() && *ch != ' ')
+                    {
+                        browser.typeahead(ch);
+                        typing = true;
+                    }
+                }
+            }
+            if !typing {
+                browser.typeahead = None;
             }
 
             // The preview follows the cursor: arrow-keying through a folder
@@ -2581,6 +3677,32 @@ impl FilesApp {
         });
     }
 
+    /// Fetch one thumbnail off the UI thread.
+    ///
+    /// The shared cache makes most of these a single file read; the rest end
+    /// in the sandboxed decoder, which is why this is never run inline. The
+    /// result is recorded whatever it is — a miss is worth remembering, or the
+    /// same file is asked for again on the very next frame.
+    fn start_thumbnail(&self, job: thumbnails::Job) {
+        let state = Arc::clone(&self.state);
+        tokio::task::spawn_blocking(move || {
+            let found = thumbnails::fetch(&job);
+            let mut browser = state.lock().unwrap();
+            let before = browser.thumbs.epoch();
+            browser.thumbs.finish(job.path, job.modified, found);
+            // A picture landing changes what the panes draw; a miss changes
+            // only what will be asked for next, and repainting for it would
+            // render the same pixels again. The store's epoch is what tells
+            // the two apart.
+            browser.dirty |= browser.thumbs.epoch() != before;
+            drop(browser);
+            // Same reason the preview decodes wake the loop: a window that has
+            // stopped committing frames has no frame callback to notice a
+            // thumbnail landed.
+            AppContext::request_wakeup();
+        });
+    }
+
     /// Keep repainting while a directory read is outstanding.
     ///
     /// Two constraints force this shape. A worker thread cannot ask for a
@@ -2622,6 +3744,9 @@ impl FilesApp {
                     || browser.quickview_pending
                     || opening
                     || preview_pending
+                    // …and while thumbnails are being fetched, so they appear
+                    // as they land rather than at the next keystroke.
+                    || browser.thumbs.is_busy()
             };
             if repaint {
                 window.request_frame();
@@ -2669,8 +3794,17 @@ impl FilesApp {
                     PointerEventKind::Press { .. } if over => {
                         browser.close_quickview();
                     }
+                    PointerEventKind::Press { .. } => {
+                        // A scrollbar over a zoomed picture takes the press
+                        // before anything else does.
+                        browser.quickview_pan_pointer(QuickviewPointer::Press, point, panel);
+                    }
+                    PointerEventKind::Release { .. } => {
+                        browser.quickview_pan_pointer(QuickviewPointer::Release, point, panel);
+                    }
                     PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
                         browser.quickview_focus(point, panel);
+                        browser.quickview_pan_pointer(QuickviewPointer::Motion, point, panel);
                         if browser.quickview_close_hovered != over {
                             browser.quickview_close_hovered = over;
                             browser.dirty = true;
@@ -2678,6 +3812,7 @@ impl FilesApp {
                     }
                     PointerEventKind::Leave { .. } => {
                         browser.quickview_focus = None;
+                        browser.quickview_pan_pointer(QuickviewPointer::Leave, point, panel);
                         if browser.quickview_close_hovered {
                             browser.quickview_close_hovered = false;
                             browser.dirty = true;
@@ -2692,9 +3827,10 @@ impl FilesApp {
                             horizontal.absolute as f32,
                             vertical.absolute as f32,
                             panel,
+                            vertical.stop || horizontal.stop,
+                            vertical.discrete != 0 || horizontal.discrete != 0,
                         );
                     }
-                    _ => {}
                 }
                 drop(browser);
                 AppContext::request_wakeup();
@@ -2831,6 +3967,88 @@ impl FilesApp {
         });
     }
 
+    /// Take drops: from another application, and from this window's own drags.
+    ///
+    /// The drag conversation is per-position — see [`otto_kit::dnd`] — so every
+    /// enter and every motion answers, even to say no. Answering nothing is how
+    /// a target refuses, and a refused drag never delivers.
+    fn install_dnd(&self, window: &Window) {
+        use otto_kit::dnd::{self, DragEvent};
+        use wayland_client::Proxy;
+
+        let state = Arc::clone(&self.state);
+        let window = window.clone();
+        // Enter names the surface; motion and drop do not. A drag over some
+        // other surface of ours — Quick View, the info sheet — is not a drop
+        // target, so what the enter decided has to be remembered.
+        let on_toplevel = std::cell::Cell::new(false);
+
+        dnd::register(move |event| {
+            let is_ours = |id: &wayland_client::backend::ObjectId| {
+                window.wl_surface().is_some_and(|s| s.id() == *id)
+            };
+
+            match event {
+                DragEvent::Enter { surface, x, y } => {
+                    on_toplevel.set(is_ours(surface));
+                    if !on_toplevel.get() {
+                        return;
+                    }
+                    hover_drag(&state, *x as f32, *y as f32);
+                }
+                DragEvent::Motion { x, y } => {
+                    if !on_toplevel.get() {
+                        return;
+                    }
+                    hover_drag(&state, *x as f32, *y as f32);
+                }
+                DragEvent::Leave => {
+                    if !on_toplevel.replace(false) {
+                        return;
+                    }
+                    let mut browser = state.lock().unwrap();
+                    browser.dirty |= browser.drop_target.take().is_some();
+                    drop(browser);
+                    AppContext::request_wakeup();
+                }
+                DragEvent::Drop { x, y } => {
+                    if !on_toplevel.replace(false) {
+                        return;
+                    }
+                    // The negotiated action, not the one we asked for: the
+                    // compositor picks, and a source that only offered a copy
+                    // must not have its files moved.
+                    let move_them = dnd::selected_action().contains(dnd::DndAction::Move);
+
+                    // Our own drag is served from our own payload; see
+                    // `dnd::own_files` for why it cannot go over the pipe.
+                    let paths = if dnd::dragging() {
+                        let paths = dnd::own_files();
+                        dnd::finish();
+                        paths
+                    } else {
+                        dnd::receive_files().map(|(paths, _)| paths)
+                    };
+
+                    let mut browser = state.lock().unwrap();
+                    // Resolved again at the drop's own position rather than
+                    // trusting the last motion: the release may land somewhere
+                    // no motion reported.
+                    browser.drop_target = browser.drop_target_at(*x as f32, *y as f32);
+                    match paths {
+                        Some(paths) => browser.apply_drop(paths, move_them),
+                        None => {
+                            browser.drop_target = None;
+                            browser.dirty = true;
+                        }
+                    }
+                    drop(browser);
+                    AppContext::request_wakeup();
+                }
+            }
+        });
+    }
+
     fn install_pointer(&self, window: &Window, context_menu: ContextMenu) {
         let state = Arc::clone(&self.state);
         let window_for_events = window.clone();
@@ -2839,7 +4057,8 @@ impl FilesApp {
         window.on_pointer_event(move |events| {
             for event in events {
                 let (x, y) = (event.position.0 as f32, event.position.1 as f32);
-                let (ctrl, shift) = *modifiers.lock().unwrap();
+                let mods = *modifiers.lock().unwrap();
+                let (ctrl, shift) = (mods.ctrl, mods.shift);
                 let mut browser = state.lock().unwrap();
                 // The file area's bottom, not the window's: every hit test
                 // below is against the listing, which stops short of the
@@ -2913,13 +4132,24 @@ impl FilesApp {
                         PointerEventKind::Press { .. } => {
                             // The button first: it sits inside the panel, so
                             // the "click outside dismisses" rule below would
-                            // never reach it.
+                            // never reach it. Then the pan's scrollbars,
+                            // which are inside it too.
                             if over_close || !panel.contains(point) {
                                 browser.close_quickview();
+                            } else {
+                                browser.quickview_pan_pointer(
+                                    QuickviewPointer::Press,
+                                    point,
+                                    panel,
+                                );
                             }
+                        }
+                        PointerEventKind::Release { .. } => {
+                            browser.quickview_pan_pointer(QuickviewPointer::Release, point, panel);
                         }
                         PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
                             browser.quickview_focus(point, panel);
+                            browser.quickview_pan_pointer(QuickviewPointer::Motion, point, panel);
                             if browser.quickview_close_hovered != over_close {
                                 browser.quickview_close_hovered = over_close;
                                 browser.dirty = true;
@@ -2927,6 +4157,7 @@ impl FilesApp {
                         }
                         PointerEventKind::Leave { .. } => {
                             browser.quickview_focus = None;
+                            browser.quickview_pan_pointer(QuickviewPointer::Leave, point, panel);
                             if browser.quickview_close_hovered {
                                 browser.quickview_close_hovered = false;
                                 browser.dirty = true;
@@ -2941,12 +4172,70 @@ impl FilesApp {
                                 horizontal.absolute as f32,
                                 vertical.absolute as f32,
                                 panel,
+                                vertical.stop || horizontal.stop,
+                                vertical.discrete != 0 || horizontal.discrete != 0,
                             );
+                        }
+                    }
+                    drop(browser);
+                    continue;
+                }
+
+                // The confirmation sheet is modal: it answers its own two
+                // buttons and swallows everything else, so a click meant for
+                // it can never land on the listing behind it.
+                if browser.confirm.is_some() {
+                    let window_h = browser.size.1;
+                    let hit = view::confirm_at(x, y, width, window_h);
+                    match event.kind {
+                        PointerEventKind::Press { button, .. } if button != BTN_RIGHT => {
+                            if let Some(sheet) = browser.confirm.as_mut() {
+                                sheet.pressed = hit;
+                            }
+                            browser.dirty = true;
+                        }
+                        PointerEventKind::Release { button, .. } if button != BTN_RIGHT => {
+                            let armed = browser
+                                .confirm
+                                .as_mut()
+                                .and_then(|sheet| sheet.pressed.take());
+                            if armed.is_some() && armed == hit {
+                                match armed {
+                                    Some(view::ConfirmButton::Replace) => {
+                                        browser.confirm_replace()
+                                    }
+                                    Some(view::ConfirmButton::Cancel) => browser.confirm_dismiss(),
+                                    None => {}
+                                }
+                            }
+                            browser.dirty = true;
+                        }
+                        PointerEventKind::Motion { .. } => {
+                            AppContext::set_cursor_shape(CursorShape::Default);
                         }
                         _ => {}
                     }
                     drop(browser);
+                    window_for_events.request_frame();
                     continue;
+                }
+
+                // A click in the name field places the caret in it. The field
+                // never loses focus to the listing, so there is no focus to
+                // take here — only a caret to move.
+                if browser.save_name.is_some()
+                    && matches!(event.kind, PointerEventKind::Press { button, .. } if button != BTN_RIGHT)
+                {
+                    let field = view::footer_name_rect(width, browser.size.1);
+                    if field.contains(skia_safe::Point::new(x, y)) {
+                        if let Some(input) = browser.save_name.as_mut() {
+                            input.on_pointer_down(x - field.left, 1, shift);
+                        }
+                        browser.dirty = true;
+                        drop(browser);
+                        window_for_events.request_frame();
+                        continue;
+                    }
                 }
 
                 // The picker's action row, and the filter menu it opens,
@@ -3046,6 +4335,46 @@ impl FilesApp {
                             continue;
                         }
 
+                        // Far enough from the press to be a drag rather than an
+                        // unsteady click. The whole selection goes, and the
+                        // compositor owns the pointer from here — nothing else
+                        // in this handler will see the rest of the gesture.
+                        if let Some((start_x, start_y, serial)) = browser.drag_armed {
+                            if (x - start_x).hypot(y - start_y) >= DRAG_THRESHOLD {
+                                browser.drag_armed = None;
+                                let paths = browser.drag_paths();
+                                // The picture the cursor carries: the first
+                                // file of the selection, and how many are
+                                // coming with it.
+                                let image = browser.drag_image();
+                                // Anchored where the row was grabbed, not by
+                                // its corner.
+                                let anchor = browser.grab_anchor(start_x, start_y);
+                                drop(browser);
+                                if let Some(surface) = window_for_events.wl_surface() {
+                                    let theme = AppContext::current_theme();
+                                    otto_kit::dnd::start_file_drag_with_icon(
+                                        &paths,
+                                        DndAction::Copy | DndAction::Move,
+                                        &surface,
+                                        serial,
+                                        (view::DRAG_IMAGE_W as i32, view::DRAG_IMAGE_H as i32),
+                                        anchor,
+                                        move |canvas, _w, _h| {
+                                            view::draw_drag_image(
+                                                canvas,
+                                                &theme,
+                                                &image.0,
+                                                &image.1,
+                                                image.2,
+                                            );
+                                        },
+                                    );
+                                }
+                                continue;
+                            }
+                        }
+
                         // Resize affordance at the window edges.
                         let edge = resize::edge_at(Rect::from_wh(width, browser.size.1), x, y);
                         let over_column_divider = (browser.mode == ViewMode::List
@@ -3098,6 +4427,8 @@ impl FilesApp {
                         browser.dirty |= browser.controls.on_motion(control);
                     }
                     PointerEventKind::Release { .. } => {
+                        // A press that came up without travelling was a click.
+                        browser.drag_armed = None;
                         browser.column_resize = None;
                         browser.miller_resize = None;
                         browser.pan.on_pointer_up();
@@ -3252,6 +4583,14 @@ impl FilesApp {
                             continue;
                         }
 
+                        // A press on a row might be the start of a drag. Armed
+                        // here and decided on motion: the selection below still
+                        // happens, so a press that never travels is an ordinary
+                        // click and a second one still opens the directory.
+                        if browser.dnd_enabled() && browser.entry_at(x, y).is_some() {
+                            browser.drag_armed = Some((x, y, serial));
+                        }
+
                         if let Some(button) = browser.nav_button_at(x, y) {
                             // Armed, not acted on: the step happens on
                             // release, over the same half, so the arrow can
@@ -3271,7 +4610,7 @@ impl FilesApp {
                             let area = view::content_viewport(width, height, ViewMode::Grid);
                             if let Some(index) = view::grid_cell_at(area, x, y, count, scroll) {
                                 if ctrl {
-                                    browser.toggle_select(depth, index);
+                                    browser.note_ctrl_row_click(depth, index);
                                 } else if shift {
                                     browser.extend_select(depth, index);
                                 } else {
@@ -3325,7 +4664,7 @@ impl FilesApp {
                                     view::row_at(x, y, width, height, count, scroll)
                                 {
                                     if ctrl {
-                                        browser.toggle_select(depth, index);
+                                        browser.note_ctrl_row_click(depth, index);
                                     } else if shift {
                                         browser.extend_select(depth, index);
                                     } else {
@@ -3387,7 +4726,7 @@ impl FilesApp {
                             );
                             if let Some((depth, Some(index))) = hit {
                                 if ctrl {
-                                    browser.toggle_select(depth, index);
+                                    browser.note_ctrl_row_click(depth, index);
                                 } else if shift {
                                     browser.extend_select(depth, index);
                                 } else {
@@ -3586,7 +4925,7 @@ fn run_app(
         window: None,
         info_window: Rc::new(RefCell::new(None)),
         state: Arc::clone(&state),
-        modifiers: Arc::new(Mutex::new((false, false))),
+        modifiers: Arc::new(Mutex::new(Modifiers::default())),
         context_menu: None,
         quickview_target: Arc::new(Mutex::new(None)),
         picker_queue,
@@ -3623,5 +4962,460 @@ mod rename_tests {
     #[test]
     fn an_extensionless_file_selects_the_whole_name() {
         assert_eq!(rename_selection("README", false), 0..6);
+    }
+}
+
+#[cfg(test)]
+mod typeahead_tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    /// A real directory of empty files, swept up when the test ends.
+    ///
+    /// The listing comes off a worker thread reading the filesystem, so
+    /// type-ahead can only be exercised against something actually on disk.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn holding(names: &[&str]) -> Self {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+            let path = std::env::temp_dir().join(format!(
+                "otto-files-typeahead-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).expect("temp dir");
+            for name in names {
+                std::fs::write(path.join(name), b"").expect("temp file");
+            }
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A browser over `names`, with the first listing already in.
+    fn browser_over(names: &[&str]) -> (Browser, TempDir) {
+        let dir = TempDir::holding(names);
+        let mut browser = Browser::new(dir.0.clone());
+        // The frame loop is what normally polls the loader; a test has to.
+        for _ in 0..500 {
+            if browser.columns[0].poll() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(!browser.columns[0].loading(), "listing never arrived");
+        (browser, dir)
+    }
+
+    /// Ctrl+O is bound to the same call a double-click makes, so on a folder
+    /// it descends. Worth pinning because Return is *not* this — it renames —
+    /// and it would be an easy mistake to give opening back to Return and
+    /// leave the chord doing nothing.
+    #[test]
+    fn opening_a_folder_descends_into_it() {
+        let dir = TempDir::holding(&["a.txt"]);
+        let sub = dir.0.join("sub");
+        std::fs::create_dir_all(sub.join("inner")).expect("child dir");
+
+        let mut browser = Browser::new(dir.0.clone());
+        for _ in 0..500 {
+            if browser.columns[0].poll() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        // List view: descending replaces the column, so the deepest path is
+        // the plainest statement of where the window ended up.
+        browser.mode = ViewMode::List;
+        let index = browser
+            .visible(0)
+            .iter()
+            .position(|e| e.name == "sub")
+            .expect("the folder is listed");
+        browser.select(0, index);
+
+        assert_eq!(browser.current_path(), dir.0);
+        browser.open_selection();
+        assert_eq!(browser.current_path(), sub);
+    }
+
+    /// Ctrl+N opens a new window at the default location, not wherever this
+    /// window happens to be pointed — a new window is a fresh start. Where the
+    /// window is browsing must not move the target.
+    #[test]
+    fn a_new_window_opens_at_the_default_location() {
+        let (mut browser, dir) = browser_over(&["one.txt", "two.txt"]);
+        let default = Browser::default_location();
+        assert_eq!(browser.new_window_target(), Some(default.clone()));
+
+        // Navigating somewhere else leaves it alone. `dir` is a temporary
+        // directory, so it is never the default location, and a target that
+        // followed the window would show up here.
+        let child = dir.0.join("sub");
+        std::fs::create_dir_all(&child).expect("child dir");
+        browser.navigate_to(&child);
+        for _ in 0..500 {
+            if browser.columns.last_mut().is_some_and(|c| c.poll()) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(browser.new_window_target(), Some(default));
+        assert_ne!(
+            browser.new_window_target().as_deref(),
+            Some(child.as_path())
+        );
+    }
+
+    fn at_cursor(browser: &Browser) -> Option<String> {
+        let index = browser.columns[browser.active].cursor?;
+        Some(browser.visible(browser.active)[index].name.clone())
+    }
+
+    /// Names chosen so that a prefix, a second character and a repeat all
+    /// have somewhere different to land.
+    const NAMES: &[&str] = &[
+        "Alpha.txt",
+        "apple.txt",
+        "Banana.txt",
+        "beta.txt",
+        "Photo.png",
+    ];
+
+    #[test]
+    fn a_character_selects_the_first_entry_starting_with_it() {
+        let (mut browser, _dir) = browser_over(NAMES);
+        browser.typeahead('b');
+        // Matching ignores case, so a lowercase key reaches a capitalised name.
+        assert_eq!(at_cursor(&browser).as_deref(), Some("Banana.txt"));
+    }
+
+    #[test]
+    fn a_second_character_narrows_the_same_word() {
+        let (mut browser, _dir) = browser_over(NAMES);
+        browser.typeahead('a');
+        assert_eq!(at_cursor(&browser).as_deref(), Some("Alpha.txt"));
+        browser.typeahead('p');
+        assert_eq!(at_cursor(&browser).as_deref(), Some("apple.txt"));
+    }
+
+    #[test]
+    fn repeating_one_character_cycles_and_wraps() {
+        let (mut browser, _dir) = browser_over(NAMES);
+        browser.typeahead('b');
+        assert_eq!(at_cursor(&browser).as_deref(), Some("Banana.txt"));
+        browser.typeahead('b');
+        assert_eq!(at_cursor(&browser).as_deref(), Some("beta.txt"));
+        // Past the last match it comes back round rather than stopping dead.
+        browser.typeahead('b');
+        assert_eq!(at_cursor(&browser).as_deref(), Some("Banana.txt"));
+    }
+
+    #[test]
+    fn a_second_of_silence_starts_a_new_word() {
+        let (mut browser, _dir) = browser_over(NAMES);
+        browser.typeahead('a');
+        assert_eq!(at_cursor(&browser).as_deref(), Some("Alpha.txt"));
+        // Backdated rather than slept through: the expiry is a second, and no
+        // test should take one.
+        let (buffer, _) = browser.typeahead.take().expect("buffer");
+        browser.typeahead = Some((buffer, std::time::Instant::now() - Duration::from_secs(2)));
+        browser.typeahead('p');
+        assert_eq!(at_cursor(&browser).as_deref(), Some("Photo.png"));
+    }
+
+    #[test]
+    fn a_name_that_matches_nothing_leaves_the_cursor_alone() {
+        let (mut browser, _dir) = browser_over(NAMES);
+        browser.typeahead('b');
+        browser.typeahead('z');
+        assert_eq!(at_cursor(&browser).as_deref(), Some("Banana.txt"));
+        // The miss stays in the buffer: it is part of the word being typed.
+        assert_eq!(
+            browser.typeahead.as_ref().map(|(b, _)| b.as_str()),
+            Some("bz")
+        );
+    }
+
+    #[test]
+    fn an_empty_directory_is_not_a_panic() {
+        let (mut browser, _dir) = browser_over(&[]);
+        browser.typeahead('a');
+        assert_eq!(at_cursor(&browser), None);
+    }
+}
+
+#[cfg(test)]
+mod dnd_tests {
+    use super::*;
+
+    /// A real directory holding files and subdirectories, swept up on drop.
+    ///
+    /// Drop targets turn on `is_dir`, which comes off the filesystem, so these
+    /// tests need something actually on disk the way the type-ahead ones do.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn holding(files: &[&str], dirs: &[&str]) -> Self {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+            let path = std::env::temp_dir().join(format!(
+                "otto-files-dnd-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).expect("temp dir");
+            for name in files {
+                std::fs::write(path.join(name), b"contents").expect("temp file");
+            }
+            for name in dirs {
+                std::fs::create_dir_all(path.join(name)).expect("temp subdir");
+            }
+            Self(path)
+        }
+
+        fn join(&self, name: &str) -> PathBuf {
+            self.0.join(name)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A list-view browser over a loaded directory. List view because its row
+    /// geometry is a single strip under the header, which a test can point at
+    /// without reproducing the Miller stack's pan.
+    fn browser_over(files: &[&str], dirs: &[&str]) -> (Browser, TempDir) {
+        let dir = TempDir::holding(files, dirs);
+        let mut browser = Browser::new(dir.0.clone());
+        browser.mode = ViewMode::List;
+        for _ in 0..500 {
+            if browser.columns[0].poll() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(!browser.columns[0].loading(), "listing never arrived");
+        (browser, dir)
+    }
+
+    /// The middle of row `index` in list view.
+    fn row_point(index: usize) -> (f32, f32) {
+        (
+            view::SIDEBAR_W + 100.0,
+            view::HEADER_H + view::COLUMNS_H + view::ROW_H * index as f32 + view::ROW_H / 2.0,
+        )
+    }
+
+    /// Where `name` sits in the sorted listing.
+    fn row_of(browser: &Browser, name: &str) -> usize {
+        browser
+            .visible(browser.active)
+            .iter()
+            .position(|entry| entry.name == name)
+            .expect("entry is in the listing")
+    }
+
+    #[test]
+    fn a_directory_row_takes_the_drop_itself() {
+        let (browser, dir) = browser_over(&["a.txt"], &["target"]);
+        let (x, y) = row_point(row_of(&browser, "target"));
+
+        let hit = browser.drop_target_at(x, y).expect("a target");
+        assert_eq!(hit.path(), &dir.join("target"));
+        assert!(matches!(hit, DropTarget::Entry { .. }));
+    }
+
+    #[test]
+    fn a_file_row_drops_into_the_directory_it_is_in() {
+        // Dropping "onto" a file means beside it, not inside it.
+        let (browser, dir) = browser_over(&["a.txt"], &["target"]);
+        let (x, y) = row_point(row_of(&browser, "a.txt"));
+
+        let hit = browser.drop_target_at(x, y).expect("a target");
+        assert_eq!(hit.path(), &dir.0);
+        assert!(matches!(hit, DropTarget::Pane { .. }));
+    }
+
+    #[test]
+    fn empty_space_below_the_rows_drops_into_the_pane() {
+        let (browser, dir) = browser_over(&["a.txt"], &[]);
+        // Past the one entry, but still inside the window: a point below the
+        // viewport is off the pane altogether, which is a different miss.
+        let (x, y) = row_point(10);
+
+        let hit = browser.drop_target_at(x, y).expect("a target");
+        assert_eq!(hit.path(), &dir.0);
+    }
+
+    #[test]
+    fn the_sidebar_takes_a_drop_only_on_a_place() {
+        let (browser, _dir) = browser_over(&["a.txt"], &[]);
+        assert!(!browser.places.is_empty(), "the sidebar has places");
+
+        let place = view::place_rect(0);
+        let hit = browser
+            .drop_target_at(place.center_x(), place.center_y())
+            .expect("a place takes a drop");
+        assert_eq!(hit.path(), &browser.places[0].path);
+
+        // The header band above the first place is chrome, and takes nothing.
+        assert_eq!(browser.drop_target_at(20.0, 4.0), None);
+    }
+
+    #[test]
+    fn the_picker_refuses_every_drop() {
+        let (mut browser, _dir) = browser_over(&["a.txt"], &["target"]);
+        let (x, y) = row_point(row_of(&browser, "target"));
+        assert!(
+            browser.drop_target_at(x, y).is_some(),
+            "the browser takes it"
+        );
+
+        let (responder, _receiver) = tokio::sync::oneshot::channel();
+        browser.picker = Some(picker::Session::new(
+            picker::Request {
+                mode: picker::Mode::Open,
+                handle: String::new(),
+                app_id: String::new(),
+                parent_window: String::new(),
+                title: String::new(),
+                accept_label: String::new(),
+                multiple: false,
+                directory: false,
+                modal: false,
+                current_name: String::new(),
+                current_folder: None,
+                current_file: None,
+                files: Vec::new(),
+                filters: Vec::new(),
+                current_filter: 0,
+                choices: Vec::new(),
+            },
+            responder,
+        ));
+
+        assert!(!browser.dnd_enabled());
+        assert_eq!(browser.drop_target_at(x, y), None);
+    }
+
+    #[test]
+    fn moving_a_file_into_the_directory_it_is_already_in_does_nothing() {
+        let (mut browser, dir) = browser_over(&["a.txt"], &[]);
+        browser.drop_target = Some(DropTarget::Pane {
+            depth: 0,
+            path: dir.0.clone(),
+        });
+
+        browser.apply_drop(vec![dir.join("a.txt")], true);
+
+        assert!(dir.join("a.txt").exists(), "the file is still there");
+        assert!(
+            !dir.join("a 2.txt").exists(),
+            "and was not renamed out of the way of itself"
+        );
+        assert_eq!(browser.status, None, "a no-op reports nothing");
+    }
+
+    #[test]
+    fn copying_a_file_into_the_directory_it_is_already_in_duplicates_it() {
+        // The same gesture with copy asked for is how a duplicate is made, so
+        // this one is not skipped.
+        let (mut browser, dir) = browser_over(&["a.txt"], &[]);
+        browser.drop_target = Some(DropTarget::Pane {
+            depth: 0,
+            path: dir.0.clone(),
+        });
+
+        browser.apply_drop(vec![dir.join("a.txt")], false);
+
+        assert!(dir.join("a.txt").exists(), "the original is untouched");
+        let copies: Vec<_> = std::fs::read_dir(&dir.0)
+            .expect("listing")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name != "a.txt")
+            .collect();
+        assert_eq!(copies.len(), 1, "exactly one copy, got {copies:?}");
+    }
+
+    #[test]
+    fn a_drop_moves_a_file_into_a_directory() {
+        let (mut browser, dir) = browser_over(&["a.txt"], &["target"]);
+        browser.drop_target = Some(DropTarget::Entry {
+            depth: 0,
+            index: row_of(&browser, "target"),
+            path: dir.join("target"),
+        });
+
+        browser.apply_drop(vec![dir.join("a.txt")], true);
+
+        assert!(dir.join("target/a.txt").exists(), "the file moved in");
+        assert!(!dir.join("a.txt").exists(), "and left where it was");
+    }
+
+    #[test]
+    fn a_drop_copy_leaves_the_original_alone() {
+        let (mut browser, dir) = browser_over(&["a.txt"], &["target"]);
+        browser.drop_target = Some(DropTarget::Entry {
+            depth: 0,
+            index: row_of(&browser, "target"),
+            path: dir.join("target"),
+        });
+
+        browser.apply_drop(vec![dir.join("a.txt")], false);
+
+        assert!(dir.join("target/a.txt").exists(), "the copy arrived");
+        assert!(dir.join("a.txt").exists(), "the original stayed");
+    }
+
+    #[test]
+    fn a_directory_cannot_be_dropped_into_itself() {
+        let (mut browser, dir) = browser_over(&[], &["outer"]);
+        std::fs::create_dir_all(dir.join("outer/inner")).expect("nested dir");
+        browser.drop_target = Some(DropTarget::Pane {
+            depth: 0,
+            path: dir.join("outer/inner"),
+        });
+
+        browser.apply_drop(vec![dir.join("outer")], true);
+
+        assert!(dir.join("outer").exists(), "nothing was moved");
+        assert!(
+            browser
+                .status
+                .as_deref()
+                .is_some_and(|status| status.contains("itself")),
+            "and it said so: {:?}",
+            browser.status
+        );
+    }
+
+    #[test]
+    fn the_drop_target_clears_once_it_has_been_applied() {
+        let (mut browser, dir) = browser_over(&["a.txt"], &["target"]);
+        browser.drop_target = Some(DropTarget::Entry {
+            depth: 0,
+            index: row_of(&browser, "target"),
+            path: dir.join("target"),
+        });
+
+        browser.apply_drop(vec![dir.join("a.txt")], true);
+
+        assert_eq!(browser.drop_target, None, "the outline goes with the drop");
+        assert!(browser.dirty, "and the window repaints");
     }
 }

@@ -127,7 +127,7 @@ pub fn read(mime: &str) -> Option<Vec<u8>> {
 }
 
 /// Read to EOF, but never past the limit and never past the deadline.
-fn read_bounded(mut pipe: std::fs::File) -> Option<Vec<u8>> {
+pub(crate) fn read_bounded(mut pipe: std::fs::File) -> Option<Vec<u8>> {
     use std::os::fd::AsRawFd;
 
     // Non-blocking, so a source that opens the pipe and then stalls cannot pin

@@ -245,6 +245,18 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub xwayland_shell_state: xwayland_shell::XWaylandShellState,
 
     pub dnd_icon: Option<WlSurface>,
+    /// The icon surface of a refused drag, whose layers are kept alive while it
+    /// flies back to where the drag started and are swept up when the next drag
+    /// begins. See [`crate::state::dnd_grab_handler`].
+    pub pending_dnd_cleanup: Option<WlSurface>,
+    /// Where the drag icon sits relative to the cursor.
+    ///
+    /// A client anchors the icon by the point it was grabbed by — `wl_surface
+    /// .offset`, or the deprecated x and y of `attach` — which arrives as
+    /// `buffer_delta` on each commit and is *relative*, so it accumulates over
+    /// the drag rather than replacing what came before. Without this the icon
+    /// hangs by its top-left corner whatever the client asks for.
+    pub dnd_icon_offset: utils::Point<i32, utils::Logical>,
 
     // input-related fields
     pub suppressed_keys: Vec<Keysym>,
@@ -590,20 +602,51 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 .expect("Failed to init wayland socket source");
             info!(name = socket_name, "Listening on wayland socket");
 
-            // Export WAYLAND_DISPLAY to systemd user session for portal services
-            if let Err(e) = std::process::Command::new("systemctl")
-                .args([
-                    "--user",
-                    "set-environment",
-                    &format!("WAYLAND_DISPLAY={}", socket_name),
-                ])
-                .output()
-            {
-                warn!(error = ?e, "Failed to export WAYLAND_DISPLAY to systemd");
+            // Export WAYLAND_DISPLAY so bus-activated helpers — the portal
+            // backend, the file picker, the islands — can find us. Without it
+            // they are started by the systemd user manager with whatever
+            // WAYLAND_DISPLAY it happens to hold and fail with `NoCompositor`.
+            //
+            // Only the backend that *is* the session does this. A nested Otto
+            // (`--winit`, `--x11`) is a client of somebody else's compositor,
+            // and its socket is not where the session's helpers should
+            // connect; exporting from one leaves the value pointing at a
+            // socket that disappears when the dev run ends, which breaks
+            // every bus-activated helper in the real session until the next
+            // login. Both are also handed to dbus, because a session whose
+            // dbus-daemon is not the systemd one activates from its own
+            // environment and never reads systemd's.
+            let owns_the_session = matches!(backend_data.backend_name(), "udev");
+            if !owns_the_session {
+                info!(
+                    backend = backend_data.backend_name(),
+                    name = socket_name,
+                    "Nested backend: not exporting WAYLAND_DISPLAY to the session"
+                );
             } else {
+                let assignment = format!("WAYLAND_DISPLAY={socket_name}");
+                let exports = [
+                    ("systemctl", vec!["--user", "set-environment", &assignment]),
+                    (
+                        "dbus-update-activation-environment",
+                        vec!["--systemd", &assignment],
+                    ),
+                ];
+                for (program, args) in exports {
+                    match std::process::Command::new(program).args(&args).output() {
+                        Ok(out) if out.status.success() => {}
+                        Ok(out) => warn!(
+                            program,
+                            status = ?out.status,
+                            stderr = %String::from_utf8_lossy(&out.stderr).trim(),
+                            "Failed to export WAYLAND_DISPLAY"
+                        ),
+                        Err(e) => warn!(program, error = ?e, "Failed to export WAYLAND_DISPLAY"),
+                    }
+                }
                 info!(
                     name = socket_name,
-                    "Exported WAYLAND_DISPLAY to systemd user session"
+                    "Exported WAYLAND_DISPLAY to the systemd and dbus activation environments"
                 );
             }
 
@@ -856,6 +899,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             pending_screencopy_frames: Vec::new(),
             virtual_pointer_manager_state,
             dnd_icon: None,
+            pending_dnd_cleanup: None,
+            dnd_icon_offset: (0, 0).into(),
             suppressed_keys: Vec::new(),
             current_modifiers: ModifiersState::default(),
             app_switcher_hold_modifiers: None,
@@ -1387,10 +1432,15 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 }
             }
 
-            self.workspaces
-                .dnd_view
-                .layer
-                .set_position((cursor_position.x as f32, cursor_position.y as f32), None);
+            // The cursor, shifted by wherever the client anchored the icon.
+            let anchor = self.dnd_icon_offset.to_f64().to_physical(scale);
+            self.workspaces.dnd_view.layer.set_position(
+                (
+                    (cursor_position.x + anchor.x) as f32,
+                    (cursor_position.y + anchor.y) as f32,
+                ),
+                None,
+            );
         }
     }
 

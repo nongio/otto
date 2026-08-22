@@ -72,7 +72,10 @@ impl Pixels {
 /// `scale` multiplies the *fitted* size rather than the source's own, so 1.0
 /// is always "the whole picture, as large as the box allows" whatever the
 /// image and the box happen to be. `offset` then drags that blown-up rect
-/// away from the centre it is otherwise pinned to.
+/// away from the centre it is otherwise pinned to, as far as the picture has
+/// slack over its box and no further. `band` is the exception to that "no
+/// further": a host pulling the picture past its stop puts the overshoot
+/// there, where nothing clamps it.
 ///
 /// Only [`Preview::Pixels`] honours it. Everything else is laid out to fit by
 /// construction and [`clamp_zoom`] pins it back to [`Zoom::FIT`], so a host
@@ -85,6 +88,18 @@ pub struct Zoom {
     /// How far the zoomed content is dragged from centred, in the box's own
     /// pixels.
     pub offset: (f32, f32),
+    /// How far the picture is pulled *past* its stop, in the same pixels —
+    /// the rubber band, which a host holds only while a gesture is stretching
+    /// it or a spring is bringing it home.
+    ///
+    /// Kept apart from `offset` rather than folded into it because the two
+    /// answer different questions: `offset` is where the picture is allowed
+    /// to be, and is clamped on every call, while this is a temporary
+    /// displacement that is deliberately not. Everything that reads a `Zoom`
+    /// to decide what may happen next — how far there is left to pan,
+    /// whether the picture is at fit — reads `offset` and is unaffected;
+    /// only the drawing adds this in.
+    pub band: (f32, f32),
 }
 
 impl Default for Zoom {
@@ -98,6 +113,7 @@ impl Zoom {
     pub const FIT: Zoom = Zoom {
         scale: 1.0,
         offset: (0.0, 0.0),
+        band: (0.0, 0.0),
     };
 
     /// The furthest in a preview goes. Past roughly this a decode meant for a
@@ -284,6 +300,11 @@ pub fn clamp_zoom(bounds: Rect, preview: &Preview, zoom: Zoom) -> Zoom {
             zoom.offset.0.clamp(-slack_x, slack_x),
             zoom.offset.1.clamp(-slack_y, slack_y),
         ),
+        // Carried through untouched: the band is the one part of a zoom that
+        // is meant to be out of range, and a host that is not banding has it
+        // at zero anyway. A picture snapped back to fit has nothing to be
+        // stretched past, though, so that case drops it.
+        band: if scale == 1.0 { (0.0, 0.0) } else { zoom.band },
     }
 }
 
@@ -325,6 +346,9 @@ pub fn zoom_about(
         Zoom {
             scale: target.scale,
             offset: (moved.0 - inner.center_x(), moved.1 - inner.center_y()),
+            // A pinch places the picture outright, so whatever it was being
+            // stretched by is over.
+            band: (0.0, 0.0),
         },
     )
 }
@@ -333,8 +357,8 @@ pub fn zoom_about(
 /// the zoom's offset.
 fn zoomed(inner: Rect, fitted: Rect, zoom: Zoom) -> Rect {
     let (w, h) = (fitted.width() * zoom.scale, fitted.height() * zoom.scale);
-    let cx = inner.center_x() + zoom.offset.0;
-    let cy = inner.center_y() + zoom.offset.1;
+    let cx = inner.center_x() + zoom.offset.0 + zoom.band.0;
+    let cy = inner.center_y() + zoom.offset.1 + zoom.band.1;
     Rect::from_ltrb(cx - w / 2.0, cy - h / 2.0, cx + w / 2.0, cy + h / 2.0)
 }
 
@@ -854,6 +878,7 @@ mod tests {
             Zoom {
                 scale: 1.01,
                 offset: (30.0, 0.0),
+                ..Zoom::FIT
             },
         );
         assert_eq!(nearly, Zoom::FIT);
@@ -867,6 +892,7 @@ mod tests {
             Zoom {
                 scale: 1.0,
                 offset: (120.0, -80.0),
+                ..Zoom::FIT
             },
         );
         assert_eq!(clamped.offset, (0.0, 0.0));
@@ -884,6 +910,7 @@ mod tests {
             Zoom {
                 scale: 2.0,
                 offset: (10_000.0, 10_000.0),
+                ..Zoom::FIT
             },
         );
         // Twice 400 wide in a 400-wide box leaves 200 of slack sideways, and
@@ -896,6 +923,52 @@ mod tests {
         assert!(drawn.bottom >= inner.bottom, "{drawn:?}");
     }
 
+    /// The band is the one displacement the clamp leaves alone: it is what a
+    /// host stretches the picture by while a gesture pulls past its stop, and
+    /// it draws exactly that far past it.
+    #[test]
+    fn a_banded_zoom_draws_past_the_stop() {
+        let bounds = image_box();
+        let stopped = clamp_zoom(
+            bounds,
+            &image(),
+            Zoom {
+                scale: 2.0,
+                offset: (10_000.0, 0.0),
+                ..Zoom::FIT
+            },
+        );
+        let banded = clamp_zoom(
+            bounds,
+            &image(),
+            Zoom {
+                band: (30.0, 0.0),
+                ..stopped
+            },
+        );
+        // The pan itself is still at its stop — only the stretch is new.
+        assert_eq!(banded.offset, stopped.offset);
+
+        let held = layout(bounds, &image(), 0, stopped).content;
+        let stretched = layout(bounds, &image(), 0, banded).content;
+        assert!(
+            (stretched.left - held.left - 30.0).abs() < 0.01,
+            "{stretched:?} {held:?}"
+        );
+
+        // A picture snapped back to fit has nothing left to be stretched past.
+        let refitted = clamp_zoom(
+            bounds,
+            &image(),
+            Zoom {
+                scale: 1.0,
+                band: (30.0, 0.0),
+                ..Zoom::FIT
+            },
+        );
+        assert!(refitted.is_fit(), "{refitted:?}");
+    }
+
     #[test]
     fn only_images_zoom() {
         let text = Preview::Text {
@@ -906,6 +979,7 @@ mod tests {
         let asked = Zoom {
             scale: 4.0,
             offset: (12.0, 12.0),
+            ..Zoom::FIT
         };
         assert!(clamp_zoom(image_box(), &text, asked).is_fit());
         assert_eq!(
