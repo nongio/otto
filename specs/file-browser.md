@@ -459,6 +459,18 @@ What the browser does:
   so both routes feed one decision about what the gesture means.
 - Enter still opens the selection in its default application. The previewer
   never launches anything.
+- **Losing the keyboard closes the panel.** A preview is a preview of what
+  *this* window has selected; once focus is on another window there is nothing
+  for it to be a preview of, and a card left floating over a background window
+  is just litter. The signal is `wl_keyboard.leave` on the browser's own
+  toplevel — a leave on the Get Info panel is focus moving between two of the
+  browser's windows and does not count.
+- **This is also how expose reaches it.** The panel is a subsurface, not a
+  popup, so the compositor's popup dismissal on the way into Show All cannot
+  take it down. Otto drops keyboard focus when expose opens (see
+  `Otto::enter_expose_focus`), and the browser closes on that leave like any
+  other. Restoring the panel on the way back is deliberately not done: expose
+  ends by focusing a window, which is a fresh start.
 
 Quick view **consumes** the thumbnail cache and the file-type detection defined
 below, and may **produce** into the thumbnail cache under the same rules. It

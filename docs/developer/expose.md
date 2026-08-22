@@ -251,6 +251,22 @@ topmost in the layer tree, rather than the one the pointer is actually over.
 | Force a relayout while open | `expose_update_if_needed` / `expose_update_if_needed_workspace` |
 | Show desktop (push windows away) | `expose_show_desktop(delta, end_gesture)` |
 
+## Keyboard focus
+
+Opening exposé clears keyboard focus (`Otto::enter_expose_focus`, called
+alongside `dismiss_all_popups` / `demote_all_scanout_windows` at every open
+site: the action handler and both gesture handlers). Closing restores it —
+`close_expose_show_all_and_focus_top` for the click/keyboard path,
+`expose_end_with_velocity_and_focus_top` for the gesture, both focusing the
+hovered preview or the workspace's top window.
+
+Two things ride on this. Keys pressed while the previews are up no longer land
+in whatever window happened to be in front. And it is the **only** signal a
+client gets that exposé opened: `dismiss_all_popups` reaches popups, but an app
+that draws transient chrome into a *subsurface* — the file browser's quick view
+panel — is out of its reach, and takes the panel down on `wl_keyboard.leave`
+instead.
+
 ## Testing notes
 
 - Wait for exposé to finish initializing — `show_all` true *and* `expose_bin`

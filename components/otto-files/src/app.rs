@@ -19,7 +19,7 @@ use smithay_client_toolkit::seat::keyboard::KeyEvent;
 use smithay_client_toolkit::seat::pointer::PointerEventKind;
 use smithay_client_toolkit::shell::xdg::window::WindowConfigure;
 use smithay_client_toolkit::shell::xdg::{XdgPositioner, XdgSurface};
-use wayland_client::protocol::wl_keyboard;
+use wayland_client::protocol::{wl_keyboard, wl_surface};
 
 /// `BTN_RIGHT` from `linux/input-event-codes.h` — a right-click opens the
 /// context menu instead of doing whatever the same spot does on the left
@@ -3183,6 +3183,32 @@ impl App for FilesApp {
     /// belongs to and again whenever the window takes focus.
     fn on_modifiers(&mut self, _ctx: &AppContext, modifiers: Modifiers) {
         *self.modifiers.lock().unwrap() = modifiers;
+    }
+
+    /// Quick View is a preview of what the window has selected, so it belongs
+    /// to the window's focus: once the keyboard goes somewhere else the panel
+    /// is a card floating over a background window with nothing to preview.
+    ///
+    /// This is also how expose reaches us. The panel is a subsurface, not a
+    /// popup, so the compositor's `dismiss_all_popups` on the way into Show All
+    /// cannot take it down — but Otto drops keyboard focus entering expose, and
+    /// that lands here.
+    ///
+    /// Only the browser's own toplevel counts. A leave on the Get Info panel is
+    /// focus moving between two of our windows, not away from the browser.
+    fn on_keyboard_leave(&mut self, _ctx: &AppContext, surface: &wl_surface::WlSurface) {
+        use wayland_client::Proxy;
+        let ours = self
+            .window
+            .as_ref()
+            .and_then(|window| window.wl_surface())
+            .is_some_and(|main| main.id() == surface.id());
+        if !ours {
+            return;
+        }
+        if self.state.lock().unwrap().close_quickview() {
+            self.render();
+        }
     }
 
     fn on_key_event(
