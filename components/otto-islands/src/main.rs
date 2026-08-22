@@ -1,6 +1,7 @@
 mod activity;
 mod dbus_service;
 mod dialog;
+mod music;
 mod notifications;
 mod renderer;
 mod state;
@@ -18,9 +19,10 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::Layer, zwlr_layer_surface_v1::Anchor,
 };
 
-use crate::activity::Activity;
+use crate::activity::{Activity, ActivitySource, PresentationMode};
 use crate::dbus_service::{DialogService, IslandService, DBUS_NAME};
 use crate::dialog::{DialogHit, DialogId, DialogResponse, DialogView};
+use crate::music::MusicMonitor;
 use crate::renderer::{
     animate_to, apply_island_style, draw_centered, set_size_and_position, COMPACT_H, MINI_H, MINI_W,
 };
@@ -38,6 +40,19 @@ const GAP: f32 = 6.0;
 const DIALOG_TOP: f32 = BAR_HEIGHT + 14.0;
 /// Seconds of inactivity before the focused island shrinks to Mini.
 const FOCUS_TIMEOUT_SECS: f64 = 4.0;
+/// Top edge of the expanded music panel, in layer coordinates. Pinned to the
+/// top and never above it: `COMPACT_H` is taller than `BAR_HEIGHT`, so centring
+/// the panel on the bar puts its top edge off-screen, where the layer clips it.
+fn expanded_music_top() -> f32 {
+    ((BAR_HEIGHT - COMPACT_H) / 2.0).max(0.0)
+}
+
+/// Corner radius of the expanded music panel — a card, not a pill.
+const EXPANDED_MUSIC_RADIUS: f64 = 16.0;
+/// How long a pressed music control stays highlighted.
+const PRESS_FEEDBACK_MS: u128 = 300;
+/// Equalizer redraw interval while a track plays (~24fps).
+const EQ_REDRAW_MS: u64 = 42;
 /// Seconds a destroyed surface is kept alive so its exit animation can play.
 const DESTROY_DELAY_SECS: f64 = 0.8;
 
@@ -52,9 +67,20 @@ enum IslandMode {
     Expanded,
 }
 
+impl IslandMode {
+    fn to_presentation_mode(self) -> PresentationMode {
+        match self {
+            IslandMode::Mini => PresentationMode::Minimal,
+            IslandMode::Compact => PresentationMode::Compact,
+            IslandMode::Expanded => PresentationMode::Expanded,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IslandKind {
     Notification,
+    Music,
 }
 
 /// Signature of what a pill buffer currently shows — redraw only on change.
@@ -87,6 +113,10 @@ struct Island {
     icon: String,
     /// The pill/circle subsurface.
     surface: SubsurfaceSurface,
+    /// Equalizer overlay subsurface (child of the pill, music islands only).
+    eq_surface: Option<SubsurfaceSurface>,
+    /// Last equalizer target (w, h, cx, cy) — skip re-animating when unchanged.
+    last_eq_layout: Option<(f32, f32, f32, f32)>,
     /// Lazily-created card subsurfaces (only when Expanded, notifications only).
     cards: Vec<CardSurface>,
     /// Current mode.
@@ -150,10 +180,18 @@ struct IslandApp {
     last_input_region: Option<Vec<(i32, i32, i32, i32)>>,
     /// The currently-presented Access-style dialog, if any.
     dialog: Option<DialogPanel>,
+    /// Music monitor — MPRIS playback plus PipeWire audio levels.
+    music_monitor: MusicMonitor,
+    /// Currently pressed music control (for press feedback).
+    music_pressed: Option<(music::MusicAction, std::time::Instant)>,
+    /// Last equalizer redraw (throttled to ~24fps).
+    music_last_redraw: std::time::Instant,
+    /// Last full music pill redraw (progress bar and clock, ~1fps).
+    music_last_full_redraw: std::time::Instant,
 }
 
 impl IslandApp {
-    fn new(state: SharedState) -> Self {
+    fn new(state: SharedState, music_monitor: MusicMonitor) -> Self {
         Self {
             state,
             layer_surface: None,
@@ -166,6 +204,10 @@ impl IslandApp {
             last_layer_size: None,
             last_input_region: None,
             dialog: None,
+            music_monitor,
+            music_pressed: None,
+            music_last_redraw: std::time::Instant::now(),
+            music_last_full_redraw: std::time::Instant::now(),
         }
     }
 
@@ -235,7 +277,13 @@ impl IslandApp {
         // Build the set of app_ids that should exist as islands.
         let mut desired: Vec<(String, IslandKind, String)> = Vec::new(); // (app_id, kind, icon)
         for (activity, _count) in &grouped {
-            let kind = IslandKind::Notification;
+            let kind = if activity.app_id == music::MUSIC_APP_ID
+                || activity.source == ActivitySource::Internal
+            {
+                IslandKind::Music
+            } else {
+                IslandKind::Notification
+            };
             if !desired.iter().any(|(id, _, _)| id == &activity.app_id) {
                 desired.push((activity.app_id.clone(), kind, activity.icon.clone()));
             }
@@ -273,6 +321,9 @@ impl IslandApp {
                 for card in island.cards.drain(..) {
                     self.defer_destroy(card.surface);
                 }
+                if let Some(eq) = island.eq_surface.take() {
+                    self.defer_destroy(eq);
+                }
                 self.defer_destroy(island.surface);
                 removed_island = true;
             }
@@ -283,11 +334,40 @@ impl IslandApp {
             if !self.islands.iter().any(|i| i.app_id == *app_id) {
                 if let Some(surface) = self.create_pill_subsurface() {
                     tracing::info!(%app_id, ?kind, %icon, "island created");
+                    // The equalizer lives on its own child subsurface so it can
+                    // redraw at ~24fps without touching the pill buffer. Clip the
+                    // pill so the bars stay inside its shape while it animates.
+                    let eq_surface = if *kind == IslandKind::Music {
+                        if let Some(ss) = surface.base_surface().surface_style() {
+                            use otto_kit::protocols::otto_surface_style_v1::ClipMode;
+                            ss.set_masks_to_bounds(ClipMode::Enabled);
+                        }
+                        let eq = SubsurfaceSurface::new(
+                            surface.wl_surface(),
+                            0,
+                            0,
+                            music::EQ_BUF_W,
+                            music::EQ_BUF_H,
+                        )
+                        .ok();
+                        if let Some(ref eq) = eq {
+                            if let Some(ss) = eq.base_surface().surface_style() {
+                                ss.set_contents_gravity(ContentsGravity::Center);
+                                ss.set_anchor_point(0.5, 0.5);
+                            }
+                            eq.place_above(surface.wl_surface());
+                        }
+                        eq
+                    } else {
+                        None
+                    };
                     self.islands.push(Island {
                         app_id: app_id.clone(),
                         kind: *kind,
                         icon: icon.clone(),
                         surface,
+                        eq_surface,
+                        last_eq_layout: None,
                         cards: Vec::new(),
                         mode: IslandMode::Mini,
                         created_at: std::time::Instant::now(),
@@ -373,6 +453,9 @@ impl IslandApp {
 
         // Compute element sizes for layout.
         let island_size = |island: &Island, mode: IslandMode| -> (f32, f32) {
+            if island.kind == IslandKind::Music {
+                return music::MusicActivityRenderer::mode_size(mode.to_presentation_mode());
+            }
             let entry = grouped.iter().find(|(a, _)| a.app_id == island.app_id);
             let count = entry.map(|(_, c)| *c).unwrap_or(1);
             let title = entry.map(|(a, _)| a.title.as_str()).unwrap_or("");
@@ -405,6 +488,8 @@ impl IslandApp {
         let mut pulse_targets: Vec<(usize, f32, f32, f32, f32)> = Vec::new();
         let mut layout_targets: Vec<(usize, f32, f32, f32, f32)> = Vec::new(); // (idx, w, h, x, y)
         let mut content_updates: Vec<(usize, PillContent)> = Vec::new();
+        // (idx, w, h, cx, cy) for the equalizer child surfaces.
+        let mut eq_updates: Vec<(usize, f32, f32, f32, f32)> = Vec::new();
 
         for (idx, island) in self.islands.iter().enumerate() {
             let count = grouped
@@ -427,7 +512,46 @@ impl IslandApp {
             let h = base_h + grow;
             // Center coordinates for anchor_point(0.5, 0.5).
             let cx = x + w / 2.0;
-            let cy = BAR_HEIGHT / 2.0;
+            // The expanded music panel is pinned to the top of the layer and
+            // grows downward: it is taller than the bar, so centring it on
+            // BAR_HEIGHT would push its top edge off the top of the screen.
+            let cy = if island.kind == IslandKind::Music && island.mode == IslandMode::Expanded {
+                expanded_music_top() + h / 2.0
+            } else {
+                BAR_HEIGHT / 2.0
+            };
+
+            if island.kind == IslandKind::Music {
+                let pmode = island.mode.to_presentation_mode();
+                if let Some(mut mr) = self.music_monitor.renderer() {
+                    if let Some((action, instant)) = &self.music_pressed {
+                        if instant.elapsed().as_millis() < PRESS_FEEDBACK_MS {
+                            mr.pressed = Some(*action);
+                        }
+                    }
+                    // The equalizer redraws on its own surface; the pill buffer
+                    // only changes when the track or the layout does.
+                    let content = PillContent {
+                        mode: island.mode,
+                        icon: format!("music:{}", mr.artist),
+                        title: mr.title.clone(),
+                        count: 0,
+                        w,
+                        h,
+                    };
+                    if island.last_content.as_ref() != Some(&content) {
+                        draw_centered(&island.surface, w, h, |canvas| {
+                            mr.draw_without_eq(canvas, pmode, w, h);
+                        });
+                        content_updates.push((idx, content));
+                    }
+                    let (eq_w, eq_h, eq_ox, eq_oy) = mr.eq_layout(pmode, w, h);
+                    eq_updates.push((idx, eq_w, eq_h, eq_ox + eq_w / 2.0, eq_oy + eq_h / 2.0));
+                }
+                layout_targets.push((idx, w, h, cx, cy));
+                x += w + GAP;
+                continue;
+            }
 
             // Detect new notification: count increased or representative activity changed.
             let current_activity_id = grouped
@@ -532,10 +656,35 @@ impl IslandApp {
         for (idx, w, h, x, y) in layout_targets {
             let target = (w, h, x, y);
             if self.islands[idx].last_layout != target {
-                let radius = h as f64 / 2.0;
+                // The expanded music panel is a card, not a pill.
+                let radius = if self.islands[idx].kind == IslandKind::Music
+                    && self.islands[idx].mode == IslandMode::Expanded
+                {
+                    EXPANDED_MUSIC_RADIUS
+                } else {
+                    h as f64 / 2.0
+                };
                 animate_to(&self.islands[idx].surface, w, h, x, y, radius, layout_delay);
                 self.islands[idx].last_layout = target;
             }
+        }
+
+        // Move the equalizer with its pill. Snapping it to the target while the
+        // pill is still springing leaves the bars outside the pill.
+        for (idx, eq_w, eq_h, eq_cx, eq_cy) in eq_updates {
+            let first_placement = self.islands[idx].last_eq_layout.is_none();
+            let target = (eq_w, eq_h, eq_cx, eq_cy);
+            if self.islands[idx].last_eq_layout == Some(target) {
+                continue;
+            }
+            if let Some(eq) = &self.islands[idx].eq_surface {
+                if first_placement {
+                    set_size_and_position(eq, eq_w, eq_h, eq_cx, eq_cy);
+                } else {
+                    animate_to(eq, eq_w, eq_h, eq_cx, eq_cy, 0.0, layout_delay);
+                }
+            }
+            self.islands[idx].last_eq_layout = Some(target);
         }
 
         // Apply pulse and peek as Compact for new notifications.
@@ -770,6 +919,10 @@ impl IslandApp {
 
         for island in &self.islands {
             if island.mode == IslandMode::Expanded {
+                if island.kind == IslandKind::Music {
+                    max_h = max_h.max(expanded_music_top() + island.last_layout.1 + 4.0);
+                    continue;
+                }
                 let card_count = island.cards.len().min(5) as f32;
                 let pill_h = COMPACT_H;
                 let pill_bottom = (BAR_HEIGHT - pill_h) / 2.0 + pill_h;
@@ -818,17 +971,31 @@ impl IslandApp {
         if !self.islands.is_empty() {
             // One rect per island, derived from last_layout (center coords).
             for island in &self.islands {
-                let (w, _h, cx, _cy) = island.last_layout;
-                let pill_h = match island.mode {
-                    IslandMode::Mini => MINI_H,
-                    IslandMode::Compact | IslandMode::Expanded => COMPACT_H,
+                let (w, h, cx, _cy) = island.last_layout;
+                let music_expanded =
+                    island.kind == IslandKind::Music && island.mode == IslandMode::Expanded;
+                let pill_h = if music_expanded {
+                    h
+                } else {
+                    match island.mode {
+                        IslandMode::Mini => MINI_H,
+                        IslandMode::Compact | IslandMode::Expanded => COMPACT_H,
+                    }
                 };
-                let pill_w = match island.mode {
-                    IslandMode::Expanded => w.max(renderer::CARD_W),
-                    _ => w.max(MINI_H),
+                let pill_w = if music_expanded {
+                    w
+                } else {
+                    match island.mode {
+                        IslandMode::Expanded => w.max(renderer::CARD_W),
+                        _ => w.max(MINI_H),
+                    }
                 };
                 let x = cx - pill_w / 2.0;
-                let y = (BAR_HEIGHT - pill_h) / 2.0;
+                let y = if music_expanded {
+                    expanded_music_top()
+                } else {
+                    (BAR_HEIGHT - pill_h) / 2.0
+                };
                 rects.push((
                     x.max(0.0) as i32,
                     y as i32,
@@ -908,17 +1075,31 @@ impl IslandApp {
     /// activity_id is Some when a card is hit.
     fn hit_test(&self, px: f32, py: f32) -> Option<(String, Option<u64>)> {
         for island in &self.islands {
-            let (w, _h, cx, _cy) = island.last_layout;
-            let pill_h = match island.mode {
-                IslandMode::Mini => MINI_H,
-                IslandMode::Compact | IslandMode::Expanded => COMPACT_H,
+            let (w, h, cx, _cy) = island.last_layout;
+            let music_expanded =
+                island.kind == IslandKind::Music && island.mode == IslandMode::Expanded;
+            let pill_h = if music_expanded {
+                h
+            } else {
+                match island.mode {
+                    IslandMode::Mini => MINI_H,
+                    IslandMode::Compact | IslandMode::Expanded => COMPACT_H,
+                }
             };
-            let pill_w = match island.mode {
-                IslandMode::Expanded => w.max(renderer::CARD_W),
-                _ => w.max(MINI_H),
+            let pill_w = if music_expanded {
+                w
+            } else {
+                match island.mode {
+                    IslandMode::Expanded => w.max(renderer::CARD_W),
+                    _ => w.max(MINI_H),
+                }
             };
             let x = cx - pill_w / 2.0;
-            let y = (BAR_HEIGHT - pill_h) / 2.0;
+            let y = if music_expanded {
+                expanded_music_top()
+            } else {
+                (BAR_HEIGHT - pill_h) / 2.0
+            };
 
             // Hit test cards first (they sit below the pill).
             if island.mode == IslandMode::Expanded {
@@ -1019,6 +1200,28 @@ impl IslandApp {
                 }
             }
         } else {
+            // An expanded music panel has transport controls: a click on one of
+            // them acts on the player instead of collapsing the panel.
+            if let Some(island) = self.islands.iter().find(|i| i.app_id == app_id) {
+                if island.kind == IslandKind::Music && island.mode == IslandMode::Expanded {
+                    let (w, h, cx, cy) = island.last_layout;
+                    let lx = px - (cx - w / 2.0);
+                    let ly = py - (cy - h / 2.0);
+                    if let Some(action) = self
+                        .music_monitor
+                        .renderer()
+                        .and_then(|mr| mr.hit_test_expanded(lx, ly, w, h))
+                    {
+                        tracing::info!(?action, "music control clicked");
+                        self.music_pressed = Some((action, std::time::Instant::now()));
+                        music::execute_action(action);
+                        self.last_interaction = std::time::Instant::now();
+                        self.state.lock().unwrap().dirty = true;
+                        return;
+                    }
+                }
+            }
+
             // Clicked a pill/circle.
             // Close any other expanded island first — only one can be expanded at a time.
             for island in self.islands.iter_mut().filter(|i| i.app_id != app_id) {
@@ -1220,6 +1423,73 @@ impl IslandApp {
     }
 }
 
+impl IslandApp {
+    /// Whether a track is currently playing (drives the equalizer tick rate).
+    fn music_playing(&self) -> bool {
+        self.music_monitor
+            .playback
+            .lock()
+            .ok()
+            .is_some_and(|info| info.is_playing)
+    }
+
+    /// Redraw the live parts of a music island: the equalizer at ~24fps on its
+    /// own subsurface, and — while expanded — the whole pill once a second so
+    /// the progress bar and clock advance. Everything else is retained.
+    fn redraw_music(&mut self, now: std::time::Instant) {
+        if !self.music_playing() {
+            return;
+        }
+
+        if now.duration_since(self.music_last_redraw) >= Duration::from_millis(EQ_REDRAW_MS) {
+            self.music_last_redraw = now;
+            for island in &self.islands {
+                if island.kind != IslandKind::Music {
+                    continue;
+                }
+                let (Some(eq_surf), Some(mr)) = (&island.eq_surface, self.music_monitor.renderer())
+                else {
+                    continue;
+                };
+                let pmode = island.mode.to_presentation_mode();
+                let (w, h, _, _) = island.last_layout;
+                let (eq_w, eq_h, _, _) = mr.eq_layout(pmode, w, h);
+                let buf_w = music::EQ_BUF_W as f32;
+                let buf_h = music::EQ_BUF_H as f32;
+                eq_surf.draw(|canvas| {
+                    canvas.save();
+                    canvas.translate(((buf_w - eq_w) / 2.0, (buf_h - eq_h) / 2.0));
+                    mr.draw_eq_only(canvas, pmode, eq_w, eq_h);
+                    canvas.restore();
+                });
+            }
+        }
+
+        if now.duration_since(self.music_last_full_redraw) >= Duration::from_secs(1) {
+            self.music_last_full_redraw = now;
+            for island in &self.islands {
+                if island.kind != IslandKind::Music || island.mode != IslandMode::Expanded {
+                    continue;
+                }
+                let Some(mut mr) = self.music_monitor.renderer() else {
+                    continue;
+                };
+                if let Some((action, instant)) = &self.music_pressed {
+                    if instant.elapsed().as_millis() < PRESS_FEEDBACK_MS {
+                        mr.pressed = Some(*action);
+                    }
+                }
+                let (w, h, _, _) = island.last_layout;
+                if w > 0.0 && h > 0.0 {
+                    draw_centered(&island.surface, w, h, |canvas| {
+                        mr.draw_without_eq(canvas, PresentationMode::Expanded, w, h);
+                    });
+                }
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // App trait implementation
 // ---------------------------------------------------------------------------
@@ -1311,6 +1581,10 @@ impl App for IslandApp {
             }
         }
 
+        // Create, update or dismiss the music activity from MPRIS state.
+        self.music_monitor.sync_to_island(&self.state);
+        self.redraw_music(now);
+
         // Poll for withdrawn dialogs (caller aborted the request). This marks
         // state dirty when one is pruned so the panel is dismissed below.
         if self.dialog.is_some() {
@@ -1348,6 +1622,10 @@ impl App for IslandApp {
             if let Some(until) = island.peek_until {
                 deadlines.push(until);
             }
+        }
+        // A playing track animates the equalizer, so the loop has to tick.
+        if self.music_playing() {
+            deadlines.push(self.music_last_redraw + Duration::from_millis(EQ_REDRAW_MS));
         }
         // While a dialog is up, poll periodically to detect caller withdrawal
         // (the D-Bus method future being dropped closes the response channel).
@@ -1618,7 +1896,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::future::pending::<()>().await;
     });
 
-    let app = IslandApp::new(state);
+    otto_kit::utils::focus_watcher::spawn_focus_watcher();
+
+    let playback = music::start_playerctl_monitor();
+    let audio_level = music::start_pipewire_level_monitor();
+    let music_monitor = MusicMonitor::new(playback, audio_level);
+
+    let app = IslandApp::new(state, music_monitor);
     AppRunner::new(app).run()?;
 
     Ok(())

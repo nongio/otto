@@ -154,6 +154,12 @@ Music is another island in the same row. It follows the same Mini/Compact/Expand
 - When a notification group is clicked to Compact, music shrinks to Mini.
 - Music Mini: 3-bar equalizer in a circle.
 - Music Compact: album art + title + artist + equalizer.
+- Music Expanded: a card pinned to the top of the layer (y = 0) that grows
+  downward. It is never centred on `BAR_HEIGHT` — `COMPACT_H` is taller than the
+  bar, so centring puts the top of the panel above the layer, where it is clipped.
+- The equalizer is a child subsurface of the music pill, redrawn at ~24fps while
+  a track plays. It animates with the pill rather than snapping to its target, so
+  the bars stay inside the pill for the whole transition.
 
 ## D-Bus Integration
 
