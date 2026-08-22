@@ -189,6 +189,14 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 .map_window(&window_element, location, true, None);
         }
 
+        // GTK negotiates KDE server decorations on the bare `wl_surface`, one
+        // request before `get_toplevel` — so the mode arrived before this
+        // window existed. Apply what was stashed for it.
+        let wl_surface = surface.wl_surface().clone();
+        if let Some(server_side) = self.pending_kde_decorations.remove(&wl_surface.id()) {
+            self.set_surface_decorated(&wl_surface, server_side);
+        }
+
         // The placement above assumed a default size because the client hasn't
         // configured yet. Revisit it once the real size arrives.
         self.pending_initial_placement

@@ -95,7 +95,7 @@ Packages come from the [GitHub Releases](https://github.com/nongio/otto/releases
 <summary>Otto implements a comprehensive set of protocols — click to expand</summary>
 
 - Core: `wl_compositor`, `wl_subcompositor`, `wl_shm`, `wl_seat`, `wl_data_device_manager`
-- Shells: `xdg_wm_base` (XDG shell), `xdg_decoration_manager_v1`, `wlr_layer_shell_v1` (Layer shell 1.0), `xwayland_shell_v1`
+- Shells: `xdg_wm_base` (XDG shell), `xdg_decoration_manager_v1`, `org_kde_kwin_server_decoration`, `wlr_layer_shell_v1` (Layer shell 1.0), `xwayland_shell_v1`
 - Output management: `wl_output`, `xdg_output`, `wp_presentation`, `wp_fractional_scale_v1`, `wp_viewporter`
 - Rendering and DRM: `zwp_linux_dmabuf_v1`, `wp_linux_drm_syncobj_v1` (explicit sync), `wp_drm_lease_device_v1`
 - Input: pointer gestures, relative pointer, pointer constraints, tablet, `wp_cursor_shape_v1`, keyboard shortcuts inhibit, text input, input method, virtual keyboard, `zwlr_virtual_pointer_v1`, XWayland keyboard grab

@@ -45,6 +45,7 @@ use smithay::{
             Interest, LoopHandle, Mode, PostAction,
         },
         wayland_protocols::xdg::shell::server::xdg_toplevel,
+        wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration_manager::Mode as KdeDefaultDecorationMode,
         wayland_server::{
             backend::{ClientData, ClientId, DisconnectReason, ObjectId},
             protocol::{wl_data_device_manager::DndAction, wl_surface::WlSurface},
@@ -77,6 +78,7 @@ use smithay::{
             primary_selection::PrimarySelectionState, wlr_data_control::DataControlState,
         },
         shell::{
+            kde::decoration::KdeDecorationState,
             wlr_layer::WlrLayerShellState,
             xdg::{decoration::XdgDecorationState, SurfaceCachedState, XdgShellState},
         },
@@ -229,6 +231,15 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub viewporter_state: ViewporterState,
     pub xdg_activation_state: XdgActivationState,
     pub xdg_decoration_state: XdgDecorationState,
+    /// KDE's legacy server-decoration protocol. GTK apps that offer a
+    /// server-side mode (ghostty) only look for this one, never
+    /// `xdg-decoration`.
+    pub kde_decoration_state: KdeDecorationState,
+    /// Decoration modes negotiated over the KDE protocol before the surface
+    /// had an `xdg_toplevel`. GTK asks for its mode on the bare `wl_surface`,
+    /// one request ahead of `get_toplevel`, so there is no window to flag yet
+    /// — `new_toplevel` replays what landed here.
+    pub pending_kde_decorations: HashMap<ObjectId, bool>,
     pub xdg_shell_state: XdgShellState,
     pub presentation_state: PresentationState,
     pub fractional_scale_manager_state: FractionalScaleManagerState,
@@ -710,6 +721,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let viewporter_state = ViewporterState::new::<Self>(&dh);
         let xdg_activation_state = XdgActivationState::new::<Self>(&dh);
         let xdg_decoration_state = XdgDecorationState::new::<Self>(&dh);
+        // Advertise server-side as the default mode, matching what Otto
+        // answers over `xdg-decoration`.
+        let kde_decoration_state =
+            KdeDecorationState::new::<Self>(&dh, KdeDefaultDecorationMode::Server);
         let xdg_shell_state = XdgShellState::new::<Self>(&dh);
         let presentation_state = PresentationState::new::<Self>(&dh, clock.id() as u32);
         let fractional_scale_manager_state = FractionalScaleManagerState::new::<Self>(&dh);
@@ -879,6 +894,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             viewporter_state,
             xdg_activation_state,
             xdg_decoration_state,
+            kde_decoration_state,
+            pending_kde_decorations: HashMap::new(),
             xdg_shell_state,
             presentation_state,
             fractional_scale_manager_state,

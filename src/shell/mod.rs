@@ -359,6 +359,10 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
         // Clean up the layer for this surface
         self.destroy_layer_for_surface(&surface.id());
 
+        // A decoration mode stashed for a surface that never became a toplevel
+        // has nothing left to apply to.
+        self.pending_kde_decorations.remove(&surface.id());
+
         // Find root surface for this destroyed surface
         // 1. Check popup cache first (O(1)) - entry removal happens in popup_destroyed
         // 2. Try PopupManager for popups

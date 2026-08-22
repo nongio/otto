@@ -1,12 +1,18 @@
 use smithay::{
-    delegate_xdg_decoration,
+    delegate_kde_decoration, delegate_xdg_decoration,
     reexports::wayland_protocols::xdg::decoration::{
         self as xdg_decoration, zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode,
     },
-    reexports::wayland_server::Resource,
+    reexports::wayland_protocols_misc::server_decoration::server::{
+        org_kde_kwin_server_decoration::{Mode as KdeMode, OrgKdeKwinServerDecoration},
+    },
+    reexports::wayland_server::{protocol::wl_surface::WlSurface, Resource, WEnum},
     wayland::{
         compositor::with_states,
-        shell::xdg::{decoration::XdgDecorationHandler, ToplevelSurface, XdgToplevelSurfaceData},
+        shell::{
+            kde::decoration::{KdeDecorationHandler, KdeDecorationState},
+            xdg::{decoration::XdgDecorationHandler, ToplevelSurface, XdgToplevelSurfaceData},
+        },
     },
 };
 
@@ -20,14 +26,6 @@ impl<BackendData: Backend> Otto<BackendData> {
             state.decoration_mode = Some(mode);
         });
 
-        let server_side = mode == DecorationMode::ServerSide;
-        let id = toplevel.wl_surface().id();
-        let changed = self
-            .workspaces
-            .get_window_for_surface(&id)
-            .map(|window| window.set_decorated(server_side) != server_side)
-            .unwrap_or(false);
-
         let initial_configure_sent = with_states(toplevel.wl_surface(), |states| {
             states
                 .data_map
@@ -40,6 +38,22 @@ impl<BackendData: Backend> Otto<BackendData> {
         if initial_configure_sent {
             toplevel.send_pending_configure();
         }
+
+        self.set_surface_decorated(toplevel.wl_surface(), mode == DecorationMode::ServerSide);
+    }
+
+    /// Show or hide Otto's titlebar for a surface, whichever protocol asked.
+    /// The KDE path has no toplevel state to configure, so this is the half
+    /// both protocols share.
+    pub(crate) fn set_surface_decorated(&mut self, surface: &WlSurface, server_side: bool) {
+        let id = surface.id();
+        let Some(window) = self.workspaces.get_window_for_surface(&id) else {
+            // No window yet — the KDE protocol lets a client negotiate before
+            // it has an `xdg_toplevel`. Remember the answer for `new_toplevel`.
+            self.pending_kde_decorations.insert(id, server_side);
+            return;
+        };
+        let changed = window.set_decorated(server_side) != server_side;
 
         // The window just grew or lost a titlebar, so its geometry changed
         // under the layout — and the view needs to show or hide the bar.
@@ -77,3 +91,42 @@ impl<BackendData: Backend> XdgDecorationHandler for Otto<BackendData> {
     }
 }
 delegate_xdg_decoration!(@<BackendData: Backend + 'static> Otto<BackendData>);
+
+/// KDE's older server-decoration protocol, kept alive because it is the only
+/// one some toolkits look for. GTK never binds `xdg-decoration`, so apps built
+/// on it — ghostty, for one — can only be server-decorated through here.
+impl<BackendData: Backend> KdeDecorationHandler for Otto<BackendData> {
+    fn kde_decoration_state(&self) -> &KdeDecorationState {
+        &self.kde_decoration_state
+    }
+
+    fn new_decoration(&mut self, surface: &WlSurface, decoration: &OrgKdeKwinServerDecoration) {
+        // Same preference as the xdg path: tell the client Otto decorates it,
+        // and start drawing the bar. A client that disagrees answers with a
+        // request_mode of its own.
+        decoration.mode(KdeMode::Server);
+        self.set_surface_decorated(surface, true);
+    }
+
+    fn request_mode(
+        &mut self,
+        surface: &WlSurface,
+        decoration: &OrgKdeKwinServerDecoration,
+        mode: WEnum<KdeMode>,
+    ) {
+        let WEnum::Value(mode) = mode else {
+            return;
+        };
+        // Acknowledge the request before acting on it — the client waits for
+        // the mode event to decide whether to draw its own titlebar.
+        decoration.mode(mode);
+        self.set_surface_decorated(surface, mode == KdeMode::Server);
+    }
+
+    fn release(&mut self, _decoration: &OrgKdeKwinServerDecoration, surface: &WlSurface) {
+        // The client dropped the object: fall back to Otto's own preference,
+        // the same one the manager advertises as its default mode.
+        self.set_surface_decorated(surface, true);
+    }
+}
+delegate_kde_decoration!(@<BackendData: Backend + 'static> Otto<BackendData>);
