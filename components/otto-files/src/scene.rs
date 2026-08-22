@@ -841,6 +841,7 @@ mod tests {
             sort: crate::model::SortKey::Name,
             ascending: true,
             list_columns: view::ListColumnWidths::default(),
+            opening: None,
             renaming: None,
             cut: Vec::new(),
             controls: otto_kit::components::titlebar::WindowControlsState::new(),

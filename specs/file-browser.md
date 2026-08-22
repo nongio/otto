@@ -120,6 +120,11 @@ A client-decorated toplevel. Layout:
   row's full height, and a **contiguous run of selected rows is drawn as one
   shape**: rounded on top only at the run's first row, rounded on the bottom
   only at its last, square where one selected row meets the next.
+- **Icon-view selection is icon-sized** — cells do not touch, so the rule above
+  is inverted: a cell-wide wash would read as a block of colour rather than as
+  one picked-out file. The highlight is a rounded square standing a few points
+  off the icon on every side, and the caption wears a pill of its own beneath
+  it. The two meet edge to edge and read as one highlight.
 The sidebar and the header band are translucent materials over the
 compositor's backdrop blur, the sidebar heavily tinted and the header only
 slightly, so the frost runs across the whole top of the window. The file area
@@ -216,7 +221,19 @@ or renamed in place.
 
 ### Opening
 
-Double-click, or Enter on the selection:
+Double-click, or Ctrl+O. Return is not the key here — it is spelled for rename,
+the way it is on macOS. Double-click opens in every view: in column view a
+directory is already open by the time the second click lands, since that view
+shows a child eagerly on the first, but a file there needs the double-click like
+anywhere else.
+
+**Opening is acknowledged before it happens.** A ghost of the whole selection —
+its highlight, its icon and its name, drawn by the same code that drew it in the
+listing — grows out of itself and fades over 280ms. Handing a file to another
+process or re-reading a directory can take long enough that a double-click with
+no answer reads as one that did not land. The ghost echoes the selection rather
+than the icon alone, so it reads as *that file* opening: in the grid the caption
+pill goes with it, in the row views the highlight band does.
 
 - A directory is navigated into, in this window. **Ctrl+double-click opens it
   in a new window instead** — a second `otto-files` process pointed at that
@@ -225,9 +242,12 @@ Double-click, or Enter on the selection:
   single Ctrl+click does; the second click opens rather than toggling back out.
   In the picker, which answers one request in one window, Ctrl+click only ever
   toggles.
-- A file is opened in its default application, resolved from the file's MIME
-  type through the desktop's associations. The application is started
-  detached — a new session, its stdio closed — so it outlives the browser.
+- A file is handed to `xdg-open`, started detached — stdio closed, reaped on a
+  thread of its own — so the application outlives the browser. The desktop's own
+  answer to "what opens this", rather than one resolved here: it already knows
+  about `mimeapps.list`, the portal and the fallbacks, and a file manager that
+  disagreed with the rest of the session about what opens a `.pdf` would be the
+  thing that was wrong.
 - An executable file is *not* run. It is opened in its default application like
   any other file, or reported as having none. Running a program by
   double-clicking it in a file manager is a well-known way to be tricked into
@@ -349,11 +369,23 @@ of them. The payload is the same three types a copy puts on the clipboard —
 `x-special/gnome-copied-files`, `text/uri-list`, `text/plain` — which is what
 makes the drag legible to other file managers and to text editors.
 
+**The drag image is shaped like the view it came from.** In icon view the cursor
+carries the cell, drawn selected by the grid's own cell drawing rather than a
+copy of it, so the picture under the cursor cannot drift from what is on screen;
+in list and column views it carries a row-shaped card. The thumbnail travels
+with it where there is one. One entry stands for the group, and a count badge
+says how many are coming — on the card's trailing edge, or at the icon's
+top-right corner in the grid.
+
 **Taking a drop.** Every target resolves to a *directory*: a directory row or
 cell, a pane's background, or a sidebar place. Dropping on a file is not a
 thing, so a hit on one lands in the directory that file is in. The target is
-outlined while the drag is over it — a wash and an accent ring, drawn over the
-rows — and resolved again at the drop's own position rather than trusting the
+outlined while the drag is over it — an accent ring, drawn over the rows, whose
+corners take the shape of what it outlines: rounded around a grid cell or a
+sidebar place, which have rounded highlights of their own, and square around a
+Miller column, a pane or a row band, where a rounded ring would read as a
+separate object floating over the target rather than as the target being picked
+out — and resolved again at the drop's own position rather than trusting the
 last motion, since a release may land somewhere no motion reported.
 
 **The conversation is per-position.** The browser answers every enter and every

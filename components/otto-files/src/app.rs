@@ -138,6 +138,9 @@ struct Browser {
     /// no Miller-style eager descent, so a directory only opens on a second
     /// click landing on the same one within the window.
     last_row_click: Option<(usize, usize, std::time::Instant)>,
+    /// The pane whose cursor is being opened, and when the open happened.
+    /// Drives the pulse the icon leaves behind — see [`view::draw_open_pulse`].
+    opening: Option<(usize, std::time::Instant)>,
     /// The last boundary clicked and when, so a second click on the same one
     /// shortly after reads as a double-click rather than a fresh drag.
     last_boundary_click: Option<(view::ColumnBoundary, std::time::Instant)>,
@@ -413,6 +416,7 @@ impl Browser {
             miller_resize: None,
             last_miller_click: None,
             last_row_click: None,
+            opening: None,
             last_boundary_click: None,
             rename: None,
             typeahead: None,
@@ -1080,6 +1084,22 @@ impl Browser {
         }
     }
 
+    /// How far through the open pulse we are, if one is running.
+    fn opening_progress(&self) -> Option<(usize, f32)> {
+        let (depth, started) = self.opening?;
+        let t = started.elapsed().as_secs_f32() / view::OPEN_PULSE.as_secs_f32();
+        (t < 1.0).then_some((depth, t))
+    }
+
+    /// Drop a pulse that has run its course, so the clock can stop.
+    fn tick_open_pulse(&mut self) -> bool {
+        if self.opening.is_some() && self.opening_progress().is_none() {
+            self.opening = None;
+            self.dirty = true;
+        }
+        self.opening.is_some()
+    }
+
     /// Record a plain click on a row/cell, opening it if this is the second
     /// one to land on the same row within the double-click window — List and
     /// Grid's only mouse way to open a directory, since neither shows a
@@ -1225,6 +1245,13 @@ impl Browser {
             return;
         };
 
+        // Say that the open was heard, before doing it: opening a file hands
+        // off to another process and opening a directory re-reads it, and
+        // either can take long enough that a double-click with no answer reads
+        // as one that did not land.
+        self.opening = Some((depth, std::time::Instant::now()));
+        self.dirty = true;
+
         if entry.is_dir {
             match self.mode {
                 ViewMode::Columns => {
@@ -1255,10 +1282,41 @@ impl Browser {
         }
 
         // A file. In the picker, activating one *is* the accept — double-click
-        // and Enter both land here, and both mean "this one". In the browser,
-        // opening a file in its default application is not wired up yet.
+        // and Enter both land here, and both mean "this one".
         if self.picker.is_some() {
             self.picker_accept();
+        } else {
+            self.open_in_default_app(&entry.path);
+        }
+    }
+
+    /// Hand a file to whatever the desktop opens that type with.
+    ///
+    /// `xdg-open` rather than resolving the association here: it is the
+    /// desktop's own answer to this question, it already knows about
+    /// `mimeapps.list`, the portal and the fallbacks, and a file manager that
+    /// disagreed with the rest of the session about what opens a `.pdf` would
+    /// be the thing that was wrong.
+    ///
+    /// Detached, like a new window: stdio closed and reaped on a thread of its
+    /// own, so the application outlives the browser that started it.
+    fn open_in_default_app(&mut self, path: &Path) {
+        let spawned = std::process::Command::new("xdg-open")
+            .arg(path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        match spawned {
+            Ok(mut child) => {
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+            }
+            Err(err) => {
+                self.status = Some(format!("Couldn\u{2019}t open that file: {err}"));
+                self.dirty = true;
+            }
         }
     }
 
@@ -2176,13 +2234,15 @@ impl Browser {
     ///
     /// One entry stands for the group. Stacking every icon is a nicer picture
     /// and a much bigger one, and the count already says how much is coming.
-    fn drag_image(&self) -> (String, Vec<String>, usize) {
+    fn drag_image(&self) -> Option<(Entry, usize, Option<skia_safe::Image>)> {
         let entries = self.selected_entries();
         let count = entries.len();
-        match entries.first() {
-            Some(entry) => (entry.name.clone(), entry.icon_chain(), count),
-            None => (String::new(), Vec::new(), 0),
-        }
+        let entry = entries.first()?;
+        // The thumbnail travels with it: in icon view the picture is what the
+        // user grabbed, and a type icon under the cursor would not be the
+        // thing they picked up.
+        let thumb = self.thumbs.image(&entry.path, entry.modified).cloned();
+        Some((entry.clone(), count, thumb))
     }
 
     /// Where inside the drag image the cursor should sit, given a grab at
@@ -2218,9 +2278,10 @@ impl Browser {
             ),
         };
 
+        let (image_w, image_h) = view::drag_image_size(self.mode);
         (
-            (x - rect.left).clamp(0.0, view::DRAG_IMAGE_W),
-            (y - rect.top).clamp(0.0, view::DRAG_IMAGE_H),
+            (x - rect.left).clamp(0.0, image_w),
+            (y - rect.top).clamp(0.0, image_h),
         )
     }
 
@@ -2760,6 +2821,7 @@ impl Browser {
             sort: self.sort,
             ascending: self.ascending,
             list_columns: self.list_columns,
+            opening: self.opening_progress(),
             renaming: self.rename.as_ref().map(|r| (r.depth, r.index)),
             controls: self.controls,
             can_go_back: !self.back.is_empty(),
@@ -3022,7 +3084,9 @@ impl App for FilesApp {
             // advance here rather than on input, since they keep running after
             // the gesture ends.
             let scrolled = browser.tick_scroll();
-            let animating = browser.quickview_animating() | browser.tick_quickview_exit();
+            let animating = browser.quickview_animating()
+                | browser.tick_quickview_exit()
+                | browser.tick_open_pulse();
             // The docked preview column follows the selection wherever it
             // moves — a click, an arrow key, a directory finishing a load
             // that changes what "the selection" resolves to — so this is
@@ -3166,7 +3230,9 @@ impl App for FilesApp {
     /// next input event.
     fn idle_timeout(&self) -> Option<std::time::Duration> {
         let browser = self.state.lock().unwrap();
-        let animating = browser.scroll_animating() || browser.quickview_animating();
+        let animating = browser.scroll_animating()
+            || browser.quickview_animating()
+            || browser.opening.is_some();
         animating.then(|| std::time::Duration::from_millis(8))
     }
 
@@ -4350,23 +4416,31 @@ impl FilesApp {
                                 // Anchored where the row was grabbed, not by
                                 // its corner.
                                 let anchor = browser.grab_anchor(start_x, start_y);
+                                // The picture is shaped like the view it came
+                                // from: a cell in the grid, a row card in the
+                                // list and column views.
+                                let mode = browser.mode;
+                                let (image_w, image_h) = view::drag_image_size(mode);
                                 drop(browser);
-                                if let Some(surface) = window_for_events.wl_surface() {
+                                if let (Some(surface), Some((entry, count, thumb))) =
+                                    (window_for_events.wl_surface(), image)
+                                {
                                     let theme = AppContext::current_theme();
                                     otto_kit::dnd::start_file_drag_with_icon(
                                         &paths,
                                         DndAction::Copy | DndAction::Move,
                                         &surface,
                                         serial,
-                                        (view::DRAG_IMAGE_W as i32, view::DRAG_IMAGE_H as i32),
+                                        (image_w as i32, image_h as i32),
                                         anchor,
                                         move |canvas, _w, _h| {
                                             view::draw_drag_image(
                                                 canvas,
                                                 &theme,
-                                                &image.0,
-                                                &image.1,
-                                                image.2,
+                                                mode,
+                                                &entry,
+                                                count,
+                                                thumb.as_ref(),
                                             );
                                         },
                                     );
@@ -4731,6 +4805,13 @@ impl FilesApp {
                                     browser.extend_select(depth, index);
                                 } else {
                                     browser.select(depth, index);
+                                    // A directory here already opened on the
+                                    // single click — Miller shows its child
+                                    // eagerly. A *file* did not, and a double
+                                    // click is how one is opened in the other
+                                    // two views, so it is how one is opened
+                                    // here too.
+                                    browser.note_row_click(depth, index);
                                 }
                             } else if let Some((depth, None)) = hit {
                                 browser.active = depth;

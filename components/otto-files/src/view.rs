@@ -138,12 +138,27 @@ const GRID_PAD: f32 = 14.0;
 /// caption's first line. Tuned so the icon's selection rectangle and the
 /// caption's pill meet edge to edge: they read as one highlight, without
 /// either overlapping the other.
-const GRID_LABEL_GAP: f32 = 14.0;
+const GRID_LABEL_GAP: f32 = 16.0;
 /// Baseline-to-baseline distance between the caption's two lines.
 const GRID_LABEL_LINE: f32 = 16.0;
 /// Padding above and below the caption inside its selection pill. The pill is
 /// built out from the line centres, so the text sits optically centred in it.
 const GRID_LABEL_INSET: f32 = 10.0;
+/// How far the icon's selection rectangle stands off the icon itself. Small,
+/// so the highlight reads as belonging to the icon rather than to the cell.
+const GRID_ICON_INSET: f32 = 6.0;
+
+/// The selection rectangle behind a grid icon, given its cell and the top of
+/// the icon inside it. Public because a desktop surface draws the same
+/// highlight against its own cells.
+pub fn grid_icon_highlight_rect(cell: Rect, icon_top: f32) -> Rect {
+    Rect::from_xywh(
+        cell.center_x() - GRID_ICON / 2.0 - GRID_ICON_INSET,
+        icon_top - GRID_ICON_INSET,
+        GRID_ICON + GRID_ICON_INSET * 2.0,
+        GRID_ICON + GRID_ICON_INSET * 2.0,
+    )
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewMode {
@@ -628,10 +643,6 @@ fn draw_drop_highlight(canvas: &Canvas, f: &Frame) {
 
     // The ring alone. A wash inside it as well says the same thing twice, and
     // over a pane it tints a whole column of rows to point at one target.
-    //
-    // Square, following the shape of what it outlines: a Miller column has
-    // square edges, and a rounded ring drawn around one reads as a different
-    // object floating over it rather than as that column being picked out.
     let mut ring = Paint::default();
     ring.set_anti_alias(true);
     ring.set_style(skia_safe::paint::Style::Stroke);
@@ -639,7 +650,33 @@ fn draw_drop_highlight(canvas: &Canvas, f: &Frame) {
     // spill a pixel outside it, over the neighbouring row.
     ring.set_stroke_width(2.0);
     ring.set_color(accent_light(f.theme));
-    canvas.draw_rect(rect.with_inset((1.0, 1.0)), &ring);
+
+    let radius = drop_ring_radius(f.mode, target);
+    if radius > 0.0 {
+        canvas.draw_rrect(
+            RRect::new_rect_xy(rect.with_inset((1.0, 1.0)), radius, radius),
+            &ring,
+        );
+    } else {
+        canvas.draw_rect(rect.with_inset((1.0, 1.0)), &ring);
+    }
+}
+
+/// The corner radius of the drop ring: the shape of the thing it outlines.
+///
+/// A Miller column and a pane have square edges, and a rounded ring drawn
+/// around one reads as a different object floating over it rather than as that
+/// column being picked out — those stay square. A grid cell and a sidebar place
+/// are rounded shapes with a rounded highlight of their own, and a square ring
+/// around either reads as a box that missed.
+fn drop_ring_radius(mode: ViewMode, target: DropHighlight) -> f32 {
+    match target {
+        // The same radius the place's own selection is drawn with.
+        DropHighlight::Place { .. } => 6.0,
+        // A cell in the grid; a band abutting its neighbours anywhere else.
+        DropHighlight::Row { .. } if mode == ViewMode::Grid => 8.0,
+        DropHighlight::Row { .. } | DropHighlight::Pane { .. } => 0.0,
+    }
 }
 
 /// One list-view row's rect, in window coordinates.
@@ -673,15 +710,78 @@ pub fn miller_row_rect(
 pub const DRAG_IMAGE_W: f32 = 240.0;
 pub const DRAG_IMAGE_H: f32 = 36.0;
 
-/// Draw the drag image. `count` is the whole selection; `name` and
-/// `icon_chain` describe the one shown.
+/// The size of the drag image for `mode`. What the cursor carries is the thing
+/// that was picked up, so the icon grid carries a cell and the row views carry
+/// a row-shaped card.
+pub fn drag_image_size(mode: ViewMode) -> (f32, f32) {
+    match mode {
+        ViewMode::Grid => (CELL_W, CELL_H),
+        ViewMode::List | ViewMode::Columns => (DRAG_IMAGE_W, DRAG_IMAGE_H),
+    }
+}
+
+/// Draw the drag image for `mode`. `count` is the whole selection; `entry` is
+/// the one shown.
 pub fn draw_drag_image(
     canvas: &Canvas,
     theme: &Theme,
-    name: &str,
-    icon_chain: &[String],
+    mode: ViewMode,
+    entry: &Entry,
     count: usize,
+    thumb: Option<&skia_safe::Image>,
 ) {
+    match mode {
+        ViewMode::Grid => draw_drag_cell(canvas, theme, entry, count, thumb),
+        ViewMode::List | ViewMode::Columns => {
+            draw_drag_card(canvas, theme, &entry.name, &entry.icon_chain(), count)
+        }
+    }
+}
+
+/// The icon grid's drag image: the cell exactly as the grid draws it, selected,
+/// with the count riding the icon's corner.
+///
+/// It calls the grid's own cell drawing rather than reproducing it, so the
+/// picture under the cursor cannot drift away from what is on screen — the
+/// thing that was picked up is drawn by the code that drew it in the first
+/// place.
+fn draw_drag_cell(
+    canvas: &Canvas,
+    theme: &Theme,
+    entry: &Entry,
+    count: usize,
+    thumb: Option<&skia_safe::Image>,
+) {
+    let cell = Rect::from_wh(CELL_W, CELL_H);
+    draw_grid_cell(canvas, theme, entry, cell, true, false, thumb);
+
+    if count > 1 {
+        let digits = count.to_string().len() as f32;
+        let badge_w = 18.0 + digits * 7.0;
+        let icon = grid_icon_highlight_rect(cell, cell.top + 8.0);
+        // The icon's top-right corner, held inside the surface: anything drawn
+        // past its edge is simply not there.
+        let badge = Rect::from_xywh(
+            (icon.right - badge_w + 4.0).min(cell.right - badge_w),
+            (icon.top - 6.0).max(0.0),
+            badge_w,
+            18.0,
+        );
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(Color::from_argb(0xFF, 0xFF, 0xFF, 0xFF));
+        canvas.draw_rrect(RRect::new_rect_xy(badge, 9.0, 9.0), &paint);
+
+        Label::new(&count.to_string())
+            .with_style(styles::FOOTNOTE_EMPHASIZED)
+            .with_color(theme.material_selection_focused)
+            .centered_on(badge.center_x(), badge.center_y())
+            .render(canvas);
+    }
+}
+
+/// The row views' drag image: an icon, the name beside it, and a count.
+fn draw_drag_card(canvas: &Canvas, theme: &Theme, name: &str, icon_chain: &[String], count: usize) {
     let card = Rect::from_wh(DRAG_IMAGE_W, DRAG_IMAGE_H);
 
     // Translucent, so what is underneath still reads through it: this is a
@@ -1426,6 +1526,11 @@ pub struct Frame<'a> {
     pub ascending: bool,
     /// The list view's draggable Size/Kind/Modified column widths.
     pub list_columns: ListColumnWidths,
+    /// How far through the open pulse the entry being opened is, 0 to 1, and
+    /// which pane it is in. `None` when nothing is opening. The entry itself is
+    /// that pane's cursor — opening acts on the selection — so only the pane
+    /// and the progress are needed here.
+    pub opening: Option<(usize, f32)>,
     /// Depth and row index of an in-place rename in progress. That row's
     /// name label is skipped so the host's text field shows through instead.
     pub renaming: Option<(usize, usize)>,
@@ -1556,6 +1661,9 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
     // After the panes and before the chrome: over the rows it points at, under
     // the sidebar divider and the footer.
     draw_drop_highlight(canvas, f);
+
+    // Over the rows, for the same reason: it is a ghost of one of them.
+    draw_open_pulse(canvas, f);
 
     paint.set_color(theme.fill_tertiary);
     paint.set_stroke_width(1.0);
@@ -2207,21 +2315,12 @@ pub fn draw_grid_cell(
     let label_center_y = icon_top + GRID_ICON + GRID_LABEL_GAP;
 
     if selected {
-        // The highlight hugs the label, not the whole cell — that is what keeps
-        // a grid of selected items from becoming a wall of colour.
+        // The highlight hugs the icon, not the cell — a cell-wide wash reads as
+        // a block of colour rather than as one picked-out file.
         paint.set_color(theme.material_selection_focused);
         paint.set_alpha(60);
         canvas.draw_rrect(
-            RRect::new_rect_xy(
-                Rect::from_xywh(
-                    cell.left + 6.0,
-                    icon_top - 4.0,
-                    cell.width() - 12.0,
-                    GRID_ICON + 8.0,
-                ),
-                8.0,
-                8.0,
-            ),
+            RRect::new_rect_xy(grid_icon_highlight_rect(cell, icon_top), 8.0, 8.0),
             &paint,
         );
     }
@@ -3424,7 +3523,133 @@ fn elide(text: &str, max: usize) -> String {
 /// tell it — `set_position` in `otto-surface-style` and `sc-layer` is a request,
 /// and no protocol carries a position back. Resolving this to the screen is the
 /// compositor's job. See `specs/file-browser.md`.
+/// How long the open pulse runs. Long enough to register as an answer to the
+/// double-click, short enough not to sit between the user and the application
+/// they just asked for.
+pub const OPEN_PULSE: std::time::Duration = std::time::Duration::from_millis(280);
+
+/// The scale and alpha of the open pulse at `t`, 0 to 1.
+///
+/// A ghost of the icon grows out of the icon and fades as it goes — the icon
+/// itself stays put underneath, so the row does not appear to leave with it.
+/// Eased out: most of the movement is in the first third, which is what makes
+/// it read as a thing springing open rather than drifting.
+pub fn open_pulse(t: f32) -> (f32, u8) {
+    let eased = 1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3);
+    (1.0 + 0.6 * eased, (255.0 * (1.0 - eased)) as u8)
+}
+
+/// Draw the open pulse over everything: the whole selected entry — its
+/// highlight, its icon and its name — growing out of itself and fading.
+///
+/// The entry is drawn again, selected, into a faded layer scaled about its own
+/// centre, by the same code that drew it in the listing. Echoing the selection
+/// rather than the icon alone is what makes it read as *that file* opening: in
+/// the grid the caption pill goes with it, and in the row views the highlight
+/// band does.
+pub fn draw_open_pulse(canvas: &Canvas, f: &Frame) {
+    let Some((depth, t)) = f.opening else { return };
+    let Some(pane) = f.panes.get(depth) else {
+        return;
+    };
+    let Some(index) = pane.cursor else { return };
+    let Some(entry) = pane.entries.get(index) else {
+        return;
+    };
+
+    let rect = cursor_entry_rect(f.width, f.height, f.mode, pane, depth, f.pan, f.miller_w);
+    if rect.is_empty() {
+        return;
+    }
+
+    let (scale, alpha) = open_pulse(t);
+    let thumb = f.thumbnail(entry);
+
+    // The layer is the grown rect, so nothing is clipped as it swells, and the
+    // fade applies to the whole ghost at once rather than to each piece of it —
+    // overlapping shapes inside must not show through one another.
+    let grown = Rect::from_xywh(
+        rect.center_x() - rect.width() * scale / 2.0,
+        rect.center_y() - rect.height() * scale / 2.0,
+        rect.width() * scale,
+        rect.height() * scale,
+    );
+    canvas.save_layer_alpha(Some(grown), alpha as u32);
+    canvas.translate((rect.center_x(), rect.center_y()));
+    canvas.scale((scale, scale));
+    canvas.translate((-rect.center_x(), -rect.center_y()));
+
+    match f.mode {
+        ViewMode::Grid => draw_grid_cell(canvas, f.theme, entry, rect, true, false, thumb),
+        ViewMode::List | ViewMode::Columns => {
+            // One row on its own is a run of one: rounded at both ends.
+            draw_row_background(
+                canvas,
+                f.theme,
+                rect,
+                true,
+                RunEnds {
+                    first: true,
+                    last: true,
+                },
+                index,
+            );
+            let (text_color, _) = row_colors(f.theme, true);
+            let icon = entry_icon_rect(rect, f.mode);
+            draw_entry_icon(canvas, entry, icon.left, icon.center_y(), false, thumb);
+
+            let name_x = icon.right + if f.mode == ViewMode::List { 10.0 } else { 8.0 };
+            let font = styles::BODY_MEDIUM.font();
+            Label::new(ellipsize(
+                &font,
+                &entry.name,
+                (rect.right - 12.0 - name_x).max(20.0),
+            ))
+            .with_style(styles::BODY_MEDIUM)
+            .with_color(text_color)
+            .centered_on(name_x, rect.center_y())
+            .render(canvas);
+        }
+    }
+
+    canvas.restore();
+}
+
 pub fn quickview_anchor(
+    width: f32,
+    height: f32,
+    mode: ViewMode,
+    pane: &PaneData,
+    depth: usize,
+    pan: f32,
+    miller_w: f32,
+) -> Rect {
+    let Some(index) = pane.cursor else {
+        return Rect::new_empty();
+    };
+    if index >= pane.entries.len() {
+        return Rect::new_empty();
+    }
+
+    let rect = cursor_entry_rect(width, height, mode, pane, depth, pan, miller_w);
+    if rect.is_empty() {
+        return rect;
+    }
+
+    // Grow from the icon, not the whole row. The row is a full-width band and
+    // the panel is a card, so a zoom out of the row reads as a stripe
+    // unfurling; the icon is already the thing on screen that stands for the
+    // file, and it is the shape the panel is closest to.
+    entry_icon_rect(rect, mode)
+}
+
+/// The whole rect of the pane's cursor entry — the row band, or the grid cell —
+/// in surface coordinates with scrolling applied.
+///
+/// Empty when there is nothing there to point at: no cursor, or one scrolled
+/// out of the viewport. [`quickview_anchor`] narrows this to the icon; the open
+/// pulse uses it whole, because what it echoes is the selection.
+pub fn cursor_entry_rect(
     width: f32,
     height: f32,
     mode: ViewMode,
@@ -3452,12 +3677,6 @@ pub fn quickview_anchor(
         )
         .rect(index),
     };
-
-    // Grow from the icon, not the whole row. The row is a full-width band and
-    // the panel is a card, so a zoom out of the row reads as a stripe
-    // unfurling; the icon is already the thing on screen that stands for the
-    // file, and it is the shape the panel is closest to.
-    let rect = entry_icon_rect(rect, mode);
 
     // Clipped away entirely, or scrolled out of the viewport: nothing to grow
     // from. A partially visible row still counts — the user can see it.
@@ -3500,6 +3719,75 @@ pub(crate) fn entry_icon_rect(rect: Rect, mode: ViewMode) -> Rect {
 #[cfg(test)]
 mod geometry_tests {
     use super::*;
+
+    /// The drop ring takes the shape of what it outlines: rounded around a
+    /// grid cell or a sidebar place, square around a column or a row band.
+    #[test]
+    fn the_drop_ring_follows_the_shape_it_outlines() {
+        let cell = DropHighlight::Row { depth: 0, index: 3 };
+        assert!(drop_ring_radius(ViewMode::Grid, cell) > 0.0);
+        assert_eq!(drop_ring_radius(ViewMode::List, cell), 0.0);
+        assert_eq!(drop_ring_radius(ViewMode::Columns, cell), 0.0);
+
+        let pane = DropHighlight::Pane { depth: 0 };
+        for mode in [ViewMode::List, ViewMode::Grid, ViewMode::Columns] {
+            assert_eq!(drop_ring_radius(mode, pane), 0.0);
+        }
+
+        let place = DropHighlight::Place { index: 1 };
+        assert!(drop_ring_radius(ViewMode::Columns, place) > 0.0);
+    }
+
+    /// A drag carries the shape of the view it started in: a cell in the icon
+    /// grid, a row card everywhere else.
+    #[test]
+    fn the_drag_image_is_shaped_like_the_view_it_came_from() {
+        assert_eq!(drag_image_size(ViewMode::Grid), (CELL_W, CELL_H));
+        for mode in [ViewMode::List, ViewMode::Columns] {
+            assert_eq!(drag_image_size(mode), (DRAG_IMAGE_W, DRAG_IMAGE_H));
+        }
+    }
+
+    /// The open pulse starts as the icon itself and ends invisible, having
+    /// grown the whole way — a ghost leaving, not a second icon appearing.
+    #[test]
+    fn the_open_pulse_grows_out_of_the_icon_and_fades() {
+        let (scale, alpha) = open_pulse(0.0);
+        assert_eq!(scale, 1.0);
+        assert_eq!(alpha, 255);
+
+        let (scale, alpha) = open_pulse(1.0);
+        assert!(scale > 1.5);
+        assert_eq!(alpha, 0);
+
+        // Eased out: past halfway through the growth before halfway in time.
+        let (mid, _) = open_pulse(0.5);
+        assert!(mid > 1.0 + 0.6 / 2.0);
+    }
+
+    /// The grid's selection rectangle belongs to the icon: it stands a little
+    /// off it on every side, and stays well inside the cell it lives in.
+    #[test]
+    fn a_selected_grid_icon_is_highlighted_at_icon_size() {
+        let cell = grid_cell_rect(Rect::from_xywh(0.0, 0.0, 800.0, 600.0), 0, 0.0);
+        let rect = grid_icon_highlight_rect(cell, cell.top + 8.0);
+
+        assert_eq!(rect.width(), GRID_ICON + GRID_ICON_INSET * 2.0);
+        assert_eq!(rect.height(), rect.width());
+        assert_eq!(rect.center_x(), cell.center_x());
+        assert!(rect.width() < cell.width() - 20.0);
+    }
+
+    /// And it meets the caption's pill edge to edge — the two read as one
+    /// highlight, with neither overlapping the other.
+    #[test]
+    fn the_icon_highlight_meets_the_caption_pill() {
+        let cell = grid_cell_rect(Rect::from_xywh(0.0, 0.0, 800.0, 600.0), 0, 0.0);
+        let icon_top = cell.top + 8.0;
+        let pill_top = icon_top + GRID_ICON + GRID_LABEL_GAP - GRID_LABEL_INSET;
+
+        assert_eq!(grid_icon_highlight_rect(cell, icon_top).bottom, pill_top);
+    }
 
     /// The first frames of the entrance are a card the size of the file's own
     /// row. The chrome is absolute, so drawing it there would fill the card
@@ -3942,6 +4230,7 @@ mod geometry_tests {
             sort: SortKey::Name,
             ascending: true,
             list_columns: ListColumnWidths::default(),
+            opening: None,
             renaming: None,
             cut: Vec::new(),
             controls: WindowControlsState::new(),
