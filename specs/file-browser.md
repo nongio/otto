@@ -96,8 +96,11 @@ A client-decorated toplevel. Layout:
   is what the 10,000-file goal above rests on — measuring and shaping the text
   of a row nobody can see is most of the cost of a frame.
 - **Thumbnails in place of icons** — an entry whose thumbnail is available is
-  drawn as itself rather than as its type's icon, in list rows and grid cells
-  alike. The picture is **fitted, never cropped**: it keeps its own proportions
+  drawn as itself rather than as its type's icon, in all three presentations:
+  list rows, grid cells, and the column view's rows. The three take different
+  routes to the screen — the first two draw immediately, while a Miller column
+  records its rows into a cached picture — so a thumbnail reaching one of them
+  says nothing about the others, and column view is what the browser opens in. The picture is **fitted, never cropped**: it keeps its own proportions
   inside the box the icon would have had and sits on the same baseline, so a
   panorama and a portrait line up with the icons around them, and it is never
   enlarged past its own pixels. A hairline closes its edge, without which a
