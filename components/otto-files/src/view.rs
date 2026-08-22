@@ -710,6 +710,221 @@ pub fn miller_row_rect(
 pub const DRAG_IMAGE_W: f32 = 240.0;
 pub const DRAG_IMAGE_H: f32 = 36.0;
 
+/// One file travelling in a drag: where its picture starts, and what to draw.
+///
+/// The start is where the entry actually is on screen, as an offset inside the
+/// drag image. The end is the pile under the cursor. Between the two is the
+/// gather — see [`draw_drag_gather`].
+#[derive(Clone)]
+pub struct DragItem {
+    pub entry: Entry,
+    pub thumb: Option<skia_safe::Image>,
+    /// Top-left of this item's picture at the moment the drag began, relative
+    /// to the drag image's own origin.
+    pub start: (f32, f32),
+}
+
+/// How many pictures a drag shows at most.
+///
+/// A hundred files would mean a hundred pictures nobody looks at and a drag
+/// surface the size of the window to hold them. The badge counts them all.
+pub const DRAG_ITEMS_MAX: usize = 8;
+
+/// The count badge's box, and how far it sits off the cursor.
+const DRAG_BADGE_H: f32 = 20.0;
+const DRAG_BADGE_GAP: f32 = 6.0;
+
+/// The width of a badge showing `count`.
+pub fn drag_badge_width(count: usize) -> f32 {
+    18.0 + count.to_string().len() as f32 * 8.0
+}
+
+/// The drag image: the files being carried, each drawn where it sits in the
+/// listing, and a count at the cursor.
+///
+/// No pile and no gathering. The files keep the places and the alignment they
+/// have in the view they came from, so what lifts off the listing looks like
+/// the rows that were selected — which is what says *which* files are moving.
+/// The badge is the only thing added, and it rides the cursor rather than the
+/// files, at its bottom right where it covers neither the names nor whatever
+/// the drag is being held over.
+pub fn draw_drag_image(
+    canvas: &Canvas,
+    theme: &Theme,
+    mode: ViewMode,
+    items: &[DragItem],
+    anchor: (f32, f32),
+    count: usize,
+) {
+    canvas.clear(Color::TRANSPARENT);
+
+    for item in items {
+        canvas.save();
+        canvas.translate(item.start);
+        draw_drag_entry(canvas, theme, mode, &item.entry, item.thumb.as_ref());
+        canvas.restore();
+    }
+
+    if count > 1 {
+        let width = drag_badge_width(count);
+        let badge = Rect::from_xywh(
+            anchor.0 + DRAG_BADGE_GAP,
+            anchor.1 + DRAG_BADGE_GAP,
+            width,
+            DRAG_BADGE_H,
+        );
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        // Red, not the accent: the names travelling under it are highlighted
+        // in the accent, and a badge in the same colour reads as one more of
+        // them instead of as the count of them.
+        paint.set_color(theme.accent_red);
+        canvas.draw_rrect(
+            RRect::new_rect_xy(badge, DRAG_BADGE_H / 2.0, DRAG_BADGE_H / 2.0),
+            &paint,
+        );
+
+        Label::new(&count.to_string())
+            .with_style(styles::FOOTNOTE_EMPHASIZED)
+            .with_color(Color::WHITE)
+            .centered_on(badge.center_x(), badge.center_y())
+            .render(canvas);
+    }
+}
+
+/// One travelling file: its icon, and its name on a highlight.
+///
+/// The highlight is behind the *name* only. The icon carries its own shape and
+/// a block of colour behind it just muddies it; the name is text over whatever
+/// the drag is passing across, and it needs the ground to stay readable.
+fn draw_drag_entry(
+    canvas: &Canvas,
+    theme: &Theme,
+    mode: ViewMode,
+    entry: &Entry,
+    thumb: Option<&skia_safe::Image>,
+) {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    let font = styles::BODY_MEDIUM.font();
+
+    match mode {
+        ViewMode::Grid => {
+            let cell = Rect::from_wh(CELL_W, CELL_H);
+            let icon_top = cell.top + 8.0;
+            if let Some(image) = thumb {
+                draw_thumbnail(
+                    canvas,
+                    image,
+                    Rect::from_xywh(
+                        cell.center_x() - GRID_ICON / 2.0,
+                        icon_top,
+                        GRID_ICON,
+                        GRID_ICON,
+                    ),
+                    false,
+                );
+            } else {
+                let chain = entry.icon_chain();
+                let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
+                if let Some(image) =
+                    icons::cached_icon_chain_at(&refs, GRID_ICON as i32, icons::FULL_COLOUR_SIZE)
+                {
+                    canvas.draw_image_rect(
+                        &image,
+                        None,
+                        Rect::from_xywh(
+                            cell.center_x() - GRID_ICON / 2.0,
+                            icon_top,
+                            GRID_ICON,
+                            GRID_ICON,
+                        ),
+                        &Paint::default(),
+                    );
+                }
+            }
+
+            // The caption on its pill, the way a selected cell wears it.
+            let center_y = icon_top + GRID_ICON + GRID_LABEL_GAP;
+            let (first, second) = split_label(&entry.name, 13);
+            let caption = styles::CALLOUT_EMPHASIZED.font();
+            let text_w = caption
+                .measure_str(&first, None)
+                .0
+                .max(caption.measure_str(&second, None).0);
+            let width = (text_w + 12.0).min(cell.width() - 4.0);
+            let lines = if second.is_empty() {
+                0.0
+            } else {
+                GRID_LABEL_LINE
+            };
+            paint.set_color(accent(theme));
+            canvas.draw_rrect(
+                RRect::new_rect_xy(
+                    Rect::from_xywh(
+                        cell.center_x() - width / 2.0,
+                        center_y - GRID_LABEL_INSET,
+                        width,
+                        lines + GRID_LABEL_INSET * 2.0,
+                    ),
+                    5.0,
+                    5.0,
+                ),
+                &paint,
+            );
+            for (line, offset) in [(first.as_str(), 0.0), (second.as_str(), GRID_LABEL_LINE)] {
+                if line.is_empty() {
+                    continue;
+                }
+                Label::new(line)
+                    .with_style(styles::CALLOUT_EMPHASIZED)
+                    .with_color(Color::WHITE)
+                    .centered_at(cell.center_x(), center_y + offset)
+                    .render(canvas);
+            }
+        }
+        ViewMode::List | ViewMode::Columns => {
+            // The row's own alignment: the icon where the listing puts it, and
+            // the name the same distance after it.
+            let lead = row_icon_lead(mode);
+            let center_y = ROW_H / 2.0;
+            draw_entry_icon(canvas, entry, lead, center_y, false, thumb);
+
+            let name_x = lead + ICON_SIZE + if mode == ViewMode::List { 10.0 } else { 8.0 };
+            let name = ellipsize(&font, &entry.name, DRAG_IMAGE_W - name_x);
+            let width = font.measure_str(&name, None).0;
+
+            paint.set_color(accent(theme));
+            canvas.draw_rrect(
+                RRect::new_rect_xy(
+                    Rect::from_xywh(name_x - 6.0, center_y - 9.0, width + 12.0, 18.0),
+                    5.0,
+                    5.0,
+                ),
+                &paint,
+            );
+
+            Label::new(name)
+                .with_style(styles::BODY_MEDIUM)
+                .with_color(Color::WHITE)
+                .centered_on(name_x, center_y)
+                .render(canvas);
+        }
+    }
+}
+
+/// Where the icon starts inside a row of `mode`, measured from the row's left
+/// edge — the same inset the listing draws it at, so a travelling row lines up
+/// with the one it lifted off.
+fn row_icon_lead(mode: ViewMode) -> f32 {
+    match mode {
+        ViewMode::List => CONTENT_PAD,
+        ViewMode::Columns => 14.0,
+        ViewMode::Grid => 0.0,
+    }
+}
+
+/// Where the icon starts inside a row-shaped travelling picture.
 /// The size of the drag image for `mode`. What the cursor carries is the thing
 /// that was picked up, so the icon grid carries a cell and the row views carry
 /// a row-shaped card.
@@ -717,126 +932,6 @@ pub fn drag_image_size(mode: ViewMode) -> (f32, f32) {
     match mode {
         ViewMode::Grid => (CELL_W, CELL_H),
         ViewMode::List | ViewMode::Columns => (DRAG_IMAGE_W, DRAG_IMAGE_H),
-    }
-}
-
-/// Draw the drag image for `mode`. `count` is the whole selection; `entry` is
-/// the one shown.
-pub fn draw_drag_image(
-    canvas: &Canvas,
-    theme: &Theme,
-    mode: ViewMode,
-    entry: &Entry,
-    count: usize,
-    thumb: Option<&skia_safe::Image>,
-) {
-    match mode {
-        ViewMode::Grid => draw_drag_cell(canvas, theme, entry, count, thumb),
-        ViewMode::List | ViewMode::Columns => {
-            draw_drag_card(canvas, theme, &entry.name, &entry.icon_chain(), count)
-        }
-    }
-}
-
-/// The icon grid's drag image: the cell exactly as the grid draws it, selected,
-/// with the count riding the icon's corner.
-///
-/// It calls the grid's own cell drawing rather than reproducing it, so the
-/// picture under the cursor cannot drift away from what is on screen — the
-/// thing that was picked up is drawn by the code that drew it in the first
-/// place.
-fn draw_drag_cell(
-    canvas: &Canvas,
-    theme: &Theme,
-    entry: &Entry,
-    count: usize,
-    thumb: Option<&skia_safe::Image>,
-) {
-    let cell = Rect::from_wh(CELL_W, CELL_H);
-    draw_grid_cell(canvas, theme, entry, cell, true, false, thumb);
-
-    if count > 1 {
-        let digits = count.to_string().len() as f32;
-        let badge_w = 18.0 + digits * 7.0;
-        let icon = grid_icon_highlight_rect(cell, cell.top + 8.0);
-        // The icon's top-right corner, held inside the surface: anything drawn
-        // past its edge is simply not there.
-        let badge = Rect::from_xywh(
-            (icon.right - badge_w + 4.0).min(cell.right - badge_w),
-            (icon.top - 6.0).max(0.0),
-            badge_w,
-            18.0,
-        );
-        let mut paint = Paint::default();
-        paint.set_anti_alias(true);
-        paint.set_color(Color::from_argb(0xFF, 0xFF, 0xFF, 0xFF));
-        canvas.draw_rrect(RRect::new_rect_xy(badge, 9.0, 9.0), &paint);
-
-        Label::new(&count.to_string())
-            .with_style(styles::FOOTNOTE_EMPHASIZED)
-            .with_color(theme.material_selection_focused)
-            .centered_on(badge.center_x(), badge.center_y())
-            .render(canvas);
-    }
-}
-
-/// The row views' drag image: an icon, the name beside it, and a count.
-fn draw_drag_card(canvas: &Canvas, theme: &Theme, name: &str, icon_chain: &[String], count: usize) {
-    let card = Rect::from_wh(DRAG_IMAGE_W, DRAG_IMAGE_H);
-
-    // Translucent, so what is underneath still reads through it: this is a
-    // thing being carried over the desktop, not a window.
-    let mut fill = Paint::default();
-    fill.set_anti_alias(true);
-    fill.set_color(theme.material_selection_focused.with_a(0xD0));
-    canvas.draw_rrect(RRect::new_rect_xy(card, 8.0, 8.0), &fill);
-
-    let refs: Vec<&str> = icon_chain.iter().map(String::as_str).collect();
-    let icon_side = 20.0;
-    if let Some(image) =
-        icons::cached_icon_chain_at(&refs, icon_side as i32, icons::FULL_COLOUR_SIZE)
-    {
-        let dst = Rect::from_xywh(
-            10.0,
-            card.center_y() - icon_side / 2.0,
-            icon_side,
-            icon_side,
-        );
-        canvas.draw_image_rect(&image, None, dst, &Paint::default());
-    }
-
-    // The badge is measured first: the name is truncated to what is left, so a
-    // long name cannot run underneath the count.
-    let badge_w = (count > 1).then(|| {
-        let digits = count.to_string().len() as f32;
-        18.0 + digits * 7.0
-    });
-    let name_right = DRAG_IMAGE_W - 10.0 - badge_w.map_or(0.0, |w| w + 8.0);
-
-    let font = styles::BODY.font();
-    Label::new(ellipsize(&font, name, (name_right - 38.0).max(20.0)))
-        .with_style(styles::BODY)
-        .with_color(Color::WHITE)
-        .centered_on(38.0, card.center_y())
-        .render(canvas);
-
-    if let Some(badge_w) = badge_w {
-        let badge = Rect::from_xywh(
-            DRAG_IMAGE_W - 10.0 - badge_w,
-            card.center_y() - 9.0,
-            badge_w,
-            18.0,
-        );
-        let mut paint = Paint::default();
-        paint.set_anti_alias(true);
-        paint.set_color(Color::from_argb(0xFF, 0xFF, 0xFF, 0xFF));
-        canvas.draw_rrect(RRect::new_rect_xy(badge, 9.0, 9.0), &paint);
-
-        Label::new(&count.to_string())
-            .with_style(styles::FOOTNOTE_EMPHASIZED)
-            .with_color(theme.material_selection_focused)
-            .centered_on(badge.center_x(), badge.center_y())
-            .render(canvas);
     }
 }
 
@@ -1538,6 +1633,15 @@ pub struct Frame<'a> {
     pub cut: Vec<std::path::PathBuf>,
     /// Hover and press state of the traffic lights.
     pub controls: WindowControlsState,
+    /// Whether this is the focused window. An unfocused one steps back: gray
+    /// traffic lights and a lighter title, the same depth cue the compositor's
+    /// own decoration uses.
+    pub focused: bool,
+    /// Whether the compositor is blurring behind the window right now — which
+    /// it does only for a focused window, and only where it can blur at all.
+    /// The panel materials are translucent when it is and filled in when it is
+    /// not; see [`opaque`].
+    pub blurred: bool,
     /// Whether the back/forward arrows have anywhere to go.
     pub can_go_back: bool,
     pub can_go_forward: bool,
@@ -1861,6 +1965,31 @@ pub fn preview_content(
             Some(otto_kit::preview::Preview::Unavailable { .. }) | None => {
                 draw_preview_icon(canvas, stage, &icon_chain);
             }
+            // A card is a description — a title, a subtitle and a table of
+            // facts — and this column already carries every one of those in
+            // the caption below. Drawn here it says the same things twice, in
+            // the space meant for the thing itself. What the card was carrying
+            // that the caption is not is its artwork: cover art, an embedded
+            // thumbnail, an mp4's poster frame. That is shown as the picture
+            // it is, and a card with none falls back to the file's own icon.
+            Some(otto_kit::preview::Preview::Card { hero, .. }) => match hero {
+                Some(pixels) => otto_kit::preview::draw(
+                    canvas,
+                    stage,
+                    &otto_kit::preview::Preview::Pixels {
+                        pixels: pixels.clone(),
+                        pages: 1,
+                        page: 1,
+                    },
+                    &theme,
+                    first_row,
+                    otto_kit::preview::Zoom::FIT,
+                    &|name, size| {
+                        icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE)
+                    },
+                ),
+                None => draw_preview_icon(canvas, stage, &icon_chain),
+            },
             Some(preview) => {
                 otto_kit::preview::draw(
                     canvas,
@@ -1964,7 +2093,12 @@ fn draw_sidebar(canvas: &Canvas, f: &Frame) {
     // the request's answer.
     if f.action_row.is_none() {
         f.controls
-            .apply(WindowControls::new().at(CONTROLS_INSET, CONTROLS_INSET))
+            .apply(
+                WindowControls::new()
+                    .at(CONTROLS_INSET, CONTROLS_INSET)
+                    .with_active(f.focused)
+                    .with_dark(is_dark()),
+            )
             .render(canvas);
     }
 
@@ -2031,15 +2165,26 @@ fn draw_header(canvas: &Canvas, f: &Frame) {
         // panel puts on its single toolbar row.
         draw_location_button(canvas, f);
     } else {
+        // Both drop a step down the text scale while the window is in the
+        // background — the title reads as a label rather than as the thing
+        // being worked on.
         Label::new(f.title)
             .with_style(styles::TITLE_1_EMPHASIZED)
-            .with_color(theme.text_primary)
+            .with_color(if f.focused {
+                theme.text_primary
+            } else {
+                theme.text_secondary
+            })
             .centered_on(TITLE_X, TITLE_CY)
             .render(canvas);
 
         Label::new(&f.subtitle)
             .with_style(styles::CALLOUT)
-            .with_color(theme.text_secondary)
+            .with_color(if f.focused {
+                theme.text_secondary
+            } else {
+                theme.text_tertiary
+            })
             .centered_on(SIDEBAR_W + CONTENT_PAD, SUBTITLE_CY)
             .render(canvas);
     }
@@ -2080,7 +2225,11 @@ fn draw_location_button(canvas: &Canvas, f: &Frame) {
 
     Label::new(f.title)
         .with_style(styles::BODY_EMPHASIZED)
-        .with_color(theme.text_primary)
+        .with_color(if f.focused {
+            theme.text_primary
+        } else {
+            theme.text_secondary
+        })
         .centered_on(text_x, cy)
         .render(canvas);
 }
@@ -2783,6 +2932,18 @@ pub fn save_field_style(theme: Theme) -> TextInputStyle {
 /// The header band: [`content_ground`] with a little alpha taken out of it.
 /// Much more opaque than the sidebar — the title sits here and the file list
 /// starts a hairline below, so the backdrop may only be hinted at.
+/// The same colour, made opaque.
+///
+/// The panel materials are translucent because they are meant to sit over the
+/// compositor's blur. An unfocused window has no blur behind it — see
+/// `FilesApp::on_app_ready` — and a translucent material over the bare desktop
+/// is not a softer version of itself: it is the wallpaper showing through,
+/// which drags the contrast of everything drawn on top down with it. Without
+/// the blur the materials are filled in instead.
+pub fn opaque(color: Color) -> Color {
+    Color::from_argb(0xFF, color.r(), color.g(), color.b())
+}
+
 pub fn header_material() -> Color {
     if matches!(current_color_scheme(), ColorScheme::Dark) {
         Color::from_argb(0xE6, 0x1C, 0x1C, 0x1E)
@@ -4234,6 +4395,8 @@ mod geometry_tests {
             renaming: None,
             cut: Vec::new(),
             controls: WindowControlsState::new(),
+            focused: true,
+            blurred: true,
             can_go_back: false,
             can_go_forward: false,
             nav_pressed: None,

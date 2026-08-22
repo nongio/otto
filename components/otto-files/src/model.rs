@@ -921,9 +921,36 @@ pub enum OnConflict {
     Skip,
 }
 
+/// One concrete thing an operation did to the filesystem, in enough detail to
+/// put it back.
+///
+/// Recorded per item rather than per operation because an operation is not
+/// all-or-nothing: a paste of ten files can move eight, skip one and fail on
+/// one, and only the eight that happened may be undone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Change {
+    /// Something that existed at `from` now lives at `to` — a move, a rename,
+    /// a drag between directories. Undone by moving it back.
+    Moved { from: PathBuf, to: PathBuf },
+    /// Something now exists at `path` that did not before — a copy, a new
+    /// folder. Undone by taking it away again.
+    Created { path: PathBuf },
+    /// Trashed: the item sits at `to` inside the trash can with its
+    /// `.trashinfo` sidecar at `info`, and came from `from`. Undone by putting
+    /// it back and dropping the sidecar, which is a restore.
+    Trashed {
+        from: PathBuf,
+        to: PathBuf,
+        info: PathBuf,
+    },
+}
+
 /// The outcome of a paste.
 #[derive(Debug, Clone, Default)]
 pub struct OpResult {
+    /// Everything this operation actually did, in the order it did it. The
+    /// undo stack is built from this; see [`undo`].
+    pub changes: Vec<Change>,
     pub moved: usize,
     pub copied: usize,
     pub skipped: usize,
@@ -999,10 +1026,28 @@ pub fn paste(clipboard: &Clipboard, dest: &Path, on_conflict: OnConflict) -> OpR
             }
         }
 
+        // Whether the destination was already there decides how an undo
+        // takes the copy back: replacing an existing file overwrote it, and
+        // removing our copy would not bring the old one back — so that one is
+        // not recorded as undoable at all.
+        let replaced = !clipboard.cut && target.exists();
         let outcome = if clipboard.cut {
-            move_entry(source, &target).map(|_| result.moved += 1)
+            move_entry(source, &target).map(|_| {
+                result.moved += 1;
+                result.changes.push(Change::Moved {
+                    from: source.clone(),
+                    to: target.clone(),
+                });
+            })
         } else {
-            copy_entry(source, &target).map(|_| result.copied += 1)
+            copy_entry(source, &target).map(|_| {
+                result.copied += 1;
+                if !replaced {
+                    result.changes.push(Change::Created {
+                        path: target.clone(),
+                    });
+                }
+            })
         };
         if let Err(err) = outcome {
             result
@@ -1012,6 +1057,93 @@ pub fn paste(clipboard: &Clipboard, dest: &Path, on_conflict: OnConflict) -> OpR
     }
 
     result
+}
+
+/// Put back everything in `changes`, most recent first.
+///
+/// Reverse order matters: a paste that both created a file and moved another
+/// out of its way has to be unwound in the order it was wound.
+///
+/// Undoing is itself an operation that can fail — the destination may be gone,
+/// or something may have taken the name back — and a failure stops that one
+/// item, not the rest, the same way [`paste`] does. The counts in the result
+/// describe the *undo*, so a summary reads as what just happened.
+///
+/// Nothing here deletes a file outright. Taking back a copy trashes it, so an
+/// undo is never the thing that loses data; only a directory this app created
+/// and that is still empty is removed, since there is nothing in it to lose.
+pub fn undo(changes: &[Change]) -> OpResult {
+    let mut result = OpResult::default();
+
+    for change in changes.iter().rev() {
+        match change {
+            Change::Moved { from, to } => {
+                if from.exists() {
+                    result.errors.push(format!(
+                        "Can\u{2019}t put \u{201c}{}\u{201d} back \u{2014} something is there now.",
+                        name_of(from)
+                    ));
+                    continue;
+                }
+                match move_entry(to, from) {
+                    Ok(()) => result.moved += 1,
+                    Err(err) => result
+                        .errors
+                        .push(format!("\u{201c}{}\u{201d}: {err}", name_of(to))),
+                }
+            }
+            Change::Created { path } => {
+                if !path.exists() {
+                    continue;
+                }
+                let empty_dir = path.is_dir()
+                    && std::fs::read_dir(path)
+                        .map(|mut d| d.next().is_none())
+                        .unwrap_or(false);
+                if empty_dir {
+                    match std::fs::remove_dir(path) {
+                        Ok(()) => result.trashed += 1,
+                        Err(err) => result
+                            .errors
+                            .push(format!("\u{201c}{}\u{201d}: {err}", name_of(path))),
+                    }
+                    continue;
+                }
+                let trashed = move_to_trash(std::slice::from_ref(path));
+                result.trashed += trashed.trashed;
+                result.errors.extend(trashed.errors);
+            }
+            Change::Trashed { from, to, info } => {
+                if from.exists() {
+                    result.errors.push(format!(
+                        "Can\u{2019}t restore \u{201c}{}\u{201d} \u{2014} something is there now.",
+                        name_of(from)
+                    ));
+                    continue;
+                }
+                match move_entry(to, from) {
+                    Ok(()) => {
+                        // The sidecar describes an item that is no longer in
+                        // the trash; leaving it would show a phantom there.
+                        std::fs::remove_file(info).ok();
+                        result.moved += 1;
+                    }
+                    Err(err) => result
+                        .errors
+                        .push(format!("\u{201c}{}\u{201d}: {err}", name_of(to))),
+                }
+            }
+        }
+    }
+
+    result
+}
+
+fn name_of(path: &Path) -> String {
+    path.file_name()
+        .unwrap_or(path.as_os_str())
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// `name`, `name 2`, `name 3`… — the first that does not exist in `dir`.
@@ -1161,7 +1293,14 @@ pub fn move_to_trash(paths: &[PathBuf]) -> OpResult {
             continue;
         };
         match trash_one(source, name, &files_dir, &info_dir) {
-            Ok(()) => result.trashed += 1,
+            Ok((to, info)) => {
+                result.trashed += 1;
+                result.changes.push(Change::Trashed {
+                    from: source.clone(),
+                    to,
+                    info,
+                });
+            }
             Err(err) => result
                 .errors
                 .push(format!("\u{201c}{}\u{201d}: {err}", name.to_string_lossy())),
@@ -1170,12 +1309,14 @@ pub fn move_to_trash(paths: &[PathBuf]) -> OpResult {
     result
 }
 
+/// Returns where the item landed in the trash and where its sidecar went, so
+/// the caller can record a restorable [`Change::Trashed`].
 fn trash_one(
     source: &Path,
     name: &std::ffi::OsStr,
     files_dir: &Path,
     info_dir: &Path,
-) -> Result<(), String> {
+) -> Result<(PathBuf, PathBuf), String> {
     let target = first_free_name(files_dir, name);
     let trashed_name = target.file_name().unwrap().to_string_lossy().to_string();
     let info_path = info_dir.join(format!("{trashed_name}.trashinfo"));
@@ -1187,7 +1328,28 @@ fn trash_one(
         percent_encode_path(source),
         deletion_date(),
     );
-    std::fs::write(&info_path, info).map_err(|e| e.to_string())
+    std::fs::write(&info_path, info).map_err(|e| e.to_string())?;
+    Ok((target, info_path))
+}
+
+/// A trash can under a temp directory, for tests.
+///
+/// Redirecting `XDG_DATA_HOME` is the only way to keep [`move_to_trash`] out
+/// of the developer's real Trash, and the environment belongs to the whole
+/// process — so it is set exactly once, to one value, and never unset. A test
+/// that set it and cleared it around itself would decide, by timing alone,
+/// where a test running beside it put its files.
+#[cfg(test)]
+pub(crate) fn test_data_home() -> &'static Path {
+    use std::sync::OnceLock;
+    static HOME: OnceLock<PathBuf> = OnceLock::new();
+    HOME.get_or_init(|| {
+        let path =
+            std::env::temp_dir().join(format!("otto-files-test-data-{}", std::process::id()));
+        std::fs::create_dir_all(&path).expect("test data home");
+        std::env::set_var("XDG_DATA_HOME", &path);
+        path
+    })
 }
 
 /// `$XDG_DATA_HOME/Trash`, falling back to `~/.local/share/Trash` — the
@@ -1550,19 +1712,22 @@ mod paste_tests {
 
     #[test]
     fn trash_moves_the_file_and_writes_a_sidecar() {
+        let home = test_data_home();
         let t = Tmp::new("trash");
-        let home = t.dir("home");
-        std::env::set_var("XDG_DATA_HOME", home.join("data"));
         let victim = t.file("gone.txt", "bye");
 
         let result = move_to_trash(&[victim.clone()]);
-        std::env::remove_var("XDG_DATA_HOME");
 
         assert_eq!(result.trashed, 1, "{:?}", result.errors);
         assert!(!victim.exists());
-        let trashed = home.join("data/Trash/files/gone.txt");
+        // The can is shared with every other test in this binary, so the name
+        // may have been numbered out of a collision; the change says which.
+        let Some(Change::Trashed { to, info, .. }) = result.changes.first() else {
+            panic!("no trashed change recorded: {:?}", result.changes);
+        };
+        assert!(to.starts_with(home.join("Trash/files")), "{to:?}");
+        let trashed = to;
         assert!(trashed.exists());
-        let info = home.join("data/Trash/info/gone.txt.trashinfo");
         let contents = std::fs::read_to_string(info).unwrap();
         assert!(contents.starts_with("[Trash Info]\n"));
         assert!(contents.contains("DeletionDate="));

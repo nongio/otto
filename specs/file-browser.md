@@ -25,7 +25,7 @@ contract. Those are defined here once, and consumed — not redefined — elsewh
 - Perform the file operations a desktop is expected to have: rename, new
   folder, copy, move, move to trash, delete permanently — each on a background
   worker, with progress, cancellation that leaves nothing half-written, and
-  one level of undo.
+  undo.
 - Open a directory of 10,000 files responsively, with the same guarantees the
   picker makes: first rows within a frame of the first batch, full frame rate
   while scrolling, and no filesystem call on the UI thread.
@@ -129,6 +129,14 @@ The sidebar and the header band are translucent materials over the
 compositor's backdrop blur, the sidebar heavily tinted and the header only
 slightly, so the frost runs across the whole top of the window. The file area
 below the header is opaque: a wall of small text needs one flat ground.
+
+An **unfocused window steps back**: the title and subtitle drop a step down
+the text scale, the traffic lights go gray, the blur behind the window is
+dropped, and the sidebar, header and action row are filled in to full opacity
+since there is no longer anything blurred for them to be translucent over.
+This is the toolkit's behaviour rather than the browser's — see
+[otto-kit-window-focus](otto-kit-window-focus.md) — and applies to the
+picker's window as well, minus the traffic lights it does not have.
 
 - **Status bar** — the entry count, the selection count and its total size, and
   the free space on the filesystem holding the current directory. It is the
@@ -283,7 +291,17 @@ leave the keyboard one row off from the highlight.
 
 Identical to the picker, including the type-ahead-is-not-search distinction, the
 anchor-based multi-select rules and rubber-band selection. See
-[file-picker.md](./file-picker.md) under *Keyboard*. The browser adds:
+[file-picker.md](./file-picker.md) under *Keyboard*.
+
+A plain click on empty space inside a pane — past the last row, between grid
+cells, on the background — selects nothing, in every view. The pane still takes
+the keyboard, since the click was in it, and in column view the panes to its
+right close with the selection: they are there because something in that pane
+was selected, and now nothing is. A click carrying Ctrl or Shift is a
+multi-select gesture and is left alone. Clicks on the header, the sidebar and
+the status strip are not clicks on nothing and change no selection.
+
+The browser adds:
 
 | Key | Effect |
 | --- | --- |
@@ -342,11 +360,29 @@ progress, and can cancel it.
   filesystems in the name of trashing it.
 - **Delete permanently** — always confirmed, always says it cannot be undone,
   and is not undoable.
-- **Undo** — one level, within the session. A move is undone by moving back; a
-  trash by restoring from trash; a copy by deleting what was created; a rename
-  by renaming back; a new folder by removing it if still empty. A permanent
-  delete is not undoable and the undo action says so rather than being silently
-  absent.
+- **Undo** — a stack, within the session, 32 operations deep. A move is undone
+  by moving back; a trash by restoring from trash; a copy by taking away what
+  was created; a rename by renaming back; a new folder by removing it if still
+  empty. A permanent delete is not undoable and the undo action says so rather
+  than being silently absent.
+
+  Undoable means *changed a file*. Selecting, navigating, sorting and switching
+  view are not on the stack: a Ctrl+Z that could spend itself taking back a
+  click would make the ones that take back a delete unreliable, because the
+  user would never know which of the two the next press was going to reach.
+
+  What goes on the stack is the list of changes an operation actually made, not
+  the operation as asked for. A paste of ten files that moves eight, skips one
+  and fails on one records the eight, and undoing puts back exactly those. A
+  copy that replaced an existing file records nothing for that file — removing
+  the copy would not bring the original back, so it is honestly not undoable.
+
+  **Nothing undo does is itself unrecoverable.** Taking back a copy trashes it
+  rather than deleting it; only a directory this browser created, and that is
+  still empty, is removed outright. An undo that put a file back where the name
+  is now taken says so and leaves both files alone rather than choosing for the
+  user. There is no redo: undoing a delete is a *restore*, and re-deleting it
+  would be a second trip to the trash rather than the inverse of anything.
 - **Progress** — an operation shorter than 500 ms shows nothing. Beyond that,
   the status bar shows the current file, the count, and a cancel action; per-byte
   progress appears for files above 32 MB.
@@ -354,6 +390,32 @@ progress, and can cancel it.
   reports which files were done, which failed and why, and offers to continue
   with the rest or to stop. It does not abort silently and it does not retry
   in a loop.
+
+### Sounds
+
+File operations are audible, from the desktop's XDG sound theme — the same
+player the compositor uses for its volume clicks and its lock chime, so the
+browser sounds like part of the desktop rather than like an application with
+opinions about audio. Otto publishes the theme name over the settings portal
+(`org.gnome.desktop.sound theme-name`) and otto-kit plays through it.
+
+The sound follows the **effect**, not the command:
+
+| Outcome | Sound |
+| --- | --- |
+| files arrived — a paste, a drop, a restore | `drag-accept`, else `device-added`, else `complete` |
+| files went away — a delete, or an undo that took a copy back | `trash-empty`, else `device-removed` |
+| nothing happened | silence |
+
+Choosing from the outcome is what makes undo sound right with no special case:
+undoing a delete is a restore, so it gets the arriving sound; undoing a copy
+takes files away, so it gets the other one.
+
+The preference order exists because the sound naming spec is thinner than a
+desktop needs — there is no "paste" event — and theme coverage of the drag
+events is patchy. The first name the installed theme actually has is the one
+that plays. A theme with none of them is silent, which is a normal outcome and
+not an error.
 
 ### Drag and drop
 
@@ -369,13 +431,19 @@ of them. The payload is the same three types a copy puts on the clipboard —
 `x-special/gnome-copied-files`, `text/uri-list`, `text/plain` — which is what
 makes the drag legible to other file managers and to text editors.
 
-**The drag image is shaped like the view it came from.** In icon view the cursor
-carries the cell, drawn selected by the grid's own cell drawing rather than a
-copy of it, so the picture under the cursor cannot drift from what is on screen;
-in list and column views it carries a row-shaped card. The thumbnail travels
-with it where there is one. One entry stands for the group, and a count badge
-says how many are coming — on the card's trailing edge, or at the icon's
-top-right corner in the grid.
+**The drag image is shaped like the view it came from.** Every dragged file is
+drawn, each where it sits on screen right now and with the alignment its view
+gives it, so the picture under the cursor reads as the files being carried
+rather than as a new object invented for the drag. Icons are drawn plain and
+only the *name* is highlighted: the accent pill behind a name says "this one is
+coming" without the picture turning into a second selection rectangle over the
+one still showing in the window. The thumbnail travels with it where there is
+one. Up to eight are drawn; a count badge at the cursor's bottom right says how
+many are coming in total.
+
+The badge is the palette's **red**, not the accent. The names travelling under
+it are already highlighted in the accent, and a badge in that same colour reads
+as one more of them instead of as the count of them.
 
 **Taking a drop.** Every target resolves to a *directory*: a directory row or
 cell, a pane's background, or a sidebar place. Dropping on a file is not a
@@ -411,11 +479,19 @@ thread, so asking for the payload over the pipe would block that thread waiting
 for a write only it could make. The drag's own payload is read directly instead,
 and the source is still told the transfer finished.
 
-**No drag icon yet.** The compositor carries and animates one, and the gesture
-works without it — the cursor changes to say copy or move — but nothing is drawn
-under the pointer. With `OTTO_FILES_PANE_SUBS=1` the Miller columns are
-subsurfaces over the window's own canvas, so the drop outline is hidden behind
-them; that mode is opt-in and needs its own drop feedback.
+**A refused drop flies home.** The compositor animates the icon back to the
+point it was grabbed by — `initial position + grab offset`, not the cursor's
+start, or it lands short by however far into the file the user happened to
+press, which is a different distance every time. An accepted drop is not
+animated: the files are where they were asked to go and the listing says so, and
+an icon flying away as well is a flourish over an answer already given.
+
+**A drop does not move the view.** The reload a drop causes keeps every pane
+scrolled exactly where it was, and the entry that landed is not scrolled to.
+
+With `OTTO_FILES_PANE_SUBS=1` the Miller columns are subsurfaces over the
+window's own canvas, so the drop outline is hidden behind them; that mode is
+opt-in and needs its own drop feedback.
 
 ### Get Info
 

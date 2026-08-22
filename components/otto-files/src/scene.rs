@@ -65,7 +65,10 @@ pub struct Scene {
     /// What the panels were last laid out against, so a frame that changed
     /// nothing geometric does not touch the engine at all.
     layout: Option<LayoutKey>,
-    dark: Option<bool>,
+    /// Colour scheme and blur the panel materials were last built for. The
+    /// blur is in the key because it decides whether they are translucent —
+    /// see [`Scene::sync_materials`].
+    materials: Option<(bool, bool)>,
 }
 
 /// One Miller column: the pane itself, and the strip of rows inside it that
@@ -171,7 +174,7 @@ impl Scene {
             preview,
             preview_key: None,
             layout: None,
-            dark: None,
+            materials: None,
         }
     }
 
@@ -191,7 +194,7 @@ impl Scene {
     /// no changes at all and the whole window is replayed from cached
     /// pictures.
     pub fn update(&mut self, f: &Frame) {
-        self.sync_materials(f.theme);
+        self.sync_materials(f);
         self.sync_layout(f);
         self.sync_panes(f);
         // One tick, so the changes above are folded into the scene before the
@@ -200,24 +203,35 @@ impl Scene {
     }
 
     /// Panel materials. These are the backgrounds the panes "should not draw":
-    /// they are set once per colour-scheme change and composited by the
-    /// engine, not painted per frame.
-    fn sync_materials(&mut self, theme: &Theme) {
+    /// they are set once per colour-scheme change — or when the window's blur
+    /// comes and goes with the focus — and composited by the engine, not
+    /// painted per frame.
+    fn sync_materials(&mut self, f: &Frame) {
+        let theme = f.theme;
         let dark = view::is_dark();
-        if self.dark == Some(dark) {
+        // Translucent only while there is a blur to be translucent over. See
+        // [`view::opaque`].
+        let fill = |color: skia_safe::Color| {
+            paint_color(if f.blurred {
+                color
+            } else {
+                view::opaque(color)
+            })
+        };
+        if self.materials == Some((dark, f.blurred)) {
             return;
         }
-        self.dark = Some(dark);
+        self.materials = Some((dark, f.blurred));
 
         self.sidebar
-            .set_background_color(paint_color(theme.material_sidebar), None);
+            .set_background_color(fill(theme.material_sidebar), None);
         self.header
-            .set_background_color(paint_color(view::header_material()), None);
+            .set_background_color(fill(view::header_material()), None);
         // The action row is the same material as the header, and for the same
         // reason: it is chrome laid over the window's blur, not a hole in it.
         // Without a ground it reads as bare blur with buttons floating on it.
         self.footer
-            .set_background_color(paint_color(view::header_material()), None);
+            .set_background_color(fill(view::header_material()), None);
         self.content
             .set_background_color(paint_color(view::content_ground()), None);
         self.preview
@@ -845,6 +859,8 @@ mod tests {
             renaming: None,
             cut: Vec::new(),
             controls: otto_kit::components::titlebar::WindowControlsState::new(),
+            focused: true,
+            blurred: true,
             can_go_back: false,
             can_go_forward: false,
             nav_pressed: None,

@@ -36,7 +36,45 @@ const DOUBLE_CLICK_WINDOW: std::time::Duration = std::time::Duration::from_milli
 /// How far the pointer must travel, with the button still down, before a press
 /// on a row becomes a drag rather than a click. Below this a hand that shifts
 /// while clicking still selects, and a double-click still opens.
+/// How many operations back Ctrl+Z can reach.
+///
+/// Deep enough that undo is a thing you can lean on, shallow enough that the
+/// paths it holds cannot pile up: every step remembers where files went, and
+/// an unbounded stack would keep the whole session's worth alive.
+const UNDO_DEPTH: usize = 32;
+
 const DRAG_THRESHOLD: f32 = 6.0;
+
+/// Files landed somewhere — a paste, a drop, a restore out of the Trash.
+///
+/// The naming spec has no "paste", and theme coverage of the drag events is
+/// thin, so this is a preference order rather than one name: the first the
+/// installed theme actually has is the one that plays.
+const SOUND_ARRIVED: [&str; 3] = ["drag-accept", "device-added", "complete"];
+
+/// Files went away — a delete, or an undo that took a copy back.
+const SOUND_REMOVED: [&str; 2] = ["trash-empty", "device-removed"];
+
+/// One undoable operation: what to call it, and everything it did.
+///
+/// Only operations that *change files* go on the stack — a move, a copy, a
+/// paste, a delete, a rename, a new folder. Selecting and navigating are not
+/// undoable and never were: Ctrl+Z that could take back a click would make
+/// the ones that take back a delete unreliable, because the user would never
+/// know which of the two the next press was going to reach.
+#[derive(Debug, Clone)]
+struct UndoStep {
+    /// Names the thing being taken back, for the status line: "Undid Move".
+    label: &'static str,
+    changes: Vec<model::Change>,
+}
+
+/// Is `(x, y)` inside a pane's own area, rather than the header, the sidebar
+/// or the status strip around it? A click on nothing only means "nothing" when
+/// it lands where the entries are.
+fn hit_content(area: skia_safe::Rect, x: f32, y: f32) -> bool {
+    x >= area.left && x <= area.right && y >= area.top && y <= area.bottom
+}
 
 /// Where a drag hovering the window would put the files, and what to outline.
 ///
@@ -138,6 +176,10 @@ struct Browser {
     /// no Miller-style eager descent, so a directory only opens on a second
     /// click landing on the same one within the window.
     last_row_click: Option<(usize, usize, std::time::Instant)>,
+    /// A press that landed on an already-selected entry and deliberately did
+    /// *not* narrow the selection to it — see [`Self::press_entry`]. Resolved by
+    /// the release, cancelled by a drag, and dropped by the next press.
+    press_pending: Option<(usize, usize)>,
     /// The pane whose cursor is being opened, and when the open happened.
     /// Drives the pulse the icon leaves behind — see [`view::draw_open_pulse`].
     opening: Option<(usize, std::time::Instant)>,
@@ -172,6 +214,9 @@ struct Browser {
     drop_target: Option<DropTarget>,
     /// The last operation's outcome, shown in the header until the next action.
     status: Option<String>,
+    /// Operations that changed files, newest last. Ctrl+Z pops one and puts
+    /// it back; see [`UndoStep`] for what does and does not go on here.
+    undo: Vec<UndoStep>,
     /// The open preview, if one is up.
     quickview: Option<quickview::Session>,
     /// The docked preview column's state, for the entry currently under a
@@ -222,6 +267,15 @@ struct Browser {
     /// Hover and press state of the traffic lights, so they reveal their
     /// glyphs under the pointer the way the compositor's own decoration does.
     controls: WindowControlsState,
+    /// Whether the window is the focused one. An unfocused window steps back:
+    /// its title and traffic lights go gray, and the compositor stops blurring
+    /// behind it.
+    focused: bool,
+    /// Whether the compositor can blur behind the window at all. False when it
+    /// carries no surface style — running under another compositor — or when
+    /// the blur has been turned off for measurement. The materials are filled
+    /// in for the whole run then, not just while the window is unfocused.
+    blur_available: bool,
     /// The Back/Forward half being held down. Like the traffic lights, the
     /// arrows arm on press and fire on release over the same half, so a press
     /// dragged off the button changes nothing.
@@ -416,6 +470,7 @@ impl Browser {
             miller_resize: None,
             last_miller_click: None,
             last_row_click: None,
+            press_pending: None,
             opening: None,
             last_boundary_click: None,
             rename: None,
@@ -443,11 +498,14 @@ impl Browser {
             quickview_auto: std::env::var_os("OTTO_FILES_QV_AUTO").is_some(),
             quickview_generation: 0,
             status: None,
+            undo: Vec::new(),
             info: None,
             info_error: None,
             info_close_hovered: false,
             info_dirty: false,
             controls: WindowControlsState::new(),
+            focused: true,
+            blur_available: false,
             dirty: true,
             picker: None,
             save_name: None,
@@ -662,15 +720,20 @@ impl Browser {
             pending: true,
             decoded: None,
         });
-        self.reveal_preview();
         self.dirty = true;
         Some((entry.path, generation))
     }
 
     /// Pan the stack so the preview pane — sitting right after the last real
     /// column, the same trailing position a freshly opened directory column
-    /// would occupy — is fully in view. Called whenever the preview's target
-    /// changes, the same way selecting a directory reveals its own column.
+    /// would occupy — is fully in view.
+    ///
+    /// **Not** called when the preview's target changes. Arrowing down a
+    /// listing changes it on every keystroke, and a stack that panned each time
+    /// would slide out from under the column being read: the preview is a thing
+    /// offered at the edge of the view, not a place the browser goes. Kept for
+    /// a caller that means to go there deliberately.
+    #[allow(dead_code)]
     fn reveal_preview(&mut self) {
         if !self.preview_visible() {
             return;
@@ -807,9 +870,25 @@ impl Browser {
         for depth in 0..depth_count {
             let viewport = view::pane_viewport(width, height, mode, depth, pan, miller_w);
             let content = view::pane_content_height(width, height, mode, counts[depth]);
+            // A column being re-read has no entries *yet*, and telling its
+            // scroll view how long *that* is would clamp the offset to the top
+            // — permanently, since the offset is not restored when the listing
+            // lands. Anything that reloads in place (a delete, a paste, a drop,
+            // a rename) would scroll the pane away from what the user was
+            // looking at. The carried length stands until the real one is
+            // known.
+            //
+            // Gated on the read being in flight, not on the measurement coming
+            // out zero: an empty listing does not measure as zero in every
+            // view. A grid counts its padding and a Miller pane its row inset
+            // whether or not there are rows, so those two clamped to the top
+            // anyway. Only List happens to measure an empty pane as nothing.
+            let loading = self.columns[depth].loading();
             let scroll = &mut self.columns[depth].scroll;
             scroll.state.set_viewport(viewport);
-            scroll.set_content_length(content);
+            if !loading {
+                scroll.set_content_length(content);
+            }
         }
     }
 
@@ -935,6 +1014,23 @@ impl Browser {
             self.reveal_pane(depth + 1);
         }
         self.dirty = true;
+    }
+
+    /// Clear one pane's selection — what a click on nothing means.
+    ///
+    /// The pane still becomes the active one: the click was in it, and the
+    /// keyboard should follow. In Miller view the panes to its right go too.
+    /// They are there because something in this one was selected, and now
+    /// nothing is; leaving them up would show a child of no parent.
+    fn clear_pane_selection(&mut self, depth: usize) {
+        if depth >= self.columns.len() {
+            return;
+        }
+        self.active = depth;
+        self.clear_selection();
+        if self.mode == ViewMode::Columns {
+            self.columns.truncate(depth + 1);
+        }
     }
 
     /// Add or remove one entry, leaving the rest of the selection alone —
@@ -1068,6 +1164,13 @@ impl Browser {
                     column.selection.insert(new_name.clone());
                 }
                 self.status = Some(format!("Renamed to \u{201c}{new_name}\u{201d}"));
+                self.record_undo(
+                    "Rename",
+                    vec![model::Change::Moved {
+                        from: session.original.clone(),
+                        to: target.clone(),
+                    }],
+                );
                 self.reload_all();
             }
             Err(err) => {
@@ -1098,6 +1201,63 @@ impl Browser {
             self.dirty = true;
         }
         self.opening.is_some()
+    }
+
+    /// A plain press on a row or cell.
+    ///
+    /// Pressing an entry that is *already* one of several selected leaves the
+    /// selection alone: what usually follows is a drag of the whole group, and
+    /// narrowing to the one under the pointer would throw the rest away before
+    /// the drag could carry them. The narrowing is not abandoned, only deferred
+    /// to the release — a press that comes back up without dragging was a click
+    /// after all, and a click on one of several selected files does mean "just
+    /// this one".
+    ///
+    /// Any pending narrow from an earlier gesture is dropped first. A deferred
+    /// decision that outlives its own gesture is worse than no deferral at all:
+    /// it would land on a later, unrelated click and undo it.
+    fn press_entry(&mut self, depth: usize, index: usize) {
+        self.press_pending = None;
+
+        if self.is_in_multiple_selection(depth, index) {
+            self.press_pending = Some((depth, index));
+            return;
+        }
+        self.select(depth, index);
+        self.note_row_click(depth, index);
+    }
+
+    /// The button came up. A press that deferred its narrowing and did not turn
+    /// into a drag was a click, so it narrows now.
+    fn release_entry(&mut self) {
+        let Some((depth, index)) = self.press_pending.take() else {
+            return;
+        };
+        self.select(depth, index);
+        self.note_row_click(depth, index);
+    }
+
+    /// A drag has begun: the group travels whole, so the press that started it
+    /// must not narrow to one of them when the button comes up.
+    fn drag_started(&mut self) {
+        self.press_pending = None;
+    }
+
+    /// Is `index` one of *several* entries selected in `depth`?
+    ///
+    /// One selected entry is not a group: pressing it again means the same
+    /// thing either way, and deferring would only make the common case answer
+    /// late.
+    fn is_in_multiple_selection(&self, depth: usize, index: usize) -> bool {
+        let Some(column) = self.columns.get(depth) else {
+            return false;
+        };
+        if column.selection.len() < 2 {
+            return false;
+        }
+        self.visible(depth)
+            .get(index)
+            .is_some_and(|entry| column.selection.contains(&entry.name))
     }
 
     /// Record a plain click on a row/cell, opening it if this is the second
@@ -1245,12 +1405,19 @@ impl Browser {
             return;
         };
 
-        // Say that the open was heard, before doing it: opening a file hands
-        // off to another process and opening a directory re-reads it, and
-        // either can take long enough that a double-click with no answer reads
-        // as one that did not land.
-        self.opening = Some((depth, std::time::Instant::now()));
-        self.dirty = true;
+        // Say that the open was heard, before doing it: handing a file to
+        // another process can take long enough that a double-click with no
+        // answer reads as one that did not land. In every view — the gesture
+        // is the same everywhere, so the answer to it should be too.
+        //
+        // A directory is the exception, and not because of the waiting: going
+        // into one *shows* itself. The listing changes, or in column view a
+        // child column arrives beside the one that was clicked, and a ghost of
+        // the row on top of that is one answer too many.
+        if !entry.is_dir {
+            self.opening = Some((depth, std::time::Instant::now()));
+            self.dirty = true;
+        }
 
         if entry.is_dir {
             match self.mode {
@@ -1942,7 +2109,7 @@ impl Browser {
             if delta < 0 {
                 self.go_up();
             } else {
-                self.open_selection();
+                self.descend_selection();
             }
             return;
         }
@@ -1953,6 +2120,55 @@ impl Browser {
                 self.dirty = true;
             }
         } else {
+            self.descend_selection();
+        }
+    }
+
+    /// Ctrl+O: open the entry at the cursor the way the desktop would.
+    ///
+    /// Everything goes to `xdg-open`, folders included — the shortcut asks the
+    /// desktop to open the thing, and the desktop's answer for a directory is
+    /// whatever it has registered as the file manager. That is the difference
+    /// between this and a double-click: the click descends where you are, the
+    /// shortcut hands the entry over. Same in every view.
+    ///
+    /// It pulses either way. Ctrl+O is a deliberate ask with no click to
+    /// acknowledge it, and whatever answers can take a moment to appear.
+    fn open_cursor_entry(&mut self) {
+        // The picker answers one request in one window: a second window would
+        // have nothing to do with the request, and no way to answer it.
+        if self.picker.is_some() {
+            self.open_selection();
+            return;
+        }
+
+        let depth = self.active;
+        let Some(index) = self.columns[depth].cursor else {
+            return;
+        };
+        let Some(entry) = self.visible(depth).get(index).map(|e| (*e).clone()) else {
+            return;
+        };
+
+        self.opening = Some((depth, std::time::Instant::now()));
+        self.dirty = true;
+        self.open_in_default_app(&entry.path);
+    }
+
+    /// Go *into* the selection, and only that: a directory is descended, and
+    /// anything else is left alone.
+    ///
+    /// An arrow key is navigation. Opening a file hands it to another
+    /// application, which is a thing to ask for deliberately — with a
+    /// double-click or Ctrl+O — not something a cursor key should do on its way
+    /// across a listing.
+    fn descend_selection(&mut self) {
+        let depth = self.active;
+        let is_dir = self.columns[depth]
+            .cursor
+            .and_then(|index| self.visible(depth).get(index).map(|entry| entry.is_dir))
+            .unwrap_or(false);
+        if is_dir {
             self.open_selection();
         }
     }
@@ -2091,6 +2307,8 @@ impl Browser {
 
         let summary = result.summary();
         self.status = (!summary.is_empty()).then_some(summary);
+        Self::play_op_sound(&result);
+        self.record_undo(if clip.cut { "Move" } else { "Copy" }, result.changes);
         self.reload_all();
         self.dirty = true;
     }
@@ -2166,7 +2384,7 @@ impl Browser {
 
         if let Some((depth, index)) = self.entry_at(x, y) {
             if let Some(entry) = self.visible(depth).get(index) {
-                if entry.is_dir {
+                if entry.is_dir && !Self::is_a_move_home(&entry.path) {
                     return Some(DropTarget::Entry {
                         depth,
                         index,
@@ -2181,10 +2399,40 @@ impl Browser {
             return None;
         }
         let depth = self.pane_under(x, y);
-        Some(DropTarget::Pane {
-            depth,
-            path: self.columns[depth].path.clone(),
-        })
+        let path = self.columns[depth].path.clone();
+        if Self::is_a_move_home(&path) {
+            return None;
+        }
+        Some(DropTarget::Pane { depth, path })
+    }
+
+    /// Would dropping our own drag on `dest` move the files exactly where they
+    /// already are?
+    ///
+    /// Such a drop has nothing to do, and a target that lights up to say it
+    /// will do nothing is worse than no target at all: the answer is a
+    /// dismissal — no outline, a cursor that says the drop is refused, and the
+    /// icon flying home to where it was picked up.
+    ///
+    /// A *copy* onto the same directory is a real request — that is how a
+    /// duplicate is made — so this only speaks for a move. The test is
+    /// "not a copy" rather than "is a move" so it stays put once we refuse:
+    /// refusing clears the negotiated action, and an `is_move` test would then
+    /// accept again on the next motion and flicker between the two.
+    fn is_a_move_home(dest: &Path) -> bool {
+        use otto_kit::dnd;
+
+        // Someone else's drag: we do not know where those files live, and the
+        // source is the one that would have to answer this anyway. Asked first
+        // because it reads our own payload, while `selected_action` needs a
+        // live `AppContext` there is no reason to require of a target test.
+        let Some(paths) = dnd::own_files() else {
+            return false;
+        };
+        if paths.is_empty() || paths.iter().any(|path| path.parent() != Some(dest)) {
+            return false;
+        }
+        !dnd::selected_action().contains(DndAction::Copy)
     }
 
     /// Put `paths` into the current drop target, moving them or copying them.
@@ -2226,6 +2474,8 @@ impl Browser {
 
         let summary = result.summary();
         self.status = (!summary.is_empty()).then_some(summary);
+        Self::play_op_sound(&result);
+        self.record_undo(if move_them { "Move" } else { "Copy" }, result.changes);
         self.reload_all();
     }
 
@@ -2234,33 +2484,85 @@ impl Browser {
     ///
     /// One entry stands for the group. Stacking every icon is a nicer picture
     /// and a much bigger one, and the count already says how much is coming.
-    fn drag_image(&self) -> Option<(Entry, usize, Option<skia_safe::Image>)> {
-        let entries = self.selected_entries();
-        let count = entries.len();
-        let entry = entries.first()?;
-        // The thumbnail travels with it: in icon view the picture is what the
-        // user grabbed, and a type icon under the cursor would not be the
-        // thing they picked up.
-        let thumb = self.thumbs.image(&entry.path, entry.modified).cloned();
-        Some((entry.clone(), count, thumb))
+    /// The pictures a drag from `(x, y)` carries, laid out where they are on
+    /// screen right now — plus the box that holds them, and where the grab sits
+    /// inside it.
+    ///
+    /// The drag image is one surface, not one per file, so the whole spread has
+    /// to fit in a single box: its size is the bounding box of the entries at
+    /// the moment the drag begins, which is what lets them start where they
+    /// were and gather from there. The nearest [`view::DRAG_GATHER_MAX`] to the
+    /// grab are the ones shown; the badge still counts them all.
+    fn drag_items(&self, x: f32, y: f32) -> Option<(Vec<view::DragItem>, (f32, f32), (f32, f32))> {
+        let (depth, grabbed) = self.entry_at(x, y)?;
+        let names: Vec<String> = self
+            .selected_entries()
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+        if names.is_empty() {
+            return None;
+        }
+
+        // The selected rows, nearest the grabbed one first, capped — and then
+        // put back in listing order so the pile stacks the way the eye saw them.
+        let entries = self.visible(depth);
+        let mut chosen: Vec<usize> = entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| names.contains(&entry.name))
+            .map(|(index, _)| index)
+            .collect();
+        chosen.sort_by_key(|index| index.abs_diff(grabbed));
+        chosen.truncate(view::DRAG_ITEMS_MAX);
+        chosen.sort_unstable();
+        let rects: Vec<Rect> = chosen
+            .iter()
+            .map(|index| self.entry_rect(depth, *index))
+            .collect();
+        let (image_w, image_h) = view::drag_image_size(self.mode);
+
+        // The box: every picture's start, and the grab point itself, have to be
+        // inside it.
+        let left = rects.iter().fold(x, |acc, r| acc.min(r.left));
+        let top = rects.iter().fold(y, |acc, r| acc.min(r.top));
+        let right = rects
+            .iter()
+            .fold(x, |acc, r| acc.max(r.left + image_w))
+            .max(left + image_w);
+        let bottom = rects
+            .iter()
+            .fold(y, |acc, r| acc.max(r.top + image_h))
+            .max(top + image_h);
+
+        let items = chosen
+            .iter()
+            .zip(&rects)
+            .filter_map(|(index, rect)| {
+                let entry = entries.get(*index)?;
+                Some(view::DragItem {
+                    entry: (*entry).clone(),
+                    thumb: self.thumbs.image(&entry.path, entry.modified).cloned(),
+                    start: (rect.left - left, rect.top - top),
+                })
+            })
+            .collect();
+
+        // The badge hangs off the cursor's bottom right, and anything drawn
+        // past the surface's edge is simply not there.
+        let right = right.max(x + 8.0 + view::drag_badge_width(names.len()));
+        let bottom = bottom.max(y + 30.0);
+
+        Some((items, (right - left, bottom - top), (x - left, y - top)))
     }
 
-    /// Where inside the drag image the cursor should sit, given a grab at
-    /// `(x, y)`.
-    ///
-    /// The point of the gesture is that the thing stays where it was grabbed,
-    /// so this is the click's offset within the row it landed on — clamped to
-    /// the image, which is narrower than a row, so a grab far along a wide row
-    /// still ends up holding its right-hand edge rather than thin air.
-    fn grab_anchor(&self, x: f32, y: f32) -> (f32, f32) {
-        let Some((depth, index)) = self.entry_at(x, y) else {
-            return (0.0, 0.0);
-        };
+    /// Where entry `index` of pane `depth` sits in the window right now.
+    fn entry_rect(&self, depth: usize, index: usize) -> Rect {
         let (width, height) = (self.size.0, self.content_h());
         let count = self.visible_len(depth);
         let scroll = self.columns[depth].scroll.offset();
 
-        let rect = match self.mode {
+        match self.mode {
             ViewMode::Grid => view::grid_cell_rect(
                 view::content_viewport(width, height, ViewMode::Grid),
                 index,
@@ -2276,13 +2578,7 @@ impl Browser {
                 index,
                 scroll,
             ),
-        };
-
-        let (image_w, image_h) = view::drag_image_size(self.mode);
-        (
-            (x - rect.left).clamp(0.0, image_w),
-            (y - rect.top).clamp(0.0, image_h),
-        )
+        }
     }
 
     /// The paths a drag started now would carry: the whole selection, so
@@ -2354,6 +2650,58 @@ impl Browser {
         items
     }
 
+    /// Say out loud what an operation did.
+    ///
+    /// Chosen from the outcome rather than from the command, which is what
+    /// makes undo sound right without a special case: undoing a delete is a
+    /// restore, and a restore moves files back into place, so it gets the
+    /// arriving sound. Undoing a copy takes files away, and gets the other
+    /// one. An operation that did nothing stays quiet.
+    fn play_op_sound(result: &model::OpResult) {
+        if result.trashed > 0 {
+            otto_kit::sound::play_first(&SOUND_REMOVED);
+        } else if result.moved + result.copied > 0 {
+            otto_kit::sound::play_first(&SOUND_ARRIVED);
+        }
+    }
+
+    /// Put `result`'s changes on the undo stack, if it changed anything.
+    ///
+    /// Called with every operation's outcome rather than only the clean ones:
+    /// a paste that half worked still moved real files, and those are exactly
+    /// the ones a user reaches for Ctrl+Z about.
+    fn record_undo(&mut self, label: &'static str, changes: Vec<model::Change>) {
+        if changes.is_empty() {
+            return;
+        }
+        self.undo.push(UndoStep { label, changes });
+        if self.undo.len() > UNDO_DEPTH {
+            self.undo.remove(0);
+        }
+    }
+
+    /// Ctrl+Z — take back the last operation that changed files.
+    fn undo_last(&mut self) {
+        let Some(step) = self.undo.pop() else {
+            self.status = Some("Nothing to undo".to_string());
+            self.dirty = true;
+            return;
+        };
+
+        let result = model::undo(&step.changes);
+        Self::play_op_sound(&result);
+        self.status = Some(if result.errors.is_empty() {
+            format!("Undid {}", step.label)
+        } else {
+            result.errors[0].clone()
+        });
+        // Deliberately not pushed back on as a redo: an undo of a delete is a
+        // restore, and re-deleting it would be a second trip to the Trash
+        // rather than the inverse of anything. Redo is its own feature.
+        self.reload_all();
+        self.dirty = true;
+    }
+
     /// Move the current selection to Trash.
     fn move_selected_to_trash(&mut self) {
         let paths: Vec<PathBuf> = self
@@ -2367,6 +2715,8 @@ impl Browser {
         let result = model::move_to_trash(&paths);
         let summary = result.summary();
         self.status = (!summary.is_empty()).then_some(summary);
+        Self::play_op_sound(&result);
+        self.record_undo("Delete", result.changes);
         self.reload_all();
         self.dirty = true;
     }
@@ -2381,6 +2731,10 @@ impl Browser {
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_default();
+                self.record_undo(
+                    "New Folder",
+                    vec![model::Change::Created { path: path.clone() }],
+                );
                 self.reload_all();
                 let depth = self.active;
                 if let Some(index) = self.visible(depth).iter().position(|e| e.name == name) {
@@ -2415,12 +2769,23 @@ impl Browser {
             let cursor = self.columns[depth].cursor;
             let offset = self.columns[depth].scroll.offset();
 
+            // The measurements come over with the position. Without them the
+            // fresh view has no content and no viewport, so its `max_offset`
+            // is zero and the offset below is clamped straight to the top —
+            // a reload after a drop or a paste would scroll the pane away
+            // from whatever the user was looking at. The next metrics sync
+            // re-measures both against the new listing and re-clamps.
+            let viewport = self.columns[depth].scroll.state.viewport();
+            let content = self.columns[depth].scroll.state.content_length();
+
             let mut column = Column::new(path);
             column.selection = keep;
             column.cursor = cursor;
             column.anchor = cursor;
-            // Only the position is carried over: the fresh view re-measures
-            // its own content, and any momentum belonged to the old listing.
+            // Only the position is carried over: any momentum belonged to the
+            // old listing.
+            column.scroll.state.set_viewport(viewport);
+            column.scroll.state.set_content_length(content);
             column.scroll.state.set_offset(offset);
             self.columns[depth] = column;
         }
@@ -2824,6 +3189,10 @@ impl Browser {
             opening: self.opening_progress(),
             renaming: self.rename.as_ref().map(|r| (r.depth, r.index)),
             controls: self.controls,
+            focused: self.focused,
+            // A translucent material needs something blurred behind it to be
+            // translucent over. See [`view::opaque`].
+            blurred: self.focused && self.blur_available,
             can_go_back: !self.back.is_empty(),
             can_go_forward: !self.forward.is_empty(),
             nav_pressed: self.nav_pressed,
@@ -2917,19 +3286,26 @@ impl App for FilesApp {
 
         if let Some(style) = window.surface_style() {
             style.set_corner_radius(view::CORNER as f64);
-            // otto-kit's materials are translucent by design — they expect a
-            // blurred backdrop behind them. Without this the desktop shows
-            // through the window rather than being frosted by it.
-            // `OTTO_FILES_NO_BLUR=1` drops the frosted backdrop, to test what
-            // it costs. The window's materials are translucent by design, so
-            // without it the desktop shows through unfrosted — ugly, but it
-            // isolates the compositor's blur work from everything else.
-            if std::env::var_os("OTTO_FILES_NO_BLUR").is_none() {
-                style.set_blend_mode(
-                    otto_kit::protocols::otto_surface_style_v1::BlendMode::BackgroundBlur,
-                );
-            }
         }
+
+        // otto-kit's materials are translucent by design — they expect a
+        // blurred backdrop behind them. Without one the desktop shows through
+        // the window rather than being frosted by it.
+        //
+        // Asked of the window rather than of the style directly: the window
+        // drops the blur while it is unfocused and puts it back on the next
+        // activate, so the compositor is not running a full-window gaussian
+        // for a window nobody is looking at.
+        //
+        // `OTTO_FILES_NO_BLUR=1` drops the frosted backdrop entirely, to test
+        // what it costs — as does running under a compositor that carries no
+        // surface style at all. The panels are filled in rather than left
+        // translucent in both cases, so what that isolates is the compositor's
+        // blur work and not the window's legibility.
+        let blur =
+            window.surface_style().is_some() && std::env::var_os("OTTO_FILES_NO_BLUR").is_none();
+        window.set_background_blur(blur);
+        self.state.lock().unwrap().blur_available = blur;
 
         // The panels' scene. `None` only where the engine could not be brought
         // up, which is the case the immediate-mode chrome still covers: the
@@ -3237,11 +3613,17 @@ impl App for FilesApp {
     }
 
     fn on_configure(&mut self, _ctx: &AppContext, configure: WindowConfigure, _serial: u32) {
+        let mut browser = self.state.lock().unwrap();
         if let (Some(w), Some(h)) = (configure.new_size.0, configure.new_size.1) {
-            let mut browser = self.state.lock().unwrap();
             browser.size = (w.get() as f32, h.get() as f32);
             browser.dirty = true;
         }
+        // Focus arrives here, and the chrome is drawn dimmer without it.
+        if browser.focused != configure.is_activated() {
+            browser.focused = configure.is_activated();
+            browser.dirty = true;
+        }
+        drop(browser);
         self.render();
     }
 
@@ -3493,6 +3875,9 @@ impl App for FilesApp {
                     browser.copy_selection(true, serial)
                 }
                 Keysym::v if ctrl && browser.picker.is_none() => browser.paste(),
+                // Undo is file management too: a picker is a chooser, and has
+                // nothing of its own to take back.
+                Keysym::z if ctrl && browser.picker.is_none() => browser.undo_last(),
                 // Space toggles: the second press dismisses what the first
                 // opened, which is the gesture people already have.
                 Keysym::space => {
@@ -3541,7 +3926,7 @@ impl App for FilesApp {
                 // directory, or activate a file. Return is not free for this —
                 // it renames, the way it does on the desktop this follows — so
                 // opening needs a chord of its own.
-                Keysym::o if ctrl => browser.open_selection(),
+                Keysym::o if ctrl => browser.open_cursor_entry(),
                 Keysym::_1 if ctrl => {
                     browser.mode = ViewMode::List;
                     browser.dirty = true;
@@ -4408,22 +4793,23 @@ impl FilesApp {
                         if let Some((start_x, start_y, serial)) = browser.drag_armed {
                             if (x - start_x).hypot(y - start_y) >= DRAG_THRESHOLD {
                                 browser.drag_armed = None;
+                                browser.drag_started();
                                 let paths = browser.drag_paths();
                                 // The picture the cursor carries: the first
                                 // file of the selection, and how many are
                                 // coming with it.
-                                let image = browser.drag_image();
-                                // Anchored where the row was grabbed, not by
-                                // its corner.
-                                let anchor = browser.grab_anchor(start_x, start_y);
+                                // Every travelling file, where it is on screen
+                                // now: the picture starts as the listing and
+                                // gathers from there.
+                                let items = browser.drag_items(start_x, start_y);
                                 // The picture is shaped like the view it came
                                 // from: a cell in the grid, a row card in the
                                 // list and column views.
                                 let mode = browser.mode;
-                                let (image_w, image_h) = view::drag_image_size(mode);
+                                let count = paths.len();
                                 drop(browser);
-                                if let (Some(surface), Some((entry, count, thumb))) =
-                                    (window_for_events.wl_surface(), image)
+                                if let (Some(surface), Some((items, size, anchor))) =
+                                    (window_for_events.wl_surface(), items)
                                 {
                                     let theme = AppContext::current_theme();
                                     otto_kit::dnd::start_file_drag_with_icon(
@@ -4431,16 +4817,11 @@ impl FilesApp {
                                         DndAction::Copy | DndAction::Move,
                                         &surface,
                                         serial,
-                                        (image_w as i32, image_h as i32),
+                                        (size.0 as i32, size.1 as i32),
                                         anchor,
                                         move |canvas, _w, _h| {
                                             view::draw_drag_image(
-                                                canvas,
-                                                &theme,
-                                                mode,
-                                                &entry,
-                                                count,
-                                                thumb.as_ref(),
+                                                canvas, &theme, mode, &items, anchor, count,
                                             );
                                         },
                                     );
@@ -4501,8 +4882,10 @@ impl FilesApp {
                         browser.dirty |= browser.controls.on_motion(control);
                     }
                     PointerEventKind::Release { .. } => {
-                        // A press that came up without travelling was a click.
+                        // A press that came up without travelling was a click —
+                        // including one that left its narrowing until now.
                         browser.drag_armed = None;
+                        browser.release_entry();
                         browser.column_resize = None;
                         browser.miller_resize = None;
                         browser.pan.on_pointer_up();
@@ -4688,9 +5071,10 @@ impl FilesApp {
                                 } else if shift {
                                     browser.extend_select(depth, index);
                                 } else {
-                                    browser.select(depth, index);
-                                    browser.note_row_click(depth, index);
+                                    browser.press_entry(depth, index);
                                 }
+                            } else if !ctrl && !shift && hit_content(area, x, y) {
+                                browser.clear_pane_selection(depth);
                             }
                         } else if browser.mode == ViewMode::List
                             && view::column_boundary_at(x, y, width, browser.list_columns).is_some()
@@ -4742,8 +5126,13 @@ impl FilesApp {
                                     } else if shift {
                                         browser.extend_select(depth, index);
                                     } else {
-                                        browser.select(depth, index);
-                                        browser.note_row_click(depth, index);
+                                        browser.press_entry(depth, index);
+                                    }
+                                } else if !ctrl && !shift {
+                                    let area =
+                                        view::content_viewport(width, height, ViewMode::List);
+                                    if hit_content(area, x, y) {
+                                        browser.clear_pane_selection(depth);
                                     }
                                 }
                             }
@@ -4804,18 +5193,24 @@ impl FilesApp {
                                 } else if shift {
                                     browser.extend_select(depth, index);
                                 } else {
-                                    browser.select(depth, index);
                                     // A directory here already opened on the
                                     // single click — Miller shows its child
                                     // eagerly. A *file* did not, and a double
                                     // click is how one is opened in the other
                                     // two views, so it is how one is opened
                                     // here too.
-                                    browser.note_row_click(depth, index);
+                                    browser.press_entry(depth, index);
                                 }
                             } else if let Some((depth, None)) = hit {
-                                browser.active = depth;
-                                browser.dirty = true;
+                                // Inside a pane, below its last row. The pane
+                                // takes the keyboard either way; without a
+                                // modifier the click also means "nothing".
+                                if ctrl || shift {
+                                    browser.active = depth;
+                                    browser.dirty = true;
+                                } else {
+                                    browser.clear_pane_selection(depth);
+                                }
                             }
                         }
                     }
@@ -5320,6 +5715,101 @@ mod dnd_tests {
         assert!(matches!(hit, DropTarget::Entry { .. }));
     }
 
+    /// A press on an entry that is not selected acts at once: the selection
+    /// follows the pointer down, the way it always has.
+    #[test]
+    fn a_press_on_an_unselected_entry_selects_it_immediately() {
+        let (mut browser, _dir) = browser_over(&["a.txt", "b.txt", "c.txt"], &[]);
+        let b = row_of(&browser, "b.txt");
+
+        browser.press_entry(0, b);
+
+        assert_eq!(browser.columns[0].selection.len(), 1);
+        assert!(browser.columns[0].selection.contains("b.txt"));
+    }
+
+    /// A press on one of several selected entries leaves the group alone, so
+    /// the drag that usually follows can carry all of it.
+    #[test]
+    fn a_press_inside_a_group_keeps_the_whole_selection() {
+        let (mut browser, _dir) = browser_over(&["a.txt", "b.txt", "c.txt"], &[]);
+        let (a, c) = (row_of(&browser, "a.txt"), row_of(&browser, "c.txt"));
+        browser.select(0, a);
+        browser.extend_select(0, c);
+        assert_eq!(browser.columns[0].selection.len(), 3, "three are selected");
+
+        browser.press_entry(0, row_of(&browser, "b.txt"));
+
+        assert_eq!(
+            browser.columns[0].selection.len(),
+            3,
+            "the group survives the press"
+        );
+    }
+
+    /// …and if the press comes back up without dragging, it was a click after
+    /// all: the selection narrows to the one under the pointer.
+    #[test]
+    fn a_click_inside_a_group_narrows_to_it_on_release() {
+        let (mut browser, _dir) = browser_over(&["a.txt", "b.txt", "c.txt"], &[]);
+        let (a, c) = (row_of(&browser, "a.txt"), row_of(&browser, "c.txt"));
+        browser.select(0, a);
+        browser.extend_select(0, c);
+        let b = row_of(&browser, "b.txt");
+
+        browser.press_entry(0, b);
+        browser.release_entry();
+
+        assert_eq!(browser.columns[0].selection.len(), 1);
+        assert!(browser.columns[0].selection.contains("b.txt"));
+    }
+
+    /// A drag cancels the deferred narrowing outright: the group is what
+    /// travels, and the button coming up at the end must not collapse it.
+    #[test]
+    fn a_drag_out_of_a_group_leaves_the_group_whole() {
+        let (mut browser, _dir) = browser_over(&["a.txt", "b.txt", "c.txt"], &[]);
+        let (a, c) = (row_of(&browser, "a.txt"), row_of(&browser, "c.txt"));
+        browser.select(0, a);
+        browser.extend_select(0, c);
+
+        browser.press_entry(0, row_of(&browser, "b.txt"));
+        browser.drag_started();
+        browser.release_entry();
+
+        assert_eq!(
+            browser.columns[0].selection.len(),
+            3,
+            "all three are still selected after the drag"
+        );
+    }
+
+    /// A deferred narrowing must never outlive its own gesture. If a release
+    /// goes missing — consumed by something else on its way through — the next
+    /// press drops the stale decision instead of letting it land on this click.
+    #[test]
+    fn a_pending_narrow_never_lands_on_a_later_click() {
+        let (mut browser, _dir) = browser_over(&["a.txt", "b.txt", "c.txt"], &[]);
+        let (a, c) = (row_of(&browser, "a.txt"), row_of(&browser, "c.txt"));
+        browser.select(0, a);
+        browser.extend_select(0, c);
+
+        // A press inside the group whose release never arrives.
+        browser.press_entry(0, row_of(&browser, "b.txt"));
+
+        // A later, unrelated click elsewhere: it selects its own entry, and the
+        // release resolves nothing left over from before.
+        let a_row = row_of(&browser, "a.txt");
+        browser.press_entry(0, a_row);
+        browser.release_entry();
+
+        assert_eq!(browser.columns[0].selection.len(), 1);
+        assert!(
+            browser.columns[0].selection.contains("a.txt"),
+            "the click that happened is the one that counts"
+        );
+    }
+
     #[test]
     fn a_file_row_drops_into_the_directory_it_is_in() {
         // Dropping "onto" a file means beside it, not inside it.
@@ -5391,6 +5881,170 @@ mod dnd_tests {
 
         assert!(!browser.dnd_enabled());
         assert_eq!(browser.drop_target_at(x, y), None);
+    }
+
+    /// A drop is a reload, and a reload must leave the pane looking at what
+    /// it was looking at — in every view. Run over all three because the two
+    /// that measure an empty pane as taller than nothing (a grid counts its
+    /// padding, a Miller pane its row inset) are exactly the ones that used to
+    /// clamp to the top while the fresh listing was still being read.
+    #[test]
+    fn a_drop_keeps_the_pane_where_it_was_scrolled() {
+        for mode in [ViewMode::List, ViewMode::Grid, ViewMode::Columns] {
+            let names: Vec<String> = (0..60).map(|i| format!("f{i:02}.txt")).collect();
+            let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+            let (mut browser, dir) = browser_over(&refs, &["sub"]);
+            browser.mode = mode;
+            browser.size = (900.0, 400.0);
+            browser.sync_scroll_metrics();
+
+            browser.columns[0].scroll.state.set_offset(300.0);
+            let before = browser.columns[0].scroll.offset();
+            assert!(before > 0.0, "{mode:?}: the pane has to be scrolled");
+
+            browser.drop_target = Some(DropTarget::Entry {
+                depth: 0,
+                index: 0,
+                path: dir.join("sub"),
+            });
+            browser.apply_drop(vec![dir.join("f00.txt")], true);
+
+            // The frame loop re-measures every frame, including the ones that
+            // land while the re-read is still in flight. Those are the frames
+            // that used to lose the position, so the test has to run them.
+            for _ in 0..500 {
+                browser.sync_scroll_metrics();
+                if browser.columns[0].poll() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            browser.sync_scroll_metrics();
+
+            assert_eq!(
+                browser.columns[0].scroll.offset(),
+                before,
+                "{mode:?}: the drop scrolled the pane away from what the user was looking at"
+            );
+        }
+    }
+
+    #[test]
+    fn undoing_a_drop_puts_the_file_back() {
+        let (mut browser, dir) = browser_over(&["a.txt"], &["sub"]);
+        browser.drop_target = Some(DropTarget::Entry {
+            depth: 0,
+            index: 0,
+            path: dir.join("sub"),
+        });
+        browser.apply_drop(vec![dir.join("a.txt")], true);
+        assert!(dir.join("sub/a.txt").exists(), "the move happened");
+
+        browser.undo_last();
+
+        assert!(dir.join("a.txt").exists(), "back where it came from");
+        assert!(!dir.join("sub/a.txt").exists(), "and not still there");
+        assert_eq!(browser.status.as_deref(), Some("Undid Move"));
+    }
+
+    /// Undoing a copy takes the copy away — via the Trash, so an undo is never
+    /// itself the thing that loses a file.
+    #[test]
+    fn undoing_a_copy_removes_the_copy_and_leaves_the_original() {
+        // Keeps the delete out of the real Trash; see `model::test_data_home`.
+        let _trash = model::test_data_home();
+        let (mut browser, dir) = browser_over(&["a.txt"], &["sub"]);
+        browser.drop_target = Some(DropTarget::Entry {
+            depth: 0,
+            index: 0,
+            path: dir.join("sub"),
+        });
+        browser.apply_drop(vec![dir.join("a.txt")], false);
+        assert!(dir.join("sub/a.txt").exists(), "the copy happened");
+
+        browser.undo_last();
+
+        assert!(dir.join("a.txt").exists(), "the original is untouched");
+        assert!(!dir.join("sub/a.txt").exists(), "the copy is gone");
+    }
+
+    #[test]
+    fn undoing_a_delete_restores_the_file() {
+        // Keeps the delete out of the real Trash; see `model::test_data_home`.
+        let _trash = model::test_data_home();
+        let (mut browser, dir) = browser_over(&["a.txt"], &[]);
+        browser.select(0, 0);
+        browser.move_selected_to_trash();
+        assert!(!dir.join("a.txt").exists(), "the delete happened");
+
+        browser.undo_last();
+
+        assert!(dir.join("a.txt").exists(), "restored out of the Trash");
+        assert_eq!(browser.status.as_deref(), Some("Undid Delete"));
+    }
+
+    /// The stack is per operation, and Ctrl+Z walks back through it.
+    #[test]
+    fn undo_walks_back_one_operation_at_a_time() {
+        let (mut browser, dir) = browser_over(&["a.txt", "b.txt"], &["sub"]);
+        for name in ["a.txt", "b.txt"] {
+            browser.drop_target = Some(DropTarget::Entry {
+                depth: 0,
+                index: 0,
+                path: dir.join("sub"),
+            });
+            browser.apply_drop(vec![dir.join(name)], true);
+        }
+
+        browser.undo_last();
+        assert!(dir.join("b.txt").exists(), "the last one came back first");
+        assert!(dir.join("sub/a.txt").exists(), "and only the last one");
+
+        browser.undo_last();
+        assert!(dir.join("a.txt").exists(), "then the one before it");
+
+        browser.undo_last();
+        assert_eq!(browser.status.as_deref(), Some("Nothing to undo"));
+    }
+
+    /// Selecting and navigating are not operations. Nothing about them may end
+    /// up on the stack, or a Ctrl+Z meant for a delete would spend itself on a
+    /// click instead.
+    #[test]
+    fn selecting_and_navigating_are_not_undoable() {
+        let (mut browser, dir) = browser_over(&["a.txt"], &["sub"]);
+        browser.select(0, 0);
+        browser.select(0, 1);
+        browser.clear_pane_selection(0);
+        browser.navigate_to(&dir.join("sub"));
+
+        assert!(browser.undo.is_empty(), "{:?}", browser.undo);
+    }
+
+    /// A click on nothing means nothing is selected — the way it does in every
+    /// file manager. Run over all three views because each resolves the click
+    /// through its own hit test.
+    #[test]
+    fn a_click_on_empty_space_clears_the_selection() {
+        for mode in [ViewMode::List, ViewMode::Grid, ViewMode::Columns] {
+            let (mut browser, _dir) = browser_over(&["a.txt"], &[]);
+            browser.mode = mode;
+            browser.size = (900.0, 600.0);
+            browser.sync_scroll_metrics();
+            browser.select(0, 0);
+            assert!(
+                !browser.columns[0].selection.is_empty(),
+                "{mode:?}: selected"
+            );
+
+            browser.clear_pane_selection(0);
+
+            assert!(
+                browser.columns[0].selection.is_empty(),
+                "{mode:?}: the click on nothing left a selection behind"
+            );
+            assert_eq!(browser.columns[0].cursor, None, "{mode:?}: and no cursor");
+        }
     }
 
     #[test]
