@@ -627,25 +627,20 @@ fn draw_drop_highlight(canvas: &Canvas, f: &Frame) {
         return;
     }
 
-    let accent = accent_light(f.theme);
-    let radius = match target {
-        DropHighlight::Place { .. } => 6.0,
-        DropHighlight::Row { .. } => 8.0,
-        DropHighlight::Pane { .. } => 10.0,
-    };
     // The ring alone. A wash inside it as well says the same thing twice, and
     // over a pane it tints a whole column of rows to point at one target.
+    //
+    // Square, following the shape of what it outlines: a Miller column has
+    // square edges, and a rounded ring drawn around one reads as a different
+    // object floating over it rather than as that column being picked out.
     let mut ring = Paint::default();
     ring.set_anti_alias(true);
     ring.set_style(skia_safe::paint::Style::Stroke);
     // Inset by half the stroke: a centred stroke on the rect's own edge would
     // spill a pixel outside it, over the neighbouring row.
     ring.set_stroke_width(2.0);
-    ring.set_color(accent);
-    canvas.draw_rrect(
-        RRect::new_rect_xy(rect.with_inset((1.0, 1.0)), radius, radius),
-        &ring,
-    );
+    ring.set_color(accent_light(f.theme));
+    canvas.draw_rect(rect.with_inset((1.0, 1.0)), &ring);
 }
 
 /// One list-view row's rect, in window coordinates.
