@@ -6,8 +6,8 @@
 
 use otto_kit::AppContext;
 use std::collections::HashMap;
-use zbus::interface;
 use zbus::zvariant::Value;
+use zbus::{interface, SignalContext};
 
 use crate::activity::{NotificationAction, Priority};
 use crate::state::SharedState;
@@ -132,14 +132,21 @@ impl NotificationDaemon {
     }
 
     /// Close a notification by ID.
-    async fn close_notification(&self, id: u32) -> zbus::fdo::Result<()> {
-        let mut state = self.state.lock().unwrap();
-        let dismissed = state.dismiss_notification(id);
-        drop(state);
+    async fn close_notification(
+        &self,
+        id: u32,
+        #[zbus(signal_context)] ctxt: SignalContext<'_>,
+    ) -> zbus::fdo::Result<()> {
+        let dismissed = {
+            let mut state = self.state.lock().unwrap();
+            state.dismiss_notification(id)
+        };
 
         if dismissed {
             AppContext::request_wakeup();
             tracing::info!(id, "notification closed");
+            // Reason 3: closed by a CloseNotification call.
+            Self::notification_closed(&ctxt, id, 3).await?;
         }
         Ok(())
     }
@@ -154,9 +161,23 @@ impl NotificationDaemon {
         )
     }
 
-    // TODO: Signals — these require zbus SignalContext
-    // NotificationClosed(id: u32, reason: u32)
-    // ActionInvoked(id: u32, action_key: String)
+    /// Emitted when a notification is closed — reasons per spec: 1 = expired,
+    /// 2 = dismissed by the user, 3 = closed via CloseNotification, 4 = undefined.
+    #[zbus(signal)]
+    pub async fn notification_closed(
+        ctxt: &SignalContext<'_>,
+        id: u32,
+        reason: u32,
+    ) -> zbus::Result<()>;
+
+    /// Emitted when the user activates one of a notification's actions (or the
+    /// default action by clicking the notification body).
+    #[zbus(signal)]
+    pub async fn action_invoked(
+        ctxt: &SignalContext<'_>,
+        id: u32,
+        action_key: &str,
+    ) -> zbus::Result<()>;
 }
 
 fn parse_urgency(hints: &HashMap<String, Value>) -> Priority {

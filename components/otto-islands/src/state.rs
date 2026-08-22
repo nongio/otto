@@ -208,53 +208,6 @@ impl IslandState {
         }
     }
 
-    /// Returns activities grouped for layout purposes.
-    /// Notifications from the same app_id are grouped — only the most recent
-    /// is returned as the representative, with a count of how many are in the group.
-    /// Non-notification activities (music, D-Bus, internal) are returned as-is.
-    pub fn grouped_activities(&self) -> Vec<(Activity, usize)> {
-        use std::collections::HashMap;
-
-        let mut notification_groups: HashMap<&str, Vec<&Activity>> = HashMap::new();
-        let mut result: Vec<(Activity, usize)> = Vec::new();
-
-        // Separate notifications from other activities
-        for activity in &self.activities {
-            if activity.source == ActivitySource::Notification {
-                notification_groups
-                    .entry(&activity.app_id)
-                    .or_default()
-                    .push(activity);
-            } else {
-                result.push((activity.clone(), 1));
-            }
-        }
-
-        // For each notification group, take the most recent as representative
-        for (_app_id, mut group) in notification_groups {
-            group.sort_by_key(|a| a.created_at);
-            let count = group.len();
-            if let Some(latest) = group.last() {
-                result.push(((*latest).clone(), count));
-            }
-        }
-
-        // Sort by creation time so layout order is stable
-        result.sort_by_key(|(a, _)| a.created_at);
-        result
-    }
-
-    /// Get all notifications for a given app_id, ordered by creation time (newest first).
-    pub fn notifications_for_app(&self, app_id: &str) -> Vec<&Activity> {
-        let mut result: Vec<_> = self
-            .activities
-            .iter()
-            .filter(|a| a.source == ActivitySource::Notification && a.app_id == app_id)
-            .collect();
-        result.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-        result
-    }
-
     /// Remove all activities whose timeout has expired.
     pub fn expire_timeouts(&mut self) {
         let now = Instant::now();

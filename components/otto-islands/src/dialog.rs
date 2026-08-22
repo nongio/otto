@@ -15,7 +15,7 @@ use otto_kit::SubsurfaceSurface;
 use skia_safe::{Canvas, Color, Paint, RRect, Rect};
 use tokio::sync::oneshot;
 
-use crate::renderer::BUFFER_SCALE;
+use crate::renderer::buffer_scale;
 
 pub type DialogId = u64;
 
@@ -577,7 +577,7 @@ pub fn apply_dialog_style(surface: &SubsurfaceSurface) {
             c.b() as f64 / 255.0,
             c.a() as f64 / 255.0,
         );
-        ss.set_corner_radius(PANEL_RADIUS as f64 * BUFFER_SCALE);
+        ss.set_corner_radius(PANEL_RADIUS as f64 * buffer_scale());
         ss.set_masks_to_bounds(ClipMode::Enabled);
         ss.set_shadow(0.35, 24.0, 0.0, 8.0, 0.0, 0.0, 0.0);
         ss.set_blend_mode(BlendMode::BackgroundBlur);

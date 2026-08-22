@@ -61,10 +61,36 @@ pub fn named_icon_sized(icon_name: &str, size: i32) -> Option<skia::Image> {
     }
 
     let scale = crate::app_runner::context::AppContext::scale_factor().max(1);
-    let icon = find_icon(icon_name, size, scale).and_then(|p| image_from_path(&p, (size, size)));
+    let icon =
+        find_icon_any_size(icon_name, size, scale).and_then(|p| image_from_path(&p, (size, size)));
 
     ic.write().unwrap().insert(cache_key, icon.clone());
     icon
+}
+
+/// The directory sizes an XDG icon theme actually ships.
+const STANDARD_ICON_SIZES: [i32; 10] = [16, 22, 24, 32, 48, 64, 96, 128, 256, 512];
+
+/// Find `icon_name` for a request of `size`, falling back to the sizes a theme
+/// is likely to have on disk.
+///
+/// A theme directory only answers for the sizes it declares, so an in-between
+/// request misses icons that plainly exist: hicolor ships ghostty at 16 and 32,
+/// and a request for 20 resolves to nothing at all. Callers scale the result
+/// into their own rect anyway, so a neighbouring size is always better than no
+/// icon. Larger neighbours come first — downscaling beats upscaling.
+fn find_icon_any_size(icon_name: &str, size: i32, scale: i32) -> Option<String> {
+    if let Some(path) = find_icon(icon_name, size, scale) {
+        return Some(path);
+    }
+    let mut candidates: Vec<i32> = STANDARD_ICON_SIZES
+        .into_iter()
+        .filter(|&s| s != size)
+        .collect();
+    candidates.sort_by_key(|&s| (s < size, (s - size).abs()));
+    candidates
+        .into_iter()
+        .find_map(|s| find_icon(icon_name, s, scale))
 }
 
 /// Load an icon from a file path with caching.
