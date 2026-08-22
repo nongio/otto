@@ -997,6 +997,74 @@ impl Browser {
         }
     }
 
+    /// Record a Ctrl+click on a row/cell. The first one toggles the row into
+    /// or out of the selection; a second one on the same row within the
+    /// double-click window opens it in a *new window* instead of toggling it
+    /// back out, so Ctrl+double-click reads as "open this one elsewhere"
+    /// rather than as two selection changes.
+    ///
+    /// The picker never takes this path: it answers one request in one
+    /// window, so there Ctrl+click only ever toggles.
+    fn note_ctrl_row_click(&mut self, depth: usize, index: usize) {
+        let now = std::time::Instant::now();
+        let double_click = self.picker.is_none()
+            && self.last_row_click.is_some_and(|(d, i, at)| {
+                d == depth && i == index && now.duration_since(at) < DOUBLE_CLICK_WINDOW
+            });
+        if double_click {
+            self.last_row_click = None;
+            self.open_in_new_window(depth, index);
+        } else {
+            self.toggle_select(depth, index);
+            self.last_row_click = Some((depth, index, now));
+        }
+    }
+
+    /// Open one directory in a second browser window — Ctrl+double-click.
+    ///
+    /// A window is a process here: the app shell is built around a single
+    /// toplevel, so the second window is a second `otto-files` handed the
+    /// directory on its command line. Anything that is not a directory falls
+    /// back to plain activation, which is all a new window could do with it.
+    fn open_in_new_window(&mut self, depth: usize, index: usize) {
+        let Some(entry) = self.visible(depth).get(index).map(|e| (*e).clone()) else {
+            return;
+        };
+        if !entry.is_dir {
+            self.select(depth, index);
+            self.open_selection();
+            return;
+        }
+
+        let exe = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(err) => {
+                self.status = Some(format!("Couldn\u{2019}t open a new window: {err}"));
+                self.dirty = true;
+                return;
+            }
+        };
+        let spawned = std::process::Command::new(exe)
+            .arg(&entry.path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        match spawned {
+            // Reap it on a thread of its own: the child outlives this call and
+            // nothing else here would ever wait on it.
+            Ok(mut child) => {
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+            }
+            Err(err) => {
+                self.status = Some(format!("Couldn\u{2019}t open a new window: {err}"));
+                self.dirty = true;
+            }
+        }
+    }
+
     /// Descend into the selection: in Miller view the child column already
     /// exists, so this only moves the keyboard into it.
     fn open_selection(&mut self) {
@@ -4050,7 +4118,7 @@ impl FilesApp {
                             let area = view::content_viewport(width, height, ViewMode::Grid);
                             if let Some(index) = view::grid_cell_at(area, x, y, count, scroll) {
                                 if ctrl {
-                                    browser.toggle_select(depth, index);
+                                    browser.note_ctrl_row_click(depth, index);
                                 } else if shift {
                                     browser.extend_select(depth, index);
                                 } else {
@@ -4104,7 +4172,7 @@ impl FilesApp {
                                     view::row_at(x, y, width, height, count, scroll)
                                 {
                                     if ctrl {
-                                        browser.toggle_select(depth, index);
+                                        browser.note_ctrl_row_click(depth, index);
                                     } else if shift {
                                         browser.extend_select(depth, index);
                                     } else {
@@ -4166,7 +4234,7 @@ impl FilesApp {
                             );
                             if let Some((depth, Some(index))) = hit {
                                 if ctrl {
-                                    browser.toggle_select(depth, index);
+                                    browser.note_ctrl_row_click(depth, index);
                                 } else if shift {
                                     browser.extend_select(depth, index);
                                 } else {

@@ -214,7 +214,13 @@ or renamed in place.
 
 Double-click, or Enter on the selection:
 
-- A directory is navigated into, in this window.
+- A directory is navigated into, in this window. **Ctrl+double-click opens it
+  in a new window instead** — a second `otto-files` process pointed at that
+  directory, since the app shell is one toplevel per process. The Ctrl+click
+  that starts the pair still toggles the row into the selection the way a
+  single Ctrl+click does; the second click opens rather than toggling back out.
+  In the picker, which answers one request in one window, Ctrl+click only ever
+  toggles.
 - A file is opened in its default application, resolved from the file's MIME
   type through the desktop's associations. The application is started
   detached — a new session, its stdio closed — so it outlives the browser.
