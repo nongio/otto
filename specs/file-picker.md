@@ -94,7 +94,9 @@ picker window, and the path the user chooses comes back as a `file://` URI.
 ## Non-Goals
 
 - File management. Copy, move, delete, trash, and drag-and-drop belong to the
-  browser. The picker creates directories (apps need it while saving) and
+  browser. The picker shares the browser's code and turns all of it off — a
+  drag started in a picker window does not begin, and a drag over one is
+  refused. The picker creates directories (apps need it while saving) and
   renames nothing.
 - Being the browser's window. The picker is a transient serving someone else's
   app; the browser is a document window. They share a view layer and nothing
@@ -703,8 +705,10 @@ watcher, the natural-order comparator, and the confirmation sheet.
 
 ## Out of scope for v1, explicitly
 
-Column view. Drag and drop, in or out — otto-kit has no `wl_data_device`
-support at all, so this is a toolkit project before it is a picker feature.
+Column view. Drag and drop, in or out. The toolkit supports it and the browser
+does it, but the picker deliberately does not: dropping files into the
+directory it happens to be showing is file management, which is the browser's
+job, and the picker refuses the drop rather than half-doing it.
 Recursive search. Content-based type detection. Running external thumbnailers.
 Mounting unmounted volumes. Remote filesystems. Previews beyond the thumbnail.
 Tagging, starring, or any metadata Otto would have to invent a store for.

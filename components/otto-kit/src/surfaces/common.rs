@@ -175,6 +175,21 @@ impl BaseWaylandSurface {
         true
     }
 
+    /// Take the Skia surface, so the caller can drop it — and with it the EGL
+    /// resources — before destroying the `wl_surface` underneath.
+    ///
+    /// Surface types that own an xdg role do this inside their own `destroy`;
+    /// this is for the ones that have no role of their own to tear down, such
+    /// as a drag icon.
+    pub fn take_skia_surface(&mut self) -> Option<Rc<SkiaSurface>> {
+        self.skia_surface.take()
+    }
+
+    /// Take the surface style, in the same teardown order.
+    pub fn take_surface_style(&mut self) -> Option<otto_surface_style_v1::OttoSurfaceStyleV1> {
+        self.surface_style.take()
+    }
+
     /// Check if surface should allow drawing
     pub fn can_draw(&self) -> bool {
         self.is_surface_configured()

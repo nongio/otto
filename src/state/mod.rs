@@ -245,6 +245,10 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub xwayland_shell_state: xwayland_shell::XWaylandShellState,
 
     pub dnd_icon: Option<WlSurface>,
+    /// The icon surface of a refused drag, whose layers are kept alive while it
+    /// flies back to where the drag started and are swept up when the next drag
+    /// begins. See [`crate::state::dnd_grab_handler`].
+    pub pending_dnd_cleanup: Option<WlSurface>,
 
     // input-related fields
     pub suppressed_keys: Vec<Keysym>,
@@ -887,6 +891,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             pending_screencopy_frames: Vec::new(),
             virtual_pointer_manager_state,
             dnd_icon: None,
+            pending_dnd_cleanup: None,
             suppressed_keys: Vec::new(),
             current_modifiers: ModifiersState::default(),
             app_switcher_hold_modifiers: None,

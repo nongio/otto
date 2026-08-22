@@ -3264,32 +3264,39 @@ impl Workspaces {
 
     pub fn raise_next_app_window(&mut self) -> Option<ObjectId> {
         let windows = self.get_current_app_windows();
-        let mut wid = None;
-        if !windows.is_empty() {
-            for (i, window_id) in windows.iter().enumerate() {
-                if i == 0 {
-                    self.raise_element(window_id, true, true);
-                    wid = Some(window_id.clone());
-                }
-            }
-        }
-        wid
+        let window_id = windows.first()?.clone();
+        self.raise_element(&window_id, true, true);
+        // The window may live on another workspace — follow it there.
+        self.switch_to_workspace_of_window(&window_id);
+        Some(window_id)
     }
 
     pub fn raise_prev_app_window(&mut self) -> Option<ObjectId> {
         let windows = self.get_current_app_windows();
-        let mut wid = None;
-        if !windows.is_empty() {
-            let current_window = (windows.len() as i32) - 1;
-            let current_window = std::cmp::max(current_window, 0) as usize;
-            for (i, window_id) in windows.iter().enumerate() {
-                if i == current_window {
-                    self.raise_element(window_id, true, true);
-                    wid = Some(window_id.clone());
-                }
+        let window_id = windows.last()?.clone();
+        self.raise_element(&window_id, true, true);
+        // The window may live on another workspace — follow it there.
+        self.switch_to_workspace_of_window(&window_id);
+        Some(window_id)
+    }
+
+    /// Scroll the output owning `wid` to the workspace that holds it, so a
+    /// window raised from another workspace actually becomes visible.
+    fn switch_to_workspace_of_window(&mut self, wid: &ObjectId) {
+        let owner = self.output_workspaces.iter().find_map(|(name, ows)| {
+            ows.spaces
+                .iter()
+                .position(|s| s.elements().any(|e| e.id() == *wid))
+                .map(|i| (name.clone(), i))
+        });
+        if let Some((name, index)) = owner {
+            if let Some(output) = self.outputs.iter().find(|o| o.name() == name).cloned() {
+                self.set_workspace_for_output(&output, index, None);
             }
+        } else {
+            let current_space_index = self.with_model(|m| m.current_workspace);
+            self.set_current_workspace_index(current_space_index, None);
         }
-        wid
     }
 
     /// Raise thw windowelement on top of all the windows in its space
@@ -3439,20 +3446,7 @@ impl Workspaces {
         let wid = wid.unwrap();
         // Find the output that owns the raised window's space rather than
         // assuming the primary output, so we scroll only that output.
-        let owner = self.output_workspaces.iter().find_map(|(name, ows)| {
-            ows.spaces
-                .iter()
-                .position(|s| s.elements().any(|e| e.id() == wid))
-                .map(|i| (name.clone(), i))
-        });
-        if let Some((name, index)) = owner {
-            if let Some(output) = self.outputs.iter().find(|o| o.name() == name).cloned() {
-                self.set_workspace_for_output(&output, index, None);
-            }
-        } else {
-            let current_space_index = self.with_model(|m| m.current_workspace);
-            self.set_current_workspace_index(current_space_index, None);
-        }
+        self.switch_to_workspace_of_window(&wid);
 
         Some(wid)
     }
@@ -3477,20 +3471,7 @@ impl Workspaces {
         let wid = wid.unwrap();
         // Find the output that owns the raised window's space rather than
         // assuming the primary output, so we scroll only that output.
-        let owner = self.output_workspaces.iter().find_map(|(name, ows)| {
-            ows.spaces
-                .iter()
-                .position(|s| s.elements().any(|e| e.id() == wid))
-                .map(|i| (name.clone(), i))
-        });
-        if let Some((name, index)) = owner {
-            if let Some(output) = self.outputs.iter().find(|o| o.name() == name).cloned() {
-                self.set_workspace_for_output(&output, index, None);
-            }
-        } else {
-            let current_space_index = self.with_model(|m| m.current_workspace);
-            self.set_current_workspace_index(current_space_index, None);
-        }
+        self.switch_to_workspace_of_window(&wid);
 
         Some(wid)
     }

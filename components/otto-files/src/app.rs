@@ -10,6 +10,7 @@ use otto_kit::components::context_menu::ContextMenu;
 use otto_kit::components::scroll::{Axis, ScrollView};
 use otto_kit::components::titlebar::{WindowControl, WindowControlsState};
 use otto_kit::components::window::resize;
+use otto_kit::dnd::DndAction;
 use otto_kit::prelude::*;
 use otto_kit::CursorShape;
 use skia_safe::Contains;
@@ -31,6 +32,80 @@ use view::ViewMode;
 /// How soon a second press on the same column divider must land to count as
 /// a double-click rather than the start of a fresh drag.
 const DOUBLE_CLICK_WINDOW: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// How far the pointer must travel, with the button still down, before a press
+/// on a row becomes a drag rather than a click. Below this a hand that shifts
+/// while clicking still selects, and a double-click still opens.
+const DRAG_THRESHOLD: f32 = 6.0;
+
+/// Where a drag hovering the window would put the files, and what to outline.
+///
+/// Every variant resolves to a directory: dropping *onto* a file is not a
+/// thing, so a hit on one is a hit on the pane behind it.
+#[derive(Debug, Clone, PartialEq)]
+enum DropTarget {
+    /// A directory row or cell — the files go inside it.
+    Entry {
+        depth: usize,
+        index: usize,
+        path: PathBuf,
+    },
+    /// The pane's own directory, hit through its background.
+    Pane { depth: usize, path: PathBuf },
+    /// A sidebar place.
+    Place { index: usize, path: PathBuf },
+}
+
+impl DropTarget {
+    /// The directory the drop lands in.
+    fn path(&self) -> &PathBuf {
+        match self {
+            Self::Entry { path, .. } | Self::Pane { path, .. } | Self::Place { path, .. } => path,
+        }
+    }
+
+    fn highlight(&self) -> view::DropHighlight {
+        match *self {
+            Self::Entry { depth, index, .. } => view::DropHighlight::Row { depth, index },
+            Self::Pane { depth, .. } => view::DropHighlight::Pane { depth },
+            Self::Place { index, .. } => view::DropHighlight::Place { index },
+        }
+    }
+}
+
+/// Answer the drag source at one position, and light up whatever would take
+/// the drop.
+///
+/// Called for every enter and every motion, because that is what the protocol
+/// asks for: the answer is per-position, and a target that goes quiet has said
+/// no. See [`otto_kit::dnd::accept`].
+fn hover_drag(state: &Arc<Mutex<Browser>>, x: f32, y: f32) {
+    use otto_kit::dnd;
+
+    let mut browser = state.lock().unwrap();
+    let target = browser.drop_target_at(x, y);
+    let mime = dnd::first_offered(clipboard::file_mime_preference());
+
+    match (&target, mime) {
+        (Some(_), Some(mime)) => dnd::accept(
+            Some(&mime),
+            DndAction::Copy | DndAction::Move,
+            // Move by default, copy on request — what every other file manager
+            // does. The compositor still has the last word, and a source that
+            // only offers a copy gets one.
+            DndAction::Move,
+        ),
+        // Over nothing that takes files, or a drag carrying none.
+        _ => dnd::accept(None, DndAction::empty(), DndAction::empty()),
+    }
+
+    if browser.drop_target != target {
+        browser.drop_target = target;
+        browser.dirty = true;
+        drop(browser);
+        AppContext::request_wakeup();
+    }
+}
 
 /// The browser's whole state. Shared with the draw and input callbacks, which
 /// outlive any borrow this struct could hand out.
@@ -85,6 +160,13 @@ struct Browser {
     /// What a cut or copy put aside. Internal to this application — see
     /// [`model::Clipboard`].
     clipboard: model::Clipboard,
+    /// A press on part of the selection that has not moved far enough to be a
+    /// drag yet: where it landed, and the serial that will authorise the drag
+    /// if it does. Cleared on release, so a click that never moves is a click.
+    drag_armed: Option<(f32, f32, u32)>,
+    /// Where a drag now over the window would drop. Drawn outlined, and read
+    /// again when the drop arrives.
+    drop_target: Option<DropTarget>,
     /// The last operation's outcome, shown in the header until the next action.
     status: Option<String>,
     /// The open preview, if one is up.
@@ -339,6 +421,8 @@ impl Browser {
             gesture_axis: None,
             size: (view::WINDOW_W, view::WINDOW_H),
             clipboard: model::Clipboard::default(),
+            drag_armed: None,
+            drop_target: None,
             quickview: None,
             preview: None,
             preview_generation_seed: 0,
@@ -1859,6 +1943,164 @@ impl Browser {
         }
     }
 
+    /// Whether this window does drag and drop at all.
+    ///
+    /// The picker does not: it is a transient serving someone else's request,
+    /// and file management belongs to the browser — see
+    /// [`specs/file-picker.md`]. Dropping files into the directory it happens
+    /// to be showing would be exactly that.
+    fn dnd_enabled(&self) -> bool {
+        self.picker.is_none()
+    }
+
+    /// Where a drag at `(x, y)` would put its files, if anywhere.
+    ///
+    /// Everything resolves to a directory. A hit on a *file* row is not a
+    /// target of its own — the files go beside it, into the directory it is
+    /// in — which is why a miss falls through to the pane rather than
+    /// rejecting the drop.
+    fn drop_target_at(&self, x: f32, y: f32) -> Option<DropTarget> {
+        if !self.dnd_enabled() {
+            return None;
+        }
+        if let Some(index) = view::place_at(x, y, self.places.len()) {
+            return Some(DropTarget::Place {
+                index,
+                path: self.places[index].path.clone(),
+            });
+        }
+        // The rest of the sidebar takes nothing: it is chrome, not a place.
+        if x < view::SIDEBAR_W {
+            return None;
+        }
+
+        if let Some((depth, index)) = self.entry_at(x, y) {
+            if let Some(entry) = self.visible(depth).get(index) {
+                if entry.is_dir {
+                    return Some(DropTarget::Entry {
+                        depth,
+                        index,
+                        path: entry.path.clone(),
+                    });
+                }
+            }
+        }
+
+        let content = view::content_viewport(self.size.0, self.content_h(), self.mode);
+        if x < content.left || x >= content.right || y < content.top || y >= content.bottom {
+            return None;
+        }
+        let depth = self.pane_under(x, y);
+        Some(DropTarget::Pane {
+            depth,
+            path: self.columns[depth].path.clone(),
+        })
+    }
+
+    /// Put `paths` into the current drop target, moving them or copying them.
+    ///
+    /// Runs on the UI thread, like [`Browser::paste`], and inherits the same
+    /// caveat: fine for a deliberate gesture on a known set of files, and due
+    /// to move to the worker pool with the rest of the file operations.
+    fn apply_drop(&mut self, paths: Vec<PathBuf>, move_them: bool) {
+        let Some(target) = self.drop_target.take() else {
+            return;
+        };
+        self.dirty = true;
+        let dest = target.path().clone();
+
+        // Files dragged back into the directory they already live in: a move
+        // there is a no-op, and doing it through `paste` would rename them
+        // out of the way of themselves. A *copy* onto the same directory is a
+        // real request — that is how a duplicate is made — so it is kept.
+        let paths: Vec<PathBuf> = paths
+            .into_iter()
+            .filter(|path| !move_them || path.parent() != Some(dest.as_path()))
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+
+        // Keep Both for the same reason the paste path does: with no conflict
+        // sheet to ask with, the only safe default is the one that cannot
+        // destroy anything. A directory dropped into itself is refused by
+        // `paste` itself, with a message.
+        let result = model::paste(
+            &model::Clipboard {
+                paths,
+                cut: move_them,
+            },
+            &dest,
+            model::OnConflict::KeepBoth,
+        );
+
+        let summary = result.summary();
+        self.status = (!summary.is_empty()).then_some(summary);
+        self.reload_all();
+    }
+
+    /// What to draw under the cursor: the first selected entry's name and icon
+    /// chain, and how many entries are travelling in total.
+    ///
+    /// One entry stands for the group. Stacking every icon is a nicer picture
+    /// and a much bigger one, and the count already says how much is coming.
+    fn drag_image(&self) -> (String, Vec<String>, usize) {
+        let entries = self.selected_entries();
+        let count = entries.len();
+        match entries.first() {
+            Some(entry) => (entry.name.clone(), entry.icon_chain(), count),
+            None => (String::new(), Vec::new(), 0),
+        }
+    }
+
+    /// Where inside the drag image the cursor should sit, given a grab at
+    /// `(x, y)`.
+    ///
+    /// The point of the gesture is that the thing stays where it was grabbed,
+    /// so this is the click's offset within the row it landed on — clamped to
+    /// the image, which is narrower than a row, so a grab far along a wide row
+    /// still ends up holding its right-hand edge rather than thin air.
+    fn grab_anchor(&self, x: f32, y: f32) -> (f32, f32) {
+        let Some((depth, index)) = self.entry_at(x, y) else {
+            return (0.0, 0.0);
+        };
+        let (width, height) = (self.size.0, self.content_h());
+        let count = self.visible_len(depth);
+        let scroll = self.columns[depth].scroll.offset();
+
+        let rect = match self.mode {
+            ViewMode::Grid => view::grid_cell_rect(
+                view::content_viewport(width, height, ViewMode::Grid),
+                index,
+                scroll,
+            ),
+            ViewMode::List => view::list_row_rect(width, count, index, scroll),
+            ViewMode::Columns => view::miller_row_rect(
+                depth,
+                height,
+                self.pan.offset(),
+                self.miller_w,
+                count,
+                index,
+                scroll,
+            ),
+        };
+
+        (
+            (x - rect.left).clamp(0.0, view::DRAG_IMAGE_W),
+            (y - rect.top).clamp(0.0, view::DRAG_IMAGE_H),
+        )
+    }
+
+    /// The paths a drag started now would carry: the whole selection, so
+    /// dragging one of several selected files takes all of them.
+    fn drag_paths(&self) -> Vec<PathBuf> {
+        self.selected_entries()
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect()
+    }
+
     /// Point the browser at what a right-click at `(x, y)` should act on,
     /// and build the menu for it.
     ///
@@ -2405,6 +2647,7 @@ impl Browser {
             }),
             footer: self.footer_h(),
             quickview_close_hovered: self.quickview_close_hovered,
+            drop_target: self.drop_target.as_ref().map(DropTarget::highlight),
         }
     }
 }
@@ -2620,6 +2863,7 @@ impl App for FilesApp {
             ));
         }
 
+        self.install_dnd(&window);
         self.install_quickview_pointer();
         self.install_info_window_pointer();
         self.install_pointer(&window, self.context_menu.clone().unwrap());
@@ -3520,6 +3764,88 @@ impl FilesApp {
         });
     }
 
+    /// Take drops: from another application, and from this window's own drags.
+    ///
+    /// The drag conversation is per-position — see [`otto_kit::dnd`] — so every
+    /// enter and every motion answers, even to say no. Answering nothing is how
+    /// a target refuses, and a refused drag never delivers.
+    fn install_dnd(&self, window: &Window) {
+        use otto_kit::dnd::{self, DragEvent};
+        use wayland_client::Proxy;
+
+        let state = Arc::clone(&self.state);
+        let window = window.clone();
+        // Enter names the surface; motion and drop do not. A drag over some
+        // other surface of ours — Quick View, the info sheet — is not a drop
+        // target, so what the enter decided has to be remembered.
+        let on_toplevel = std::cell::Cell::new(false);
+
+        dnd::register(move |event| {
+            let is_ours = |id: &wayland_client::backend::ObjectId| {
+                window.wl_surface().is_some_and(|s| s.id() == *id)
+            };
+
+            match event {
+                DragEvent::Enter { surface, x, y } => {
+                    on_toplevel.set(is_ours(surface));
+                    if !on_toplevel.get() {
+                        return;
+                    }
+                    hover_drag(&state, *x as f32, *y as f32);
+                }
+                DragEvent::Motion { x, y } => {
+                    if !on_toplevel.get() {
+                        return;
+                    }
+                    hover_drag(&state, *x as f32, *y as f32);
+                }
+                DragEvent::Leave => {
+                    if !on_toplevel.replace(false) {
+                        return;
+                    }
+                    let mut browser = state.lock().unwrap();
+                    browser.dirty |= browser.drop_target.take().is_some();
+                    drop(browser);
+                    AppContext::request_wakeup();
+                }
+                DragEvent::Drop { x, y } => {
+                    if !on_toplevel.replace(false) {
+                        return;
+                    }
+                    // The negotiated action, not the one we asked for: the
+                    // compositor picks, and a source that only offered a copy
+                    // must not have its files moved.
+                    let move_them = dnd::selected_action().contains(dnd::DndAction::Move);
+
+                    // Our own drag is served from our own payload; see
+                    // `dnd::own_files` for why it cannot go over the pipe.
+                    let paths = if dnd::dragging() {
+                        let paths = dnd::own_files();
+                        dnd::finish();
+                        paths
+                    } else {
+                        dnd::receive_files().map(|(paths, _)| paths)
+                    };
+
+                    let mut browser = state.lock().unwrap();
+                    // Resolved again at the drop's own position rather than
+                    // trusting the last motion: the release may land somewhere
+                    // no motion reported.
+                    browser.drop_target = browser.drop_target_at(*x as f32, *y as f32);
+                    match paths {
+                        Some(paths) => browser.apply_drop(paths, move_them),
+                        None => {
+                            browser.drop_target = None;
+                            browser.dirty = true;
+                        }
+                    }
+                    drop(browser);
+                    AppContext::request_wakeup();
+                }
+            }
+        });
+    }
+
     fn install_pointer(&self, window: &Window, context_menu: ContextMenu) {
         let state = Arc::clone(&self.state);
         let window_for_events = window.clone();
@@ -3806,6 +4132,46 @@ impl FilesApp {
                             continue;
                         }
 
+                        // Far enough from the press to be a drag rather than an
+                        // unsteady click. The whole selection goes, and the
+                        // compositor owns the pointer from here — nothing else
+                        // in this handler will see the rest of the gesture.
+                        if let Some((start_x, start_y, serial)) = browser.drag_armed {
+                            if (x - start_x).hypot(y - start_y) >= DRAG_THRESHOLD {
+                                browser.drag_armed = None;
+                                let paths = browser.drag_paths();
+                                // The picture the cursor carries: the first
+                                // file of the selection, and how many are
+                                // coming with it.
+                                let image = browser.drag_image();
+                                // Anchored where the row was grabbed, not by
+                                // its corner.
+                                let anchor = browser.grab_anchor(start_x, start_y);
+                                drop(browser);
+                                if let Some(surface) = window_for_events.wl_surface() {
+                                    let theme = AppContext::current_theme();
+                                    otto_kit::dnd::start_file_drag_with_icon(
+                                        &paths,
+                                        DndAction::Copy | DndAction::Move,
+                                        &surface,
+                                        serial,
+                                        (view::DRAG_IMAGE_W as i32, view::DRAG_IMAGE_H as i32),
+                                        anchor,
+                                        move |canvas, _w, _h| {
+                                            view::draw_drag_image(
+                                                canvas,
+                                                &theme,
+                                                &image.0,
+                                                &image.1,
+                                                image.2,
+                                            );
+                                        },
+                                    );
+                                }
+                                continue;
+                            }
+                        }
+
                         // Resize affordance at the window edges.
                         let edge = resize::edge_at(Rect::from_wh(width, browser.size.1), x, y);
                         let over_column_divider = (browser.mode == ViewMode::List
@@ -3858,6 +4224,8 @@ impl FilesApp {
                         browser.dirty |= browser.controls.on_motion(control);
                     }
                     PointerEventKind::Release { .. } => {
+                        // A press that came up without travelling was a click.
+                        browser.drag_armed = None;
                         browser.column_resize = None;
                         browser.miller_resize = None;
                         browser.pan.on_pointer_up();
@@ -4010,6 +4378,14 @@ impl FilesApp {
                             browser.dirty = true;
                             drop(browser);
                             continue;
+                        }
+
+                        // A press on a row might be the start of a drag. Armed
+                        // here and decided on motion: the selection below still
+                        // happens, so a press that never travels is an ordinary
+                        // click and a second one still opens the directory.
+                        if browser.dnd_enabled() && browser.entry_at(x, y).is_some() {
+                            browser.drag_armed = Some((x, y, serial));
                         }
 
                         if let Some(button) = browser.nav_button_at(x, y) {
@@ -4512,5 +4888,271 @@ mod typeahead_tests {
         let (mut browser, _dir) = browser_over(&[]);
         browser.typeahead('a');
         assert_eq!(at_cursor(&browser), None);
+    }
+}
+
+#[cfg(test)]
+mod dnd_tests {
+    use super::*;
+
+    /// A real directory holding files and subdirectories, swept up on drop.
+    ///
+    /// Drop targets turn on `is_dir`, which comes off the filesystem, so these
+    /// tests need something actually on disk the way the type-ahead ones do.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn holding(files: &[&str], dirs: &[&str]) -> Self {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+            let path = std::env::temp_dir().join(format!(
+                "otto-files-dnd-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).expect("temp dir");
+            for name in files {
+                std::fs::write(path.join(name), b"contents").expect("temp file");
+            }
+            for name in dirs {
+                std::fs::create_dir_all(path.join(name)).expect("temp subdir");
+            }
+            Self(path)
+        }
+
+        fn join(&self, name: &str) -> PathBuf {
+            self.0.join(name)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A list-view browser over a loaded directory. List view because its row
+    /// geometry is a single strip under the header, which a test can point at
+    /// without reproducing the Miller stack's pan.
+    fn browser_over(files: &[&str], dirs: &[&str]) -> (Browser, TempDir) {
+        let dir = TempDir::holding(files, dirs);
+        let mut browser = Browser::new(dir.0.clone());
+        browser.mode = ViewMode::List;
+        for _ in 0..500 {
+            if browser.columns[0].poll() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(!browser.columns[0].loading(), "listing never arrived");
+        (browser, dir)
+    }
+
+    /// The middle of row `index` in list view.
+    fn row_point(index: usize) -> (f32, f32) {
+        (
+            view::SIDEBAR_W + 100.0,
+            view::HEADER_H + view::COLUMNS_H + view::ROW_H * index as f32 + view::ROW_H / 2.0,
+        )
+    }
+
+    /// Where `name` sits in the sorted listing.
+    fn row_of(browser: &Browser, name: &str) -> usize {
+        browser
+            .visible(browser.active)
+            .iter()
+            .position(|entry| entry.name == name)
+            .expect("entry is in the listing")
+    }
+
+    #[test]
+    fn a_directory_row_takes_the_drop_itself() {
+        let (browser, dir) = browser_over(&["a.txt"], &["target"]);
+        let (x, y) = row_point(row_of(&browser, "target"));
+
+        let hit = browser.drop_target_at(x, y).expect("a target");
+        assert_eq!(hit.path(), &dir.join("target"));
+        assert!(matches!(hit, DropTarget::Entry { .. }));
+    }
+
+    #[test]
+    fn a_file_row_drops_into_the_directory_it_is_in() {
+        // Dropping "onto" a file means beside it, not inside it.
+        let (browser, dir) = browser_over(&["a.txt"], &["target"]);
+        let (x, y) = row_point(row_of(&browser, "a.txt"));
+
+        let hit = browser.drop_target_at(x, y).expect("a target");
+        assert_eq!(hit.path(), &dir.0);
+        assert!(matches!(hit, DropTarget::Pane { .. }));
+    }
+
+    #[test]
+    fn empty_space_below_the_rows_drops_into_the_pane() {
+        let (browser, dir) = browser_over(&["a.txt"], &[]);
+        // Past the one entry, but still inside the window: a point below the
+        // viewport is off the pane altogether, which is a different miss.
+        let (x, y) = row_point(10);
+
+        let hit = browser.drop_target_at(x, y).expect("a target");
+        assert_eq!(hit.path(), &dir.0);
+    }
+
+    #[test]
+    fn the_sidebar_takes_a_drop_only_on_a_place() {
+        let (browser, _dir) = browser_over(&["a.txt"], &[]);
+        assert!(!browser.places.is_empty(), "the sidebar has places");
+
+        let place = view::place_rect(0);
+        let hit = browser
+            .drop_target_at(place.center_x(), place.center_y())
+            .expect("a place takes a drop");
+        assert_eq!(hit.path(), &browser.places[0].path);
+
+        // The header band above the first place is chrome, and takes nothing.
+        assert_eq!(browser.drop_target_at(20.0, 4.0), None);
+    }
+
+    #[test]
+    fn the_picker_refuses_every_drop() {
+        let (mut browser, _dir) = browser_over(&["a.txt"], &["target"]);
+        let (x, y) = row_point(row_of(&browser, "target"));
+        assert!(
+            browser.drop_target_at(x, y).is_some(),
+            "the browser takes it"
+        );
+
+        let (responder, _receiver) = tokio::sync::oneshot::channel();
+        browser.picker = Some(picker::Session::new(
+            picker::Request {
+                mode: picker::Mode::Open,
+                handle: String::new(),
+                app_id: String::new(),
+                parent_window: String::new(),
+                title: String::new(),
+                accept_label: String::new(),
+                multiple: false,
+                directory: false,
+                modal: false,
+                current_name: String::new(),
+                current_folder: None,
+                current_file: None,
+                files: Vec::new(),
+                filters: Vec::new(),
+                current_filter: 0,
+                choices: Vec::new(),
+            },
+            responder,
+        ));
+
+        assert!(!browser.dnd_enabled());
+        assert_eq!(browser.drop_target_at(x, y), None);
+    }
+
+    #[test]
+    fn moving_a_file_into_the_directory_it_is_already_in_does_nothing() {
+        let (mut browser, dir) = browser_over(&["a.txt"], &[]);
+        browser.drop_target = Some(DropTarget::Pane {
+            depth: 0,
+            path: dir.0.clone(),
+        });
+
+        browser.apply_drop(vec![dir.join("a.txt")], true);
+
+        assert!(dir.join("a.txt").exists(), "the file is still there");
+        assert!(
+            !dir.join("a 2.txt").exists(),
+            "and was not renamed out of the way of itself"
+        );
+        assert_eq!(browser.status, None, "a no-op reports nothing");
+    }
+
+    #[test]
+    fn copying_a_file_into_the_directory_it_is_already_in_duplicates_it() {
+        // The same gesture with copy asked for is how a duplicate is made, so
+        // this one is not skipped.
+        let (mut browser, dir) = browser_over(&["a.txt"], &[]);
+        browser.drop_target = Some(DropTarget::Pane {
+            depth: 0,
+            path: dir.0.clone(),
+        });
+
+        browser.apply_drop(vec![dir.join("a.txt")], false);
+
+        assert!(dir.join("a.txt").exists(), "the original is untouched");
+        let copies: Vec<_> = std::fs::read_dir(&dir.0)
+            .expect("listing")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name != "a.txt")
+            .collect();
+        assert_eq!(copies.len(), 1, "exactly one copy, got {copies:?}");
+    }
+
+    #[test]
+    fn a_drop_moves_a_file_into_a_directory() {
+        let (mut browser, dir) = browser_over(&["a.txt"], &["target"]);
+        browser.drop_target = Some(DropTarget::Entry {
+            depth: 0,
+            index: row_of(&browser, "target"),
+            path: dir.join("target"),
+        });
+
+        browser.apply_drop(vec![dir.join("a.txt")], true);
+
+        assert!(dir.join("target/a.txt").exists(), "the file moved in");
+        assert!(!dir.join("a.txt").exists(), "and left where it was");
+    }
+
+    #[test]
+    fn a_drop_copy_leaves_the_original_alone() {
+        let (mut browser, dir) = browser_over(&["a.txt"], &["target"]);
+        browser.drop_target = Some(DropTarget::Entry {
+            depth: 0,
+            index: row_of(&browser, "target"),
+            path: dir.join("target"),
+        });
+
+        browser.apply_drop(vec![dir.join("a.txt")], false);
+
+        assert!(dir.join("target/a.txt").exists(), "the copy arrived");
+        assert!(dir.join("a.txt").exists(), "the original stayed");
+    }
+
+    #[test]
+    fn a_directory_cannot_be_dropped_into_itself() {
+        let (mut browser, dir) = browser_over(&[], &["outer"]);
+        std::fs::create_dir_all(dir.join("outer/inner")).expect("nested dir");
+        browser.drop_target = Some(DropTarget::Pane {
+            depth: 0,
+            path: dir.join("outer/inner"),
+        });
+
+        browser.apply_drop(vec![dir.join("outer")], true);
+
+        assert!(dir.join("outer").exists(), "nothing was moved");
+        assert!(
+            browser
+                .status
+                .as_deref()
+                .is_some_and(|status| status.contains("itself")),
+            "and it said so: {:?}",
+            browser.status
+        );
+    }
+
+    #[test]
+    fn the_drop_target_clears_once_it_has_been_applied() {
+        let (mut browser, dir) = browser_over(&["a.txt"], &["target"]);
+        browser.drop_target = Some(DropTarget::Entry {
+            depth: 0,
+            index: row_of(&browser, "target"),
+            path: dir.join("target"),
+        });
+
+        browser.apply_drop(vec![dir.join("a.txt")], true);
+
+        assert_eq!(browser.drop_target, None, "the outline goes with the drop");
+        assert!(browser.dirty, "and the window repaints");
     }
 }
