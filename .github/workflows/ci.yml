@@ -56,7 +56,11 @@ jobs:
       - name: Run font matching tests
         run: cargo test --lib -p otto -- workspaces::utils::tests --ignored
   
-  build-deb:
+  # Every packaged binary is compiled exactly once here. build-deb, build-rpm
+  # and build-arch consume this artifact; each used to run an identical
+  # `cargo build --release`, so the same binaries were built three times per
+  # run and the cost grew with every component added.
+  build-binaries:
     # Package builds only run on merge to main and tags, not on every PR.
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
@@ -68,44 +72,82 @@ jobs:
       - name: Cargo cache (registry + target)
         uses: Swatinem/rust-cache@v2
         with:
-          # Shared with build-rpm and build-arch — same release artifacts.
           shared-key: workspace-build
           cache-on-failure: true
       - name: System dependencies
-        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev hicolor-icon-theme
-      - name: Install cargo-deb
-        run: cargo install cargo-deb
+        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev hicolor-icon-theme fonts-dejavu-core
       - name: Build workspace binaries
         run: cargo build --release -p otto -p otto-bar -p otto-islands -p otto-lock -p otto-greeter -p otto-rdp -p xdg-desktop-portal-otto -p otto-settings -p otto-files -p otto-launcher -p otto-quickview
+      - name: Upload workspace binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: otto-binaries
+          path: |
+            target/release/otto
+            target/release/otto-bar
+            target/release/otto-islands
+            target/release/otto-lock
+            target/release/otto-greeter
+            target/release/otto-rdp
+            target/release/xdg-desktop-portal-otto
+            target/release/otto-settings
+            target/release/otto-files
+            target/release/otto-launcher
+            target/release/otto-quickview
+          retention-days: 1
+
+  build-deb:
+    if: github.event_name != 'pull_request'
+    needs: build-binaries
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.0
+      - name: System dependencies
+        # Nothing is compiled here, but dpkg-shlibdeps reads the binaries to
+        # resolve runtime dependencies, so the shared libraries must be present.
+        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev hicolor-icon-theme fonts-dejavu-core
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+      - name: Download workspace binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: otto-binaries
+          path: target/release
+      - name: Restore executable bits
+        # upload-artifact does not preserve the executable bit.
+        run: chmod +x target/release/*
       - name: Build Debian package
-        run: cargo deb --no-strip
+        run: cargo deb --no-build --no-strip
       - name: Upload Debian package
         uses: actions/upload-artifact@v4
         with:
           name: otto-deb
           path: target/debian/*.deb
           retention-days: 30
-  
+
   build-rpm:
-    # Package builds only run on merge to main and tags, not on every PR.
     if: github.event_name != 'pull_request'
+    needs: build-binaries
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.0
-      - name: Cargo cache (registry + target)
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: workspace-build
-          cache-on-failure: true
       - name: System dependencies
-        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev hicolor-icon-theme
+        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev hicolor-icon-theme fonts-dejavu-core
       - name: Install cargo-generate-rpm
         run: cargo install cargo-generate-rpm
-      - name: Build workspace binaries
-        run: cargo build --release -p otto -p otto-bar -p otto-islands -p otto-lock -p otto-greeter -p otto-rdp -p xdg-desktop-portal-otto -p otto-settings -p otto-files -p otto-launcher -p otto-quickview
+      - name: Download workspace binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: otto-binaries
+          path: target/release
+      - name: Restore executable bits
+        run: chmod +x target/release/*
       - name: Build RPM package
         run: cargo generate-rpm
       - name: Upload RPM package
@@ -114,25 +156,22 @@ jobs:
           name: otto-rpm
           path: target/generate-rpm/*.rpm
           retention-days: 30
-  
+
   build-arch:
-    # Package builds only run on merge to main and tags, not on every PR.
     if: github.event_name != 'pull_request'
+    needs: build-binaries
     runs-on: ubuntu-24.04
+    # No Rust toolchain or system libraries: this job only assembles a tarball.
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-      - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@1.97.0
-      - name: Cargo cache (registry + target)
-        uses: Swatinem/rust-cache@v2
+      - name: Download workspace binaries
+        uses: actions/download-artifact@v4
         with:
-          shared-key: workspace-build
-          cache-on-failure: true
-      - name: System dependencies
-        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev hicolor-icon-theme
-      - name: Build workspace binaries
-        run: cargo build --release -p otto -p otto-bar -p otto-islands -p otto-lock -p otto-greeter -p otto-rdp -p xdg-desktop-portal-otto -p otto-settings -p otto-files -p otto-launcher -p otto-quickview
+          name: otto-binaries
+          path: target/release
+      - name: Restore executable bits
+        run: chmod +x target/release/*
       - name: Build Arch tarball
         run: |
           PKGVER=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
