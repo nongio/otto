@@ -119,8 +119,16 @@ jobs:
         # Nothing is compiled here, but dpkg-shlibdeps reads the binaries to
         # resolve runtime dependencies, so the shared libraries must be present.
         run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev hicolor-icon-theme fonts-dejavu-core
+      - name: Cargo cache (packaging tools)
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Separate from workspace-build: this job downloads target/release
+          # rather than building it, so caching ./target would serve stale
+          # binaries. Only ~/.cargo is wanted, for the installed tool.
+          shared-key: packaging-tools
+          cache-targets: "false"
       - name: Install cargo-deb
-        run: cargo install cargo-deb
+        run: cargo install cargo-deb --locked
       - name: Download workspace binaries
         uses: actions/download-artifact@v4
         with:
@@ -149,8 +157,16 @@ jobs:
         uses: dtolnay/rust-toolchain@1.97.0
       - name: System dependencies
         run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev hicolor-icon-theme fonts-dejavu-core
+      - name: Cargo cache (packaging tools)
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Separate from workspace-build: this job downloads target/release
+          # rather than building it, so caching ./target would serve stale
+          # binaries. Only ~/.cargo is wanted, for the installed tool.
+          shared-key: packaging-tools
+          cache-targets: "false"
       - name: Install cargo-generate-rpm
-        run: cargo install cargo-generate-rpm
+        run: cargo install cargo-generate-rpm --locked
       - name: Download workspace binaries
         uses: actions/download-artifact@v4
         with:
