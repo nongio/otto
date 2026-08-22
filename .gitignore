@@ -17,6 +17,11 @@ docs/inbox/
 docs/investigations/
 
 # makepkg artifacts
+# Running makepkg in-tree extracts the source tarball into ./src, which
+# collides with the crate's own src/. Anchored and hyphen-specific so the
+# tracked src/otto_dock/ is not caught.
+/src/otto/
+/src/otto-*/
 pkg/
 *.pkg.tar.zst
 *.pkg.tar.xz
