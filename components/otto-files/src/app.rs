@@ -2484,16 +2484,18 @@ impl Browser {
 struct FilesApp {
     window: Option<Window>,
     state: Arc<Mutex<Browser>>,
-    /// Control held. Tracked from the key stream rather than inferred from the
-    /// text a chord produces: Ctrl+I is historically a TAB character and Ctrl+H
-    /// a backspace, so reading `utf8` to detect them is both obscure and
-    /// unreliable — it depends on the keymap producing the control character at
-    /// all, which it may not.
+    /// The modifier state, as the compositor reports it in
+    /// `wl_keyboard.modifiers` — not inferred from the text a chord produces
+    /// (Ctrl+I is historically a TAB character and Ctrl+H a backspace, so
+    /// reading `utf8` to detect them is both obscure and unreliable), and not
+    /// tracked from `Control_L`/`Control_R` presses either: those miss a
+    /// modifier that was already held when the window took focus, and any
+    /// chord the compositor swallowed before the key reached us.
     ///
-    /// Shared rather than a plain field because the pointer callback needs them
+    /// Shared rather than a plain field because the pointer callback needs it
     /// too — Ctrl+click and Shift+click are the pointer half of the same
     /// selection rules — and that callback outlives any borrow of `self`.
-    modifiers: Arc<Mutex<(bool, bool)>>,
+    modifiers: Arc<Mutex<Modifiers>>,
     /// The right-click menu, built once — see `ContextMenu::new`'s docs for
     /// why it cannot be built lazily from inside a pointer handler. `None`
     /// until `on_app_ready` constructs it, which is the earliest point
@@ -2868,6 +2870,12 @@ impl App for FilesApp {
         self.render();
     }
 
+    /// The authoritative modifier state, sent before the key event it
+    /// belongs to and again whenever the window takes focus.
+    fn on_modifiers(&mut self, _ctx: &AppContext, modifiers: Modifiers) {
+        *self.modifiers.lock().unwrap() = modifiers;
+    }
+
     fn on_key_event(
         &mut self,
         _ctx: &AppContext,
@@ -2877,20 +2885,26 @@ impl App for FilesApp {
     ) {
         use smithay_client_toolkit::seat::keyboard::Keysym;
 
-        // Track the modifiers on both edges, before the press-only guard.
-        let pressed = key_state == wl_keyboard::KeyState::Pressed;
-        if matches!(event.keysym, Keysym::Control_L | Keysym::Control_R) {
-            self.modifiers.lock().unwrap().0 = pressed;
+        // A modifier key on its own is not a shortcut and not type-ahead:
+        // the state it changed already arrived in `on_modifiers`.
+        if matches!(
+            event.keysym,
+            Keysym::Control_L
+                | Keysym::Control_R
+                | Keysym::Shift_L
+                | Keysym::Shift_R
+                | Keysym::Alt_L
+                | Keysym::Alt_R
+                | Keysym::Super_L
+                | Keysym::Super_R
+        ) {
             return;
         }
-        if matches!(event.keysym, Keysym::Shift_L | Keysym::Shift_R) {
-            self.modifiers.lock().unwrap().1 = pressed;
+        if key_state != wl_keyboard::KeyState::Pressed {
             return;
         }
-        if !pressed {
-            return;
-        }
-        let (ctrl, shift) = *self.modifiers.lock().unwrap();
+        let mods = *self.modifiers.lock().unwrap();
+        let (ctrl, shift) = (mods.ctrl, mods.shift);
 
         {
             let mut browser = self.state.lock().unwrap();
@@ -3136,10 +3150,14 @@ impl App for FilesApp {
                 // Anything else printable is type-ahead. It comes last so
                 // that every shortcut above keeps the key it already had.
                 _ => {
+                    // Only an unmodified key is a letter of a name. A chord
+                    // this app does not bind is still a chord — it belongs to
+                    // whoever does bind it, not to the buffer.
+                    let chord = ctrl || mods.alt || mods.logo;
                     if let Some(ch) = event
                         .utf8
                         .as_deref()
-                        .filter(|_| !ctrl)
+                        .filter(|_| !chord)
                         .and_then(|text| text.chars().next())
                         .filter(|ch| !ch.is_control() && *ch != ' ')
                     {
@@ -3616,7 +3634,8 @@ impl FilesApp {
         window.on_pointer_event(move |events| {
             for event in events {
                 let (x, y) = (event.position.0 as f32, event.position.1 as f32);
-                let (ctrl, shift) = *modifiers.lock().unwrap();
+                let mods = *modifiers.lock().unwrap();
+                let (ctrl, shift) = (mods.ctrl, mods.shift);
                 let mut browser = state.lock().unwrap();
                 // The file area's bottom, not the window's: every hit test
                 // below is against the listing, which stops short of the
@@ -4433,7 +4452,7 @@ fn run_app(
         window: None,
         info_window: Rc::new(RefCell::new(None)),
         state: Arc::clone(&state),
-        modifiers: Arc::new(Mutex::new((false, false))),
+        modifiers: Arc::new(Mutex::new(Modifiers::default())),
         context_menu: None,
         quickview_target: Arc::new(Mutex::new(None)),
         picker_queue,

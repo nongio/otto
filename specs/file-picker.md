@@ -364,9 +364,14 @@ viewport, and does not move at all when it is already there. Walking a long
 directory with the arrow keys therefore never leaves the selection off screen.
 
 **Type-ahead** is distinct from search and must not be conflated with it.
-Typing a printable character while the file view has focus appends to a
-type-ahead buffer and moves the cursor to the first entry whose name starts with
-that buffer, case-insensitively, without changing what is displayed. The buffer
+Typing an unmodified printable character while the file view has focus appends
+to a type-ahead buffer and moves the cursor to the first entry whose name starts
+with that buffer, case-insensitively, without changing what is displayed. A key
+held with Ctrl, Alt or Super is a chord, never a letter of a name: it reaches
+the shortcut that binds it — Ctrl+I opens the info panel — and leaves the buffer
+alone, whether or not this app binds that chord. Modifier state is read from
+what the compositor reports, so a modifier held before the window took focus
+counts. The buffer
 resets after one second of no typing, or on any navigation key. Repeatedly
 pressing the same single character with no other input cycles through the
 entries beginning with it. Search, reached with Ctrl+F, filters the view instead

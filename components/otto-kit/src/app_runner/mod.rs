@@ -7,6 +7,7 @@ pub mod context;
 mod handlers;
 
 pub use context::AppContext;
+pub use smithay_client_toolkit::seat::keyboard::Modifiers;
 
 use crate::protocols::{
     otto_dock_item_v1, otto_dock_manager_v1, otto_style_transaction_v1,
@@ -18,7 +19,7 @@ use smithay_client_toolkit::{
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{
-        keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers},
+        keyboard::{KeyEvent, KeyboardHandler, Keysym},
         pointer::{PointerEvent, PointerHandler},
         Capability, SeatHandler, SeatState,
     },
@@ -134,6 +135,16 @@ pub trait App {
         _state: wl_keyboard::KeyState,
         _serial: u32,
     ) {
+        // Default: do nothing
+    }
+
+    /// The modifier state changed. Sent by the compositor before the key
+    /// event that the change belongs to, and again on focus, so an app that
+    /// needs to know whether Ctrl is down should read it from here rather
+    /// than tracking `Control_L`/`Control_R` presses — those miss a modifier
+    /// held before the surface took focus, and any chord the compositor
+    /// swallowed.
+    fn on_modifiers(&mut self, _ctx: &AppContext, _modifiers: Modifiers) {
         // Default: do nothing
     }
 
@@ -313,6 +324,10 @@ impl App for DefaultApp {
         serial: u32,
     ) {
         self.inner.on_key_event(ctx, event, state, serial)
+    }
+
+    fn on_modifiers(&mut self, ctx: &AppContext, modifiers: Modifiers) {
+        self.inner.on_modifiers(ctx, modifiers)
     }
 
     fn on_keyboard_leave(&mut self, ctx: &AppContext, surface: &wl_surface::WlSurface) {
@@ -956,9 +971,11 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
         _qh: &QueueHandle<Self>,
         _keyboard: &wl_keyboard::WlKeyboard,
         _serial: u32,
-        _modifiers: Modifiers,
+        modifiers: Modifiers,
         _layout: u32,
     ) {
+        let ctx = AppContext::new(&self.context_data);
+        self.app.on_modifiers(&ctx, modifiers);
     }
 }
 
