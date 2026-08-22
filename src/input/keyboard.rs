@@ -37,18 +37,30 @@ pub fn is_cmd_keycode(keycode: u32) -> bool {
     keycode == KEY_LEFTMETA || keycode == KEY_RIGHTMETA
 }
 
-/// Whether the layout folds the Cmd keys into the Control modifier.
+/// The xkb option that folds the Cmd keys into the Control modifier.
 ///
-/// `altwin:ctrl_win` maps `<LWIN>`/`<RWIN>` to `Control_L`/`Control_R` so that
-/// Cmd+C reaches clients as Ctrl+C, the way every toolkit expects. The cost is
-/// that Cmd and the real Ctrl key become the same event, which is what
+/// It maps `<LWIN>`/`<RWIN>` to `Control_L`/`Control_R` so that Cmd+C reaches
+/// clients as Ctrl+C, the way every toolkit expects. The cost is that Cmd and
+/// the real Ctrl key become the same event, which is what
 /// [`shortcut_modifiers`] undoes for shortcut matching.
+///
+/// Otto never sets this — the layout is the config's to choose. This is only
+/// the name to recognise when deciding whether that undoing applies.
+const CMD_IS_CTRL_OPTION: &str = "altwin:ctrl_win";
+
+/// Whether shortcuts should follow the Cmd key alone.
+///
+/// `input.mac_style_modifiers` decides, and when it is unset the layout does:
+/// the behaviour is only meaningful under [`CMD_IS_CTRL_OPTION`], so a config
+/// that asks for that option gets it without having to say so twice.
 fn cmd_is_ctrl(config: &Config) -> bool {
-    config
-        .input
-        .xkb_options
-        .iter()
-        .any(|option| option == "altwin:ctrl_win")
+    config.input.mac_style_modifiers.unwrap_or_else(|| {
+        config
+            .input
+            .xkb_options
+            .iter()
+            .any(|option| option == CMD_IS_CTRL_OPTION)
+    })
 }
 
 /// The modifiers a shortcut is matched against.

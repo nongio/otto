@@ -70,6 +70,14 @@ Bindings are still written as `Ctrl+...` in the config; they simply follow the
 Cmd key. Nothing changes for layouts without this option, where Ctrl behaves
 normally.
 
+This follows the `altwin:ctrl_win` option, since that is the only layout it
+makes sense for. To force it either way, set it explicitly:
+
+```toml
+[input]
+mac_style_modifiers = true
+```
+
 Note that the built-in `Ctrl+Alt+Backspace` follows the same rule and becomes
 `Cmd+Alt+Backspace`. VT switching (`Ctrl+Alt+F1`) is read from raw keycodes and
 keeps working from either key.
