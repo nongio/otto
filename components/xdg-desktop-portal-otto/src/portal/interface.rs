@@ -171,6 +171,11 @@ impl ScreenCastPortal {
             return Ok(None);
         };
 
+        // One source is not a choice — a single-monitor session sharing its
+        // only screen gets the plain grant/deny prompt, not a radio list with
+        // nothing to pick. The answer is then implied by the grant.
+        let single_source = options.len() == 1;
+
         let title = "Share your screen";
         let subtitle = format!("{} wants to share your screen", display_app_name(app_id));
         let body = "The selected source will be visible to the application.";
@@ -188,12 +193,16 @@ impl ScreenCastPortal {
                     "Share",
                     "Cancel",
                     true,
-                    vec![(
-                        "source".to_string(),
-                        "Choose what to share".to_string(),
-                        options.clone(),
-                        default_id.clone(),
-                    )],
+                    if single_source {
+                        Vec::new()
+                    } else {
+                        vec![(
+                            "source".to_string(),
+                            "Choose what to share".to_string(),
+                            options.clone(),
+                            default_id.clone(),
+                        )]
+                    },
                 )
                 .await
         }
@@ -224,12 +233,16 @@ impl ScreenCastPortal {
                         "Share",
                         "Cancel",
                         true,
-                        vec![(
-                            "source".to_string(),
-                            "Choose what to share".to_string(),
-                            plain,
-                            default_id,
-                        )],
+                        if single_source {
+                            Vec::new()
+                        } else {
+                            vec![(
+                                "source".to_string(),
+                                "Choose what to share".to_string(),
+                                plain,
+                                default_id.clone(),
+                            )]
+                        },
                     )
                     .await?
             }
@@ -239,9 +252,15 @@ impl ScreenCastPortal {
             return Ok(None);
         }
 
-        let Some((_, choice)) = results.into_iter().find(|(group, _)| group == "source") else {
-            warn!("Picker returned no selection for the source group");
-            return Ok(None);
+        let choice = match results.into_iter().find(|(group, _)| group == "source") {
+            Some((_, choice)) => choice,
+            // No group was sent when there was only one source, so the grant
+            // is the answer.
+            None if single_source => default_id,
+            None => {
+                warn!("Picker returned no selection for the source group");
+                return Ok(None);
+            }
         };
 
         Ok(match choice.split_once(':') {

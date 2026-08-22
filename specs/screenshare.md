@@ -138,6 +138,10 @@ documented in `docs/developer/screenshare.md`.
 - The list is presented through the `org.otto.Dialog1` renderer (otto-islands), the same
   Access-style permission/choice dialog used by the portal's Access implementation. Option
   ids are namespaced `monitor:<connector>` and `window:<identifier>`.
+- When exactly **one** source is on offer (the common single-monitor, monitors-only case)
+  no choice group is sent at all: the dialog is the plain grant/deny permission prompt, and
+  a grant implies that one source. A radio list the user cannot change is noise, and it made
+  every cast — AirPlay included — look like it needed a screen picked.
 - The user's answer resolves as:
   - **Chose a source** → stored on the session; response `0`.
   - **Dismissed the dialog** → response `1` (cancelled). Nothing is captured.
