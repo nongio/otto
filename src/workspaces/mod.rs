@@ -48,7 +48,9 @@ mod workspace_selector;
 
 pub use background::BackgroundView;
 pub use window_selector::{WindowSelectorView, WindowSelectorWindow};
-pub use window_view::{WindowView, WindowViewBaseModel, WindowViewSurface};
+pub use window_view::{
+    WindowDecorationModel, WindowDecorationView, WindowView, WindowViewBaseModel, WindowViewSurface,
+};
 
 pub use app_icons_manager::AppIconsManager;
 pub use app_switcher::AppSwitcherView;
@@ -87,6 +89,14 @@ pub struct OutputWorkspaces {
     /// Single layer containing all workspace window containers, child of workspaces_layer.
     /// Rendered as a single KMS windows plane; scrolls in sync automatically.
     pub windows_plane: Layer,
+    /// Container for the one window promoted to its own KMS plane ("subtree
+    /// plane"). A promoted window's `window_layer` is reparented here, out of
+    /// its workspace's `windows_layer`, so the windows plane stops drawing it
+    /// and this container can be rendered into a buffer of its own. Sits
+    /// directly above `windows_plane` and mirrors the current workspace's
+    /// `windows_layer` geometry, so reparenting does not move the window.
+    /// Empty (and skipped) whenever nothing is promoted.
+    pub promoted_plane: Layer,
     /// Overlay UI plane: workspace selector, layer_shell_top,
     /// layer_shell_overlay, OSD, DnD and popups — chrome above windows that
     /// changes rarely. Dock and app switcher have their own planes.
@@ -198,6 +208,13 @@ pub struct Workspaces {
     pub show_desktop_gesture: Arc<AtomicI32>,
     /// Tracks whether the workspace is currently animating (e.g., scrolling between workspaces)
     pub is_animating: Arc<AtomicBool>,
+    /// Set while an expose open/close animation is in flight, and cleared when
+    /// that animation finishes. Unlike `is_animating` (shared with workspace
+    /// scrolling) and the gesture accumulator (which lands on its final value
+    /// the moment the animation is *scheduled*), this stays true for the whole
+    /// duration of the animation — which is what `is_expose_transitioning`
+    /// needs, or scanout promotion resumes while the previews are still flying.
+    expose_animating: Arc<AtomicBool>,
     /// Windows currently flagged for direct scanout (their `content_layer` is
     /// hidden; the client buffer is pushed as a `ScanoutCandidate` element).
     /// The render call-site diffs against this to re-import departing windows
@@ -206,6 +223,14 @@ pub struct Workspaces {
     /// Per-output desired scanout sets — the global `scanout_windows` set is
     /// the union of these (see `set_scanout_windows_for_output`).
     scanout_windows_per_output: Arc<RwLock<HashMap<String, HashSet<ObjectId>>>>,
+    /// Per-output window promoted to its own KMS plane — the middle tier
+    /// between raw client-buffer scanout and compositing into the shared
+    /// windows plane. Its whole lay-rs subtree (client texture *plus* the
+    /// compositor-drawn style: rounded clip, border, background, blur,
+    /// SSD decorations, shadow) is rendered into a plane-sized buffer, so
+    /// unlike raw scanout it is not limited to windows whose client buffer
+    /// already describes the finished window. See `set_promoted_window`.
+    promoted_windows: Arc<RwLock<HashMap<String, ObjectId>>>,
     /// Set when a promoted (scanned-out) window commits: the commit skips the
     /// scene import, so this flag is the only signal that a frame must render
     /// to submit the client's new buffer to its plane. Consumed (swapped to
@@ -213,6 +238,10 @@ pub struct Workspaces {
     pub scanout_commit_pending: Arc<std::sync::atomic::AtomicBool>,
     /// True while a 3-finger expose gesture is physically in progress (fingers on trackpad).
     pub expose_gesture_active: Arc<AtomicBool>,
+    /// True while a workspace label is being renamed in the selector. Shared
+    /// with every output's selector; the keyboard path checks it so typing a
+    /// name never triggers a compositor shortcut.
+    pub label_editing: Arc<AtomicBool>,
 
     // layers
     pub layers_engine: Arc<Engine>,
@@ -225,6 +254,9 @@ pub struct Workspaces {
     observers: Vec<Weak<dyn Observer<WorkspacesModel>>>,
     expose_dragged_window: Arc<std::sync::Mutex<Option<ObjectId>>>,
     remove_workspace_sender: CalloopSender<(Option<String>, usize)>,
+    /// Carries `(output_name, workspace_index, name)` from a selector whose
+    /// rename ended without a `&mut Otto` at hand (losing keyboard focus).
+    rename_workspace_sender: CalloopSender<(String, usize, String)>,
 }
 
 /// # Workspaces Layer Structure
@@ -275,7 +307,99 @@ pub struct Workspaces {
 /// │   │   ├── workspace_selector_workspace_add
 /// ```
 ///
+/// Removal requests from a selector: `(Some(output), position)` for a
+/// per-output removal, `(None, position)` for a lockstep one.
+pub type RemoveWorkspaceChannel =
+    smithay::reexports::calloop::channel::Channel<(Option<String>, usize)>;
+
+/// Rename requests from a selector: `(output, workspace index, name)`.
+pub type RenameWorkspaceChannel =
+    smithay::reexports::calloop::channel::Channel<(String, usize, String)>;
+
+/// The user-chosen name saved for workspace `position` on `output`, if any.
+///
+/// Names are keyed by position rather than by workspace identity: indices are
+/// handed out by a counter that never repeats across restarts, so position is
+/// the only thing that survives. Adding or removing a workspace shifts the
+/// positions after it, and the names shift with them — the same trade-off every
+/// position-keyed workspace name has.
+fn persisted_workspace_name(output: &str, position: usize) -> Option<String> {
+    Config::with(|c| {
+        c.workspaces
+            .names
+            .get(&crate::config::workspace_name_key(output, position))
+            .cloned()
+    })
+}
+
+/// The outcome of one promotion pass over an output's windows.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct PlaneCandidates {
+    /// Tier 1 — windows whose raw client buffer can go straight to a KMS
+    /// plane. Zero GPU work per client frame, but only for windows whose
+    /// buffer already describes the finished window.
+    pub raw: Vec<ObjectId>,
+    /// Tier 2 — the window whose lay-rs subtree is rendered into a plane
+    /// buffer of its own. Costs one GPU pass per client frame; buys damage
+    /// isolation from the shared windows plane, and works for windows tier 1
+    /// cannot take (compositor-drawn style, decorations, SHM clients).
+    pub subtree: Option<ObjectId>,
+}
+
+impl PlaneCandidates {
+    /// Nothing promoted on this output this frame.
+    pub fn none() -> Self {
+        Self::default()
+    }
+}
+
 impl Workspaces {
+    /// Re-draw everything that paints with `theme::accent_color()`.
+    ///
+    /// These views read the accent inside their render function rather than
+    /// carrying it in their state, so `update_state` would hash to the same
+    /// value and skip the render — the layer trees are rebuilt directly.
+    /// Re-read the desktop background from the live configuration and push it
+    /// to every workspace.
+    ///
+    /// Every workspace has its own `BackgroundView`, so a wallpaper that
+    /// changed on one and not the others would show up the moment the user
+    /// swiped sideways. Returns whether the image loaded — an unreadable path
+    /// is reported rather than leaving the old wallpaper up and claiming
+    /// success.
+    pub fn reload_background(&self) -> Result<(), String> {
+        let path = Config::with(|c| c.background_image.clone());
+        let color = crate::utils::parse_hex_color(&Config::with(|c| c.background_color.clone()));
+
+        let mut failed = false;
+        for workspace in self.with_model(|m| m.workspaces.clone()) {
+            workspace.background_view.set_fallback_color(color);
+            if !workspace.background_view.set_image_path(&path) {
+                failed = true;
+            }
+        }
+
+        if failed {
+            return Err(format!("cannot read a background image at `{path}`"));
+        }
+        Ok(())
+    }
+
+    pub fn rerender_accent_colored_views(&self) {
+        for output in self.output_workspaces.values() {
+            let selector = &output.workspace_selector;
+            selector.view.render(&selector.layer);
+        }
+        for workspace in self.with_model(|m| m.workspaces.clone()) {
+            let selector = &workspace.window_selector_view;
+            selector.view.render(&selector.window_selector_view);
+        }
+        // The titlebar controls are tinted from the accent, by otto-kit.
+        for view in self.window_views.read().unwrap().values() {
+            view.rerender_decoration();
+        }
+    }
+
     pub fn start_window_selector_drag(&self, window_id: &ObjectId) {
         *self.expose_dragged_window.lock().unwrap() = Some(window_id.clone());
         // Hide the selection overlay while dragging; it is restored in end_window_selector_drag
@@ -310,10 +434,7 @@ impl Workspaces {
     pub fn new(
         layers_engine: Arc<Engine>,
         display_handle: DisplayHandle,
-    ) -> (
-        Self,
-        smithay::reexports::calloop::channel::Channel<(Option<String>, usize)>,
-    ) {
+    ) -> (Self, RemoveWorkspaceChannel, RenameWorkspaceChannel) {
         let model = WorkspacesModel::default();
 
         let expose_layer = layers_engine.new_layer();
@@ -389,6 +510,7 @@ impl Workspaces {
         // attached to output_layer in map_output_with_primary
 
         let (remove_workspace_sender, remove_receiver) = channel::<(Option<String>, usize)>();
+        let (rename_workspace_sender, rename_receiver) = channel::<(String, usize, String)>();
 
         // Create OSD view; attach it to overlay_layer in map_output_with_primary
         let osd = OsdView::new(layers_engine.clone());
@@ -421,21 +543,25 @@ impl Workspaces {
             show_all_gesture: Arc::new(AtomicI32::new(0)),
             show_desktop_gesture: Arc::new(AtomicI32::new(0)),
             is_animating: Arc::new(AtomicBool::new(false)),
+            expose_animating: Arc::new(AtomicBool::new(false)),
             scanout_windows: Arc::new(RwLock::new(HashSet::new())),
             scanout_windows_per_output: Arc::new(RwLock::new(HashMap::new())),
+            promoted_windows: Arc::new(RwLock::new(HashMap::new())),
             scanout_commit_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             expose_gesture_active: Arc::new(AtomicBool::new(false)),
+            label_editing: Arc::new(AtomicBool::new(false)),
             window_views: Arc::new(RwLock::new(HashMap::new())),
             observers: Vec::new(),
             layers_engine,
             expose_dragged_window: Arc::new(std::sync::Mutex::new(None)),
             remove_workspace_sender,
+            rename_workspace_sender,
             display_handle,
         };
 
         workspaces.add_listener(dock.clone());
         workspaces.add_listener(app_switcher.clone());
-        (workspaces, remove_receiver)
+        (workspaces, remove_receiver, rename_receiver)
     }
 
     fn primary_output_name(&self) -> Option<String> {
@@ -523,6 +649,48 @@ impl Workspaces {
             .unwrap_or_else(|| self.with_model(|m| m.width));
         let scale = output.current_scale().fractional_scale() as f32;
         self.app_switcher.set_host_metrics(width_px, scale);
+    }
+
+    /// Is a workspace label being renamed right now?
+    pub fn is_label_editing(&self) -> bool {
+        self.label_editing
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Rename the workspace with global index `workspace_index` on `output`.
+    /// An empty name clears the custom name, falling back to `Workspace N`.
+    ///
+    /// The new name is persisted keyed by position, so it comes back on the
+    /// next start (see [`persisted_workspace_name`]).
+    pub fn rename_workspace(&self, output: &str, workspace_index: usize, name: Option<String>) {
+        let Some(ows) = self.output_workspaces.get(output) else {
+            return;
+        };
+        let Some(workspace) = ows
+            .workspace_views
+            .iter()
+            .find(|w| w.index == workspace_index)
+        else {
+            return;
+        };
+        workspace.set_custom_name(name);
+        self.save_workspace_names();
+        self.refresh_output_selectors();
+    }
+
+    /// Write every output's custom workspace names to the config, keyed by
+    /// position. Called after a rename; positions that hold no custom name are
+    /// simply absent.
+    fn save_workspace_names(&self) {
+        let mut names = std::collections::BTreeMap::new();
+        for (output, ows) in self.output_workspaces.iter() {
+            for (position, workspace) in ows.workspace_views.iter().enumerate() {
+                if let Some(name) = workspace.get_custom_name() {
+                    names.insert(crate::config::workspace_name_key(output, position), name);
+                }
+            }
+        }
+        crate::config::save_workspace_names(&names);
     }
 
     /// The workspace selector belonging to a given output.
@@ -647,7 +815,35 @@ impl Workspaces {
 
         self.update_workspaces_layout();
         self.scroll_to_workspace_index(current_workspace, Some(Transition::ease_out_quad(0.0)));
-        self.dock.set_screen_size(width, height);
+        self.refresh_dock_metrics_with(width, height);
+    }
+
+    /// Tell the dock how much room it has: the screen, and the part of it left
+    /// over once the layer-shell exclusive zones (the top bar) are taken out.
+    /// Call it whenever those zones change — the dock's icon-size cap and its
+    /// resize limit are derived from them.
+    ///
+    /// The caller must not be holding a layer map guard: this takes one.
+    pub fn refresh_dock_metrics(&self) {
+        let (width, height) = self.with_model(|model| (model.width, model.height));
+        self.refresh_dock_metrics_with(width, height);
+    }
+
+    fn refresh_dock_metrics_with(&self, width: i32, height: i32) {
+        // The dock lives on the primary output; fall back to the whole screen
+        // while there isn't one yet (early startup).
+        let usable = self
+            .primary_output()
+            .map(|output| {
+                let scale = output.current_scale().fractional_scale() as f32;
+                let zone = layer_map_for_output(output).non_exclusive_zone();
+                (
+                    (zone.size.w as f32 * scale).round() as i32,
+                    (zone.size.h as f32 * scale).round() as i32,
+                )
+            })
+            .unwrap_or((width, height));
+        self.dock.set_screen_size(width, height, usable);
     }
 
     pub fn get_logical_rect(&self) -> smithay::utils::Rectangle<i32, smithay::utils::Logical> {
@@ -891,8 +1087,20 @@ impl Workspaces {
         // the windows plane is pushed instead: mid-gesture the screen flicks back
         // to the normal layout, then snaps to expose when the gesture ends. A slow
         // gesture hides the bug by spending most frames strictly inside (0,1000).
+        //
+        // The `expose_animating` clause covers the close (and open) animation
+        // driven from a click or the keyboard: `expose_set_visible` commits the
+        // accumulator to its final 0/1000 the moment it schedules the spring, so
+        // clauses (2) and (3) both read false for every frame of that animation
+        // and the windows would be promoted to scanout planes at their final
+        // positions while the previews are still flying back to them — the exit
+        // looks instantaneous. The finger gesture never hit this because
+        // `expose_gesture_active` (1) stays set until the same animation ends.
         self.expose_gesture_active
             .load(std::sync::atomic::Ordering::Relaxed)
+            || self
+                .expose_animating
+                .load(std::sync::atomic::Ordering::Relaxed)
             || (gesture_value > 0 && gesture_value < 1000)
             || (is_animating && gesture_value != 0 && gesture_value != 1000)
     }
@@ -1778,6 +1986,13 @@ impl Workspaces {
             if let (true, Some(transaction)) = (transition.is_some(), selector_transaction) {
                 window_selector_view_ref.set_position((0.0, 0.0), None);
                 let is_animating_ref = self.is_animating.clone();
+                // Set here rather than next to `is_animating` above so the flag
+                // can only ever be raised together with the `on_finish` that
+                // lowers it again — a raised flag with no clearer would block
+                // scanout promotion for the rest of the session.
+                self.expose_animating
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                let expose_animating_ref = self.expose_animating.clone();
                 transaction.on_finish(
                     move |_: &Layer, _: f32| {
                         // The expose open/close animation is over. Clear the
@@ -1788,6 +2003,7 @@ impl Workspaces {
                         // reversed gesture schedules a new animation which
                         // sets the flag again, so clearing here is safe.
                         is_animating_ref.store(false, std::sync::atomic::Ordering::Relaxed);
+                        expose_animating_ref.store(false, std::sync::atomic::Ordering::Relaxed);
                         let is_dragging =
                             expose_dragged_window_ref.lock().unwrap().is_some();
                         // Re-read the current state at finish time — the gesture may have
@@ -1887,10 +2103,11 @@ impl Workspaces {
             // gesture (same interpolation as the non-autohide path). The hot zone is suppressed
             // during expose (see check_dock_hot_zone).
             if self.dock.is_autohide_enabled() && !self.dock.is_hidden() {
-                let dock_y = 0.0_f32.interpolate(&250.0, delta);
-                self.dock
-                    .view_layer
-                    .set_position((0.0, dock_y.clamp(0.0, 250.0)), transition);
+                let dock_slide = 0.0_f32.interpolate(&250.0, delta);
+                self.dock.view_layer.set_position(
+                    self.dock.slide_position(dock_slide.clamp(0.0, 250.0)),
+                    transition,
+                );
                 if end_gesture && show_all {
                     self.dock.schedule_autohide();
                 }
@@ -1903,9 +2120,11 @@ impl Workspaces {
                     start_position = 250.0;
                     end_position = 250.0;
                 }
-                let dock_y = start_position.interpolate(&end_position, delta);
-                let dock_y = dock_y.clamp(0.0, 250.0);
-                self.dock.view_layer.set_position((0.0, dock_y), transition);
+                let dock_slide = start_position.interpolate(&end_position, delta);
+                let dock_slide = dock_slide.clamp(0.0, 250.0);
+                self.dock
+                    .view_layer
+                    .set_position(self.dock.slide_position(dock_slide), transition);
             }
 
             if let Some(anim_ref) = animation {
@@ -2134,6 +2353,30 @@ impl Workspaces {
         }
     }
 
+    /// Repaint the workspace-selector thumbnail of the workspace containing
+    /// `wid`, after one of its windows committed new content.
+    ///
+    /// The thumbnail is an image-cached `replicate_node` mirror of the
+    /// workspace's `windows_layer` container, and its cached surface only
+    /// re-renders when the FOLLOWED node's frame advances — a commit repaints
+    /// a surface layer deep inside the container, which never bumps the
+    /// container itself. Reporting the damage on the container is what lets
+    /// the thumb track live content; without it, the preview of every
+    /// non-current workspace freezes on whatever it showed when exposé opened.
+    pub fn damage_workspace_thumbnail(&self, wid: &ObjectId) {
+        let ws = self.with_model(|model| {
+            model
+                .workspaces
+                .iter()
+                .find(|ws| ws.windows_list.read().unwrap().contains(wid))
+                .map(|ws| ws.windows_layer.clone())
+        });
+        if let Some(windows_layer) = ws {
+            let size = windows_layer.render_size();
+            windows_layer.add_damage(layers::skia::Rect::from_wh(size.x, size.y));
+        }
+    }
+
     pub fn expose_update_if_needed(&self) {
         let current_workspace_index = self.get_current_workspace_index();
         self.expose_update_if_needed_workspace(current_workspace_index);
@@ -2174,15 +2417,20 @@ impl Workspaces {
 
     /// Make the per-workspace selection overlay (hover highlight + label)
     /// visible again after a re-layout that ran while expose was already open.
-    fn show_selection_overlays(&self) {
+    pub fn show_selection_overlays(&self) {
         if self.expose_dragged_window.lock().unwrap().is_some() {
             return;
         }
         for workspace_view in self.with_model(|m| m.workspaces.clone()).iter() {
-            workspace_view
-                .window_selector_view
-                .window_selector_view
-                .set_opacity(1.0_f32, None);
+            let selector = &workspace_view.window_selector_view;
+            // Re-record the overlay's content before revealing it. Its layer
+            // keeps the last picture it was *rasterized* with, and it was
+            // hidden for the whole drag: the highlight the pointer left on the
+            // preview that has since been dragged away is still in that
+            // picture, and un-hiding paints it back even though the state has
+            // long since dropped the selection.
+            selector.view.render(&selector.window_selector_view);
+            selector.window_selector_view.set_opacity(1.0_f32, None);
         }
     }
 
@@ -2286,6 +2534,13 @@ impl Workspaces {
                     let base_bounds = view.window_layer.render_bounds_with_children();
                     let base_size = (base_bounds.width(), base_bounds.height());
                     let inner_bounds = inner.render_bounds_transformed();
+                    // The window is sucked towards the dock, so the genie runs
+                    // sideways when the dock is on a screen side.
+                    let dock_position = dock_ref.position();
+                    view.genie_effect.set_direction(
+                        dock_position.is_vertical(),
+                        dock_position == crate::config::DockPosition::Left,
+                    );
                     let minimize_tr = view.minimize(skia::Rect::from_xywh(
                         inner_bounds.x(),
                         inner_bounds.y(),
@@ -2352,9 +2607,10 @@ impl Workspaces {
                         }
                         view.set_is_minimizing(false);
                         let bounds = inner.render_bounds_transformed();
+                        // apply_minimized_scale_with_base also positions the
+                        // window centred in the drawer — don't reset it to the
+                        // drawer's top-left corner here.
                         let scale_tr = view.apply_minimized_scale_with_base(base_size, bounds);
-                        view.window_layer
-                            .set_position(layers::types::Point { x: 0.0, y: 0.0 }, None);
                         // scale/position are SCHEDULED engine changes while
                         // set_hidden is IMMEDIATE: unhiding before they are
                         // applied lets a render draw the window in the
@@ -2514,18 +2770,15 @@ impl Workspaces {
         let mut adjusted = Rectangle::new(geo.loc + zone.loc, zone.size);
 
         // Account for the dock geometry (internal compositor UI, not layer-shell)
-        let dock_geom = self.get_dock_geometry();
-        if dock_geom.size.h > 0 {
-            let dock_top = dock_geom.loc.y;
-            let available_bottom = adjusted.loc.y + adjusted.size.h;
-
-            // If dock is in the usable area, reduce height to stop above dock
-            if dock_top < available_bottom {
-                adjusted.size.h = dock_top - adjusted.loc.y;
-            }
-        }
+        self.subtract_dock(&mut adjusted);
 
         Some(adjusted)
+    }
+
+    /// Shrink `zone` so it stops at the dock, whichever screen edge the dock is
+    /// docked to. A no-op when the dock has no geometry yet.
+    pub fn subtract_dock(&self, zone: &mut Rectangle<i32, smithay::utils::Logical>) {
+        subtract_dock_rect(self.dock.position(), self.get_dock_geometry(), zone);
     }
 
     /// Determine the initial placement of a new window within the workspace.
@@ -2840,18 +3093,23 @@ impl Workspaces {
         if self.dock.alive() {
             let bounds = self.dock.bar_layer.render_bounds_transformed();
             let scale = Config::with(|c| c.screen_scale) as f32;
-            Rectangle::new(
-                (
-                    ((bounds.x() / scale) as i32),
-                    ((bounds.y() / scale) as i32) - 2,
-                )
-                    .into(),
-                (
-                    (bounds.width() / scale).ceil() as i32,
-                    (bounds.height() / scale).ceil() as i32,
-                )
-                    .into(),
-            )
+            let x = (bounds.x() / scale) as i32;
+            let y = (bounds.y() / scale) as i32;
+            let w = (bounds.width() / scale).ceil() as i32;
+            let h = (bounds.height() / scale).ceil() as i32;
+            // Grow the rect 2pt towards the screen interior so windows keep a
+            // sliver of clearance from the dock's inner edge.
+            match self.dock.position() {
+                crate::config::DockPosition::Bottom => {
+                    Rectangle::new((x, y - 2).into(), (w, h).into())
+                }
+                crate::config::DockPosition::Left => {
+                    Rectangle::new((x, y).into(), (w + 2, h).into())
+                }
+                crate::config::DockPosition::Right => {
+                    Rectangle::new((x - 2, y).into(), (w + 2, h).into())
+                }
+            }
         } else {
             Rectangle::new((0, 0).into(), (0, 0).into())
         }
@@ -3521,6 +3779,24 @@ impl Workspaces {
         windows_plane.set_pointer_events(false);
         let _ = workspaces_layer.add_sublayer(&windows_plane);
 
+        // Container for the window promoted to its own KMS plane. Added after
+        // windows_plane so it draws above it — a promoted window is always the
+        // topmost window (that is an eligibility rule), so the scene order
+        // matches the plane order.
+        let promoted_plane = self.layers_engine.new_layer();
+        promoted_plane.set_key(format!("promoted_plane_{}", output.name()));
+        promoted_plane.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        promoted_plane.set_size(layers::types::Size::auto(), None);
+        promoted_plane.set_pointer_events(false);
+        // Same clipping as the `windows_layer` it stands in for, so a window
+        // straddling a workspace edge is cropped identically in either plane.
+        promoted_plane.set_clip_children(true, None);
+        promoted_plane.set_clip_content(true, None);
+        let _ = workspaces_layer.add_sublayer(&promoted_plane);
+
         // Attach layers to output_layer in z-order (bottom to top):
         // workspaces (background_plane, windows_plane, expose_layer) →
         // dock (primary) → overlay_plane (layer_shell_top, workspace_selector,
@@ -3539,6 +3815,31 @@ impl Workspaces {
         expose_layer.set_picture_cached(false);
         expose_layer.set_image_cached(false);
         let _ = workspaces_layer.add_sublayer(&expose_layer);
+
+        // Black floor under the exposé previews. The gaps between workspace
+        // slots (and the overscroll bands past the first/last workspace) have
+        // no exposé content, so whatever plane sits below shows through —
+        // which is the background plane, still holding the pre-exposé
+        // wallpaper. The gap is supposed to read as black. First child of
+        // `expose_layer` so every selector root draws above it; sized far
+        // beyond any realistic workspace extent instead of tracking layout,
+        // because it scrolls with `expose_layer` and just has to cover the
+        // viewport at every reachable offset.
+        let expose_backdrop = self.layers_engine.new_layer();
+        expose_backdrop.set_key(format!("expose_backdrop_{}", output.name()));
+        expose_backdrop.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        // Sized to cover ~10 workspaces of horizontal scroll plus overscroll,
+        // not "infinite": pathological bounds propagate into
+        // bounds_with_children and can blow up downstream surface allocations.
+        expose_backdrop.set_position((-(phys_w * 2.0), 0.0), None);
+        expose_backdrop.set_size(layers::types::Size::points(phys_w * 14.0, phys_h), None);
+        expose_backdrop
+            .set_background_color(layers::types::Color::new_rgba(0.0, 0.0, 0.0, 1.0), None);
+        expose_backdrop.set_pointer_events(false);
+        let _ = expose_layer.add_sublayer(&expose_backdrop);
 
         // overlay_plane: workspace selector, app switcher, layer shell UI,
         // OSD and DnD — above windows/expose, below popups and dock.
@@ -3569,6 +3870,8 @@ impl Workspaces {
             self.layers_engine.clone(),
             selector_layer.clone(),
             self.remove_workspace_sender.clone(),
+            self.label_editing.clone(),
+            self.rename_workspace_sender.clone(),
         ));
         let _ = overlay_plane.add_sublayer(&selector_layer);
 
@@ -3684,6 +3987,9 @@ impl Workspaces {
             // so all workspace backgrounds live under one node for the KMS plane.
             let _ = background_plane.add_sublayer(&workspace.workspace_background);
             let _ = windows_plane.add_sublayer(&workspace.windows_layer);
+            if let Some(name) = persisted_workspace_name(&output.name(), i) {
+                workspace.set_custom_name(Some(name));
+            }
             workspace_views.push(workspace);
         }
 
@@ -3701,6 +4007,7 @@ impl Workspaces {
             workspace_views,
             background_plane,
             windows_plane,
+            promoted_plane,
             overlay_plane,
             switcher_plane,
             dock_plane,
@@ -3852,6 +4159,9 @@ impl Workspaces {
                     .add_sublayer(&workspace.window_selector_view.window_selector_root);
 
                 let index = ows.workspace_views.len();
+                if let Some(custom) = persisted_workspace_name(name, index) {
+                    workspace.set_custom_name(Some(custom));
+                }
                 ows.workspace_views.push(workspace.clone());
 
                 if primary_name.as_deref() == Some(name.as_str()) {
@@ -3927,6 +4237,9 @@ impl Workspaces {
             let _ = ows.windows_plane.add_sublayer(&workspace.windows_layer);
 
             let index = ows.workspace_views.len();
+            if let Some(name) = persisted_workspace_name(output_name, index) {
+                workspace.set_custom_name(Some(name));
+            }
             ows.workspace_views.push(workspace.clone());
             (index, workspace)
         };
@@ -4156,7 +4469,11 @@ impl Workspaces {
         for (name, i) in &source_indices {
             if let Some(ows) = self.output_workspaces.get_mut(name) {
                 if let Some(view) = ows.workspace_views.get(*i) {
-                    view.unmap_window_internal(&id);
+                    // Keep the mirror node alive — the destination view
+                    // re-parents the same one — but drop it from the source
+                    // selector's map, or that selector goes on holding a
+                    // window it no longer shows.
+                    view.unmap_window_keep_mirror(&id);
                 }
                 if let Some(space) = ows.spaces.get_mut(*i) {
                     space.unmap_elem(we);
@@ -4186,10 +4503,35 @@ impl Workspaces {
             }
         }
 
-        for (_, src) in &source_indices {
+        // A move is the one moment both grids are certain to have changed, so
+        // neither may be skipped by the cached-layout check. The exposé drag
+        // already re-laid the source grid out *without* the dragged window
+        // when it was picked up, which leaves the cached hash equal to the
+        // post-move one: the drop would then apply nothing, and the grid kept
+        // the layout it was dropped on until some unrelated client commit
+        // moved the hash again seconds later.
+        for (name, src) in &source_indices {
+            self.invalidate_expose_layout(name, *src);
             self.expose_update_if_needed_workspace(*src);
         }
+        self.invalidate_expose_layout(&name, workspace_index);
         self.expose_update_if_needed_workspace(workspace_index);
+    }
+
+    /// Drop the cached exposé grid of one workspace, so the next layout pass
+    /// recomputes and re-applies it even if the window set hashes the same,
+    /// and drop the selection with it: the highlight and its label address a
+    /// preview by index into that grid, and the window that was under the
+    /// pointer has just left it.
+    fn invalidate_expose_layout(&self, output_name: &str, workspace_index: usize) {
+        if let Some(workspace) = self
+            .output_workspaces
+            .get(output_name)
+            .and_then(|ows| ows.workspace_views.get(workspace_index))
+        {
+            workspace.window_selector_view.clear_selection();
+            workspace.window_selector_view.invalidate_layout();
+        }
     }
 
     /// Per-output variant of `defer_remove_workspace_at`: remove workspace `n`
@@ -4341,6 +4683,12 @@ impl Workspaces {
     /// every engine update, so sampling them oscillates between promote and
     /// demote and flickers the window content.
     pub fn get_scanout_candidates(&self, output: &Output) -> Vec<ObjectId> {
+        self.get_plane_candidates(output).raw
+    }
+
+    /// Both promotion tiers for `output`, computed in one top-to-bottom walk
+    /// (they share every stability gate and the same occlusion state).
+    pub fn get_plane_candidates(&self, output: &Output) -> PlaneCandidates {
         use smithay::utils::{Physical, Rectangle};
 
         // ---- global stable gates ----
@@ -4350,30 +4698,30 @@ impl Workspaces {
         if crate::render_elements::scene_dmabuf_element::NO_SCANOUT
             .load(std::sync::atomic::Ordering::Relaxed)
         {
-            return Vec::new();
+            return PlaneCandidates::none();
         }
         if self.get_show_all() || self.is_expose_transitioning() {
-            return Vec::new();
+            return PlaneCandidates::none();
         }
         if self.is_animating.load(std::sync::atomic::Ordering::Relaxed) {
-            return Vec::new();
+            return PlaneCandidates::none();
         }
         // Candidates are strictly PER OUTPUT: a window may only be promoted
         // onto the CRTC of the output whose space contains it — promoting the
         // primary's topmost window on every CRTC painted it on all screens.
         let Some(ows) = self.output_workspaces.get(&output.name()) else {
-            return Vec::new();
+            return PlaneCandidates::none();
         };
         let Some(current_workspace) = ows.workspace_views.get(ows.current_workspace) else {
-            return Vec::new();
+            return PlaneCandidates::none();
         };
         // Fullscreen has its own dedicated direct-scanout path.
         if current_workspace.get_fullscreen_mode() || current_workspace.get_fullscreen_animating() {
-            return Vec::new();
+            return PlaneCandidates::none();
         }
         // The tiling drop-zone overlay composites above windows.
         if self.tiling_overlay.is_visible() {
-            return Vec::new();
+            return PlaneCandidates::none();
         }
         let is_primary = self
             .primary_output
@@ -4432,11 +4780,12 @@ impl Workspaces {
 
         // ---- per-window eligibility, top-to-bottom ----
         let Some(space) = ows.spaces.get(ows.current_workspace) else {
-            return Vec::new();
+            return PlaneCandidates::none();
         };
 
         tracing::debug!(target: "otto::planes", "scanout occluders: {occluders:?}");
         let mut promoted = Vec::new();
+        let mut subtree: Option<ObjectId> = None;
         // Union of visible-window rects seen so far (everything above current).
         let mut covered: Vec<Rectangle<i32, Physical>> = Vec::new();
         // Space::elements yields bottom-to-top; rev() => top-to-bottom.
@@ -4526,19 +4875,59 @@ impl Workspaces {
             // account panel) would be hidden behind the scanned-out root plane,
             // so such a window must composite. Checked last — it only runs for
             // an otherwise-eligible topmost candidate.
+            //
+            // A window the compositor draws something for — a background
+            // colour, a backdrop blur, a rounded clip, a border, all asked for
+            // through `otto-surface-style` — is NOT eligible here. The plane
+            // carries the client's buffer and nothing else, and none of that
+            // is in the buffer: the rounding in particular exists only as a
+            // clip in the composite path, so scanning the buffer out raw
+            // squares off the corners. Those windows fall through to the
+            // subtree tier below, which renders the whole thing.
             const MAX_PROMOTED: usize = 1;
+            // Gates both tiers share: the window must be the unobstructed
+            // topmost one, holding still, with nothing composited over it.
+            let stable = !overlaps_above && !animating && !has_popups && !overlaps_occluder;
             if promoted.len() < MAX_PROMOTED
-                && !overlaps_above
-                && !animating
-                && !has_popups
-                && !overlaps_occluder
+                && stable
                 && has_dmabuf_buffer
+                && !window.has_material()
                 && !window_has_overlapping_subsurface(window)
             {
                 promoted.push(window.id());
+                continue;
+            }
+            // Tier 2 — subtree plane. The compositor re-renders the window's
+            // own lay-rs subtree into a dedicated buffer instead of handing
+            // KMS the raw client buffer, so none of tier 1's buffer-shape
+            // rules apply: the style the client asked for through
+            // `otto-surface-style` (rounded corners, border, background,
+            // blur), SSD decoration subsurfaces, overlapping subsurfaces and
+            // SHM clients are all drawn into the plane exactly as they are
+            // drawn when compositing. What it does NOT save is the per-frame
+            // GPU pass — it buys damage isolation and a page flip, not zero
+            // work — so it is strictly the fallback for a window tier 1
+            // cannot take, never a replacement for it.
+            //
+            // Only one, and only when tier 1 took nothing: the two tiers
+            // compete for the same scarce overlay plane, and tier 1 is the
+            // cheaper occupant.
+            if promoted.is_empty()
+                && subtree.is_none()
+                && stable
+                && !crate::render_elements::scene_dmabuf_element::NO_WINDOW_PLANE
+                    .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                subtree = Some(window.id());
             }
         }
-        promoted
+        if !promoted.is_empty() {
+            subtree = None;
+        }
+        PlaneCandidates {
+            raw: promoted,
+            subtree,
+        }
     }
 
     /// Whether any overlay-UI chrome is visible on `output` — used by the
@@ -4669,6 +5058,156 @@ impl Workspaces {
         self.set_scanout_windows(&union_vec);
     }
 
+    /// Promote (or demote) one window to its own KMS plane on `output_name`.
+    ///
+    /// Promotion reparents the window's whole `window_layer` — shadow, client
+    /// content, SSD decorations and the compositor-drawn style on it — out of
+    /// its workspace's `windows_layer` and into the output's `promoted_plane`
+    /// container, which the backend renders into a dedicated buffer. The
+    /// windows plane stops drawing the window purely because it is no longer
+    /// part of that subtree, so there is no hidden/blank state to keep in sync
+    /// and nothing to re-import on demotion: the same layers keep rendering,
+    /// in a different buffer.
+    ///
+    /// The container mirrors the current workspace's `windows_layer` geometry,
+    /// so the move is geometrically a no-op. Re-applied every frame (cheap
+    /// when unchanged) because other code paths — `raise_window_to_front`
+    /// above all — reparent window layers back under `windows_layer` without
+    /// knowing about promotion.
+    ///
+    /// Returns whether the promoted window changed, so the caller can force a
+    /// full redraw of both affected planes on the transition.
+    pub fn set_promoted_window(&self, output_name: &str, id: Option<&ObjectId>) -> bool {
+        let Some(ows) = self.output_workspaces.get(output_name) else {
+            return false;
+        };
+        let prev = self
+            .promoted_windows
+            .read()
+            .unwrap()
+            .get(output_name)
+            .cloned();
+        let changed = prev.as_ref() != id;
+
+        // Demote first: a window leaving the plane must be back under its
+        // workspace before the new one is pulled out, or a swap between two
+        // windows would briefly have both in the container.
+        if let Some(prev_id) = prev.as_ref().filter(|p| Some(*p) != id) {
+            self.demote_window_layer(ows, prev_id);
+        }
+
+        match id {
+            Some(id) => {
+                let Some(workspace) = ows.workspace_views.get(ows.current_workspace) else {
+                    return changed;
+                };
+                // Keep the container aligned with the workspace it is standing
+                // in for: `windows_layer` is offset by the workspace's index
+                // inside `windows_plane`, and both scroll together.
+                let wl = &workspace.windows_layer;
+                let pos = wl.position();
+                if ows.promoted_plane.position() != pos {
+                    ows.promoted_plane.set_position(pos, None);
+                }
+                ows.promoted_plane.set_size(wl.size(), None);
+                if let Some(view) = self.get_window_view(id) {
+                    // lay-rs has no parent lookup; the container holds at most
+                    // one window, so checking its children is equivalent.
+                    let already_here = ows
+                        .promoted_plane
+                        .children_nodes()
+                        .contains(&view.window_layer.id());
+                    if !already_here {
+                        if let Err(e) = ows.promoted_plane.add_sublayer(&view.window_layer) {
+                            tracing::warn!(
+                                target: "otto::planes",
+                                "promote: reparent into promoted_plane failed: {e}"
+                            );
+                            return changed;
+                        }
+                    }
+                }
+                self.promoted_windows
+                    .write()
+                    .unwrap()
+                    .insert(output_name.to_string(), id.clone());
+            }
+            None => {
+                // No `set_hidden` either way: an empty container draws
+                // nothing, and a hidden flag reaches the scene arena a frame
+                // late — long enough for the window to blink out of both
+                // planes on the promotion edge.
+                self.promoted_windows.write().unwrap().remove(output_name);
+            }
+        }
+        if changed {
+            tracing::info!(
+                target: "otto::planes",
+                "subtree plane on {output_name}: {prev:?} -> {id:?}"
+            );
+        }
+        changed
+    }
+
+    /// Put a promoted window's layer back under its workspace's windows
+    /// container, restoring the normal z-order among its siblings.
+    fn demote_window_layer(&self, ows: &OutputWorkspaces, id: &ObjectId) {
+        let Some(view) = self.get_window_view(id) else {
+            return;
+        };
+        let Some(workspace) = ows.workspace_views.get(ows.current_workspace) else {
+            return;
+        };
+        if let Err(e) = workspace.windows_layer.add_sublayer(&view.window_layer) {
+            tracing::warn!(
+                target: "otto::planes",
+                "demote: reparent back into windows_layer failed: {e}"
+            );
+        }
+    }
+
+    /// The window currently rendered into its own plane on `output_name`.
+    pub fn promoted_window_for_output(&self, output_name: &str) -> Option<ObjectId> {
+        self.promoted_windows
+            .read()
+            .unwrap()
+            .get(output_name)
+            .cloned()
+    }
+
+    /// Output-local bounds (physical px) of the promoted window's subtree,
+    /// shadow included — the buffer size and plane position the backend needs.
+    /// `None` when nothing is promoted, or the window has no view yet.
+    pub fn promoted_plane_bounds(
+        &self,
+        output_name: &str,
+    ) -> Option<(
+        smithay::utils::Point<i32, smithay::utils::Physical>,
+        (i32, i32),
+    )> {
+        let id = self.promoted_window_for_output(output_name)?;
+        let ows = self.output_workspaces.get(output_name)?;
+        let view = self.get_window_view(&id)?;
+        // The shadow layer is the widest node in the subtree (it extends a
+        // fixed safe area past the window on every side), so the subtree's
+        // own bounds are what the buffer has to cover.
+        let bounds = view.window_layer.render_bounds_with_children_transformed();
+        let origin = ows.output_layer.render_position();
+        let w = bounds.width().ceil() as i32;
+        let h = bounds.height().ceil() as i32;
+        if w <= 0 || h <= 0 {
+            return None;
+        }
+        Some((
+            (
+                (bounds.x() - origin.x).floor() as i32,
+                (bounds.y() - origin.y).floor() as i32,
+            )
+                .into(),
+            (w, h),
+        ))
+    }
+
     /// Remove one window from every output's scanout set (pre-animation
     /// demotion) and apply the new union.
     pub fn remove_scanout_window(&self, id: &ObjectId) {
@@ -4707,18 +5246,27 @@ impl Workspaces {
             }
         }
         for new in new_ids.difference(&prev_ids) {
-            let base_only = self
-                .get_window_for_surface(new)
-                .map(window_has_subsurfaces)
-                .unwrap_or(false);
+            let window = self.get_window_for_surface(new);
+            // Two reasons to blank the surface layer's texture rather than
+            // hide the whole subtree. An SSD window keeps its decoration
+            // subsurfaces rendering; a window with a material — a background
+            // colour or a `BackgroundBlur` it asked the compositor for through
+            // `otto-surface-style` — keeps those pixels rendering. Both live on
+            // layers the plane cannot carry: the KMS plane holds the client
+            // buffer and nothing else. Left in the windows plane they land
+            // under the scanout plane, which is where they belong, and the
+            // blur seeds its backdrop from the planes below exactly as it does
+            // for an unpromoted window.
+            let blank_texture_only = window.map(window_has_subsurfaces).unwrap_or(false)
+                || window.map(|w| w.has_material()).unwrap_or(false);
             if let Some(view) = self.get_window_view(new) {
-                if base_only {
-                    // SSD window: only the root surface's client buffer goes
-                    // to a plane. Blank just the root surface layer's draw
-                    // content so the decoration subsurface layers (its
-                    // children: titlebar, buttons, borders) keep rendering
-                    // in the windows plane. Hiding the root layer instead
-                    // would hide the children with it. The no-op closure
+                if blank_texture_only {
+                    // Blank just the root surface layer's draw content, so
+                    // everything else on and under that layer keeps rendering
+                    // in the windows plane: an SSD window's decoration
+                    // subsurfaces (its children: titlebar, buttons, borders),
+                    // and the layer's own material. Hiding the root layer
+                    // instead would take both with it. The no-op closure
                     // reports full-bounds damage so the old pixels clear;
                     // the demotion re-import (`update_window_view` →
                     // `configure_surface_layer`) reinstalls the real draw
@@ -4729,6 +5277,12 @@ impl Workspaces {
                             layers::skia::Rect::from_wh(w, h)
                         });
                     }
+                    // The draw closure was replaced behind
+                    // `configure_surface_layer`'s back, so its idempotence key
+                    // no longer describes the layer — drop it, or the demotion
+                    // re-import would match the stale key and leave the window
+                    // showing this blank closure forever.
+                    crate::surface_config_cache::invalidate(new);
                 } else {
                     view.set_content_hidden(true);
                 }
@@ -5577,6 +6131,11 @@ impl UnminimizeContext {
                     layer.remove();
                 });
 
+            let dock_position = self.dock.position();
+            view.genie_effect.set_direction(
+                dock_position.is_vertical(),
+                dock_position == crate::config::DockPosition::Left,
+            );
             view.unminimize(drawer_bounds);
 
             // Make sure the mirror layer is visible again for expose
@@ -5700,4 +6259,168 @@ fn window_has_overlapping_subsurface(window: &WindowElement) -> bool {
         |_, _, _| !overlaps.get(),
     );
     overlaps.get()
+}
+
+/// The largest share of a zone's cross-axis extent the dock is ever allowed to
+/// reserve. The dock is a thin band on one edge; anything past this is not a
+/// dock rect for `position` but a stale one from the edge the dock just left,
+/// and honouring it would collapse the usable zone (and with it any maximized
+/// window) to nothing.
+const MAX_DOCK_ZONE_FRACTION: f32 = 0.5;
+
+/// Shrink `zone` so it stops at `dock_geom`, the dock's rect on the `position`
+/// edge. Both rects are logical (points).
+///
+/// Split out of [`Workspaces::subtract_dock`] so the geometry is testable
+/// without a live compositor.
+pub(crate) fn subtract_dock_rect(
+    position: crate::config::DockPosition,
+    dock_geom: Rectangle<i32, smithay::utils::Logical>,
+    zone: &mut Rectangle<i32, smithay::utils::Logical>,
+) {
+    if dock_geom.size.w <= 0 || dock_geom.size.h <= 0 || zone.size.w <= 0 || zone.size.h <= 0 {
+        return;
+    }
+
+    // How much of the zone this rect would eat on the dock's own axis.
+    let (taken, budget) = match position {
+        crate::config::DockPosition::Bottom => {
+            ((zone.loc.y + zone.size.h) - dock_geom.loc.y, zone.size.h)
+        }
+        crate::config::DockPosition::Left => (
+            (dock_geom.loc.x + dock_geom.size.w) - zone.loc.x,
+            zone.size.w,
+        ),
+        crate::config::DockPosition::Right => {
+            ((zone.loc.x + zone.size.w) - dock_geom.loc.x, zone.size.w)
+        }
+    };
+
+    // Already clear of the zone: nothing to subtract.
+    if taken <= 0 {
+        return;
+    }
+    // Implausible for a dock band — treat the rect as stale and leave the zone
+    // alone rather than shrinking the window to a sliver.
+    if taken as f32 > budget as f32 * MAX_DOCK_ZONE_FRACTION {
+        return;
+    }
+
+    match position {
+        crate::config::DockPosition::Bottom => zone.size.h -= taken,
+        crate::config::DockPosition::Left => {
+            zone.loc.x += taken;
+            zone.size.w -= taken;
+        }
+        crate::config::DockPosition::Right => zone.size.w -= taken,
+    }
+}
+
+#[cfg(test)]
+mod dock_zone_tests {
+    use super::subtract_dock_rect;
+    use crate::config::DockPosition;
+    use smithay::utils::Rectangle;
+
+    fn screen() -> Rectangle<i32, smithay::utils::Logical> {
+        Rectangle::new((0, 0).into(), (1920, 1080).into())
+    }
+
+    /// A bottom dock band, as `get_dock_geometry` reports it: full width, thin.
+    fn bottom_dock() -> Rectangle<i32, smithay::utils::Logical> {
+        Rectangle::new((0, 980).into(), (1920, 100).into())
+    }
+
+    /// A left dock band: thin, full height.
+    fn left_dock() -> Rectangle<i32, smithay::utils::Logical> {
+        Rectangle::new((0, 0).into(), (100, 1080).into())
+    }
+
+    fn right_dock() -> Rectangle<i32, smithay::utils::Logical> {
+        Rectangle::new((1820, 0).into(), (100, 1080).into())
+    }
+
+    #[test]
+    fn bottom_dock_takes_only_its_own_height() {
+        let mut zone = screen();
+        subtract_dock_rect(DockPosition::Bottom, bottom_dock(), &mut zone);
+        assert_eq!(zone, Rectangle::new((0, 0).into(), (1920, 980).into()));
+    }
+
+    #[test]
+    fn side_docks_take_only_their_own_width() {
+        let mut zone = screen();
+        subtract_dock_rect(DockPosition::Left, left_dock(), &mut zone);
+        assert_eq!(zone, Rectangle::new((100, 0).into(), (1820, 1080).into()));
+
+        let mut zone = screen();
+        subtract_dock_rect(DockPosition::Right, right_dock(), &mut zone);
+        assert_eq!(zone, Rectangle::new((0, 0).into(), (1820, 1080).into()));
+    }
+
+    /// Regression: moving the dock from an edge to another one re-maximizes the
+    /// open windows, and the dock's laid-out rect can still be the one from the
+    /// edge it just left. Read naively, a full-height left band as a *bottom*
+    /// dock reserves the whole screen height (and a full-width bottom band as a
+    /// *side* dock the whole width), so the maximized window is configured at
+    /// its minimum size. A stale rect must leave the zone untouched instead.
+    #[test]
+    fn stale_dock_rect_from_the_previous_edge_never_collapses_the_zone() {
+        // Bottom -> Left, still holding the bottom band's rect.
+        let mut zone = screen();
+        subtract_dock_rect(DockPosition::Left, bottom_dock(), &mut zone);
+        assert_eq!(
+            zone,
+            screen(),
+            "a bottom band read as a left dock ate the screen"
+        );
+
+        // Bottom -> Right.
+        let mut zone = screen();
+        subtract_dock_rect(DockPosition::Right, bottom_dock(), &mut zone);
+        assert_eq!(
+            zone,
+            screen(),
+            "a bottom band read as a right dock ate the screen"
+        );
+
+        // Left -> Bottom, still holding the left band's rect.
+        let mut zone = screen();
+        subtract_dock_rect(DockPosition::Bottom, left_dock(), &mut zone);
+        assert_eq!(
+            zone,
+            screen(),
+            "a left band read as a bottom dock ate the screen"
+        );
+
+        // Right -> Bottom.
+        let mut zone = screen();
+        subtract_dock_rect(DockPosition::Bottom, right_dock(), &mut zone);
+        assert_eq!(
+            zone,
+            screen(),
+            "a right band read as a bottom dock ate the screen"
+        );
+    }
+
+    #[test]
+    fn a_dock_clear_of_the_zone_is_a_no_op() {
+        // Second output: the zone sits to the right of the primary screen, the
+        // dock band is on the primary.
+        let mut zone = Rectangle::new((1920, 0).into(), (1920, 1080).into());
+        let before = zone;
+        subtract_dock_rect(DockPosition::Left, left_dock(), &mut zone);
+        assert_eq!(zone, before);
+    }
+
+    #[test]
+    fn an_empty_dock_rect_is_a_no_op() {
+        let mut zone = screen();
+        subtract_dock_rect(
+            DockPosition::Bottom,
+            Rectangle::new((0, 0).into(), (0, 0).into()),
+            &mut zone,
+        );
+        assert_eq!(zone, screen());
+    }
 }

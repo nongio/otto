@@ -1,8 +1,11 @@
 use smithay::{
-    delegate_data_control, delegate_data_device,
+    delegate_data_control, delegate_data_device, delegate_ext_data_control,
     reexports::wayland_server::protocol::wl_data_device_manager::DndAction,
     wayland::selection::{
         data_device::{DataDeviceHandler, DataDeviceState},
+        ext_data_control::{
+            DataControlHandler as ExtDataControlHandler, DataControlState as ExtDataControlState,
+        },
         wlr_data_control::{DataControlHandler, DataControlState},
     },
 };
@@ -49,5 +52,15 @@ impl<BackendData: Backend> DataControlHandler for Otto<BackendData> {
     }
 }
 
+/// `ext-data-control-v1`. Same contract as the wlr one it supersedes; a
+/// clipboard manager speaks whichever it was built against, so Otto serves
+/// both rather than choosing for it.
+impl<BackendData: Backend> ExtDataControlHandler for Otto<BackendData> {
+    fn data_control_state(&mut self) -> &mut ExtDataControlState {
+        &mut self.ext_data_control_state
+    }
+}
+
 delegate_data_device!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_data_control!(@<BackendData: Backend + 'static> Otto<BackendData>);
+delegate_ext_data_control!(@<BackendData: Backend + 'static> Otto<BackendData>);

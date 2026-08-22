@@ -108,17 +108,26 @@ pub struct WindowSelectorView {
 /// ```diagram
 /// WindowSelectorView
 /// ├── window_selector_root
+/// │   ├── window_selector_background (mirror: workspace background_view)
+/// │   ├── layer_shell_bg_expose_mirror (mirror: wlr-layer-shell background)
 /// │   ├── window_selector_windows_container
 /// │   ├── window_selector_view (view(view_window_selector))
 /// │   │   └── window_selector_label
 /// ```
 ///
 /// - `window_selector_root`: The root layer for the window selector view.
+/// - `window_selector_background`: a replica of the workspace background
 /// - `window_selector_windows_container`: windows replica container
 /// - `window_selector_view`: draw the window selection and text
 /// - `window_selector_label`: text layer for the window title
 impl WindowSelectorView {
-    pub fn new(index: usize, layers_engine: Arc<Engine>, drag_overlay_layer: Layer) -> Self {
+    pub fn new(
+        index: usize,
+        layers_engine: Arc<Engine>,
+        background_layer: &Layer,
+        drag_overlay_layer: Layer,
+        layer_shell_background: &Layer,
+    ) -> Self {
         let window_selector_root = layers_engine.new_layer();
         window_selector_root.set_layout_style(taffy::Style {
             position: taffy::Position::Absolute,
@@ -167,6 +176,49 @@ impl WindowSelectorView {
                 label.set_blur_include_content(true);
             }
         });
+
+        // The wallpaper, mirrored into the exposé subtree.
+        //
+        // Not a duplicate of the background plane below it: a window preview is
+        // a mirror layer, and the decoration inside it carries
+        // `BlendMode::BackgroundBlur`, which blurs whatever the *destination
+        // canvas* already holds. Exposé renders into its own buffer (its own
+        // KMS plane in the udev backend), and lay-rs' external-backdrop seed
+        // only reaches layers whose own blend mode is `BackgroundBlur` —
+        // `Layer::as_content()` re-renders the mirrored subtree with no
+        // backdrop at all. Without the wallpaper in this pass the previews
+        // blur empty pixels and their titlebars come out flat grey.
+        // The composite path needs it for a second reason: `workspaces_layer`
+        // (which owns the real background) is hidden while exposé is up.
+        let window_selector_background = layers_engine.new_layer();
+        window_selector_background.set_key(format!("window_selector_background_{}", index));
+        window_selector_background.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        window_selector_background.set_size(layers::types::Size::percent(1.0, 1.0), None);
+        window_selector_background.set_draw_content(background_layer.as_content());
+        window_selector_background.set_picture_cached(false);
+        window_selector_background.set_pointer_events(false);
+        background_layer.add_follower_node(&window_selector_background);
+        let _ = window_selector_root.add_sublayer(&window_selector_background);
+
+        // Mirror the per-output wlr-layer-shell background into exposé too,
+        // above the config background mirror and below the windows — a
+        // wallpaper drawn by a client (wpaperd and friends) has to be in the
+        // previews' backdrop for the same reason.
+        let layer_shell_bg_expose_mirror = layers_engine.new_layer();
+        layer_shell_bg_expose_mirror.set_key(format!("layer_shell_bg_expose_mirror_{}", index));
+        layer_shell_bg_expose_mirror.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        layer_shell_bg_expose_mirror.set_size(layers::types::Size::percent(1.0, 1.0), None);
+        layer_shell_bg_expose_mirror.set_draw_content(layer_shell_background.as_content());
+        layer_shell_bg_expose_mirror.set_picture_cached(false);
+        layer_shell_bg_expose_mirror.set_pointer_events(false);
+        layer_shell_background.add_follower_node(&layer_shell_bg_expose_mirror);
+        let _ = window_selector_root.add_sublayer(&layer_shell_bg_expose_mirror);
 
         let window_selector_windows_container = layers_engine.new_layer();
         window_selector_windows_container
@@ -1038,8 +1090,11 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
                                     target_pos,
                                     position,
                                 );
-                                // Refresh expose view
-                                otto.workspaces.expose_set_visible(true);
+                                // The move re-laid out both grids where the
+                                // window set changed; expose is already open,
+                                // so all that is left is putting the selection
+                                // overlay back (the drag hid it).
+                                otto.workspaces.show_selection_overlays();
                             } else {
                                 tracing::warn!(
                                     "Expose drop: window {:?} not found in windows_map, ending drag only",

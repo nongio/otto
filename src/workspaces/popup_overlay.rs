@@ -17,6 +17,11 @@ pub struct PopupLayer {
     /// Surface IDs whose layers live under this popup's content_layer.
     /// Used to clean up `surface_layers` when the popup is destroyed.
     surface_ids: Vec<ObjectId>,
+    /// Position last handed to [`PopupOverlayView::update_popup`], before the
+    /// anchor adjustment. Drives [`PopupOverlayView::needs_sync`] and keeps
+    /// `set_position` — which lay-rs applies without comparing — from dirtying
+    /// the layer when the popup has not moved.
+    last_position: Option<Point>,
 }
 
 /// View for rendering popups on top of all windows
@@ -33,6 +38,13 @@ pub struct PopupOverlayView {
     /// plane pipeline watches this counter and redraws the overlay plane in
     /// full after a teardown instead of trusting partial damage.
     teardown_generation: usize,
+    /// Bumped on every STRUCTURAL popup change: a popup mapping, unmapping,
+    /// becoming visible, or moving. Repaints of an already-placed popup do not
+    /// count. The backdrop rebuild uses this to tell "a popup appeared, the
+    /// blur under it must be right *now*" from "the popup redrew", so only the
+    /// former is allowed to bypass the rebuild rate limit — see
+    /// `udev::backdrop::decide_rebuild`.
+    structure_generation: usize,
 }
 
 impl PopupOverlayView {
@@ -54,6 +66,7 @@ impl PopupOverlayView {
             layers_engine,
             popup_layers: HashMap::new(),
             teardown_generation: 0,
+            structure_generation: 0,
         }
     }
 
@@ -64,6 +77,10 @@ impl PopupOverlayView {
         root_window_id: ObjectId,
         _warm_cache: Option<HashMap<String, std::collections::VecDeque<layers::prelude::NodeRef>>>,
     ) -> &mut PopupLayer {
+        if !self.popup_layers.contains_key(&popup_id) {
+            // A popup entering the scene is structural.
+            self.structure_generation = self.structure_generation.wrapping_add(1);
+        }
         self.popup_layers
             .entry(popup_id.clone())
             .or_insert_with(|| {
@@ -99,6 +116,7 @@ impl PopupOverlayView {
                     layer,
                     content_layer,
                     surface_ids: Vec::new(),
+                    last_position: None,
                 }
             })
     }
@@ -125,7 +143,19 @@ impl PopupOverlayView {
             x: position.x + (size.x * anchor_point.x),
             y: position.y + (size.y * anchor_point.y),
         };
-        popup.layer.set_position(adjusted_position, None);
+        // Only write when it actually moved: lay-rs applies `set_position`
+        // without comparing the value, so an unconditional write marks the
+        // node NEEDS_LAYOUT and turns every parent-window commit into popup
+        // damage. Compared against what the layer already holds rather than
+        // against `last_position`, so a re-derived `adjusted_position` (the
+        // anchor is applied over a `render_size` that is 0 until the first
+        // layout) still lands. See `needs_sync`.
+        let applied = popup.layer.position();
+        let moved = applied.x != adjusted_position.x || applied.y != adjusted_position.y;
+        if moved {
+            popup.layer.set_position(adjusted_position, None);
+        }
+        popup.last_position = Some(position);
 
         let mut surface_layers: HashMap<ObjectId, Layer> = HashMap::new();
         let mut new_surface_ids: Vec<ObjectId> = Vec::new();
@@ -187,11 +217,38 @@ impl PopupOverlayView {
         // First frame with actual content: the position set above is now the
         // real one (clients only attach buffers after the initial configure),
         // so the popup can become visible without a mispositioned first frame.
+        let became_visible = !popup.surface_ids.is_empty() && popup.layer.hidden();
         if !popup.surface_ids.is_empty() {
             popup.layer.set_hidden(false);
         }
+        if moved || became_visible {
+            self.structure_generation = self.structure_generation.wrapping_add(1);
+        }
 
         surface_layers
+    }
+
+    /// Whether this popup's layer tree has to be re-synced at all.
+    ///
+    /// The surface sync runs per window: a commit on ANY surface of a window
+    /// walks that window's popups too. Re-syncing a popup that neither moved
+    /// nor redrew costs a surface-tree walk and — before the guards in
+    /// `update_popup` and `configure_surface_layer` — invented damage that
+    /// drove a full backdrop rebuild. `popup_committed` is true when the
+    /// commit that triggered this sync belongs to this popup's own surface
+    /// tree; otherwise only a move (or a popup that has not been placed yet)
+    /// needs work.
+    pub fn needs_sync(&self, popup_id: &ObjectId, position: Point, popup_committed: bool) -> bool {
+        if popup_committed {
+            return true;
+        }
+        match self.popup_layers.get(popup_id) {
+            // Not placed yet (no buffer, so still hidden): keep trying.
+            Some(popup) if !popup.surface_ids.is_empty() => popup
+                .last_position
+                .is_none_or(|p| p.x != position.x || p.y != position.y),
+            _ => true,
+        }
     }
 
     /// Remove a popup layer, returning surface IDs that need cleanup from surface_layers
@@ -200,6 +257,7 @@ impl PopupOverlayView {
             tracing::debug!(target: "otto::popups", "remove_popup {:?}", popup_id);
             popup.layer.remove();
             self.teardown_generation = self.teardown_generation.wrapping_add(1);
+            self.structure_generation = self.structure_generation.wrapping_add(1);
             popup.surface_ids
         } else {
             Vec::new()
@@ -230,12 +288,18 @@ impl PopupOverlayView {
         for (_, popup) in self.popup_layers.drain() {
             popup.layer.remove();
             self.teardown_generation = self.teardown_generation.wrapping_add(1);
+            self.structure_generation = self.structure_generation.wrapping_add(1);
         }
     }
 
     /// Counter of popup teardowns so far — see `teardown_generation`.
     pub fn teardown_generation(&self) -> usize {
         self.teardown_generation
+    }
+
+    /// Counter of structural popup changes so far — see `structure_generation`.
+    pub fn structure_generation(&self) -> usize {
+        self.structure_generation
     }
 
     /// How many popups are currently in the scene. Non-zero means the plane
@@ -257,7 +321,8 @@ impl PopupOverlayView {
     }
 
     /// Hide all popups belonging to a specific root window
-    pub fn hide_popups_for_window(&self, root_window_id: &ObjectId) {
+    pub fn hide_popups_for_window(&mut self, root_window_id: &ObjectId) {
+        self.structure_generation = self.structure_generation.wrapping_add(1);
         for popup in self.popup_layers.values() {
             if &popup.root_window_id == root_window_id {
                 tracing::debug!(
@@ -272,7 +337,8 @@ impl PopupOverlayView {
     }
 
     /// Show all popups belonging to a specific root window
-    pub fn show_popups_for_window(&self, root_window_id: &ObjectId) {
+    pub fn show_popups_for_window(&mut self, root_window_id: &ObjectId) {
+        self.structure_generation = self.structure_generation.wrapping_add(1);
         for popup in self.popup_layers.values() {
             if &popup.root_window_id == root_window_id {
                 tracing::debug!(

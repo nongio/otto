@@ -1,0 +1,33 @@
+[package]
+name = "otto-quickview"
+version = "0.1.0"
+edition = "2021"
+description = "Press space on a file and see it — Otto's quick-view previewer"
+
+# A library the file views embed, plus a binary that is both the sandboxed
+# decode worker and a standalone previewer for a path named on the command line.
+[lib]
+name = "otto_quickview"
+path = "src/lib.rs"
+
+[[bin]]
+name = "otto-quickview"
+path = "src/main.rs"
+
+[dependencies]
+otto-kit = { path = "../otto-kit" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+wayland-client = "0.31"
+smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
+libc = "0.2"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+
+[dependencies.laye-rs]
+git = "https://github.com/nongio/layers"
+tag = "v1.13.0"
+features = ["export-taffy"]
+
+[dependencies.skia-safe]
+version = "=0.93"
+features = ["gl", "textlayout", "svg", "skottie"]

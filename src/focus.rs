@@ -35,7 +35,9 @@ use crate::{
     interactive_view::InteractiveView,
     shell::WindowElement,
     state::{Backend, Otto},
-    workspaces::{AppSwitcherView, DockView, WindowSelectorView, WorkspaceSelectorView},
+    workspaces::{
+        AppSwitcherView, DockView, WindowDecorationView, WindowSelectorView, WorkspaceSelectorView,
+    },
 };
 
 #[allow(clippy::large_enum_variant)]
@@ -749,6 +751,15 @@ where
         let view = value.clone();
         let d = InteractiveView {
             view: Box::new(view),
+        };
+        PointerFocusTarget::View(d)
+    }
+}
+
+impl<B: Backend> From<WindowDecorationView> for PointerFocusTarget<B> {
+    fn from(value: WindowDecorationView) -> Self {
+        let d = InteractiveView {
+            view: Box::new(value),
         };
         PointerFocusTarget::View(d)
     }

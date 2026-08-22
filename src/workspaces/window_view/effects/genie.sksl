@@ -68,15 +68,38 @@ uniform shader content;
 uniform float4 src_bounds;
 uniform float4 dst_bounds;
 uniform float progress;
+// 1.0 when the window is being sucked sideways (dock on a screen side) instead
+// of downwards. The whole effect below is written for the vertical case, so a
+// horizontal genie is the same maths in a transposed frame: swap x and y on the
+// way in, and swap the sampled point back on the way out.
+uniform float horizontal;
+// 1.0 when the destination is *behind* the source on that axis — a dock on the
+// left edge. The slit-scan below only travels towards growing coordinates, so
+// the frame is mirrored about the far end of the two rects and the sampled
+// point mirrored back; mirroring is its own inverse, so nothing else changes.
+uniform float mirrored;
 
-half4 main(float2 fragCoord) {
+half4 main(float2 realFragCoord) {
+    bool swapAxes = horizontal > 0.5;
+    bool flip = mirrored > 0.5;
+    float2 fragCoord = swapAxes ? realFragCoord.yx : realFragCoord;
+    float4 src = swapAxes ? src_bounds.yxwz : src_bounds;
+    float4 dst = swapAxes ? dst_bounds.yxwz : dst_bounds;
+
+    float pivot = max(src.y + src.w, dst.y + dst.w);
+    if(flip) {
+        fragCoord.y = pivot - fragCoord.y;
+        src.y = pivot - (src.y + src.w);
+        dst.y = pivot - (dst.y + dst.w);
+    }
+
     // float progress = 0.0;
     float2 offset = float2(0.0, 0.0);
-    if(src_bounds.x < 0.0) {
-        offset.x = -src_bounds.x;
+    if(src.x < 0.0) {
+        offset.x = -src.x;
     }
-    if(src_bounds.y < 0.0) {
-        offset.y = -src_bounds.y;
+    if(src.y < 0.0) {
+        offset.y = -src.y;
     }
     // different animation progress values with delays and velocities
     float progressScale = mapRange(progress, 0.0, 1.0, 0.0, 1.0);
@@ -88,27 +111,27 @@ half4 main(float2 fragCoord) {
     progressScale = clamp(progressScale, 0.0, 1.0);
 
     // scale animation
-    float finalScaleX = dst_bounds.z / src_bounds.z;
-    float finalScaleY = dst_bounds.w / src_bounds.w;
+    float finalScaleX = dst.z / src.z;
+    float finalScaleY = dst.w / src.w;
     float finalScale = min(finalScaleX, finalScaleY);
     float scaleProgressY = bezier(progressScale, float4(.47, -0.21, .76, -0.03));
     float currentScaleY = mapRange(scaleProgressY, 0.0, 1.0, 1.0, finalScale);
 
     // translation animation
     float translationProgressY = bezier(progressTranslation, float4(.74, .04, 1, -0.03));
-    float diffHeight = dst_bounds.w - src_bounds.w * currentScaleY;
-    float centerDiffY = (dst_bounds.w - src_bounds.w * finalScale);
-    // float current_y = mix(src_bounds.y, dst_bounds.y + diffHeight - centerDiffY / 2.0, translationProgressY);
-    float current_y = mix(0.0, dst_bounds.y - src_bounds.y + diffHeight - centerDiffY / 2.0, translationProgressY);
+    float diffHeight = dst.w - src.w * currentScaleY;
+    float centerDiffY = (dst.w - src.w * finalScale);
+    // float current_y = mix(src.y, dst.y + diffHeight - centerDiffY / 2.0, translationProgressY);
+    float current_y = mix(0.0, dst.y - src.y + diffHeight - centerDiffY / 2.0, translationProgressY);
 
-    float normalCoordY = mapRange(fragCoord.y, 0.0, (dst_bounds.y + dst_bounds.w * (1.0 - progress)), 0.0, 1.1);
+    float normalCoordY = mapRange(fragCoord.y, 0.0, (dst.y + dst.w * (1.0 - progress)), 0.0, 1.1);
 
     // slitscan squeeze animation
     float slitScanProgressSqueeze = clamp(normalCoordY, 0.0, 1.0) * bezier(progressSqueeze, easeInOut);
     float smoothSlitScanProgressSqueeze = bezier(slitScanProgressSqueeze, easeIn);
-    float centerDiffX = (dst_bounds.z - src_bounds.z * finalScale);
+    float centerDiffX = (dst.z - src.z * finalScale);
 
-    float current_x = mix(0.0, dst_bounds.x - src_bounds.x + centerDiffX / 2.0, smoothSlitScanProgressSqueeze);
+    float current_x = mix(0.0, dst.x - src.x + centerDiffX / 2.0, smoothSlitScanProgressSqueeze);
 
     float currentScaleX = mapRange(smoothSlitScanProgressSqueeze, 0.0, 1.0, 1.0, finalScale);
 
@@ -131,8 +154,11 @@ half4 main(float2 fragCoord) {
     // }
     // color = color / float(samples);
 
-    half4 color = content.eval(current_point);
-    
+    if(flip) {
+        current_point.y = pivot - current_point.y;
+    }
+    half4 color = content.eval(swapAxes ? current_point.yx : current_point);
+
     // DEBUG
     // color = mix(half4(1.0, 0.0, 0.0, 1.0), color, 0.5);
     // if(fragCoord.x >= src_bounds.x && fragCoord.x <= (src_bounds.x + src_bounds.z) && fragCoord.y >= src_bounds.y && fragCoord.y <= (src_bounds.y+src_bounds.w)){

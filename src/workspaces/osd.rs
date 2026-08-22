@@ -2,9 +2,20 @@ use layers::{engine::Engine, prelude::*, skia, types::Size};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::{theme::theme_colors, utils::resource_image};
+use crate::theme::theme_colors;
 
 const PROGRESSBAR_STEPS: usize = 16;
+
+// Embedded rather than loaded via resource_image: the OSD must render its
+// icons regardless of the compositor's cwd (an installed binary usually
+// isn't launched from the repo root) or the desktop's icon theme.
+const BRIGHTNESS_SVG: &[u8] = include_bytes!("../../resources/brightness.svg");
+const AUDIO_SVG: &[u8] = include_bytes!("../../resources/audio.svg");
+const AUDIO_MUTE_SVG: &[u8] = include_bytes!("../../resources/audio-mute.svg");
+
+fn osd_icon(svg_data: &[u8]) -> Option<skia::Image> {
+    otto_kit::icons::svg_image_from_bytes(svg_data, skia::ISize::new(512, 512))
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum OsdType {
@@ -68,9 +79,9 @@ impl OsdView {
         wrap.set_hidden(true);
 
         // Load icons at startup
-        let brightness_icon = resource_image("brightness.svg", "display-brightness-symbolic");
-        let audio_icon = resource_image("audio.svg", "audio-volume-high-symbolic");
-        let audio_mute_icon = resource_image("audio-mute.svg", "audio-volume-muted-symbolic");
+        let brightness_icon = osd_icon(BRIGHTNESS_SVG);
+        let audio_icon = osd_icon(AUDIO_SVG);
+        let audio_mute_icon = osd_icon(AUDIO_MUTE_SVG);
 
         let state = OsdViewState {
             visible: false,

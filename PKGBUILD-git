@@ -31,6 +31,11 @@ build() {
     cargo build --release -p otto-lock
     cargo build --release -p otto-greeter
     cargo build --release -p xdg-desktop-portal-otto
+    cargo build --release -p otto-rdp
+    cargo build --release -p otto-settings
+    cargo build --release -p otto-files
+    cargo build --release -p otto-launcher
+    cargo build --release -p otto-quickview
 }
 
 package() {
@@ -43,6 +48,10 @@ package() {
     install -Dm755 target/release/otto-lock "$pkgdir/usr/bin/otto-lock"
     install -Dm755 target/release/otto-greeter "$pkgdir/usr/bin/otto-greeter"
     install -Dm755 target/release/otto-rdp "$pkgdir/usr/bin/otto-rdp"
+    install -Dm755 target/release/otto-settings "$pkgdir/usr/bin/otto-settings"
+    install -Dm755 target/release/otto-files "$pkgdir/usr/bin/otto-files"
+    install -Dm755 target/release/otto-launcher "$pkgdir/usr/bin/otto-launcher"
+    install -Dm755 target/release/otto-quickview "$pkgdir/usr/bin/otto-quickview"
     install -Dm755 target/release/xdg-desktop-portal-otto "$pkgdir/usr/libexec/xdg-desktop-portal-otto"
 
     # Install documentation
@@ -58,6 +67,8 @@ package() {
 
     # Install desktop files
     install -Dm644 resources/otto.desktop "$pkgdir/usr/share/wayland-sessions/otto.desktop"
+    install -Dm644 resources/otto-files.desktop "$pkgdir/usr/share/applications/otto-files.desktop"
+    install -Dm644 resources/otto-settings.desktop "$pkgdir/usr/share/applications/otto-settings.desktop"
     install -Dm644 components/xdg-desktop-portal-otto/otto.portal "$pkgdir/usr/share/xdg-desktop-portal/portals/otto.portal"
     install -Dm644 components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.service"
 }

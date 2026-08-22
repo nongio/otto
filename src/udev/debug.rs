@@ -35,7 +35,9 @@ pub(super) fn debug_tick(
 /// `touch /tmp/otto-no-scanout` disables window promotion (A/B testing).
 /// `touch /tmp/otto-dump-planes` requests a one-shot per-plane PNG dump.
 fn refresh_debug_toggles(surface: &mut SurfaceData) {
-    use crate::render_elements::scene_dmabuf_element::{DUMP_PLANES, NO_SCANOUT, TINT_COMPOSITE};
+    use crate::render_elements::scene_dmabuf_element::{
+        DUMP_PLANES, NO_SCANOUT, NO_WINDOW_PLANE, TINT_COMPOSITE,
+    };
     use smithay::backend::renderer::DebugFlags;
     use std::sync::atomic::Ordering;
 
@@ -53,6 +55,10 @@ fn refresh_debug_toggles(surface: &mut SurfaceData) {
 
     NO_SCANOUT.store(
         std::path::Path::new("/tmp/otto-no-scanout").exists(),
+        Ordering::Relaxed,
+    );
+    NO_WINDOW_PLANE.store(
+        std::path::Path::new("/tmp/otto-no-window-plane").exists(),
         Ordering::Relaxed,
     );
     if std::path::Path::new("/tmp/otto-dump-planes").exists() {
@@ -82,6 +88,7 @@ fn log_frame_realization(surface: &SurfaceData, states: &RenderElementStates, ex
     }
     log_state!(surface.scene_dmabuf_element, "bg");
     log_state!(surface.windows_dmabuf_element, "windows");
+    log_state!(surface.window_dmabuf_element, "window");
     log_state!(surface.expose_dmabuf_element, "expose");
     log_state!(surface.overlay_dmabuf_element, "overlay");
     log_state!(surface.switcher_dmabuf_element, "switcher");
@@ -125,6 +132,7 @@ pub(super) fn maybe_dump_planes(surface: &SurfaceData) {
     }
     dump_plane!(surface.scene_dmabuf_element, "bg");
     dump_plane!(surface.windows_dmabuf_element, "windows");
+    dump_plane!(surface.window_dmabuf_element, "window");
     dump_plane!(surface.expose_dmabuf_element, "expose");
     dump_plane!(surface.overlay_dmabuf_element, "overlay");
     dump_plane!(surface.switcher_dmabuf_element, "switcher");

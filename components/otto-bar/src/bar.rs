@@ -113,7 +113,7 @@ impl LeftPanel {
         }
     }
 
-    #[allow(dead_code)]
+    /// Rebuild the style from the current theme — call on a color-scheme change.
     pub fn update_style(&mut self) {
         self.style = left_menu_style();
     }
@@ -211,7 +211,7 @@ impl RightPanel {
         }
     }
 
-    #[allow(dead_code)]
+    /// Rebuild the style from the current theme — call on a color-scheme change.
     pub fn update_style(&mut self) {
         self.tray_style = tray_menu_style();
     }

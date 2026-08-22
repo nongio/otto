@@ -3,22 +3,29 @@
 //! This module provides D-Bus interface implementations for:
 //! - `org.freedesktop.impl.portal.ScreenCast`
 //! - `org.freedesktop.impl.portal.Settings`
+//! - `org.freedesktop.impl.portal.Access`
+//! - `org.freedesktop.impl.portal.FileChooser`
+//! - `org.freedesktop.impl.portal.Screenshot`
 
 mod access;
+mod file_chooser;
 mod interface;
 mod request;
 mod restore;
+mod screenshot;
 mod session;
 mod settings;
 mod state;
 mod stream;
 
 pub use access::AccessPortal;
+pub use file_chooser::FileChooserPortal;
 pub use interface::{
     fallback_mapping_id, validate_cursor_mode, validate_persist_mode, ScreenCastPortal,
 };
 pub use restore::{decode_restore_data, encode_restore_data, resolve_restored, RestoredSource};
-pub use settings::SettingsPortal;
+pub use screenshot::ScreenshotPortal;
+pub use settings::{spawn_change_relay, SettingsPortal};
 pub use state::{PortalState, SelectedWindow, SessionState};
 pub use stream::{build_streams_value_from_descriptors, StreamDescriptor};
 

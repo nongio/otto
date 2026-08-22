@@ -156,9 +156,11 @@ impl<BackendData: Backend> Otto<BackendData> {
             let mods = keyboard.modifier_state();
             if mods.ctrl && mods.alt {
                 if let Some(vt) = function_key_vt(keycode.raw()) {
+                    self.current_modifiers = mods;
                     return KeyAction::VtSwitch(vt);
                 }
                 if keycode.raw() == KEY_ESC {
+                    self.current_modifiers = mods;
                     return KeyAction::LockSession;
                 }
             }
@@ -184,6 +186,18 @@ impl<BackendData: Backend> Otto<BackendData> {
             keyboard.input::<(), _>(self, keycode, state, serial, time, |_, _, _| {
                 FilterResult::Forward
             });
+            self.current_modifiers = keyboard.modifier_state();
+            return KeyAction::None;
+        }
+
+        // Renaming a workspace label grabs the keyboard the same way: every
+        // key is text, so no shortcut fires and nothing reaches a client. The
+        // selector view owns focus and gets the key through `keyboard.input`.
+        if self.workspaces.is_label_editing() {
+            keyboard.input::<(), _>(self, keycode, state, serial, time, |_, _, _| {
+                FilterResult::Forward
+            });
+            self.current_modifiers = keyboard.modifier_state();
             return KeyAction::None;
         }
 
@@ -207,6 +221,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                     keyboard.input::<(), _>(self, keycode, state, serial, time, |_, _, _| {
                         FilterResult::Forward
                     });
+                    self.current_modifiers = keyboard.modifier_state();
                     return KeyAction::None;
                 };
             }
@@ -325,10 +340,10 @@ impl<BackendData: Backend> Otto<BackendData> {
             }
         }
 
-        // Update current modifiers state
-        if let Some(modifiers) = updated_modifiers {
-            self.current_modifiers = modifiers;
-        }
+        // Update current modifiers state. Read it back from the keyboard rather
+        // than only from the filter's snapshot: the filter is skipped on some
+        // paths (debug dumps), and the handle is authoritative after `input`.
+        self.current_modifiers = keyboard.modifier_state();
 
         self.suppressed_keys = suppressed_keys;
         action
@@ -345,6 +360,12 @@ impl<BackendData: Backend> Otto<BackendData> {
         self.app_switcher_hold_modifiers = None;
     }
 
+    /// Release every key the keyboard still believes is held.
+    ///
+    /// Needed whenever key events can be missed — leaving the session for
+    /// another VT, losing X11 focus — otherwise a modifier that was pressed
+    /// before we left stays latched forever and silently arms every
+    /// modifier-gated interaction (window-drag tiling, shortcuts).
     pub fn release_all_keys(&mut self) {
         let keyboard = self.seat.get_keyboard().unwrap();
         for keycode in keyboard.pressed_keys() {
@@ -357,6 +378,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                 |_, _, _| FilterResult::Forward::<bool>,
             );
         }
+        self.current_modifiers = keyboard.modifier_state();
     }
 }
 

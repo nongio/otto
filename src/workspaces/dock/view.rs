@@ -20,7 +20,7 @@ use smithay::{reexports::wayland_server::backend::ObjectId, utils::IsAlive};
 use tokio::sync::mpsc;
 
 use crate::{
-    config::{Config, DockBookmark},
+    config::{Config, DockBookmark, DockPosition},
     shell::WindowElement,
     theme::theme_colors,
     utils::{parse_hex_color, Observer},
@@ -46,12 +46,48 @@ pub(super) struct AppLayerEntry {
     /// Mirror layer: replicates the icon stack from `AppIconsManager` (icon + badge + progress).
     pub(super) icon_mirror: Layer,
     pub(super) label_layer: Layer,
+    /// The tooltip text, kept so the balloon can be rebuilt when the dock moves
+    /// to another screen edge and the arrow has to point elsewhere.
+    pub(super) label_text: String,
     pub(super) dot_layer: Layer,
     pub(super) running: bool,
     pub(super) identifier: String,
 }
 
 type MiniWindowLayers = (Layer, Layer, Layer, Option<u32>);
+
+/// A press on a dock icon, from the moment it lands — when it could still turn
+/// out to be a plain click — through to the drop that commits a new order.
+///
+/// Only launchers can be reordered: the running apps that are not bookmarked
+/// live in a trailing section of the dock and have no persisted place. Dragging
+/// one promotes it to a bookmark at the end of the launcher list first, so that
+/// from then on the drag is an ordinary reorder.
+#[derive(Debug, Clone)]
+pub(super) struct IconDrag {
+    /// The app being dragged, keyed as `app_layers` is.
+    match_id: String,
+    /// Pointer position along the dock's long axis when the press landed, in
+    /// physical pixels — the same space slot geometry is expressed in.
+    grab_px: f32,
+    /// Whether the pointer has travelled far enough for this to be a drag
+    /// rather than a click. Everything below is only meaningful once it has.
+    active: bool,
+    /// Index in the launcher list the drag started from.
+    start_index: usize,
+    /// Index the icon occupies right now.
+    index: usize,
+    /// How many launchers there are — the drag is clamped to that range.
+    launchers: usize,
+    /// One slot along the long axis, in physical pixels.
+    pitch: f32,
+    /// The icon that follows the pointer: a mirror of the app's icon stack,
+    /// parented to the drag overlay so it paints over its neighbours while the
+    /// real slot stays in the layout, empty, holding the gap.
+    ghost: Option<Layer>,
+    /// The scale the ghost settles at, i.e. the one an unmagnified icon has.
+    ghost_scale: f32,
+}
 
 #[derive(Debug, Clone)]
 pub struct DockView {
@@ -63,6 +99,9 @@ pub struct DockView {
     pub resize_handle: layers::prelude::Layer,
     dock_apps_container: layers::prelude::Layer,
     dock_windows_container: layers::prelude::Layer,
+    /// Sits above the icon strips and holds the icon being dragged, so it
+    /// paints over its neighbours instead of under the ones that follow it.
+    drag_overlay: layers::prelude::Layer,
 
     pub(super) app_layers: Arc<RwLock<HashMap<String, AppLayerEntry>>>,
     miniwindow_layers: Arc<RwLock<HashMap<ObjectId, MiniWindowLayers>>>,
@@ -84,18 +123,22 @@ pub struct DockView {
     pub menu_teardown_gen: Arc<std::sync::atomic::AtomicUsize>,
     /// The identifier of the app whose icon is currently showing the context-menu pressed state.
     pub(super) context_menu_app_id: Arc<RwLock<Option<String>>>,
-    /// Runtime dock configuration — loaded at startup, kept in sync with the file on changes.
-    /// This is the single source of truth for all dock settings and bookmarks.
-    pub(super) dock_config: Arc<RwLock<crate::config::DockConfig>>,
-    /// Runtime magnification toggle (mirrors config but can be changed without restart).
+    /// Runtime magnification toggle. Mirrors `dock.magnification` so the
+    /// magnification hot path is one atomic load rather than a config read;
+    /// [`DockView::apply_magnification`] keeps it in step.
     magnification_enabled: Arc<AtomicBool>,
-    /// Live drag on the dock handle: the pointer y (logical) where the press
-    /// landed and the `dock.size` multiplier at that moment. `Some` only while a
-    /// resize drag is in flight; the new size is written to the config file when
-    /// the button is released.
+    /// Live drag on the dock handle: the pointer position along the dock's
+    /// thickness axis (logical) where the press landed and the `dock.size`
+    /// multiplier at that moment. `Some` only while a resize drag is in flight;
+    /// the new size is written to the config file when the button is released.
     pub(super) resize_drag: Arc<RwLock<Option<(f64, f64)>>>,
+    /// The press or drag currently in flight on a dock icon. See [`IconDrag`].
+    pub(super) icon_drag: Arc<RwLock<Option<IconDrag>>>,
     /// Physical screen dimensions, kept in sync by the compositor via `set_screen_size`.
     screen_size: Arc<RwLock<(i32, i32)>>,
+    /// Physical dimensions of the area left over after the layer-shell
+    /// exclusive zones (the top bar) — the space the dock may actually fill.
+    usable_size: Arc<RwLock<(i32, i32)>>,
     /// Pre-computed autohide hot-zone rect, rebuilt by `render_dock` every time the dock
     /// layout changes. `check_dock_hot_zone` reads this without doing any computation.
     pub cached_hot_zone: Arc<RwLock<Option<skia::Rect>>>,
@@ -154,9 +197,48 @@ impl DockView {
         icon_size + 3.0 * scale
     }
 
+    /// How the dock is pinned to its screen edge: the single flex child
+    /// (`view_layer`) is pushed against that edge and centred along it.
+    fn wrap_layout_style(position: DockPosition) -> Style {
+        let (justify, align) = match position {
+            DockPosition::Bottom => (taffy::JustifyContent::Center, taffy::AlignItems::FlexEnd),
+            DockPosition::Left => (taffy::JustifyContent::FlexStart, taffy::AlignItems::Center),
+            DockPosition::Right => (taffy::JustifyContent::FlexEnd, taffy::AlignItems::Center),
+        };
+        Style {
+            position: layers::taffy::style::Position::Absolute,
+            display: layers::taffy::style::Display::Flex,
+            justify_content: Some(justify),
+            align_items: Some(align),
+            justify_items: Some(taffy::JustifyItems::Center),
+            ..Default::default()
+        }
+    }
+
+    /// The `view_layer` translation that slides the dock `amount` physical
+    /// pixels off its own screen edge — the axis depends on which edge that is.
+    pub fn slide_offset(position: DockPosition, amount: f32) -> (f32, f32) {
+        match position {
+            DockPosition::Bottom => (0.0, amount),
+            DockPosition::Left => (-amount, 0.0),
+            DockPosition::Right => (amount, 0.0),
+        }
+    }
+
+    /// [`Self::slide_offset`] for the dock's current position.
+    pub fn slide_position(&self, amount: f32) -> (f32, f32) {
+        Self::slide_offset(self.position(), amount)
+    }
+
+    /// The screen edge the dock is currently docked to.
+    pub fn position(&self) -> DockPosition {
+        Config::with(|c| c.dock.position)
+    }
+
     pub fn new(layers_engine: Arc<Engine>, app_icons_manager: Arc<AppIconsManager>) -> Self {
         let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
         let dock_size_multiplier = Config::with(|config| config.dock.size.clamp(0.5, 2.0)) as f32;
+        let position = Config::with(|config| config.dock.position);
         let base_icon_size = 95.0;
         let scaled_icon_size = base_icon_size * dock_size_multiplier * draw_scale;
 
@@ -164,20 +246,13 @@ impl DockView {
         wrap_layer.set_key("dock_view");
         wrap_layer.set_pointer_events(false);
         wrap_layer.set_size(Size::percent(1.0, 1.0), None);
-        wrap_layer.set_layout_style(Style {
-            position: layers::taffy::style::Position::Absolute,
-            display: layers::taffy::style::Display::Flex,
-            justify_content: Some(taffy::JustifyContent::Center), // horizontal
-            align_items: Some(taffy::AlignItems::FlexEnd),        // vertical alignment
-            justify_items: Some(taffy::JustifyItems::Center),
-            ..Default::default()
-        });
+        wrap_layer.set_layout_style(Self::wrap_layout_style(position));
 
         let view_layer = layers_engine.new_layer();
 
         let _ = wrap_layer.add_sublayer(&view_layer);
         // FIXME: initial dock position
-        view_layer.set_position((0.0, 1000.0), None);
+        view_layer.set_position(Self::slide_offset(position, 1000.0), None);
         let view_tree = LayerTreeBuilder::default()
             .key("dock_layout")
             .size(Size::auto())
@@ -251,12 +326,19 @@ impl DockView {
                 height: taffy::Dimension::Length(initial_bar_height),
             })
             // .background_color(Color::new_rgba(0.0, 0.0, 0.0, 0.0     ))
+            // The grip runs along the dock's long axis, so it follows the
+            // handle's own aspect: a tall narrow handle (bottom dock) gets a
+            // vertical bar, a short wide one (side dock) a horizontal bar.
             .content(Some(move |canvas: &skia::Canvas, w, h| {
                 let paint = layers::skia::Paint::new(theme_colors().text_tertiary.c4f(), None);
 
                 let line_width: f32 = 3.0 * draw_scale;
-                let margin_h = (w - line_width) / 2.0;
-                let margin_v = 18.0 * draw_scale * dock_size_multiplier;
+                let end_margin = 18.0 * draw_scale * dock_size_multiplier;
+                let (margin_h, margin_v) = if w <= h {
+                    ((w - line_width) / 2.0, end_margin)
+                } else {
+                    (end_margin, (h - line_width) / 2.0)
+                };
                 let rect = layers::skia::Rect::from_xywh(
                     margin_h,
                     margin_v,
@@ -297,6 +379,23 @@ impl DockView {
             .unwrap();
         dock_windows_container.build_layer_tree(&container_tree);
 
+        // Last child of the view, so a dragged icon paints over every strip.
+        // It spans the dock and positions nothing itself: the drag reads its
+        // rendered origin and places the ghost relative to that.
+        let drag_overlay = layers_engine.new_layer();
+        let _ = view_layer.add_sublayer(&drag_overlay);
+        let overlay_tree = LayerTreeBuilder::default()
+            .key("dock_drag_overlay")
+            .pointer_events(false)
+            .size(Size::percent(1.0, 1.0))
+            .layout_style(taffy::Style {
+                position: taffy::Position::Absolute,
+                ..Default::default()
+            })
+            .build()
+            .unwrap();
+        drag_overlay.build_layer_tree(&overlay_tree);
+
         let mut initial_state = DockModel::new();
         initial_state.width = 1000;
 
@@ -310,6 +409,7 @@ impl DockView {
             resize_handle,
             dock_apps_container,
             dock_windows_container,
+            drag_overlay,
             app_layers: Arc::new(RwLock::new(HashMap::new())),
             miniwindow_layers: Arc::new(RwLock::new(HashMap::new())),
             state: Arc::new(RwLock::new(initial_state)),
@@ -321,12 +421,13 @@ impl DockView {
             context_menu: Arc::new(RwLock::new(None)),
             menu_teardown_gen: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             context_menu_app_id: Arc::new(RwLock::new(None)),
-            dock_config: Arc::new(RwLock::new(Config::with(|c| c.dock.clone()))),
             magnification_enabled: Arc::new(AtomicBool::new(Config::with(|c| {
                 c.dock.magnification
             }))),
             resize_drag: Arc::new(RwLock::new(None)),
+            icon_drag: Arc::new(RwLock::new(None)),
             screen_size: Arc::new(RwLock::new((0, 0))),
+            usable_size: Arc::new(RwLock::new((0, 0))),
             cached_hot_zone: Arc::new(RwLock::new(None)),
             cached_dock_bounds: Arc::new(RwLock::new(None)),
             active_label: Arc::new(RwLock::new(None)),
@@ -335,11 +436,6 @@ impl DockView {
             bouncing: Arc::new(RwLock::new(HashMap::new())),
             app_icons_manager,
         };
-        // Sync AtomicBool from dock_config (single source)
-        dock.magnification_enabled.store(
-            dock.dock_config.read().unwrap().magnification,
-            std::sync::atomic::Ordering::SeqCst,
-        );
         dock.render_dock();
         dock.notification_handler(notify_rx);
         dock.load_configured_bookmarks();
@@ -347,7 +443,7 @@ impl DockView {
         dock
     }
     fn load_configured_bookmarks(&self) {
-        let bookmarks = self.dock_config.read().unwrap().bookmarks.clone();
+        let bookmarks = Config::with(|c| c.dock.bookmarks.clone());
         if bookmarks.is_empty() {
             let mut state = self.get_state();
             state.launchers.clear();
@@ -391,7 +487,7 @@ impl DockView {
         !self.active.load(std::sync::atomic::Ordering::Relaxed)
     }
     pub fn is_autohide_enabled(&self) -> bool {
-        self.dock_config.read().unwrap().autohide
+        Config::with(|c| c.dock.autohide)
     }
     /// Whether the dock still has to be composited this frame.
     ///
@@ -399,14 +495,10 @@ impl DockView {
     /// signal for input (the hot zone must arm immediately) but the wrong one
     /// for rendering: gating the dock plane on it drops the dock from the frame
     /// before its slide-out has run, so it appears to vanish instead of sliding
-    /// away. The autohide slide-out ends by setting `hidden` on the layer, so
-    /// that flag is the accurate "nothing left to draw" signal.
+    /// away. Every slide-out ends by setting `hidden` on the layer, so that flag
+    /// is the accurate "nothing left to draw" signal.
     pub fn is_hidden_for_render(&self) -> bool {
-        if self.is_autohide_enabled() {
-            self.view_layer.hidden()
-        } else {
-            self.is_hidden()
-        }
+        self.view_layer.hidden()
     }
     pub fn set_active_flag(&self, active: bool) {
         self.active
@@ -416,29 +508,53 @@ impl DockView {
         tracing::debug!("dock: hide");
         self.active
             .store(false, std::sync::atomic::Ordering::Relaxed);
-        self.view_layer.set_position((0.0, 250.0), transition)
+        let has_transition = transition.is_some();
+        let tr = self
+            .view_layer
+            .set_position(self.slide_position(250.0), transition);
+        if has_transition {
+            // Only mark the layer hidden once the slide-out has run — the
+            // render path gates the dock plane on that flag, so setting it up
+            // front would drop the dock from the frame and make it snap away
+            // (e.g. when a window animates to fullscreen).
+            tr.on_finish(
+                |l: &Layer, _| {
+                    l.set_hidden(true);
+                },
+                true,
+            );
+        } else {
+            self.view_layer.set_hidden(true);
+        }
+        tr
     }
     pub fn show(&self, transition: Option<Transition>) -> TransactionRef {
-        if self.dock_config.read().unwrap().autohide {
+        if self.is_autohide_enabled() {
             // When autohide is on, external show() calls should keep the dock hidden.
             // Mark active=false so is_hidden() returns true and the hot zone can trigger it.
             self.active
                 .store(false, std::sync::atomic::Ordering::Relaxed);
-            return self.view_layer.set_position((0.0, 250.0), None);
+            let tr = self
+                .view_layer
+                .set_position(self.slide_position(250.0), None);
+            self.view_layer.set_hidden(true);
+            return tr;
         }
         tracing::debug!("dock: show");
         self.active
             .store(true, std::sync::atomic::Ordering::Relaxed);
+        // Unhide before animating in, so the slide is actually composited.
+        self.view_layer.set_hidden(false);
         self.view_layer.set_position((0.0, 0.0), transition)
     }
     fn display_entries(&self, state: &DockModel) -> Vec<(Application, bool)> {
         state.display_entries()
     }
-    fn render_elements_layers(&self, available_icon_width: f32, icon_size: f32) {
+    fn render_elements_layers(&self, available_icon_width: f32) {
         let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
-        let dock_size_multiplier = self.dock_config.read().unwrap().size.clamp(0.5, 2.0) as f32;
+        let dock_size_multiplier = Config::with(|c| c.dock.size.clamp(0.5, 2.0)) as f32;
         let icon_color_filter = {
-            let dock_config = self.dock_config.read().unwrap();
+            let dock_config = Config::with(|c| c.dock.clone());
             if dock_config.colorize_icons {
                 let color = parse_hex_color(&dock_config.colorize_color);
                 let intensity = dock_config.colorize_intensity.clamp(0.0, 1.0) as f32;
@@ -477,44 +593,133 @@ impl DockView {
         let app_height = available_icon_width * (1.0 + 20.0 / 95.0);
         let miniwindow_height = available_icon_width * (1.0 + 60.0 / 95.0);
 
-        // Calculate bar height using helper function
-        let bar_height = Self::calculate_bar_height(icon_size, draw_scale * dock_size_multiplier);
-        let padding_top = 4.0 * draw_scale;
-        let padding_bottom = 4.0 * draw_scale;
+        // The dock's "thickness": its height for a bottom dock, its width for a
+        // side one. Everything below is expressed along the thickness axis and
+        // the long axis, then mapped onto x/y by `position`.
+        // Sized from the icon size that actually fits rather than the configured
+        // one: once the long axis runs out of room the icons shrink, and a bar
+        // that kept the configured thickness would grow fat around tiny icons.
+        let bar_thickness =
+            Self::calculate_bar_height(available_icon_width, draw_scale * dock_size_multiplier);
+        let position = self.position();
+        let vertical = position.is_vertical();
+        let edge_padding = 4.0 * draw_scale;
+        let end_padding = available_icon_width * 10.0 / 95.0;
 
         // Update view layer padding to match current icon size
         self.view_layer.set_layout_style(taffy::Style {
             position: taffy::Position::Relative,
             display: taffy::Display::Flex,
-            flex_direction: taffy::FlexDirection::Row,
+            flex_direction: if vertical {
+                taffy::FlexDirection::Column
+            } else {
+                taffy::FlexDirection::Row
+            },
             justify_content: Some(taffy::JustifyContent::Center),
             justify_items: Some(taffy::JustifyItems::Center),
             align_items: Some(taffy::AlignItems::Center),
             gap: taffy::Size::<taffy::LengthPercentage>::from_length(0.0_f32),
-            padding: taffy::Rect {
-                top: taffy::length(padding_top),
-                bottom: taffy::length(padding_bottom),
-                right: taffy::length(available_icon_width * 10.0 / 95.0),
-                left: taffy::length(available_icon_width * 10.0 / 95.0),
+            padding: if vertical {
+                taffy::Rect {
+                    top: taffy::length(end_padding),
+                    bottom: taffy::length(end_padding),
+                    right: taffy::length(edge_padding),
+                    left: taffy::length(edge_padding),
+                }
+            } else {
+                taffy::Rect {
+                    top: taffy::length(edge_padding),
+                    bottom: taffy::length(edge_padding),
+                    right: taffy::length(end_padding),
+                    left: taffy::length(end_padding),
+                }
             },
             ..Default::default()
         });
 
         self.bar_layer
-            .set_border_corner_radius(bar_height / 3.5, None);
+            .set_border_corner_radius(bar_thickness / 3.5, None);
 
+        let handle_long = 25.0 * draw_scale;
         self.resize_handle.set_size(
-            Size {
-                width: taffy::length(25.0 * draw_scale),
-                height: taffy::Dimension::Length(bar_height),
+            if vertical {
+                Size {
+                    width: taffy::Dimension::Length(bar_thickness),
+                    height: taffy::length(handle_long),
+                }
+            } else {
+                Size {
+                    width: taffy::length(handle_long),
+                    height: taffy::Dimension::Length(bar_thickness),
+                }
             },
             None,
         );
 
         self.bar_layer.set_size(
-            Size {
-                width: taffy::percent(1.0_f32),
-                height: taffy::Dimension::Length(bar_height),
+            if vertical {
+                Size {
+                    width: taffy::Dimension::Length(bar_thickness),
+                    height: taffy::percent(1.0_f32),
+                }
+            } else {
+                Size {
+                    width: taffy::percent(1.0_f32),
+                    height: taffy::Dimension::Length(bar_thickness),
+                }
+            },
+            None,
+        );
+
+        // Icon strips stack along the dock's long axis. Slots grow across it as
+        // they magnify, so they have to be aligned to the *screen edge* side of
+        // the strip — a left dock grows its icons rightwards, into the screen.
+        let cross_align = if position == DockPosition::Left {
+            taffy::AlignItems::FlexStart
+        } else {
+            taffy::AlignItems::FlexEnd
+        };
+        for container in [&self.dock_apps_container, &self.dock_windows_container] {
+            container.set_layout_style(taffy::Style {
+                display: taffy::Display::Flex,
+                flex_direction: if vertical {
+                    taffy::FlexDirection::Column
+                } else {
+                    taffy::FlexDirection::Row
+                },
+                justify_content: Some(taffy::JustifyContent::FlexEnd),
+                justify_items: Some(taffy::JustifyItems::FlexEnd),
+                align_items: Some(cross_align),
+                gap: taffy::Size::<taffy::LengthPercentage>::from_length(0.0_f32),
+                min_size: if vertical {
+                    taffy::Size {
+                        width: taffy::Dimension::Length(0.0),
+                        height: taffy::Dimension::Length(20.0 * draw_scale),
+                    }
+                } else {
+                    taffy::Size {
+                        width: taffy::Dimension::Length(20.0 * draw_scale),
+                        height: taffy::Dimension::Length(0.0),
+                    }
+                },
+                ..Default::default()
+            });
+        }
+        // The minimized-window strip is sized along the long axis by its
+        // content; across it, it must follow the dock like the apps strip does
+        // (it kept the horizontal dock's fixed height otherwise, reserving a
+        // whole icon of empty space on a side dock).
+        self.dock_windows_container.set_size(
+            if vertical {
+                Size {
+                    width: taffy::Dimension::Length(available_icon_width),
+                    height: taffy::Dimension::Auto,
+                }
+            } else {
+                Size {
+                    width: taffy::Dimension::Auto,
+                    height: taffy::Dimension::Length(available_icon_width),
+                }
             },
             None,
         );
@@ -624,10 +829,12 @@ impl DockView {
                     icon_mirror.set_color_filter(icon_color_filter.clone());
 
                     let label_layer = self.layers_engine.new_layer();
-                    setup_label(&label_layer, app_name);
+                    let app_name_for_label = app_name.clone();
+                    setup_label(&label_layer, app_name, position);
 
-                    // Running indicator dot — absolute-positioned at bottom center,
-                    // rendered on top of the icon because it's the last child.
+                    // Running indicator dot — absolute-positioned against the
+                    // screen edge the dock sits on, rendered on top of the icon
+                    // because it's the last child.
                     let dot_layer = self.layers_engine.new_layer();
                     let dot_radius = 2.0 * draw_scale;
                     let dot_height = 5.0 * draw_scale;
@@ -637,18 +844,10 @@ impl DockView {
                             .key("_dot")
                             .layout_style(taffy::Style {
                                 position: taffy::Position::Absolute,
-                                inset: taffy::Rect {
-                                    left: taffy::length(0.0_f32),
-                                    right: taffy::length(0.0_f32),
-                                    top: taffy::LengthPercentageAuto::Auto,
-                                    bottom: taffy::length(0.0_f32),
-                                },
+                                inset: Self::dot_inset(position),
                                 ..Default::default()
                             })
-                            .size(Size {
-                                width: taffy::Dimension::Percent(1.0),
-                                height: taffy::Dimension::Length(dot_height),
-                            })
+                            .size(Self::dot_size(position, dot_height))
                             .pointer_events(false)
                             .build()
                             .unwrap();
@@ -674,6 +873,7 @@ impl DockView {
                         icon_scaler: icon_scaler.clone(),
                         icon_mirror: icon_mirror.clone(),
                         label_layer: label_layer.clone(),
+                        label_text: app_name_for_label,
                         dot_layer: dot_layer.clone(),
                         running: *running,
                         identifier: app.identifier.clone(),
@@ -702,7 +902,7 @@ impl DockView {
                         setup_miniwindow_icon(&new_layer, &inner_layer, available_icon_width);
                         let _ = new_layer.add_sublayer(&inner_layer);
 
-                        setup_label(&label_layer, title.clone());
+                        setup_label(&label_layer, title.clone(), position);
                         let _ = new_layer.add_sublayer(&label_layer);
 
                         (new_layer, inner_layer, label_layer, None)
@@ -768,12 +968,106 @@ impl DockView {
             self.stop_bounce(&match_id);
         }
     }
+    /// Where the running-indicator dot sits inside an icon slot: against the
+    /// screen edge the dock is docked to.
+    fn dot_inset(position: DockPosition) -> taffy::Rect<taffy::LengthPercentageAuto> {
+        match position {
+            DockPosition::Bottom => taffy::Rect {
+                left: taffy::length(0.0_f32),
+                right: taffy::length(0.0_f32),
+                top: taffy::LengthPercentageAuto::Auto,
+                bottom: taffy::length(0.0_f32),
+            },
+            DockPosition::Left => taffy::Rect {
+                left: taffy::length(0.0_f32),
+                right: taffy::LengthPercentageAuto::Auto,
+                top: taffy::length(0.0_f32),
+                bottom: taffy::length(0.0_f32),
+            },
+            DockPosition::Right => taffy::Rect {
+                left: taffy::LengthPercentageAuto::Auto,
+                right: taffy::length(0.0_f32),
+                top: taffy::length(0.0_f32),
+                bottom: taffy::length(0.0_f32),
+            },
+        }
+    }
+
+    /// The dot strip spans the icon slot across the dock's thickness axis.
+    fn dot_size(position: DockPosition, dot_thickness: f32) -> Size {
+        if position.is_vertical() {
+            Size {
+                width: taffy::Dimension::Length(dot_thickness),
+                height: taffy::Dimension::Percent(1.0),
+            }
+        } else {
+            Size {
+                width: taffy::Dimension::Percent(1.0),
+                height: taffy::Dimension::Length(dot_thickness),
+            }
+        }
+    }
+
+    /// Move the dock to another screen edge and persist the choice.
+    ///
+    /// The per-icon layers that bake the orientation in (the running dot and the
+    /// tooltip balloon) are rebuilt here rather than on every render: they only
+    /// ever change when the dock moves.
+    pub(crate) fn apply_dock_position(&self) {
+        let position = self.position();
+        self.wrap_layer
+            .set_layout_style(Self::wrap_layout_style(position));
+
+        let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
+        let dot_thickness = 5.0 * draw_scale;
+        {
+            let app_layers = self.app_layers.read().unwrap();
+            for entry in app_layers.values() {
+                entry.dot_layer.set_layout_style(taffy::Style {
+                    position: taffy::Position::Absolute,
+                    inset: Self::dot_inset(position),
+                    ..Default::default()
+                });
+                entry
+                    .dot_layer
+                    .set_size(Self::dot_size(position, dot_thickness), None);
+                setup_label(&entry.label_layer, entry.label_text.clone(), position);
+            }
+        }
+        {
+            let miniwindows = self.miniwindow_layers.read().unwrap();
+            for (win, title) in self.get_state().minimized_windows {
+                if let Some((_, _, label_layer, ..)) = miniwindows.get(&win) {
+                    setup_label(label_layer, title, position);
+                }
+            }
+        }
+        // The dock is at rest wherever it was: re-anchor it to the new edge.
+        self.view_layer.set_position(
+            if self.is_hidden() {
+                Self::slide_offset(position, 250.0)
+            } else {
+                (0.0, 0.0)
+            },
+            None,
+        );
+        // The long axis (and with it the icon-size budget) swaps with the edge.
+        let mut state = self.get_state();
+        state.width = self.long_axis_budget();
+        self.update_state(&state);
+        // Everything above only *requests* a layout: the dock's layers keep
+        // their old rects until the engine lays them out. Callers read the dock
+        // rect right away — moving the dock re-maximizes the open windows —
+        // and would otherwise reserve the band on the edge the dock just left.
+        self.view_layer.engine.update(0.0);
+    }
+
     pub fn available_icon_size(&self) -> (f32, f32) {
         let state = self.get_state();
         let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
         let available_width = state.width as f32 - 20.0 * draw_scale;
         let base_icon_size = 95.0;
-        let dock_size_multiplier = self.dock_config.read().unwrap().size.clamp(0.5, 2.0) as f32;
+        let dock_size_multiplier = Config::with(|c| c.dock.size.clamp(0.5, 2.0)) as f32;
         let icon_size: f32 = base_icon_size * dock_size_multiplier * draw_scale;
 
         let apps_len = self.display_entries(&state).len() as f32;
@@ -791,10 +1085,10 @@ impl DockView {
 
     /// Render dock elements (app icons and miniwindow icons) based on the current state.
     /// This is called whenever the state changes to update the dock appearance.
-    fn render_dock(&self) {
-        let (available_icon_size, icon_size) = self.available_icon_size();
+    pub(crate) fn render_dock(&self) {
+        let (available_icon_size, _) = self.available_icon_size();
 
-        self.render_elements_layers(available_icon_size, icon_size);
+        self.render_elements_layers(available_icon_size);
         // When magnification is enabled, re-apply the current hover position so a
         // state-driven re-render (e.g. window focus change) doesn't snap icons back
         // to base size while the pointer is still over the dock.
@@ -811,38 +1105,52 @@ impl DockView {
 
         // Recompute and cache the autohide hot zone from the new dock dimensions.
         let screen_scale = Config::with(|c| c.screen_scale) as f32;
-        let bar_h = Self::calculate_bar_height(icon_size, 1.0) / screen_scale;
+        let bar_h = Self::calculate_bar_height(available_icon_size, 1.0) / screen_scale;
         let bar_h = bar_h / 2.0;
         let (screen_w, screen_h) = *self.screen_size.read().unwrap();
         // println!("screen x=0, w={}, h={} scale={}", screen_w, screen_h, screen_scale);
 
         let screen_h = screen_h as f32 / screen_scale;
         let screen_w = screen_w as f32 / screen_scale;
-        *self.cached_hot_zone.write().unwrap() = if screen_w > 0.0 && screen_h > 0.0 {
-            // Hot zone is a thin strip at the very bottom: 30% of the dock height.
-            let hot_zone_h = (bar_h * 2.0) * 0.3;
-            Some(skia::Rect::from_xywh(
+        let position = self.position();
+        let has_screen = screen_w > 0.0 && screen_h > 0.0;
+        // Both rects hug the edge the dock is docked to: a thin reveal strip on
+        // the edge itself, and the dock's own band outset by 40 pts across and
+        // 80 pts past the edge, so leaving it in any direction re-hides it.
+        let dock_thickness = bar_h * 2.0;
+        let hot_zone_thickness = dock_thickness * 0.3;
+        *self.cached_hot_zone.write().unwrap() = has_screen.then(|| match position {
+            DockPosition::Bottom => skia::Rect::from_xywh(
                 0.0,
-                screen_h - hot_zone_h,
+                screen_h - hot_zone_thickness,
                 screen_w,
-                hot_zone_h,
-            ))
-        } else {
-            None
-        };
-        *self.cached_dock_bounds.write().unwrap() = if screen_w > 0.0 && screen_h > 0.0 {
-            // Span from dock top (screen_h - bar height) to screen bottom,
-            // outset 40 pts horizontally.
-            let dock_h = bar_h * 2.0;
-            Some(skia::Rect::from_xywh(
+                hot_zone_thickness,
+            ),
+            DockPosition::Left => skia::Rect::from_xywh(0.0, 0.0, hot_zone_thickness, screen_h),
+            DockPosition::Right => skia::Rect::from_xywh(
+                screen_w - hot_zone_thickness,
+                0.0,
+                hot_zone_thickness,
+                screen_h,
+            ),
+        });
+        *self.cached_dock_bounds.write().unwrap() = has_screen.then(|| match position {
+            DockPosition::Bottom => skia::Rect::from_xywh(
                 -40.0,
-                screen_h - dock_h,
+                screen_h - dock_thickness,
                 screen_w + 80.0,
-                dock_h + 80.0,
-            ))
-        } else {
-            None
-        };
+                dock_thickness + 80.0,
+            ),
+            DockPosition::Left => {
+                skia::Rect::from_xywh(-80.0, -40.0, dock_thickness + 80.0, screen_h + 80.0)
+            }
+            DockPosition::Right => skia::Rect::from_xywh(
+                screen_w - dock_thickness,
+                -40.0,
+                dock_thickness + 80.0,
+                screen_h + 80.0,
+            ),
+        });
     }
     fn notification_handler(&self, mut rx: tokio::sync::mpsc::Receiver<WorkspacesModel>) {
         // let view = self.view.clone();
@@ -1070,7 +1378,7 @@ impl DockView {
     /// magnification is at rest (same formula as `magnify_elements_with_scale`).
     pub fn miniwindow_icon_size(&self) -> f32 {
         let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
-        let dock_size_multiplier = self.dock_config.read().unwrap().size.clamp(0.5, 2.0) as f32;
+        let dock_size_multiplier = Config::with(|c| c.dock.size.clamp(0.5, 2.0)) as f32;
         let base_icon_size = 80.0;
         base_icon_size * dock_size_multiplier * draw_scale
     }
@@ -1097,14 +1405,29 @@ impl DockView {
         if scale_override.is_none() && !magnification_enabled {
             return;
         }
+        // A drag keeps every slot exactly one pitch wide, which is what lets the
+        // dragged icon be placed by counting slots; magnifying under the pointer
+        // would move the ground that count is measured against.
+        if self.is_icon_dragging() {
+            return;
+        }
+        // Magnification runs along the dock's long axis: x for a bottom dock,
+        // y for a side one. `magnification_position` is already the pointer
+        // coordinate on that axis (see `on_motion`).
+        let position = self.position();
+        let vertical = position.is_vertical();
+        let axis_start = |r: &skia::Rect| if vertical { r.y() } else { r.x() };
+        let axis_end = |r: &skia::Rect| if vertical { r.bottom } else { r.right };
+        let axis_len = |r: &skia::Rect| if vertical { r.height() } else { r.width() };
+
         let pos = *self.magnification_position.read().unwrap();
         let bounds = self.view_layer.render_bounds_transformed();
-        let pos = pos - bounds.x();
+        let pos = pos - axis_start(&bounds);
         let state = self.get_state();
         let display_apps = self.display_entries(&state);
 
         let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
-        let dock_size_multiplier = self.dock_config.read().unwrap().size.clamp(0.5, 2.0) as f32;
+        let dock_size_multiplier = Config::with(|c| c.dock.size.clamp(0.5, 2.0)) as f32;
         let base_icon_size = 80.0;
         let icon_size: f32 = base_icon_size * dock_size_multiplier * draw_scale;
 
@@ -1113,14 +1436,21 @@ impl DockView {
         // We need to skip the handle gap so that icon_pos maps to actual cursor positions.
         let apps_bounds = self.dock_apps_container.render_bounds_transformed();
         let windows_bounds = self.dock_windows_container.render_bounds_transformed();
-        let elements_start = apps_bounds.x() - bounds.x();
-        let handle_gap = (windows_bounds.x() - apps_bounds.right()).max(0.0);
-        let elements_width = (apps_bounds.width() + windows_bounds.width()).max(1.0);
-        // Subtract the handle gap for any cursor position that is past the apps container.
-        let pos_in_elements = if pos - elements_start > apps_bounds.width() {
-            pos - elements_start - handle_gap
+        let elements_start = axis_start(&apps_bounds) - axis_start(&bounds);
+        let handle_gap = (axis_start(&windows_bounds) - axis_end(&apps_bounds)).max(0.0);
+        let elements_width = (axis_len(&apps_bounds) + axis_len(&windows_bounds)).max(1.0);
+        // Subtract the handle gap for any cursor position that is past the apps
+        // container, and clamp it to the end of that container while the pointer
+        // is *inside* the gap: subtracting the whole gap the moment the pointer
+        // crosses the last app icon would make `focus` jump backwards and then
+        // creep forward again, which reads as the icons wiggling as the pointer
+        // passes over the resize handle.
+        let apps_axis_len = axis_len(&apps_bounds);
+        let pos_from_start = pos - elements_start;
+        let pos_in_elements = if pos_from_start > apps_axis_len {
+            (pos_from_start - handle_gap).max(apps_axis_len)
         } else {
-            pos - elements_start
+            pos_from_start
         };
         let focus = pos_in_elements / elements_width;
 
@@ -1132,16 +1462,22 @@ impl DockView {
         let animation =
             transition.map(|t| self.layers_engine.add_animation_from_transition(&t, false));
         let mut changes = Vec::new();
-        let genie_scale =
-            scale_override.unwrap_or_else(|| self.dock_config.read().unwrap().genie_scale);
-        let genie_span = self.dock_config.read().unwrap().genie_span;
+        let genie_scale = scale_override.unwrap_or_else(|| Config::with(|c| c.dock.genie_scale));
+        let genie_span = Config::with(|c| c.dock.genie_span);
         {
             let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
             let dot_area_height = 3.0 * draw_scale;
-            let container_height = icon_size + dot_area_height;
-            let change = self.dock_apps_container.change_size(Size {
-                width: taffy::Dimension::Auto,
-                height: taffy::Dimension::Length(container_height),
+            let container_thickness = icon_size + dot_area_height;
+            let change = self.dock_apps_container.change_size(if vertical {
+                Size {
+                    width: taffy::Dimension::Length(container_thickness),
+                    height: taffy::Dimension::Auto,
+                }
+            } else {
+                Size {
+                    width: taffy::Dimension::Auto,
+                    height: taffy::Dimension::Length(container_thickness),
+                }
             });
             changes.push(change);
             let position_change = self
@@ -1149,6 +1485,39 @@ impl DockView {
                 .change_position(Point { x: 0.0, y: 0.0 });
 
             changes.push(position_change);
+            // App slots reserve a dot area on the screen-edge side, minimized
+            // windows do not — so shift their strip by the same amount, or the
+            // two rows of icons sit a few pixels out of line.
+            let windows_offset = match position {
+                DockPosition::Bottom => Point {
+                    x: 0.0,
+                    y: -dot_area_height,
+                },
+                DockPosition::Left => Point {
+                    x: dot_area_height,
+                    y: 0.0,
+                },
+                DockPosition::Right => Point {
+                    x: -dot_area_height,
+                    y: 0.0,
+                },
+            };
+            changes.push(self.dock_windows_container.change_position(windows_offset));
+            // Across the dock, the minimized-window strip has to be exactly as
+            // thick as an app slot (icon + dot area), or its icons — aligned to
+            // the screen-edge side like the apps are — sit lower than the app
+            // icons, and their tooltips with them.
+            changes.push(self.dock_windows_container.change_size(if vertical {
+                Size {
+                    width: taffy::Dimension::Length(container_thickness),
+                    height: taffy::Dimension::Auto,
+                }
+            } else {
+                Size {
+                    width: taffy::Dimension::Auto,
+                    height: taffy::Dimension::Length(container_thickness),
+                }
+            }));
             let layers_map = self.app_layers.read().unwrap_or_else(|e| e.into_inner());
             for (index, (app, _running)) in display_apps.iter().enumerate() {
                 if let Some(entry) = layers_map.get(&app.match_id) {
@@ -1158,11 +1527,15 @@ impl DockView {
                         1.0 + magnify_function(focus - icon_pos, genie_span) * genie_scale;
                     let focused_icon_size = icon_size * icon_focus as f32;
 
-                    // Width = focused icon size (for magnification);
-                    // Height = icon + dot area so the running indicator dot
-                    // sits below the icon inside the container.
-                    let app_height = focused_icon_size + dot_area_height;
-                    let change = layer.change_size(Size::points(focused_icon_size, app_height));
+                    // The slot grows along the dock's long axis with the
+                    // magnification, and is one dot-area thicker across it so
+                    // the running indicator sits beside the icon.
+                    let slot_thickness = focused_icon_size + dot_area_height;
+                    let change = layer.change_size(if vertical {
+                        Size::points(slot_thickness, focused_icon_size)
+                    } else {
+                        Size::points(focused_icon_size, slot_thickness)
+                    });
                     changes.push(change);
 
                     let change = entry
@@ -1173,10 +1546,20 @@ impl DockView {
                     // to focused_icon_size. badge and progress scale with it as children.
                     let scaler = (focused_icon_size * ICON_SCALER_FILL) / BASE_ICON_SIZE;
 
-                    let scaler_change_position = entry.icon_scaler.change_position(Point {
-                        x: focused_icon_size / 2.0,
-                        y: focused_icon_size / 2.0,
-                    });
+                    // Centre the icon in the part of the slot the dot does not
+                    // take: the dot hugs the screen edge, so on a left dock the
+                    // icon starts one dot-area in.
+                    let scaler_change_position =
+                        entry.icon_scaler.change_position(match position {
+                            DockPosition::Left => Point {
+                                x: dot_area_height + focused_icon_size / 2.0,
+                                y: focused_icon_size / 2.0,
+                            },
+                            _ => Point {
+                                x: focused_icon_size / 2.0,
+                                y: focused_icon_size / 2.0,
+                            },
+                        });
                     changes.push(scaler_change_position);
                     let scaler_change = entry.icon_scaler.change_scale(Point {
                         x: scaler,
@@ -1215,25 +1598,46 @@ impl DockView {
             self.layers_engine.start_animation(animation, 0.0);
         }
     }
-    /// Update the physical screen dimensions so `render_dock` can compute a correct hot zone.
+    /// Update the physical screen dimensions so `render_dock` can compute a
+    /// correct hot zone, and the usable dimensions — the screen minus the
+    /// layer-shell exclusive zones (the top bar) — which is the space the dock
+    /// itself may occupy.
     ///
-    /// The screen width is also the dock's width budget: `available_icon_size`
-    /// divides it by the number of entries and caps the icon size with the
-    /// result. Leaving it at the placeholder width meant that cap was tighter
-    /// than the configured icon size on any real screen, so `[dock] size` had no
-    /// visible effect once a handful of icons were in the dock.
-    pub fn set_screen_size(&self, w: i32, h: i32) {
+    /// The usable extent along the dock's long axis is its budget:
+    /// `available_icon_size` divides it by the number of entries and caps the
+    /// icon size with the result, and `max_dock_size` derives how far the resize
+    /// drag may go from it. Leaving it at the placeholder width meant that cap
+    /// was tighter than the configured icon size on any real screen, so
+    /// `[dock] size` had no visible effect once a handful of icons were in the
+    /// dock.
+    pub fn set_screen_size(&self, w: i32, h: i32, usable: (i32, i32)) {
         {
             let mut screen_size = self.screen_size.write().unwrap();
-            if *screen_size == (w, h) {
+            let mut usable_size = self.usable_size.write().unwrap();
+            if *screen_size == (w, h) && *usable_size == usable {
                 return;
             }
             *screen_size = (w, h);
+            *usable_size = usable;
         }
         let mut state = self.get_state();
-        if state.width != w {
-            state.width = w;
+        let budget = self.long_axis_budget();
+        if state.width != budget {
+            state.width = budget;
             self.update_state(&state);
+        } else {
+            self.render_dock();
+        }
+    }
+
+    /// How much room the dock has along the axis it stretches on, in physical
+    /// pixels: the screen minus whatever layer-shell panels reserved.
+    fn long_axis_budget(&self) -> i32 {
+        let (usable_w, usable_h) = *self.usable_size.read().unwrap();
+        if self.position().is_vertical() {
+            usable_h
+        } else {
+            usable_w
         }
     }
 
@@ -1259,13 +1663,19 @@ impl DockView {
         bouncing.insert(match_id.to_string(), flag.clone());
         drop(bouncing);
 
-        // Bounce roughly two-thirds of an icon height above the dock.
-        let height = self.available_icon_size().0 * 0.7;
+        // Bounce roughly two-thirds of an icon out of the dock, away from the
+        // screen edge it is docked to.
+        let distance = self.available_icon_size().0 * 0.7;
+        let hop = match self.position() {
+            DockPosition::Bottom => Point::new(0.0, -distance),
+            DockPosition::Left => Point::new(distance, 0.0),
+            DockPosition::Right => Point::new(-distance, 0.0),
+        };
         // Each hop lasts ~0.8s; cap the loop so a failed launch settles after ~20s.
         Self::schedule_bounce_hop(
             layer,
             flag,
-            height,
+            hop,
             24,
             self.bouncing.clone(),
             match_id.to_string(),
@@ -1292,7 +1702,7 @@ impl DockView {
     fn schedule_bounce_hop(
         layer: Layer,
         flag: Arc<AtomicBool>,
-        height: f32,
+        hop: Point,
         remaining: u32,
         bouncing: Arc<RwLock<HashMap<String, Arc<AtomicBool>>>>,
         match_id: String,
@@ -1303,16 +1713,17 @@ impl DockView {
             return;
         }
 
-        // The keyframes drive `y` from rest (0) up to `-height` and back to rest, so
-        // the icon settles exactly where it started at the end of every hop.
+        // The keyframes drive the position from rest (0) out to `hop` and back
+        // to rest, so the icon settles exactly where it started at the end of
+        // every hop.
         layer
-            .set_position(Point::new(0.0, -height), Some(Self::bounce_transition()))
+            .set_position(hop, Some(Self::bounce_transition()))
             .on_finish(
                 move |l: &Layer, _| {
                     Self::schedule_bounce_hop(
                         l.clone(),
                         flag.clone(),
-                        height,
+                        hop,
                         remaining - 1,
                         bouncing.clone(),
                         match_id.clone(),
@@ -1379,10 +1790,7 @@ impl DockView {
         self.magnify_elements();
     }
     pub fn bookmark_config_for(&self, match_id: &str) -> Option<DockBookmark> {
-        self.dock_config
-            .read()
-            .unwrap()
-            .bookmarks
+        Config::with(|c| c.dock.bookmarks.clone())
             .iter()
             .find(|b| {
                 b.desktop_id
@@ -1424,13 +1832,20 @@ impl DockView {
         let scale = Config::with(|c| c.screen_scale) as f32;
         let handle_bounds = self.resize_handle.render_bounds_transformed();
         let wrap_bounds = self.wrap_layer.render_bounds_transformed();
-        let pos = Point::new(
-            (handle_bounds.x() + handle_bounds.width() / 2.0 - wrap_bounds.x()) / scale,
-            (handle_bounds.y() - wrap_bounds.y()) / scale,
-        );
+        let (anchor, pos) = self.menu_anchor_for(&handle_bounds, &wrap_bounds, scale, 0.0);
 
-        let autohide = self.dock_config.read().unwrap().autohide;
-        let magnification = self.dock_config.read().unwrap().magnification;
+        let (autohide, magnification) = Config::with(|c| (c.dock.autohide, c.dock.magnification));
+        let position = self.position();
+        // Flat entries rather than a "Position ▸" submenu: the dock's own click
+        // handling only hit-tests the top level.
+        let position_item = |label: &str, value: DockPosition, action: &str| {
+            MenuItem::action(if position == value {
+                format!("✓ {label}")
+            } else {
+                label.to_string()
+            })
+            .with_action_id(action)
+        };
 
         let items = vec![
             MenuItem::action(if autohide {
@@ -1445,6 +1860,10 @@ impl DockView {
                 "Magnification"
             })
             .with_action_id("toggle_magnification"),
+            MenuItem::separator(),
+            position_item("Bottom", DockPosition::Bottom, "position_bottom"),
+            position_item("Left", DockPosition::Left, "position_left"),
+            position_item("Right", DockPosition::Right, "position_right"),
         ];
 
         let mut context_menu_lock = self.context_menu.write().unwrap();
@@ -1455,11 +1874,14 @@ impl DockView {
                 self.menu_teardown_gen.clone(),
             );
             let s = Config::with(|c| c.screen_scale) as f32;
-            menu.set_style(ContextMenuStyle::default_with_scale(s));
+            menu.set_style(
+                ContextMenuStyle::default_with_scale(s).with_theme(crate::theme::kit_theme()),
+            );
             *context_menu_lock = Some(menu);
         }
         if let Some(menu) = context_menu_lock.as_ref() {
             menu.set_items(items);
+            menu.set_anchor(anchor.0, anchor.1);
             menu.show_at(pos.x, pos.y);
         }
         drop(context_menu_lock);
@@ -1530,24 +1952,44 @@ impl DockView {
         items
     }
 
+    /// Where a context menu opened off a dock element goes, as an
+    /// `(anchor_point, position)` pair in the wrap layer's logical coordinates.
+    ///
+    /// A bottom dock grows its menus upwards out of the element; a side dock
+    /// grows them inwards, away from the screen edge.
+    fn menu_anchor_for(
+        &self,
+        element: &skia::Rect,
+        wrap: &skia::Rect,
+        scale: f32,
+        gap: f32,
+    ) -> ((f32, f32), Point) {
+        let left = (element.x() - wrap.x()) / scale;
+        let right = (element.right - wrap.x()) / scale;
+        let top = (element.y() - wrap.y()) / scale;
+        let bottom = (element.bottom - wrap.y()) / scale;
+        match self.position() {
+            DockPosition::Bottom => (
+                (0.5, 1.0),
+                Point::new((left + right) / 2.0, top - gap * scale),
+            ),
+            DockPosition::Left => ((0.0, 1.0), Point::new(right + gap * scale, bottom)),
+            DockPosition::Right => ((1.0, 1.0), Point::new(left - gap * scale, bottom)),
+        }
+    }
+
     pub fn open_context_menu(&self, _pos: Point, app_id: String) {
-        // Compute position from the app icon layer to anchor the menu above it
+        // Compute position from the app icon layer to anchor the menu next to it
         let scale = Config::with(|c| c.screen_scale) as f32;
-        let menu_pos = {
+        let (menu_anchor, menu_pos) = {
             let app_layers = self.app_layers.read().unwrap();
             let entry = app_layers.values().find(|e| e.identifier == app_id);
             if let Some(e) = entry {
                 let icon_bounds = e.layer.render_bounds_transformed();
                 let wrap_bounds = self.wrap_layer.render_bounds_transformed();
-                // Center the menu horizontally over the icon;
-                // anchor point (0.5, 1.0) means the bottom-center lands at (x, y),
-                // so y = top-edge of the icon relative to the wrap_layer (in logical px).
-                Point::new(
-                    (icon_bounds.x() + icon_bounds.width() / 2.0 - wrap_bounds.x()) / scale,
-                    (icon_bounds.y() - wrap_bounds.y()) / scale - 10.0 * scale, // nudge up above the icon
-                )
+                self.menu_anchor_for(&icon_bounds, &wrap_bounds, scale, 10.0)
             } else {
-                _pos
+                ((0.5, 1.0), _pos)
             }
         };
 
@@ -1568,7 +2010,9 @@ impl DockView {
                 self.menu_teardown_gen.clone(),
             );
             let scale = Config::with(|c| c.screen_scale) as f32;
-            menu.set_style(ContextMenuStyle::default_with_scale(scale));
+            menu.set_style(
+                ContextMenuStyle::default_with_scale(scale).with_theme(crate::theme::kit_theme()),
+            );
             *context_menu_lock = Some(menu);
         }
 
@@ -1576,6 +2020,7 @@ impl DockView {
             // Refresh items in case the menu was reused (app state may have changed)
             let items = self.build_context_menu_items(&app_id);
             menu.set_items(items);
+            menu.set_anchor(menu_anchor.0, menu_anchor.1);
             menu.show_at(menu_pos.x, menu_pos.y);
         }
         drop(context_menu_lock);
@@ -1611,8 +2056,9 @@ impl DockView {
         }
     }
 
-    pub(super) fn set_magnification_enabled(&self, enabled: bool) {
-        self.dock_config.write().unwrap().magnification = enabled;
+    /// Reconcile the dock with `dock.magnification`.
+    pub(crate) fn apply_magnification(&self) {
+        let enabled = Config::with(|c| c.dock.magnification);
         self.magnification_enabled
             .store(enabled, std::sync::atomic::Ordering::SeqCst);
         if !enabled {
@@ -1621,71 +2067,536 @@ impl DockView {
         }
     }
 
-    /// Persist the current in-memory dock config to the writable config file.
-    pub(super) fn save_config(&self) {
-        crate::config::save_dock_config(&self.dock_config.read().unwrap());
+    /// Reconcile the dock with `dock.autohide`: hiding it right away when the
+    /// setting goes on, and bringing it back when it goes off.
+    pub(crate) fn apply_autohide(&self) {
+        if Config::with(|c| c.dock.autohide) {
+            self.hide(Some(Transition::ease_out_quad(0.3)));
+        } else {
+            self.show(Some(Transition::ease_out_quad(0.3)));
+        }
     }
 
-    /// Mutate the in-memory dock config and immediately persist it.
-    pub(super) fn update_dock_config(&self, f: impl FnOnce(&mut crate::config::DockConfig)) {
-        f(&mut self.dock_config.write().unwrap());
-        self.save_config();
+    /// Persist the dock keys the dock itself owns — currently only the
+    /// bookmarks, which are a list rather than a setting and so have no schema
+    /// identifier of their own. Every scalar dock setting is written by
+    /// [`crate::settings::set`].
+    pub(super) fn update_bookmarks(&self, f: impl FnOnce(&mut Vec<crate::config::DockBookmark>)) {
+        let config = crate::config::Config::update(|config| f(&mut config.dock.bookmarks));
+        crate::config::save_dock_bookmarks(&config.dock.bookmarks);
     }
 
-    /// Logical pixels of dock height per unit of `dock.size`, i.e. how far the
-    /// pointer has to travel to change the multiplier by 1. The icon is
-    /// `95 * size * screen_scale * 0.8` physical pixels tall, and the pointer
+    /// Logical pixels of dock thickness per unit of `dock.size`, i.e. how far
+    /// the pointer has to travel to change the multiplier by 1. The icon is
+    /// `95 * size * screen_scale * 0.8` physical pixels across, and the pointer
     /// position is logical, so the scale cancels out.
     const RESIZE_PIXELS_PER_UNIT: f64 = 95.0 * 0.8;
+
+    /// The pointer coordinate along the axis a resize drag runs on, oriented so
+    /// that dragging *away* from the dock's screen edge — up for a bottom dock,
+    /// inwards for a side one — always grows it.
+    fn resize_axis_pos(&self, pointer: (f64, f64)) -> f64 {
+        match self.position() {
+            DockPosition::Bottom => -pointer.1,
+            DockPosition::Left => pointer.0,
+            DockPosition::Right => -pointer.0,
+        }
+    }
+
+    /// The largest `dock.size` there is room for, bounded two ways:
+    ///
+    /// * along the dock — every icon must still fit in the usable extent (the
+    ///   screen minus the top bar), or the dock runs off the screen and takes
+    ///   the resize handle with it, leaving no way to drag it back;
+    /// * across it — the dock may take at most a quarter of its thickness axis.
+    fn max_dock_size(&self) -> f64 {
+        let draw_scale = Config::with(|config| config.screen_scale) * 0.8;
+        if draw_scale <= 0.0 {
+            return 2.0;
+        }
+        let mut max = 2.0_f64;
+
+        let budget = self.long_axis_budget() as f64;
+        if budget > 0.0 {
+            let state = self.get_state();
+            let entries =
+                (self.display_entries(&state).len() + state.minimized_windows.len()).max(1) as f64;
+            // One slot is `95 * size * draw_scale` wide, plus the view's end
+            // padding (10/95 of an icon each side); the handle and a margin are
+            // fixed. Solve `used(size) <= budget` for size.
+            let per_unit = (entries * 95.0 + 20.0) * draw_scale;
+            let fixed = 65.0 * draw_scale; // resize handle + breathing room
+            max = max.min((budget - fixed).max(0.0) / per_unit);
+        }
+
+        let (screen_w, screen_h) = *self.screen_size.read().unwrap();
+        let cross_px = if self.position().is_vertical() {
+            screen_w
+        } else {
+            screen_h
+        } as f64;
+        if cross_px > 0.0 {
+            // `calculate_bar_height` is `95 * size * draw_scale` plus a hair of padding.
+            max = max.min(cross_px * 0.25 / (98.0 * draw_scale));
+        }
+
+        max.clamp(0.5, 2.0)
+    }
 
     /// Remember where a resize drag on the dock handle started. The size is
     /// updated live from `resize_drag_update` and only written to the config
     /// file when the drag ends.
-    pub(super) fn begin_resize_drag(&self, pointer_y: f64) {
-        let size = self.dock_config.read().unwrap().size;
-        *self.resize_drag.write().unwrap() = Some((pointer_y, size));
+    pub(super) fn begin_resize_drag(&self, pointer: (f64, f64)) {
+        let size = Config::with(|c| c.dock.size);
+        *self.resize_drag.write().unwrap() = Some((self.resize_axis_pos(pointer), size));
     }
 
-    /// Apply an in-flight resize drag: dragging up (smaller y) grows the dock.
-    /// Returns whether a drag was actually in flight.
-    pub(super) fn resize_drag_update(&self, pointer_y: f64) -> bool {
-        let Some((start_y, start_size)) = *self.resize_drag.read().unwrap() else {
+    /// Apply an in-flight resize drag. Returns whether a drag was actually in
+    /// flight.
+    pub(super) fn resize_drag_update(&self, pointer: (f64, f64)) -> bool {
+        let Some((start, start_size)) = *self.resize_drag.read().unwrap() else {
             return false;
         };
+        let travel = self.resize_axis_pos(pointer) - start;
         let size =
-            (start_size + (start_y - pointer_y) / Self::RESIZE_PIXELS_PER_UNIT).clamp(0.5, 2.0);
-        if (size - self.dock_config.read().unwrap().size).abs() < f64::EPSILON {
+            (start_size + travel / Self::RESIZE_PIXELS_PER_UNIT).clamp(0.5, self.max_dock_size());
+        if (size - Config::with(|c| c.dock.size)).abs() < f64::EPSILON {
             return true;
         }
-        self.dock_config.write().unwrap().size = size;
+        // Live during the drag, without touching the file: persistence and the
+        // `Changed` signal wait until the interaction settles, in
+        // `end_resize_drag`.
+        Config::update(|config| config.dock.size = size);
         self.render_dock();
         true
     }
 
     /// End a resize drag and persist the size that was landed on. Returns
     /// whether a drag was in flight, so the caller can swallow the click.
-    pub(super) fn end_resize_drag(&self) -> bool {
+    pub(super) fn end_resize_drag<B: crate::state::Backend + 'static>(
+        &self,
+        state: &mut crate::Otto<B>,
+    ) -> bool {
         let Some((_, start_size)) = self.resize_drag.write().unwrap().take() else {
             return false;
         };
-        if (self.dock_config.read().unwrap().size - start_size).abs() > f64::EPSILON {
-            self.save_config();
+        let size = Config::with(|c| c.dock.size);
+        if (size - start_size).abs() > f64::EPSILON {
+            // The size is already live; going through `set` is what persists it
+            // and tells every observer, exactly as a settings app would.
+            if let Err(err) = crate::settings::set(
+                state,
+                "dock.size",
+                crate::settings::value::SettingValue::Double(size),
+            ) {
+                tracing::warn!("Could not save the dock size: {err}");
+            }
         }
         true
+    }
+
+    /// Physical pixels the pointer has to travel along the dock before a press
+    /// on an icon becomes a reorder drag rather than a click.
+    const DRAG_THRESHOLD_PX: f32 = 8.0;
+
+    /// A pointer position projected onto the dock's long axis, in physical
+    /// pixels — the space slot sizes and positions are expressed in.
+    fn drag_axis_px(&self, pointer: (f64, f64)) -> f32 {
+        let scale = Config::with(|c| c.screen_scale) as f32;
+        let along = if self.position().is_vertical() {
+            pointer.1
+        } else {
+            pointer.0
+        };
+        along as f32 * scale
+    }
+
+    /// A displacement along the dock's long axis, as a point.
+    fn along_axis(&self, amount: f32) -> Point {
+        if self.position().is_vertical() {
+            Point::new(0.0, amount)
+        } else {
+            Point::new(amount, 0.0)
+        }
+    }
+
+    /// Where the dragged icon has to sit, in the drag overlay's coordinates, to
+    /// be under `along_px` — a position on the dock's long axis, in physical
+    /// pixels — and in line with the row of icons.
+    ///
+    /// Every part of this is read live rather than cached from the press: the
+    /// dock is still settling out of its magnified shape when a drag starts,
+    /// and a magnified dock is both fatter and differently placed than the flat
+    /// one the drag ends up working against. An icon positioned from what the
+    /// dock looked like at the press hangs off the pointer by the difference.
+    fn ghost_point(&self, along_px: f32, pitch: f32) -> Point {
+        let overlay = self.drag_overlay.render_bounds_transformed();
+        let icons = self.dock_apps_container.render_bounds_transformed();
+        // The strip of icons is exactly one unmagnified icon thick plus the
+        // running-indicator dot, whatever the magnification is doing, and the
+        // dot hugs the screen edge — so the middle of the row of icons is a
+        // pitch's half in from the edge the dock is not docked to.
+        match self.position() {
+            DockPosition::Bottom => Point::new(
+                along_px - overlay.left,
+                icons.top + pitch / 2.0 - overlay.top,
+            ),
+            DockPosition::Left => Point::new(
+                icons.right - pitch / 2.0 - overlay.left,
+                along_px - overlay.top,
+            ),
+            DockPosition::Right => Point::new(
+                icons.left + pitch / 2.0 - overlay.left,
+                along_px - overlay.top,
+            ),
+        }
+    }
+
+    /// The distance between two icon slots along the dock's long axis: an
+    /// unmagnified icon, which is what every slot measures while a drag is in
+    /// flight (see [`Self::begin_icon_drag`]).
+    fn slot_pitch(&self) -> f32 {
+        let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
+        let dock_size_multiplier = Config::with(|c| c.dock.size.clamp(0.5, 2.0)) as f32;
+        80.0 * dock_size_multiplier * draw_scale
+    }
+
+    /// Whether an icon is being dragged right now. Magnification and the
+    /// tooltip stand down while it is.
+    pub(super) fn is_icon_dragging(&self) -> bool {
+        self.icon_drag
+            .read()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|drag| drag.active)
+    }
+
+    /// Record a press on the icon of `match_id`. Nothing happens yet: the press
+    /// only becomes a drag once the pointer has moved
+    /// [`Self::DRAG_THRESHOLD_PX`] along the dock, so a plain click still
+    /// launches or focuses the app.
+    pub(super) fn begin_icon_drag(&self, match_id: &str, pointer: (f64, f64)) {
+        *self.icon_drag.write().unwrap() = Some(IconDrag {
+            match_id: match_id.to_string(),
+            grab_px: self.drag_axis_px(pointer),
+            active: false,
+            start_index: 0,
+            index: 0,
+            launchers: 0,
+            pitch: 0.0,
+            ghost: None,
+            ghost_scale: 1.0,
+        });
+    }
+
+    /// Advance an in-flight icon drag. Returns whether the drag has taken over
+    /// the pointer, in which case the caller must not treat the motion as
+    /// hovering.
+    pub(super) fn icon_drag_update(&self, pointer: (f64, f64)) -> bool {
+        let Some(mut drag) = self.icon_drag.read().unwrap().clone() else {
+            return false;
+        };
+        let px = self.drag_axis_px(pointer);
+        if !drag.active {
+            if (px - drag.grab_px).abs() < Self::DRAG_THRESHOLD_PX {
+                return false;
+            }
+            if !self.activate_icon_drag(&mut drag) {
+                // Nothing draggable under the press after all — forget it, so
+                // the release still counts as a click.
+                *self.icon_drag.write().unwrap() = None;
+                return false;
+            }
+        }
+
+        // Clamp to the launcher section: the running apps that follow it have
+        // no persisted order to take part in.
+        let min = -(drag.start_index as f32) * drag.pitch;
+        let max = drag
+            .launchers
+            .saturating_sub(1)
+            .saturating_sub(drag.start_index) as f32
+            * drag.pitch;
+        let travel = (px - drag.grab_px).clamp(min, max);
+        if let Some(ghost) = drag.ghost.as_ref() {
+            ghost.set_position(self.ghost_point(drag.grab_px + travel, drag.pitch), None);
+        }
+
+        // Round to the nearest slot, so the icon changes places when it has
+        // covered half of one.
+        let target = (drag.start_index as f32 + travel / drag.pitch).round() as isize;
+        let target = target.clamp(0, drag.launchers.saturating_sub(1) as isize) as usize;
+        if target != drag.index {
+            self.move_dragged_icon(&mut drag, target);
+        }
+
+        *self.icon_drag.write().unwrap() = Some(drag);
+        true
+    }
+
+    /// Turn a press that has moved far enough into a real drag: promote the app
+    /// to a bookmark if it is only running, flatten the magnification so every
+    /// slot is one pitch wide, and lift the icon into the drag overlay.
+    ///
+    /// Returns `false` when the app cannot be dragged (it disappeared, or it has
+    /// no icon to lift), leaving the dock untouched.
+    fn activate_icon_drag(&self, drag: &mut IconDrag) -> bool {
+        let match_id = drag.match_id.clone();
+        let mut state = self.get_state();
+        let index = match state.launchers.iter().position(|a| a.match_id == match_id) {
+            Some(index) => index,
+            None => {
+                // Only running: give it a place of its own before moving it.
+                let Some((app, _)) = state
+                    .display_entries()
+                    .into_iter()
+                    .find(|(app, _)| app.match_id == match_id)
+                else {
+                    return false;
+                };
+                self.update_bookmarks(|bookmarks| {
+                    if !bookmarks.iter().any(|b| {
+                        b.desktop_id
+                            .strip_suffix(".desktop")
+                            .unwrap_or(&b.desktop_id)
+                            == match_id
+                    }) {
+                        bookmarks.push(crate::config::DockBookmark {
+                            desktop_id: match_id.clone(),
+                            label: None,
+                            exec_args: Vec::new(),
+                        });
+                    }
+                });
+                state.launchers.push(app);
+                *self.state.write().unwrap() = state.clone();
+                // Promotion moves the icon out of the running section and into
+                // the launcher one, which is a change of order like any other.
+                self.reorder_app_layers();
+                state.launchers.len() - 1
+            }
+        };
+
+        let app_layers = self.app_layers.read().unwrap();
+        let Some(entry) = app_layers.get(&match_id) else {
+            return false;
+        };
+        let slot = entry.layer.clone();
+        let scaler = entry.icon_scaler.clone();
+        drop(app_layers);
+
+        let Some(icon_stack) = self.get_icon_stack_for_app(&match_id) else {
+            return false;
+        };
+
+        // Every slot has to be the same width for the drag to be a matter of
+        // counting pitches, so the magnification stands down for the duration.
+        self.set_active_label(None);
+        self.magnify_elements_with_scale(Some(0.0), Some(Transition::spring(0.2, 0.1)));
+
+        let ghost = self.layers_engine.new_layer();
+        let ghost_tree = LayerTreeBuilder::default()
+            .key(format!("dock_drag_ghost_{match_id}"))
+            .layout_style(taffy::Style {
+                position: taffy::Position::Absolute,
+                ..Default::default()
+            })
+            .size(Size::points(BASE_ICON_SIZE, BASE_ICON_SIZE))
+            .anchor_point(layers::types::Point::new(0.5, 0.5))
+            .replicate_node(Some(icon_stack.id()))
+            .picture_cached(true)
+            .image_cache(true)
+            .pointer_events(false)
+            .build()
+            .unwrap();
+        ghost.build_layer_tree(&ghost_tree);
+        let _ = self.drag_overlay.add_sublayer(&ghost);
+
+        // The ghost takes the pointer with it from the first frame, and keeps
+        // the scale the icon had so the lift itself is not a jump.
+        let pitch = self.slot_pitch();
+        let settled_scale = (pitch * ICON_SCALER_FILL) / BASE_ICON_SIZE;
+        let current_scale = scaler.scale();
+        ghost.set_position(self.ghost_point(drag.grab_px, pitch), None);
+        ghost.set_scale(current_scale, None);
+        ghost.set_scale(
+            Point::new(settled_scale * 1.1, settled_scale * 1.1),
+            Some(Transition::ease_out_quad(0.15)),
+        );
+
+        // The slot keeps its place in the layout — it is the gap the icon
+        // leaves behind — but shows nothing while the ghost stands in for it.
+        slot.set_opacity(0.0_f32, None);
+
+        drag.active = true;
+        drag.start_index = index;
+        drag.index = index;
+        drag.launchers = state.launchers.len();
+        drag.pitch = pitch;
+        drag.ghost = Some(ghost);
+        drag.ghost_scale = settled_scale;
+        self.dragging
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        true
+    }
+
+    /// Move the dragged icon to `new_index` in the launcher list and slide every
+    /// icon it displaced one slot the other way.
+    fn move_dragged_icon(&self, drag: &mut IconDrag, new_index: usize) {
+        let old_index = drag.index;
+        if new_index == old_index {
+            return;
+        }
+        let mut state = self.get_state();
+        if old_index >= state.launchers.len() || new_index >= state.launchers.len() {
+            return;
+        }
+        let moved: Vec<String> = if new_index > old_index {
+            state.launchers[old_index + 1..=new_index].iter()
+        } else {
+            state.launchers[new_index..old_index].iter()
+        }
+        .map(|app| app.match_id.clone())
+        .collect();
+
+        let app = state.launchers.remove(old_index);
+        state.launchers.insert(new_index, app);
+        *self.state.write().unwrap() = state;
+        self.reorder_app_layers();
+        drag.index = new_index;
+
+        // The displaced icons have just been re-laid-out one slot along. Put
+        // them back where they were and let them slide into the new place, or
+        // the reorder reads as a jump.
+        let shift = if new_index > old_index {
+            drag.pitch
+        } else {
+            -drag.pitch
+        };
+        let app_layers = self.app_layers.read().unwrap();
+        for match_id in moved {
+            if let Some(entry) = app_layers.get(&match_id) {
+                entry.layer.set_position(self.along_axis(shift), None);
+                entry
+                    .layer
+                    .set_position(Point::new(0.0, 0.0), Some(Transition::ease_out_quad(0.16)));
+            }
+        }
+    }
+
+    /// Finish an icon drag: fly the ghost into the slot it landed on, hand the
+    /// icon back to that slot and persist the new order. Returns whether a drag
+    /// was in flight, so the caller can swallow the click that ends it.
+    pub(super) fn end_icon_drag(&self) -> bool {
+        let Some(drag) = self.icon_drag.write().unwrap().take() else {
+            return false;
+        };
+        if !drag.active {
+            return false;
+        }
+        self.dragging
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+
+        let slot = self
+            .app_layers
+            .read()
+            .unwrap()
+            .get(&drag.match_id)
+            .map(|entry| entry.layer.clone());
+
+        if let Some(ghost) = drag.ghost {
+            // The dock has been flat and still for the length of the drag, so
+            // the slot the icon landed in can simply be measured.
+            let target = match slot.as_ref() {
+                Some(slot) => {
+                    let bounds = slot.render_bounds_transformed();
+                    let centre = if self.position().is_vertical() {
+                        (bounds.top + bounds.bottom) / 2.0
+                    } else {
+                        (bounds.left + bounds.right) / 2.0
+                    };
+                    self.ghost_point(centre, drag.pitch)
+                }
+                None => ghost.position(),
+            };
+            let animation = self
+                .layers_engine
+                .add_animation_from_transition(&Transition::ease_out_quad(0.18), false);
+            let changes = [
+                ghost.change_position(target),
+                ghost.change_scale(Point::new(drag.ghost_scale, drag.ghost_scale)),
+            ];
+            self.layers_engine.schedule_changes(&changes, animation);
+            // Animation-scoped, not transaction-scoped: a transaction handler is
+            // dropped if anything writes the same value before it ends, and the
+            // ghost has to be taken down whatever happens.
+            self.layers_engine.on_animation_finish(
+                animation,
+                move |_| {
+                    ghost.remove();
+                    if let Some(slot) = slot.as_ref() {
+                        slot.set_opacity(1.0_f32, None);
+                    }
+                },
+                true,
+            );
+            self.layers_engine.start_animation(animation, 0.0);
+        } else if let Some(slot) = slot {
+            slot.set_opacity(1.0_f32, None);
+        }
+
+        if drag.index != drag.start_index {
+            self.persist_launcher_order();
+        }
+        // The pointer is still over the dock, so pick the magnification back up.
+        self.magnify_elements_animated();
+        true
+    }
+
+    /// Drop a press that never became a drag.
+    pub(super) fn cancel_icon_drag(&self) {
+        *self.icon_drag.write().unwrap() = None;
+    }
+
+    /// Re-append every app slot in display order. Slots are laid out and painted
+    /// in the order they are attached to the container, and both the
+    /// magnification (which finds an icon's centre from its index) and the drag
+    /// assume that order is the one [`DockModel::display_entries`] gives.
+    fn reorder_app_layers(&self) {
+        let entries = self.get_state().display_entries();
+        let app_layers = self.app_layers.read().unwrap();
+        for (app, _) in entries.iter() {
+            if let Some(entry) = app_layers.get(&app.match_id) {
+                let _ = self.dock_apps_container.add_sublayer(&entry.layer);
+            }
+        }
+    }
+
+    /// Write the launcher order back to the bookmark list. Bookmarks the dock
+    /// does not know about — one whose desktop entry failed to load, say — keep
+    /// their relative order at the end rather than being dropped.
+    fn persist_launcher_order(&self) {
+        let order: Vec<String> = self
+            .get_state()
+            .launchers
+            .iter()
+            .map(|app| app.match_id.clone())
+            .collect();
+        self.update_bookmarks(|bookmarks| super::model::sort_bookmarks_to(bookmarks, &order));
     }
 
     /// Schedule hiding the dock after a short delay (if autohide is enabled).
     /// The delay is handled by the animation itself; a subsequent show() call
     /// overrides the pending animation and cancels the hide naturally.
     pub fn schedule_autohide(&self) {
-        if !self.dock_config.read().unwrap().autohide || self.is_hidden() || self.has_menu_open() {
+        if !self.is_autohide_enabled() || self.is_hidden() || self.has_menu_open() {
             return;
         }
         self.active
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.view_layer
             .set_position(
-                (0.0, 250.0),
+                self.slide_position(250.0),
                 Some(Transition {
                     timing: TimingFunction::Spring(Spring::with_duration_and_bounce(0.5, 0.0)),
                     delay: 0.4,
@@ -1705,7 +2616,7 @@ impl DockView {
     /// was started, so callers can chain work via `on_finish`. Returns `None` if
     /// autohide is off or the dock is already visible.
     pub fn show_autohide(&self) -> Option<TransactionRef> {
-        if !self.dock_config.read().unwrap().autohide {
+        if !self.is_autohide_enabled() {
             return None;
         }
         if self.active.load(std::sync::atomic::Ordering::Relaxed) {
@@ -1757,4 +2668,626 @@ use std::f64::consts::E;
 pub fn magnify_function(x: impl Into<f64>, genie_span: f64) -> f64 {
     let x = x.into();
     E.powf(-genie_span * x.powi(2))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workspaces::app_icons_manager::AppIconsManager;
+    use serial_test::serial;
+
+    /// A dock with two launchers, laid out on a 1000×1000 screen at the given
+    /// edge. The tokio runtime is kept alive by the caller: `DockView::new`
+    /// spawns its notification tasks on it.
+    fn dock_at(position: DockPosition) -> (Arc<Engine>, DockView) {
+        dock_at_with_magnification(position, true)
+    }
+
+    fn dock_at_with_magnification(
+        position: DockPosition,
+        magnification: bool,
+    ) -> (Arc<Engine>, DockView) {
+        Config::update(|c| {
+            c.dock.position = position;
+            c.dock.bookmarks.clear();
+            c.dock.magnification = magnification;
+            c.screen_scale = 1.0;
+        });
+        let engine = Engine::create(1000.0, 1000.0);
+        let root = engine.new_layer();
+        root.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        root.set_size(Size::points(1000.0, 1000.0), None);
+        let _ = engine.add_layer(&root);
+
+        let icons = Arc::new(AppIconsManager::new(engine.clone()));
+        let dock = DockView::new(engine.clone(), icons);
+        let _ = root.add_sublayer(&dock.wrap_layer);
+        dock.set_screen_size(1000, 1000, (1000, 1000));
+
+        let mut state = dock.get_state();
+        state.launchers = vec![
+            Application::test_new("calculator"),
+            Application::test_new("editor"),
+        ];
+        dock.update_state(&state);
+        // A fresh dock is parked off screen until it is shown; slide it in, or
+        // there is nothing to paint.
+        dock.show(None);
+        settle(&engine);
+        (engine, dock)
+    }
+
+    /// Run the engine until the layout animations land. Dock geometry is
+    /// applied through spring transitions — a single `update(0.0)` leaves every
+    /// icon slot at the size it was built with, which is not what the dock
+    /// looks like a moment later.
+    fn settle(engine: &Arc<Engine>) {
+        for _ in 0..300 {
+            engine.update(0.016);
+        }
+    }
+
+    /// (slot bounds, balloon bounds) for the first app in the dock. The balloon
+    /// is the shape drawn inside the label layer — the layer itself is padded
+    /// by a safe margin all around, so its bounds say nothing about placement.
+    fn first_label_geometry(dock: &DockView) -> (skia::Rect, skia::Rect) {
+        let entry = first_entry(dock);
+        (
+            entry.0.render_bounds_transformed(),
+            entry.1.render_layer().global_shape_bounds,
+        )
+    }
+
+    /// (slot layer, label layer, dot layer) of the first app in the dock.
+    fn first_entry(dock: &DockView) -> (Layer, Layer, Layer) {
+        let app_layers = dock.app_layers.read().unwrap();
+        // By name, not by iteration order: the entries live in a HashMap, and
+        // two docks holding the same apps would otherwise be compared through
+        // two different icons.
+        let entry = app_layers
+            .get("calculator")
+            .expect("the dock should have laid out its launchers");
+        (
+            entry.layer.clone(),
+            entry.label_layer.clone(),
+            entry.dot_layer.clone(),
+        )
+    }
+
+    /// Where the balloon sits relative to its icon slot.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Side {
+        Above,
+        Left,
+        Right,
+        Elsewhere,
+    }
+
+    fn side_of(slot: skia::Rect, balloon: skia::Rect) -> Side {
+        let centred_x = (balloon.center_x() - slot.center_x()).abs() < 2.0;
+        let centred_y = (balloon.center_y() - slot.center_y()).abs() < 2.0;
+        if balloon.bottom <= slot.y() + 2.0 && centred_x {
+            Side::Above
+        } else if balloon.right <= slot.x() + 2.0 && centred_y {
+            Side::Left
+        } else if balloon.x() >= slot.right - 2.0 && centred_y {
+            Side::Right
+        } else {
+            Side::Elsewhere
+        }
+    }
+
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    }
+
+    /// The match ids of the app slots in the order they are attached to the
+    /// apps container — which is the order they are laid out and painted in.
+    fn slot_order(engine: &Arc<Engine>, dock: &DockView) -> Vec<String> {
+        let app_layers = dock.app_layers.read().unwrap();
+        engine
+            .node_children(&dock.dock_apps_container.id())
+            .into_iter()
+            .filter_map(|child| {
+                app_layers
+                    .iter()
+                    .find(|(_, entry)| entry.layer.id() == child)
+                    .map(|(match_id, _)| match_id.clone())
+            })
+            .collect()
+    }
+
+    /// A bottom dock holding `apps` as launchers, settled.
+    fn dock_with_launchers(apps: &[&str]) -> (Arc<Engine>, DockView) {
+        dock_at_with_launchers(DockPosition::Bottom, apps)
+    }
+
+    /// A dock at `position` holding `apps` as launchers, settled.
+    fn dock_at_with_launchers(position: DockPosition, apps: &[&str]) -> (Arc<Engine>, DockView) {
+        let (engine, dock) = dock_at(position);
+        let mut state = dock.get_state();
+        state.launchers = apps.iter().map(|id| Application::test_new(id)).collect();
+        dock.update_state(&state);
+        settle(&engine);
+        (engine, dock)
+    }
+
+    fn launcher_order(dock: &DockView) -> Vec<String> {
+        dock.get_state()
+            .launchers
+            .iter()
+            .map(|app| app.match_id.clone())
+            .collect()
+    }
+
+    /// Where the pointer has to be, in logical coordinates, to have grabbed the
+    /// icon at `index` and dragged it by `slots` places.
+    fn drag_to(dock: &DockView, slots: f32) -> (f64, f64) {
+        let scale = Config::with(|c| c.screen_scale);
+        ((dock.slot_pitch() * slots) as f64 / scale, 0.0)
+    }
+
+    /// The centre of the dragged icon, and the centre of the pointer that is
+    /// dragging it, in scene coordinates.
+    fn ghost_and_pointer(dock: &DockView, drag: &IconDrag, pointer: (f64, f64)) -> (Point, Point) {
+        let ghost = drag.ghost.as_ref().unwrap().render_bounds_transformed();
+        let icons = dock.dock_apps_container.render_bounds_transformed();
+        let scale = Config::with(|c| c.screen_scale) as f32;
+        let pitch = drag.pitch;
+        // The pointer only carries the icon along the dock; across it the icon
+        // stays in the row, which is a half pitch in from the far edge.
+        let expected = match dock.position() {
+            DockPosition::Bottom => Point::new(pointer.0 as f32 * scale, icons.top + pitch / 2.0),
+            DockPosition::Left => Point::new(icons.right - pitch / 2.0, pointer.1 as f32 * scale),
+            DockPosition::Right => Point::new(icons.left + pitch / 2.0, pointer.1 as f32 * scale),
+        };
+        (
+            Point::new(
+                (ghost.left + ghost.right) / 2.0,
+                (ghost.top + ghost.bottom) / 2.0,
+            ),
+            expected,
+        )
+    }
+
+    #[test]
+    #[serial]
+    fn the_dragged_icon_stays_under_the_pointer_through_the_magnification() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        for position in [
+            DockPosition::Bottom,
+            DockPosition::Left,
+            DockPosition::Right,
+        ] {
+            let (engine, dock) =
+                dock_at_with_launchers(position, &["calculator", "editor", "files"]);
+
+            // Magnified under the pointer, which is how the dock looks when a
+            // press lands on it — and not how it looks a moment later, once the
+            // drag has flattened it.
+            let scaler = {
+                let app_layers = dock.app_layers.read().unwrap();
+                app_layers.get("calculator").unwrap().icon_scaler.clone()
+            };
+            let icon = scaler.render_bounds_transformed();
+            let vertical = position.is_vertical();
+            let grab_along = if vertical {
+                (icon.top + icon.bottom) / 2.0
+            } else {
+                (icon.left + icon.right) / 2.0
+            };
+            dock.update_magnification_position(grab_along);
+            settle(&engine);
+
+            let pointer = |along: f32| -> (f64, f64) {
+                if vertical {
+                    (0.0, along as f64)
+                } else {
+                    (along as f64, 0.0)
+                }
+            };
+
+            dock.begin_icon_drag("calculator", pointer(grab_along));
+            let moved = grab_along + dock.slot_pitch();
+            assert!(dock.icon_drag_update(pointer(moved)));
+
+            // The frame the drag starts on, with the dock still magnified...
+            engine.update(0.0);
+            let drag = dock.icon_drag.read().unwrap().clone().unwrap();
+            let (ghost, expected) = ghost_and_pointer(&dock, &drag, pointer(moved));
+            assert!(
+                (ghost.x - expected.x).abs() < 2.0 && (ghost.y - expected.y).abs() < 2.0,
+                "{position:?}: the icon must ride the pointer from the first frame, \
+                 not hang off the magnified dock — {ghost:?} against {expected:?}"
+            );
+
+            // ...and once the dock has settled flat underneath it.
+            settle(&engine);
+            assert!(dock.icon_drag_update(pointer(moved)));
+            engine.update(0.0);
+            let drag = dock.icon_drag.read().unwrap().clone().unwrap();
+            let (ghost, expected) = ghost_and_pointer(&dock, &drag, pointer(moved));
+            assert!(
+                (ghost.x - expected.x).abs() < 2.0 && (ghost.y - expected.y).abs() < 2.0,
+                "{position:?}: the icon must stay on the pointer once the dock is \
+                 flat — {ghost:?} against {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn a_short_press_is_a_click_not_a_drag() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        let (engine, dock) = dock_with_launchers(&["calculator", "editor", "files"]);
+
+        dock.begin_icon_drag("calculator", (0.0, 0.0));
+        // Well inside the threshold: a hand that wobbles is still clicking.
+        assert!(!dock.icon_drag_update((2.0, 0.0)), "a wobble is not a drag");
+        assert!(!dock.is_icon_dragging());
+        assert!(!dock.end_icon_drag(), "the click must not be swallowed");
+        settle(&engine);
+        assert_eq!(launcher_order(&dock), ["calculator", "editor", "files"]);
+    }
+
+    #[test]
+    #[serial]
+    fn dragging_an_icon_past_its_neighbour_swaps_them() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        let (engine, dock) = dock_with_launchers(&["calculator", "editor", "files"]);
+
+        dock.begin_icon_drag("calculator", (0.0, 0.0));
+        assert!(dock.icon_drag_update(drag_to(&dock, 1.0)));
+        assert!(dock.is_icon_dragging());
+
+        assert_eq!(launcher_order(&dock), ["editor", "calculator", "files"]);
+        assert_eq!(
+            slot_order(&engine, &dock),
+            ["editor", "calculator", "files"],
+            "the slots have to be laid out in the order the model now has"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn half_a_slot_is_not_enough_to_swap() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        let (engine, dock) = dock_with_launchers(&["calculator", "editor", "files"]);
+
+        dock.begin_icon_drag("calculator", (0.0, 0.0));
+        // Just short of the half-way point between two slots.
+        assert!(dock.icon_drag_update(drag_to(&dock, 0.45)));
+        assert_eq!(launcher_order(&dock), ["calculator", "editor", "files"]);
+
+        assert!(dock.icon_drag_update(drag_to(&dock, 0.55)));
+        assert_eq!(launcher_order(&dock), ["editor", "calculator", "files"]);
+        settle(&engine);
+    }
+
+    #[test]
+    #[serial]
+    fn a_drag_carries_the_icon_all_the_way_across() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        let (engine, dock) = dock_with_launchers(&["calculator", "editor", "files"]);
+
+        dock.begin_icon_drag("calculator", (0.0, 0.0));
+        assert!(dock.icon_drag_update(drag_to(&dock, 2.0)));
+        assert_eq!(launcher_order(&dock), ["editor", "files", "calculator"]);
+
+        // And back again, in one move: the icons in between shift the other way.
+        assert!(dock.icon_drag_update(drag_to(&dock, 0.0)));
+        assert_eq!(launcher_order(&dock), ["calculator", "editor", "files"]);
+        assert_eq!(
+            slot_order(&engine, &dock),
+            ["calculator", "editor", "files"]
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn a_drag_cannot_push_an_icon_off_the_end() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        let (_engine, dock) = dock_with_launchers(&["calculator", "editor"]);
+
+        dock.begin_icon_drag("editor", (0.0, 0.0));
+        assert!(dock.icon_drag_update(drag_to(&dock, 12.0)));
+        assert_eq!(
+            launcher_order(&dock),
+            ["calculator", "editor"],
+            "the last icon has nowhere further to go"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn the_dragged_icon_is_lifted_out_of_its_slot() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        let (engine, dock) = dock_with_launchers(&["calculator", "editor", "files"]);
+
+        let slot = {
+            let app_layers = dock.app_layers.read().unwrap();
+            app_layers.get("calculator").unwrap().layer.clone()
+        };
+
+        dock.begin_icon_drag("calculator", (0.0, 0.0));
+        assert!(dock.icon_drag_update(drag_to(&dock, 1.0)));
+        settle(&engine);
+        assert_eq!(
+            slot.opacity(),
+            0.0,
+            "the slot stands empty while the ghost has the icon"
+        );
+        assert!(
+            dock.icon_drag
+                .read()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .ghost
+                .is_some(),
+            "the icon has to be somewhere while its slot is empty"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn tooltips_follow_the_edge_the_dock_starts_on() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        for (position, expected) in [
+            (DockPosition::Bottom, Side::Above),
+            (DockPosition::Left, Side::Right),
+            (DockPosition::Right, Side::Left),
+        ] {
+            let (_engine, dock) = dock_at(position);
+            let (slot, balloon) = first_label_geometry(&dock);
+            assert_eq!(
+                side_of(slot, balloon),
+                expected,
+                "{position:?} dock: balloon {balloon:?} against slot {slot:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn tooltips_follow_the_dock_when_it_moves() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        for (from, to, expected) in [
+            (DockPosition::Bottom, DockPosition::Right, Side::Left),
+            (DockPosition::Bottom, DockPosition::Left, Side::Right),
+            (DockPosition::Right, DockPosition::Bottom, Side::Above),
+            (DockPosition::Left, DockPosition::Bottom, Side::Above),
+            (DockPosition::Left, DockPosition::Right, Side::Left),
+        ] {
+            let (engine, dock) = dock_at(from);
+            Config::update(|c| c.dock.position = to);
+            dock.apply_dock_position();
+            settle(&engine);
+
+            let (slot, balloon) = first_label_geometry(&dock);
+            assert_eq!(
+                side_of(slot, balloon),
+                expected,
+                "{from:?} -> {to:?}: balloon {balloon:?} against slot {slot:?}"
+            );
+
+            // The layer that carries the balloon has to be rebuilt too, not
+            // just the path drawn in it: its box is what the background blur
+            // and the material fill are clipped to.
+            let (_engine2, fresh) = dock_at(to);
+            let moved_box = first_entry(&dock).1.render_bounds_transformed();
+            let fresh_box = first_entry(&fresh).1.render_bounds_transformed();
+            assert!(
+                (moved_box.width() - fresh_box.width()).abs() < 1.0
+                    && (moved_box.height() - fresh_box.height()).abs() < 1.0,
+                "{from:?} -> {to:?}: moved label layer is {}x{}, a fresh one is {}x{}",
+                moved_box.width(),
+                moved_box.height(),
+                fresh_box.width(),
+                fresh_box.height()
+            );
+        }
+    }
+
+    /// An icon slot is a square icon plus the sliver the running dot lives in,
+    /// laid along the dock: on a side dock it is wider than it is tall. This
+    /// holds with magnification off too, where nothing re-sizes the slots after
+    /// they are created.
+    #[test]
+    #[serial]
+    fn icon_slots_are_laid_out_along_the_dock() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        for magnification in [true, false] {
+            for position in [
+                DockPosition::Bottom,
+                DockPosition::Left,
+                DockPosition::Right,
+            ] {
+                let (_engine, dock) = dock_at_with_magnification(position, magnification);
+                let slot = first_entry(&dock).0.render_bounds_transformed();
+                let along_the_dock = if position.is_vertical() {
+                    slot.width() > slot.height()
+                } else {
+                    slot.height() > slot.width()
+                };
+                assert!(
+                    along_the_dock,
+                    "{position:?} dock (magnification {magnification}): slot is {}x{}, \
+                     the dot sliver should thicken it across the dock, not along it",
+                    slot.width(),
+                    slot.height()
+                );
+            }
+        }
+    }
+
+    /// Paint the scene into a raster surface: the tooltip is only wrong once it
+    /// has been *drawn*, so the layer tree agreeing with itself is not enough.
+    fn paint(engine: &Arc<Engine>) -> skia::Image {
+        let mut surface = layers::skia::surfaces::raster_n32_premul((1000, 1000)).unwrap();
+        let canvas = surface.canvas();
+        canvas.clear(layers::skia::Color::from_argb(255, 40, 40, 40));
+        if let Some(root) = engine.scene_root() {
+            layers::drawing::draw_scene(canvas, engine.scene(), root);
+        }
+        surface.image_snapshot()
+    }
+
+    /// The pixels of `image` inside `area`, as RGBA rows.
+    fn pixels_in(image: &skia::Image, area: skia::Rect) -> Vec<u8> {
+        use layers::skia::RoundOut;
+        let area: skia::Rect = {
+            let r: skia::IRect = area.round_out();
+            skia::Rect::from(r)
+        };
+        let (w, h) = (area.width() as i32, area.height() as i32);
+        let info = layers::skia::ImageInfo::new(
+            (w, h),
+            layers::skia::ColorType::RGBA8888,
+            layers::skia::AlphaType::Premul,
+            None,
+        );
+        let mut pixels = vec![0u8; (w * h * 4) as usize];
+        assert!(
+            image.read_pixels(
+                &info,
+                &mut pixels,
+                (w * 4) as usize,
+                (area.x() as i32, area.y() as i32),
+                layers::skia::image::CachingHint::Allow,
+            ),
+            "could not read the painted pixels back"
+        );
+        pixels
+    }
+
+    /// How many of the two pixel buffers differ noticeably.
+    fn differing_pixels(a: &[u8], b: &[u8]) -> usize {
+        a.chunks_exact(4)
+            .zip(b.chunks_exact(4))
+            .filter(|(p, q)| {
+                p.iter()
+                    .zip(q.iter())
+                    .any(|(x, y)| (*x as i16 - *y as i16).abs() > 8)
+            })
+            .count()
+    }
+
+    /// Hovering an icon shows its tooltip; this is what the dock does on hover.
+    fn show_first_label(dock: &DockView, engine: &Arc<Engine>) {
+        let label = first_entry(dock).1;
+        dock.set_active_label(Some(label));
+        settle(engine);
+    }
+
+    /// A tooltip that has already been painted at one edge must not be re-used
+    /// with its old shape after the dock moves: the balloon painted after a
+    /// move has to be pixel-for-pixel the one a dock that started at that edge
+    /// paints. This is what a stale draw cache breaks — the layer tree is
+    /// right, the placement is right, and the arrow still points the old way.
+    #[test]
+    #[serial]
+    fn a_moved_tooltip_paints_the_same_as_one_that_never_moved() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        for (from, to) in [
+            (DockPosition::Bottom, DockPosition::Right),
+            (DockPosition::Bottom, DockPosition::Left),
+            (DockPosition::Right, DockPosition::Bottom),
+            (DockPosition::Left, DockPosition::Bottom),
+            (DockPosition::Left, DockPosition::Right),
+        ] {
+            let (engine, dock) = dock_at(from);
+            // Show it once at the old edge, so it gets painted (and cached) there.
+            show_first_label(&dock, &engine);
+            let _ = paint(&engine);
+            dock.set_active_label(None);
+            settle(&engine);
+
+            Config::update(|c| c.dock.position = to);
+            dock.apply_dock_position();
+            settle(&engine);
+            show_first_label(&dock, &engine);
+            let moved = paint(&engine);
+
+            let (engine2, dock2) = dock_at(to);
+            show_first_label(&dock2, &engine2);
+            let fresh = paint(&engine2);
+
+            // Compare the band the tooltip lives in. Both docks hold the same
+            // apps on the same screen, so everything else in it — the bar, the
+            // icon — is laid out identically.
+            let mut area = first_entry(&dock).1.render_layer().global_shape_bounds;
+            area.join(first_entry(&dock2).1.render_layer().global_shape_bounds);
+            area.outset((20.0, 20.0));
+            let differing = differing_pixels(&pixels_in(&moved, area), &pixels_in(&fresh, area));
+            let total = (area.width().ceil() as usize + 2) * (area.height().ceil() as usize + 2);
+            // Identical in practice; the allowance is only for antialiasing
+            // noise, and a stale arrow is an order of magnitude more than this.
+            assert!(
+                differing * 1000 < total,
+                "{from:?} -> {to:?}: {differing} of {total} pixels around the tooltip differ \
+                 from the dock that started at {to:?}"
+            );
+        }
+    }
+
+    /// The running indicator hugs the screen edge the dock sits on, whether the
+    /// dock started there or was moved there.
+    #[test]
+    #[serial]
+    fn the_running_dot_hugs_the_screen_edge() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        for (from, to) in [
+            (DockPosition::Bottom, DockPosition::Bottom),
+            (DockPosition::Bottom, DockPosition::Left),
+            (DockPosition::Bottom, DockPosition::Right),
+            (DockPosition::Right, DockPosition::Bottom),
+            (DockPosition::Left, DockPosition::Right),
+        ] {
+            let (engine, dock) = dock_at(from);
+            if to != from {
+                Config::update(|c| c.dock.position = to);
+                dock.apply_dock_position();
+                settle(&engine);
+            }
+            let (slot_layer, _, dot_layer) = first_entry(&dock);
+            let slot = slot_layer.render_bounds_transformed();
+            let dot = dot_layer.render_bounds_transformed();
+            let hugs = match to {
+                // The dot sits under the icon on a bottom dock, and beside it
+                // on a side dock — always on the side facing the screen edge.
+                DockPosition::Bottom => {
+                    dot.bottom >= slot.bottom - 1.0 && dot.width() >= slot.width() - 1.0
+                }
+                DockPosition::Left => {
+                    dot.x() <= slot.x() + 1.0 && dot.height() >= slot.height() - 1.0
+                }
+                DockPosition::Right => {
+                    dot.right >= slot.right - 1.0 && dot.height() >= slot.height() - 1.0
+                }
+            };
+            assert!(
+                hugs,
+                "{from:?} -> {to:?}: dot {dot:?} does not hug the edge of slot {slot:?}"
+            );
+        }
+    }
 }

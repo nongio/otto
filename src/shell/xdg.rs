@@ -56,7 +56,20 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         let surface_id = surface.wl_surface().id();
         window_layer.set_key(format!("surface_{:?}", surface_id));
 
-        expose_mirror_layer.set_draw_content(window_layer.as_content());
+        // The exposé preview mirrors the whole window subtree, shadow included,
+        // and the shadow reaches outside the preview box. Dragging one toward
+        // the workspace row shrinks it a few percent per frame, so the rect it
+        // covered on the previous frame is always larger than the one it
+        // reports now — and the band between the two keeps the old shadow on
+        // screen. Report a 20% margin around the mirrored content so each
+        // frame repaints what the frame before it covered.
+        let mirrored_content = window_layer.as_content();
+        expose_mirror_layer.set_draw_content(
+            move |canvas: &layers::skia::Canvas, w: f32, h: f32| {
+                let damage = (mirrored_content.0)(canvas, w, h);
+                damage.with_outset((damage.width() * 0.2, damage.height() * 0.2))
+            },
+        );
         expose_mirror_layer.set_picture_cached(false);
         expose_mirror_layer.set_key(format!("mirror_window_{}", window_layer.id.0));
         expose_mirror_layer.set_layout_style(taffy::Style {
@@ -74,11 +87,23 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
         let (bounds, location) = self.workspaces.new_window_placement_at(pointer_location);
 
-        // set the initial toplevel bounds
+        // set the initial toplevel bounds and the window-management actions this
+        // compositor implements. The capability set starts out EMPTY, and
+        // `maximize_request`, `minimize_request` and `fullscreen_request` all
+        // refuse to act on a capability they were never given — so without this
+        // every client-initiated request is dropped on the floor, while the
+        // client goes on drawing itself as maximized (Chrome restoring a
+        // maximized window is the visible case). No window menu is advertised:
+        // Otto has no per-window menu for a client to invoke.
         #[allow(irrefutable_let_patterns)]
         if let WindowSurface::Wayland(surface) = window_element.underlying_surface() {
             surface.with_pending_state(|state| {
                 state.bounds = Some(bounds.size);
+                state.capabilities.replace([
+                    xdg_toplevel::WmCapabilities::Maximize,
+                    xdg_toplevel::WmCapabilities::Minimize,
+                    xdg_toplevel::WmCapabilities::Fullscreen,
+                ]);
             });
         }
 
@@ -166,7 +191,8 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
         // The placement above assumed a default size because the client hasn't
         // configured yet. Revisit it once the real size arrives.
-        self.pending_initial_placement.insert(window_element.id());
+        self.pending_initial_placement
+            .insert(window_element.id(), None);
 
         // Register with foreign toplevel protocols (both ext and wlr)
         let surface_id = surface.wl_surface().id();
@@ -756,28 +782,38 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 }
 
                 view.window_layer
-                    .set_position(layers::types::Point { x: 0.0, y: 0.0 }, Some(transition))
-                    .on_finish(
-                        move |l: &Layer, _| {
-                            surface_clone.with_pending_state(|state| {
-                                state.states.set(xdg_toplevel::State::Fullscreen);
-                                state.size = Some(geometry.size);
-                                state.fullscreen_output = wl_output_ref.clone();
-                            });
-                            if let Err(e) = next_workspace_layer.add_sublayer(l) {
-                                tracing::warn!(
-                                    "fullscreen: failed to reparent window to workspace: {e}"
-                                );
-                            }
-                            // The protocol demands us to always reply with a configure,
-                            // regardless of we fulfilled the request or not
-                            surface_clone.send_configure();
+                    .set_position(layers::types::Point { x: 0.0, y: 0.0 }, Some(transition));
+                // The un-park MUST NOT hang off the set_position transaction's
+                // on_finish: any later set_position on this layer (a client
+                // commit repositioning the view mid-animation) REPLACES that
+                // transaction and its handlers are silently dropped — the
+                // window then stays parked in the overlay plane forever,
+                // drawn above everything including expose. The size animation
+                // is keyed separately and always completes, so the reparent
+                // rides on it instead.
+                let fs_window_layer = view.window_layer.clone();
+                self.layers_engine.on_animation_finish(
+                    animation,
+                    move |_: f32| {
+                        surface_clone.with_pending_state(|state| {
+                            state.states.set(xdg_toplevel::State::Fullscreen);
+                            state.size = Some(geometry.size);
+                            state.fullscreen_output = wl_output_ref.clone();
+                        });
+                        if let Err(e) = next_workspace_layer.add_sublayer(&fs_window_layer) {
+                            tracing::warn!(
+                                "fullscreen: failed to reparent window to workspace: {e}"
+                            );
+                        }
+                        // The protocol demands us to always reply with a configure,
+                        // regardless of we fulfilled the request or not
+                        surface_clone.send_configure();
 
-                            // Clear the fullscreen animating flag now that the animation is complete
-                            next_workspace_clone.set_fullscreen_animating(false);
-                        },
-                        true,
-                    );
+                        // Clear the fullscreen animating flag now that the animation is complete
+                        next_workspace_clone.set_fullscreen_animating(false);
+                    },
+                    true,
+                );
             }
         }
     }
@@ -934,28 +970,35 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                         }
                     }
 
-                    view.window_layer
-                        .set_position(
-                            layers::types::Point {
-                                x: position.x as f32,
-                                y: position.y as f32,
-                            },
-                            Some(transition),
-                        )
-                        .on_finish(
-                            move |l: &Layer, _| {
-                                surface_clone.with_pending_state(|state| {
-                                    state.size = Some(restored_size);
-                                });
-                                if let Err(e) = workspace_layer.add_sublayer(l) {
-                                    tracing::warn!(
-                                        "unmaximize: failed to reparent window to workspace: {e}"
-                                    );
-                                }
-                                surface_clone.send_configure();
-                            },
-                            true,
-                        );
+                    view.window_layer.set_position(
+                        layers::types::Point {
+                            x: position.x as f32,
+                            y: position.y as f32,
+                        },
+                        Some(transition),
+                    );
+                    // Same as the fullscreen-enter path: the reparent back into
+                    // the workspace layer must ride the size ANIMATION, not the
+                    // set_position transaction — a client commit repositioning
+                    // this layer mid-animation cancels the transaction and its
+                    // handlers, stranding the window in the overlay plane on
+                    // top of everything (including expose).
+                    let unfs_window_layer = view.window_layer.clone();
+                    self.layers_engine.on_animation_finish(
+                        animation,
+                        move |_: f32| {
+                            surface_clone.with_pending_state(|state| {
+                                state.size = Some(restored_size);
+                            });
+                            if let Err(e) = workspace_layer.add_sublayer(&unfs_window_layer) {
+                                tracing::warn!(
+                                    "unfullscreen: failed to reparent window to workspace: {e}"
+                                );
+                            }
+                            surface_clone.send_configure();
+                        },
+                        true,
+                    );
                 }
             }
         }
@@ -970,10 +1013,34 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 .contains(xdg_toplevel::WmCapabilities::Maximize)
         }) {
             let id = surface.wl_surface().id();
-            let window = self.workspaces.get_window_for_surface(&id).unwrap().clone();
+            let Some(window) = self.workspaces.get_window_for_surface(&id).cloned() else {
+                return;
+            };
 
-            let current_element_geometry = self.workspaces.element_geometry(&window).unwrap();
-            let id = surface.wl_surface().id();
+            // A client can ask to be maximized before it has ever committed a
+            // buffer — a browser restoring a maximized window does exactly that
+            // — so there may be no geometry yet. Fall back to the window's own
+            // (possibly empty) geometry rather than unwrapping: what matters is
+            // the rect to restore to on unmaximize, and the animation below
+            // clamps a zero size to a sane minimum.
+            let current_element_geometry = self
+                .workspaces
+                .element_geometry(&window)
+                .unwrap_or_else(|| Rectangle::new((0, 0).into(), window.geometry().size));
+
+            // The window's geometry is ours from here on. Mark it before the
+            // animation runs — the `Maximized` state below is only committed on
+            // the animation's LAST frame, so anything checking "is this window
+            // maximized?" in between (initial placement, above all) would other-
+            // wise treat it as an ordinary window and move it back out of the
+            // corner. And drop it from the initial-placement queue outright: a
+            // client that asks to be maximized before its first commit (a
+            // browser restoring a maximized window) must not then be re-placed
+            // by a heuristic meant for windows that never said where they want
+            // to be.
+            window.set_is_maximized(true);
+            self.pending_initial_placement.remove(&id);
+
             if let Some(mut view) = self.workspaces.get_window_view(&id) {
                 view.unmaximised_rect = current_element_geometry;
                 self.workspaces.set_window_view(&id, view);
@@ -1003,12 +1070,18 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 .layers_engine
                 .add_animation_from_transition(&transition, false);
 
-            // Use minimum size for windows that open already maximized (size 0,0)
-            let current_width = current_element_geometry.size.w.max(600) as f32;
-            let current_height = current_element_geometry.size.h.max(400) as f32;
+            // The client is configured in ITS OWN geometry, which excludes the
+            // server-side titlebar: the bar is drawn above the client surface
+            // and already counted in the element geometry we animate from.
+            let current_client_size = window.client_size(current_element_geometry.size);
+            let new_client_size = window.client_size(new_geometry.size);
 
-            let new_width = new_geometry.size.w as f32;
-            let new_height = new_geometry.size.h as f32;
+            // Use minimum size for windows that open already maximized (size 0,0)
+            let current_width = current_client_size.w.max(600) as f32;
+            let current_height = current_client_size.h.max(400) as f32;
+
+            let new_width = new_client_size.w as f32;
+            let new_height = new_client_size.h as f32;
 
             let s = surface.clone();
             self.layers_engine.on_animation_update(
@@ -1048,6 +1121,7 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
         let id = surface.wl_surface().id();
         let window = self.workspaces.get_window_for_surface(&id).unwrap().clone();
+        window.set_is_maximized(false);
         if let Some(view) = self.workspaces.get_window_view(&id) {
             let current_element_geometry = self
                 .workspaces
@@ -1059,11 +1133,16 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 .layers_engine
                 .add_animation_from_transition(&transition, false);
 
-            let current_width = current_element_geometry.size.w as f32;
-            let current_height = current_element_geometry.size.h as f32;
+            // Both rects are decorated (space) geometry — strip the titlebar
+            // before handing sizes to the client.
+            let current_client_size = window.client_size(current_element_geometry.size);
+            let new_client_size = window.client_size(view.unmaximised_rect.size);
 
-            let new_width = view.unmaximised_rect.size.w as f32;
-            let new_height = view.unmaximised_rect.size.h as f32;
+            let current_width = current_client_size.w as f32;
+            let current_height = current_client_size.h as f32;
+
+            let new_width = new_client_size.w as f32;
+            let new_height = new_client_size.h as f32;
 
             let s = surface.clone();
             self.layers_engine.on_animation_update(
@@ -1138,8 +1217,27 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
     fn grab(&mut self, surface: PopupSurface, seat: wl_seat::WlSeat, serial: Serial) {
         let seat: Seat<Otto<BackendData>> = Seat::from_resource(&seat).unwrap();
         let kind = PopupKind::Xdg(surface);
-        if let Some(root) = find_popup_root_surface(&kind).ok().and_then(|root| {
-            self.workspaces
+        let popup_id = kind.wl_surface().id();
+
+        // Resolve the popup's root surface to a keyboard focus target. A failure
+        // here means we silently skip the grab — the popup then never gets
+        // dismissed on an outside click — so it must be loud, not silent.
+        let root_surface = match find_popup_root_surface(&kind) {
+            Ok(root) => Some(root),
+            Err(err) => {
+                tracing::warn!(
+                    "xdg grab: popup {:?} has no resolvable root surface ({:?}) — grab skipped, \
+                     this popup will not be dismissed on outside clicks",
+                    popup_id,
+                    err
+                );
+                None
+            }
+        };
+
+        let root = root_surface.and_then(|root| {
+            let target = self
+                .workspaces
                 .spaces_elements()
                 .find(|w| w.wl_surface().map(|s| *s == root).unwrap_or(false))
                 .cloned()
@@ -1153,9 +1251,24 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                                 .cloned()
                         })
                         .map(KeyboardFocusTarget::LayerSurface)
-                })
-        }) {
+                });
+            if target.is_none() {
+                tracing::warn!(
+                    "xdg grab: popup {:?} root {:?} is neither a mapped window nor a layer \
+                     surface — grab skipped, this popup will not be dismissed on outside clicks",
+                    popup_id,
+                    root.id()
+                );
+            }
+            target
+        });
+
+        if let Some(root) = root {
             let ret = self.popups.grab_popup(root, kind, &seat, serial);
+
+            if let Err(ref err) = ret {
+                tracing::warn!("xdg grab: grab_popup failed for {:?}: {:?}", popup_id, err);
+            }
 
             if let Ok(grab) = ret {
                 if let Some(keyboard) = seat.get_keyboard() {
@@ -1295,7 +1408,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         // If the client disconnects after requesting a move
         // we can just ignore the request
         let id = surface.wl_surface().id();
-        let Some(window) = self.workspaces.get_window_for_surface(&id) else {
+        let Some(window) = self.workspaces.get_window_for_surface(&id).cloned() else {
             return;
         };
 
@@ -1311,6 +1424,52 @@ impl<BackendData: Backend> Otto<BackendData> {
             return;
         }
 
+        self.begin_pointer_move(&window, surface, seat, start_data, serial);
+    }
+
+    /// Start a pointer move grab for a window Otto itself decorated.
+    ///
+    /// Unlike [`move_request_xdg`] there is no client request and no
+    /// client-focus check to make: the press landed on the server-side
+    /// titlebar, which is Otto's own surface-less input target, so the grab's
+    /// focus is the decoration view rather than the client.
+    ///
+    /// Must not be called from inside a pointer dispatch — see the note at the
+    /// call site in `WindowDecorationView::on_button`.
+    pub fn move_request_ssd(
+        &mut self,
+        window: &crate::shell::WindowElement,
+        seat: &Seat<Self>,
+        serial: Serial,
+    ) {
+        let Some(pointer) = seat.get_pointer() else {
+            return;
+        };
+        if !pointer.has_grab(serial) {
+            return;
+        }
+        let Some(start_data) = pointer.grab_start_data() else {
+            return;
+        };
+        let Some(surface) = window.toplevel().cloned() else {
+            return;
+        };
+        self.begin_pointer_move(window, &surface, seat, start_data, serial);
+    }
+
+    /// Install the move grab: restore a maximized/tiled window under the
+    /// cursor first, then hand the pointer to `PointerMoveSurfaceGrab`.
+    fn begin_pointer_move(
+        &mut self,
+        window: &crate::shell::WindowElement,
+        surface: &ToplevelSurface,
+        seat: &Seat<Self>,
+        start_data: smithay::input::pointer::GrabStartData<Self>,
+        serial: Serial,
+    ) {
+        let Some(pointer) = seat.get_pointer() else {
+            return;
+        };
         let mut initial_window_location = self.workspaces.element_location(window).unwrap();
 
         // If the surface is maximized or tiled, restore it as the drag begins.
@@ -1448,12 +1607,21 @@ impl<BackendData: Backend> Otto<BackendData> {
                     .layers_engine
                     .add_animation_from_transition(&transition, false);
 
-                let current_width = current_geometry.size.w.max(600) as f32;
-                let current_height = current_geometry.size.h.max(400) as f32;
-                let new_width = target.size.w as f32;
-                let new_height = target.size.h as f32;
+                // `current_geometry` and `target` are both decorated (space)
+                // rects; the client is configured without the titlebar Otto
+                // draws on top of it.
+                let current_client_size = window.client_size(current_geometry.size);
+                let new_client_size = window.client_size(target.size);
+
+                let current_width = current_client_size.w.max(600) as f32;
+                let current_height = current_client_size.h.max(400) as f32;
+                let new_width = new_client_size.w as f32;
+                let new_height = new_client_size.h as f32;
 
                 let maximize = matches!(zone, TileZone::Maximize);
+                // Same reason as in `maximize_request`: the state below lands on
+                // the animation's last frame, this flag has to be true now.
+                window.set_is_maximized(maximize);
                 let tiled_left = matches!(zone, TileZone::LeftHalf);
                 let tiled_right = matches!(zone, TileZone::RightHalf);
 
@@ -1635,6 +1803,7 @@ impl<BackendData: Backend> Otto<BackendData> {
             self.layers_engine.mark_for_delete(layer.id);
         }
         self.surface_layer_parents.remove(surface_id);
+        crate::surface_config_cache::invalidate(surface_id);
     }
 }
 

@@ -10,18 +10,25 @@ use std::sync::{atomic::AtomicBool, Arc};
 
 use crate::shell::WindowElement;
 
-use super::{effects::GenieEffect, model::WindowViewBaseModel, render::view_window_shadow};
+use super::{
+    effects::GenieEffect,
+    model::{WindowDecorationModel, WindowViewBaseModel},
+    render::{view_window_decoration, view_window_shadow},
+};
 
 #[derive(Clone)]
 pub struct WindowView {
     pub window_id: ObjectId,
     // views
     pub view_base: layers::prelude::View<WindowViewBaseModel>,
+    /// Server-side titlebar, empty until the window negotiates SSD
+    pub view_decoration: layers::prelude::View<WindowDecorationModel>,
 
     // layers
     pub window_layer: layers::prelude::Layer,
     pub shadow_layer: layers::prelude::Layer,
     pub content_layer: layers::prelude::Layer,
+    pub decoration_layer: layers::prelude::Layer,
     pub mirror_layer: layers::prelude::Layer,
 
     pub genie_effect: GenieEffect,
@@ -56,8 +63,23 @@ impl WindowView {
             ..Default::default()
         });
 
+        // The titlebar sits above the client content, so it is appended last.
+        let decoration_layer = layers_engine.new_layer();
+        decoration_layer.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        decoration_layer.set_hidden(true);
+        // The titlebar carries `BackgroundBlur`, and what it has to blur is
+        // usually the window *below* it in the same plane, not just the
+        // wallpaper. Seeding the plane's pre-blurred background would land
+        // behind that same-pass content and leave the window underneath sharp,
+        // so opt into the raw background plus a real blur.
+        decoration_layer.set_blur_include_content(true);
+
         let _ = layers_engine.append_layer(&shadow_layer, layer.id());
         let _ = layers_engine.append_layer(&content_layer, layer.id());
+        let _ = layers_engine.append_layer(&decoration_layer, layer.id());
 
         let base_rect = WindowViewBaseModel {
             x: 0.0,
@@ -72,6 +94,13 @@ impl WindowView {
             layers::prelude::View::new("window_shadow", base_rect, Box::new(view_window_shadow));
 
         view_base.mount_layer(shadow_layer.clone());
+
+        let view_decoration = layers::prelude::View::new(
+            "window_decoration",
+            WindowDecorationModel::default(),
+            Box::new(view_window_decoration),
+        );
+        view_decoration.mount_layer(decoration_layer.clone());
         let mirror_layer = window.mirror_layer().clone();
         mirror_layer.set_size(shadow_layer.render_layer().bounds.size(), None);
 
@@ -82,8 +111,10 @@ impl WindowView {
         Self {
             window_id,
             view_base,
+            view_decoration,
             window_layer: layer,
             content_layer,
+            decoration_layer,
             shadow_layer,
             genie_effect,
             mirror_layer,
@@ -92,6 +123,46 @@ impl WindowView {
             minimizing_animation: Arc::new(AtomicBool::new(false)),
             is_unmapped: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Show or hide the server-side titlebar.
+    pub fn set_decorated(&self, decorated: bool) {
+        self.decoration_layer.set_hidden(!decorated);
+    }
+
+    /// Push new titlebar state. No-op when nothing changed: this runs on every
+    /// commit of a decorated window, and re-rendering the view would repaint
+    /// the bar at the client's frame rate.
+    pub fn update_decoration(&self, model: WindowDecorationModel) {
+        let current = self.view_decoration.get_state();
+        if current.width == model.width
+            && current.height == model.height
+            && current.title == model.title
+            && current.active == model.active
+            && current.dark == model.dark
+            && current.corner_radius == model.corner_radius
+            && current.controls_hovered == model.controls_hovered
+            && current.pressed == model.pressed
+            && current.sharing == model.sharing
+            && current.scale == model.scale
+        {
+            return;
+        }
+        self.view_decoration.update_state(&model);
+    }
+
+    /// Repaint the titlebar without changing its state.
+    ///
+    /// The accent is read inside the render function rather than carried in
+    /// `WindowDecorationModel`, so `update_decoration` would hash to the same
+    /// state and skip the repaint — the layer tree is rebuilt directly.
+    pub fn rerender_decoration(&self) {
+        self.view_decoration.render(&self.decoration_layer);
+    }
+
+    /// Current titlebar state, for hit testing.
+    pub fn decoration_state(&self) -> WindowDecorationModel {
+        self.view_decoration.get_state()
     }
 
     /// Update the activation state of the window shadow
@@ -274,6 +345,17 @@ impl WindowView {
         let scale_x = if w > 0.0 { target.width() / w } else { 1.0 };
         let scale_y = if h > 0.0 { target.height() / h } else { 1.0 };
         let target_scale = scale_x.min(scale_y);
+        // The fit keeps the aspect ratio, so one axis is short of the square
+        // drawer: centre the thumbnail in it, or the window sits in the
+        // drawer's top-left corner and its tooltip — centred on the drawer —
+        // is visibly off-centre over the window.
+        layer.set_position(
+            Point {
+                x: (target.width() - w * target_scale).max(0.0) / 2.0,
+                y: (target.height() - h * target_scale).max(0.0) / 2.0,
+            },
+            None,
+        );
         Some(layer.set_scale(
             Point {
                 x: target_scale,

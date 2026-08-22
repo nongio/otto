@@ -28,6 +28,12 @@ Values from higher-priority files are merged recursively into lower-priority one
 
 Config files are read once, when the session starts: an edit takes effect on the next login.
 
+### Which file gets written
+
+Changes made from the Settings app — or from the desktop itself, such as dragging the dock handle — are written to the **highest-priority file that exists**, because that is the one whose values actually take effect. With no `otto_config.toml` around, that is `~/.config/otto/config.toml`, and it is created if it is not there yet. The system-wide `/etc/otto/config.toml` is never written.
+
+This is worth knowing when a setting appears not to stick. A leftover `otto_config.toml` in the directory the session was started from — the current directory is the home directory for a normal login, and the checkout for `cargo run` — overrides `~/.config/otto/config.toml` for every key it sets, and quietly becomes the file the Settings app edits. Otto logs a warning at startup when the writable file is not your own config; delete the stray file, or the keys it repeats, to go back to configuring from `~/.config/otto`.
+
 ## Getting Started
 
 ```bash

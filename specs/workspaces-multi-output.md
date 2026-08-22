@@ -48,7 +48,12 @@ Otto supports multiple workspaces across multiple outputs (physical monitors and
 - No "×" is rendered for the current workspace, nor for a fullscreen workspace that still has windows — neither can be removed.
 - When the user clicks "×" on a workspace preview, that workspace is removed from that output only.
 - If the output has only one workspace, the remove action is ignored (minimum one workspace per output).
-- A removal animation plays (the preview shrinks to zero width) before the workspace is actually removed.
+- A removal animation plays before the workspace is actually removed: the item's width collapses to zero on a spring and the preview is cropped against it — the preview keeps its size and opacity and is wiped away rather than faded or scaled. The remaining previews slide across to close the gap because the strip re-lays out against the shrinking width every frame.
+- The crop is centred and keeps the strip's spacing: the preview's box is inset half a gap on each side of the item and takes its width from the item, and the preview (and its label) sit centred in that box, so equal amounts are cropped from the left and the right and a full gap remains on both sides of the shrinking sliver. The preview is fully cropped away once the item is narrower than one gap, and the last of the item's width closes the remaining space.
+- Clipping is armed only for the collapse — at rest the remove button and its shadow overhang the preview box and must not be cut off — and the button is hidden outright when the collapse starts, for the same reason. The workspace is dropped from compositor state when the collapse finishes, so the row never jumps.
+- The collapsing item stops being a pointer target as soon as the animation starts: it is shrinking under the cursor, so clicks on it must not switch to it, rename it, or start a second removal.
+- Item widths are owned by one place (the selector's post-render hook), not by the render function, so a re-render triggered mid-animation — a window opening, a workspace switch, a drop-hover change, the rename caret blinking — cannot cut an enter or leave animation short, and a workspace whose removal is refused cannot be left collapsed to zero width.
+- The removal is addressed by the workspace's stable index and resolved to a list position at the moment it is sent, not at the moment it is clicked: an add or remove elsewhere during the animation would otherwise shift the position and delete the wrong workspace.
 - Windows on the removed workspace are moved to the current workspace of that output.
 - If the removed workspace was the last in the list and was active, the current workspace index is clamped to the new last workspace.
 - Other outputs are unaffected.

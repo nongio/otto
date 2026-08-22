@@ -972,4 +972,151 @@ mod headless_tests {
 
         handle.stop();
     }
+
+    // ── Expose: moving a window to another workspace ─────────────────────
+
+    /// Pick a preview up in expose and drop it on another workspace's
+    /// thumbnail: the source grid must re-layout for the windows that stay,
+    /// and the target grid must pick the moved one up.
+    #[test]
+    #[serial]
+    fn expose_drag_window_to_other_workspace() {
+        let handle = start_compositor();
+        let mut client = connect_client(&handle);
+
+        let _w1 = client.create_toplevel("window-1", 640, 480);
+        let _w2 = client.create_toplevel("window-2", 800, 600);
+        let _w3 = client.create_toplevel("window-3", 400, 300);
+        handle.wait(Duration::from_millis(200));
+        let _ = client.roundtrip();
+
+        handle.toggle_expose();
+        handle.settle(300);
+        let before = handle.expose_window_rects();
+        assert_eq!(before.len(), 3);
+
+        // Grid rects are physical; the pointer takes logical coordinates.
+        let scale = handle.query(|state| {
+            state
+                .workspaces
+                .outputs()
+                .next()
+                .map(|o| o.current_scale().fractional_scale())
+                .unwrap_or(1.0)
+        }) as f32;
+
+        // The second workspace, addressed the way the drop targets are: by
+        // workspace *view* index, not by position.
+        let second = handle
+            .query(|state| {
+                state
+                    .workspaces
+                    .with_model(|m| m.workspaces.get(1).map(|w| w.index))
+            })
+            .expect("a second workspace");
+        let target = handle
+            .query(move |state| {
+                state
+                    .workspaces
+                    .focused_output_selector()
+                    .and_then(|selector| {
+                        selector
+                            .get_drop_targets()
+                            .iter()
+                            .find(|t| t.workspace_index == second)
+                            .map(|t| {
+                                let b = t.drop_layer.render_bounds_transformed();
+                                (b.left(), b.top(), b.width(), b.height())
+                            })
+                    })
+            })
+            .expect("a drop target for the second workspace");
+
+        // Pick window-3 up. The first motion after entering the selector only
+        // delivers `enter`, so hover (and with it the pressed selection) needs
+        // a second one.
+        let (moved_title, x, y, w, h) = before[2].clone();
+        let (sx, sy) = ((x + w / 2.0) / scale, (y + h / 2.0) / scale);
+        handle.pointer_move(sx as f64, sy as f64);
+        handle.settle(5);
+        handle.pointer_move(sx as f64 + 1.0, sy as f64);
+        handle.settle(5);
+        handle.pointer_press();
+        handle.pointer_move(sx as f64 + 4.0, sy as f64 - 4.0);
+        handle.settle(20);
+        assert!(
+            handle.query(|state| state.workspaces.is_window_selector_dragging()),
+            "drag should have started past the threshold"
+        );
+
+        // Drop it on the second workspace's thumbnail.
+        let (tx, ty) = (
+            (target.0 + target.2 / 2.0) / scale,
+            (target.1 + target.3 / 2.0) / scale,
+        );
+        for i in 1..=10 {
+            let f = i as f32 / 10.0;
+            handle.pointer_move((sx + (tx - sx) * f) as f64, (sy + (ty - sy) * f) as f64);
+            handle.settle(3);
+        }
+        assert_eq!(
+            handle.query(|state| state
+                .workspaces
+                .focused_output_selector()
+                .and_then(|s| s.get_drop_hover())),
+            Some(second),
+            "the thumbnail under the dragged preview should be the drop target"
+        );
+        // The drop itself must re-lay the grid out. The drag already laid the
+        // source grid out without the dragged window when it was picked up, so
+        // a drop that leans on the cached layout applies nothing here and the
+        // grid stays as dropped until an unrelated commit moves it.
+        handle.pointer_release();
+        let frames = handle.settle(300);
+        assert!(
+            frames > 0,
+            "the drop should animate the grids into their new layout"
+        );
+
+        // Nothing is under the pointer in the grid the window just left — it
+        // is over the strip — so no preview may be left highlighted.
+        assert_eq!(
+            handle.expose_selected_title(),
+            None,
+            "the source grid should hold no selection after the drop"
+        );
+        // The pointer lingers on the strip afterwards, as it does for real.
+        for d in [1.0f32, 2.0, 3.0] {
+            handle.pointer_move((tx + d) as f64, (ty + d) as f64);
+            handle.settle(5);
+        }
+        assert_eq!(handle.expose_selected_title(), None);
+        // Source grid: the moved window is gone and the rest have re-laid out.
+        let after = handle.expose_window_rects();
+        assert_eq!(after.len(), 2, "source grid should hold 2 previews");
+        assert!(
+            !after.iter().any(|(title, ..)| *title == moved_title),
+            "moved window should be gone from the source grid"
+        );
+        assert!(
+            after[0] != before[0],
+            "the previews that stay should re-layout, got {after:#?}"
+        );
+
+        // Target grid: the moved window arrived.
+        let target_rects = handle.query(|state| {
+            let Some(workspace) = state.workspaces.get_workspace_at(1) else {
+                return Vec::new();
+            };
+            let selector = workspace.window_selector_view.clone();
+            let rects = selector.view.get_state().rects;
+            rects
+                .iter()
+                .filter_map(|r| r.window_id.as_ref().map(|_| r.window_title.clone()))
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(target_rects, vec![moved_title]);
+
+        handle.stop();
+    }
 }

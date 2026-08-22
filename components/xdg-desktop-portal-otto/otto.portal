@@ -1,4 +1,4 @@
 [portal]
 DBusName=org.freedesktop.impl.portal.desktop.otto
-Interfaces=org.freedesktop.impl.portal.ScreenCast;org.freedesktop.impl.portal.Settings
+Interfaces=org.freedesktop.impl.portal.ScreenCast;org.freedesktop.impl.portal.Settings;org.freedesktop.impl.portal.Access;org.freedesktop.impl.portal.Screenshot;org.freedesktop.impl.portal.FileChooser
 UseIn=otto

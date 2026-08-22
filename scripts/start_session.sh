@@ -134,13 +134,7 @@ fi
 portal_setup
 
 # Force frontend portal to reload with the current session environment.
-if command -v systemctl >/dev/null 2>&1; then
-    if systemctl --user restart xdg-desktop-portal.service 2>/dev/null; then
-        log_info "Restarted xdg-desktop-portal user service"
-    else
-        log_warn "Could not restart xdg-desktop-portal user service"
-    fi
-fi
+portal_frontend_reload
 
 # Bring compositor to foreground and tail its log
 log_info "Compositor initialized successfully, following log..."

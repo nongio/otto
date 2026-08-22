@@ -39,6 +39,10 @@ pub struct WorkspaceView {
     fullscreen_mode: Arc<AtomicBool>,
     is_fullscreen_animating: Arc<AtomicBool>,
     name: Arc<RwLock<Option<String>>>,
+    /// Name the user typed in the workspace selector. Takes precedence over
+    /// `name` (which the fullscreen path sets to the app's name) and over the
+    /// positional fallback.
+    custom_name: Arc<RwLock<Option<String>>>,
     window_base_layers: Arc<RwLock<HashMap<ObjectId, Layer>>>,
     /// Stacking order (bottom→top ObjectIds) saved when expose opens,
     /// so it can be restored verbatim when expose closes without selection.
@@ -148,8 +152,13 @@ impl WorkspaceView {
         }
         let background_view = Arc::new(background_view);
 
-        let window_selector_view =
-            WindowSelectorView::new(index, layers_engine.clone(), overlay_layer);
+        let window_selector_view = WindowSelectorView::new(
+            index,
+            layers_engine.clone(),
+            &background_layer,
+            overlay_layer,
+            layer_shell_background,
+        );
 
         let window_selector_view = Arc::new(window_selector_view);
 
@@ -172,6 +181,7 @@ impl WorkspaceView {
             fullscreen_mode: Arc::new(AtomicBool::new(false)),
             is_fullscreen_animating: Arc::new(AtomicBool::new(false)),
             name: Arc::new(RwLock::new(None)),
+            custom_name: Arc::new(RwLock::new(None)),
             window_base_layers: Arc::new(RwLock::new(HashMap::new())),
             pre_expose_order: Arc::new(RwLock::new(Vec::new())),
         }
@@ -343,6 +353,25 @@ impl WorkspaceView {
 
     pub fn get_name(&self) -> Option<String> {
         self.name.read().unwrap().clone()
+    }
+
+    /// Set the user-chosen name. An empty name clears it, falling back to the
+    /// fullscreen app name or the positional default.
+    pub fn set_custom_name(&self, name: Option<String>) {
+        let name = name.filter(|n| !n.trim().is_empty());
+        *self.custom_name.write().unwrap() = name;
+    }
+
+    pub fn get_custom_name(&self) -> Option<String> {
+        self.custom_name.read().unwrap().clone()
+    }
+
+    /// What the workspace is called in the UI: the user's name, else the
+    /// fullscreen app name, else `Workspace <position + 1>`.
+    pub fn display_name(&self, position: usize) -> String {
+        self.get_custom_name()
+            .or_else(|| self.get_name())
+            .unwrap_or_else(|| format!("Workspace {}", position + 1))
     }
 
     /// Returns true if no pre-expose stacking order has been saved yet.

@@ -26,7 +26,7 @@ pub fn parse_hex_color(hex: &str) -> skia::Color4f {
 }
 
 // Delegate icon functions to otto-kit
-pub use otto_kit::icons::{image_from_path, named_icon};
+pub use otto_kit::icons::image_from_path;
 
 /// Find an icon using the configured theme or auto-detection.
 ///
@@ -35,32 +35,6 @@ pub fn find_icon_with_theme(icon_name: &str, size: i32, scale: i32) -> Option<St
     Config::with(|config| {
         otto_kit::icons::find_icon_in_theme(icon_name, size, scale, config.icon_theme.as_deref())
     })
-}
-
-/// Load an image from resources directory, falling back to system locations and theme icons
-///
-/// Search order:
-/// 1. `./resources/{path}`
-/// 2. `/etc/otto/share/{path}`
-/// 3. Theme icon with `alternative_theme_icon_name`
-pub fn resource_image(
-    path: &str,
-    alternative_theme_icon_name: &str,
-) -> Option<layers::skia::Image> {
-    // Try local resources directory first
-    let local_path = format!("resources/{}", path);
-    if let Some(image) = image_from_path(&local_path, (512, 512)) {
-        return Some(image);
-    }
-
-    // Try system-wide installation directory
-    let system_path = format!("/etc/otto/share/{}", path);
-    if let Some(image) = image_from_path(&system_path, (512, 512)) {
-        return Some(image);
-    }
-
-    // Fall back to theme icon
-    named_icon(alternative_theme_icon_name)
 }
 
 /// Find a resource file path
@@ -85,25 +59,58 @@ pub fn resource_path(path: &str) -> Option<std::path::PathBuf> {
 
     None
 }
-pub fn draw_named_icon(icon_name: &str) -> Option<ContentDrawFunction> {
-    let icon = named_icon(icon_name);
-    icon.as_ref().map(|icon| {
-        let icon = icon.clone();
-        let resampler = skia::CubicResampler::catmull_rom();
+/// Look up a themed icon for compositor chrome.
+///
+/// Unlike [`named_icon`], this resolves against the icon theme from otto's
+/// config: otto-kit's own theme state is fed by the Settings portal, which the
+/// compositor serves but never consumes, so in-process lookups would otherwise
+/// fall back to hicolor and find nothing.
+///
+/// The lookup is strict — a generic `application-default-icon` substituted for
+/// a missing UI icon is rejected, so the caller can try the next candidate name.
+fn themed_chrome_icon(icon_name: &str) -> Option<layers::skia::Image> {
+    let path = find_icon_with_theme(icon_name, 512, 1)?;
+    let matches = std::path::Path::new(&path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(|stem| stem.starts_with(icon_name));
+    matches.then(|| otto_kit::icons::cached_file_icon(&path, 512))?
+}
 
-        let draw_function = move |canvas: &skia::Canvas, w: f32, h: f32| -> layers::skia::Rect {
-            let paint = skia::Paint::new(skia::Color4f::new(1.0, 1.0, 1.0, 1.0), None);
-            canvas.draw_image_rect_with_sampling_options(
-                &icon,
-                None,
-                skia::Rect::from_xywh(0.0, 0.0, w, h),
-                resampler,
-                &paint,
-            );
-            skia::Rect::from_xywh(0.0, 0.0, w, h)
-        };
-        draw_function.into()
-    })
+/// Draw the first of `icon_names` that the current icon theme provides.
+///
+/// Themes disagree on names for the same glyph (`close-symbolic` vs
+/// `window-close-symbolic`, `plus-symbolic` vs `list-add-symbolic`), so chrome
+/// passes every spelling it accepts.
+pub fn draw_named_icon_any(icon_names: &[&str]) -> Option<ContentDrawFunction> {
+    icon_names
+        .iter()
+        .find_map(|name| themed_chrome_icon(name))
+        .map(icon_draw_function)
+}
+
+fn icon_draw_function(icon: layers::skia::Image) -> ContentDrawFunction {
+    let resampler = skia::CubicResampler::catmull_rom();
+
+    let draw_function = move |canvas: &skia::Canvas, w: f32, h: f32| -> layers::skia::Rect {
+        // Symbolic icons ship as dark glyphs, so tint them with the theme's
+        // text colour — otherwise they vanish against a dark background.
+        let mut paint = skia::Paint::new(skia::Color4f::new(1.0, 1.0, 1.0, 1.0), None);
+        paint.set_anti_alias(true);
+        paint.set_color_filter(skia::color_filters::blend(
+            crate::theme::theme_colors().text_primary.c4f().to_color(),
+            skia::BlendMode::SrcIn,
+        ));
+        canvas.draw_image_rect_with_sampling_options(
+            &icon,
+            None,
+            skia::Rect::from_xywh(0.0, 0.0, w, h),
+            resampler,
+            &paint,
+        );
+        skia::Rect::from_xywh(0.0, 0.0, w, h)
+    };
+    draw_function.into()
 }
 
 pub fn notify_observers<T>(observers: &Vec<std::sync::Weak<dyn Observer<T>>>, event: &T) {
@@ -169,30 +176,12 @@ pub fn draw_text_content(
     Some(draw_function.into())
 }
 
-pub fn button_press_filter() -> PointerHandlerFunction {
-    let darken_color = skia::Color::from_argb(100, 100, 100, 100);
-    let add = skia::Color::from_argb(0, 0, 0, 0);
-    let filter = skia::color_filters::lighting(darken_color, add);
-
-    let f = move |layer: &Layer, _x: f32, _y: f32| {
-        layer.set_color_filter(filter.clone());
-    };
-    f.into()
-}
-
 pub fn button_press_scale(s: f32) -> PointerHandlerFunction {
     let f = move |layer: &Layer, _x: f32, _y: f32| {
         layer.set_scale(
             layers::types::Point::new(s, s),
             Transition::spring(0.3, 0.1),
         );
-    };
-    f.into()
-}
-
-pub fn button_release_filter() -> PointerHandlerFunction {
-    let f = |layer: &Layer, _x: f32, _y: f32| {
-        layer.set_color_filter(None);
     };
     f.into()
 }

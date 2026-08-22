@@ -1,0 +1,36 @@
+[package]
+name = "otto-files"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+otto-kit = { path = "../otto-kit" }
+otto-quickview = { path = "../otto-quickview" }
+smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
+wayland-client = "0.31"
+tracing = "0.1"
+libc = "0.2"
+zbus = { version = "4", default-features = false, features = ["tokio"] }
+tokio = { version = "1", features = ["full"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dependencies.laye-rs]
+git = "https://github.com/nongio/layers"
+tag = "v1.13.0"
+features = ["export-taffy"]
+
+[dependencies.skia-safe]
+version = "=0.93"
+features = ["gl", "textlayout", "svg"]
+
+[dev-dependencies]
+khronos-egl = { version = "6", features = ["dynamic"] }
+wayland-egl = "0.32"
+
+[[bin]]
+name = "otto-files"
+path = "src/main.rs"
+
+[lib]
+name = "otto_files"
+path = "src/lib.rs"

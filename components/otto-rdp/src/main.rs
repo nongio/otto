@@ -29,6 +29,7 @@
 
 mod egfx;
 mod h264;
+mod indicator;
 mod pipewire_capture;
 mod rdp;
 mod screencast;
@@ -257,6 +258,12 @@ async fn main() -> anyhow::Result<()> {
         frames_tx
     };
 
+    // Privacy signal: a tray indicator, published only while a client is
+    // actually being served. Nothing here can fail the bridge — a session bus
+    // that isn't there (headless rigs) just means no icon is drawn.
+    let (indicator, mut stop_rx) = indicator::Indicator::new(&output);
+    let peer = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+
     let display = rdp::VirtualOutputDisplay {
         size,
         frames,
@@ -265,6 +272,8 @@ async fn main() -> anyhow::Result<()> {
         desktop_override: args.desktop,
         egfx_mode,
         gfx_shared: egfx_shared,
+        indicator: indicator.clone(),
+        peer: std::sync::Arc::clone(&peer),
     };
     let input = rdp::InputForwarder {
         tx: input_tx,
@@ -300,7 +309,31 @@ async fn main() -> anyhow::Result<()> {
         Some(factory) => builder.with_gfx_factory(Some(factory)),
         None => builder,
     };
+    let builder = builder.with_connection_handler(Some(Box::new(indicator::ConnectionStatus {
+        indicator: indicator.clone(),
+        peer: std::sync::Arc::clone(&peer),
+    })));
     let mut server = builder.build();
+
+    // "Stop Sharing" ends the whole bridge, not just the current client:
+    // leaving the port listening would let the remote party reconnect
+    // immediately, which is not what stopping sharing means. Quit drops any
+    // live connection; the `stopping` flag then makes the connection handler
+    // break the accept loop instead of waiting for the next client.
+    {
+        let events = server.event_sender().clone();
+        tokio::spawn(async move {
+            if stop_rx.recv().await.is_some() {
+                indicator
+                    .stopping
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                indicator.hide();
+                let _ = events.send(ironrdp_server::ServerEvent::Quit(
+                    "stopped by the user".to_owned(),
+                ));
+            }
+        });
+    }
 
     server.run().await
 }

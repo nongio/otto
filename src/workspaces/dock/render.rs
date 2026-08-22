@@ -3,10 +3,10 @@ use layers::{prelude::*, types::Size};
 use taffy::LengthPercentageAuto;
 
 use crate::{
-    config::Config,
+    config::{Config, DockPosition},
     theme::theme_colors,
     workspaces::{
-        utils::{draw_balloon_rect, FONT_CACHE},
+        utils::{draw_balloon_rect, BalloonArrow, FONT_CACHE},
         Application,
     },
 };
@@ -243,7 +243,12 @@ pub fn setup_miniwindow_icon(layer: &Layer, inner_layer: &Layer, icon_width: f32
     inner_layer.build_layer_tree(&inner_tree);
 }
 
-pub fn setup_label(new_layer: &Layer, label_text: String) {
+/// Build the tooltip balloon shown while hovering a dock element.
+///
+/// The balloon always points at the element it belongs to, so its arrow — and
+/// with it the whole layout — follows the edge the dock is docked to: a bottom
+/// dock puts the tooltip above the icon, a side dock beside it.
+pub fn setup_label(new_layer: &Layer, label_text: String, position: DockPosition) {
     // The tooltip is drawn straight into the scene, so every measurement below
     // is in physical pixels: keep the design in logical points and scale once.
     let scale = Config::with(|config| config.screen_scale as f32);
@@ -266,16 +271,27 @@ pub fn setup_label(new_layer: &Layer, label_text: String) {
     let text_padding_h = 15.0 * scale;
     let text_padding_v = 7.0 * scale;
     let safe_margin = 50.0 * scale;
-    let label_size_width = text_bounds.width() + text_padding_h * 2.0 + safe_margin * 2.0;
-    // Fixed height based on font size, not measured text bounds
-    let label_size_height = text_size + arrow_height + text_padding_v * 2.0 + safe_margin * 2.0;
+    // The text box, without the arrow that sticks out of one of its edges.
+    let body_width = text_bounds.width() + text_padding_h * 2.0;
+    let body_height = text_size + text_padding_v * 2.0;
+    let arrow = match position {
+        DockPosition::Bottom => BalloonArrow::Bottom,
+        // A dock on the left edge puts the tooltip to the icon's right, so the
+        // arrow points back at the dock — and vice versa.
+        DockPosition::Left => BalloonArrow::Left,
+        DockPosition::Right => BalloonArrow::Right,
+    };
+    let (tooltip_width, tooltip_height) = if position.is_vertical() {
+        (body_width + arrow_height, body_height)
+    } else {
+        (body_width, body_height + arrow_height)
+    };
+    let label_size_width = tooltip_width + safe_margin * 2.0;
+    let label_size_height = tooltip_height + safe_margin * 2.0;
 
     let rect_corner_radius = 5.0 * scale;
     let arrow_width = 12.5 * scale;
     let arrow_corner_radius = 1.5 * scale;
-    // Calculate tooltip dimensions
-    let tooltip_width = label_size_width - safe_margin * 2.0;
-    let tooltip_height = label_size_height - safe_margin * 2.0;
 
     let arrow_path = draw_balloon_rect(
         safe_margin,
@@ -287,13 +303,22 @@ pub fn setup_label(new_layer: &Layer, label_text: String) {
         arrow_height,
         0.5,
         arrow_corner_radius,
+        arrow,
     );
+
+    // Where the text box starts inside the layer: the arrow eats into the
+    // tooltip on the side it points to.
+    let body_x = safe_margin
+        + if arrow == BalloonArrow::Left {
+            arrow_height
+        } else {
+            0.0
+        };
 
     let draw_label = move |canvas: &layers::skia::Canvas, w: f32, h: f32| -> layers::skia::Rect {
         // Tooltip parameters
 
         let text = text.clone();
-        let tooltip_height = h - safe_margin * 2.0;
 
         // Paint for the tooltip background
         let mut paint = layers::skia::Paint::default();
@@ -318,14 +343,17 @@ pub fn setup_label(new_layer: &Layer, label_text: String) {
         text_paint.set_anti_alias(true);
 
         // // Draw the text inside the tooltip
-        let text_x = safe_margin + text_padding_h;
-        // Position text baseline at 68% of content area (excluding arrow)
-        let text_y = safe_margin + (tooltip_height - arrow_height) * 0.68;
+        let text_x = body_x + text_padding_h;
+        // Position text baseline at 68% of the text box
+        let text_y = safe_margin + body_height * 0.68;
         canvas.draw_str(text.as_str(), (text_x, text_y), &font, &text_paint);
         layers::skia::Rect::from_xywh(0.0, 0.0, w, h)
     };
     let label_tree = LayerTreeBuilder::default()
-        .key(format!("{}_label", new_layer.key()))
+        // A stable key: the tooltip is rebuilt in place every time the dock
+        // moves, and deriving the key from the layer's own key grew it by a
+        // suffix on every rebuild.
+        .key("dock_label")
         .shape(layers::prelude::Shape::from_path(&arrow_path))
         .blend_mode(layers::prelude::BlendMode::BackgroundBlur)
         .layout_style(taffy::Style {
@@ -334,11 +362,27 @@ pub fn setup_label(new_layer: &Layer, label_text: String) {
                 width: taffy::style::Dimension::Length(label_size_width),
                 height: taffy::style::Dimension::Length(label_size_height),
             },
-            inset: taffy::geometry::Rect::<LengthPercentageAuto> {
-                top: LengthPercentageAuto::Auto,
-                right: LengthPercentageAuto::Auto,
-                bottom: LengthPercentageAuto::Auto,
-                left: LengthPercentageAuto::Percent(0.5),
+            // Anchored to the middle of the icon's far edge; the offset below
+            // then places the balloon so its arrow tip lands on the icon.
+            inset: match arrow {
+                BalloonArrow::Bottom => taffy::geometry::Rect::<LengthPercentageAuto> {
+                    top: LengthPercentageAuto::Auto,
+                    right: LengthPercentageAuto::Auto,
+                    bottom: LengthPercentageAuto::Auto,
+                    left: LengthPercentageAuto::Percent(0.5),
+                },
+                BalloonArrow::Left => taffy::geometry::Rect::<LengthPercentageAuto> {
+                    top: LengthPercentageAuto::Percent(0.5),
+                    right: LengthPercentageAuto::Auto,
+                    bottom: LengthPercentageAuto::Auto,
+                    left: LengthPercentageAuto::Percent(1.0),
+                },
+                BalloonArrow::Right => taffy::geometry::Rect::<LengthPercentageAuto> {
+                    top: LengthPercentageAuto::Percent(0.5),
+                    right: LengthPercentageAuto::Auto,
+                    bottom: LengthPercentageAuto::Auto,
+                    left: LengthPercentageAuto::Percent(0.0),
+                },
             },
             ..Default::default()
         })
@@ -347,9 +391,19 @@ pub fn setup_label(new_layer: &Layer, label_text: String) {
             height: taffy::Dimension::Length(label_size_height),
         })
         .background_color(theme_colors().materials_ultrathick)
-        .position(Point {
-            x: -label_size_width / 2.0,
-            y: -label_size_height - 5.0 * scale + safe_margin,
+        .position(match arrow {
+            BalloonArrow::Bottom => Point {
+                x: -label_size_width / 2.0,
+                y: -label_size_height - 5.0 * scale + safe_margin,
+            },
+            BalloonArrow::Left => Point {
+                x: -safe_margin + 5.0 * scale,
+                y: -label_size_height / 2.0,
+            },
+            BalloonArrow::Right => Point {
+                x: -label_size_width + safe_margin - 5.0 * scale,
+                y: -label_size_height / 2.0,
+            },
         })
         .shadow_color(theme_colors().shadow_color)
         .shadow_offset(((0.0, 0.0).into(), None))
@@ -434,4 +488,139 @@ pub fn draw_app_icon(application: &Application) -> ContentDrawFunction {
     };
 
     draw_picture.into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use layers::engine::Engine;
+    use serial_test::serial;
+
+    const SLOT: f32 = 100.0;
+
+    /// A slot layer with a label sublayer, laid out once so the render bounds
+    /// are meaningful. Returns (engine, slot, label).
+    fn label_scene(position: DockPosition) -> (std::sync::Arc<Engine>, Layer, Layer) {
+        let engine = Engine::create(1000.0, 1000.0);
+        let slot = engine.new_layer();
+        slot.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        slot.set_size(Size::points(SLOT, SLOT), None);
+        slot.set_position(layers::types::Point::new(400.0, 400.0), None);
+        let _ = engine.add_layer(&slot);
+
+        let label = engine.new_layer();
+        let _ = slot.add_sublayer(&label);
+        setup_label(&label, "Calculator".to_string(), position);
+        engine.update(0.0);
+        (engine, slot, label)
+    }
+
+    /// The balloon itself, in the same coordinate space as the slot bounds:
+    /// the layer is padded by a safe margin all around, so its own bounds say
+    /// nothing about where the tooltip is drawn.
+    fn balloon_rect(label: &Layer) -> layers::skia::Rect {
+        label.render_layer().global_shape_bounds
+    }
+
+    #[test]
+    #[serial]
+    fn bottom_dock_puts_the_balloon_above_the_slot() {
+        let _ = Config::update(|c| c.dock.position = DockPosition::Bottom);
+        let (_engine, slot, label) = label_scene(DockPosition::Bottom);
+        let slot = slot.render_bounds_transformed();
+        let balloon = balloon_rect(&label);
+
+        assert!(
+            balloon.bottom <= slot.y() + 1.0,
+            "balloon {balloon:?} should sit above the slot {slot:?}"
+        );
+        assert!(
+            (balloon.center_x() - slot.center_x()).abs() < 1.0,
+            "balloon {balloon:?} should be centred on the slot {slot:?}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn left_dock_puts_the_balloon_right_of_the_slot() {
+        let _ = Config::update(|c| c.dock.position = DockPosition::Left);
+        let (_engine, slot, label) = label_scene(DockPosition::Left);
+        let slot = slot.render_bounds_transformed();
+        let balloon = balloon_rect(&label);
+
+        assert!(
+            balloon.x() >= slot.right - 1.0,
+            "balloon {balloon:?} should sit right of the slot {slot:?}"
+        );
+        assert!(
+            (balloon.center_y() - slot.center_y()).abs() < 1.0,
+            "balloon {balloon:?} should be centred on the slot {slot:?}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn right_dock_puts_the_balloon_left_of_the_slot() {
+        let _ = Config::update(|c| c.dock.position = DockPosition::Right);
+        let (_engine, slot, label) = label_scene(DockPosition::Right);
+        let slot = slot.render_bounds_transformed();
+        let balloon = balloon_rect(&label);
+
+        assert!(
+            balloon.right <= slot.x() + 1.0,
+            "balloon {balloon:?} should sit left of the slot {slot:?}"
+        );
+        assert!(
+            (balloon.center_y() - slot.center_y()).abs() < 1.0,
+            "balloon {balloon:?} should be centred on the slot {slot:?}"
+        );
+    }
+
+    /// Moving the dock rebuilds the tooltips in place: the same layer, rebuilt
+    /// for the new edge, has to end up exactly where a freshly built one does.
+    fn rebuild_matches_fresh(from: DockPosition, to: DockPosition) {
+        let (_engine, slot, label) = label_scene(from);
+        let engine = _engine;
+        setup_label(&label, "Calculator".to_string(), to);
+        engine.update(0.0);
+        let rebuilt = balloon_rect(&label);
+        let rebuilt_slot = slot.render_bounds_transformed();
+
+        let (_engine2, slot2, label2) = label_scene(to);
+        let fresh = balloon_rect(&label2);
+        let fresh_slot = slot2.render_bounds_transformed();
+
+        // Compare relative to each slot: the two scenes are laid out apart.
+        let rel = |b: layers::skia::Rect, s: layers::skia::Rect| {
+            (b.x() - s.x(), b.y() - s.y(), b.width(), b.height())
+        };
+        let (rx, ry, rw, rh) = rel(rebuilt, rebuilt_slot);
+        let (fx, fy, fw, fh) = rel(fresh, fresh_slot);
+        assert!(
+            (rx - fx).abs() < 1.0 && (ry - fy).abs() < 1.0,
+            "{from:?} -> {to:?}: rebuilt balloon at ({rx}, {ry}), fresh one at ({fx}, {fy})"
+        );
+        assert!(
+            (rw - fw).abs() < 1.0 && (rh - fh).abs() < 1.0,
+            "{from:?} -> {to:?}: rebuilt balloon is {rw}x{rh}, fresh one is {fw}x{fh}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn moving_the_dock_rebuilds_the_balloon() {
+        for (from, to) in [
+            (DockPosition::Bottom, DockPosition::Right),
+            (DockPosition::Bottom, DockPosition::Left),
+            (DockPosition::Right, DockPosition::Bottom),
+            (DockPosition::Left, DockPosition::Bottom),
+            (DockPosition::Left, DockPosition::Right),
+        ] {
+            let _ = Config::update(|c| c.dock.position = to);
+            rebuild_matches_fresh(from, to);
+        }
+    }
 }

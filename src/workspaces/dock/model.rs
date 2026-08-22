@@ -62,9 +62,73 @@ impl DockModel {
     }
 }
 
+/// Reorder `bookmarks` to follow `order`, a list of match ids.
+///
+/// A bookmark the dock never loaded — one whose desktop entry is missing, say —
+/// is not in `order`; it keeps its relative place at the end rather than being
+/// dropped, so a reorder never costs the user an entry they cannot see.
+pub fn sort_bookmarks_to(bookmarks: &mut [crate::config::DockBookmark], order: &[String]) {
+    bookmarks.sort_by_key(|bookmark| {
+        let id = bookmark
+            .desktop_id
+            .strip_suffix(".desktop")
+            .unwrap_or(&bookmark.desktop_id);
+        order
+            .iter()
+            .position(|known| known == id)
+            .unwrap_or(usize::MAX)
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn bookmark(id: &str) -> crate::config::DockBookmark {
+        crate::config::DockBookmark {
+            desktop_id: id.to_string(),
+            label: None,
+            exec_args: vec![],
+        }
+    }
+
+    fn ids(bookmarks: &[crate::config::DockBookmark]) -> Vec<String> {
+        bookmarks.iter().map(|b| b.desktop_id.clone()).collect()
+    }
+
+    fn order(entries: &[&str]) -> Vec<String> {
+        entries.iter().map(|e| e.to_string()).collect()
+    }
+
+    #[test]
+    fn bookmarks_follow_the_launcher_order() {
+        let mut bookmarks = vec![bookmark("firefox"), bookmark("terminal"), bookmark("files")];
+        sort_bookmarks_to(&mut bookmarks, &order(&["files", "firefox", "terminal"]));
+        assert_eq!(ids(&bookmarks), vec!["files", "firefox", "terminal"]);
+    }
+
+    #[test]
+    fn desktop_suffix_still_matches() {
+        let mut bookmarks = vec![bookmark("firefox.desktop"), bookmark("terminal")];
+        sort_bookmarks_to(&mut bookmarks, &order(&["terminal", "firefox"]));
+        assert_eq!(ids(&bookmarks), vec!["terminal", "firefox.desktop"]);
+    }
+
+    #[test]
+    fn unknown_bookmarks_keep_their_order_at_the_end() {
+        let mut bookmarks = vec![
+            bookmark("ghost-one"),
+            bookmark("firefox"),
+            bookmark("ghost-two"),
+            bookmark("terminal"),
+        ];
+        sort_bookmarks_to(&mut bookmarks, &order(&["terminal", "firefox"]));
+        assert_eq!(
+            ids(&bookmarks),
+            vec!["terminal", "firefox", "ghost-one", "ghost-two"],
+            "bookmarks the dock could not load must survive a reorder"
+        );
+    }
 
     fn make_app(id: &str) -> Application {
         Application::test_new(id)

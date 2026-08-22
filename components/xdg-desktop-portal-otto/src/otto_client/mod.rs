@@ -21,5 +21,6 @@ impl OttoClient {
 }
 
 pub mod dialog;
+pub mod file_picker;
 pub mod screencast;
 pub mod settings;

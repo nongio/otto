@@ -316,7 +316,7 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
                             // the pre-change size while the content tiles.
                             self.refresh_window_shadow_geometry(&window);
                         } else {
-                            self.update_window_view(&window);
+                            self.update_window_view_for_commit(&window, Some(surface));
                         }
 
                         // Update foreign toplevel list only if title or app_id actually changed
@@ -736,6 +736,10 @@ impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
 
         // Arrange the layer map which will handle the exclusive zone
         map.arrange();
+        // A new panel may have taken space away from the dock (see
+        // `refresh_dock_metrics`); it takes the map itself, so drop ours.
+        drop(map);
+        self.workspaces.refresh_dock_metrics();
     }
 
     fn new_popup(&mut self, _parent: WlrLayerSurface, popup: PopupSurface) {
@@ -821,16 +825,26 @@ impl<BackendData: crate::state::Backend> crate::state::Otto<BackendData> {
     /// center it. Runs at most once per window.
     fn settle_initial_placement(&mut self, window: &WindowElement) {
         let id = window.id();
-        if !self.pending_initial_placement.contains(&id) {
-            return;
-        }
-
         let size = window.geometry().size;
         // Still unsized — wait for a later commit.
         if size.w <= 0 || size.h <= 0 {
             return;
         }
-        self.pending_initial_placement.remove(&id);
+
+        // A client may map at one size and grow to its real one a commit later:
+        // Chrome maps at its minimum size, gets treated as a dialog and centered
+        // by the branch below, and then expands from that centered origin — which
+        // is how a browser window ends up with its top-left corner in the middle
+        // of the screen, hanging off the right and bottom edges. So keep
+        // re-placing the window until two consecutive commits agree on a size.
+        let Some(last_seen) = self.pending_initial_placement.get_mut(&id) else {
+            return;
+        };
+        if *last_seen == Some(size) {
+            self.pending_initial_placement.remove(&id);
+        } else {
+            *last_seen = Some(size);
+        }
 
         // Fullscreen/maximized windows own their geometry already.
         if window.is_fullscreen() || window.is_maximized() {
@@ -847,6 +861,35 @@ impl<BackendData: crate::state::Backend> crate::state::Otto<BackendData> {
         let is_dialog = (size.w as f64) <= usable.size.w as f64 * DIALOG_MAX_FRACTION
             && (size.h as f64) <= usable.size.h as f64 * DIALOG_MAX_FRACTION;
         if !is_dialog {
+            // Not a dialog, so it keeps the spot the placement picked — but that
+            // spot was chosen for an assumed 800x600 window. A window wider or
+            // taller than that (a browser, an IDE) hangs off the right or bottom
+            // edge from a corner candidate, which reads as "it opened with its
+            // top-left corner in the middle of the screen". Pull it back inside.
+            let Some(location) = self.workspaces.element_location(window) else {
+                return;
+            };
+            let clamped = smithay::utils::Point::<i32, Logical>::from((
+                location
+                    .x
+                    .min(usable.loc.x + (usable.size.w - size.w).max(0))
+                    .max(usable.loc.x),
+                location
+                    .y
+                    .min(usable.loc.y + (usable.size.h - size.h).max(0))
+                    .max(usable.loc.y),
+            ));
+            if clamped != location {
+                tracing::debug!(
+                    "settle_initial_placement: pulling {}x{} window back inside from {:?} to {:?}",
+                    size.w,
+                    size.h,
+                    location,
+                    clamped
+                );
+                self.workspaces
+                    .map_window_on_output(&output, window, clamped, false, None);
+            }
             return;
         }
 
@@ -984,6 +1027,11 @@ fn ensure_initial_configure<Backend: crate::state::Backend>(
 
             layer.layer_surface().send_configure();
         }
+        // The arrange above may have changed the exclusive zones (a panel
+        // appearing or resizing), which is the dock's own space budget. Drop
+        // the map first — refreshing takes it again.
+        drop(map);
+        state.workspaces.refresh_dock_metrics();
     };
 }
 

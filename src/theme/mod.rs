@@ -124,6 +124,19 @@ pub enum ThemeScheme {
     Dark,
 }
 
+/// The otto-kit palette matching the compositor's configured scheme.
+///
+/// Toolkit widgets the compositor draws itself — dock menus, the workspace
+/// rename field — take their colors from a `Theme`, and otto-kit's own default
+/// follows the XDG portal, which only client apps watch. Inside the compositor
+/// the config is the source of truth, so hand it over explicitly.
+pub fn kit_theme() -> otto_kit::theme::Theme {
+    match Config::with(|c| c.theme_scheme.clone()) {
+        ThemeScheme::Dark => otto_kit::theme::Theme::dark(),
+        ThemeScheme::Light => otto_kit::theme::Theme::light(),
+    }
+}
+
 pub fn theme_colors() -> &'static Lazy<ThemeColors> {
     Config::with(|c| match c.theme_scheme {
         ThemeScheme::Light => &colors_light::COLORS,
@@ -131,25 +144,98 @@ pub fn theme_colors() -> &'static Lazy<ThemeColors> {
     })
 }
 
-/// Get the configured accent color by name
-pub fn accent_color() -> Color {
+/// Every accent colour a user can choose, in the order they are offered.
+///
+/// The settings schema serves this list as the choices for `accent_color`, so
+/// a name that is not here cannot be set — `accent_by_name` and the schema
+/// cannot drift apart.
+pub const ACCENT_NAMES: &[&str] = &[
+    "blue", "purple", "pink", "red", "orange", "yellow", "green", "mint", "teal", "cyan", "indigo",
+    "brown", "gray",
+];
+
+/// Resolve an accent name against the current scheme's palette.
+pub fn accent_by_name(name: &str) -> Option<Color> {
     let colors = theme_colors();
-    Config::with(|c| {
-        match c.accent_color.as_str() {
-            "red" => colors.accents_red,
-            "orange" => colors.accents_orange,
-            "yellow" => colors.accents_yellow,
-            "green" => colors.accents_green,
-            "mint" => colors.accents_mint,
-            "teal" => colors.accents_teal,
-            "cyan" => colors.accents_cyan,
-            "blue" => colors.accents_blue,
-            "indigo" => colors.accents_indigo,
-            "purple" => colors.accents_purple,
-            "pink" => colors.accents_pink,
-            "gray" => colors.accents_gray,
-            "brown" => colors.accents_brown,
-            _ => colors.accents_blue, // default fallback
-        }
+    Some(match name {
+        "red" => colors.accents_red,
+        "orange" => colors.accents_orange,
+        "yellow" => colors.accents_yellow,
+        "green" => colors.accents_green,
+        "mint" => colors.accents_mint,
+        "teal" => colors.accents_teal,
+        "cyan" => colors.accents_cyan,
+        "blue" => colors.accents_blue,
+        "indigo" => colors.accents_indigo,
+        "purple" => colors.accents_purple,
+        "pink" => colors.accents_pink,
+        "gray" => colors.accents_gray,
+        "brown" => colors.accents_brown,
+        _ => return None,
     })
+}
+
+/// The accent colour everything paints with.
+///
+/// The value lives in otto-kit's `accent` store rather than being resolved
+/// here on every call. otto-kit draws Otto's window decorations and reads the
+/// accent from that store, so keeping a second copy on this side is what left
+/// the titlebar controls painting otto-kit's blue fallback while the workspace
+/// selector painted the configured accent. One store, read by both.
+///
+/// Seeds the store on first read, so a caller that runs before
+/// [`publish_accent`] still gets the configured colour rather than the
+/// fallback.
+pub fn accent_color() -> Color {
+    match otto_kit::accent::current_accent() {
+        Some(color) => Color::new_rgba255(color.r(), color.g(), color.b(), color.a()),
+        None => publish_accent(),
+    }
+}
+
+/// Resolve the accent from the configuration and publish it to the store.
+///
+/// Call after anything that changes what the accent resolves to — the
+/// `accent_color` setting, or the colour scheme whose palette it names.
+pub fn publish_accent() -> Color {
+    // The name is copied out before resolving it: `accent_by_name` reads the
+    // configuration again for the palette, and `Config::with` is not
+    // re-entrant.
+    let name = Config::with(|c| c.accent_color.clone());
+    let color = accent_by_name(&name).unwrap_or_else(|| theme_colors().accents_blue);
+    otto_kit::accent::set_accent(color.c4f().to_color());
+    color
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rgb255(color: Color) -> (u8, u8, u8) {
+        let c = color.c4f();
+        let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+        (byte(c.r), byte(c.g), byte(c.b))
+    }
+
+    /// The accent survives the trip through otto-kit's store, so a caller on
+    /// Otto's side and a draw routine on otto-kit's side see the same colour.
+    #[test]
+    fn accent_round_trips_through_the_shared_store() {
+        for name in ACCENT_NAMES {
+            let expected = accent_by_name(name).expect("named accent resolves");
+            otto_kit::accent::set_accent(expected.c4f().to_color());
+
+            let kit = otto_kit::accent::current_accent().expect("store holds the accent");
+            assert_eq!(
+                (kit.r(), kit.g(), kit.b()),
+                rgb255(expected),
+                "otto-kit sees a different `{name}` than Otto published"
+            );
+            assert_eq!(
+                rgb255(accent_color()),
+                rgb255(expected),
+                "reading `{name}` back through the store changed it"
+            );
+        }
+    }
 }
