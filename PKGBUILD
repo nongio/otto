@@ -13,6 +13,10 @@ depends=("libdrm" "systemd-libs" "mesa" "libxkbcommon" "wayland" "libinput" "dbu
 optdepends=("xdg-desktop-portal: Desktop integration" "fprintd: fingerprint unlock for otto-lock and otto-greeter" "greetd: login manager otto --login hosts a greeter for" "gst-plugin-pipewire: otto-rdp video capture" "gst-plugins-bad: otto-rdp hardware H.264 (VA-API)")
 source=("https://github.com/nongio/otto/releases/download/v$pkgver/otto-$pkgver-x86_64.tar.gz")
 sha256sums=("SKIP")
+# Files pacman must never clobber: a modified config becomes .pacnew on
+# upgrade and .pacsave on removal, instead of being silently overwritten or
+# deleted when swapping between the otto-bin/otto-git/otto-nightly-bin variants.
+backup=("etc/otto/config.toml" "etc/pam.d/otto-lock")
 
 package() {
     cd "$srcdir/otto-$pkgver"
