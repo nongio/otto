@@ -3146,6 +3146,104 @@ mod geometry_tests {
     use crate::model::Entry;
     use otto_kit::filetype::Kind;
 
+    /// A solid-red image of the given shape, standing in for a thumbnail.
+    fn red_image(w: i32, h: i32) -> skia_safe::Image {
+        let info = skia_safe::ImageInfo::new(
+            (w, h),
+            skia_safe::ColorType::RGBA8888,
+            skia_safe::AlphaType::Premul,
+            None,
+        );
+        let pixels: Vec<u8> = (0..w * h).flat_map(|_| [255u8, 0, 0, 255]).collect();
+        skia_safe::images::raster_from_data(
+            &info,
+            skia_safe::Data::new_copy(&pixels),
+            w as usize * 4,
+        )
+        .expect("raster image")
+    }
+
+    /// Draw one grid cell into a bitmap and hand back the pixels, so a test
+    /// can ask what actually landed rather than what was meant to.
+    fn grid_cell_pixels(thumb: Option<&skia_safe::Image>) -> (skia_safe::Surface, Rect) {
+        let cell = Rect::from_xywh(0.0, 0.0, CELL_W, CELL_H);
+        let mut surface =
+            skia_safe::surfaces::raster_n32_premul((CELL_W as i32, CELL_H as i32)).unwrap();
+        let theme = Theme::light();
+        let entry = &entries(1)[0];
+        surface.canvas().clear(skia_safe::Color::WHITE);
+        draw_grid_cell(surface.canvas(), &theme, entry, cell, false, false, thumb);
+        (surface, cell)
+    }
+
+    fn pixel_at(surface: &mut skia_safe::Surface, x: i32, y: i32) -> (u8, u8, u8) {
+        let info = skia_safe::ImageInfo::new(
+            (1, 1),
+            skia_safe::ColorType::RGBA8888,
+            skia_safe::AlphaType::Unpremul,
+            None,
+        );
+        let mut px = [0u8; 4];
+        assert!(
+            surface.image_snapshot().read_pixels(
+                &info,
+                &mut px,
+                4,
+                (x, y),
+                skia_safe::image::CachingHint::Allow
+            ),
+            "reading pixel at {x},{y}"
+        );
+        (px[0], px[1], px[2])
+    }
+
+    /// A thumbnail is drawn where the icon would have been — the picture
+    /// reaches the box, rather than the type icon being drawn over or under
+    /// it.
+    #[test]
+    fn a_grid_cell_with_a_thumbnail_draws_the_picture() {
+        let image = red_image(64, 64);
+        let (mut surface, cell) = grid_cell_pixels(Some(&image));
+
+        // Centre of the icon box: a square thumbnail fills it, so this is red.
+        let x = cell.center_x() as i32;
+        let y = (cell.top + 8.0 + GRID_ICON / 2.0) as i32;
+        let (r, g, b) = pixel_at(&mut surface, x, y);
+        assert!(
+            r > 200 && g < 60 && b < 60,
+            "expected the thumbnail at the icon box's centre, got ({r},{g},{b})"
+        );
+    }
+
+    /// Fitted, not filled: a wide picture keeps its proportions, so the box's
+    /// top corners stay empty rather than being covered by a stretched or
+    /// cropped image.
+    #[test]
+    fn a_wide_thumbnail_keeps_its_shape() {
+        // Twice as wide as tall: fitted to the box's width, it occupies the
+        // bottom half of the box and leaves the top half alone.
+        let image = red_image(128, 64);
+        let (mut surface, cell) = grid_cell_pixels(Some(&image));
+
+        let icon_top = cell.top + 8.0;
+        let x = cell.center_x() as i32;
+
+        // Just below the box's bottom edge minus a quarter of its height: in
+        // the picture.
+        let inside = (icon_top + GRID_ICON * 0.75) as i32;
+        let (r, _, _) = pixel_at(&mut surface, x, inside);
+        assert!(r > 200, "expected picture in the lower half of the box");
+
+        // The top of the box: above a half-height picture sitting on the
+        // box's baseline, so still the background.
+        let above = (icon_top + 2.0) as i32;
+        let (r, g, b) = pixel_at(&mut surface, x, above);
+        assert!(
+            r > 200 && g > 200 && b > 200,
+            "a fitted wide picture must not reach the top of the box, got ({r},{g},{b})"
+        );
+    }
+
     fn entries(n: usize) -> Vec<Entry> {
         (0..n)
             .map(|i| Entry {
