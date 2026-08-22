@@ -256,6 +256,9 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub xwayland_shell_state: xwayland_shell::XWaylandShellState,
 
     pub dnd_icon: Option<WlSurface>,
+    /// Every surface a drag icon has had a layer built for, so the next drag
+    /// can sweep them whether or not those surfaces are still alive.
+    pub dnd_layer_ids: Vec<ObjectId>,
     /// The icon surface of a refused drag, whose layers are kept alive while it
     /// flies back to where the drag started and are swept up when the next drag
     /// begins. See [`crate::state::dnd_grab_handler`].
@@ -924,6 +927,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             pending_screencopy_frames: Vec::new(),
             virtual_pointer_manager_state,
             dnd_icon: None,
+            dnd_layer_ids: Vec::new(),
             pending_dnd_cleanup: None,
             dnd_icon_offset: (0, 0).into(),
             suppressed_keys: Vec::new(),
@@ -1262,7 +1266,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         } else if action == DndAction::Ask {
             CursorImageStatus::Named(CursorIcon::Help)
         } else {
-            CursorImageStatus::Hidden
+            // No action the target will take — say so, rather than saying
+            // nothing. Hiding the cursor here left the user dragging with no
+            // pointer at all for most of the screen, since every surface that
+            // is not a drop target lands in this branch.
+            CursorImageStatus::Named(CursorIcon::NoDrop)
         };
         self.set_cursor(&cursor);
     }
@@ -1417,6 +1425,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             // Now build layers from surface_info (like windows)
             for (surface_id, (surface, parent_id)) in surface_info.iter() {
                 let layer = self.get_or_create_layer_for_surface(surface);
+                // Remembered so the next drag can take it down even if the
+                // client that owned it is gone by then.
+                if !self.dnd_layer_ids.contains(surface_id) {
+                    self.dnd_layer_ids.push(surface_id.clone());
+                }
 
                 // Configure layer with all properties
                 if let Some(wvs) = render_elements.iter().find(|e| &e.id == surface_id) {
@@ -1467,6 +1480,25 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 ),
                 None,
             );
+        }
+    }
+
+    /// Take down every layer any drag icon has ever put in the scene.
+    ///
+    /// [`Self::cleanup_dnd_layers`] walks a *live* surface tree, so it sweeps
+    /// nothing once the client is gone — and a drag icon outlives its drag by
+    /// design, so the client exiting between drags is the ordinary case, not a
+    /// rare one. What is left behind stays parented under the view and is shown
+    /// again the moment the next drag makes that view visible: the previous
+    /// drag's picture, drawn behind the current one.
+    ///
+    /// Tracked by id rather than by surface for the same reason: the ids are
+    /// ours and stay valid, while the surfaces they came from may not.
+    fn sweep_dnd_layers(&mut self) {
+        for surface_id in std::mem::take(&mut self.dnd_layer_ids) {
+            if let Some(layer) = self.surface_layers.remove(&surface_id) {
+                layer.remove();
+            }
         }
     }
 

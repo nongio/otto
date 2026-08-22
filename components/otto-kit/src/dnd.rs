@@ -240,6 +240,9 @@ thread_local! {
 /// at `(0, 0)` is what the cursor appears to be holding.
 struct DragIcon {
     surface: crate::surfaces::BaseWaylandSurface,
+    /// The size it was created at, in points. Kept so a redraw can be handed
+    /// the same box the first draw was given.
+    size: (f32, f32),
 }
 
 impl DragIcon {
@@ -260,7 +263,10 @@ impl DragIcon {
             tracing::warn!(%err, "could not create the drag icon's surface");
             return None;
         }
-        Some(Self { surface })
+        Some(Self {
+            surface,
+            size: (width as f32, height as f32),
+        })
     }
 
     /// Put the point `(x, y)` *inside* the icon under the cursor, instead of
@@ -387,6 +393,30 @@ pub(crate) fn payload_for(mime: &str) -> Option<Vec<u8>> {
 /// by which time whatever the compositor was doing with it is long over.
 pub(crate) fn clear_payload() {
     DRAG_PAYLOAD.lock().unwrap().clear();
+}
+
+/// Draw the drag icon again, over what is already there.
+///
+/// The picture under the cursor is a surface of our own, so it can change while
+/// the drag runs: a group of files can gather into a stack, a target's answer
+/// can change what is shown. The size is fixed at the drag's start — the buffer
+/// is allocated once — so this repaints the same box.
+///
+/// Returns whether there was an icon to draw into: a drag started without one,
+/// or one already over, is not an error.
+pub fn redraw_icon<F>(draw: F) -> bool
+where
+    F: FnOnce(&skia_safe::Canvas, f32, f32),
+{
+    DRAG_ICON.with(|slot| {
+        let slot = slot.borrow();
+        let Some(icon) = slot.as_ref() else {
+            return false;
+        };
+        let (w, h) = icon.size;
+        icon.surface.draw(|canvas| draw(canvas, w, h));
+        true
+    })
 }
 
 /// Is this application the source of a drag in flight?
