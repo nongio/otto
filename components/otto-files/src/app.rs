@@ -1175,12 +1175,13 @@ impl Browser {
         }
     }
 
-    /// Open a new window on the directory this one is showing — Ctrl+N.
+    /// Open a new window on the default location — Ctrl+N.
     ///
-    /// The *current* directory rather than a fixed home, because the reason to
-    /// want a second window is almost always to have two places open at once,
-    /// and one of the two is where you already are. A new window at home would
-    /// have to be navigated back to here first.
+    /// The default location, not this window's directory: a new window is a
+    /// fresh start, and starting somewhere arbitrary — wherever the window
+    /// that happened to have focus was pointed — is what makes a new window
+    /// feel like a copy of the old one rather than a new one. Ctrl+double-click
+    /// is the gesture for "that directory, in another window".
     fn open_new_window(&mut self) {
         let Some(path) = self.new_window_target() else {
             return;
@@ -1200,8 +1201,17 @@ impl Browser {
         if self.picker.is_some() {
             return None;
         }
-        let path = self.current_path();
-        (!path.as_os_str().is_empty()).then_some(path)
+        Some(Self::default_location())
+    }
+
+    /// Where a window with nowhere in particular to be starts.
+    ///
+    /// The home directory for now. It is a single function rather than a
+    /// literal at each call site because this is the thing a preference would
+    /// replace — when there is one, it is read here and everywhere that opens
+    /// a fresh window follows.
+    fn default_location() -> PathBuf {
+        model::home_dir().unwrap_or_else(|| PathBuf::from("/"))
     }
 
     /// Descend into the selection: in Miller view the child column already
@@ -4975,20 +4985,18 @@ mod typeahead_tests {
         (browser, dir)
     }
 
-    /// Ctrl+N opens a new window *here*, not at a fixed home: the reason to
-    /// want a second window is to have two directories open at once, and one
-    /// of them is the one already on screen. Navigating moves the target with
-    /// it.
+    /// Ctrl+N opens a new window at the default location, not wherever this
+    /// window happens to be pointed — a new window is a fresh start. Where the
+    /// window is browsing must not move the target.
     #[test]
-    fn a_new_window_opens_on_the_directory_in_view() {
+    fn a_new_window_opens_at_the_default_location() {
         let (mut browser, dir) = browser_over(&["one.txt", "two.txt"]);
-        assert_eq!(
-            browser.new_window_target().as_deref(),
-            Some(dir.0.as_path())
-        );
+        let default = Browser::default_location();
+        assert_eq!(browser.new_window_target(), Some(default.clone()));
 
-        // Descend, and the target follows the deepest column rather than
-        // staying at the directory the window was opened on.
+        // Navigating somewhere else leaves it alone. `dir` is a temporary
+        // directory, so it is never the default location, and a target that
+        // followed the window would show up here.
         let child = dir.0.join("sub");
         std::fs::create_dir_all(&child).expect("child dir");
         browser.navigate_to(&child);
@@ -4998,7 +5006,8 @@ mod typeahead_tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
-        assert_eq!(
+        assert_eq!(browser.new_window_target(), Some(default));
+        assert_ne!(
             browser.new_window_target().as_deref(),
             Some(child.as_path())
         );
