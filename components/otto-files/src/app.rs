@@ -3445,6 +3445,11 @@ impl App for FilesApp {
                     browser.dirty = true;
                 }
                 Keysym::n if ctrl => browser.open_new_window(),
+                // What a double-click does, from the keyboard: descend into a
+                // directory, or activate a file. Return is not free for this —
+                // it renames, the way it does on the desktop this follows — so
+                // opening needs a chord of its own.
+                Keysym::o if ctrl => browser.open_selection(),
                 Keysym::_1 if ctrl => {
                     browser.mode = ViewMode::List;
                     browser.dirty = true;
@@ -4983,6 +4988,38 @@ mod typeahead_tests {
         }
         assert!(!browser.columns[0].loading(), "listing never arrived");
         (browser, dir)
+    }
+
+    /// Ctrl+O is bound to the same call a double-click makes, so on a folder
+    /// it descends. Worth pinning because Return is *not* this — it renames —
+    /// and it would be an easy mistake to give opening back to Return and
+    /// leave the chord doing nothing.
+    #[test]
+    fn opening_a_folder_descends_into_it() {
+        let dir = TempDir::holding(&["a.txt"]);
+        let sub = dir.0.join("sub");
+        std::fs::create_dir_all(sub.join("inner")).expect("child dir");
+
+        let mut browser = Browser::new(dir.0.clone());
+        for _ in 0..500 {
+            if browser.columns[0].poll() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        // List view: descending replaces the column, so the deepest path is
+        // the plainest statement of where the window ended up.
+        browser.mode = ViewMode::List;
+        let index = browser
+            .visible(0)
+            .iter()
+            .position(|e| e.name == "sub")
+            .expect("the folder is listed");
+        browser.select(0, index);
+
+        assert_eq!(browser.current_path(), dir.0);
+        browser.open_selection();
+        assert_eq!(browser.current_path(), sub);
     }
 
     /// Ctrl+N opens a new window at the default location, not wherever this

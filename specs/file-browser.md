@@ -274,6 +274,7 @@ anchor-based multi-select rules and rubber-band selection. See
 | Ctrl+C / Ctrl+X / Ctrl+V | copy / cut / paste |
 | Ctrl+Z | undo the last operation |
 | Ctrl+N | new window, at the **default location** (the home directory for now, a preference later) rather than at this window's directory — a new window is a fresh start, and inheriting wherever the focused window was pointed makes it read as a copy of that window. Ctrl+double-click is the gesture for "that directory, in another window". Nothing in the picker, which answers one request in one window |
+| Ctrl+O | open the entry at the cursor — exactly what a double-click does: descend into a directory, or activate a file (in the picker, accept it). Return is not free for this, since it renames |
 | Ctrl+I | show info for the selection |
 | Ctrl+1 / Ctrl+2 / Ctrl+3 | list / icon / column view |
 | Escape | cancel an inline rename, else clear the search field, else clear the selection |
