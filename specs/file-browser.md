@@ -330,9 +330,29 @@ A plain click on empty space inside a pane — past the last row, between grid
 cells, on the background — selects nothing, in every view. The pane still takes
 the keyboard, since the click was in it, and in column view the panes to its
 right close with the selection: they are there because something in that pane
-was selected, and now nothing is. A click carrying Ctrl or Shift is a
-multi-select gesture and is left alone. Clicks on the header, the sidebar and
-the status strip are not clicks on nothing and change no selection.
+was selected, and now nothing is. Clicks on the header, the sidebar and the
+status strip are not clicks on nothing and change no selection.
+
+**The rubber band.** In icon view that click is the corner of a rubber band: a
+press on empty space and a drag sweeps a rectangle out over the grid, and
+everything it touches is selected. A cell counts as caught the moment the band
+touches its rect at all, so a band flicked through a row of icons takes the
+row; enclosing each one is not required. The selection is recomputed from the
+band on every motion rather than accumulated, so pulling the band back off an
+entry gives it up again. A band with no extent at all — a click that never
+travels — catches nothing, which is exactly the "selects nothing" rule above:
+the two are one behaviour, not two.
+
+Held with Ctrl or Shift the band *adds* to what was already selected, the way
+Ctrl+click does, and the press does not clear first. The band is anchored in
+the pane's content coordinates, not on the screen, so scrolling the wheel
+mid-drag keeps it around the same files and lets it reach past the bottom of
+the window. Releasing puts the band away and leaves the selection it made.
+
+There is no band in list or column view. Rows there span their pane's whole
+width, so a rectangle could only ever say what dragging down the rows already
+says; the plain click-clears rule is the whole of the empty-space behaviour in
+those two.
 
 The browser adds:
 

@@ -384,7 +384,7 @@ the last entry selected without a modifier. Shift+click and Shift+Arrow select
 the contiguous range from the anchor to the cursor, replacing the previous
 range. Ctrl+click toggles one entry and moves the anchor to it. Ctrl+Arrow moves
 the cursor without changing the selection; Ctrl+Space toggles the entry at the
-cursor. A pointer drag beginning on empty space rubber-band selects. In a
+cursor. A pointer drag beginning on empty space rubber-band selects, in icon view. In a
 single-select request every one of these collapses to "select the entry under
 the cursor".
 

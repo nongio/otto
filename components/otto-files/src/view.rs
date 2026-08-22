@@ -254,6 +254,50 @@ pub fn grid_visible_range(
     first..end.max(first)
 }
 
+/// The cells `band` touches — the rubber band's hit test, the counterpart of
+/// [`grid_cell_at`] for a rectangle rather than a point.
+///
+/// Closed-form over the rows and columns the band spans, so sweeping a band
+/// across a directory of ten thousand files costs what the band covers rather
+/// than what the directory holds. A cell counts as caught the moment the band
+/// touches its rect at all, which is what makes flicking a thin band through a
+/// row of icons select them: requiring containment would mean drawing a box
+/// carefully around each one.
+pub fn grid_cells_in_rect(area: Rect, count: usize, scroll: f32, band: Rect) -> Vec<usize> {
+    // A band with no extent at all catches nothing, even sitting squarely
+    // over a cell: that band is a click on empty space, and a click on empty
+    // space means nothing is selected. A band flat in *one* axis is still a
+    // drag — a pointer swept straight across a row rarely moves a whole pixel
+    // down — and catches what the line crosses.
+    if count == 0 || (band.width() <= 0.0 && band.height() <= 0.0) {
+        return Vec::new();
+    }
+    let cols = grid_columns(area);
+    let origin_x = area.left + GRID_PAD;
+    let origin_y = area.top + GRID_PAD - scroll;
+
+    let span = |lo: f32, hi: f32, pitch: f32, origin: f32| {
+        let first = ((lo - origin) / pitch).floor().max(0.0);
+        let end = ((hi - origin) / pitch).ceil().max(0.0);
+        (first as usize, end as usize)
+    };
+    let (first_col, end_col) = span(band.left, band.right, CELL_W, origin_x);
+    let (first_row, end_row) = span(band.top, band.bottom, CELL_H, origin_y);
+    let end_col = end_col.min(cols);
+
+    let mut hit = Vec::new();
+    for row in first_row..end_row {
+        for col in first_col..end_col {
+            let index = row * cols + col;
+            if index >= count {
+                return hit;
+            }
+            hit.push(index);
+        }
+    }
+    hit
+}
+
 /// Total height `count` cells need in `area`.
 pub fn grid_content_height(area: Rect, count: usize) -> f32 {
     let cols = grid_columns(area);
@@ -1681,6 +1725,11 @@ pub struct Frame<'a> {
     /// over one. `None` when there is no drag, or it is over nothing that
     /// takes files.
     pub drop_target: Option<DropHighlight>,
+    /// The rubber band being dragged out over the icon grid, in window
+    /// coordinates. Grid view only: rows span their pane's whole width, so a
+    /// band over a list or a Miller column could only ever say what dragging
+    /// down the rows already says.
+    pub marquee: Option<Rect>,
 }
 
 impl Frame<'_> {
@@ -2447,8 +2496,33 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
         }
     }
 
+    if let Some(band) = f.marquee {
+        draw_marquee(canvas, theme, band);
+    }
+
     canvas.restore();
     pane.draw_scrollbar(canvas, theme);
+}
+
+/// The rubber band: a wash of the accent over what it covers, with a hairline
+/// edge so a band dragged out over a dark wallpaper still reads as a shape.
+///
+/// Drawn inside the grid's clip and after the cells, so it tints the icons it
+/// has caught rather than hiding behind them.
+pub fn draw_marquee(canvas: &Canvas, theme: &Theme, band: Rect) {
+    let accent = accent(theme);
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(accent.with_a(40));
+    canvas.draw_rrect(RRect::new_rect_xy(band, 2.0, 2.0), &paint);
+
+    paint.set_color(accent.with_a(140));
+    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_stroke_width(1.0);
+    canvas.draw_rrect(
+        RRect::new_rect_xy(band.with_inset((0.5, 0.5)), 2.0, 2.0),
+        &paint,
+    );
 }
 
 /// One grid cell: icon over a centred, wrapped-to-two-lines name.
@@ -3874,6 +3948,71 @@ pub(crate) fn entry_icon_rect(rect: Rect, mode: ViewMode) -> Rect {
 mod geometry_tests {
     use super::*;
 
+    /// The rubber band's hit test has to agree with where the cells are
+    /// drawn — a band around a cell's own rect catches that cell and only it.
+    #[test]
+    fn a_band_catches_the_cells_it_is_drawn_around() {
+        let area = content_viewport(900.0, 600.0, ViewMode::Grid);
+        let count = 30;
+        let cell = grid_cell_rect(area, 7, 0.0);
+
+        assert_eq!(
+            grid_cells_in_rect(area, count, 0.0, cell.with_inset((1.0, 1.0))),
+            vec![7]
+        );
+
+        // Widened over its neighbour, and the neighbour comes along.
+        let pair = Rect::from_ltrb(
+            cell.left + 1.0,
+            cell.top + 1.0,
+            cell.right + 4.0,
+            cell.bottom - 1.0,
+        );
+        assert_eq!(grid_cells_in_rect(area, count, 0.0, pair), vec![7, 8]);
+    }
+
+    /// A band that touches an icon at all catches it: dragging a thin band
+    /// through a row selects the row, rather than needing to enclose it.
+    #[test]
+    fn a_band_grazing_a_cell_still_catches_it() {
+        let area = content_viewport(900.0, 600.0, ViewMode::Grid);
+        let cell = grid_cell_rect(area, 3, 0.0);
+        let sliver = Rect::from_ltrb(
+            cell.left + 2.0,
+            cell.top + 2.0,
+            cell.left + 3.0,
+            cell.top + 3.0,
+        );
+
+        assert_eq!(grid_cells_in_rect(area, 30, 0.0, sliver), vec![3]);
+    }
+
+    /// A band of no size catches nothing, whatever it is over — which is what
+    /// makes a click on empty space mean an empty selection.
+    #[test]
+    fn a_band_of_no_size_catches_nothing() {
+        let area = content_viewport(900.0, 600.0, ViewMode::Grid);
+        let cell = grid_cell_rect(area, 2, 0.0);
+        let point = Rect::from_xywh(cell.center_x(), cell.center_y(), 0.0, 0.0);
+
+        assert!(grid_cells_in_rect(area, 30, 0.0, point).is_empty());
+    }
+
+    /// Past the last entry there is nothing to catch, however far the band is
+    /// dragged into the empty part of the pane.
+    #[test]
+    fn a_band_below_the_last_cell_catches_nothing_more() {
+        let area = content_viewport(900.0, 600.0, ViewMode::Grid);
+        let below = Rect::from_ltrb(
+            area.left,
+            area.bottom - 40.0,
+            area.right,
+            area.bottom + 400.0,
+        );
+
+        assert!(grid_cells_in_rect(area, 3, 0.0, below).is_empty());
+    }
+
     /// The drop ring takes the shape of what it outlines: rounded around a
     /// grid cell or a sidebar place, square around a column or a row band.
     #[test]
@@ -4368,6 +4507,7 @@ mod geometry_tests {
             footer: 0.0,
             quickview_close_hovered: false,
             drop_target: None,
+            marquee: None,
             width: 1100.0,
             height,
             theme: &theme,

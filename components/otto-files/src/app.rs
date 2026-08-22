@@ -69,6 +69,40 @@ struct UndoStep {
     changes: Vec<model::Change>,
 }
 
+/// A rubber-band selection being dragged out over the icon grid.
+///
+/// Both corners are kept in the pane's *content* coordinates — the pointer's y
+/// with the pane's scroll already added — so the band stays anchored over the
+/// files it was drawn around rather than over the screen. Scroll the wheel
+/// mid-drag and the band grows with the content, which is what makes it
+/// possible to band-select past the bottom of the window.
+///
+/// `base` is the selection the press started from. A plain press clears it, so
+/// it is empty and the band *is* the selection; Ctrl or Shift keeps it, so the
+/// band adds to what was already there. Either way the selection is recomputed
+/// from scratch on every motion, which is what lets the band shrink back and
+/// give up entries again.
+#[derive(Debug, Clone)]
+struct Marquee {
+    depth: usize,
+    anchor: (f32, f32),
+    cursor: (f32, f32),
+    base: std::collections::BTreeSet<String>,
+}
+
+impl Marquee {
+    /// The band in content coordinates, normalised so dragging up and left
+    /// gives the same rectangle as dragging down and right.
+    fn rect(&self) -> skia_safe::Rect {
+        skia_safe::Rect::from_ltrb(
+            self.anchor.0.min(self.cursor.0),
+            self.anchor.1.min(self.cursor.1),
+            self.anchor.0.max(self.cursor.0),
+            self.anchor.1.max(self.cursor.1),
+        )
+    }
+}
+
 /// Is `(x, y)` inside a pane's own area, rather than the header, the sidebar
 /// or the status strip around it? A click on nothing only means "nothing" when
 /// it lands where the entries are.
@@ -209,6 +243,9 @@ struct Browser {
     /// drag yet: where it landed, and the serial that will authorise the drag
     /// if it does. Cleared on release, so a click that never moves is a click.
     drag_armed: Option<(f32, f32, u32)>,
+    /// A rubber band being dragged out over the icon grid, if one is in
+    /// progress. See [`Marquee`].
+    marquee: Option<Marquee>,
     /// Where a drag now over the window would drop. Drawn outlined, and read
     /// again when the drop arrives.
     drop_target: Option<DropTarget>,
@@ -488,6 +525,7 @@ impl Browser {
             size: (view::WINDOW_W, view::WINDOW_H),
             clipboard: model::Clipboard::default(),
             drag_armed: None,
+            marquee: None,
             drop_target: None,
             quickview: None,
             preview: None,
@@ -1031,6 +1069,83 @@ impl Browser {
         if self.mode == ViewMode::Columns {
             self.columns.truncate(depth + 1);
         }
+    }
+
+    /// Start dragging a rubber band out from `(x, y)` — a press on the empty
+    /// part of the icon grid.
+    ///
+    /// `additive` (Ctrl or Shift held) keeps what was already selected and
+    /// adds to it. Without it the press has already cleared the pane, which is
+    /// what makes a band that catches nothing — a plain click — mean nothing
+    /// selected.
+    fn begin_marquee(&mut self, depth: usize, x: f32, y: f32, additive: bool) {
+        if self.mode != ViewMode::Grid || depth >= self.columns.len() {
+            return;
+        }
+        let scroll = self.columns[depth].scroll.offset();
+        let base = if additive {
+            self.columns[depth].selection.clone()
+        } else {
+            Default::default()
+        };
+        self.active = depth;
+        self.marquee = Some(Marquee {
+            depth,
+            anchor: (x, y + scroll),
+            cursor: (x, y + scroll),
+            base,
+        });
+    }
+
+    /// Follow the pointer, and reselect everything the band now covers.
+    ///
+    /// Recomputed rather than accumulated: an entry the band has moved off
+    /// leaves the selection again, unless it was in `base`.
+    fn update_marquee(&mut self, x: f32, y: f32) -> bool {
+        let Some(depth) = self.marquee.as_ref().map(|m| m.depth) else {
+            return false;
+        };
+        let Some(scroll) = self.columns.get(depth).map(|c| c.scroll.offset()) else {
+            return false;
+        };
+
+        let (band, mut selection) = {
+            let marquee = self.marquee.as_mut().unwrap();
+            marquee.cursor = (x, y + scroll);
+            (marquee.rect(), marquee.base.clone())
+        };
+
+        // The band is in content coordinates, so the hit test is asked about
+        // the unscrolled grid: `grid_cell_rect(area, i, 0.0)` is where cell `i`
+        // sits in that same space.
+        let area = view::content_viewport(self.size.0, self.size.1, ViewMode::Grid);
+        let names: Vec<String> = self.visible(depth).iter().map(|e| e.name.clone()).collect();
+        let caught = view::grid_cells_in_rect(area, names.len(), 0.0, band);
+
+        let last = caught.last().copied();
+        for index in caught {
+            selection.insert(names[index].clone());
+        }
+
+        let column = &mut self.columns[depth];
+        if column.selection == selection && column.cursor == last {
+            return false;
+        }
+        column.selection = selection;
+        column.cursor = last;
+        column.anchor = last;
+        self.dirty = true;
+        true
+    }
+
+    /// The band as it should be drawn: window coordinates, or `None` when no
+    /// band is out.
+    fn marquee_band(&self) -> Option<skia_safe::Rect> {
+        let marquee = self.marquee.as_ref()?;
+        let scroll = self.columns.get(marquee.depth)?.scroll.offset();
+        let mut band = marquee.rect();
+        band.offset((0.0, -scroll));
+        Some(band)
     }
 
     /// Add or remove one entry, leaving the rest of the selection alone —
@@ -3212,6 +3327,7 @@ impl Browser {
             quickview_close_hovered: self.quickview_close_hovered,
             thumbs: Some(&self.thumbs),
             drop_target: self.drop_target.as_ref().map(DropTarget::highlight),
+            marquee: self.marquee_band(),
         }
     }
 }
@@ -4786,6 +4902,15 @@ impl FilesApp {
                             continue;
                         }
 
+                        // A rubber band owns the gesture while it is out: no
+                        // scrollbar, hover or resize affordance should answer
+                        // a pointer that is busy drawing a selection.
+                        if browser.marquee.is_some() {
+                            browser.update_marquee(x, y);
+                            drop(browser);
+                            continue;
+                        }
+
                         // Far enough from the press to be a drag rather than an
                         // unsteady click. The whole selection goes, and the
                         // compositor owns the pointer from here — nothing else
@@ -4885,6 +5010,9 @@ impl FilesApp {
                         // A press that came up without travelling was a click —
                         // including one that left its narrowing until now.
                         browser.drag_armed = None;
+                        // The band goes away with the button that drew it; what
+                        // it caught stays selected.
+                        browser.dirty |= browser.marquee.take().is_some();
                         browser.release_entry();
                         browser.column_resize = None;
                         browser.miller_resize = None;
@@ -5073,8 +5201,15 @@ impl FilesApp {
                                 } else {
                                     browser.press_entry(depth, index);
                                 }
-                            } else if !ctrl && !shift && hit_content(area, x, y) {
-                                browser.clear_pane_selection(depth);
+                            } else if hit_content(area, x, y) {
+                                // Nothing under the press: it is the corner of
+                                // a rubber band. A band that never travels is
+                                // an empty one, which is how a plain click on
+                                // nothing comes to mean nothing selected.
+                                if !ctrl && !shift {
+                                    browser.clear_pane_selection(depth);
+                                }
+                                browser.begin_marquee(depth, x, y, ctrl || shift);
                             }
                         } else if browser.mode == ViewMode::List
                             && view::column_boundary_at(x, y, width, browser.list_columns).is_some()
@@ -6045,6 +6180,116 @@ mod dnd_tests {
             );
             assert_eq!(browser.columns[0].cursor, None, "{mode:?}: and no cursor");
         }
+    }
+
+    /// A browser in icon view, sized, with its scroll metrics current — what
+    /// the marquee's geometry needs before it can be asked anything.
+    fn grid_over(files: &[&str]) -> (Browser, TempDir) {
+        let (mut browser, dir) = browser_over(files, &[]);
+        browser.mode = ViewMode::Grid;
+        browser.size = (900.0, 600.0);
+        browser.sync_scroll_metrics();
+        (browser, dir)
+    }
+
+    /// The middle of cell `index`, in window coordinates, in an unscrolled
+    /// grid the size `grid_over` builds.
+    fn cell_center(index: usize) -> (f32, f32) {
+        let area = view::content_viewport(900.0, 600.0, ViewMode::Grid);
+        let cell = view::grid_cell_rect(area, index, 0.0);
+        (cell.center_x(), cell.center_y())
+    }
+
+    /// Dragging from empty space rubber-bands: everything the band touches is
+    /// selected, and nothing else is.
+    #[test]
+    fn a_band_dragged_over_the_grid_selects_what_it_covers() {
+        let (mut browser, _dir) = grid_over(&["a.txt", "b.txt", "c.txt"]);
+        let names: Vec<String> = browser.visible(0).iter().map(|e| e.name.clone()).collect();
+
+        let area = view::content_viewport(900.0, 600.0, ViewMode::Grid);
+        browser.begin_marquee(0, area.right - 4.0, area.bottom - 4.0, false);
+        let (x, y) = cell_center(1);
+        browser.update_marquee(x, y);
+
+        let selected = &browser.columns[0].selection;
+        assert!(selected.contains(&names[1]), "the band caught the cell");
+        assert!(
+            !selected.contains(&names[0]),
+            "and left the one it never reached: {selected:?}"
+        );
+    }
+
+    /// The selection is recomputed from the band, not accumulated along the
+    /// way, so pulling the band back off an entry deselects it again.
+    #[test]
+    fn a_band_pulled_back_gives_up_what_it_leaves() {
+        let (mut browser, _dir) = grid_over(&["a.txt", "b.txt", "c.txt"]);
+        let names: Vec<String> = browser.visible(0).iter().map(|e| e.name.clone()).collect();
+
+        let (x0, y0) = cell_center(0);
+        browser.begin_marquee(0, x0, y0, false);
+        let (x2, y2) = cell_center(2);
+        browser.update_marquee(x2, y2);
+        assert_eq!(browser.columns[0].selection.len(), 3, "all three, sweeping");
+
+        browser.update_marquee(x0 + 1.0, y0);
+
+        assert_eq!(
+            browser.columns[0].selection.iter().collect::<Vec<_>>(),
+            vec![&names[0]],
+            "only the one still under the band"
+        );
+    }
+
+    /// Ctrl keeps what was selected and adds to it, the way Ctrl+click does.
+    #[test]
+    fn a_band_held_with_ctrl_adds_to_the_selection() {
+        let (mut browser, _dir) = grid_over(&["a.txt", "b.txt", "c.txt"]);
+        let names: Vec<String> = browser.visible(0).iter().map(|e| e.name.clone()).collect();
+        browser.select(0, 0);
+
+        let (x, y) = cell_center(2);
+        browser.begin_marquee(0, x - view::CELL_W / 2.0 + 1.0, y, true);
+        browser.update_marquee(x, y);
+
+        let selected = &browser.columns[0].selection;
+        assert!(selected.contains(&names[0]), "the earlier click survived");
+        assert!(selected.contains(&names[2]), "and the band added to it");
+    }
+
+    /// A band the size of a point catches nothing — which is exactly what a
+    /// plain click on empty space has to mean.
+    #[test]
+    fn a_band_that_never_travels_selects_nothing() {
+        let (mut browser, _dir) = grid_over(&["a.txt"]);
+        browser.select(0, 0);
+
+        let area = view::content_viewport(900.0, 600.0, ViewMode::Grid);
+        browser.clear_pane_selection(0);
+        browser.begin_marquee(0, area.right - 4.0, area.bottom - 4.0, false);
+        browser.update_marquee(area.right - 4.0, area.bottom - 4.0);
+
+        assert!(browser.columns[0].selection.is_empty());
+    }
+
+    /// The band is anchored to the content, not to the screen: scrolling under
+    /// it keeps it around the same files.
+    #[test]
+    fn a_band_stays_over_the_files_when_the_pane_scrolls() {
+        // Enough cells that the pane has somewhere to scroll to: `set_offset`
+        // clamps, and a short listing would silently stay at the top.
+        let names: Vec<String> = (0..60).map(|i| format!("f{i:02}.txt")).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let (mut browser, _dir) = grid_over(&refs);
+        let (x, y) = cell_center(0);
+        browser.begin_marquee(0, x, y, false);
+
+        let band = browser.marquee_band().expect("a band is out");
+        browser.columns[0].scroll.state.set_offset(40.0);
+
+        let scrolled = browser.marquee_band().expect("still out");
+        assert_eq!(scrolled.top, band.top - 40.0, "the band scrolled with them");
     }
 
     #[test]

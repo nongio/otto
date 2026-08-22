@@ -869,6 +869,7 @@ mod tests {
             footer: 0.0,
             quickview_close_hovered: false,
             drop_target: None,
+            marquee: None,
             thumbs: Some(&store),
         };
 
