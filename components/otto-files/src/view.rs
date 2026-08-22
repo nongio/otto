@@ -577,13 +577,12 @@ pub fn drop_highlight_rect(f: &Frame, target: DropHighlight) -> Option<Rect> {
                 // One pane fills the content area in the flat views.
                 _ => viewport,
             };
-            // Held off the pane's own edges. Flush against them the outline's
-            // corners land exactly on the header line and the window's bottom,
-            // where the curve has nowhere to happen and the ring reads as a
-            // square — and a column panned half off screen loses two corners
-            // to the clip entirely.
+            // On the pane's own edges, where the divider between columns runs.
+            // Held inside them the ring crosses the rows instead of bounding
+            // them, which reads as a box drawn over the content rather than as
+            // the column being picked out. Square corners need no room to
+            // curve, so there is nothing to hold it off the edge for.
             clipped_to(pane, viewport)
-                .map(|rect| rect.with_inset((PANE_OUTLINE_INSET, PANE_OUTLINE_INSET)))
         }
         DropHighlight::Row { depth, index } => {
             let pane = f.panes.get(depth)?;
@@ -664,10 +663,6 @@ pub fn miller_row_rect(
     let pane = miller_pane_rect(depth, height, pan, miller_w);
     RowStrip::miller(pane, count, scroll).rect(index)
 }
-
-/// How far a pane's drop outline is held inside the pane's own edges, so the
-/// whole rounded rectangle is on screen.
-const PANE_OUTLINE_INSET: f32 = 5.0;
 
 /// The picture carried under the cursor while files are being dragged.
 ///
