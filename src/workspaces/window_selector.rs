@@ -264,7 +264,8 @@ impl WindowSelectorView {
         // previews the dragged window passes over. The dragged preview is not
         // in the container any more, so it cannot mirror itself. The clip
         // keeps the patch entirely hidden behind the preview.
-        let drag_backdrop_rect: Arc<RwLock<Option<(skia::Rect, f32)>>> = Arc::new(RwLock::new(None));
+        let drag_backdrop_rect: Arc<RwLock<Option<(skia::Rect, f32)>>> =
+            Arc::new(RwLock::new(None));
         let drag_backdrop_layer = layers_engine.new_layer();
         drag_backdrop_layer.set_key(format!("window_selector_drag_backdrop_{}", index));
         drag_backdrop_layer.set_layout_style(taffy::Style {

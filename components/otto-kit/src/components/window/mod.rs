@@ -4,6 +4,7 @@ pub mod resize;
 
 use smithay_client_toolkit::seat::pointer::PointerEvent;
 use smithay_client_toolkit::shell::xdg::window::WindowConfigure;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use wayland_client::protocol::wl_seat;
 
@@ -40,6 +41,10 @@ pub struct Window {
     background_color: Arc<RwLock<skia_safe::Color>>,
     title: Arc<RwLock<String>>,
     on_draw_fn: CanvasDrawFn,
+    /// Whether the application asked for a blurred backdrop. The blur is only
+    /// actually asked of the compositor while the window is focused — see
+    /// [`Window::set_background_blur`].
+    blur_wanted: Arc<AtomicBool>,
 }
 
 impl Window {
@@ -72,6 +77,7 @@ impl Window {
             background_color: Arc::new(RwLock::new(background)),
             title: Arc::new(RwLock::new(title.to_string())),
             on_draw_fn: Arc::new(Mutex::new(None)),
+            blur_wanted: Arc::new(AtomicBool::new(false)),
         };
         // Hand the default to the compositor too, so the background is carried
         // by the style from the first frame and a window that never calls
@@ -203,6 +209,38 @@ impl Window {
         self.surface.read().ok()?.as_ref()?.surface_style().cloned()
     }
 
+    /// Ask the compositor to blur what is behind this window.
+    ///
+    /// The blur is dropped while the window is unfocused and restored when it
+    /// comes back: an unfocused window is chrome the user is not looking at,
+    /// and a full-window gaussian per frame is the most expensive thing the
+    /// compositor does on its behalf. The request is remembered, so a window
+    /// that asked for blur once gets it back on the next activate without the
+    /// application doing anything.
+    pub fn set_background_blur(&self, enabled: bool) {
+        self.blur_wanted.store(enabled, Ordering::Relaxed);
+        self.apply_blend_mode();
+    }
+
+    /// Whether the application asked for a blurred backdrop, regardless of
+    /// whether the window is focused right now.
+    pub fn background_blur(&self) -> bool {
+        self.blur_wanted.load(Ordering::Relaxed)
+    }
+
+    /// Push the blend mode the window's current state calls for.
+    fn apply_blend_mode(&self) {
+        let Some(style) = self.surface_style() else {
+            return;
+        };
+        let blurred = self.blur_wanted.load(Ordering::Relaxed) && self.is_activated();
+        style.set_blend_mode(if blurred {
+            otto_surface_style_v1::BlendMode::BackgroundBlur
+        } else {
+            otto_surface_style_v1::BlendMode::Normal
+        });
+    }
+
     /// Internal: Handle window configure event
     fn on_configure(&self, configure: WindowConfigure, serial: u32) {
         if let Ok(mut surface_guard) = self.surface.write() {
@@ -210,6 +248,8 @@ impl Window {
                 let _ = surface.handle_configure(configure, serial);
             }
         }
+        // The configure is where activation arrives, so the blur follows it.
+        self.apply_blend_mode();
         self.render();
     }
 
@@ -446,6 +486,17 @@ impl Window {
             .read()
             .ok()
             .and_then(|guard| guard.as_ref().map(|s| s.is_maximized()))
+            .unwrap_or(false)
+    }
+
+    /// Whether the compositor's last configure said this is the focused
+    /// window. Chrome that dims itself when the focus moves away — the title,
+    /// the traffic lights — reads this each time it draws.
+    pub fn is_activated(&self) -> bool {
+        self.surface
+            .read()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|s| s.is_activated()))
             .unwrap_or(false)
     }
 

@@ -1,7 +1,7 @@
 # Window Decorations
 
 **Status:** stable
-**Related specs:** [pointer-input-focus](pointer-input-focus.md), [window-focus-navigation](window-focus-navigation.md)
+**Related specs:** [pointer-input-focus](pointer-input-focus.md), [window-focus-navigation](window-focus-navigation.md), [otto-kit-window-focus](otto-kit-window-focus.md)
 
 ## Summary
 
@@ -61,6 +61,16 @@ appears, and discarded if the surface dies first.
   release, as a button does.
 - The window's geometry in the layout includes the strip, so mapping,
   maximizing and tiling all account for its height.
+
+**Activation.** A client that draws its own decoration needs to know when it
+has the focus, so every mapped toplevel's `activated` state follows the
+keyboard: the focused window has it, every other window on every workspace and
+every output does not, and the configure carrying the change is sent to the
+windows losing it as much as to the one gaining it. Keyboard focus on a *popup*
+counts as focus on the window that put the popup up — a window must not dim
+itself the moment one of its own menus opens. What a client *does* with the
+state is its own business; for otto-kit's own windows, see
+[otto-kit-window-focus](otto-kit-window-focus.md).
 
 **Toggling.** The `ToggleDecorations` action flips the mode of every window
 that has negotiated one, and windows that have not are left alone.

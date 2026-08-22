@@ -39,6 +39,9 @@ pub struct ToplevelSurface {
     /// than copied: the surface is cloned into the handles the app holds, and
     /// all of them have to see the same answer.
     maximized: Arc<AtomicBool>,
+    /// Whether the last configure carried the activated state — the window is
+    /// the focused one. Shared for the same reason as `maximized`.
+    activated: Arc<AtomicBool>,
 }
 
 impl ToplevelSurface {
@@ -145,6 +148,7 @@ impl ToplevelSurface {
             window,
             configured: false,
             maximized: Arc::new(AtomicBool::new(false)),
+            activated: Arc::new(AtomicBool::new(false)),
         };
 
         Ok(toplevel)
@@ -161,6 +165,8 @@ impl ToplevelSurface {
     ) -> Result<(), SurfaceError> {
         self.maximized
             .store(configure.is_maximized(), Ordering::Relaxed);
+        self.activated
+            .store(configure.is_activated(), Ordering::Relaxed);
 
         // Get configured size or use initial size
         let (width, height) = match configure.new_size {
@@ -205,6 +211,13 @@ impl ToplevelSurface {
     /// Whether the compositor's last configure said the window is maximized.
     pub fn is_maximized(&self) -> bool {
         self.maximized.load(Ordering::Relaxed)
+    }
+
+    /// Whether the compositor's last configure said the window is activated —
+    /// that is, whether it is the focused window. Chrome reads this to draw
+    /// itself dimmed while another window has the focus.
+    pub fn is_activated(&self) -> bool {
+        self.activated.load(Ordering::Relaxed)
     }
 
     /// Get the underlying XDG window
