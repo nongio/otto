@@ -15,11 +15,11 @@ pub fn build() -> Pane {
                 vec![
                     Row::new("Appearance", Control::Select("Light".into())).id("theme_scheme"),
                     Row::new("Accent colour", Control::Color(0xFF0A84FF)).id("accent_color"),
-                    Row::new("Font", Control::Select("Inter".into())).id("font_family"),
+                    Row::new("Font", Control::Text("Inter".into())).id("font_family"),
                     // Applies to GTK clients rather than to Otto's own
                     // interface, so it sits with the other appearance rows but
                     // is deliberately not called "Appearance".
-                    Row::new("GTK theme", Control::Value(String::new())).id("gtk_theme"),
+                    Row::new("GTK theme", Control::Text(String::new())).id("gtk_theme"),
                 ],
             ),
             group(
@@ -61,7 +61,7 @@ pub fn build() -> Pane {
             ),
             group(
                 Some("Language"),
-                vec![Row::new("Preferred languages", Control::Value("en".into())).id("locales")],
+                vec![Row::new("Preferred languages", Control::Text("en".into())).id("locales")],
             ),
         ],
     }

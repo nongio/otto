@@ -563,9 +563,22 @@ impl Window {
         }
     }
 
-    pub fn set_title(&mut self, title: &str) {
+    /// Rename the window, in the compositor as well as here.
+    ///
+    /// Takes `&self` rather than `&mut self`: a window's title is one of the
+    /// things an event handler changes, and handlers hold a clone of the
+    /// window, not a mutable borrow of it. Everything behind the handle is
+    /// already interior-mutable, so nothing is lost by it.
+    pub fn set_title(&self, title: &str) {
         if let Ok(mut title_guard) = self.title.write() {
             *title_guard = title.to_string();
+        }
+        // Without this the new title never leaves the process: the app
+        // switcher, the dock and the window list all read the toplevel's.
+        if let Ok(surface_guard) = self.surface.read() {
+            if let Some(ref surface) = *surface_guard {
+                surface.xdg_window().set_title(title.to_string());
+            }
         }
     }
 }

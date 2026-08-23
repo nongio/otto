@@ -37,6 +37,12 @@ const CONTENT_TOP_PAD: f32 = 16.0;
 /// as one constant, alongside that function, so [`Settings::pane_content_height`]
 /// cannot drift from what it actually draws.
 const ARRANGEMENT_HEIGHT: f32 = 168.0 + 30.0;
+/// A file row's preview: how tall the thumbnail box is, and the space above
+/// and below it. The width follows the image's own aspect, capped at
+/// [`PREVIEW_W`] — a wallpaper is worth seeing in its own shape.
+const PREVIEW_H: f32 = 108.0;
+const PREVIEW_W: f32 = 192.0;
+const PREVIEW_GAP: f32 = 10.0;
 
 /// The scrollable pane viewport: everything right of the sidebar, below the
 /// titlebar, in window-local coordinates. Where the pane's subsurfaces are
@@ -66,6 +72,28 @@ pub fn pane_background(dark: bool) -> Color {
     }
 }
 
+/// The sidebar's material: the colour the compositor tints its blur with.
+///
+/// It lives on the compositor's layer for the surface (see `apply_material` in
+/// `main.rs`), not in the buffer — a ground painted into the buffer covers the
+/// frost instead of colouring it.
+pub fn sidebar_material(dark: bool) -> Color {
+    if dark {
+        Theme::dark_palette().material_sidebar
+    } else {
+        Theme::light_palette().material_sidebar
+    }
+}
+
+/// The flat sidebar for a surface the compositor is *not* frosting.
+pub fn sidebar_flat(dark: bool) -> Color {
+    if dark {
+        Color::from_rgb(0x1C, 0x1E, 0x22)
+    } else {
+        Color::from_rgb(0xEE, 0xEE, 0xF0)
+    }
+}
+
 /// The titlebar band over the content area: the pane's ground, thinned just
 /// enough that the compositor's blur shows through it. It stays much more
 /// opaque than the sidebar — the band is a hairline away from a wall of form
@@ -81,7 +109,7 @@ pub fn titlebar_material(dark: bool) -> Color {
 /// Sidebar row geometry. Drawing and hit-testing both go through this so the
 /// clickable area cannot drift away from the painted one.
 fn sidebar_item_rect(index: usize) -> Rect {
-    const FIRST_ITEM_Y: f32 = TITLEBAR_H + 10.0 + 26.0 + 12.0;
+    const FIRST_ITEM_Y: f32 = TITLEBAR_H + 10.0;
     const ITEM_H: f32 = 30.0;
     const ITEM_STEP: f32 = 32.0;
     Rect::from_xywh(
@@ -106,6 +134,17 @@ fn select_rect(right: f32, cy: f32) -> Rect {
         cy - dropdown::field::HEIGHT / 2.0,
         widgets::SELECT_W,
         dropdown::field::HEIGHT,
+    )
+}
+
+/// The text field's rect within a row. Drawing, hit-testing and the live
+/// editor's own geometry all come through here.
+pub fn text_rect(right: f32, cy: f32) -> Rect {
+    Rect::from_xywh(
+        right - widgets::TEXT_W,
+        cy - widgets::CONTROL_H / 2.0,
+        widgets::TEXT_W,
+        widgets::CONTROL_H,
     )
 }
 
@@ -179,6 +218,16 @@ pub struct SelectHit {
     pub current: String,
 }
 
+/// A text field the pointer landed on, with everything needed to start editing.
+pub struct TextHit {
+    pub id: &'static str,
+    /// The value the field starts from — the last committed one.
+    pub current: String,
+    /// Where in the field's own box the click landed, so the caret can go
+    /// under the pointer rather than to a default position.
+    pub local_x: f32,
+}
+
 /// A click that landed on a control bound to a setting.
 pub struct Hit {
     pub id: &'static str,
@@ -218,6 +267,61 @@ struct PaneLayout<'a> {
     height: f32,
 }
 
+/// The decoded thumbnail for `path`, or `None` if it is not a readable image.
+///
+/// Decoding a 2560x1600 wallpaper is far too expensive to do per frame, and
+/// the pane repaints its band on every value change — so each path is decoded
+/// once, scaled down to preview size once, and kept. The cache is keyed by
+/// path and holds the failures too: a missing file must not be re-read from
+/// disk sixty times a second either.
+///
+/// One entry per path chosen this session, which is bounded by how many times
+/// somebody opens the file picker; nothing here needs eviction.
+fn preview_image(path: &str) -> Option<skia_safe::Image> {
+    thread_local! {
+        static CACHE: std::cell::RefCell<HashMap<String, Option<skia_safe::Image>>> =
+            std::cell::RefCell::new(HashMap::new());
+    }
+
+    CACHE.with(|cache| {
+        if let Some(cached) = cache.borrow().get(path) {
+            return cached.clone();
+        }
+        let decoded = decode_preview(path);
+        cache
+            .borrow_mut()
+            .insert(path.to_string(), decoded.clone());
+        decoded
+    })
+}
+
+/// Read `path` and decode it, scaled down to something a thumbnail needs.
+fn decode_preview(path: &str) -> Option<skia_safe::Image> {
+    let bytes = std::fs::read(path).ok()?;
+    let full = skia_safe::Image::from_encoded(skia_safe::Data::new_copy(&bytes))?;
+
+    // Scaled to twice the drawn size, so the thumbnail is still sharp on a
+    // 2x output without carrying the whole wallpaper around in memory.
+    let target = PREVIEW_W.max(PREVIEW_H) * 2.0;
+    let scale = (target / full.width().max(full.height()) as f32).min(1.0);
+    if scale >= 1.0 {
+        return Some(full);
+    }
+    let (w, h) = (
+        (full.width() as f32 * scale).round() as i32,
+        (full.height() as f32 * scale).round() as i32,
+    );
+    let info = skia_safe::ImageInfo::new_n32_premul((w, h), None);
+    let mut surface = skia_safe::surfaces::raster(&info, None, None)?;
+    surface.canvas().draw_image_rect(
+        &full,
+        None,
+        Rect::from_iwh(w, h),
+        &Paint::default(),
+    );
+    Some(surface.image_snapshot())
+}
+
 /// Does `rect` fall inside the band of content being asked for?
 ///
 /// Only the vertical extent is compared: a pane is a single column that
@@ -253,6 +357,9 @@ pub struct Settings {
     /// Pointer state of the traffic lights: the app draws its own decoration,
     /// so revealing the glyphs on hover is the app's job too.
     pub controls: WindowControlsState,
+    /// The text row being edited, and the live field editing it. A row not
+    /// named here draws its value as static text.
+    pub editing: Option<(&'static str, TextInput)>,
 }
 
 impl Settings {
@@ -269,7 +376,14 @@ impl Settings {
             toggle_flips: HashMap::new(),
             blurred: false,
             controls: WindowControlsState::new(),
+            editing: None,
         }
+    }
+
+    /// The row whose text field has the keyboard, with the field itself.
+    pub fn with_editing(mut self, editing: Option<(&'static str, TextInput)>) -> Self {
+        self.editing = editing;
+        self
     }
 
     /// The surface has compositor blur behind it.
@@ -404,6 +518,11 @@ impl Settings {
         self.render_pane(canvas, self.width - SIDEBAR_W, band);
     }
 
+    /// What the window is called: the app, then the pane you are in.
+    pub fn title(&self) -> String {
+        format!("Otto Settings - {}", self.panes[self.selected].name)
+    }
+
     /// The window's rounded outline, which everything is clipped to.
     fn frame(&self) -> RRect {
         RRect::new_rect_xy(Rect::from_wh(self.width, self.height), CORNER, CORNER)
@@ -423,21 +542,19 @@ impl Settings {
             &self.fill(pane_background(self.dark)),
         );
 
-        // The sidebar is a translucent material over whatever the compositor
-        // blurs behind the surface. It only reads as a material if the
-        // surface actually carries `BackgroundBlur` — otherwise this is a
-        // tint over the raw desktop. See `main.rs`, where the blend mode is
-        // set.
-        canvas.draw_rect(
-            Rect::from_wh(SIDEBAR_W, self.height),
-            &self.fill(if self.blurred {
-                self.theme.material_sidebar
-            } else if self.dark {
-                Color::from_rgb(0x1C, 0x1E, 0x22)
-            } else {
-                Color::from_rgb(0xEE, 0xEE, 0xF0)
-            }),
-        );
+        // The sidebar is a material over whatever the compositor blurs behind
+        // the surface — and the frost, tint included, is entirely the
+        // compositor's (see `apply_material` in `main.rs`). Anything painted
+        // here would sit *on top* of it, so when the surface carries
+        // `BackgroundBlur` the buffer is left transparent and the layer shows
+        // through. Without it there is nothing behind the surface to show, so
+        // paint a flat sidebar instead.
+        if !self.blurred {
+            canvas.draw_rect(
+                Rect::from_wh(SIDEBAR_W, self.height),
+                &self.fill(sidebar_flat(self.dark)),
+            );
+        }
     }
 
     /// Sidebar/content divider, drawn last so it sits above both.
@@ -536,7 +653,7 @@ impl Settings {
             .find(|(_, rect)| rect.contains(local))?;
         let id = row.id?;
         let right = rect.right - 14.0;
-        let cy = rect.center_y();
+        let cy = Self::control_band(row, rect).center_y();
 
         match &row.control {
             Control::Toggle(on) => {
@@ -555,7 +672,7 @@ impl Settings {
             Control::Slider {
                 min, max, readout, ..
             } => {
-                let readout_w = styles::BODY.font().measure_str(readout, None).0;
+                let readout_w = widgets::CONTROL_TEXT.font().measure_str(readout, None).0;
                 let track_x = right - readout_w - 12.0 - widgets::SLIDER_W;
                 // Generous vertically: the track is 4pt tall, which is not a
                 // realistic click target.
@@ -593,9 +710,44 @@ impl Settings {
         if !matches!(row.control, Control::File(_)) {
             return None;
         }
-        widgets::choose_rect(rect.right - 14.0, rect.center_y())
+        widgets::choose_rect(rect.right - 14.0, Self::control_band(row, rect).center_y())
             .contains(local)
             .then_some(id)
+    }
+
+    /// The text field a click lands on, with the field's rect in content-local
+    /// coordinates and the offset in the value the click points at.
+    ///
+    /// Separate from [`Self::hit`] for the same reason a dropdown is: the
+    /// click does not carry a new value, it takes the keyboard.
+    pub fn text_hit(&self, x: f32, y: f32, scroll_offset: f32) -> Option<TextHit> {
+        let viewport = self.viewport();
+        if !viewport.contains(Point::new(x, y)) {
+            return None;
+        }
+
+        let content_width = self.width - SIDEBAR_W;
+        let local = Point::new(x - viewport.left, y - viewport.top + scroll_offset);
+
+        let (row, rect) = self
+            .row_rects(content_width)
+            .into_iter()
+            .find(|(_, rect)| rect.contains(local))?;
+        let id = row.id?;
+        let Control::Text(current) = &row.control else {
+            return None;
+        };
+
+        let field = text_rect(rect.right - 14.0, Self::control_band(row, rect).center_y());
+        if !field.contains(local) {
+            return None;
+        }
+        Some(TextHit {
+            id,
+            current: current.clone(),
+            // Box-local, which is what `TextInput::on_pointer_down` wants.
+            local_x: local.x - field.left,
+        })
     }
 
     /// The pop-up button a click lands on, if any. Separate from [`Self::hit`]
@@ -619,7 +771,7 @@ impl Settings {
             return None;
         };
 
-        let field = select_rect(rect.right - 14.0, rect.center_y());
+        let field = select_rect(rect.right - 14.0, Self::control_band(row, rect).center_y());
         if !dropdown::field::hit_test(field, local.x, local.y) {
             return None;
         }
@@ -659,7 +811,7 @@ impl Settings {
         };
 
         let color = Color::from(*argb);
-        let well = well_rect(rect.right - 14.0, rect.center_y(), color);
+        let well = well_rect(rect.right - 14.0, Self::control_band(row, rect).center_y(), color);
         if !color_picker::well::hit_test(well, local.x, local.y) {
             return None;
         }
@@ -690,7 +842,7 @@ impl Settings {
             Control::Slider {
                 min, max, readout, ..
             } => {
-                let readout_w = styles::BODY.font().measure_str(readout, None).0;
+                let readout_w = widgets::CONTROL_TEXT.font().measure_str(readout, None).0;
                 let track_x = rect.right - 14.0 - readout_w - 12.0 - widgets::SLIDER_W;
                 let t = ((local_x - track_x) / widgets::SLIDER_W).clamp(0.0, 1.0);
                 let raw = min + t * (max - min);
@@ -733,9 +885,12 @@ impl Settings {
             )
             .render(canvas);
 
+        // The app and the pane, the same string the toplevel carries — so the
+        // bar reads the same as the window's entry in the switcher and the
+        // dock rather than naming only half of where you are.
         widgets::text_centered_y(
             canvas,
-            self.panes[self.selected].name,
+            &self.title(),
             SIDEBAR_W + CONTENT_PAD,
             TITLEBAR_H / 2.0,
             styles::TITLE_3_EMPHASIZED,
@@ -758,20 +913,9 @@ impl Settings {
     }
 
     fn render_sidebar(&self, canvas: &Canvas) {
-        // Search field
-        let field = Rect::from_xywh(12.0, TITLEBAR_H + 10.0, SIDEBAR_W - 24.0, 26.0);
-        let rrect = RRect::new_rect_xy(field, 7.0, 7.0);
-        canvas.draw_rrect(rrect, &self.fill(self.theme.fill_tertiary));
-        self.magnifier(canvas, field.left + 10.0, field.center_y());
-        widgets::text_centered_y(
-            canvas,
-            "Search",
-            field.left + 24.0,
-            field.center_y(),
-            styles::BODY,
-            self.theme.text_tertiary,
-        );
-
+        // No search field: it was drawn but never searched anything, and a
+        // control that does nothing is worse than no control. The list starts
+        // at the top of the sidebar instead — see `sidebar_item_rect`.
         for (i, pane) in self.panes.iter().enumerate() {
             let item = sidebar_item_rect(i);
             let selected = i == self.selected;
@@ -809,20 +953,6 @@ impl Settings {
                 tint,
             );
         }
-    }
-
-    fn magnifier(&self, canvas: &Canvas, cx: f32, cy: f32) {
-        let mut paint = Paint::default();
-        paint.set_anti_alias(true);
-        paint.set_style(skia_safe::PaintStyle::Stroke);
-        paint.set_stroke_width(1.3);
-        paint.set_color(self.theme.text_tertiary);
-        canvas.draw_circle(Point::new(cx - 0.5, cy - 0.5), 4.0, &paint);
-        canvas.draw_line(
-            Point::new(cx + 2.5, cy + 2.5),
-            Point::new(cx + 5.0, cy + 5.0),
-            &paint,
-        );
     }
 
     /// Draws in content-local coordinates: `(0, 0)` is the pane viewport's
@@ -898,7 +1028,87 @@ impl Settings {
         }
     }
 
-    fn row_height(row: &Row) -> f32 {
+    /// A file row's thumbnail, centred on `cx` and starting at `y`.
+    ///
+    /// Centred rather than aligned to the label: the picture is the row's
+    /// subject, not an annotation hanging off its text, and the box's width
+    /// changes with the image's aspect — pinned to the left it would shift
+    /// sideways every time a differently-shaped wallpaper was chosen.
+    ///
+    /// The box is at most [`PREVIEW_W`]x[`PREVIEW_H`] and keeps the image's own
+    /// aspect inside it, so a portrait wallpaper is not stretched into a
+    /// letterbox. A file that cannot be decoded — gone, or not an image —
+    /// draws the empty frame with a line saying so rather than nothing at all,
+    /// which would read as a preview still loading.
+    fn render_preview(&self, canvas: &Canvas, path: &str, cx: f32, y: f32) {
+        let image = preview_image(path);
+        let (w, h) = match &image {
+            Some(image) => {
+                let (iw, ih) = (image.width() as f32, image.height() as f32);
+                let scale = (PREVIEW_W / iw).min(PREVIEW_H / ih);
+                (iw * scale, ih * scale)
+            }
+            None => (PREVIEW_H * 16.0 / 9.0, PREVIEW_H),
+        };
+        let box_rect = Rect::from_xywh(cx - w / 2.0, y, w, h);
+        let rrect = RRect::new_rect_xy(box_rect, 6.0, 6.0);
+
+        canvas.save();
+        canvas.clip_rrect(rrect, ClipOp::Intersect, true);
+        match &image {
+            Some(image) => {
+                let mut paint = Paint::default();
+                paint.set_anti_alias(true);
+                canvas.draw_image_rect(
+                    image,
+                    None,
+                    box_rect,
+                    &paint,
+                );
+            }
+            None => {
+                let mut paint = Paint::default();
+                paint.set_anti_alias(true);
+                paint.set_color(self.theme.fill_quaternary);
+                canvas.draw_rect(box_rect, &paint);
+                widgets::text_centered_y(
+                    canvas,
+                    "Cannot be shown",
+                    box_rect.left + 10.0,
+                    box_rect.center_y(),
+                    styles::SUBHEADLINE,
+                    self.theme.text_tertiary,
+                );
+            }
+        }
+        canvas.restore();
+
+        // A hairline keeps a pale image from bleeding into the card behind it.
+        let mut border = Paint::default();
+        border.set_anti_alias(true);
+        border.set_style(skia_safe::PaintStyle::Stroke);
+        border.set_stroke_width(1.0);
+        border.set_color(self.theme.fill_secondary);
+        canvas.draw_rrect(rrect, &border);
+    }
+
+    /// The band a row's own controls sit in — the whole row, less anything
+    /// that hangs below them.
+    ///
+    /// Drawing and every hit test measure the control from here rather than
+    /// from the row's own centre: a file row carrying a preview is twice as
+    /// tall as the line its field is on, and centring in *that* would leave
+    /// the field floating in the middle of the picture.
+    fn control_band(row: &Row, rect: Rect) -> Rect {
+        Rect::from_ltrb(
+            rect.left,
+            rect.top,
+            rect.right,
+            rect.top + Self::control_height(row),
+        )
+    }
+
+    fn control_height(row: &Row) -> f32 {
         if row.detail.is_some() {
             ROW_H_DETAIL
         } else {
@@ -906,8 +1116,26 @@ impl Settings {
         }
     }
 
+    /// What a row's preview adds under its controls, gaps included. Only a
+    /// file row with something chosen has one — an empty setting has nothing
+    /// to show and should not reserve a hole for it.
+    fn preview_height(row: &Row) -> f32 {
+        match &row.control {
+            Control::File(path) if !path.is_empty() => PREVIEW_H + PREVIEW_GAP * 2.0,
+            _ => 0.0,
+        }
+    }
+
+    fn row_height(row: &Row) -> f32 {
+        Self::control_height(row) + Self::preview_height(row)
+    }
+
     fn render_row(&self, canvas: &Canvas, row: &Row, x0: f32, x1: f32, y: f32, h: f32) {
-        let cy = y + h / 2.0;
+        // The controls sit on the row's first line, not in the middle of it:
+        // a row carrying a preview is much taller than the line its field is
+        // on. See [`Self::control_band`].
+        let _ = h;
+        let cy = y + Self::control_height(row) / 2.0;
         let label_x = x0 + 14.0;
         let right = x1 - 14.0;
 
@@ -960,7 +1188,7 @@ impl Settings {
                 max,
                 readout,
             } => {
-                let readout_w = styles::BODY.font().measure_str(readout, None).0;
+                let readout_w = widgets::CONTROL_TEXT.font().measure_str(readout, None).0;
                 let x = right - readout_w - 12.0 - widgets::SLIDER_W;
                 widgets::slider(canvas, x, cy, *value, *min, *max, readout, &self.theme);
             }
@@ -999,7 +1227,20 @@ impl Settings {
                     &self.theme,
                 );
             }
-            Control::Text(value) => widgets::text_field(canvas, right, cy, value, &self.theme),
+            Control::Text(value) => {
+                let field = text_rect(right, cy);
+                match self.editing.as_ref().filter(|(id, _)| Some(*id) == row.id) {
+                    // The live field owns the value while it is being edited:
+                    // what the model holds is the last committed one.
+                    Some((_, input)) => {
+                        canvas.save();
+                        canvas.translate((field.left, field.top));
+                        input.render_at(canvas, field.width(), field.height());
+                        canvas.restore();
+                    }
+                    None => widgets::text_field(canvas, field, value, &self.theme),
+                }
+            }
             Control::File(value) => widgets::file_field(canvas, right, cy, value, &self.theme),
             Control::Value(value) => {
                 // Shortcut rows read as key combinations; everything else is
@@ -1012,10 +1253,23 @@ impl Settings {
                         value,
                         right,
                         cy,
-                        styles::BODY,
+                        widgets::CONTROL_TEXT,
                         self.theme.text_secondary,
                     )
                 }
+            }
+        }
+
+        // A chosen file gets shown, not just named: a wallpaper is picked by
+        // eye, and a path is the one thing about it that says nothing.
+        if let Control::File(path) = &row.control {
+            if !path.is_empty() {
+                self.render_preview(
+                    canvas,
+                    path,
+                    (x0 + x1) / 2.0,
+                    y + Self::control_height(row) + PREVIEW_GAP,
+                );
             }
         }
 

@@ -50,6 +50,13 @@ pub struct ContextMenuStyle {
     /// as cramped rather than as bigger.
     pub item_height: Option<f32>,
 
+    /// Tallest the menu may be drawn, in logical points. A list longer than
+    /// this is not made shorter — the menu is capped at this height and the
+    /// items scroll inside it. `None` lets the menu be as tall as its
+    /// contents, which is right for the handful of rows a menu bar carries
+    /// and wrong for a pop-up button listing every installed font.
+    pub max_height: Option<f32>,
+
     // === Scale ===
     /// Display scale factor (e.g. screen_scale * 0.8)
     /// Applied to all dimensions: sizes, padding, fonts.
@@ -72,6 +79,7 @@ impl Hash for ContextMenuStyle {
         self.close_delay.to_bits().hash(state);
         self.item_font_size.map(|v| v.to_bits()).hash(state);
         self.item_height.map(|v| v.to_bits()).hash(state);
+        self.max_height.map(|v| v.to_bits()).hash(state);
         self.draw_scale.to_bits().hash(state);
         // For theme, we can hash the relevant colors
         // self.theme.material_titlebar.hash(state);
@@ -93,6 +101,7 @@ impl Default for ContextMenuStyle {
             close_delay: 0.15,
             item_font_size: None,
             item_height: None,
+            max_height: None,
             draw_scale: 1.0,
             // Follow the system color scheme. A menu is a popup built on the
             // spot, so reading the watcher here is enough — by the time one
@@ -159,6 +168,12 @@ impl ContextMenuStyle {
 
     /// Set the label point size and the row height together — see
     /// [`ContextMenuStyle::item_font_size`] for why they travel as a pair.
+    /// Cap the menu's height, scrolling the items inside it beyond that.
+    pub fn with_max_height(mut self, max_height: f32) -> Self {
+        self.max_height = Some(max_height);
+        self
+    }
+
     pub fn with_item_metrics(mut self, font_size: f32, item_height: f32) -> Self {
         self.item_font_size = Some(font_size);
         self.item_height = Some(item_height);

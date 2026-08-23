@@ -42,9 +42,9 @@ pub fn build() -> Pane {
                     // discoverable choice list, and the app has no text entry
                     // yet. Binding them at least stops the pane from hiding
                     // what the session is actually using.
-                    Row::new("Layout", Control::Value(String::new())).id("input.xkb_layout"),
-                    Row::new("Variant", Control::Value(String::new())).id("input.xkb_variant"),
-                    Row::new("Options", Control::Value(String::new())).id("input.xkb_options"),
+                    Row::new("Layout", Control::Text(String::new())).id("input.xkb_layout"),
+                    Row::new("Variant", Control::Text(String::new())).id("input.xkb_variant"),
+                    Row::new("Options", Control::Text(String::new())).id("input.xkb_options"),
                 ],
             ),
             group(

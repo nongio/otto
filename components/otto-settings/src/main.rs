@@ -32,7 +32,9 @@ use otto_kit::components::window::resize;
 use otto_kit::prelude::*;
 use otto_kit::protocols::otto_surface_style_v1;
 use otto_kit::CursorShape;
+use smithay_client_toolkit::reexports::client::protocol::{wl_keyboard, wl_surface};
 use smithay_client_toolkit::reexports::client::Proxy;
+use smithay_client_toolkit::seat::keyboard::KeyEvent;
 use smithay_client_toolkit::seat::pointer::{AxisScroll, PointerEventKind};
 use smithay_client_toolkit::shell::xdg::XdgSurface;
 use view::{Settings, WINDOW_H, WINDOW_W};
@@ -81,6 +83,36 @@ struct SettingsApp {
     /// Hover and press state of the traffic lights, shared between the window's
     /// pointer handler and its draw closure.
     controls: Arc<Mutex<WindowControlsState>>,
+    /// The text row that currently has the keyboard, if any. `None` means no
+    /// field is being edited and key presses are nobody's.
+    editing: Arc<Mutex<Option<Editing>>>,
+    /// Modifier state, kept from `on_modifiers` so a key press can be read
+    /// with the modifiers that were down when it arrived.
+    modifiers: Arc<Mutex<Mods>>,
+    /// Whether the compositor is frosting the surface *right now*.
+    ///
+    /// Not the same as having asked for a frost: the window drops the blur
+    /// while it is unfocused, and the chrome has to follow — the materials are
+    /// translucent, and with nothing frosted behind them they would leave the
+    /// desktop showing sharp through the sidebar. Shared with the draw
+    /// closure, which is why it is an atomic rather than a plain flag.
+    frosted: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// A text field with the keyboard: which setting it edits, and the live editor.
+///
+/// The value being typed lives here, not in the model — the model holds the
+/// last *committed* value, which is what a cancelled edit falls back to.
+struct Editing {
+    id: &'static str,
+    input: TextInput,
+}
+
+/// The modifiers a text field cares about.
+#[derive(Clone, Copy, Default)]
+struct Mods {
+    shift: bool,
+    ctrl: bool,
 }
 
 /// Every setting in the app that a colour well edits.
@@ -251,6 +283,7 @@ fn current_settings(
     selected: &Arc<Mutex<usize>>,
     size: &Arc<Mutex<(f32, f32)>>,
     toggle_flips: &Arc<Mutex<HashMap<&'static str, toggle::Flip>>>,
+    editing: &Arc<Mutex<Option<Editing>>>,
 ) -> Settings {
     let (w, h) = *size.lock().unwrap();
     let flips = toggle_flips
@@ -265,6 +298,13 @@ fn current_settings(
     )
     .with_size(w, h)
     .with_toggle_flips(flips)
+    .with_editing(
+        editing
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|edit| (edit.id, edit.input.clone())),
+    )
 }
 
 /// The pane viewport for the surface's current size, clamped exactly the way
@@ -502,6 +542,64 @@ fn open_file_picker(id: &'static str) {
     }
 }
 
+/// What the window is called: the app, then the pane you are in.
+///
+/// The dock, the app switcher and the window list all read the toplevel's
+/// title, and "Settings" alone says nothing about where in the app you were.
+fn window_title(selected: usize) -> String {
+    match model::panes().get(selected) {
+        Some(pane) => format!("Otto Settings - {}", pane.name),
+        None => "Otto Settings".to_string(),
+    }
+}
+
+/// The looks of a settings row's text field while it is being edited, matched
+/// to what [`crate::widgets::text_field`] draws at rest so focusing a field
+/// does not make it jump.
+fn text_input_style(dark: bool) -> TextInputStyle {
+    let theme = if dark { Theme::dark() } else { Theme::light() };
+    let mut style = TextInputStyle::with_theme(theme.clone());
+    // The same size the row draws at rest: focusing a field must not resize
+    // the text you were about to edit.
+    style.text_style = widgets::CONTROL_TEXT;
+    style.horizontal_padding = 9.0;
+    style.corner_radius = 6.0;
+    // A focused field goes to paper — the page's own ground rather than the
+    // faint fill it sits in at rest — so the one field taking the keyboard is
+    // obvious among a column of identical-looking ones.
+    style.background = if dark {
+        Color::from_rgb(0x1A, 0x1C, 0x20)
+    } else {
+        Color::WHITE
+    };
+    style
+}
+
+/// Send what a field currently holds and stop editing.
+///
+/// Returns whether there was anything to commit, so a caller can skip a
+/// repaint it does not need.
+fn commit_edit(editing: &Arc<Mutex<Option<Editing>>>) -> bool {
+    let Some(edit) = editing.lock().unwrap().take() else {
+        return false;
+    };
+    apply(
+        edit.id,
+        settings_client::Value::Text(edit.input.value().to_string()),
+    );
+    true
+}
+
+/// Stop editing without sending anything — Escape, and a keyboard focus lost
+/// to another window.
+fn cancel_edit(editing: &Arc<Mutex<Option<Editing>>>) -> bool {
+    editing.lock().unwrap().take().is_some()
+}
+
+/// How often the app wakes itself while something is moving: a scroll fling,
+/// a switch mid-flip, or a caret blinking.
+const IDLE_TICK: std::time::Duration = std::time::Duration::from_millis(8);
+
 impl SettingsApp {
     /// Bring the pane's surfaces in line with the model: where the viewport
     /// is, how tall the content is, and where the scroll has put it.
@@ -512,7 +610,7 @@ impl SettingsApp {
     /// whole point of them and no help at all here, so anything else that
     /// changes how the pane looks has to invalidate it explicitly.
     fn sync_pane(&mut self, repaint: bool) {
-        let settings = current_settings(&self.selected, &self.size, &self.toggle_flips)
+        let settings = current_settings(&self.selected, &self.size, &self.toggle_flips, &self.editing)
             .with_open_dropdown(*self.open_dropdown.lock().unwrap())
             .with_open_picker(*self.open_picker.lock().unwrap());
 
@@ -557,9 +655,32 @@ impl SettingsApp {
     }
 }
 
+/// Put the sidebar's material colour on the compositor's layer for the
+/// window's surface.
+///
+/// The frost is the compositor's, and so is its tint: the blur samples what is
+/// behind the surface and this colour is what tints the result. It has to be
+/// re-applied whenever the colour scheme changes, since the layer keeps the
+/// colour it was last given.
+fn apply_material(style: &otto_surface_style_v1::OttoSurfaceStyleV1) {
+    let colour = skia_safe::Color4f::from(view::sidebar_material(
+        current_color_scheme() == ColorScheme::Dark,
+    ));
+    style.set_background_color(
+        colour.r as f64,
+        colour.g as f64,
+        colour.b as f64,
+        colour.a as f64,
+    );
+}
+
 impl App for SettingsApp {
     fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
-        let mut window = Window::new("Settings", WINDOW_W as i32, WINDOW_H as i32)?;
+        let mut window = Window::new(
+            &window_title(*self.selected.lock().unwrap()),
+            WINDOW_W as i32,
+            WINDOW_H as i32,
+        )?;
         window.set_background(Color::TRANSPARENT);
         window.set_min_size(view::MIN_W as u32, view::MIN_H as u32);
 
@@ -576,7 +697,6 @@ impl App for SettingsApp {
         if window.surface_style().is_none() {
             eprintln!("settings: no surface style — sidebar cannot be a material");
         }
-        let mut blurred = false;
         if let Some(style) = window.surface_style() {
             style.set_corner_radius(view::CORNER as f64);
             style.set_masks_to_bounds(otto_surface_style_v1::ClipMode::Enabled);
@@ -587,11 +707,24 @@ impl App for SettingsApp {
             // rounds them with it.
             style.set_clip_children(otto_surface_style_v1::ClipMode::Enabled);
             if want_blur {
-                style.set_blend_mode(otto_surface_style_v1::BlendMode::BackgroundBlur);
-                blurred = true;
+                // The material's colour goes on the compositor's layer, not
+                // into the buffer: `BackgroundBlur` blurs what is behind the
+                // layer and tints the result with this colour. A ground
+                // painted into the buffer — even a translucent one — sits on
+                // top of the frost and hides it, which is why `render_ground`
+                // leaves the sidebar transparent when `blurred`.
+                apply_material(&style);
             }
             eprintln!("settings: surface style present, blur requested = {want_blur}");
         }
+        // Asked of the *window* rather than of the style directly: the window
+        // re-applies the blend mode on every configure, and the first style
+        // request goes out before the surface is mapped — set once on the
+        // style alone it reaches a surface the compositor has no window for
+        // yet, and the frost never arrives. The window also drops the blur
+        // while it is unfocused, so no full-window gaussian runs for a window
+        // nobody is looking at. Same path `otto-files` takes.
+        window.set_background_blur(want_blur);
 
         // Built here, at window setup, and never later: a `DropdownMenu`
         // constructed from inside a pointer handler deadlocks on
@@ -615,12 +748,13 @@ impl App for SettingsApp {
         let selected = self.selected.clone();
         let size = self.size.clone();
         let controls = self.controls.clone();
+        let frosted = self.frosted.clone();
         window.on_draw(move |canvas| {
             let index = *selected.lock().unwrap();
             let (w, h) = *size.lock().unwrap();
             Settings::new(index, current_color_scheme() == ColorScheme::Dark)
                 .with_size(w, h)
-                .with_blur(blurred)
+                .with_blur(frosted.load(std::sync::atomic::Ordering::Relaxed))
                 .with_controls(*controls.lock().unwrap())
                 .render_chrome(canvas);
         });
@@ -695,6 +829,7 @@ impl App for SettingsApp {
                             let mut current = selected.lock().unwrap();
                             if *current != index {
                                 *current = index;
+                                redraw.set_title(&window_title(index));
                                 // A different pane has an unrelated content
                                 // height, so its old scroll position means
                                 // nothing here.
@@ -769,6 +904,7 @@ impl App for SettingsApp {
         let open_picker = self.open_picker.clone();
         let pane_dirty = self.pane_dirty.clone();
         let size_hit = self.size.clone();
+        let editing_hit = self.editing.clone();
         let redraw = window.clone();
         AppContext::register_pointer_callback(move |events| {
             for event in events {
@@ -834,7 +970,16 @@ impl App for SettingsApp {
                         // here rather than cached because a successful Set
                         // changes what the next one would hit.
                         let offset = scroll.lock().unwrap().offset();
-                        let settings = current_settings(&selected, &size_hit, &toggle_flips);
+                        let settings = current_settings(&selected, &size_hit, &toggle_flips, &editing_hit);
+
+                        // A press anywhere but on the field being edited is
+                        // an answer to it, not an abandonment: commit before
+                        // the press does whatever else it does.
+                        let same_field = settings.text_hit(x, y, offset).map(|hit| hit.id)
+                            == editing_hit.lock().unwrap().as_ref().map(|edit| edit.id);
+                        if !same_field && commit_edit(&editing_hit) {
+                            mark_pane_dirty(&pane_dirty);
+                        }
 
                         if let Some(color) = settings.color_hit(x, y, offset) {
                             open_picker_for(
@@ -859,6 +1004,30 @@ impl App for SettingsApp {
                             mark_pane_dirty(&pane_dirty);
                         } else if let Some(id) = settings.file_hit(x, y, offset) {
                             open_file_picker(id);
+                        } else if let Some(text) = settings.text_hit(x, y, offset) {
+                            // Moving between fields commits the one being
+                            // left: a click elsewhere is an answer, not an
+                            // abandonment.
+                            let already = {
+                                let current = editing_hit.lock().unwrap();
+                                current.as_ref().map(|edit| edit.id) == Some(text.id)
+                            };
+                            if !already {
+                                let mut input = TextInput::editing(
+                                    text.current.clone(),
+                                    text_input_style(settings.dark),
+                                )
+                                .with_size(widgets::TEXT_W, widgets::CONTROL_H);
+                                input.state.set_focused(true);
+                                *editing_hit.lock().unwrap() = Some(Editing {
+                                    id: text.id,
+                                    input,
+                                });
+                            }
+                            if let Some(edit) = editing_hit.lock().unwrap().as_mut() {
+                                edit.input.on_pointer_down(text.local_x, 1, false);
+                            }
+                            mark_pane_dirty(&pane_dirty);
                         } else if let Some(hit) = settings.hit(x, y, offset) {
                             // A switch slides to its new position rather than
                             // jumping. Started from where the knob is right
@@ -897,7 +1066,7 @@ impl App for SettingsApp {
                         }
                         let held = dragging.lock().unwrap().clone();
                         if let Some(id) = held {
-                            let settings = current_settings(&selected, &size_hit, &toggle_flips);
+                            let settings = current_settings(&selected, &size_hit, &toggle_flips, &editing_hit);
                             if let Some(value) = settings.drag_value(&id, x) {
                                 apply(&id, value);
                                 mark_pane_dirty(&pane_dirty);
@@ -927,6 +1096,16 @@ impl App for SettingsApp {
         let Some(window) = self.window.as_ref() else {
             return;
         };
+
+        // Activation arrives on a configure, and the window turns its blur on
+        // and off with it — so this is where the chrome learns whether there
+        // is a frost behind its materials. A configure that changes nothing
+        // else still has to repaint the sidebar, which is why this runs before
+        // the size early-out below.
+        let frosted = window.background_blur() && window.is_activated();
+        if self.frosted.swap(frosted, std::sync::atomic::Ordering::Relaxed) != frosted {
+            window.request_frame();
+        }
         // A configure with no size is the compositor letting the client
         // choose, so keep what we have.
         let width = w
@@ -991,12 +1170,108 @@ impl App for SettingsApp {
             !flips.is_empty() || flips.len() != before
         };
 
+        // The caret blinks on the app's clock, so the field being edited gets
+        // its phase advanced here and its band repainted with it.
+        let blinking = {
+            let mut editing = self.editing.lock().unwrap();
+            match editing.as_mut() {
+                Some(edit) => {
+                    let was = edit.input.caret_visible();
+                    edit.input.tick(IDLE_TICK.as_secs_f32());
+                    was != edit.input.caret_visible()
+                }
+                None => false,
+            }
+        };
+
         let dirty = std::mem::replace(&mut *self.pane_dirty.lock().unwrap(), false);
-        if animating || flipping || dirty {
+        if animating || flipping || dirty || blinking {
             // A flip changes what a row looks like, not where the pane is
             // scrolled, so it has to repaint the band like any other value
             // change.
-            self.sync_pane(dirty || flipping);
+            self.sync_pane(dirty || flipping || blinking);
+        }
+    }
+
+    /// Modifier state, saved for the key press it belongs to.
+    fn on_modifiers(&mut self, _ctx: &AppContext, modifiers: Modifiers) {
+        *self.modifiers.lock().unwrap() = Mods {
+            shift: modifiers.shift,
+            ctrl: modifiers.ctrl,
+        };
+    }
+
+    /// Keys go to the text field that has the keyboard, if there is one.
+    /// Nothing else in the app takes typed input yet.
+    fn on_key_event(
+        &mut self,
+        _ctx: &AppContext,
+        event: &KeyEvent,
+        state: wl_keyboard::KeyState,
+        _serial: u32,
+    ) {
+        use smithay_client_toolkit::seat::keyboard::Keysym;
+
+        if state != wl_keyboard::KeyState::Pressed {
+            return;
+        }
+        if self.editing.lock().unwrap().is_none() {
+            return;
+        }
+        let Mods { shift, ctrl } = *self.modifiers.lock().unwrap();
+
+        let key = match event.keysym {
+            Keysym::Return | Keysym::KP_Enter => Some(TextInputKey::Enter),
+            Keysym::Escape => Some(TextInputKey::Escape),
+            Keysym::Left => Some(TextInputKey::Left),
+            Keysym::Right => Some(TextInputKey::Right),
+            Keysym::Home => Some(TextInputKey::Home),
+            Keysym::End => Some(TextInputKey::End),
+            Keysym::BackSpace => Some(TextInputKey::Backspace),
+            Keysym::Delete => Some(TextInputKey::Delete),
+            Keysym::a if ctrl => Some(TextInputKey::SelectAll),
+            // A modifier pressed on its own carries no text and is not an
+            // edit: `on_modifiers` already recorded what it changed.
+            _ => event
+                .utf8
+                .as_ref()
+                .and_then(|text| text.chars().next())
+                .filter(|c| !c.is_control())
+                .map(TextInputKey::Char),
+        };
+        let Some(key) = key else { return };
+
+        let response = self
+            .editing
+            .lock()
+            .unwrap()
+            .as_mut()
+            .map(|edit| edit.input.on_key(key, KeyMods { shift, ctrl }));
+        match response {
+            Some(TextInputResponse::Commit) => {
+                commit_edit(&self.editing);
+            }
+            Some(TextInputResponse::Cancel) => {
+                cancel_edit(&self.editing);
+            }
+            Some(TextInputResponse::Ignored) | None => return,
+            Some(_) => {}
+        }
+        mark_pane_dirty(&self.pane_dirty);
+        if let Some(window) = self.window.as_ref() {
+            window.request_frame();
+        }
+    }
+
+    /// The keyboard went elsewhere. An edit in flight has no way left to be
+    /// answered, so it is dropped rather than left blinking on a window that
+    /// no longer has focus.
+    fn on_keyboard_leave(&mut self, _ctx: &AppContext, _surface: &wl_surface::WlSurface) {
+        if cancel_edit(&self.editing) {
+            mark_pane_dirty(&self.pane_dirty);
+            if let Some(window) = self.window.as_ref() {
+                window.request_frame();
+            }
         }
     }
 
@@ -1006,6 +1281,11 @@ impl App for SettingsApp {
     fn on_theme_changed(&mut self, _ctx: &AppContext) {
         mark_pane_dirty(&self.pane_dirty);
         if let Some(window) = self.window.as_ref() {
+            // The frost's tint is on the compositor's layer, which keeps the
+            // colour it was last given — hand it the new scheme's material.
+            if let Some(style) = window.surface_style() {
+                apply_material(&style);
+            }
             window.request_frame();
         }
     }
@@ -1022,8 +1302,11 @@ impl App for SettingsApp {
     /// just the next input event.
     fn idle_timeout(&self) -> Option<std::time::Duration> {
         let animating = self.scroll.lock().unwrap().is_animating()
-            || !self.toggle_flips.lock().unwrap().is_empty();
-        animating.then(|| std::time::Duration::from_millis(8))
+            || !self.toggle_flips.lock().unwrap().is_empty()
+            // A blinking caret needs the same steady clock, and for the same
+            // reason: nothing else is going to ask for the next frame.
+            || self.editing.lock().unwrap().is_some();
+        animating.then(|| IDLE_TICK)
     }
 }
 
@@ -1063,6 +1346,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         open_picker: Arc::new(Mutex::new(None)),
         size: Arc::new(Mutex::new((view::WINDOW_W, view::WINDOW_H))),
         controls: Arc::new(Mutex::new(WindowControlsState::new())),
+        editing: Arc::new(Mutex::new(None)),
+        modifiers: Arc::new(Mutex::new(Mods::default())),
+        frosted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     })
     .run()?;
     Ok(())

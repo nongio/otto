@@ -42,16 +42,6 @@ pub fn build() -> Pane {
                         },
                     )
                     .id("dock.genie_scale"),
-                    Row::new(
-                        "Magnification spread",
-                        Control::Slider {
-                            value: 10.0,
-                            min: 0.0,
-                            max: 100.0,
-                            readout: "10.0".into(),
-                        },
-                    )
-                    .id("dock.genie_span"),
                     Row::new("Tint icons", Control::Toggle(false)).id("dock.colorize_icons"),
                     Row::new("Icon tint", Control::Color(0xFF3B82F6)).id("dock.colorize_color"),
                     Row::new(

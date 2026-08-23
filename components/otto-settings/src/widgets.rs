@@ -17,6 +17,16 @@ pub const SLIDER_W: f32 = 160.0;
 pub const SELECT_W: f32 = 176.0;
 pub const CONTROL_H: f32 = 24.0;
 
+/// One size for every control's own text — a readout, a field's value, a
+/// keycap, a button's label.
+///
+/// The same size as the pop-up button's label, the menu it drops, and the row
+/// label beside it: a control's value is content, not an annotation of it, and
+/// a row of mixed controls has to read as one line rather than as four
+/// typographic accidents. `styles::SUBHEADLINE` is what the detail line under
+/// a label uses — a control set in it looks like a caption of itself.
+pub const CONTROL_TEXT: TextStyle = styles::BODY;
+
 fn fill(color: Color) -> Paint {
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
@@ -111,29 +121,80 @@ pub fn slider(
         readout,
         x + SLIDER_W + 12.0,
         cy,
-        styles::SUBHEADLINE,
+        CONTROL_TEXT,
         theme.text_secondary,
     );
 }
 
-/// Editable-looking text field, right-aligned like the other controls.
-pub fn text_field(canvas: &Canvas, right: f32, cy: f32, value: &str, theme: &Theme) {
-    let width = 220.0;
-    let rect = Rect::from_xywh(right - width, cy - CONTROL_H / 2.0, width, CONTROL_H);
+/// A text row's field width. The rect itself comes from `view::text_rect`.
+pub const TEXT_W: f32 = 220.0;
+
+/// A text field at rest — what a row draws when it does *not* have the
+/// keyboard. The focused one is drawn by `otto_kit`'s own `TextInput`, so this
+/// only has to match its resting looks.
+pub fn text_field(canvas: &Canvas, rect: Rect, value: &str, theme: &Theme) {
     let rrect = RRect::new_rect_xy(rect, 6.0, 6.0);
     canvas.draw_rrect(rrect, &fill(theme.fill_quaternary));
     canvas.draw_rrect(rrect, &stroke(theme.fill_secondary, 1.0));
     canvas.save();
     canvas.clip_rrect(rrect, ClipOp::Intersect, true);
+    let style = CONTROL_TEXT;
+    let (text, color) = if value.is_empty() {
+        ("Not set".to_string(), theme.text_tertiary)
+    } else {
+        (
+            elide_tail(value, style, rect.width() - 18.0),
+            theme.text_primary,
+        )
+    };
     text_centered_y(
         canvas,
-        value,
+        &text,
         rect.left + 9.0,
-        cy,
-        styles::SUBHEADLINE,
-        theme.text_primary,
+        rect.center_y(),
+        style,
+        color,
     );
     canvas.restore();
+}
+
+/// Trim characters off the END of `text` until it fits `width`, marking the
+/// cut with a trailing ellipsis.
+pub fn elide_tail(text: &str, style: otto_kit::typography::TextStyle, width: f32) -> String {
+    let font = style.font();
+    if font.measure_str(text, None).0 <= width {
+        return text.to_string();
+    }
+    let mut end = text.len();
+    while end > 0 {
+        end -= 1;
+        while end > 0 && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let candidate = format!("{}…", &text[..end]);
+        if font.measure_str(&candidate, None).0 <= width {
+            return candidate;
+        }
+    }
+    "…".to_string()
+}
+
+/// Trim characters off the FRONT of `text` until it fits `width`, marking the
+/// cut with a leading ellipsis. Returns `text` unchanged when it already fits.
+fn elide_head(text: &str, style: otto_kit::typography::TextStyle, width: f32) -> String {
+    let font = style.font();
+    if font.measure_str(text, None).0 <= width {
+        return text.to_string();
+    }
+    // Walk char boundaries from the front; the first tail that fits with the
+    // ellipsis in front of it is the answer.
+    for (i, _) in text.char_indices() {
+        let candidate = format!("…{}", &text[i..]);
+        if font.measure_str(&candidate, None).0 <= width {
+            return candidate;
+        }
+    }
+    "…".to_string()
 }
 
 /// The "Choose…" button's width, and the gap between it and the path field.
@@ -149,9 +210,10 @@ pub fn choose_rect(right: f32, cy: f32) -> Rect {
 
 /// A file setting: the chosen path, and the button that changes it.
 ///
-/// The path is shown from its *end* when it does not fit — the file's own
-/// name is what identifies it, and truncating that away to keep `/home/user/`
-/// would leave the one part nobody needs.
+/// The path reads from the left like any other field's text. When it does not
+/// fit, the *head* is elided — the file's own name is what identifies it, and
+/// truncating that away to keep `/home/user/` would leave the one part nobody
+/// needs.
 pub fn file_field(canvas: &Canvas, right: f32, cy: f32, value: &str, theme: &Theme) {
     let button = choose_rect(right, cy);
     let field = Rect::from_xywh(
@@ -166,21 +228,18 @@ pub fn file_field(canvas: &Canvas, right: f32, cy: f32, value: &str, theme: &The
     canvas.draw_rrect(rrect, &stroke(theme.fill_secondary, 1.0));
     canvas.save();
     canvas.clip_rrect(rrect, ClipOp::Intersect, true);
-    let style = styles::SUBHEADLINE;
-    let (width, _) = style.font().measure_str(value, None);
-    let inner = FILE_FIELD_W - 18.0;
-    // Overflow to the left, so the tail stays put against the right edge.
-    let x = if width > inner {
-        field.left + 9.0 - (width - inner)
-    } else {
-        field.left + 9.0
-    };
+    let style = CONTROL_TEXT;
     let (text, color) = if value.is_empty() {
-        ("No file chosen", theme.text_tertiary)
+        ("No file chosen".to_string(), theme.text_tertiary)
     } else {
-        (value, theme.text_primary)
+        (value.to_string(), theme.text_primary)
     };
-    text_centered_y(canvas, text, x, cy, style, color);
+    // Left aligned, like every other field's text. The file's own name is what
+    // identifies it, so what a too-long path loses is its leading directories:
+    // the head is elided rather than the tail truncated.
+    let inner = FILE_FIELD_W - 18.0;
+    let text = elide_head(&text, style, inner);
+    text_centered_y(canvas, &text, field.left + 9.0, cy, style, color);
     canvas.restore();
 
     let brrect = RRect::new_rect_xy(button, 6.0, 6.0);
@@ -201,7 +260,7 @@ pub fn file_field(canvas: &Canvas, right: f32, cy: f32, value: &str, theme: &The
 /// Key combination shown as individual keycaps.
 pub fn key_combo(canvas: &Canvas, right: f32, cy: f32, combo: &str, theme: &Theme) {
     let keys: Vec<&str> = combo.split('+').map(|k| k.trim()).collect();
-    let style = styles::FOOTNOTE;
+    let style = CONTROL_TEXT;
     let gap = 4.0;
     let pad = 7.0;
 

@@ -165,6 +165,9 @@ impl Control {
             }
             (Control::Select(_), Value::Text(text)) => Control::Select(text.clone()),
             (Control::Text(_), Value::Text(text)) => Control::Text(text.clone()),
+            // A list setting edited as text — preferred languages, xkb options
+            // — reads and writes the comma-separated form.
+            (Control::Text(_), Value::List(items)) => Control::Text(items.join(", ")),
             (Control::File(_), Value::Text(text)) => Control::File(text.clone()),
             // Enumerated colour settings (the accent) carry a name rather than
             // hex, so a well that only understood hex drew them as black.

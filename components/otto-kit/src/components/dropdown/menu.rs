@@ -69,12 +69,70 @@ use crate::components::menu_item::MenuItem;
 
 /// Label size and row height for a pop-up button's menu.
 ///
-/// Deliberately larger than a menu-bar menu's 13pt/22pt: this menu drops out
-/// of a form control and is read next to that form's own labels, where the
-/// bar's compact metrics look undersized. A menu bar is scanned along a
-/// crowded strip; a pop-up button is read one row at a time.
-const ITEM_FONT_SIZE: f32 = 15.0;
-const ITEM_HEIGHT: f32 = 28.0;
+/// The size is the field's own — `super::field` draws its label at
+/// [`crate::typography::styles::BODY`], and a menu that drops out of a control
+/// to list that control's values has to read as the same text, not as a larger
+/// echo of it. The row stays taller than a menu bar's 22pt all the same: a
+/// pop-up button is read one row at a time, not scanned along a crowded strip.
+const ITEM_FONT_SIZE: f32 = crate::typography::styles::BODY.size;
+const ITEM_HEIGHT: f32 = 26.0;
+
+/// Tallest a pop-up button's menu is drawn before its list starts scrolling.
+///
+/// A menu listing every installed font or cursor theme is hundreds of rows
+/// long; past a screenful it stops being a menu you read and becomes one you
+/// hunt through, and the compositor would be sliding a full-height popup
+/// around to keep it on screen. Capped here, the surplus scrolls under the
+/// wheel instead.
+const MAX_HEIGHT: f32 = 360.0;
+
+/// How much wider than the button its menu may grow to fit a long value.
+///
+/// The menu is the button's own column by default. A value too long for it
+/// widens the menu rather than being cut down to nothing — but only this far,
+/// and the menu stays anchored to the button's right edge so the growth goes
+/// leftwards into the form's margin instead of out over its labels.
+const MAX_GROWTH: f32 = 1.6;
+
+/// What an item's label loses to the menu's own padding and to the checkmark
+/// column, so the text it is elided to actually fits the row.
+const TEXT_INSET: f32 = 26.0;
+
+/// The font the menu sets its rows in, for measuring.
+fn item_font() -> skia_safe::Font {
+    crate::typography::TextStyle {
+        family: "Inter",
+        weight: 400,
+        size: ITEM_FONT_SIZE,
+    }
+    .font()
+}
+
+/// How wide `text` is in a menu row.
+fn measure(text: &str) -> f32 {
+    item_font().measure_str(text, None).0
+}
+
+/// Trim `text` until it fits `width`, marking the cut with a trailing
+/// ellipsis. Returns it unchanged when it already fits.
+fn elide(text: &str, width: f32) -> String {
+    let font = item_font();
+    if width <= 0.0 || font.measure_str(text, None).0 <= width {
+        return text.to_string();
+    }
+    let mut end = text.len();
+    while end > 0 {
+        end -= 1;
+        while end > 0 && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let candidate = format!("{}\u{2026}", &text[..end]);
+        if font.measure_str(&candidate, None).0 <= width {
+            return candidate;
+        }
+    }
+    "\u{2026}".to_string()
+}
 
 /// Owns the popup lifecycle for one dropdown. The caller keeps one of these
 /// per dropdown field (it is not `Clone` — there is no reason to share it),
@@ -146,19 +204,65 @@ impl DropdownMenu {
 
         let menu = &self.menu;
 
+        // The menu starts as the button's own column — a list of that button's
+        // values, under that button — and grows leftwards only as far as
+        // `MAX_GROWTH` if the longest value needs it. Anything still too long
+        // is elided; letting the menu take whatever width its longest label
+        // wants leaves the two controls' edges disagreeing by however long
+        // that label happens to be.
+        let field_w = field_rect.width().max(1.0);
+        let widest = options
+            .iter()
+            .map(|label| measure(label))
+            .fold(0.0_f32, f32::max)
+            + TEXT_INSET;
+        let width = widest.clamp(field_w, field_w * MAX_GROWTH);
+        menu.clone().with_style(
+            ContextMenuStyle::default()
+                .with_item_metrics(ITEM_FONT_SIZE, ITEM_HEIGHT)
+                .with_width(width)
+                .with_min_width(width)
+                .with_max_height(MAX_HEIGHT),
+        );
+
         let items: Vec<MenuItem> = options
             .iter()
             .enumerate()
             .map(|(i, label)| {
-                let text = if Some(i) == selected {
-                    format!("\u{2713} {label}")
+                // The checkmark rides in the trailing slot rather than in
+                // front of the label: a leading mark indents the chosen row
+                // out of line with every other one, and the values then no
+                // longer share a left edge to be scanned down.
+                let item = MenuItem::action(elide(label, width - TEXT_INSET))
+                    .with_action_id(i.to_string());
+                if Some(i) == selected {
+                    item.with_shortcut("\u{2713}")
                 } else {
-                    label.clone()
-                };
-                MenuItem::action(text).with_action_id(i.to_string())
+                    item
+                }
             })
             .collect();
-        menu.state().borrow_mut().set_items(items);
+        let overflow = {
+            let mut state = menu.state().borrow_mut();
+            state.set_items(items);
+            // A menu that scrolls opens on the value it is showing, not at the
+            // top: in a list of every installed font, the top is the one place
+            // the current one almost certainly is not. Centred in the box, so
+            // the values either side of it are visible too.
+            let overflow = ContextMenuStyle::default()
+                .with_item_metrics(ITEM_FONT_SIZE, ITEM_HEIGHT)
+                .with_max_height(MAX_HEIGHT);
+            let overflow = crate::components::context_menu::ContextMenuRenderer::overflow(
+                state.items(),
+                &overflow,
+            );
+            let centred = selected
+                .map(|i| i as f32 * ITEM_HEIGHT - MAX_HEIGHT / 2.0 + ITEM_HEIGHT / 2.0)
+                .unwrap_or(0.0);
+            state.set_scroll(centred, overflow);
+            overflow
+        };
+        let _ = overflow;
 
         menu.clone().on_item_click(move |action_id| {
             if let Ok(index) = action_id.parse::<usize>() {
@@ -180,8 +284,12 @@ impl DropdownMenu {
             field_rect.width().max(1.0) as i32,
             field_rect.height().max(1.0) as i32,
         );
-        positioner.set_anchor(xdg_positioner::Anchor::BottomLeft);
-        positioner.set_gravity(xdg_positioner::Gravity::BottomRight);
+        // Anchored to the button's bottom-RIGHT corner, growing down and to
+        // the left from it: the menu and the button share a right edge, so a
+        // menu that had to grow does so into the form's margin rather than
+        // over the row's label.
+        positioner.set_anchor(xdg_positioner::Anchor::BottomRight);
+        positioner.set_gravity(xdg_positioner::Gravity::BottomLeft);
         positioner.set_offset(0, 4);
         positioner.set_constraint_adjustment(
             xdg_positioner::ConstraintAdjustment::SlideX
