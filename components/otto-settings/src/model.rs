@@ -361,6 +361,10 @@ pub struct Output {
     pub modes: Vec<Mode>,
     /// Index into `modes` of the one in use — what the two pop-ups show.
     pub mode: usize,
+    /// Added in the pane rather than found by the probe. Such an output has no
+    /// counterpart in the compositor, so [`sync`] has to carry it across
+    /// instead of expecting to see it again.
+    local: bool,
 }
 
 impl Output {
@@ -424,25 +428,79 @@ struct Arrangement {
 }
 
 impl Default for Arrangement {
-    /// Whatever the compositor is driving right now.
-    ///
-    /// `wl_output` is the probe: it carries each output's name, its place in
-    /// the desktop's coordinate space, and — since the compositor advertises
-    /// the connector's whole mode list, not just the one in use — every
-    /// resolution and refresh rate the hardware offers. That is what fills
-    /// the two pop-ups. It costs no DRM access and it is the same list
-    /// `otto --probe` prints.
+    /// Empty. The compositor's outputs arrive after the app has started, so
+    /// there is nothing to probe yet at the moment this is first asked for —
+    /// see [`sync`], which fills it in and keeps it current.
     fn default() -> Self {
-        let outputs = probe();
-        // Nothing here says which display is primary — `wl_output` carries no
-        // such notion, and `org.otto.Settings` serves no per-output setting to
-        // ask (see the doc comment on `crate::panes::displays`). The
-        // compositor announces its outputs in the order it brought them up,
-        // which starts with the one it made primary, so the first is the
-        // closest thing to an answer available.
-        let selected = 0;
-        Self { outputs, selected }
+        Self {
+            outputs: Vec::new(),
+            selected: 0,
+        }
     }
+}
+
+/// Bring the arrangement up to date with what the compositor is driving.
+///
+/// Run on every read rather than once at startup, because the answer changes:
+/// the outputs are announced after the app is up — an arrangement built at
+/// window-setup time is always empty — and they come and go with hotplug
+/// afterwards.
+///
+/// Reconciled rather than replaced, so the edits made in the pane survive it.
+/// An output is matched by name; what the compositor owns (its modes, and its
+/// size) is taken from the probe, and what only this app knows (where the
+/// pane has been told to put it, whether it has been switched off, which
+/// screen is selected) is kept.
+fn sync() {
+    let probed = probe();
+    let mut arrangement = arrangement().write().unwrap();
+
+    let selected_name = arrangement
+        .outputs
+        .get(arrangement.selected)
+        .map(|o| o.name.clone());
+
+    let held = std::mem::take(&mut arrangement.outputs);
+    let mut outputs: Vec<Output> = probed
+        .into_iter()
+        .map(|mut output| {
+            if let Some(previous) = held.iter().find(|o| o.name == output.name) {
+                output.x = previous.x;
+                output.y = previous.y;
+                output.enabled = previous.enabled;
+                output.primary = previous.primary;
+                // Keep the mode the pane picked, but only while the display
+                // still offers it: a panel that came back on a different port
+                // may not.
+                if let Some(mode) = previous.current_mode() {
+                    if let Some(index) = output.modes.iter().position(|m| *m == mode) {
+                        output.mode = index;
+                    }
+                }
+            }
+            output
+        })
+        .collect();
+
+    // Virtual outputs added in the pane are not running anywhere, so the probe
+    // cannot report them — they would disappear the moment they were added.
+    outputs.extend(held.into_iter().filter(|o| o.local));
+
+    // Nothing in the protocol says which display is primary, and
+    // `org.otto.Settings` serves no per-output setting to ask (see the doc
+    // comment on `crate::panes::displays`). The compositor announces its
+    // outputs in the order it brought them up, which starts with the one it
+    // made primary, so the first is the closest thing to an answer available.
+    if !outputs.iter().any(|o| o.primary) {
+        if let Some(first) = outputs.first_mut() {
+            first.primary = true;
+        }
+    }
+
+    arrangement.selected = selected_name
+        .and_then(|name| outputs.iter().position(|o| o.name == name))
+        .unwrap_or(0);
+    arrangement.outputs = outputs;
 }
 
 /// Ask the compositor what it is driving.
@@ -496,6 +554,7 @@ fn probe() -> Vec<Output> {
                 enabled: true,
                 mode: current,
                 modes,
+                local: false,
             }
         })
         .collect()
@@ -509,11 +568,13 @@ fn arrangement() -> &'static RwLock<Arrangement> {
 /// Every output in the arrangement, in the order the canvas draws them — which
 /// is also the order [`selected_output`] and [`select_output`] index into.
 pub fn outputs() -> Vec<Output> {
+    sync();
     arrangement().read().unwrap().outputs.clone()
 }
 
 /// Index of the screen whose settings the pane is showing.
 pub fn selected_output() -> usize {
+    sync();
     arrangement().read().unwrap().selected
 }
 
@@ -587,6 +648,47 @@ pub fn set_selected_refresh(rate: &str) {
     });
 }
 
+/// Resize the selected screen.
+///
+/// Only meaningful for a virtual output: a panel is driven at one of the
+/// modes its connector advertises, and there is nothing to type. A headless
+/// output has no such list — its one mode is whatever it is told to be — so
+/// the pane gives it plain fields instead of pop-ups.
+pub fn set_selected_size(width: Option<i32>, height: Option<i32>) {
+    with_selected(|output| {
+        let mut mode = output.current_mode().unwrap_or(Mode {
+            width: output.width as i32,
+            height: output.height as i32,
+            refresh_mhz: 60_000,
+        });
+        if let Some(width) = width {
+            mode.width = width.max(1);
+        }
+        if let Some(height) = height {
+            mode.height = height.max(1);
+        }
+        output.modes = vec![mode];
+        output.mode = 0;
+        // A virtual output runs unscaled, so its mode is also its size in the
+        // arrangement's logical pixels.
+        output.width = mode.width as f32;
+        output.height = mode.height as f32;
+    });
+}
+
+/// Set the selected screen's refresh rate, in whole hertz. Virtual outputs
+/// only, for the same reason as [`set_selected_size`].
+pub fn set_selected_refresh_hz(hz: f32) {
+    with_selected(|output| {
+        let Some(mut mode) = output.current_mode() else {
+            return;
+        };
+        mode.refresh_mhz = ((hz.max(1.0)) * 1000.0) as i32;
+        output.modes = vec![mode];
+        output.mode = 0;
+    });
+}
+
 /// Move the selected screen's top-left corner.
 pub fn set_selected_position(x: Option<f32>, y: Option<f32>) {
     with_selected(|output| {
@@ -630,6 +732,7 @@ pub fn add_virtual_output() {
         primary: false,
         kind: OutputKind::Virtual,
         enabled: true,
+        local: true,
         // A headless output has no hardware to take a mode list from, so the
         // one it is created at is the only one it offers.
         modes: vec![Mode {

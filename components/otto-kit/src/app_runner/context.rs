@@ -281,9 +281,20 @@ impl<'a> AppContext<'a> {
     /// or a refresh rate has to know what the hardware actually supports, and
     /// `wl_output` already carries it — no DRM access, no second session, and
     /// it follows hotplug because the compositor keeps sending events.
+    /// Empty before the context exists, and again before the compositor has
+    /// announced anything — a caller has to be able to ask again rather than
+    /// keep the first answer, since outputs arrive after the app starts and
+    /// come and go with hotplug.
     pub fn outputs() -> Vec<OutputInfo> {
-        Self::with_global(|ctx| {
-            let state = ctx.output_state_ref();
+        APP_CONTEXT_PTR.with(|ptr| {
+            let Some(data_ptr) = *ptr.borrow() else {
+                return Vec::new();
+            };
+            let state = &unsafe { &*data_ptr }.output_state;
+            // An output is listed as soon as its global is bound but has no
+            // `OutputInfo` until its `done` event lands a few dispatches
+            // later, so this is empty for the app's first frames even though
+            // the compositor is driving a display.
             state.outputs().filter_map(|o| state.info(&o)).collect()
         })
     }

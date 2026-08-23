@@ -39,6 +39,9 @@ const ACTIVE: &str = "Active";
 const PRIMARY: &str = "Use as primary";
 const X_POSITION: &str = "X position";
 const Y_POSITION: &str = "Y position";
+const WIDTH: &str = "Width";
+const HEIGHT: &str = "Height";
+const REFRESH: &str = "Refresh rate";
 const VIRTUAL: &str = "Virtual displays";
 
 /// The push buttons on the [`VIRTUAL`] row.
@@ -100,8 +103,6 @@ pub fn build() -> Pane {
             .detail("The compositor is not driving any output")])],
         };
     };
-    let mode = selected.current_mode();
-
     let count = model::virtual_output_count();
     Pane {
         name: "Displays",
@@ -111,38 +112,31 @@ pub fn build() -> Pane {
         groups: vec![
             group(
                 selected.name.clone(),
-                vec![
-                    Row::new(
-                        "Resolution",
-                        Control::Select(mode.map(|m| m.resolution()).unwrap_or_default()),
-                    )
-                    .id(RESOLUTION_ID),
-                    Row::new(
-                        "Refresh rate",
-                        Control::Select(mode.map(|m| m.refresh()).unwrap_or_default()),
-                    )
-                    .id(REFRESH_ID),
-                    Row::new(
-                        "Scale",
-                        Control::Slider {
-                            value: 2.0,
-                            min: 0.5,
-                            max: 4.0,
-                            readout: "200%".into(),
-                        },
-                    )
-                    .id("screen_scale"),
-                    Row::new(ACTIVE, Control::Toggle(selected.enabled))
-                        .detail("An inactive display keeps its place in the arrangement"),
-                    Row::new(PRIMARY, Control::Toggle(selected.primary))
-                        .detail("The dock and the bar live on the primary display"),
-                    // Positions are logical pixels, which is the space the
-                    // arrangement canvas lays out in — see the coordinate
-                    // conventions in the repository's CLAUDE.md.
-                    Row::new(X_POSITION, Control::Text(position_text(selected.x)))
-                        .detail("Top-left corner in the desktop's coordinate space"),
-                    Row::new(Y_POSITION, Control::Text(position_text(selected.y))),
-                ],
+                mode_rows(selected)
+                    .into_iter()
+                    .chain([
+                        Row::new(
+                            "Scale",
+                            Control::Slider {
+                                value: 2.0,
+                                min: 0.5,
+                                max: 4.0,
+                                readout: "200%".into(),
+                            },
+                        )
+                        .id("screen_scale"),
+                        Row::new(ACTIVE, Control::Toggle(selected.enabled))
+                            .detail("An inactive display keeps its place in the arrangement"),
+                        Row::new(PRIMARY, Control::Toggle(selected.primary))
+                            .detail("The dock and the bar live on the primary display"),
+                        // Positions are logical pixels, which is the space the
+                        // arrangement canvas lays out in — see the coordinate
+                        // conventions in the repository's CLAUDE.md.
+                        Row::new(X_POSITION, Control::Text(position_text(selected.x)))
+                            .detail("Top-left corner in the desktop's coordinate space"),
+                        Row::new(Y_POSITION, Control::Text(position_text(selected.y))),
+                    ])
+                    .collect(),
             ),
             group(
                 VIRTUAL,
@@ -156,6 +150,49 @@ pub fn build() -> Pane {
             ),
         ],
     }
+}
+
+/// The rows describing how the selected display is being driven.
+///
+/// A panel is driven at one of the modes its connector advertises, so its size
+/// and its rate are pop-ups over that list. A virtual output has no such list
+/// — it is headless, and it is whatever it is told to be — so it gets fields
+/// to type in instead. A pop-up with one entry in it is not a choice.
+fn mode_rows(selected: &model::Output) -> Vec<Row> {
+    let mode = selected.current_mode();
+    if selected.is_virtual() {
+        return vec![
+            Row::new(
+                WIDTH,
+                Control::Text(mode.map(|m| m.width.to_string()).unwrap_or_default()),
+            )
+            .detail("Pixels. A headless output can be any size"),
+            Row::new(
+                HEIGHT,
+                Control::Text(mode.map(|m| m.height.to_string()).unwrap_or_default()),
+            ),
+            Row::new(
+                REFRESH,
+                Control::Text(
+                    mode.map(|m| format!("{:.0}", m.refresh_mhz as f32 / 1000.0))
+                        .unwrap_or_default(),
+                ),
+            )
+            .detail("Hertz — how often the stream is fed a frame"),
+        ];
+    }
+    vec![
+        Row::new(
+            "Resolution",
+            Control::Select(mode.map(|m| m.resolution()).unwrap_or_default()),
+        )
+        .id(RESOLUTION_ID),
+        Row::new(
+            REFRESH,
+            Control::Select(mode.map(|m| m.refresh()).unwrap_or_default()),
+        )
+        .id(REFRESH_ID),
+    ]
 }
 
 /// A coordinate as the text field shows it. Whole logical pixels: a display
@@ -178,6 +215,9 @@ pub fn commit_text(label: &str, text: &str) {
     match label {
         X_POSITION => model::set_selected_position(Some(value), None),
         Y_POSITION => model::set_selected_position(None, Some(value)),
+        WIDTH => model::set_selected_size(Some(value as i32), None),
+        HEIGHT => model::set_selected_size(None, Some(value as i32)),
+        REFRESH => model::set_selected_refresh_hz(value),
         _ => {}
     }
 }
