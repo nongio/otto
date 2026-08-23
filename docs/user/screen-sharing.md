@@ -148,8 +148,15 @@ Bind one to a key:
 "Print" = { run = { cmd = "sh", args = ["-c", "grim ~/Pictures/$(date +%s).png"] } }
 ```
 
-There is no built-in screenshot UI, and **per-window capture is not implemented**
-— screencopy captures whole outputs or rectangles of them.
+Applications that ask through the desktop portal — GTK and Qt screenshot tools,
+and sandboxed apps that cannot talk to Wayland directly — are answered too:
+Otto captures the whole screen to `~/Pictures/Screenshots/` and returns the file.
+That path runs `grim`, so install it if you want portal screenshots to work.
+
+There is no built-in screenshot UI for selecting a region or a window
+interactively, and **per-window capture through screencopy is not implemented**
+— screencopy captures whole outputs or rectangles of them. Per-window capture
+*is* available through the screen-sharing portal.
 
 ## AirPlay
 

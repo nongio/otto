@@ -1,5 +1,8 @@
 # Clipboard Management
 
+Why clipboard contents vanish when you close an app on Wayland, and which
+clipboard manager to run so they do not.
+
 ## Clipboard Persistence Issue
 
 By default in Wayland compositors (including Otto), when you copy text from an application and then close or crash that application, the clipboard content is lost. This is because Wayland requires the source client to remain active to serve clipboard data on paste.

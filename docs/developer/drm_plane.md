@@ -1,5 +1,8 @@
 # DRM Planes and Direct Scanout
 
+How Otto hands parts of the screen straight to the display hardware, so the
+GPU does not have to composite them.
+
 > Structure and rationale live here. The full behavioural contract —
 > per-buffer damage rules, blur-composite invalidation, promotion hysteresis —
 > is [`specs/plane-scanout.md`](../../specs/plane-scanout.md).

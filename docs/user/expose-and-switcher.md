@@ -3,8 +3,6 @@
 Two ways to find a window: see them all at once (Exposé), or step through
 applications (App Switcher).
 
----
-
 ## Exposé
 
 Exposé scales every window on the current workspace down into a packed grid, so

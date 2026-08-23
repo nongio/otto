@@ -924,7 +924,7 @@ copied.
 
 ## Out of scope for v1, explicitly
 
-Column view (the model supports it; the renderer is v2). Tabs. Split views. Network and virtual filesystems. Mounting and ejecting.
+Tabs. Split views. Network and virtual filesystems. Mounting and ejecting.
 Content search and any index. Batch rename. Archive browsing or extraction.
 File comparison. Tags, labels, colours, or any metadata Otto would have to store
 itself. Custom per-directory view settings beyond sort order. Templates. Running

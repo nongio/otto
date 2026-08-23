@@ -95,48 +95,71 @@ function addParentHeadingAttribute() {
     });
 }
 
-// https://tj.ie/building-a-table-of-contents-with-the-intersection-observer-api/
-// TODO(bfirsh): this could be improved with a scroll handler.
-// It should probably highlight a section if it is _mostly_ visible on a page, with some special cases around parent sections. This is basically impossible to do with visibility API.
+// Highlight the entry for the section you are currently reading.
+//
+// This is read-only: it observes scroll position and never sets it. Nothing
+// here scrolls the page, the contents list, or an element into view — the
+// reader is in charge of where the page is and how fast it gets there.
+//
+// It used to be an IntersectionObserver picking the first section with any
+// pixel on screen, which lagged by about a screen: a section you had scrolled
+// past kept a sliver visible and stayed highlighted while the next one filled
+// the viewport. Instead, track a "reading line" a third of the way down the
+// viewport and highlight the last section whose top has crossed it. Sections
+// are nested, so the last match is also the deepest one — scrolling into an
+// h3 highlights the h3, not its parent h2.
+const READING_LINE = 0.33;
 
-function highlightFirstActive() {
-    document.querySelectorAll("nav li").forEach(link => {
-        link.classList.remove('active')
-    })
+function updateActiveNavEntry() {
+    const line = window.innerHeight * READING_LINE;
+    const sections = document.querySelectorAll('main section[id]');
 
-    let firstVisibleLink = document.querySelector('nav li.visible');
-    if (firstVisibleLink) {
-        let firstVisibleChild = firstVisibleLink.querySelector("li.visible");
-        if (firstVisibleChild) {
-            firstVisibleChild.classList.add('active')
-        } else {
-            firstVisibleLink.classList.add('active')
-        }
+    let current = null;
+
+    // At the bottom of the page the last section can never cross the line,
+    // so nothing down there would ever highlight. Pick it explicitly.
+    const atBottom =
+        window.innerHeight + window.scrollY >= document.body.scrollHeight - 2;
+
+    if (atBottom) {
+        current = sections[sections.length - 1];
+    } else {
+        sections.forEach(section => {
+            if (section.getBoundingClientRect().top <= line) {
+                current = section;
+            }
+        });
     }
+
+    const link = current
+        ? document.querySelector(`nav li a[href="#${current.id}"]`)
+        : null;
+    const active = link && link.parentElement;
+
+    document.querySelectorAll('nav li.active').forEach(li => {
+        if (li !== active) li.classList.remove('active');
+    });
+
+    if (active) active.classList.add('active');
 }
 
 function startNavObservation() {
+    let queued = false;
 
-    const observer = new IntersectionObserver(entries => {
-        entries.forEach(entry => {
-            const id = entry.target.getAttribute('id');
-            const link = document.querySelector(`nav li a[href="#${id}"]`);
-            if (link) {
-                if (entry.intersectionRatio > 0) {
-                    link.parentElement.classList.add('visible');
-                } else {
-                    link.parentElement.classList.remove('visible');
-                }
-            }
+    // Coalesce to one read per frame: a scroll handler that measures on every
+    // event is what makes scrolling feel heavy.
+    function schedule() {
+        if (queued) return;
+        queued = true;
+        requestAnimationFrame(() => {
+            queued = false;
+            updateActiveNavEntry();
         });
-        highlightFirstActive();
-    });
+    }
 
-    // Track all sections that have an `id` applied
-    document.querySelectorAll('section[id]').forEach((section) => {
-        observer.observe(section);
-    });
-
+    window.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule);
+    updateActiveNavEntry();
 }
 
 // Script to hide/show menu

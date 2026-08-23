@@ -1,5 +1,8 @@
 # Getting Started
 
+Installing Otto, launching it on your hardware, and the handful of things
+worth checking on first run.
+
 ## Installing
 
 Pre-built packages are published on the

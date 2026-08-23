@@ -25,6 +25,17 @@ If you are installing Otto for the first time, start with
 | [Keyboard Shortcuts](keyboard-shortcuts.md) | Binding syntax and the complete action list |
 | [Touchpad Gestures](gestures.md) | Three-finger swipes, four-finger pinch |
 
+## Applications
+
+Otto ships a few applications of its own, built with `otto-kit`. All are early
+versions: useful day to day, still filling in.
+
+| Page | What it covers |
+|------|----------------|
+| [Files](files.md) | Browsing, thumbnails, file operations, quick view, the file picker |
+| [Settings](settings.md) | Editing the configuration live, display arrangement, shortcuts |
+| [Launcher](launcher.md) | Starting applications and switching windows from the keyboard |
+
 ## Configuring Otto
 
 | Page | What it covers |
@@ -54,5 +65,5 @@ If you are installing Otto for the first time, start with
 |------|----------------|
 | [Troubleshooting](troubleshooting.md) | Logs, common failures, and how to report a bug |
 
-Questions and feedback are welcome in the Matrix room
+Questions and feedback are welcome on [Discord](https://discord.gg/AdXkrYKuz) or in the Matrix room
 [`#otto-compositor:matrix.org`](https://matrix.to/#/#otto-compositor:matrix.org).

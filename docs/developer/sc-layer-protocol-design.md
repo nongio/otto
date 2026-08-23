@@ -1,5 +1,8 @@
 # Surface Style Protocol — design and history
 
+Why Otto lets clients describe animations declaratively instead of driving
+them frame by frame, and how that idea became a Wayland protocol.
+
 > **Status: superseded.** This document was the design exploration for a
 > client-facing animation protocol, originally sketched as `sc_layer_shell`.
 > What shipped is **`otto-surface-style-unstable-v1`**:

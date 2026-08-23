@@ -1,0 +1,138 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 580" width="760" height="580" role="img" aria-label="Anatomy of a lay-rs layer: the model you write, the render layer that draws, how a change becomes a transaction, and the order a layer paints itself in">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.3; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.3; }
+    .grn  { fill: #dafbe1; stroke: #2da44e; stroke-width: 1.3; }
+    .pur  { fill: #fbefff; stroke: #a475f9; stroke-width: 1.3; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.1; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 12.5px; }
+    .tb   { fill: #1f2328; font-size: 12.5px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 10.5px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.2; fill: none; }
+    .lna  { stroke: #8b949e; stroke-width: 1.3; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grn { fill: #0f2f18; stroke: #3fb950; }
+      .pur { fill: #21162e; stroke: #a475f9; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <!-- ============ Band A: two faces ============ -->
+  <text class="tb" x="16" y="20">One layer, two faces</text>
+
+  <rect class="acc" x="16" y="30" width="216" height="164" rx="7"/>
+  <text class="tb" x="30" y="50">ModelLayer</text>
+  <text class="tm" x="30" y="66">what you write — animatable</text>
+  <text class="tm" x="30" y="90">position · size · anchor_point</text>
+  <text class="tm" x="30" y="108">scale · rotation · display</text>
+  <text class="tm" x="30" y="126">background · border · shadow</text>
+  <text class="tm" x="30" y="144">opacity · blend_mode · filters</text>
+  <text class="tm" x="30" y="162">clip_content · clip_children</text>
+  <text class="tm" x="30" y="180">draw_content closure</text>
+
+  <rect class="grp" x="264" y="30" width="200" height="164" rx="7"/>
+  <text class="tb" x="276" y="48">Engine::update(dt)</text>
+  <rect class="box" x="278" y="58" width="172" height="24" rx="5"/>
+  <text class="t" x="290" y="75">1  advance animations</text>
+  <rect class="box" x="278" y="88" width="172" height="24" rx="5"/>
+  <text class="t" x="290" y="105">2  apply transactions</text>
+  <rect class="box" x="278" y="118" width="172" height="24" rx="5"/>
+  <text class="t" x="290" y="135">3  Taffy layout</text>
+  <rect class="box" x="278" y="148" width="172" height="24" rx="5"/>
+  <text class="t" x="290" y="165">4  update_nodes</text>
+  <text class="tm" x="278" y="187">derives the new snapshot</text>
+
+  <rect class="grn" x="528" y="30" width="216" height="164" rx="7"/>
+  <text class="tb" x="542" y="50">RenderLayer</text>
+  <text class="tm" x="542" y="66">what gets drawn — derived</text>
+  <text class="tm" x="542" y="90">bounds · local/global transformed</text>
+  <text class="tm" x="542" y="108">bounds_with_children · overflow</text>
+  <text class="tm" x="542" y="126">transform (4x4) · transform_33</text>
+  <text class="tm" x="542" y="144">premultiplied_opacity · visible</text>
+  <text class="tm" x="542" y="162">recorded content picture</text>
+  <text class="tm" x="542" y="180">diffed against last frame</text>
+
+  <path class="lna" d="M232 112 L262 112"/>
+  <path class="lna" d="M466 112 L526 112"/>
+
+  <!-- ============ Band B: a change is a transaction ============ -->
+  <text class="tb" x="16" y="234">A change is a transaction</text>
+
+  <rect class="acc" x="16" y="246" width="160" height="50" rx="7"/>
+  <text class="t"  x="28" y="268">set_x(v, transition)</text>
+  <text class="tm" x="28" y="286">change_x(v)</text>
+
+  <rect class="box" x="196" y="246" width="190" height="50" rx="7"/>
+  <text class="t"  x="208" y="268">Transaction</text>
+  <text class="tm" x="208" y="286">keyed by attribute id</text>
+
+  <rect class="box" x="406" y="246" width="150" height="50" rx="7"/>
+  <text class="t"  x="418" y="268">Animation</text>
+  <text class="tm" x="418" y="286">spring keeps velocity</text>
+
+  <rect class="grn" x="576" y="246" width="168" height="50" rx="7"/>
+  <text class="t"  x="588" y="268">value + flags</text>
+  <text class="tm" x="588" y="286">NEEDS_LAYOUT / PAINT</text>
+
+  <path class="lna" d="M176 271 L194 271"/>
+  <path class="lna" d="M386 271 L404 271"/>
+  <path class="lna" d="M556 271 L574 271"/>
+  <text class="tm" x="16" y="318">With no transition the value is written immediately; with one, the engine interpolates it.</text>
+  <text class="tm" x="16" y="334">A second change to the same property cancels the first — its on_finish handlers go with it.</text>
+  <text class="tm" x="16" y="350">change_* values submitted together share one animation, so they move in lockstep.</text>
+
+  <!-- ============ Band C: painting one layer ============ -->
+  <text class="tb" x="16" y="386">Painting one layer</text>
+
+  <rect class="box" x="16" y="398" width="168" height="50" rx="7"/>
+  <text class="t"  x="28" y="420">1  background</text>
+  <text class="tm" x="28" y="438">blur material lives here</text>
+
+  <rect class="box" x="200" y="398" width="168" height="50" rx="7"/>
+  <text class="t"  x="212" y="420">2  drop shadow</text>
+  <text class="tm" x="212" y="438">drawn outside the shape</text>
+
+  <rect class="acc" x="384" y="398" width="168" height="50" rx="7"/>
+  <text class="t"  x="396" y="420">3  content closure</text>
+  <text class="tm" x="396" y="438">canvas in, damage out</text>
+
+  <rect class="box" x="568" y="398" width="176" height="50" rx="7"/>
+  <text class="t"  x="580" y="420">4  border</text>
+  <text class="tm" x="580" y="438">stroked on the shape</text>
+
+  <path class="lna" d="M184 423 L198 423"/>
+  <path class="lna" d="M368 423 L382 423"/>
+  <path class="lna" d="M552 423 L566 423"/>
+
+  <rect class="grn" x="16" y="480" width="236" height="66" rx="7"/>
+  <text class="t"  x="28" y="502">picture cache — on by default</text>
+  <text class="tm" x="28" y="520">replayed on move and on fade;</text>
+  <text class="tm" x="28" y="536">re-recorded on paint or resize</text>
+
+  <rect class="grn" x="268" y="480" width="220" height="66" rx="7"/>
+  <text class="t"  x="280" y="502">image cache — opt in</text>
+  <text class="tm" x="280" y="520">whole subtree into an</text>
+  <text class="tm" x="280" y="536">offscreen GPU surface</text>
+
+  <rect class="pur" x="504" y="480" width="240" height="66" rx="7"/>
+  <text class="t"  x="516" y="502">damage, in layer coordinates</text>
+  <text class="tm" x="516" y="520">closure rect, add_damage, and</text>
+  <text class="tm" x="516" y="536">geometry diffs → Engine::damage()</text>
+
+  <path class="ln"  d="M468 448 L468 464 L624 464"/>
+  <path class="lna" d="M624 464 L624 478"/>
+  <path class="ln"  d="M100 448 L100 464 L134 464"/>
+  <path class="lna" d="M134 464 L134 478"/>
+  <path class="ln"  d="M284 448 L284 464 L378 464"/>
+  <path class="lna" d="M378 464 L378 478"/>
+</svg>

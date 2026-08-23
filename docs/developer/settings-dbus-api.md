@@ -1,5 +1,8 @@
 # `org.otto.Settings` — the settings D-Bus contract
 
+The D-Bus interface the compositor serves for reading and writing settings,
+and the contract a settings client can build against.
+
 > **Status**: implemented on the compositor side (`src/settings/`,
 > `src/settings_service.rs`), ahead of the app. This document is the interface
 > both sides build against, so the compositor and the settings app can be
