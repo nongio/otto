@@ -329,7 +329,11 @@ main {
 }
 
 @media (min-width: 901px) {
-   main > section:first-child > section {
+   /* main spans both grid columns, so the table of contents overlays the
+      first 25%. Everything in the intro section clears it except the hero
+      h1 and its subtitle paragraph, which are centred over the full width
+      and reset padding-left through their own shorthand below. */
+   main > section:first-child > * {
       padding-left: 25%;
    }
 }
@@ -395,10 +399,6 @@ main > section:first-child > h1 + p a {
    margin: 1.7em auto;
 }
 
-/* HACK: this makes the table of contents highlighting work when you click on a link in the table of contents */
-section {
-   margin-bottom: 1px;
-}
 
 section section:after {
    content: " ";
