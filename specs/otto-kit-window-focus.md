@@ -74,11 +74,18 @@ panel material is drawn at full opacity in the same colour instead.
 **The change is a fade, not a cut.** The material moves between its
 translucent and its filled-in form over about a third of a second rather than
 snapping, and the blur is switched at the *opaque* end of that fade in both
-directions — so the frost is never seen arriving or leaving, only the tint
+directions — whether the material belongs to the window, to the compositor's
+own title bar, or to panels an application composites for itself — so the frost is never seen arriving or leaving, only the tint
 thinning to reveal it or thickening to cover it. Losing focus therefore keeps
 blurring until the material is fully opaque; gaining it turns the blur on
 before the material has started to thin. A window the compositor decorates
 fades on the same schedule as one that draws its own bar.
+
+An application that composites its own materials owns their fade, and with it
+the moment the blur may be dropped — it says when. Turning the blur *on* stays
+the window's, since focus is known before the frame in which those materials
+start to thin, and waiting to be told would cost exactly the frame the
+atomicity rule below forbids.
 
 **Restoring.** An application states once that it wants a blurred backdrop. The
 window drops and restores that blur as focus comes and goes, without the
