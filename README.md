@@ -6,6 +6,8 @@ Otto is a Wayland compositor and stacking window manager built on [LayersEngine]
 
 You can try it inside your current session in about a minute — [jump to Try it](#try-it).
 
+**Documentation:** [User Guide](https://nongio.github.io/otto/) · [Developer Guide](https://nongio.github.io/otto/developer/)
+
 > **Testing phase.** Many features are ready for daily use, but Otto is not finished and not yet fully stable. Playing with it, breaking it and telling us about it is genuinely the most useful thing you can do right now.
 > Feedback and questions: [`#otto-compositor:matrix.org`](https://matrix.to/#/#otto-compositor:matrix.org).
 
@@ -59,7 +61,7 @@ sudo dnf install otto-*.rpm                          # Fedora / RHEL
 curl -O https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD && makepkg -si   # Arch
 ```
 
-Packages come from the [GitHub Releases](https://github.com/nongio/otto/releases) page. See [Installation](#installation) for the details and post-install notes, and the [Getting Started guide](./docs/user/getting-started.md) for a walkthrough.
+Packages come from the [GitHub Releases](https://github.com/nongio/otto/releases) page. See [Installation](#installation) for the details and post-install notes, and the [Getting Started guide](https://nongio.github.io/otto/getting-started/) for a walkthrough.
 
 ## What you get
 
@@ -234,7 +236,7 @@ Every hotkey is configurable in the `[keyboard_shortcuts]` section:
 "Prior" = "ExposeShowAll"
 ```
 
-For everything else — window management, workspaces, gestures, the Dock and top bar, screen sharing, remote desktop, locking and login — see the [configuration reference](./docs/user/configuration.md) and the [User Guide](./docs/user/README.md).
+For everything else — window management, workspaces, gestures, the Dock and top bar, screen sharing, remote desktop, locking and login — see the [configuration reference](https://nongio.github.io/otto/configuration/) and the [User Guide](https://nongio.github.io/otto/).
 
 ## Development
 
@@ -262,7 +264,7 @@ cargo run --release -- --winit &
 WAYLAND_DISPLAY=wayland-1 cargo run -p otto-launcher
 ```
 
-Developer documentation lives in [docs/developer/](./docs/developer/README.md) — architecture, the rendering pipeline, the render loop, the scene graph, DRM planes, screen sharing and more.
+The [Developer Guide](https://nongio.github.io/otto/developer/) covers architecture, the rendering pipeline, the render loop, the scene graph, layers, DRM planes, screen sharing and more. The same pages live in [docs/developer/](./docs/developer/README.md).
 
 ### Profiling
 
