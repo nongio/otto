@@ -1,6 +1,7 @@
 use smithay::{
     desktop::space::SpaceElement, reexports::wayland_protocols::xdg::shell::server::xdg_toplevel,
-    reexports::wayland_server::backend::ObjectId, utils::SERIAL_COUNTER,
+    reexports::wayland_server::backend::ObjectId, reexports::wayland_server::Resource,
+    utils::IsAlive, utils::SERIAL_COUNTER,
 };
 
 use crate::focus::KeyboardFocusTarget;
@@ -144,6 +145,14 @@ impl<BackendData: Backend> Otto<BackendData> {
             .and_then(|ows| ows.spaces.get(workspace_index))
             .and_then(|space| {
                 space.elements().rev().find_map(|e| {
+                    // A window whose client has gone can still be in the
+                    // space: this runs from the toplevel destructor, and an
+                    // exiting client is torn down before its objects are.
+                    // Focusing one sends wl_keyboard.enter into a client the
+                    // backend can no longer resolve, which aborts.
+                    if !can_take_focus(e) {
+                        return None;
+                    }
                     let id = e.id();
                     if let Some(w) = self.workspaces.windows_map.get(&id) {
                         if w.is_minimised() {
@@ -295,6 +304,12 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// Centralized keyboard focus change: deactivates old window, activates new one,
     /// sends xdg configure and foreign-toplevel state for both.
     pub fn set_keyboard_focus_on_window(&mut self, window: &crate::shell::WindowElement) {
+        // Nothing may be sent to a surface whose client has gone: wayland-backend
+        // resolves the client id first and aborts the compositor on a dead one.
+        if !can_take_focus(window) {
+            return;
+        }
+
         // While a self-managing X11 game (Cuphead) is fullscreen, never move focus
         // to a DIFFERENT window (pointer, dock, self-activation by Steam Big
         // Picture, …). XWayland would send the game an X11 `FocusOut` and Unity
@@ -360,6 +375,12 @@ impl<BackendData: Backend> Otto<BackendData> {
         // sets _NET_ACTIVE_WINDOW, which is what they actually poll for.
         keyboard.set_focus(self, Some(window.clone().into()), serial);
         self.set_x11_active_window(window);
+
+        // The app switcher is ordered by focus recency, and `note_window_focused`
+        // above only moved the history — nothing rebuilds the model off it on its
+        // own, so without this the switcher keeps the order it had before the
+        // focus change.
+        self.workspaces.update_workspace_model();
     }
 
     /// Mirror keyboard focus to the X11 world by setting `_NET_ACTIVE_WINDOW`.
@@ -438,4 +459,18 @@ impl<BackendData: Backend> Otto<BackendData> {
             keyboard.set_focus(self, None, serial);
         }
     }
+}
+
+/// Whether a window can still be given the keyboard focus.
+///
+/// `IsAlive` alone is not enough. A client is destroyed before the objects it
+/// owns, so during `wl_client_destroy` a toplevel still reports itself alive
+/// while the backend can no longer resolve its client id — and every send on
+/// it aborts the process from inside a destructor that must not unwind.
+/// Asking the surface for its client is the check that covers both.
+fn can_take_focus(window: &crate::shell::WindowElement) -> bool {
+    window.alive()
+        && window
+            .wl_surface()
+            .is_some_and(|surface| surface.client().is_some())
 }

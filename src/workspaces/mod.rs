@@ -3669,9 +3669,25 @@ impl Workspaces {
         // of non-current workspaces first, so an app whose window lives on
         // another workspace would sink to the bottom of the switcher no matter
         // how recently it was used.
+        // An app is ranked by how recently it was used, but only against the
+        // apps it shares a workspace with: one whose windows are all somewhere
+        // else belongs behind everything here, however recently it was used.
+        #[allow(clippy::mutable_key_type)]
+        let here: HashSet<ObjectId> = self
+            .focused_output_workspaces()
+            .and_then(|ows| ows.spaces.get(ows.current_workspace))
+            .map(|space| {
+                space
+                    .elements()
+                    .filter_map(|we| we.wl_surface().map(|s| s.as_ref().id()))
+                    .collect()
+            })
+            .unwrap_or_default();
         {
             let mut model = self.model.write().unwrap();
-            let mut ranks: HashMap<String, usize> = HashMap::new();
+            // Per app: whether any of its windows is on this workspace, and the
+            // best (lowest) focus rank among them.
+            let mut ranks: HashMap<String, (bool, usize)> = HashMap::new();
             for (window_id, we) in all_windows.iter() {
                 let app_id = we.display_app_id(&self.display_handle);
                 if app_id.is_empty() {
@@ -3684,12 +3700,17 @@ impl Workspaces {
                     .rev()
                     .position(|h| h == window_id)
                     .unwrap_or(usize::MAX);
-                let entry = ranks.entry(app_id).or_insert(usize::MAX);
-                *entry = (*entry).min(rank);
+                let entry = ranks.entry(app_id).or_insert((false, usize::MAX));
+                entry.0 |= here.contains(window_id);
+                entry.1 = entry.1.min(rank);
             }
-            // Stable sort: apps never focused keep their space-iteration order.
+            // Stable sort, and the consumer reads the list in reverse: the
+            // most recent app on this workspace has to end up LAST, and the
+            // apps that are not on it first.
             model.zindex_application_list.sort_by_key(|app_id| {
-                std::cmp::Reverse(ranks.get(app_id).copied().unwrap_or(usize::MAX))
+                let (on_this_workspace, rank) =
+                    ranks.get(app_id).copied().unwrap_or((false, usize::MAX));
+                (on_this_workspace, std::cmp::Reverse(rank))
             });
         }
 
