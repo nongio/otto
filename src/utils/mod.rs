@@ -37,28 +37,6 @@ pub fn find_icon_with_theme(icon_name: &str, size: i32, scale: i32) -> Option<St
     })
 }
 
-/// Find a resource file path
-///
-/// Search order:
-/// 1. `./resources/{path}`
-/// 2. `/etc/otto/share/{path}`
-pub fn resource_path(path: &str) -> Option<std::path::PathBuf> {
-    use std::path::PathBuf;
-
-    // Try local resources directory first
-    let local_path = PathBuf::from(format!("resources/{}", path));
-    if local_path.exists() {
-        return Some(local_path);
-    }
-
-    // Try system-wide installation directory
-    let system_path = PathBuf::from(format!("/etc/otto/share/{}", path));
-    if system_path.exists() {
-        return Some(system_path);
-    }
-
-    None
-}
 /// Look up a themed icon for compositor chrome.
 ///
 /// Unlike [`named_icon`], this resolves against the icon theme from otto's

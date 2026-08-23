@@ -32,6 +32,9 @@ const BTN_LEFT: u32 = 0x110;
 const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 const DOUBLE_CLICK_SLOP: f32 = 6.0;
 
+/// When and where a press on the titlebar landed.
+type PressMark = Arc<Mutex<Option<(Instant, (f32, f32))>>>;
+
 /// A window's titlebar, as an input target.
 #[derive(Clone)]
 pub struct WindowDecorationView {
@@ -41,7 +44,7 @@ pub struct WindowDecorationView {
     press_on_bar: Arc<AtomicBool>,
     /// When and where the last press on the bar landed, for double-click
     /// detection.
-    last_press: Arc<Mutex<Option<(Instant, (f32, f32))>>>,
+    last_press: PressMark,
 }
 
 impl WindowDecorationView {

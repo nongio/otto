@@ -256,7 +256,7 @@ impl SettingsInterface {
         }
 
         let key = |leaf: &str| format!("displays.named.{connector}.{leaf}");
-        let mut write = |leaf: &str, value: toml::Value| {
+        let write = |leaf: &str, value: toml::Value| {
             crate::config::persist_key(&key(leaf), &value).map_err(|reason| {
                 SettingsFault::ApplyFailed(format!("could not persist: {reason}"))
             })
