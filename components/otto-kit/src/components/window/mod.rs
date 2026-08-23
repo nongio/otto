@@ -9,9 +9,9 @@ use std::sync::{Arc, Mutex, RwLock};
 use wayland_client::protocol::wl_seat;
 
 use crate::app_runner::AppContext;
-use wayland_client::Proxy;
 pub use crate::protocols::otto_surface_style_v1;
 use crate::surfaces::{SurfaceError, ToplevelSurface};
+use wayland_client::Proxy;
 
 pub use application_window::{ApplicationWindow, WindowLayout};
 
@@ -30,7 +30,7 @@ type CanvasDrawFn = Arc<Mutex<Option<Box<dyn FnMut(&skia_safe::Canvas) + Send>>>
 /// directions, so the frost never appears or disappears in view — what the eye
 /// follows is the tint thinning or thickening, and the toggle underneath it is
 /// always hidden by a fully opaque cover.
-const MATERIAL_FADE: f64 = 0.18;
+const MATERIAL_FADE: f64 = 0.3;
 
 /// Window component using ToplevelSurface
 ///
