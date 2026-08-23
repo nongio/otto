@@ -750,16 +750,10 @@ impl SettingsApp {
 /// behind the surface and this colour is what tints the result. It has to be
 /// re-applied whenever the colour scheme changes, since the layer keeps the
 /// colour it was last given.
-fn apply_material(style: &otto_surface_style_v1::OttoSurfaceStyleV1) {
-    let colour = skia_safe::Color4f::from(view::sidebar_material(
+fn apply_material(window: &Window) {
+    window.set_material(view::sidebar_material(
         current_color_scheme() == ColorScheme::Dark,
     ));
-    style.set_background_color(
-        colour.r as f64,
-        colour.g as f64,
-        colour.b as f64,
-        colour.a as f64,
-    );
 }
 
 impl App for SettingsApp {
@@ -794,17 +788,15 @@ impl App for SettingsApp {
             // corner. Clipping the descendants to the window's style bounds
             // rounds them with it.
             style.set_clip_children(otto_surface_style_v1::ClipMode::Enabled);
-            if want_blur {
-                // The material's colour goes on the compositor's layer, not
-                // into the buffer: `BackgroundBlur` blurs what is behind the
-                // layer and tints the result with this colour. A ground
-                // painted into the buffer — even a translucent one — sits on
-                // top of the frost and hides it, which is why `render_ground`
-                // leaves the sidebar transparent when `blurred`.
-                apply_material(&style);
-            }
             eprintln!("settings: surface style present, blur requested = {want_blur}");
         }
+        // The material's colour goes on the compositor's layer, not into the
+        // buffer: `BackgroundBlur` blurs what is behind the layer and tints
+        // the result with this colour, and the window fades that tint between
+        // its translucent and opaque forms as focus comes and goes. A ground
+        // painted into the buffer — even a translucent one — would sit on top
+        // of all of it, which is why `render_ground` leaves the sidebar to
+        // the compositor whenever there is a style to carry it.
         // Asked of the *window* rather than of the style directly: the window
         // re-applies the blend mode on every configure, and the first style
         // request goes out before the surface is mapped — set once on the
@@ -812,6 +804,7 @@ impl App for SettingsApp {
         // yet, and the frost never arrives. The window also drops the blur
         // while it is unfocused, so no full-window gaussian runs for a window
         // nobody is looking at. Same path `otto-files` takes.
+        apply_material(&window);
         window.set_background_blur(want_blur);
 
         // Built here, at window setup, and never later: a `DropdownMenu`
@@ -1468,9 +1461,7 @@ impl App for SettingsApp {
         if let Some(window) = self.window.as_ref() {
             // The frost's tint is on the compositor's layer, which keeps the
             // colour it was last given — hand it the new scheme's material.
-            if let Some(style) = window.surface_style() {
-                apply_material(&style);
-            }
+            apply_material(window);
             window.request_frame();
         }
     }

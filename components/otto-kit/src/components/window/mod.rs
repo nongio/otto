@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use wayland_client::protocol::wl_seat;
 
 use crate::app_runner::AppContext;
+use wayland_client::Proxy;
 pub use crate::protocols::otto_surface_style_v1;
 use crate::surfaces::{SurfaceError, ToplevelSurface};
 
@@ -21,6 +22,15 @@ fn default_layer_augmentation(layer: &otto_surface_style_v1::OttoSurfaceStyleV1)
 }
 
 type CanvasDrawFn = Arc<Mutex<Option<Box<dyn FnMut(&skia_safe::Canvas) + Send>>>>;
+
+/// How long the material takes to fade between its frosted and opaque forms,
+/// in seconds.
+///
+/// The blend mode is switched at the opaque end of that fade, in both
+/// directions, so the frost never appears or disappears in view — what the eye
+/// follows is the tint thinning or thickening, and the toggle underneath it is
+/// always hidden by a fully opaque cover.
+const MATERIAL_FADE: f64 = 0.18;
 
 /// Window component using ToplevelSurface
 ///
@@ -45,6 +55,18 @@ pub struct Window {
     /// actually asked of the compositor while the window is focused — see
     /// [`Window::set_background_blur`].
     blur_wanted: Arc<AtomicBool>,
+    /// The colour the window's material is tinted with while it is frosted.
+    ///
+    /// Held here rather than pushed straight at the style because the window
+    /// has to fade between it and its opaque form as focus comes and goes —
+    /// see [`Window::update_material`]. `None` means the application never
+    /// asked for a material and the background is whatever
+    /// [`Window::set_background`] last set.
+    material: Arc<RwLock<Option<skia_safe::Color>>>,
+    /// Whether the compositor is currently frosting the surface, so a change
+    /// of focus can tell which way it is going. Not the same as
+    /// `blur_wanted`: this follows activation too.
+    frosted: Arc<AtomicBool>,
 }
 
 impl Window {
@@ -78,6 +100,8 @@ impl Window {
             title: Arc::new(RwLock::new(title.to_string())),
             on_draw_fn: Arc::new(Mutex::new(None)),
             blur_wanted: Arc::new(AtomicBool::new(false)),
+            material: Arc::new(RwLock::new(None)),
+            frosted: Arc::new(AtomicBool::new(false)),
         };
         // Hand the default to the compositor too, so the background is carried
         // by the style from the first frame and a window that never calls
@@ -219,7 +243,7 @@ impl Window {
     /// application doing anything.
     pub fn set_background_blur(&self, enabled: bool) {
         self.blur_wanted.store(enabled, Ordering::Relaxed);
-        self.apply_blend_mode();
+        self.update_material(false);
     }
 
     /// Whether the application asked for a blurred backdrop, regardless of
@@ -228,17 +252,126 @@ impl Window {
         self.blur_wanted.load(Ordering::Relaxed)
     }
 
-    /// Push the blend mode the window's current state calls for.
-    fn apply_blend_mode(&self) {
+    /// The colour the compositor tints the frost with.
+    ///
+    /// Give it the *translucent* material — the colour the window should have
+    /// while it is frosted. What it looks like unfocused is derived from it
+    /// (the same hue, fully opaque), so the two ends of the fade always agree.
+    ///
+    /// This has to go through the window rather than straight at the surface
+    /// style: the window is what knows whether it is focused, and therefore
+    /// which of the two colours is the current one.
+    pub fn set_material(&self, color: impl Into<skia_safe::Color>) {
+        if let Ok(mut material) = self.material.write() {
+            *material = Some(color.into());
+        }
+        self.update_material(false);
+    }
+
+    /// The material's opaque form: the same hue with nothing behind it.
+    ///
+    /// What an unfocused window wears. Derived rather than asked for, so a
+    /// caller cannot hand over two colours that do not belong together.
+    fn opaque_material(color: skia_safe::Color) -> skia_safe::Color {
+        skia_safe::Color::from_argb(0xFF, color.r(), color.g(), color.b())
+    }
+
+    /// Bring the surface's frost and tint in line with the window's state,
+    /// fading between them when `animate` is set.
+    ///
+    /// The order matters in both directions, and it is not symmetric:
+    ///
+    /// - **Losing focus**: keep the blur, fade the tint to opaque, and only
+    ///   when that has finished take the blur away. Dropping it first would
+    ///   show the sharp desktop through a still-translucent tint for the whole
+    ///   fade.
+    /// - **Gaining focus**: put the blur on first, then fade the tint back
+    ///   down to translucent. The frost appears behind an opaque cover that
+    ///   thins to reveal it, rather than snapping in.
+    ///
+    /// Either way the opaque tint is the cover the blur is switched under.
+    fn update_material(&self, animate: bool) {
         let Some(style) = self.surface_style() else {
             return;
         };
-        let blurred = self.blur_wanted.load(Ordering::Relaxed) && self.is_activated();
-        style.set_blend_mode(if blurred {
+        let Some(material) = self.material.read().ok().and_then(|m| *m) else {
+            // No material to fade: the blend mode is all there is to set.
+            self.set_blend_mode(&style, self.wants_frost());
+            return;
+        };
+
+        let frost = self.wants_frost();
+        if self.frosted.swap(frost, Ordering::Relaxed) == frost && animate {
+            return;
+        }
+
+        let target = if frost {
+            material
+        } else {
+            Self::opaque_material(material)
+        };
+
+        // Gaining the frost: it goes on first, under the opaque cover.
+        if frost {
+            self.set_blend_mode(&style, true);
+        }
+
+        if !animate {
+            Self::push_color(&style, target);
+            if !frost {
+                self.set_blend_mode(&style, false);
+            }
+            return;
+        }
+
+        let Some(scene) = AppContext::surface_style_manager() else {
+            Self::push_color(&style, target);
+            if !frost {
+                self.set_blend_mode(&style, false);
+            }
+            return;
+        };
+        let qh = AppContext::queue_handle();
+        let transaction = scene.begin_transaction(qh, ());
+        transaction.set_duration(MATERIAL_FADE);
+        Self::push_color(&style, target);
+
+        // Losing the frost: the blur comes off only once the cover is fully
+        // opaque, which is what the completion event is for.
+        if !frost {
+            transaction.enable_completion_event();
+            let style_for_completion = style.clone();
+            AppContext::register_transaction_completion_callback(
+                transaction.id(),
+                Box::new(move || {
+                    style_for_completion.set_blend_mode(otto_surface_style_v1::BlendMode::Normal);
+                }),
+            );
+        }
+        transaction.commit();
+    }
+
+    /// Whether the compositor should be frosting the surface right now.
+    fn wants_frost(&self) -> bool {
+        self.blur_wanted.load(Ordering::Relaxed) && self.is_activated()
+    }
+
+    fn set_blend_mode(&self, style: &otto_surface_style_v1::OttoSurfaceStyleV1, frost: bool) {
+        style.set_blend_mode(if frost {
             otto_surface_style_v1::BlendMode::BackgroundBlur
         } else {
             otto_surface_style_v1::BlendMode::Normal
         });
+    }
+
+    fn push_color(style: &otto_surface_style_v1::OttoSurfaceStyleV1, color: skia_safe::Color) {
+        let scale = 1.0 / 255.0;
+        style.set_background_color(
+            color.r() as f64 * scale,
+            color.g() as f64 * scale,
+            color.b() as f64 * scale,
+            color.a() as f64 * scale,
+        );
     }
 
     /// Internal: Handle window configure event
@@ -248,8 +381,10 @@ impl Window {
                 let _ = surface.handle_configure(configure, serial);
             }
         }
-        // The configure is where activation arrives, so the blur follows it.
-        self.apply_blend_mode();
+        // The configure is where activation arrives, so the frost follows it —
+        // and fades, since this is the one place it changes for a reason the
+        // user can see.
+        self.update_material(true);
         self.render();
     }
 
