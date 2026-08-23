@@ -1,5 +1,8 @@
 # Screenshot Portal — implementation plan
 
+A plan for the D-Bus screenshot portal Otto does not have yet, and how it
+would sit on top of the screencopy machinery that already exists.
+
 > **Status: not implemented.** No `org.freedesktop.impl.portal.Screenshot`
 > exists in `xdg-desktop-portal-otto`, and `otto.portal` declares only
 > `ScreenCast` and `Settings`.

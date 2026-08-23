@@ -2,6 +2,8 @@
 
 A guided walk through everything Otto puts on screen, and what each piece is for.
 
+## The screen at a glance
+
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │ Firefox  File  Edit  View      ( O o )        🔊 🔋  Mar 23, 21:16   │  ← Top bar + Dynamic island

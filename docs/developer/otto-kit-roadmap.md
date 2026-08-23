@@ -1,5 +1,8 @@
 # otto-kit: application UI
 
+What otto-kit gives an app today, what is still missing, and the order the
+remaining pieces are being built in.
+
 > **Status: partially built.** Written while scaffolding the settings app
 > ([specs/settings-app.md](../../specs/settings-app.md)) — the first otto-kit
 > app that is mostly *forms* rather than mostly custom drawing, and so the
