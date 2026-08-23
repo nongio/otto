@@ -259,7 +259,12 @@ disconnected from the arrangement.
 
 Selecting an output exposes its resolution, refresh rate, scale, and whether it
 is primary. Resolution and refresh rate offer only modes the output actually
-advertises.
+advertises: the arrangement and both mode lists are read from `wl_output`,
+which carries each output's name, its place in the desktop and every mode its
+connector can be driven at. That is the app's display probe — it needs no
+privileged access and it follows hotplug. Refresh rates are listed for the
+resolution currently selected, since a display does not offer every rate at
+every size.
 
 Position and primary changes apply immediately. A resolution, refresh rate, or
 scale change applies immediately, and must be confirmed by the user within a

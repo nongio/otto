@@ -71,14 +71,25 @@ whenever there is no blur behind the window — it is unfocused, the application
 never asked for one, or the compositor cannot provide one — every translucent
 panel material is drawn at full opacity in the same colour instead.
 
+**The change is a fade, not a cut.** The material moves between its
+translucent and its filled-in form over about a third of a second rather than
+snapping, and the blur is switched at the *opaque* end of that fade in both
+directions — so the frost is never seen arriving or leaving, only the tint
+thinning to reveal it or thickening to cover it. Losing focus therefore keeps
+blurring until the material is fully opaque; gaining it turns the blur on
+before the material has started to thin. A window the compositor decorates
+fades on the same schedule as one that draws its own bar.
+
 **Restoring.** An application states once that it wants a blurred backdrop. The
 window drops and restores that blur as focus comes and goes, without the
 application asking again.
 
-**Atomicity.** The blur change and the repaint that answers it must reach the
-compositor in the same commit. A frame showing the new blur state against the
-old materials — translucent panels over an unblurred desktop — must not be
-presentable.
+**Atomicity.** No frame may show a translucent material over an unblurred
+desktop. Where the material changes in one step — a client's own panels
+repainting — that step and the blur change reach the compositor in the same
+commit. Where it fades, the ordering above is what guarantees it instead: the
+blur only ever turns off under a material that has already finished filling
+in, and only ever turns on under one that has not yet started to thin.
 
 ## Constraints & Edge Cases
 
@@ -100,6 +111,13 @@ presentable.
 
 ## Rationale
 
+- **Why the blur is toggled under an opaque cover.** The toggle itself is a
+  step change — a surface either has a blurred backdrop or it does not, and
+  there is no half a gaussian. Fading the material without moving the toggle
+  to the opaque end of the fade just makes that step visible for longer:
+  the frost pops in against a half-thinned tint. Hiding the step under the
+  one moment when nothing can be seen through the material is what makes the
+  whole transition read as a single fade.
 - **Why drop the blur rather than dim it.** A full-window gaussian every frame
   is the most expensive thing the compositor does on a window's behalf, and it
   is spent on a window nobody is looking at. Dropping it is both the cheaper

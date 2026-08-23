@@ -494,21 +494,33 @@ is shared with quick view. What follows is how the picker uses it.
 
 ### Filesystem watching
 
-Only the directories currently displayed are watched — the path stack, plus the
-places file — using inotify directly. Watches are dropped as directories leave
-the stack. Nothing is watched recursively.
+Only the directories currently displayed are watched — the path stack — using
+inotify directly. One inotify instance serves the process, with a single reader
+thread blocked in `poll(2)` until an event lands or a debounce comes due; the UI
+thread never blocks on it. A watch belongs to the column showing that directory
+and is dropped with it, so the watch set stays equal to what is on screen. Two
+panes on the same directory share one watch. Nothing is watched recursively.
 
 `IN_CREATE`, `IN_DELETE`, `IN_MOVED_FROM`, `IN_MOVED_TO`, `IN_CLOSE_WRITE` and
 `IN_ATTRIB` mark the directory dirty. A dirty directory is re-read after a
-100 ms debounce and the result diffed against the current snapshot, so that
-selection, cursor and scroll offset survive an unrelated file appearing.
-`IN_Q_OVERFLOW` forces a full re-read of everything watched.
-`IN_DELETE_SELF` or `IN_MOVE_SELF` on a displayed directory navigates to its
-nearest surviving ancestor and says why.
+100 ms debounce, and the re-read happens **in place**: only the column's listing
+is replaced. The selection is held by name and survives untouched; the scroll
+view — offset, measurements and momentum — is never rebuilt, because a change
+somebody else made must not move the view out from under the person reading it.
+The cursor is an index, so it alone is re-derived from the selection, and
+nothing is scrolled to reveal it. `IN_Q_OVERFLOW` forces a re-read of everything
+watched. `IN_DELETE_SELF`, `IN_MOVE_SELF` or `IN_IGNORED` on a displayed
+directory drops the panes at and below it and lands on the nearest surviving
+ancestor, saying why in the status line.
 
-Removable volumes appear and disappear in the sidebar by watching
-`/proc/self/mounts`, which signals `POLLPRI` on change. Volumes that are not
-already mounted are not shown and cannot be mounted from the picker in v1.
+Operations the user performs themselves — a paste, a delete, a drop — re-read
+every displayed column immediately by the same in-place path, rather than
+waiting out a debounce: the watcher would get there on its own, but the view
+should not visibly lag behind the user's own hand.
+
+Watching the places file, and watching `/proc/self/mounts` for removable volumes
+appearing and disappearing in the sidebar, are not yet built. Volumes that are
+not already mounted are not shown and cannot be mounted from the picker in v1.
 
 A filesystem that inotify cannot watch (many network mounts) simply produces no
 events; the view is correct when read and refreshes on navigation or on an
