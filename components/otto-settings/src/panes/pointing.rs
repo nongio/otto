@@ -11,7 +11,7 @@ pub fn build() -> Pane {
         icon: "pointer",
         groups: vec![
             group(
-                Some("Trackpad"),
+                "Trackpad",
                 vec![
                     Row::new("Tap to click", Control::Toggle(true)).id("input.tap_enabled"),
                     Row::new("Tap and drag", Control::Toggle(true)).id("input.tap_drag_enabled"),
@@ -29,7 +29,7 @@ pub fn build() -> Pane {
                 ],
             ),
             group(
-                Some("Pointer"),
+                "Pointer",
                 vec![
                     Row::new(
                         "Tracking speed",

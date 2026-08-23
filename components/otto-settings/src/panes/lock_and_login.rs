@@ -11,7 +11,7 @@ pub fn build() -> Pane {
         icon: "lock",
         groups: vec![
             group(
-                Some("Lock"),
+                "Lock",
                 vec![
                     // Seconds, matching the setting's own unit — a select of
                     // pretty intervals would have to invent choices the
@@ -34,7 +34,7 @@ pub fn build() -> Pane {
                 ],
             ),
             group(
-                Some("Login"),
+                "Login",
                 vec![
                     Row::new("Greeter", Control::Select("otto-greeter".into()))
                         .detail("Applies at the next login")

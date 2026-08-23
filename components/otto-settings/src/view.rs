@@ -7,7 +7,7 @@ use otto_kit::components::titlebar::{
     Titlebar, TitlebarGroup, WindowControls, WindowControlsState,
 };
 use otto_kit::prelude::*;
-use skia_safe::{ClipOp, Contains, Point, RRect};
+use skia_safe::{ClipOp, Contains, PathEffect, Point, RRect};
 
 use crate::glyphs;
 use crate::model::{self, Control, Pane, Row};
@@ -34,11 +34,14 @@ const GROUP_GAP: f32 = 22.0;
 /// Top padding of the pane content, in content-local points (origin at the
 /// pane viewport's top-left, i.e. `(SIDEBAR_W, TITLEBAR_H)`).
 const CONTENT_TOP_PAD: f32 = 16.0;
-/// Height the displays arrangement canvas adds ahead of the groups: the
-/// 168pt area plus the 30pt gap `render_arrangement` leaves below it. Kept
-/// as one constant, alongside that function, so [`Settings::pane_content_height`]
+/// The displays arrangement canvas itself: the framed area the screens are
+/// laid out in.
+const ARRANGEMENT_CANVAS_H: f32 = 168.0;
+/// Height the canvas adds ahead of the groups: the area plus the gap
+/// `render_arrangement` leaves below it for its caption. Kept as one
+/// constant, alongside that function, so [`Settings::pane_content_height`]
 /// cannot drift from what it actually draws.
-const ARRANGEMENT_HEIGHT: f32 = 168.0 + 30.0;
+const ARRANGEMENT_HEIGHT: f32 = ARRANGEMENT_CANVAS_H + 30.0;
 /// A file row's preview: how tall the thumbnail box is, and the space above
 /// and below it. The width follows the image's own aspect, capped at
 /// [`PREVIEW_W`] — a wallpaper is worth seeing in its own shape.
@@ -204,6 +207,72 @@ fn well_rect(right: f32, cy: f32, color: Color) -> Rect {
     Rect::from_xywh(right - width, cy - 22.0 / 2.0, width, 22.0)
 }
 
+/// The framed canvas within the space the pane walk reserves for the
+/// arrangement — everything but the caption gap below it.
+fn arrangement_canvas(reserved: Rect) -> Rect {
+    Rect::from_ltrb(
+        reserved.left,
+        reserved.top,
+        reserved.right,
+        reserved.top + ARRANGEMENT_CANVAS_H,
+    )
+}
+
+/// Where each output's rectangle lands inside the arrangement canvas.
+///
+/// Drawing and hit-testing both come through here, so a click can never
+/// select a different screen from the one under the pointer. The whole
+/// desktop's bounding box is fitted into the canvas with a margin, which is
+/// why this cannot be a per-output calculation: moving one screen rescales
+/// all of them.
+fn arrangement_screens(area: Rect) -> Vec<(model::Output, Rect)> {
+    let outputs = model::outputs();
+    if outputs.is_empty() {
+        return Vec::new();
+    }
+
+    let min_x = outputs.iter().map(|o| o.x).fold(f32::MAX, f32::min);
+    let min_y = outputs.iter().map(|o| o.y).fold(f32::MAX, f32::min);
+    let max_x = outputs
+        .iter()
+        .map(|o| o.x + o.width)
+        .fold(f32::MIN, f32::max);
+    let max_y = outputs
+        .iter()
+        .map(|o| o.y + o.height)
+        .fold(f32::MIN, f32::max);
+    let margin = 22.0;
+    let scale = ((area.width() - margin * 2.0) / (max_x - min_x))
+        .min((area.height() - margin * 2.0) / (max_y - min_y));
+    let ox = area.left + (area.width() - (max_x - min_x) * scale) / 2.0 - min_x * scale;
+    let oy = area.top + (area.height() - (max_y - min_y) * scale) / 2.0 - min_y * scale;
+
+    outputs
+        .into_iter()
+        .map(|output| {
+            let rect = Rect::from_xywh(
+                ox + output.x * scale,
+                oy + output.y * scale,
+                output.width * scale,
+                output.height * scale,
+            );
+            (output, rect)
+        })
+        .collect()
+}
+
+/// The second line inside a screen's rectangle: what it is, and whether it is
+/// on. Empty for an ordinary physical display that is running, which is the
+/// case that needs no explaining.
+fn screen_caption(output: &model::Output) -> &'static str {
+    match (output.is_virtual(), output.enabled) {
+        (true, true) => "Virtual",
+        (true, false) => "Virtual · Off",
+        (false, true) => "",
+        (false, false) => "Off",
+    }
+}
+
 /// Padding `Titlebar` is given, which is also where it places its leading
 /// group — so the traffic lights end up at `(TITLEBAR_PAD, TITLEBAR_PAD)`.
 const TITLEBAR_PAD: f32 = (TITLEBAR_H - 12.0) / 2.0;
@@ -266,14 +335,28 @@ pub struct SelectHit {
     pub current: String,
 }
 
-/// A text field the pointer landed on, with everything needed to start editing.
+/// A text field the pointer landed on, with everything needed to start
+/// editing it in place.
 pub struct TextHit {
-    pub id: &'static str,
+    /// The row's label. Not every text row is bound to a setting — the
+    /// Displays pane's position fields are not — so the label is what
+    /// identifies a field when there is no identifier to key it on. It is
+    /// unique within a pane, which is as far as an editing session reaches.
+    pub label: &'static str,
+    /// The setting a commit should reach, where the row has one.
+    pub id: Option<&'static str>,
     /// The value the field starts from — the last committed one.
     pub current: String,
     /// Where in the field's own box the click landed, so the caret can go
     /// under the pointer rather than to a default position.
     pub local_x: f32,
+}
+
+/// A push button the pointer landed on. Both halves are labels: the row's,
+/// and the button's within it.
+pub struct ButtonHit {
+    pub row: &'static str,
+    pub button: &'static str,
 }
 
 /// What a press on the shortcuts group means.
@@ -306,7 +389,7 @@ pub struct Hit {
 
 /// One group of a pane, placed by [`Settings::pane_layout`].
 struct GroupLayout<'a> {
-    title: Option<&'static str>,
+    title: Option<&'a str>,
     /// Top of the title's 24pt band, where the group has a title.
     title_y: Option<f32>,
     /// The grouped-list card behind the rows.
@@ -657,7 +740,7 @@ impl Settings {
 
         let mut groups = Vec::with_capacity(pane.groups.len());
         for group in &pane.groups {
-            let title_y = group.title.map(|_| {
+            let title_y = group.title.as_ref().map(|_| {
                 let top = y;
                 y += 24.0;
                 top
@@ -678,7 +761,7 @@ impl Settings {
             y += GROUP_GAP;
 
             groups.push(GroupLayout {
-                title: group.title,
+                title: group.title.as_deref(),
                 title_y,
                 card,
                 rows,
@@ -806,7 +889,6 @@ impl Settings {
             .row_rects(content_width)
             .into_iter()
             .find(|(_, rect)| rect.contains(local))?;
-        let id = row.id?;
         let Control::Text(current) = &row.control else {
             return None;
         };
@@ -816,7 +898,11 @@ impl Settings {
             return None;
         }
         Some(TextHit {
-            id,
+            // Not every text row is bound: the Displays pane's position
+            // fields have no identifier, so the label is what an editing
+            // session is keyed on there.
+            label: row.label,
+            id: row.id,
             current: current.clone(),
             // Box-local, which is what `TextInput::on_pointer_down` wants.
             local_x: local.x - field.left,
@@ -961,6 +1047,85 @@ impl Settings {
             ),
             current: color,
         })
+    }
+
+    /// The push button a click lands on, if any.
+    pub fn button_hit(&self, x: f32, y: f32, scroll_offset: f32) -> Option<ButtonHit> {
+        let viewport = self.viewport();
+        if !viewport.contains(Point::new(x, y)) {
+            return None;
+        }
+
+        let content_width = self.width - SIDEBAR_W;
+        let local = Point::new(x - viewport.left, y - viewport.top + scroll_offset);
+
+        let (row, rect) = self
+            .row_rects(content_width)
+            .into_iter()
+            .find(|(_, rect)| rect.contains(local))?;
+        let Control::Button(labels) = &row.control else {
+            return None;
+        };
+
+        widgets::button_rects(rect.right - 14.0, rect.center_y(), labels)
+            .into_iter()
+            .position(|button| button.contains(local))
+            .map(|index| ButtonHit {
+                row: row.label,
+                button: labels[index],
+            })
+    }
+
+    /// The label of the switch a click lands on, for a row that is *not* bound
+    /// to a setting.
+    ///
+    /// [`Self::hit`] only reports bound rows: it exists to produce a value for
+    /// the compositor, and a row with no identifier has nowhere to send one.
+    /// The displays pane's switches are all unbound (see
+    /// [`crate::panes::displays`]) and still have to do something, so they are
+    /// hit-tested separately and routed by label.
+    pub fn unbound_toggle_hit(&self, x: f32, y: f32, scroll_offset: f32) -> Option<&'static str> {
+        let viewport = self.viewport();
+        if !viewport.contains(Point::new(x, y)) {
+            return None;
+        }
+
+        let content_width = self.width - SIDEBAR_W;
+        let local = Point::new(x - viewport.left, y - viewport.top + scroll_offset);
+
+        let (row, rect) = self
+            .row_rects(content_width)
+            .into_iter()
+            .find(|(_, rect)| rect.contains(local))?;
+        if row.id.is_some() || !matches!(row.control, Control::Toggle(_)) {
+            return None;
+        }
+
+        let toggle = Rect::from_xywh(
+            rect.right - 14.0 - widgets::TOGGLE_W,
+            rect.center_y() - widgets::TOGGLE_H / 2.0,
+            widgets::TOGGLE_W,
+            widgets::TOGGLE_H,
+        );
+        toggle.contains(local).then_some(row.label)
+    }
+
+    /// The index of the screen a click lands on in the arrangement canvas —
+    /// an index into [`model::outputs`], which is the order the canvas draws
+    /// them in.
+    pub fn screen_hit(&self, x: f32, y: f32, scroll_offset: f32) -> Option<usize> {
+        let viewport = self.viewport();
+        if !viewport.contains(Point::new(x, y)) {
+            return None;
+        }
+
+        let content_width = self.width - SIDEBAR_W;
+        let local = Point::new(x - viewport.left, y - viewport.top + scroll_offset);
+
+        let area = self.pane_layout(content_width).arrangement?;
+        arrangement_screens(arrangement_canvas(area))
+            .into_iter()
+            .position(|(_, rect)| rect.contains(local))
     }
 
     /// The value a drag to `x` implies, for a slider already being dragged.
@@ -1372,9 +1537,10 @@ impl Settings {
             }
             Control::Text(value) => {
                 let field = text_rect(right, cy);
-                match self.editing_field(crate::EditTarget::Setting(row.id.unwrap_or_default())) {
-                    // The live field owns the value while it is being edited:
-                    // what the model holds is the last committed one.
+                // While a row is being edited its field *is* the editor: the
+                // value underneath is what the edit started from, and drawing
+                // it as well would put stale text under a live caret.
+                match self.editing_field(crate::EditTarget::for_row(row.id, row.label)) {
                     Some(input) => {
                         canvas.save();
                         canvas.translate((field.left, field.top));
@@ -1384,6 +1550,7 @@ impl Settings {
                     None => widgets::text_field(canvas, field, value, &self.theme),
                 }
             }
+            Control::Button(labels) => widgets::buttons(canvas, right, cy, labels, &self.theme),
             Control::File(value) => widgets::file_field(canvas, right, cy, value, &self.theme),
             Control::Value(value) => {
                 // Shortcut rows read as key combinations; everything else is
@@ -1472,8 +1639,7 @@ impl Settings {
     /// Displays arrangement canvas, drawn from `y` down. It occupies
     /// [`ARRANGEMENT_HEIGHT`], which is what the pane walk reserves for it.
     fn render_arrangement(&self, canvas: &Canvas, x0: f32, x1: f32, y: f32) {
-        let outputs = model::outputs();
-        let area = Rect::from_ltrb(x0, y, x1, y + 168.0);
+        let area = arrangement_canvas(Rect::from_ltrb(x0, y, x1, y + ARRANGEMENT_HEIGHT));
         let rrect = RRect::new_rect_xy(area, 9.0, 9.0);
         canvas.draw_rrect(
             rrect,
@@ -1484,61 +1650,68 @@ impl Settings {
             }),
         );
 
-        // Fit the desktop bounding box into the area with a margin.
-        let min_x = outputs.iter().map(|o| o.x).fold(f32::MAX, f32::min);
-        let min_y = outputs.iter().map(|o| o.y).fold(f32::MAX, f32::min);
-        let max_x = outputs
-            .iter()
-            .map(|o| o.x + o.width)
-            .fold(f32::MIN, f32::max);
-        let max_y = outputs
-            .iter()
-            .map(|o| o.y + o.height)
-            .fold(f32::MIN, f32::max);
-        let margin = 22.0;
-        let scale = ((area.width() - margin * 2.0) / (max_x - min_x))
-            .min((area.height() - margin * 2.0) / (max_y - min_y));
-        let ox = area.left + (area.width() - (max_x - min_x) * scale) / 2.0 - min_x * scale;
-        let oy = area.top + (area.height() - (max_y - min_y) * scale) / 2.0 - min_y * scale;
-
-        widgets::dashed_rect(
-            canvas,
-            Rect::from_ltrb(
-                ox + min_x * scale - 6.0,
-                oy + min_y * scale - 6.0,
-                ox + max_x * scale + 6.0,
-                oy + max_y * scale + 6.0,
-            ),
-            self.theme.fill_tertiary,
-        );
-
-        for output in &outputs {
-            let rect = Rect::from_xywh(
-                ox + output.x * scale,
-                oy + output.y * scale,
-                output.width * scale,
-                output.height * scale,
+        // The desktop's bounds, marked out around whatever the screens
+        // occupy. Taken from the drawn rects rather than recomputed from the
+        // model, so it cannot end up framing a layout that is not there.
+        let screens = arrangement_screens(area);
+        if !screens.is_empty() {
+            let margin = 6.0;
+            widgets::dashed_rect(
+                canvas,
+                Rect::from_ltrb(
+                    screens.iter().map(|(_, r)| r.left).fold(f32::MAX, f32::min) - margin,
+                    screens.iter().map(|(_, r)| r.top).fold(f32::MAX, f32::min) - margin,
+                    screens
+                        .iter()
+                        .map(|(_, r)| r.right)
+                        .fold(f32::MIN, f32::max)
+                        + margin,
+                    screens
+                        .iter()
+                        .map(|(_, r)| r.bottom)
+                        .fold(f32::MIN, f32::max)
+                        + margin,
+                ),
+                self.theme.fill_tertiary,
             );
-            let rrect = RRect::new_rect_xy(rect, 4.0, 4.0);
+        }
+
+        let selected = model::selected_output();
+        for (index, (output, rect)) in screens.iter().enumerate() {
+            let rrect = RRect::new_rect_xy(*rect, 4.0, 4.0);
+            // A screen that is off is drawn on the same ground as one that is
+            // on, only fainter: it still holds its place in the arrangement,
+            // and dropping it out of the layout would move everything else.
+            let ground = if self.dark {
+                Color::from_rgb(0x33, 0x39, 0x45)
+            } else {
+                Color::from_rgb(0xD5, 0xDC, 0xE6)
+            };
             canvas.draw_rrect(
                 rrect,
-                &self.fill(if self.dark {
-                    Color::from_rgb(0x33, 0x39, 0x45)
+                &self.fill(if output.enabled {
+                    ground
                 } else {
-                    Color::from_rgb(0xD5, 0xDC, 0xE6)
+                    Color::from_argb(0x4D, ground.r(), ground.g(), ground.b())
                 }),
             );
-            // Selection is the accent ring; being primary is the bar strip.
-            // They are different states and a display can have either.
+
+            // Selection is the accent ring; being primary is the bar strip;
+            // being virtual is the dashed edge. They are different states and
+            // a display can have any combination of them, so the ring wins the
+            // stroke and the caption carries the rest.
             let mut border = Paint::default();
             border.set_anti_alias(true);
             border.set_style(skia_safe::PaintStyle::Stroke);
-            border.set_stroke_width(if output.selected { 2.0 } else { 1.0 });
-            border.set_color(if output.selected {
+            border.set_stroke_width(if index == selected { 2.0 } else { 1.0 });
+            border.set_color(if index == selected {
                 self.theme.accent
             } else {
                 self.theme.fill_primary
             });
+            if output.is_virtual() && index != selected {
+                border.set_path_effect(PathEffect::dash(&[4.0, 4.0], 0.0));
+            }
             canvas.draw_rrect(rrect, &border);
 
             if output.primary {
@@ -1549,21 +1722,44 @@ impl Settings {
                 canvas.restore();
             }
 
+            let caption = screen_caption(output);
             let style = styles::SUBHEADLINE;
-            let width = style.font().measure_str(output.name, None).0;
+            let width = style.font().measure_str(&output.name, None).0;
             widgets::text_centered_y(
                 canvas,
-                output.name,
+                &output.name,
                 rect.center_x() - width / 2.0,
-                rect.center_y(),
+                // Two lines of text are centred as a pair, so a screen with no
+                // caption does not sit its name higher than its neighbour.
+                if caption.is_empty() {
+                    rect.center_y()
+                } else {
+                    rect.center_y() - 8.0
+                },
                 style,
-                self.theme.text_primary,
+                if output.enabled {
+                    self.theme.text_primary
+                } else {
+                    self.theme.text_tertiary
+                },
             );
+            if !caption.is_empty() {
+                let style = styles::CAPTION_2;
+                let width = style.font().measure_str(caption, None).0;
+                widgets::text_centered_y(
+                    canvas,
+                    caption,
+                    rect.center_x() - width / 2.0,
+                    rect.center_y() + 8.0,
+                    style,
+                    self.theme.text_tertiary,
+                );
+            }
         }
 
         widgets::text_centered_y(
             canvas,
-            "Drag a display to rearrange it",
+            "Click a display to change its settings below",
             x0 + 2.0,
             area.bottom + 12.0,
             styles::SUBHEADLINE,

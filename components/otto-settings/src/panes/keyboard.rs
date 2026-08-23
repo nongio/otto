@@ -5,7 +5,7 @@
 
 use std::sync::{OnceLock, RwLock};
 
-use crate::model::{group, Control, Pane, Row};
+use crate::model::{group, untitled, Control, Pane, Row};
 
 /// Builtin actions a shortcut can be bound to.
 ///
@@ -189,33 +189,30 @@ pub fn build() -> Pane {
         name: "Keyboard",
         icon: "keyboard",
         groups: vec![
+            untitled(vec![
+                Row::new(
+                    "Key repeat delay",
+                    Control::Slider {
+                        value: 300.0,
+                        min: 100.0,
+                        max: 1000.0,
+                        readout: "300 ms".into(),
+                    },
+                )
+                .id("keyboard_repeat_delay"),
+                Row::new(
+                    "Key repeat rate",
+                    Control::Slider {
+                        value: 30.0,
+                        min: 5.0,
+                        max: 60.0,
+                        readout: "30 / s".into(),
+                    },
+                )
+                .id("keyboard_repeat_rate"),
+            ]),
             group(
-                None,
-                vec![
-                    Row::new(
-                        "Key repeat delay",
-                        Control::Slider {
-                            value: 300.0,
-                            min: 100.0,
-                            max: 1000.0,
-                            readout: "300 ms".into(),
-                        },
-                    )
-                    .id("keyboard_repeat_delay"),
-                    Row::new(
-                        "Key repeat rate",
-                        Control::Slider {
-                            value: 30.0,
-                            min: 5.0,
-                            max: 60.0,
-                            readout: "30 / s".into(),
-                        },
-                    )
-                    .id("keyboard_repeat_rate"),
-                ],
-            ),
-            group(
-                Some("Input source"),
+                "Input source",
                 vec![
                     // Shown, not editable: these are free text with no
                     // discoverable choice list, and the app has no text entry
@@ -230,7 +227,7 @@ pub fn build() -> Pane {
             // the config file, and the settings contract has no identifier for
             // a list. Adding, removing and retyping lines all work; nothing
             // leaves the process.
-            group(Some("Shortcuts"), shortcut_rows),
+            group("Shortcuts", shortcut_rows),
         ],
     }
 }

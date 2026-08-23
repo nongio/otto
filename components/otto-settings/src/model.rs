@@ -5,6 +5,7 @@
 //! plausible constants chosen to exercise every control the panes need.
 
 use std::borrow::Cow;
+use std::sync::{OnceLock, RwLock};
 
 use crate::panes;
 use crate::settings_client::{self, Value};
@@ -24,11 +25,12 @@ pub enum Control {
     Select(String),
     /// Colour swatch plus its hex value.
     Color(u32),
-    /// Free text (paths, command lines, font names). No pane uses it since
-    /// the background image became a [`Control::File`]; kept because it is
-    /// the natural control for the next free-text setting that appears.
-    #[allow(dead_code)]
+    /// Free text (paths, command lines, numbers), edited in place — see
+    /// `Settings::text_hit` and the `Editing` session in `main.rs`.
     Text(String),
+    /// Push buttons at the row's trailing edge, labelled by these strings.
+    /// For a row that *does* something rather than holding a value.
+    Button(&'static [&'static str]),
     /// A file the user picks through the desktop portal. Holds the chosen
     /// path, empty until one is chosen.
     File(String),
@@ -133,6 +135,10 @@ impl Row {
         self
     }
 
+    /// No pane marks a row overridden since the shortcuts group stopped being
+    /// a static list; kept because the badge it sets is drawn and the next
+    /// setting that can be overridden will want it.
+    #[allow(dead_code)]
     pub(crate) fn overridden(mut self) -> Self {
         self.overridden = true;
         self
@@ -251,7 +257,9 @@ fn parse_hex(text: &str) -> Option<u32> {
 
 /// A titled run of rows inside a pane.
 pub struct Group {
-    pub title: Option<&'static str>,
+    /// `Cow` rather than `&'static str` because the displays pane titles a
+    /// group with the name of the screen the canvas has selected.
+    pub title: Option<Cow<'static, str>>,
     pub rows: Vec<Row>,
 }
 
@@ -276,42 +284,242 @@ pub fn panes() -> Vec<Pane> {
     ]
 }
 
-pub(crate) fn group(title: Option<&'static str>, rows: Vec<Row>) -> Group {
-    Group { title, rows }
+pub(crate) fn group(title: impl Into<Cow<'static, str>>, rows: Vec<Row>) -> Group {
+    Group {
+        title: Some(title.into()),
+        rows,
+    }
+}
+
+/// A group with no heading of its own — its rows read as the pane's first
+/// block, under the pane's own title.
+///
+/// Separate from [`group`] rather than a `None` passed to it: the title is
+/// generic now (the Displays pane names its group after the selected screen),
+/// and `None` on its own tells the compiler nothing about which type it is
+/// `None` of.
+pub(crate) fn untitled(rows: Vec<Row>) -> Group {
+    Group { title: None, rows }
+}
+
+/// What is behind an output.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum OutputKind {
+    /// A connector with a panel on the end of it.
+    Physical,
+    /// A headless output streamed over PipeWire — what `otto-rdp` serves to a
+    /// remote client, and what an AirPlay receiver consumes. See
+    /// `src/virtual_output/` in the compositor.
+    Virtual,
 }
 
 /// Outputs shown in the Displays arrangement canvas. Positions and sizes are
 /// in compositor logical pixels; the canvas scales them to fit.
+#[derive(Clone)]
 pub struct Output {
-    pub name: &'static str,
+    /// Connector name for a physical output, the configured name for a
+    /// virtual one. Owned rather than `&'static str` because a virtual output
+    /// added from the pane is named at runtime.
+    pub name: String,
     pub x: f32,
     pub y: f32,
     pub width: f32,
     pub height: f32,
     pub primary: bool,
-    /// Whose settings the pane is showing below the canvas.
-    pub selected: bool,
+    pub kind: OutputKind,
+    /// Whether the compositor is driving this output. A disabled one keeps
+    /// its place in the arrangement so re-enabling it puts it back where it
+    /// was.
+    pub enabled: bool,
 }
 
+impl Output {
+    pub fn is_virtual(&self) -> bool {
+        matches!(self.kind, OutputKind::Virtual)
+    }
+}
+
+/// The arrangement the Displays pane is showing, and which screen in it the
+/// pane's rows belong to.
+///
+/// **Nothing here reaches the compositor.** `org.otto.Settings` serves no
+/// per-output setting at all (see the doc comment on [`crate::panes::displays`]),
+/// so an arrangement the user edits lives exactly as long as the window does.
+/// It is kept anyway because the alternative is worse: a canvas that ignored
+/// every click, and add/remove buttons that did nothing, would read as broken
+/// rather than as unwired.
+struct Arrangement {
+    outputs: Vec<Output>,
+    /// Index into `outputs`. Kept in range by every mutator here, so the pane
+    /// can index with it directly.
+    selected: usize,
+}
+
+impl Default for Arrangement {
+    /// Two panels and one virtual output — the shape `otto_config.example.toml`
+    /// documents, so the pane shows what a virtual output looks like before
+    /// anyone adds one.
+    fn default() -> Self {
+        Self {
+            outputs: vec![
+                Output {
+                    name: "eDP-1".into(),
+                    x: 0.0,
+                    y: 560.0,
+                    width: 1128.0,
+                    height: 752.0,
+                    primary: true,
+                    kind: OutputKind::Physical,
+                    enabled: true,
+                },
+                Output {
+                    name: "HDMI-A-1".into(),
+                    x: 1128.0,
+                    y: 0.0,
+                    width: 2560.0,
+                    height: 1440.0,
+                    primary: false,
+                    kind: OutputKind::Physical,
+                    enabled: true,
+                },
+                Output {
+                    name: "virtual-1".into(),
+                    x: 3688.0,
+                    y: 0.0,
+                    width: 1920.0,
+                    height: 1080.0,
+                    primary: false,
+                    kind: OutputKind::Virtual,
+                    enabled: true,
+                },
+            ],
+            selected: 1,
+        }
+    }
+}
+
+fn arrangement() -> &'static RwLock<Arrangement> {
+    static ARRANGEMENT: OnceLock<RwLock<Arrangement>> = OnceLock::new();
+    ARRANGEMENT.get_or_init(|| RwLock::new(Arrangement::default()))
+}
+
+/// Every output in the arrangement, in the order the canvas draws them — which
+/// is also the order [`selected_output`] and [`select_output`] index into.
 pub fn outputs() -> Vec<Output> {
-    vec![
-        Output {
-            name: "eDP-1",
-            x: 0.0,
-            y: 560.0,
-            width: 1128.0,
-            height: 752.0,
-            primary: true,
-            selected: false,
-        },
-        Output {
-            name: "HDMI-A-1",
-            x: 1128.0,
-            y: 0.0,
-            width: 2560.0,
-            height: 1440.0,
-            primary: false,
-            selected: true,
-        },
-    ]
+    arrangement().read().unwrap().outputs.clone()
+}
+
+/// Index of the screen whose settings the pane is showing.
+pub fn selected_output() -> usize {
+    arrangement().read().unwrap().selected
+}
+
+/// Show `index`'s settings. Out-of-range indices are ignored rather than
+/// clamped: they can only come from a hit test that disagrees with the canvas,
+/// and silently selecting a different screen would hide that.
+pub fn select_output(index: usize) {
+    let mut arrangement = arrangement().write().unwrap();
+    if index < arrangement.outputs.len() {
+        arrangement.selected = index;
+    }
+}
+
+/// Run `edit` on the selected output.
+fn with_selected(edit: impl FnOnce(&mut Output)) {
+    let mut arrangement = arrangement().write().unwrap();
+    let selected = arrangement.selected;
+    if let Some(output) = arrangement.outputs.get_mut(selected) {
+        edit(output);
+    }
+}
+
+/// Turn the selected screen on or off.
+pub fn toggle_selected_enabled() {
+    with_selected(|output| output.enabled = !output.enabled);
+}
+
+/// Make the selected screen the primary one — the display the dock and the
+/// bar live on. Exactly one output is primary, so this takes it off the
+/// others rather than toggling.
+pub fn make_selected_primary() {
+    let mut arrangement = arrangement().write().unwrap();
+    let selected = arrangement.selected;
+    for (index, output) in arrangement.outputs.iter_mut().enumerate() {
+        output.primary = index == selected;
+    }
+}
+
+/// Move the selected screen's top-left corner.
+pub fn set_selected_position(x: Option<f32>, y: Option<f32>) {
+    with_selected(|output| {
+        if let Some(x) = x {
+            output.x = x;
+        }
+        if let Some(y) = y {
+            output.y = y;
+        }
+    });
+}
+
+/// Add a virtual output, and select it so its rows are the ones on screen.
+///
+/// Placed to the right of everything else at the resolution
+/// `otto_config.example.toml` uses, since a new headless output has no
+/// hardware to take a mode from.
+pub fn add_virtual_output() {
+    let mut arrangement = arrangement().write().unwrap();
+    // Names have to be unique — the compositor keys virtual outputs by name —
+    // so count up past whatever is already there rather than past the number
+    // of virtual outputs, which repeats a name after a removal.
+    let next = (1..)
+        .find(|n| {
+            let name = format!("virtual-{n}");
+            !arrangement.outputs.iter().any(|o| o.name == name)
+        })
+        .expect("an unused name exists");
+    let right = arrangement
+        .outputs
+        .iter()
+        .map(|o| o.x + o.width)
+        .fold(0.0_f32, f32::max);
+
+    arrangement.outputs.push(Output {
+        name: format!("virtual-{next}"),
+        x: right,
+        y: 0.0,
+        width: 1920.0,
+        height: 1080.0,
+        primary: false,
+        kind: OutputKind::Virtual,
+        enabled: true,
+    });
+    arrangement.selected = arrangement.outputs.len() - 1;
+}
+
+/// Remove the selected screen, if it is a virtual one.
+///
+/// Physical outputs are not removable: the arrangement describes hardware
+/// that is plugged in, and a panel does not stop existing because the pane
+/// stopped listing it. Returns whether anything was removed.
+pub fn remove_selected_virtual_output() -> bool {
+    let mut arrangement = arrangement().write().unwrap();
+    let selected = arrangement.selected;
+    match arrangement.outputs.get(selected) {
+        Some(output) if output.is_virtual() => {}
+        _ => return false,
+    }
+    arrangement.outputs.remove(selected);
+    arrangement.selected = selected.min(arrangement.outputs.len().saturating_sub(1));
+    true
+}
+
+/// How many virtual outputs the arrangement holds, for the pane's summary.
+pub fn virtual_output_count() -> usize {
+    arrangement()
+        .read()
+        .unwrap()
+        .outputs
+        .iter()
+        .filter(|o| o.is_virtual())
+        .count()
 }

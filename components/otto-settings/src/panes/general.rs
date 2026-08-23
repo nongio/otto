@@ -11,7 +11,7 @@ pub fn build() -> Pane {
         icon: "settings",
         groups: vec![
             group(
-                Some("Appearance"),
+                "Appearance",
                 vec![
                     Row::new("Appearance", Control::Select("Light".into())).id("theme_scheme"),
                     Row::new("Accent colour", Control::Color(0xFF0A84FF)).id("accent_color"),
@@ -23,7 +23,7 @@ pub fn build() -> Pane {
                 ],
             ),
             group(
-                Some("Desktop"),
+                "Desktop",
                 vec![
                     Row::new("Background colour", Control::Color(0xFF2C2CA0))
                         .id("background_color"),
@@ -33,7 +33,7 @@ pub fn build() -> Pane {
                 ],
             ),
             group(
-                Some("Pointer & icons"),
+                "Pointer & icons",
                 vec![
                     Row::new("Cursor theme", Control::Select("Notwaita-Black".into()))
                         .id("cursor_theme"),
@@ -53,14 +53,14 @@ pub fn build() -> Pane {
             // The app switcher has no pane of its own — the workspaces pane
             // was dropped — and this is the only setting it owns.
             group(
-                Some("Window switcher"),
+                "Window switcher",
                 vec![
                     Row::new("Show on the pointer's display", Control::Toggle(false))
                         .id("appswitcher.follow_cursor"),
                 ],
             ),
             group(
-                Some("Language"),
+                "Language",
                 vec![Row::new("Preferred languages", Control::Text("en".into())).id("locales")],
             ),
         ],

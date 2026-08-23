@@ -3,8 +3,10 @@
 //! Rows carrying an `id` are bound to `org.otto.Settings`; rows without one
 //! are not wired to the compositor yet.
 //!
-//! Resolution, refresh rate and "use as primary" are per-output settings —
-//! in the compositor's config they live under `displays.named.<connector>`
+//! Almost everything here is in the second category, and deliberately so.
+//! Resolution, refresh rate, "use as primary", whether a screen is on, and
+//! where its top-left corner sits are all per-output settings — in the
+//! compositor's config they live under `displays.named.<connector>`
 //! (`DisplaysConfig`/`DisplayProfile` in `src/config/mod.rs`), keyed by
 //! connector name. The wire contract
 //! (`docs/developer/settings-dbus-api.md`, "Open" section) explicitly leaves
@@ -13,40 +15,144 @@
 //! port or a docking-station reshuffle. Inventing an identifier now (e.g.
 //! `displays.named.HDMI-A-1.resolution`) would bake a wire contract we would
 //! have to support forever even after a real display-identity scheme lands,
-//! so these three rows stay unbound.
+//! so those rows stay unbound. The same goes for the virtual outputs, which
+//! the compositor reads from `[[virtual_outputs]]` at startup
+//! (`VirtualOutputConfig` in `src/config/mod.rs`) and serves no setting for
+//! at all.
 //!
-//! Scale is different: `DisplayProfile` has no per-output scale field at
-//! all today, only the single top-level `screen_scale` (see
+//! What the unbound rows do edit is the session-local arrangement in
+//! [`crate::model`] — see the doc comment there for why that exists rather
+//! than nothing.
+//!
+//! Scale is the one exception: `DisplayProfile` has no per-output scale field
+//! at all today, only the single top-level `screen_scale` (see
 //! `src/settings/schema.rs`). So although this row is drawn under a
 //! per-display header, it is bound to that global identifier — it is the
 //! only scale setting Otto actually has.
 
-use crate::model::{group, Control, Pane, Row};
+use crate::model::{self, group, Control, Pane, Row};
+
+/// Labels of the rows this pane routes back to itself. They are the only
+/// handle an unbound row has: `Row::id` is `None`, so there is no identifier
+/// to key on, and the label is what the hit tests in `view.rs` report.
+const ACTIVE: &str = "Active";
+const PRIMARY: &str = "Use as primary";
+const X_POSITION: &str = "X position";
+const Y_POSITION: &str = "Y position";
+const VIRTUAL: &str = "Virtual displays";
+
+/// The push buttons on the [`VIRTUAL`] row.
+const ADD: &str = "Add";
+const REMOVE: &str = "Remove";
 
 pub fn build() -> Pane {
+    let outputs = model::outputs();
+    let selected = outputs
+        .get(model::selected_output())
+        .expect("the arrangement always has a selected output");
+
+    let count = model::virtual_output_count();
     Pane {
         name: "Displays",
         icon: "monitor",
         // The arrangement canvas is drawn by the pane itself, not as a row.
         // Below it sit the settings for whichever display is selected there.
-        groups: vec![group(
-            Some("HDMI-A-1 — Dell U2720Q"),
-            vec![
-                Row::new("Resolution", Control::Select("3840 × 2160".into())).overridden(),
-                Row::new("Refresh rate", Control::Select("60.00 Hz".into())),
-                Row::new(
-                    "Scale",
-                    Control::Slider {
-                        value: 2.0,
-                        min: 0.5,
-                        max: 4.0,
-                        readout: "200%".into(),
-                    },
-                )
-                .id("screen_scale"),
-                Row::new("Use as primary", Control::Toggle(false))
-                    .detail("The dock and the bar live on the primary display"),
-            ],
-        )],
+        groups: vec![
+            group(
+                selected.name.clone(),
+                vec![
+                    Row::new(
+                        "Resolution",
+                        Control::Select(format!(
+                            "{} × {}",
+                            selected.width as u32, selected.height as u32
+                        )),
+                    ),
+                    Row::new("Refresh rate", Control::Select("60.00 Hz".into())),
+                    Row::new(
+                        "Scale",
+                        Control::Slider {
+                            value: 2.0,
+                            min: 0.5,
+                            max: 4.0,
+                            readout: "200%".into(),
+                        },
+                    )
+                    .id("screen_scale"),
+                    Row::new(ACTIVE, Control::Toggle(selected.enabled))
+                        .detail("An inactive display keeps its place in the arrangement"),
+                    Row::new(PRIMARY, Control::Toggle(selected.primary))
+                        .detail("The dock and the bar live on the primary display"),
+                    // Positions are logical pixels, which is the space the
+                    // arrangement canvas lays out in — see the coordinate
+                    // conventions in the repository's CLAUDE.md.
+                    Row::new(X_POSITION, Control::Text(position_text(selected.x)))
+                        .detail("Top-left corner in the desktop's coordinate space"),
+                    Row::new(Y_POSITION, Control::Text(position_text(selected.y))),
+                ],
+            ),
+            group(
+                VIRTUAL,
+                vec![
+                    Row::new(VIRTUAL, Control::Button(&[ADD, REMOVE])).detail(format!(
+                        "{count} headless {}, streamed over PipeWire. Remove takes away the \
+                     selected one",
+                        if count == 1 { "output" } else { "outputs" },
+                    )),
+                ],
+            ),
+        ],
+    }
+}
+
+/// A coordinate as the text field shows it. Whole logical pixels: a display
+/// cannot start on half of one, and "1128" reads as a position where
+/// "1128.0" reads as a measurement.
+fn position_text(value: f32) -> String {
+    format!("{value:.0}")
+}
+
+/// Apply a committed edit from one of this pane's text rows.
+///
+/// Called for any text row with no `id`, since a row that has one goes to the
+/// compositor instead. Text that is not a number is dropped rather than
+/// guessed at — the field then redraws with the position the screen still
+/// has, which is the honest answer to "seventeen-ish".
+pub fn commit_text(label: &str, text: &str) {
+    let Ok(value) = text.trim().parse::<f32>() else {
+        return;
+    };
+    match label {
+        X_POSITION => model::set_selected_position(Some(value), None),
+        Y_POSITION => model::set_selected_position(None, Some(value)),
+        _ => {}
+    }
+}
+
+/// A press on one of this pane's unbound switches.
+pub fn toggle(label: &str) {
+    match label {
+        ACTIVE => model::toggle_selected_enabled(),
+        // Primary is a choice among the displays rather than a per-display
+        // flag, so the switch only ever turns *on*: taking it off would leave
+        // the desktop with nowhere to put the dock.
+        PRIMARY => model::make_selected_primary(),
+        _ => {}
+    }
+}
+
+/// A press on one of this pane's push buttons.
+pub fn press(row: &str, button: &str) {
+    if row != VIRTUAL {
+        return;
+    }
+    match button {
+        ADD => model::add_virtual_output(),
+        REMOVE => {
+            if !model::remove_selected_virtual_output() {
+                eprintln!("displays: only a virtual display can be removed");
+            }
+        }
+        _ => {}
     }
 }

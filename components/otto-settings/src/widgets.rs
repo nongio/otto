@@ -197,6 +197,53 @@ fn elide_head(text: &str, style: otto_kit::typography::TextStyle, width: f32) ->
     "…".to_string()
 }
 
+/// Horizontal padding inside a push button, and the gap between two of them.
+const BUTTON_PAD: f32 = 12.0;
+const BUTTON_GAP: f32 = 8.0;
+
+/// Where each of a row's push buttons sits, in the order they are labelled.
+///
+/// Widths are measured from the labels rather than fixed, so "Add" does not
+/// get the same box as "Remove". Drawing and hit-testing both come through
+/// here so a press can never land on the button next door.
+pub fn button_rects(right: f32, cy: f32, labels: &[&str]) -> Vec<Rect> {
+    let style = styles::SUBHEADLINE;
+    let widths: Vec<f32> = labels
+        .iter()
+        .map(|label| style.font().measure_str(label, None).0 + BUTTON_PAD * 2.0)
+        .collect();
+    let total: f32 = widths.iter().sum::<f32>() + BUTTON_GAP * (labels.len() as f32 - 1.0);
+
+    let mut x = right - total;
+    widths
+        .into_iter()
+        .map(|width| {
+            let rect = Rect::from_xywh(x, cy - CONTROL_H / 2.0, width, CONTROL_H);
+            x += width + BUTTON_GAP;
+            rect
+        })
+        .collect()
+}
+
+/// A row's push buttons, in the rects [`button_rects`] places them at.
+pub fn buttons(canvas: &Canvas, right: f32, cy: f32, labels: &[&str], theme: &Theme) {
+    let style = styles::SUBHEADLINE;
+    for (label, rect) in labels.iter().zip(button_rects(right, cy, labels)) {
+        let rrect = RRect::new_rect_xy(rect, 6.0, 6.0);
+        canvas.draw_rrect(rrect, &fill(theme.fill_tertiary));
+        canvas.draw_rrect(rrect, &stroke(theme.fill_secondary, 1.0));
+        let width = style.font().measure_str(label, None).0;
+        text_centered_y(
+            canvas,
+            label,
+            rect.center_x() - width / 2.0,
+            cy,
+            style,
+            theme.text_primary,
+        );
+    }
+}
+
 /// The "Choose…" button's width, and the gap between it and the path field.
 pub const CHOOSE_W: f32 = 84.0;
 const CHOOSE_GAP: f32 = 8.0;

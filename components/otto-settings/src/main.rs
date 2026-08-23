@@ -123,6 +123,22 @@ enum EditTarget {
     /// process-local store in `panes::keyboard` — shortcuts are not in the
     /// served schema, so there is nowhere else for them to go.
     ShortcutKeys(usize),
+    /// A row the compositor does not serve, keyed by its label: the Displays
+    /// pane's position fields, which write back to `panes::displays`'s own
+    /// store. Labels are unique within a pane, which is as far as an editing
+    /// session ever reaches.
+    Unbound(&'static str),
+}
+
+impl EditTarget {
+    /// Which target a settings row edits: its identifier where it has one, and
+    /// its label where it does not.
+    fn for_row(id: Option<&'static str>, label: &'static str) -> Self {
+        match id {
+            Some(id) => Self::Setting(id),
+            None => Self::Unbound(label),
+        }
+    }
 }
 
 /// The modifiers a text field cares about.
@@ -633,6 +649,7 @@ fn commit_edit(editing: &Arc<Mutex<Option<Editing>>>) -> bool {
         EditTarget::ShortcutKeys(index) => {
             keyboard::set_keys(index, edit.input.value().trim().to_string())
         }
+        EditTarget::Unbound(label) => panes::displays::commit_text(label, edit.input.value()),
     }
     true
 }
@@ -1049,7 +1066,7 @@ impl App for SettingsApp {
                         // the press does whatever else it does.
                         let same_field = settings
                             .text_hit(x, y, offset)
-                            .map(|hit| EditTarget::Setting(hit.id))
+                            .map(|hit| EditTarget::for_row(hit.id, hit.label))
                             == editing_hit.lock().unwrap().as_ref().map(|edit| edit.target);
                         if !same_field && commit_edit(&editing_hit) {
                             mark_pane_dirty(&pane_dirty);
@@ -1141,11 +1158,26 @@ impl App for SettingsApp {
                             mark_pane_dirty(&pane_dirty);
                         } else if let Some(id) = settings.file_hit(x, y, offset) {
                             open_file_picker(id);
+                        } else if let Some(index) = settings.screen_hit(x, y, offset) {
+                            // The arrangement is a picker: the rows under it
+                            // are the settings of whichever screen is chosen
+                            // there, so selecting one rebuilds the pane.
+                            model::select_output(index);
+                            mark_pane_dirty(&pane_dirty);
+                        } else if let Some(button) = settings.button_hit(x, y, offset) {
+                            panes::displays::press(button.row, button.button);
+                            mark_pane_dirty(&pane_dirty);
+                        } else if let Some(label) = settings.unbound_toggle_hit(x, y, offset) {
+                            // A switch the compositor does not serve. It has no
+                            // identifier to `apply`, and no flip animation
+                            // either — the pane it belongs to owns the value.
+                            panes::displays::toggle(label);
+                            mark_pane_dirty(&pane_dirty);
                         } else if let Some(text) = settings.text_hit(x, y, offset) {
                             // Moving between fields commits the one being
                             // left: a click elsewhere is an answer, not an
                             // abandonment.
-                            let target = EditTarget::Setting(text.id);
+                            let target = EditTarget::for_row(text.id, text.label);
                             let already = {
                                 let current = editing_hit.lock().unwrap();
                                 current.as_ref().map(|edit| edit.target) == Some(target)
