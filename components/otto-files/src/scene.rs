@@ -65,8 +65,60 @@ pub struct Scene {
     /// What the panels were last laid out against, so a frame that changed
     /// nothing geometric does not touch the engine at all.
     layout: Option<LayoutKey>,
-    dark: Option<bool>,
+    /// Colour scheme and blur the panel materials were last built for. The
+    /// blur is in the key because it decides whether they are translucent —
+    /// see [`Scene::sync_materials`].
+    materials: Option<(bool, bool)>,
+    /// Turns the compositor's backdrop blur on and off. The scene owns that
+    /// timing because it owns the fade the toggle has to hide under — see
+    /// [`Scene::sync_materials`]. `None` before the window has handed it over,
+    /// and where there is no blur to switch at all.
+    frost: std::sync::Arc<FrostState>,
+    /// When the engine was last ticked, so a fade advances by real time.
+    last_tick: std::time::Instant,
 }
+
+/// What the scene needs from its host while the panel materials fade.
+///
+/// Shared rather than called back into, because both of these belong to the
+/// `Window` — and a `Window` is not `Send`, so it cannot ride the engine's own
+/// animation callbacks, which are.
+#[derive(Default)]
+pub struct FrostState {
+    /// The compositor's backdrop blur, to be switched once it is safe:
+    /// entering the frost that is immediately, while the panels are still
+    /// filled in; leaving it, not until they have finished filling in again.
+    /// Taken by the host, which owns the window.
+    pending: std::sync::Mutex<Option<bool>>,
+    /// Whether a fade is still running. The engine only advances when it is
+    /// driven, so a fade that stopped being drawn would stop halfway: the host
+    /// keeps ticking and repainting while this is set.
+    fading: std::sync::atomic::AtomicBool,
+}
+
+impl FrostState {
+    /// The blur switch the scene is waiting on, if any. Cleared by the read —
+    /// it is an instruction, not a state.
+    pub fn take_pending(&self) -> Option<bool> {
+        self.pending.lock().ok().and_then(|mut p| p.take())
+    }
+
+    pub fn is_fading(&self) -> bool {
+        self.fading.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn request(&self, frosted: bool) {
+        if let Ok(mut pending) = self.pending.lock() {
+            *pending = Some(frosted);
+        }
+    }
+}
+
+/// How long the panel materials take to fade between translucent and filled
+/// in. Matches otto-kit's own `MATERIAL_FADE`: a window that composites its
+/// materials and one that hands them to the window should not fade at
+/// different speeds.
+const MATERIAL_FADE: f32 = 0.3;
 
 /// One Miller column: the pane itself, and the strip of rows inside it that
 /// the scroll offset moves.
@@ -101,6 +153,9 @@ struct PaneKey {
     /// and costs one column a re-record; scrolling within a row does not.
     range: (usize, usize),
     entries: u64,
+    /// The thumbnail store's epoch, which moves when a picture lands. See
+    /// where this is filled in for why it belongs in the key.
+    thumbs: u64,
     /// Selection, cursor, cut marks and an in-place rename, over the visible
     /// rows only.
     marks: u64,
@@ -168,7 +223,9 @@ impl Scene {
             preview,
             preview_key: None,
             layout: None,
-            dark: None,
+            materials: None,
+            frost: Default::default(),
+            last_tick: std::time::Instant::now(),
         }
     }
 
@@ -188,37 +245,112 @@ impl Scene {
     /// no changes at all and the whole window is replayed from cached
     /// pictures.
     pub fn update(&mut self, f: &Frame) {
-        self.sync_materials(f.theme);
+        self.sync_materials(f);
         self.sync_layout(f);
         self.sync_panes(f);
         // One tick, so the changes above are folded into the scene before the
-        // host renders it. Nothing here animates, so the delta is zero.
-        self.engine.update(0.0);
+        // host renders it. The delta is zero unless the panel materials are
+        // mid-fade — that is the only thing here that animates, and everything
+        // else would rather not have time pass under it.
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(self.last_tick).as_secs_f32();
+        self.last_tick = now;
+        self.engine
+            .update(if self.frost.is_fading() { elapsed } else { 0.0 });
     }
 
     /// Panel materials. These are the backgrounds the panes "should not draw":
-    /// they are set once per colour-scheme change and composited by the
-    /// engine, not painted per frame.
-    fn sync_materials(&mut self, theme: &Theme) {
+    /// they are set once per colour-scheme change — or when the window's blur
+    /// comes and goes with the focus — and composited by the engine, not
+    /// painted per frame.
+    fn sync_materials(&mut self, f: &Frame) {
+        let theme = f.theme;
         let dark = view::is_dark();
-        if self.dark == Some(dark) {
+        // Translucent only while there is a blur to be translucent over. See
+        // [`view::opaque`].
+        let fill = |color: skia_safe::Color| {
+            paint_color(if f.blurred {
+                color
+            } else {
+                view::opaque(color)
+            })
+        };
+        let previous = self.materials;
+        if previous == Some((dark, f.blurred)) {
             return;
         }
-        self.dark = Some(dark);
+        self.materials = Some((dark, f.blurred));
 
-        self.sidebar
-            .set_background_color(paint_color(theme.material_sidebar), None);
+        // The blur only ever changes under a cover. Entering the frost the
+        // window has already turned it on — a configure lands before this
+        // frame, while the panels are still filled in. Leaving it, it stays on
+        // until they have finished filling in again, which is what the
+        // transaction below waits for. So what the eye follows is the material
+        // thinning or thickening, never the frost arriving or leaving.
+        //
+        // Only a change of *blur* fades. A change of colour scheme is a
+        // different set of colours rather than the same one at a different
+        // opacity, and crossfading it would run every panel through a wrong
+        // intermediate.
+        let fades = previous
+            .is_some_and(|(was_dark, was_blurred)| was_dark == dark && was_blurred != f.blurred);
+        let transition = fades.then(|| Transition::ease_out_quad(MATERIAL_FADE));
+
+        let sidebar = self
+            .sidebar
+            .set_background_color(fill(theme.material_sidebar), transition.clone());
         self.header
-            .set_background_color(paint_color(view::header_material()), None);
+            .set_background_color(fill(view::header_material()), transition.clone());
         // The action row is the same material as the header, and for the same
         // reason: it is chrome laid over the window's blur, not a hole in it.
         // Without a ground it reads as bare blur with buttons floating on it.
         self.footer
-            .set_background_color(paint_color(view::header_material()), None);
+            .set_background_color(fill(view::header_material()), transition.clone());
+        // The content ground is opaque either way — there is no blur behind
+        // the file area to be translucent over — so it never fades.
         self.content
             .set_background_color(paint_color(view::content_ground()), None);
         self.preview
             .set_background_color(paint_color(view::content_ground()), None);
+
+        if !fades {
+            // Nothing to wait for: the panels are already where they belong.
+            if !f.blurred {
+                self.frost.request(false);
+            }
+            return;
+        }
+
+        // Any of the panels' transactions would do as the clock; the sidebar is
+        // the widest of them and the one the frost is most visible through.
+        self.frost
+            .fading
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let frost = self.frost.clone();
+        let leaving = !f.blurred;
+        sidebar.on_finish(
+            move |_: &Layer, _| {
+                frost
+                    .fading
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                // Leaving the frost: only now, with the panels opaque again,
+                // is the blur safe to drop.
+                if leaving {
+                    frost.request(false);
+                }
+            },
+            true,
+        );
+    }
+
+    /// The blur switch the scene is waiting on, and whether a fade is still
+    /// running.
+    ///
+    /// The scene fades the panel materials, so it is the only thing that knows
+    /// when they are opaque enough to hide the switch — but the switch belongs
+    /// to the window. See [`FrostState`].
+    pub fn frost_state(&self) -> std::sync::Arc<FrostState> {
+        self.frost.clone()
     }
 
     fn sync_layout(&mut self, f: &Frame) {
@@ -468,6 +600,11 @@ impl PaneLayer {
         let key = PaneKey {
             range,
             entries: hash_entries(&pane.entries, range),
+            // A thumbnail landing changes what this pane draws without
+            // changing anything else the key is made of, so the store's epoch
+            // rides along: it moves exactly when a picture arrives, and a pane
+            // that would show it rebuilds while the rest replay.
+            thumbs: f.thumbs.map(|store| store.epoch()).unwrap_or(0),
             marks: hash_marks(pane, range, f, depth),
             active,
             status: status.clone(),
@@ -550,6 +687,13 @@ struct Row {
     top: f32,
     name: String,
     icon: Option<Image>,
+    /// The file's own picture, where one is ready. Drawn instead of `icon`.
+    ///
+    /// Owned rather than borrowed because the strip's draw closure outlives
+    /// the frame that built it: the picture has to travel into the closure,
+    /// the way the icon already does. A Skia image is a handle over shared
+    /// pixels, so this is a refcount bump and not a copy of the bitmap.
+    thumb: Option<Image>,
     is_dir: bool,
     selected: bool,
     ends: RunEnds,
@@ -572,22 +716,23 @@ impl Row {
             view::draw_cursor_ring(canvas, theme, rect, 6.0);
         }
 
-        if let Some(image) = &self.icon {
+        let icon_box = Rect::from_xywh(
+            14.0,
+            rect.center_y() - view::ICON_SIZE / 2.0,
+            view::ICON_SIZE,
+            view::ICON_SIZE,
+        );
+        if let Some(image) = &self.thumb {
+            // The same painter the list and grid use, so a file looks the same
+            // in all three views rather than only in the two that draw
+            // themselves immediately.
+            view::draw_thumbnail(canvas, image, icon_box, self.cut);
+        } else if let Some(image) = &self.icon {
             let mut paint = Paint::default();
             if self.cut {
                 paint.set_alpha(110);
             }
-            canvas.draw_image_rect(
-                image,
-                None,
-                Rect::from_xywh(
-                    14.0,
-                    rect.center_y() - view::ICON_SIZE / 2.0,
-                    view::ICON_SIZE,
-                    view::ICON_SIZE,
-                ),
-                &paint,
-            );
+            canvas.draw_image_rect(image, None, icon_box, &paint);
         }
 
         if !self.renaming {
@@ -629,6 +774,13 @@ fn build_rows(pane: &PaneData<'_>, range: (usize, usize), f: &Frame, depth: usiz
             let highlighted = selected && active;
             let (text_color, detail_color) = view::row_colors(f.theme, highlighted);
 
+            // A thumbnail, where the store has one; the icon is resolved
+            // anyway, because it is what this row falls back to and it is a
+            // cache hit either way.
+            let thumb = f
+                .thumbs
+                .and_then(|store| store.image(&entry.path, entry.modified))
+                .cloned();
             let chain = entry.icon_chain();
             let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
             let icon =
@@ -644,6 +796,7 @@ fn build_rows(pane: &PaneData<'_>, range: (usize, usize), f: &Frame, depth: usiz
                 top: (index - range.0) as f32 * view::ROW_H,
                 name,
                 icon,
+                thumb,
                 is_dir: entry.is_dir,
                 selected,
                 ends: RunEnds::of_pane(pane, index),
@@ -723,4 +876,149 @@ fn place_in_content(layer: &Layer, full: Rect, window_h: f32) {
         full.width(),
         (window_h - view::HEADER_H).max(0.0),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::path::PathBuf;
+    use std::time::SystemTime;
+
+    use crate::model::Entry;
+    use crate::thumbnails::{Found, Store};
+    use otto_kit::filetype::Kind;
+
+    fn red_image(w: i32, h: i32) -> Image {
+        let info = skia_safe::ImageInfo::new(
+            (w, h),
+            skia_safe::ColorType::RGBA8888,
+            skia_safe::AlphaType::Premul,
+            None,
+        );
+        let pixels: Vec<u8> = (0..w * h).flat_map(|_| [255u8, 0, 0, 255]).collect();
+        skia_safe::images::raster_from_data(
+            &info,
+            skia_safe::Data::new_copy(&pixels),
+            w as usize * 4,
+        )
+        .expect("raster image")
+    }
+
+    fn photo() -> Entry {
+        Entry {
+            name: "photo.png".into(),
+            path: PathBuf::from("/tmp/photo.png"),
+            is_dir: false,
+            is_symlink: false,
+            hidden: false,
+            kind: Kind::Image,
+            size: Some(1),
+            modified: Some(SystemTime::UNIX_EPOCH),
+        }
+    }
+
+    /// The Miller columns build their rows here rather than going through
+    /// `view::draw_entry_icon`, so a thumbnail reaching the list and the grid
+    /// says nothing about whether it reaches the *default* view. It did not,
+    /// once: the store was consulted by the two immediate-mode paths and this
+    /// third one resolved an icon and drew that. This test is that regression.
+    #[test]
+    fn a_miller_row_draws_the_thumbnail_over_the_icon() {
+        let entry = photo();
+        let mut store = Store::new();
+        store.wanted(
+            [crate::thumbnails::Request {
+                path: entry.path.clone(),
+                modified: entry.modified,
+                may_generate: true,
+            }],
+            crate::thumbcache::Size::Normal,
+        );
+        store.finish(
+            entry.path.clone(),
+            entry.modified,
+            Found::Thumbnail(red_image(64, 64)),
+        );
+
+        let owned = vec![entry];
+        let entries: Vec<&Entry> = owned.iter().collect();
+        let pane = PaneData {
+            entries,
+            selected: vec![false],
+            cursor: None,
+            scroll: 0.0,
+            bar: None,
+            loading: false,
+            error: None,
+        };
+        let theme = Theme::light();
+        let frame = Frame {
+            width: 1100.0,
+            height: 700.0,
+            theme: &theme,
+            title: "Home",
+            subtitle: String::new(),
+            places: &[],
+            selected_place: None,
+            mode: ViewMode::Columns,
+            panes: vec![pane],
+            active: 0,
+            pan: 0.0,
+            pan_bar: None,
+            miller_w: view::MILLER_W,
+            sort: crate::model::SortKey::Name,
+            ascending: true,
+            list_columns: view::ListColumnWidths::default(),
+            opening: None,
+            renaming: None,
+            cut: Vec::new(),
+            controls: otto_kit::components::titlebar::WindowControlsState::new(),
+            focused: true,
+            blurred: true,
+            can_go_back: false,
+            can_go_forward: false,
+            nav_pressed: None,
+            preview: None,
+            action_row: None,
+            footer: 0.0,
+            quickview_close_hovered: false,
+            drop_target: None,
+            marquee: None,
+            thumbs: Some(&store),
+        };
+
+        let rows = build_rows(&frame.panes[0], (0, 1), &frame, 0);
+        assert!(
+            rows[0].thumb.is_some(),
+            "a Miller row must carry the thumbnail the store holds"
+        );
+
+        // And it must actually be painted: draw the row and look for red where
+        // the icon box is.
+        let mut surface = skia_safe::surfaces::raster_n32_premul((240, 40)).unwrap();
+        surface.canvas().clear(skia_safe::Color::WHITE);
+        rows[0].draw(surface.canvas(), &theme, 240.0);
+
+        let info = skia_safe::ImageInfo::new(
+            (1, 1),
+            skia_safe::ColorType::RGBA8888,
+            skia_safe::AlphaType::Unpremul,
+            None,
+        );
+        let mut px = [0u8; 4];
+        let x = (14.0 + view::ICON_SIZE / 2.0) as i32;
+        let y = (view::ROW_H / 2.0) as i32;
+        assert!(surface.image_snapshot().read_pixels(
+            &info,
+            &mut px,
+            4,
+            (x, y),
+            skia_safe::image::CachingHint::Allow
+        ));
+        assert!(
+            px[0] > 200 && px[1] < 60 && px[2] < 60,
+            "expected the thumbnail in the row's icon box, got {px:?}"
+        );
+    }
 }

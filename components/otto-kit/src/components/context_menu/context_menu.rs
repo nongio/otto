@@ -12,6 +12,26 @@ use smithay_client_toolkit::seat::pointer::PointerEventKind;
 use wayland_client::{backend::ObjectId, protocol::wl_keyboard, Proxy};
 use wayland_protocols::xdg::shell::client::xdg_surface;
 
+/// How much of the menu a wheel notch or a finger's travel moves.
+///
+/// The axis event arrives in the pointer's own units, which land a notch at
+/// well under one row here — the list barely creeps. Multiplied up, a notch
+/// clears a couple of rows and a pan moves the distance the fingers did.
+const SCROLL_RATE: f32 = 3.0;
+
+/// How far the list at `depth` is scrolled.
+///
+/// Only the root menu scrolls: a submenu is short by construction, and giving
+/// each depth its own offset would buy nothing yet. See
+/// [`ContextMenuState::scroll`].
+fn scroll_at_depth(state: &ContextMenuState, depth: usize) -> f32 {
+    if depth == 0 {
+        state.scroll()
+    } else {
+        0.0
+    }
+}
+
 type PopupStack = Rc<RefCell<Vec<Rc<RefCell<Option<PopupSurface>>>>>>;
 type ItemClickCallback = Rc<RefCell<Option<Rc<dyn Fn(&str)>>>>;
 type CloseCallback = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
@@ -752,6 +772,20 @@ impl ContextMenu {
                                 y as f32,
                             );
                         }
+                        // A wheel over a capped menu scrolls its list. The
+                        // popup is a fixed-size surface, so this is the only
+                        // way to reach the rows past its bottom edge.
+                        PointerEventKind::Axis { vertical, .. } => {
+                            Self::handle_scroll_static(
+                                &state,
+                                &popups,
+                                &style,
+                                depth,
+                                vertical.absolute as f32 * SCROLL_RATE,
+                                x as f32,
+                                y as f32,
+                            );
+                        }
                         _ => {}
                     }
                 }
@@ -795,15 +829,23 @@ impl ContextMenu {
         y: f64,
     ) {
         // Get items for this depth
-        let items = {
+        let (items, scroll) = {
             let state_borrow = state.borrow();
-            state_borrow.items_at_depth(depth).to_vec()
+            (
+                state_borrow.items_at_depth(depth).to_vec(),
+                scroll_at_depth(&state_borrow, depth),
+            )
         };
 
         // Hit test
         let style_borrowed = style.borrow();
-        let item_index =
-            ContextMenuRenderer::hit_test_items(&items, &style_borrowed, x as f32, y as f32);
+        let item_index = ContextMenuRenderer::hit_test_items(
+            &items,
+            &style_borrowed,
+            x as f32,
+            y as f32,
+            scroll,
+        );
         drop(style_borrowed);
 
         // Update selection at this depth
@@ -902,14 +944,17 @@ impl ContextMenu {
         y: f32,
     ) {
         // Get items for this depth
-        let items = {
+        let (items, scroll) = {
             let state_borrow = state.borrow();
-            state_borrow.items_at_depth(depth).to_vec()
+            (
+                state_borrow.items_at_depth(depth).to_vec(),
+                scroll_at_depth(&state_borrow, depth),
+            )
         };
 
         // Hit test
         let style_borrowed = style.borrow();
-        let item_index = ContextMenuRenderer::hit_test_items(&items, &style_borrowed, x, y);
+        let item_index = ContextMenuRenderer::hit_test_items(&items, &style_borrowed, x, y, scroll);
         drop(style_borrowed);
 
         if let Some(idx) = item_index {
@@ -987,6 +1032,66 @@ impl ContextMenu {
         state.borrow_mut().reset();
     }
 
+    /// Scroll the list at `depth` by `delta` and redraw it, then re-run the
+    /// hover test: the pointer has not moved, but the row under it has.
+    #[allow(clippy::too_many_arguments)]
+    fn handle_scroll_static(
+        state: &Rc<RefCell<ContextMenuState>>,
+        popups: &PopupStack,
+        style: &Rc<RefCell<ContextMenuStyle>>,
+        depth: usize,
+        delta: f32,
+        x: f32,
+        y: f32,
+    ) {
+        if depth != 0 || delta == 0.0 {
+            return;
+        }
+        let style_borrowed = style.borrow();
+        let (moved, overflow) = {
+            let mut state_mut = state.borrow_mut();
+            let overflow =
+                ContextMenuRenderer::overflow(state_mut.items_at_depth(0), &style_borrowed);
+            let before = state_mut.scroll();
+            state_mut.set_scroll(before + delta, overflow);
+            (state_mut.scroll() != before, overflow)
+        };
+        drop(style_borrowed);
+        if overflow <= 0.0 || !moved {
+            return;
+        }
+
+        // The row under the pointer changed with the list, so the highlight
+        // has to be re-tested before the redraw rather than after it.
+        Self::handle_motion_static_hover(state, style, depth, x, y);
+
+        let style_borrowed = style.borrow();
+        if let Some(popup) = popups.borrow().get(depth) {
+            Self::render_menu_at_depth(state, &style_borrowed, popup, depth);
+        }
+    }
+
+    /// The selection half of a motion: which row is under `(x, y)` now.
+    fn handle_motion_static_hover(
+        state: &Rc<RefCell<ContextMenuState>>,
+        style: &Rc<RefCell<ContextMenuStyle>>,
+        depth: usize,
+        x: f32,
+        y: f32,
+    ) {
+        let (items, scroll) = {
+            let state_borrow = state.borrow();
+            (
+                state_borrow.items_at_depth(depth).to_vec(),
+                scroll_at_depth(&state_borrow, depth),
+            )
+        };
+        let style_borrowed = style.borrow();
+        let index = ContextMenuRenderer::hit_test_items(&items, &style_borrowed, x, y, scroll);
+        drop(style_borrowed);
+        state.borrow_mut().select_at_depth(depth, index);
+    }
+
     /// Render at a specific depth (static helper for callbacks)
     fn render_menu_at_depth(
         state: &Rc<RefCell<ContextMenuState>>,
@@ -995,19 +1100,25 @@ impl ContextMenu {
         depth: usize,
     ) {
         // Get items and dimensions before borrowing popup
-        let (items_vec, selected, width, height) = {
+        let (items_vec, selected, width, height, scroll) = {
             let state_borrow = state.borrow();
             let items = state_borrow.items_at_depth(depth);
             let selected = state_borrow.selected_at_depth(depth);
             let (w, h) = ContextMenuRenderer::measure_items(items, style);
-            (items.to_vec(), selected, w, h)
+            (
+                items.to_vec(),
+                selected,
+                w,
+                h,
+                scroll_at_depth(&state_borrow, depth),
+            )
         };
 
         // Now borrow popup and draw (no other borrows held)
         if let Some(popup_surface) = popup.borrow().as_ref() {
             popup_surface.draw(|canvas| {
                 ContextMenuRenderer::render_depth(
-                    canvas, &items_vec, selected, style, width, height,
+                    canvas, &items_vec, selected, style, width, height, scroll,
                 );
             });
         }

@@ -45,6 +45,7 @@ use smithay::{
             Interest, LoopHandle, Mode, PostAction,
         },
         wayland_protocols::xdg::shell::server::xdg_toplevel,
+        wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration_manager::Mode as KdeDefaultDecorationMode,
         wayland_server::{
             backend::{ClientData, ClientId, DisconnectReason, ObjectId},
             protocol::{wl_data_device_manager::DndAction, wl_surface::WlSurface},
@@ -77,6 +78,7 @@ use smithay::{
             primary_selection::PrimarySelectionState, wlr_data_control::DataControlState,
         },
         shell::{
+            kde::decoration::KdeDecorationState,
             wlr_layer::WlrLayerShellState,
             xdg::{decoration::XdgDecorationState, SurfaceCachedState, XdgShellState},
         },
@@ -229,6 +231,15 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub viewporter_state: ViewporterState,
     pub xdg_activation_state: XdgActivationState,
     pub xdg_decoration_state: XdgDecorationState,
+    /// KDE's legacy server-decoration protocol. GTK apps that offer a
+    /// server-side mode (ghostty) only look for this one, never
+    /// `xdg-decoration`.
+    pub kde_decoration_state: KdeDecorationState,
+    /// Decoration modes negotiated over the KDE protocol before the surface
+    /// had an `xdg_toplevel`. GTK asks for its mode on the bare `wl_surface`,
+    /// one request ahead of `get_toplevel`, so there is no window to flag yet
+    /// — `new_toplevel` replays what landed here.
+    pub pending_kde_decorations: HashMap<ObjectId, bool>,
     pub xdg_shell_state: XdgShellState,
     pub presentation_state: PresentationState,
     pub fractional_scale_manager_state: FractionalScaleManagerState,
@@ -245,10 +256,33 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub xwayland_shell_state: xwayland_shell::XWaylandShellState,
 
     pub dnd_icon: Option<WlSurface>,
+    /// Every surface a drag icon has had a layer built for, so the next drag
+    /// can sweep them whether or not those surfaces are still alive.
+    pub dnd_layer_ids: Vec<ObjectId>,
+    /// The icon surface of a refused drag, whose layers are kept alive while it
+    /// flies back to where the drag started and are swept up when the next drag
+    /// begins. See [`crate::state::dnd_grab_handler`].
+    pub pending_dnd_cleanup: Option<WlSurface>,
+    /// Where the drag icon sits relative to the cursor.
+    ///
+    /// A client anchors the icon by the point it was grabbed by — `wl_surface
+    /// .offset`, or the deprecated x and y of `attach` — which arrives as
+    /// `buffer_delta` on each commit and is *relative*, so it accumulates over
+    /// the drag rather than replacing what came before. Without this the icon
+    /// hangs by its top-left corner whatever the client asks for.
+    pub dnd_icon_offset: utils::Point<i32, utils::Logical>,
 
     // input-related fields
     pub suppressed_keys: Vec<Keysym>,
     pub current_modifiers: ModifiersState,
+    /// Physical Cmd keys (`<LWIN>`/`<RWIN>`) currently held down.
+    ///
+    /// `altwin:ctrl_win` maps those keys onto the Control modifier, so by the
+    /// time a key reaches us Cmd+C and Ctrl+C are the same event. The keycode
+    /// is the one thing xkb leaves untouched, so tracking it here is what lets
+    /// shortcut matching tell the two apart. See
+    /// [`crate::input::keyboard::shortcut_modifiers`].
+    pub pressed_cmd_keys: HashSet<u32>,
     pub app_switcher_hold_modifiers: Option<ModifiersState>,
     pub cursor_status: Arc<Mutex<CursorImageStatus>>,
     pub cursor_manager: CursorManager,
@@ -590,20 +624,51 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 .expect("Failed to init wayland socket source");
             info!(name = socket_name, "Listening on wayland socket");
 
-            // Export WAYLAND_DISPLAY to systemd user session for portal services
-            if let Err(e) = std::process::Command::new("systemctl")
-                .args([
-                    "--user",
-                    "set-environment",
-                    &format!("WAYLAND_DISPLAY={}", socket_name),
-                ])
-                .output()
-            {
-                warn!(error = ?e, "Failed to export WAYLAND_DISPLAY to systemd");
+            // Export WAYLAND_DISPLAY so bus-activated helpers — the portal
+            // backend, the file picker, the islands — can find us. Without it
+            // they are started by the systemd user manager with whatever
+            // WAYLAND_DISPLAY it happens to hold and fail with `NoCompositor`.
+            //
+            // Only the backend that *is* the session does this. A nested Otto
+            // (`--winit`, `--x11`) is a client of somebody else's compositor,
+            // and its socket is not where the session's helpers should
+            // connect; exporting from one leaves the value pointing at a
+            // socket that disappears when the dev run ends, which breaks
+            // every bus-activated helper in the real session until the next
+            // login. Both are also handed to dbus, because a session whose
+            // dbus-daemon is not the systemd one activates from its own
+            // environment and never reads systemd's.
+            let owns_the_session = matches!(backend_data.backend_name(), "udev");
+            if !owns_the_session {
+                info!(
+                    backend = backend_data.backend_name(),
+                    name = socket_name,
+                    "Nested backend: not exporting WAYLAND_DISPLAY to the session"
+                );
             } else {
+                let assignment = format!("WAYLAND_DISPLAY={socket_name}");
+                let exports = [
+                    ("systemctl", vec!["--user", "set-environment", &assignment]),
+                    (
+                        "dbus-update-activation-environment",
+                        vec!["--systemd", &assignment],
+                    ),
+                ];
+                for (program, args) in exports {
+                    match std::process::Command::new(program).args(&args).output() {
+                        Ok(out) if out.status.success() => {}
+                        Ok(out) => warn!(
+                            program,
+                            status = ?out.status,
+                            stderr = %String::from_utf8_lossy(&out.stderr).trim(),
+                            "Failed to export WAYLAND_DISPLAY"
+                        ),
+                        Err(e) => warn!(program, error = ?e, "Failed to export WAYLAND_DISPLAY"),
+                    }
+                }
                 info!(
                     name = socket_name,
-                    "Exported WAYLAND_DISPLAY to systemd user session"
+                    "Exported WAYLAND_DISPLAY to the systemd and dbus activation environments"
                 );
             }
 
@@ -675,6 +740,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let viewporter_state = ViewporterState::new::<Self>(&dh);
         let xdg_activation_state = XdgActivationState::new::<Self>(&dh);
         let xdg_decoration_state = XdgDecorationState::new::<Self>(&dh);
+        // Advertise server-side as the default mode, matching what Otto
+        // answers over `xdg-decoration`.
+        let kde_decoration_state =
+            KdeDecorationState::new::<Self>(&dh, KdeDefaultDecorationMode::Server);
         let xdg_shell_state = XdgShellState::new::<Self>(&dh);
         let presentation_state = PresentationState::new::<Self>(&dh, clock.id() as u32);
         let fractional_scale_manager_state = FractionalScaleManagerState::new::<Self>(&dh);
@@ -844,6 +913,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             viewporter_state,
             xdg_activation_state,
             xdg_decoration_state,
+            kde_decoration_state,
+            pending_kde_decorations: HashMap::new(),
             xdg_shell_state,
             presentation_state,
             fractional_scale_manager_state,
@@ -856,8 +927,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             pending_screencopy_frames: Vec::new(),
             virtual_pointer_manager_state,
             dnd_icon: None,
+            dnd_layer_ids: Vec::new(),
+            pending_dnd_cleanup: None,
+            dnd_icon_offset: (0, 0).into(),
             suppressed_keys: Vec::new(),
             current_modifiers: ModifiersState::default(),
+            pressed_cmd_keys: HashSet::new(),
             app_switcher_hold_modifiers: None,
             cursor_status,
             cursor_manager,
@@ -1191,7 +1266,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         } else if action == DndAction::Ask {
             CursorImageStatus::Named(CursorIcon::Help)
         } else {
-            CursorImageStatus::Hidden
+            // No action the target will take — say so, rather than saying
+            // nothing. Hiding the cursor here left the user dragging with no
+            // pointer at all for most of the screen, since every surface that
+            // is not a drop target lands in this branch.
+            CursorImageStatus::Named(CursorIcon::NoDrop)
         };
         self.set_cursor(&cursor);
     }
@@ -1346,6 +1425,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             // Now build layers from surface_info (like windows)
             for (surface_id, (surface, parent_id)) in surface_info.iter() {
                 let layer = self.get_or_create_layer_for_surface(surface);
+                // Remembered so the next drag can take it down even if the
+                // client that owned it is gone by then.
+                if !self.dnd_layer_ids.contains(surface_id) {
+                    self.dnd_layer_ids.push(surface_id.clone());
+                }
 
                 // Configure layer with all properties
                 if let Some(wvs) = render_elements.iter().find(|e| &e.id == surface_id) {
@@ -1387,10 +1471,34 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 }
             }
 
-            self.workspaces
-                .dnd_view
-                .layer
-                .set_position((cursor_position.x as f32, cursor_position.y as f32), None);
+            // The cursor, shifted by wherever the client anchored the icon.
+            let anchor = self.dnd_icon_offset.to_f64().to_physical(scale);
+            self.workspaces.dnd_view.layer.set_position(
+                (
+                    (cursor_position.x + anchor.x) as f32,
+                    (cursor_position.y + anchor.y) as f32,
+                ),
+                None,
+            );
+        }
+    }
+
+    /// Take down every layer any drag icon has ever put in the scene.
+    ///
+    /// [`Self::cleanup_dnd_layers`] walks a *live* surface tree, so it sweeps
+    /// nothing once the client is gone — and a drag icon outlives its drag by
+    /// design, so the client exiting between drags is the ordinary case, not a
+    /// rare one. What is left behind stays parented under the view and is shown
+    /// again the moment the next drag makes that view visible: the previous
+    /// drag's picture, drawn behind the current one.
+    ///
+    /// Tracked by id rather than by surface for the same reason: the ids are
+    /// ours and stay valid, while the surfaces they came from may not.
+    fn sweep_dnd_layers(&mut self) {
+        for surface_id in std::mem::take(&mut self.dnd_layer_ids) {
+            if let Some(layer) = self.surface_layers.remove(&surface_id) {
+                layer.remove();
+            }
         }
     }
 
@@ -1549,14 +1657,18 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             // it as inactive unconditionally makes the shadow flick for one frame
             // whenever this runs on a still-focused window (e.g. on scanout demote,
             // where the window is demoted but keeps focus).
+            //
+            // Read through `focused_window_surface` so that a popup counts as
+            // focus on the window that opened it: a menu takes the keyboard
+            // for as long as it is up, and matching the focus target directly
+            // would gray out the titlebar and lighten the shadow of the very
+            // window being used.
             let is_focused = self
                 .seat
                 .get_keyboard()
                 .and_then(|k| k.current_focus())
-                .map(|focus| {
-                    matches!(&focus, crate::focus::KeyboardFocusTarget::Window(w) if w.id() == window.id())
-                })
-                .unwrap_or(false);
+                .and_then(|focus| crate::state::seat_handler::focused_window_surface(Some(&focus)))
+                .is_some_and(|surface| window.wl_surface().as_deref() == Some(&surface));
 
             // Ensure all surfaces in the tree have rendering layers before building render elements
             // This only creates layers for surfaces that don't already have them

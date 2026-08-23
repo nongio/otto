@@ -1,4 +1,4 @@
-use layers::prelude::Transition;
+use layers::prelude::{TimingFunction, Transition};
 use smithay::{
     input::{
         dnd::{DnDGrab, DndGrabHandler, GrabType},
@@ -12,6 +12,11 @@ use smithay::{
 
 use super::{Backend, Otto};
 
+/// How long the icon takes to fly back to where the drag started, when the
+/// drop is refused. Long enough to read as a return rather than a glitch,
+/// short enough not to make the user wait to try again.
+const SNAP_BACK: f32 = 0.35;
+
 impl<BackendData: Backend> WaylandDndGrabHandler for Otto<BackendData> {
     fn dnd_requested<S: smithay::input::dnd::Source>(
         &mut self,
@@ -21,7 +26,19 @@ impl<BackendData: Backend> WaylandDndGrabHandler for Otto<BackendData> {
         serial: Serial,
         type_: GrabType,
     ) {
+        // Whatever the last drag left behind, now that its flight home or its
+        // fade is over and its layers are no longer being looked at.
+        if let Some(surface) = self.pending_dnd_cleanup.take() {
+            self.cleanup_dnd_layers(&surface);
+        }
+        // And anything that sweep could not reach: an icon whose client has
+        // since exited leaves layers no surface tree can be walked to find,
+        // and they would be shown again behind this drag's own picture.
+        self.sweep_dnd_layers();
+
         self.dnd_icon = icon;
+        // Each drag anchors itself from scratch.
+        self.dnd_icon_offset = (0, 0).into();
         let p = self.get_cursor_position();
         let p = (p.x as f32, p.y as f32).into();
         self.workspaces.dnd_view.set_initial_position(p);
@@ -61,25 +78,98 @@ impl<BackendData: Backend> DndGrabHandler for Otto<BackendData> {
     fn dropped(
         &mut self,
         _target: Option<smithay::input::dnd::DndTarget<'_, Self>>,
-        _validated: bool,
+        validated: bool,
         _seat: Seat<Self>,
         _location: Point<f64, Logical>,
     ) {
-        // Clean up layers before clearing dnd_icon
         let dnd_surface = self.dnd_icon.clone();
-        if let Some(ref surface) = dnd_surface {
-            self.cleanup_dnd_layers(surface);
-        }
-
+        // Cleared first either way: `update_dnd` snaps the view to the cursor
+        // every frame while an icon exists, and would fight the animation.
         self.dnd_icon = None;
-        self.workspaces
-            .dnd_view
-            .layer
-            .set_opacity(0.0_f32, Some(Transition::default()));
-        self.workspaces
-            .dnd_view
-            .layer
-            .set_scale((1.2, 1.2), Some(Transition::default()));
+
+        let view = self.workspaces.dnd_view.clone();
+        if validated {
+            // Taken, and that is the end of it. The files are where they were
+            // asked to go and the listing says so; an icon animating away from
+            // the drop as well is a flourish over an answer already given.
+            // Only the refusal below needs saying, because nothing else says
+            // it.
+            if let Some(ref surface) = dnd_surface {
+                self.cleanup_dnd_layers(surface);
+            }
+            view.layer.set_opacity(0.0_f32, None);
+            view.layer.set_scale((1.0, 1.0), None);
+        } else {
+            // Refused — nothing happened, and the files are still where they
+            // started. Fly the icon home to say so, the way a dragged thing
+            // that is not accepted goes back.
+            //
+            // The content layers are torn down when the flight ends rather
+            // than now: cleaning them up here would animate an empty layer.
+            let flight = Transition {
+                delay: 0.0,
+                timing: TimingFunction::ease_out_quad(SNAP_BACK),
+            };
+            // Home is where the *icon* was, not where the cursor was. The icon
+            // hangs from the cursor by the point it was grabbed by, and every
+            // frame of the drag placed it at `cursor + offset` — so the flight
+            // has to end at the same sum, or it lands short by however far into
+            // the file the user happened to press, which is a different
+            // distance every time.
+            //
+            // The offset is read now rather than at `dnd_requested`: it arrives
+            // on the icon's own commits, which come after the drag has started.
+            let scale = crate::config::Config::with(|c| c.screen_scale);
+            let anchor = self.dnd_icon_offset.to_f64().to_physical(scale);
+            let home: layers::types::Point = (
+                view.initial_position.x + anchor.x as f32,
+                view.initial_position.y + anchor.y as f32,
+            )
+                .into();
+
+            view.layer.set_scale((1.0, 1.0), Some(flight.clone()));
+            view.layer.set_position(home, Some(flight.clone()));
+            view.layer.set_opacity(
+                0.0_f32,
+                Some(Transition {
+                    // Held opaque for most of the way: fading immediately
+                    // would make it vanish before it arrives, and the point of
+                    // the gesture is seeing where it goes back to.
+                    delay: SNAP_BACK * 0.6,
+                    timing: TimingFunction::ease_out_quad(SNAP_BACK * 0.4),
+                }),
+            );
+            // Torn down when the flight lands, rather than at the next drag:
+            // the picture has to survive the animation, but waiting for a
+            // drag that may never come leaves it — and the buffer behind it —
+            // in the scene for the rest of the session.
+            //
+            // The teardown rides an animation of its own rather than the
+            // position transaction's `on_finish`: a later `set_position` on
+            // this layer replaces that transaction and drops its handlers
+            // silently, which is how the fullscreen overlay once stranded a
+            // window forever. This animation is nobody else's to replace.
+            let doomed = view.content_layer.children();
+            let animation = self
+                .layers_engine
+                .add_animation_from_transition(&flight, false);
+            self.layers_engine.on_animation_finish(
+                animation,
+                move |_: f32| {
+                    for layer in &doomed {
+                        layer.remove();
+                    }
+                },
+                true,
+            );
+            self.layers_engine.start_animation(animation, 0.0);
+
+            // Still handed to the next drag: the layers are gone by then, but
+            // the compositor's surface-to-layer map still has the entries, and
+            // walking the tree is what takes those out. A safety net for a
+            // flight that never lands, too.
+            self.pending_dnd_cleanup = dnd_surface;
+        }
 
         // Reset cursor to default
         self.set_cursor(&CursorImageStatus::default_named());

@@ -20,9 +20,10 @@ The focused window's name and menus appear in the [Top Bar](topbar.md).
 ## Moving and resizing
 
 Drag a window by its title bar to move it; drag an edge or corner to resize.
-Both are driven by the application: Otto starts the move or resize when the app
-asks it to, which is what happens when you grab the parts of the window its
-toolkit designates for that.
+On a server-side title bar Otto starts the move itself. Everywhere else both
+are driven by the application: Otto starts the move or resize when the app asks
+it to, which is what happens when you grab the parts of the window its toolkit
+designates for that.
 
 Dragging a **maximized** window unmaximizes it and keeps the grab point under
 your pointer, proportionally — so the window shrinks to its restored size around
@@ -32,13 +33,25 @@ There is no modifier-drag (`Alt`+drag) to move a window from anywhere yet.
 
 ## Decorations
 
-Otto always asks applications to draw their own decorations. Even when a client
-requests server-side decorations via `xdg-decoration`, Otto answers
-*client-side*. Title bars, close buttons and shadows therefore come from the
-application's own toolkit, and look like whatever that toolkit does.
+Otto draws window decorations itself. A client that binds `xdg-decoration`
+without stating a preference — or that unsets the one it had — is told
+*server-side*, and gets an Otto-drawn title bar with the close, minimize and
+maximize controls. The compositor owns that strip: it is hit-tested before the
+client's surfaces, so dragging it moves the window and the controls work even
+when the application is busy.
 
-The `ToggleDecorations` shortcut action flips every window's requested
-decoration mode, which is mostly useful for testing how apps respond.
+Clients that explicitly ask for *client-side* are honoured. GTK and Electron
+apps request it and keep drawing their own title bars, so those look like
+whatever the toolkit does.
+
+Otto answers on both decoration protocols — `xdg-decoration`, which Qt and KDE
+apps use, and KDE's older `org_kde_kwin_server_decoration`, which is the only
+one GTK applications look for. Ghostty's `window-decoration = server`, for
+instance, reaches Otto through the latter.
+
+The `ToggleDecorations` shortcut action flips the decoration mode of every
+window that negotiated one, which is mostly useful for testing how apps
+respond.
 
 ## Maximize
 

@@ -1,6 +1,7 @@
 use smithay::{
     desktop::space::SpaceElement, reexports::wayland_protocols::xdg::shell::server::xdg_toplevel,
-    reexports::wayland_server::backend::ObjectId, utils::SERIAL_COUNTER,
+    reexports::wayland_server::backend::ObjectId, reexports::wayland_server::Resource,
+    utils::IsAlive, utils::SERIAL_COUNTER,
 };
 
 use crate::focus::KeyboardFocusTarget;
@@ -144,6 +145,14 @@ impl<BackendData: Backend> Otto<BackendData> {
             .and_then(|ows| ows.spaces.get(workspace_index))
             .and_then(|space| {
                 space.elements().rev().find_map(|e| {
+                    // A window whose client has gone can still be in the
+                    // space: this runs from the toplevel destructor, and an
+                    // exiting client is torn down before its objects are.
+                    // Focusing one sends wl_keyboard.enter into a client the
+                    // backend can no longer resolve, which aborts.
+                    if !can_take_focus(e) {
+                        return None;
+                    }
                     let id = e.id();
                     if let Some(w) = self.workspaces.windows_map.get(&id) {
                         if w.is_minimised() {
@@ -158,6 +167,25 @@ impl<BackendData: Backend> Otto<BackendData> {
         } else {
             self.clear_keyboard_focus();
         }
+    }
+
+    /// Hand focus to the next window after the focused one is closed.
+    ///
+    /// Called from the window-destroyed paths (xdg + XWayland): the closed
+    /// window is already unmapped, so the top of the focused output's current
+    /// workspace is the window that should become active — activated state,
+    /// window-view shadow and keyboard focus all follow.
+    pub fn focus_next_window_after_close(&mut self) {
+        if self.is_session_locked() {
+            return;
+        }
+        let index = self
+            .workspaces
+            .focused_output_workspaces()
+            .map(|ows| ows.current_workspace)
+            .unwrap_or_else(|| self.workspaces.get_current_workspace_index());
+        self.focus_top_window_or_clear(index);
+        self.workspaces.update_workspace_model();
     }
 
     pub fn set_current_workspace_index(&mut self, index: usize) {
@@ -276,6 +304,12 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// Centralized keyboard focus change: deactivates old window, activates new one,
     /// sends xdg configure and foreign-toplevel state for both.
     pub fn set_keyboard_focus_on_window(&mut self, window: &crate::shell::WindowElement) {
+        // Nothing may be sent to a surface whose client has gone: wayland-backend
+        // resolves the client id first and aborts the compositor on a dead one.
+        if !can_take_focus(window) {
+            return;
+        }
+
         // While a self-managing X11 game (Cuphead) is fullscreen, never move focus
         // to a DIFFERENT window (pointer, dock, self-activation by Steam Big
         // Picture, …). XWayland would send the game an X11 `FocusOut` and Unity
@@ -293,6 +327,10 @@ impl<BackendData: Backend> Otto<BackendData> {
                 return;
             }
         }
+
+        // Cross-workspace navigation (app switcher, cycle-windows) needs to know
+        // which window of an app was used last; per-workspace stacking cannot say.
+        self.workspaces.note_window_focused(&window.id());
 
         let keyboard = self.seat.get_keyboard().unwrap();
         let serial = SERIAL_COUNTER.next_serial();
@@ -337,6 +375,12 @@ impl<BackendData: Backend> Otto<BackendData> {
         // sets _NET_ACTIVE_WINDOW, which is what they actually poll for.
         keyboard.set_focus(self, Some(window.clone().into()), serial);
         self.set_x11_active_window(window);
+
+        // The app switcher is ordered by focus recency, and `note_window_focused`
+        // above only moved the history — nothing rebuilds the model off it on its
+        // own, so without this the switcher keeps the order it had before the
+        // focus change.
+        self.workspaces.update_workspace_model();
     }
 
     /// Mirror keyboard focus to the X11 world by setting `_NET_ACTIVE_WINDOW`.
@@ -378,6 +422,20 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
     }
 
+    /// Entering Show All: the keyboard belongs to expose, not to whatever
+    /// window happened to be in front.
+    ///
+    /// Two things depend on this. Keys pressed while the previews are up no
+    /// longer leak into the window underneath them, which is what a modal
+    /// overview is supposed to mean. And clients hear about it: `wl_keyboard`
+    /// `leave` is the only signal a client gets that expose opened, which is
+    /// how apps take down transient chrome of their own — `dismiss_all_popups`
+    /// reaches popups, but nothing else. Focus comes back on the way out, in
+    /// `close_expose_show_all_and_focus_top` and its gesture twin.
+    pub fn enter_expose_focus(&mut self) {
+        self.clear_keyboard_focus();
+    }
+
     pub fn clear_keyboard_focus(&mut self) {
         if let Some(keyboard) = self.seat.get_keyboard() {
             let serial = SERIAL_COUNTER.next_serial();
@@ -401,4 +459,18 @@ impl<BackendData: Backend> Otto<BackendData> {
             keyboard.set_focus(self, None, serial);
         }
     }
+}
+
+/// Whether a window can still be given the keyboard focus.
+///
+/// `IsAlive` alone is not enough. A client is destroyed before the objects it
+/// owns, so during `wl_client_destroy` a toplevel still reports itself alive
+/// while the backend can no longer resolve its client id — and every send on
+/// it aborts the process from inside a destructor that must not unwind.
+/// Asking the surface for its client is the check that covers both.
+fn can_take_focus(window: &crate::shell::WindowElement) -> bool {
+    window.alive()
+        && window
+            .wl_surface()
+            .is_some_and(|surface| surface.client().is_some())
 }

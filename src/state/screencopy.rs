@@ -310,7 +310,62 @@ pub fn complete_screencopy_for_output(
         let p = pending.remove(i);
         let success = match &p.buffer {
             CaptureBuffer::Dmabuf(dmabuf) => copy_to_dmabuf(renderer, &p, dmabuf, output),
-            CaptureBuffer::Shm(buffer) => copy_to_shm(renderer, &p, buffer, output),
+            CaptureBuffer::Shm(buffer) => copy_to_shm(renderer.as_mut(), &p, buffer, output, false),
+        };
+
+        if success {
+            p.frame.flags(zwlr_screencopy_frame_v1::Flags::empty());
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default();
+            p.frame.ready(
+                (now.as_secs() >> 32) as u32,
+                now.as_secs() as u32,
+                now.subsec_nanos(),
+            );
+        } else {
+            p.frame.failed();
+        }
+    }
+}
+
+/// Called from the winit render loop after the output has been rendered.
+///
+/// The winit backend renders straight into a `SkiaRenderer` with no udev
+/// multi-GPU wrapper. Both capture paths are served: dmabuf clients get a GPU
+/// blit, SHM clients the read-pixels fallback. Both flip vertically, because
+/// winit draws into a bottom-up GL window surface.
+pub fn complete_screencopy_for_output_skia(
+    pending: &mut Vec<PendingScreencopy>,
+    output: &Output,
+    renderer: &mut crate::skia_renderer::SkiaRenderer,
+) {
+    let indices: Vec<usize> = pending
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.output == *output)
+        .map(|(i, _)| i)
+        .collect();
+
+    if indices.is_empty() {
+        return;
+    }
+
+    for i in indices.into_iter().rev() {
+        let p = pending.remove(i);
+        let success = match &p.buffer {
+            CaptureBuffer::Dmabuf(dmabuf) => {
+                let (src, dst) = capture_rects(&p, output);
+                let mut dmabuf = dmabuf.clone();
+                match renderer.blit_current_frame_flipped(&mut dmabuf, src, dst) {
+                    Ok(()) => true,
+                    Err(err) => {
+                        tracing::warn!(?err, "screencopy dmabuf blit failed");
+                        false
+                    }
+                }
+            }
+            CaptureBuffer::Shm(buffer) => copy_to_shm(renderer, &p, buffer, output, true),
         };
 
         if success {
@@ -371,12 +426,13 @@ fn copy_to_dmabuf(
 }
 
 fn copy_to_shm(
-    renderer: &mut UdevRenderer<'_>,
+    renderer: &mut crate::skia_renderer::SkiaRenderer,
     p: &PendingScreencopy,
     buffer: &WlBuffer,
     output: &Output,
+    flip_y: bool,
 ) -> bool {
-    let Some(skia_renderer) = renderer.as_mut().current_skia_renderer() else {
+    let Some(skia_renderer) = renderer.current_skia_renderer() else {
         return false;
     };
     let mut skia_surface = skia_renderer.surface.clone();
@@ -409,7 +465,25 @@ fn copy_to_shm(
 
         let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, expected) };
 
-        skia_surface.read_pixels(&info, dst, p.stride as usize, (x_off, y_off))
+        if !skia_surface.read_pixels(&info, dst, p.stride as usize, (x_off, y_off)) {
+            return false;
+        }
+
+        // The winit backend draws into a bottom-up GL framebuffer, so the rows
+        // come back in the opposite order from the one the client expects.
+        if flip_y {
+            let stride = p.stride as usize;
+            let rows = p.height as usize;
+            let mut scratch = vec![0u8; stride];
+            for row in 0..rows / 2 {
+                let other = rows - 1 - row;
+                scratch.copy_from_slice(&dst[row * stride..row * stride + stride]);
+                dst.copy_within(other * stride..other * stride + stride, row * stride);
+                dst[other * stride..other * stride + stride].copy_from_slice(&scratch);
+            }
+        }
+
+        true
     });
 
     matches!(result, Ok(true))

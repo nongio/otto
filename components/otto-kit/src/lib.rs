@@ -8,6 +8,7 @@ pub mod color_scheme;
 pub mod common;
 pub mod components;
 pub mod desktop_entry;
+pub mod dnd;
 pub mod filetype;
 pub mod icon_theme;
 pub mod icons;
@@ -17,6 +18,7 @@ mod portal_runtime;
 pub mod preview;
 pub mod protocols;
 pub mod rendering;
+pub mod sound;
 pub mod surfaces;
 pub mod theme;
 pub mod typography;
@@ -40,7 +42,7 @@ pub use surfaces::{
 };
 
 // Re-export app framework
-pub use app_runner::{App, AppContext, AppRunner, AppRunnerWithType};
+pub use app_runner::{App, AppContext, AppRunner, AppRunnerWithType, Modifiers};
 
 // Re-export cursor shape type for apps
 pub use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape as CursorShape;
@@ -48,7 +50,7 @@ pub use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_
 /// Convenience prelude for application development
 pub mod prelude {
     pub use crate::accent::current_accent;
-    pub use crate::app_runner::{App, AppContext, AppRunner, AppRunnerWithType};
+    pub use crate::app_runner::{App, AppContext, AppRunner, AppRunnerWithType, Modifiers};
     pub use crate::color_scheme::current_color_scheme;
     pub use crate::common::Renderable;
     pub use crate::components::color_picker::{

@@ -24,4 +24,7 @@ pub mod perf;
 pub mod picker;
 pub mod quickview;
 pub mod scene;
+pub mod thumbcache;
+pub mod thumbnails;
 pub mod view;
+pub mod watch;

@@ -50,7 +50,7 @@ pub fn hex_string(color: Color) -> String {
 /// a control that silently clips.
 pub fn measure(color: Color) -> f32 {
     let hex = hex_string(color);
-    SWATCH_SIZE + GAP + styles::SUBHEADLINE.font().measure_str(&hex, None).0
+    SWATCH_SIZE + GAP + styles::BODY.font().measure_str(&hex, None).0
 }
 
 /// Is `(x, y)` within the well? Reads the same `rect` [`draw`] paints into.
@@ -101,13 +101,15 @@ pub fn draw(
         canvas.draw_rrect(rrect, &fill(Color::from_argb(0x28, 0, 0, 0)));
     }
 
+    // The hex *is* the value this control shows — it reads at full strength,
+    // like a field's text, not as the secondary annotation it used to be.
     let text_color = if disabled {
-        scale_alpha(theme.text_secondary, 0.5)
+        scale_alpha(theme.text_primary, 0.5)
     } else {
-        theme.text_secondary
+        theme.text_primary
     };
     Label::new(hex_string(color))
-        .with_style(styles::SUBHEADLINE)
+        .with_style(styles::BODY)
         .with_color(text_color)
         .centered_on(swatch.right + GAP, cy)
         .render(canvas);

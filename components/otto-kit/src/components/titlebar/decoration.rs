@@ -48,6 +48,22 @@ pub struct WindowDecoration {
     /// `background_blur` — the compositor blurs behind it and blurring again
     /// here would double up.
     pub backdrop_blur: f32,
+    /// Whether anything is blurred behind the bar — either the compositor
+    /// blurring under the surface, or [`Self::backdrop_blur`] doing it here.
+    /// With nothing behind it the material is filled in instead of left
+    /// translucent; see [`TitlebarMaterial::opaque`].
+    pub blurred: bool,
+    /// Leave the material's tint to whoever owns the layer this is drawn on:
+    /// only the sheen and the bevel hairlines are painted, over whatever is
+    /// already there.
+    ///
+    /// The compositor sets this for a server-side titlebar. The tint is the
+    /// one thing about the bar that changes when focus comes and goes, and on
+    /// its own layer it can be *faded* between the frosted and the opaque form
+    /// — see `view_window_decoration` — where painting it here would mean
+    /// repainting the whole bar on every frame of that fade. The colour to use
+    /// comes from [`Self::material_tint`].
+    pub tint_on_layer: bool,
     /// Type style of the title
     pub title_style: TextStyle,
 }
@@ -67,6 +83,8 @@ impl Default for WindowDecoration {
             disabled: Vec::new(),
             sharing: false,
             backdrop_blur: 0.0,
+            blurred: true,
+            tint_on_layer: false,
             title_style: Self::DEFAULT_TITLE_STYLE,
         }
     }
@@ -118,6 +136,16 @@ impl WindowDecoration {
 
     pub fn with_backdrop_blur(mut self, sigma: f32) -> Self {
         self.backdrop_blur = sigma;
+        self
+    }
+
+    pub fn with_blurred(mut self, blurred: bool) -> Self {
+        self.blurred = blurred;
+        self
+    }
+
+    pub fn with_tint_on_layer(mut self, on_layer: bool) -> Self {
+        self.tint_on_layer = on_layer;
         self
     }
 
@@ -182,7 +210,9 @@ impl WindowDecoration {
         y >= 0.0 && y <= self.titlebar_height && x >= 0.0 && x <= self.width
     }
 
-    fn material(&self) -> TitlebarMaterial {
+    /// The material for this bar's colour scheme and focus, before anything
+    /// is decided about how — or whether — its tint gets painted.
+    fn base_material(&self) -> TitlebarMaterial {
         let base = match (self.dark, self.active) {
             (false, true) => TitlebarMaterial::light_active(),
             (false, false) => TitlebarMaterial::light_inactive(),
@@ -190,6 +220,33 @@ impl WindowDecoration {
             (true, false) => TitlebarMaterial::dark_inactive(),
         };
         base.with_backdrop_blur(self.backdrop_blur)
+    }
+
+    /// The bar's tint, for a caller painting it itself — see
+    /// [`Self::tint_on_layer`].
+    ///
+    /// `frosted` picks which end of the fade is wanted: the material's own
+    /// translucency, or that same colour filled in to full opacity for a bar
+    /// with nothing blurred behind it.
+    pub fn material_tint(&self, frosted: bool) -> Color {
+        let material = self.base_material();
+        if frosted {
+            material.tint
+        } else {
+            material.opaque().tint
+        }
+    }
+
+    fn material(&self) -> TitlebarMaterial {
+        let base = self.base_material();
+        if self.tint_on_layer {
+            return base.with_tint(Color::TRANSPARENT);
+        }
+        if self.blurred {
+            base
+        } else {
+            base.opaque()
+        }
     }
 
     fn title_color(&self) -> Color {

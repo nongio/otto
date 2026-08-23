@@ -4,7 +4,7 @@ use crate::{components::menu_item::MenuItem, prelude::ContextMenuStyle};
 ///
 /// Pure state management - no rendering, no surface logic.
 /// Handles menu items, selection, hover state, and submenu navigation.
-#[derive(Clone, Debug, Hash)]
+#[derive(Clone, Debug)]
 pub struct ContextMenuState {
     /// Menu items
     items: Vec<MenuItem>,
@@ -25,7 +25,30 @@ pub struct ContextMenuState {
     /// Flag to request closing the menu
     should_close: bool,
 
+    /// How far the root menu's list is scrolled up inside its box, in logical
+    /// points. Non-zero only when the items are taller than
+    /// [`ContextMenuStyle::max_height`] allows the menu to be. Submenus are
+    /// not scrolled: they are short by construction, and a scrolling submenu
+    /// would need its own offset per depth for no benefit yet.
+    scroll: f32,
+
     pub style: ContextMenuStyle,
+}
+
+/// Hashed by hand rather than derived: `scroll` is an `f32`, which has no
+/// `Hash` of its own, and hashing its bits is exactly right here — two states
+/// scrolled to the same place hash alike, and NaN never reaches this field.
+impl std::hash::Hash for ContextMenuState {
+    fn hash<H: std::hash::Hasher>(&self, hasher: &mut H) {
+        self.items.hash(hasher);
+        self.selected_index.hash(hasher);
+        self.selections_by_depth.hash(hasher);
+        self.open_submenu_by_depth.hash(hasher);
+        self.depth.hash(hasher);
+        self.should_close.hash(hasher);
+        self.scroll.to_bits().hash(hasher);
+        self.style.hash(hasher);
+    }
 }
 
 impl ContextMenuState {
@@ -37,6 +60,7 @@ impl ContextMenuState {
             open_submenu_by_depth: Vec::new(),
             depth: 0,
             should_close: false,
+            scroll: 0.0,
             style: ContextMenuStyle::default(),
         }
     }
@@ -63,6 +87,19 @@ impl ContextMenuState {
 
     pub fn set_items(&mut self, items: Vec<MenuItem>) {
         self.items = items;
+    }
+
+    /// How far the list is scrolled, in logical points.
+    pub fn scroll(&self) -> f32 {
+        self.scroll
+    }
+
+    /// Scroll the list, clamped to what there is to scroll.
+    ///
+    /// `overflow` is how much taller the items are than the box — zero when
+    /// everything fits, in which case the offset is forced back to the top.
+    pub fn set_scroll(&mut self, offset: f32, overflow: f32) {
+        self.scroll = offset.clamp(0.0, overflow.max(0.0));
     }
 
     pub fn select(&mut self, index: Option<usize>) {

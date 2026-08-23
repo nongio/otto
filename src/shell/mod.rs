@@ -191,6 +191,26 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
         on_commit_buffer_handler::<Self>(surface);
         self.backend_data.early_import(surface);
 
+        // A drag icon's commit can carry an anchor: the offset that puts the
+        // point the user grabbed under the cursor, rather than the icon's
+        // corner. It is relative to the last one, so it accumulates, and it is
+        // taken here because the compositor is the only place that sees it —
+        // nothing else in the pipeline reads `buffer_delta` for a role-less
+        // surface.
+        if self.dnd_icon.as_ref() == Some(surface) {
+            let delta = with_states(surface, |states| {
+                states
+                    .cached_state
+                    .get::<SurfaceAttributes>()
+                    .current()
+                    .buffer_delta
+                    .take()
+            });
+            if let Some(delta) = delta {
+                self.dnd_icon_offset += delta;
+            }
+        }
+
         let sync = is_sync_subsurface(surface);
         let surface_id = surface.id();
 
@@ -358,6 +378,10 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
     fn destroyed(&mut self, surface: &WlSurface) {
         // Clean up the layer for this surface
         self.destroy_layer_for_surface(&surface.id());
+
+        // A decoration mode stashed for a surface that never became a toplevel
+        // has nothing left to apply to.
+        self.pending_kde_decorations.remove(&surface.id());
 
         // Find root surface for this destroyed surface
         // 1. Check popup cache first (O(1)) - entry removal happens in popup_destroyed
@@ -529,6 +553,23 @@ impl<BackendData: Backend> Otto<BackendData> {
                     client_owns_size,
                     shared_gravity,
                 );
+                // …then correct the opacity claim it just made. Layer-shell
+                // (and lock) surfaces are routinely fullscreen and mostly
+                // transparent — the launcher is a fullscreen overlay with a
+                // search field on it — and a blanket `content_opaque` turns
+                // one into an occluder that culls the wallpaper and every
+                // window beneath it. That is invisible on the KMS path, where
+                // each plane subtree is rendered in isolation, and blacks out
+                // the whole screen on winit, which composites the output as a
+                // single tree. Ask the client instead: opaque only where it
+                // declared an opaque region (or committed a buffer with no
+                // alpha at all). Cheap enough to redo every commit — this is a
+                // plain field write in lay-rs, it schedules nothing.
+                let fully_opaque = smithay::wayland::compositor::with_states(
+                    &surface_info.get(surface_id).unwrap().0,
+                    crate::workspaces::utils::surface_is_fully_opaque,
+                );
+                surface_layer.set_content_opaque(fully_opaque);
 
                 // Set up parent-child relationship
                 // Only append if there's a parent - root surface is handled separately below

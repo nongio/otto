@@ -73,7 +73,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
             let menu_bounds = menu.view_layer.render_bounds_transformed();
             let x = event.location.x as f32 - menu_bounds.left / scale as f32;
             let y = event.location.y as f32 - menu_bounds.top / scale as f32;
-            let item_index = ContextMenuRenderer::hit_test_items(items, style, x, y);
+            let item_index = ContextMenuRenderer::hit_test_items(items, style, x, y, 0.0);
             menu_state.select_at_depth(0, item_index);
             menu.view.update_state(&menu_state);
         }
@@ -171,7 +171,8 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
                         let ptr = state.last_pointer_location;
                         let x = ptr.0 as f32 - menu_bounds.left / scale;
                         let y = ptr.1 as f32 - menu_bounds.top / scale;
-                        let item_index = ContextMenuRenderer::hit_test_items(items, style, x, y);
+                        let item_index =
+                            ContextMenuRenderer::hit_test_items(items, style, x, y, 0.0);
                         drop(menu_lock);
                         if let Some(idx) = item_index {
                             // Get action_id and app_id synchronously before closing the menu

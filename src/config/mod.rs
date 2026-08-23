@@ -1069,6 +1069,20 @@ pub struct InputConfig {
     pub xkb_variant: Option<String>,
     #[serde(default)]
     pub xkb_options: Vec<String>,
+    /// Whether Otto's shortcuts follow the Cmd key alone.
+    ///
+    /// Only meaningful when the layout folds Cmd into Control — see
+    /// `altwin:ctrl_win` in `xkb_options`. Then Cmd and the real Ctrl key
+    /// produce the same event, and a `Ctrl+W` binding fires from both, closing
+    /// the window when the user meant `^W` in a terminal. With this on, Otto
+    /// matches its shortcuts on Cmd and leaves the real Ctrl key to the
+    /// focused application.
+    ///
+    /// Unset means "whenever `altwin:ctrl_win` is in `xkb_options`", which is
+    /// the only layout it makes sense for. Set it explicitly to force it either
+    /// way.
+    #[serde(default)]
+    pub mac_style_modifiers: Option<bool>,
 }
 
 /// Touchpad click method configuration
@@ -1120,6 +1134,7 @@ impl Default for InputConfig {
             xkb_layout: None,
             xkb_variant: None,
             xkb_options: Vec::new(),
+            mac_style_modifiers: None,
         }
     }
 }

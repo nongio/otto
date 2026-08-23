@@ -1,7 +1,7 @@
 # Pointer Input Focus
 
 **Status:** draft  
-**Related specs:** dynamic-island, context-menus, workspaces-multi-output
+**Related specs:** dynamic-island, context-menus, workspaces-multi-output, window-focus-navigation
 
 ## Summary
 
@@ -26,6 +26,7 @@ Defines how Otto resolves which surface receives a pointer button event. Focus m
 - On press over an application window (when not in a mode that suppresses it, such as show-all/expose), the window under the cursor is raised and given keyboard focus. Clicking a subsurface or popup gives keyboard focus to the owning top-level surface.
 - On press over a focusable Top or Overlay layer-shell surface, that surface receives keyboard focus instead, hit-tested against its live on-screen position and honoring its input region.
 - When the cursor is over empty space (no surface), the press resolves to no focus and is not delivered to any surface.
+- Focus changes that are not pointer-driven — closing the focused window, the app switcher, cycling an application's windows — are specified in window-focus-navigation.
 
 ## Constraints & Edge Cases
 

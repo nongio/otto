@@ -93,6 +93,14 @@ impl SettingsInterface {
         Config::with(|config| config.icon_theme.clone().unwrap_or_default())
     }
 
+    /// Returns the configured sound theme name (e.g. "freedesktop", "ocean").
+    ///
+    /// Empty means no preference, which leaves the app to auto-detect — the
+    /// same contract `GetIconTheme` has.
+    async fn get_sound_theme(&self) -> String {
+        Config::with(|config| config.audio.sound_theme.clone().unwrap_or_default())
+    }
+
     /// The schema: one dictionary per setting. Clients ignore keys they do not
     /// know, so the schema can grow without breaking them.
     async fn describe(&self) -> Vec<HashMap<String, OwnedValue>> {
@@ -200,6 +208,83 @@ impl SettingsInterface {
                 entry
             })
             .collect())
+    }
+
+    /// The file a changed setting is written to.
+    ///
+    /// Configuration is layered, and which layer is writable depends on what
+    /// exists on this system — a local `otto_config.toml` next to the running
+    /// binary quietly outranks `~/.config/otto/config.toml`. A client cannot
+    /// work that out for itself, so it asks.
+    async fn config_path(&self) -> String {
+        crate::config::writable_config_path()
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// Persist how one display should be driven, keyed by its connector.
+    ///
+    /// Not part of the settings schema, for the same reason virtual outputs
+    /// are not: the identifier is a connector name the hardware supplies at
+    /// runtime, and the schema is a table fixed at compile time. This writes
+    /// `displays.named.<connector>` — the same profile
+    /// `DisplaysConfig::resolve` reads when an output is brought up.
+    ///
+    /// **Takes effect at the next start.** Nothing here re-drives the running
+    /// output: a mode change is a modeset, and one made from under a session
+    /// that cannot be undone if the display does not come back is worse than
+    /// one you restart for. The answer says so, in the same words `Set` uses.
+    ///
+    /// A zero width or height leaves the resolution unset, and a zero refresh
+    /// leaves the rate unset, so a caller that only wants to move a display
+    /// does not have to invent a mode for it.
+    #[allow(clippy::too_many_arguments)]
+    async fn set_output_profile(
+        &self,
+        connector: &str,
+        width: u32,
+        height: u32,
+        refresh_hz: f64,
+        x: i32,
+        y: i32,
+        primary: bool,
+    ) -> Result<String, SettingsFault> {
+        if connector.trim().is_empty() {
+            return Err(SettingsFault::OutOfRange(
+                "a display profile needs a connector".to_string(),
+            ));
+        }
+
+        let key = |leaf: &str| format!("displays.named.{connector}.{leaf}");
+        let write = |leaf: &str, value: toml::Value| {
+            crate::config::persist_key(&key(leaf), &value).map_err(|reason| {
+                SettingsFault::ApplyFailed(format!("could not persist: {reason}"))
+            })
+        };
+
+        write("primary", toml::Value::Boolean(primary))?;
+        write(
+            "position",
+            toml::Value::Table(toml::map::Map::from_iter([
+                ("x".to_string(), toml::Value::Integer(x as i64)),
+                ("y".to_string(), toml::Value::Integer(y as i64)),
+            ])),
+        )?;
+        if width > 0 && height > 0 {
+            write(
+                "resolution",
+                toml::Value::Table(toml::map::Map::from_iter([
+                    ("width".to_string(), toml::Value::Integer(width as i64)),
+                    ("height".to_string(), toml::Value::Integer(height as i64)),
+                ])),
+            )?;
+        }
+        if refresh_hz > 0.0 {
+            write("refresh_hz", toml::Value::Float(refresh_hz))?;
+        }
+
+        info!("display profile for {connector} saved; it applies at the next start");
+        Ok(settings::Status::PendingRestart.wire_name().to_string())
     }
 
     /// Create a virtual output on the running compositor.

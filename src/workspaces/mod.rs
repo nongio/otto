@@ -186,6 +186,13 @@ pub struct Workspaces {
     display_handle: DisplayHandle,
 
     pub windows_map: HashMap<ObjectId, WindowElement>,
+    /// Windows in the order they were last focused, most recent LAST.
+    ///
+    /// Per-workspace stacking order cannot answer "which window of this app did
+    /// I use last?" once the app's windows live on different workspaces — every
+    /// space has its own top. This list is the cross-workspace answer, and it
+    /// is what the app switcher and the cycle-windows shortcut navigate by.
+    focus_history: Vec<ObjectId>,
     // views
     pub dock: Arc<DockView>,
     pub app_switcher: Arc<AppSwitcherView>,
@@ -526,6 +533,7 @@ impl Workspaces {
             suspended_outputs: HashMap::new(),
             model: Arc::new(RwLock::new(model)),
             windows_map: HashMap::new(),
+            focus_history: Vec::new(),
             expose_layer,
             app_switcher: app_switcher.clone(),
             app_switcher_output: Arc::new(RwLock::new(None)),
@@ -3051,6 +3059,7 @@ impl Workspaces {
             }
         });
         self.windows_map.remove(window_id);
+        self.forget_window_focus(window_id);
         // Remove debug texture snapshot for this surface
         crate::textures_storage::remove(window_id);
         let removed_surface_ids = self.remove_window_view(window_id);
@@ -3168,6 +3177,115 @@ impl Workspaces {
             .unwrap_or_default()
     }
 
+    /// Record `wid` as the most recently focused window (see `focus_history`).
+    pub fn note_window_focused(&mut self, wid: &ObjectId) {
+        if self.focus_history.last() == Some(wid) {
+            return;
+        }
+        self.focus_history.retain(|id| id != wid);
+        self.focus_history.push(wid.clone());
+    }
+
+    /// Drop a dead window from the focus history.
+    pub fn forget_window_focus(&mut self, wid: &ObjectId) {
+        self.focus_history.retain(|id| id != wid);
+    }
+
+    /// The most recently focused window that is still mapped.
+    pub fn last_focused_window(&self) -> Option<ObjectId> {
+        self.focus_history
+            .iter()
+            .rev()
+            .find(|id| self.windows_map.contains_key(id))
+            .cloned()
+    }
+
+    fn window_matches_app(&self, we: &WindowElement, app_id: &str) -> bool {
+        we.xdg_app_id() == app_id || we.display_app_id(&self.display_handle) == app_id
+    }
+
+    /// Windows of `app_id` in a stable, workspace-aware order: by output, then
+    /// workspace index, then stacking position within that workspace.
+    ///
+    /// Unlike `app_windows_map`, this order does not depend on which workspace
+    /// happens to be current, so cycling through it visits every window once.
+    /// Minimised windows are skipped — raising them is a different gesture.
+    pub fn app_windows_in_stable_order(&self, app_id: &str) -> Vec<ObjectId> {
+        let mut output_names: Vec<&String> = self.output_workspaces.keys().collect();
+        output_names.sort();
+        let mut windows = Vec::new();
+        for name in output_names {
+            let Some(ows) = self.output_workspaces.get(name) else {
+                continue;
+            };
+            for space in ows.spaces.iter() {
+                for we in space.elements() {
+                    if we.is_minimised() || !self.window_matches_app(we, app_id) {
+                        continue;
+                    }
+                    windows.push(we.id());
+                }
+            }
+        }
+        windows
+    }
+
+    /// Windows of `app_id` ordered most-recently-focused first; windows never
+    /// focused come last, in stable order.
+    pub fn app_windows_by_recency(&self, app_id: &str) -> Vec<ObjectId> {
+        let mut windows = self.app_windows_in_stable_order(app_id);
+        windows.sort_by_key(|id| {
+            // Position from the end of the history: 0 = most recent. Never
+            // focused sorts after everything, keeping the stable order.
+            self.focus_history
+                .iter()
+                .rev()
+                .position(|h| h == id)
+                .unwrap_or(usize::MAX)
+        });
+        windows
+    }
+
+    /// The app to cycle within: the app owning the last focused window, falling
+    /// back to the topmost app in the z-order.
+    fn cycling_app_id(&self) -> Option<String> {
+        self.last_focused_window()
+            .and_then(|id| self.windows_map.get(&id).cloned())
+            .map(|we| {
+                let raw = we.xdg_app_id();
+                if raw.is_empty() {
+                    we.display_app_id(&self.display_handle)
+                } else {
+                    raw
+                }
+            })
+            .filter(|app_id| !app_id.is_empty())
+            .or_else(|| self.get_current_app_id())
+    }
+
+    /// Step `offset` windows through the current app's stable window order,
+    /// starting from the focused one, and raise the window we land on.
+    fn cycle_app_window(&mut self, offset: isize) -> Option<ObjectId> {
+        let app_id = self.cycling_app_id()?;
+        let windows = self.app_windows_in_stable_order(&app_id);
+        if windows.is_empty() {
+            return None;
+        }
+        let current = self
+            .last_focused_window()
+            .and_then(|id| windows.iter().position(|w| *w == id))
+            // Nothing of this app is focused — start from the end so that
+            // stepping forward lands on the first window.
+            .unwrap_or(windows.len() - 1) as isize;
+        let len = windows.len() as isize;
+        let index = (current + offset).rem_euclid(len) as usize;
+        let window_id = windows[index].clone();
+        self.raise_element(&window_id, true, true);
+        // The window may live on another workspace — follow it there.
+        self.switch_to_workspace_of_window(&window_id);
+        Some(window_id)
+    }
+
     /// Return the Window object of WlSurface by its id
     pub fn get_window_for_surface(&self, id: &ObjectId) -> Option<&WindowElement> {
         self.windows_map.get(id)
@@ -3263,33 +3381,30 @@ impl Workspaces {
     }
 
     pub fn raise_next_app_window(&mut self) -> Option<ObjectId> {
-        let windows = self.get_current_app_windows();
-        let mut wid = None;
-        if !windows.is_empty() {
-            for (i, window_id) in windows.iter().enumerate() {
-                if i == 0 {
-                    self.raise_element(window_id, true, true);
-                    wid = Some(window_id.clone());
-                }
-            }
-        }
-        wid
+        self.cycle_app_window(1)
     }
 
     pub fn raise_prev_app_window(&mut self) -> Option<ObjectId> {
-        let windows = self.get_current_app_windows();
-        let mut wid = None;
-        if !windows.is_empty() {
-            let current_window = (windows.len() as i32) - 1;
-            let current_window = std::cmp::max(current_window, 0) as usize;
-            for (i, window_id) in windows.iter().enumerate() {
-                if i == current_window {
-                    self.raise_element(window_id, true, true);
-                    wid = Some(window_id.clone());
-                }
+        self.cycle_app_window(-1)
+    }
+
+    /// Scroll the output owning `wid` to the workspace that holds it, so a
+    /// window raised from another workspace actually becomes visible.
+    fn switch_to_workspace_of_window(&mut self, wid: &ObjectId) {
+        let owner = self.output_workspaces.iter().find_map(|(name, ows)| {
+            ows.spaces
+                .iter()
+                .position(|s| s.elements().any(|e| e.id() == *wid))
+                .map(|i| (name.clone(), i))
+        });
+        if let Some((name, index)) = owner {
+            if let Some(output) = self.outputs.iter().find(|o| o.name() == name).cloned() {
+                self.set_workspace_for_output(&output, index, None);
             }
+        } else {
+            let current_space_index = self.with_model(|m| m.current_workspace);
+            self.set_current_workspace_index(current_space_index, None);
         }
-        wid
     }
 
     /// Raise thw windowelement on top of all the windows in its space
@@ -3431,7 +3546,12 @@ impl Workspaces {
             self.expose_show_desktop(-2.0, true);
         }
 
-        let wid = self.raise_app_elements(app_id, None);
+        // Target the app's most recently focused window, not whichever of its
+        // windows happens to sit on the current workspace — otherwise an app
+        // with windows on two workspaces always resolves to the one already in
+        // view and the switcher appears to do nothing.
+        let target = self.app_windows_by_recency(app_id).first().cloned();
+        let wid = self.raise_app_elements(app_id, target.as_ref());
         if wid.is_none() {
             // return early
             return wid;
@@ -3439,20 +3559,7 @@ impl Workspaces {
         let wid = wid.unwrap();
         // Find the output that owns the raised window's space rather than
         // assuming the primary output, so we scroll only that output.
-        let owner = self.output_workspaces.iter().find_map(|(name, ows)| {
-            ows.spaces
-                .iter()
-                .position(|s| s.elements().any(|e| e.id() == wid))
-                .map(|i| (name.clone(), i))
-        });
-        if let Some((name, index)) = owner {
-            if let Some(output) = self.outputs.iter().find(|o| o.name() == name).cloned() {
-                self.set_workspace_for_output(&output, index, None);
-            }
-        } else {
-            let current_space_index = self.with_model(|m| m.current_workspace);
-            self.set_current_workspace_index(current_space_index, None);
-        }
+        self.switch_to_workspace_of_window(&wid);
 
         Some(wid)
     }
@@ -3477,20 +3584,7 @@ impl Workspaces {
         let wid = wid.unwrap();
         // Find the output that owns the raised window's space rather than
         // assuming the primary output, so we scroll only that output.
-        let owner = self.output_workspaces.iter().find_map(|(name, ows)| {
-            ows.spaces
-                .iter()
-                .position(|s| s.elements().any(|e| e.id() == wid))
-                .map(|i| (name.clone(), i))
-        });
-        if let Some((name, index)) = owner {
-            if let Some(output) = self.outputs.iter().find(|o| o.name() == name).cloned() {
-                self.set_workspace_for_output(&output, index, None);
-            }
-        } else {
-            let current_space_index = self.with_model(|m| m.current_workspace);
-            self.set_current_workspace_index(current_space_index, None);
-        }
+        self.switch_to_workspace_of_window(&wid);
 
         Some(wid)
     }
@@ -3568,6 +3662,56 @@ impl Workspaces {
                         .push(display_app_id.clone());
                 }
             }
+        }
+
+        // Order the switcher list by focus recency (most recent LAST — the
+        // consumer reverses it). Space iteration order alone puts the windows
+        // of non-current workspaces first, so an app whose window lives on
+        // another workspace would sink to the bottom of the switcher no matter
+        // how recently it was used.
+        // An app is ranked by how recently it was used, but only against the
+        // apps it shares a workspace with: one whose windows are all somewhere
+        // else belongs behind everything here, however recently it was used.
+        #[allow(clippy::mutable_key_type)]
+        let here: HashSet<ObjectId> = self
+            .focused_output_workspaces()
+            .and_then(|ows| ows.spaces.get(ows.current_workspace))
+            .map(|space| {
+                space
+                    .elements()
+                    .filter_map(|we| we.wl_surface().map(|s| s.as_ref().id()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        {
+            let mut model = self.model.write().unwrap();
+            // Per app: whether any of its windows is on this workspace, and the
+            // best (lowest) focus rank among them.
+            let mut ranks: HashMap<String, (bool, usize)> = HashMap::new();
+            for (window_id, we) in all_windows.iter() {
+                let app_id = we.display_app_id(&self.display_handle);
+                if app_id.is_empty() {
+                    continue;
+                }
+                // Distance from the end of the history: 0 = most recent.
+                let rank = self
+                    .focus_history
+                    .iter()
+                    .rev()
+                    .position(|h| h == window_id)
+                    .unwrap_or(usize::MAX);
+                let entry = ranks.entry(app_id).or_insert((false, usize::MAX));
+                entry.0 |= here.contains(window_id);
+                entry.1 = entry.1.min(rank);
+            }
+            // Stable sort, and the consumer reads the list in reverse: the
+            // most recent app on this workspace has to end up LAST, and the
+            // apps that are not on it first.
+            model.zindex_application_list.sort_by_key(|app_id| {
+                let (on_this_workspace, rank) =
+                    ranks.get(app_id).copied().unwrap_or((false, usize::MAX));
+                (on_this_workspace, std::cmp::Reverse(rank))
+            });
         }
 
         // keep only app in application_list that are in zindex_application_list

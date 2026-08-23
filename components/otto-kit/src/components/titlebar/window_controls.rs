@@ -138,7 +138,7 @@ impl WindowControls {
         let accent =
             crate::accent::current_accent().unwrap_or_else(|| Color::from_rgb(0x0A, 0x84, 0xFF));
         let base = match control {
-            WindowControl::Close => shade(accent, -0.45),
+            WindowControl::Close => shade(accent, -0.28),
             WindowControl::Minimize | WindowControl::Zoom => shade(accent, 0.58),
         };
         if self.pressed == Some(control) {

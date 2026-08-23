@@ -23,7 +23,8 @@ use std::{
 
 use wayland_client::{
     protocol::{
-        wl_buffer, wl_callback, wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm,
+        wl_buffer, wl_callback, wl_compositor, wl_data_device, wl_data_device_manager,
+        wl_data_offer, wl_data_source, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm,
         wl_shm_pool, wl_surface,
     },
     Connection, Dispatch, EventQueue, QueueHandle,
@@ -53,6 +54,17 @@ pub struct TestClientState {
     pub keys: Vec<(u32, bool)>,
     /// Whether the compositor has given this client's surface keyboard focus.
     pub keyboard_focused: bool,
+    /// The seat's pointer, once the compositor announces the capability.
+    pub wl_pointer: Option<wl_pointer::WlPointer>,
+    /// The serial of the most recent pointer button press. Starting a drag
+    /// needs one: the compositor checks it against the grab it handed out, and
+    /// a made-up number is refused.
+    pub last_button_serial: Option<u32>,
+    /// Drag and drop, when the compositor advertises it.
+    pub wl_data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
+    pub wl_data_device: Option<wl_data_device::WlDataDevice>,
+    /// Set when a drag this client started was cancelled by the compositor.
+    pub drag_cancelled: bool,
 }
 
 impl TestClientState {
@@ -67,6 +79,11 @@ impl TestClientState {
             wl_keyboard: None,
             keys: Vec::new(),
             keyboard_focused: false,
+            wl_pointer: None,
+            last_button_serial: None,
+            wl_data_device_manager: None,
+            wl_data_device: None,
+            drag_cancelled: false,
         }
     }
 }
@@ -164,6 +181,62 @@ impl TestClient {
         style.set_corner_radius(36.0);
         style.set_masks_to_bounds(otto_surface_style_v1::ClipMode::Enabled);
         Some(style)
+    }
+
+    /// A drag icon: a plain surface with a buffer already attached, ready to
+    /// be handed to [`Self::start_drag`].
+    ///
+    /// It is *not* committed here. A surface only takes the drag-icon role
+    /// when `start_drag` gives it one, and committing a buffer before that
+    /// would map it as an ordinary surface instead.
+    pub fn create_drag_icon(
+        &mut self,
+        width: u32,
+        height: u32,
+    ) -> (wl_surface::WlSurface, ShmBuffer) {
+        let shm = self.state.wl_shm.clone().expect("shm not bound");
+        let buffer = ShmBuffer::new(&shm, &self.qh, width, height);
+        let surface = self.create_surface();
+        surface.attach(Some(buffer.buffer()), 0, 0);
+        (surface, buffer)
+    }
+
+    /// Start a drag from `origin`, optionally carrying `icon` under the
+    /// cursor — what a file manager does when a press turns into a drag.
+    ///
+    /// Needs a real press serial, so the caller has to have pressed the
+    /// pointer over `origin` first; returns `None` when no press has been
+    /// seen, rather than inventing one the compositor would refuse.
+    pub fn start_drag(
+        &mut self,
+        origin: &wl_surface::WlSurface,
+        icon: Option<&wl_surface::WlSurface>,
+        mime_types: &[&str],
+    ) -> Option<wl_data_source::WlDataSource> {
+        let manager = self.state.wl_data_device_manager.clone()?;
+        let seat = self.state.wl_seat.clone()?;
+        let serial = self.state.last_button_serial?;
+
+        let device = match self.state.wl_data_device.clone() {
+            Some(device) => device,
+            None => {
+                let device = manager.get_data_device(&seat, &self.qh, ());
+                self.state.wl_data_device = Some(device.clone());
+                device
+            }
+        };
+
+        let source = manager.create_data_source(&self.qh, ());
+        for mime in mime_types {
+            source.offer(mime.to_string());
+        }
+        device.start_drag(Some(&source), origin, icon, serial);
+        // The icon has its role now, so its buffer can go up.
+        if let Some(icon) = icon {
+            icon.damage(0, 0, i32::MAX, i32::MAX);
+            icon.commit();
+        }
+        Some(source)
     }
 
     /// Create an XDG toplevel window and attach a minimal SHM buffer.
@@ -460,6 +533,10 @@ impl Dispatch<wl_registry::WlRegistry, ()> for TestClientState {
                 "xdg_wm_base" => {
                     state.xdg_wm_base = Some(registry.bind(name, version.min(6), qh, ()));
                 }
+                "wl_data_device_manager" => {
+                    state.wl_data_device_manager =
+                        Some(registry.bind(name, version.min(3), qh, ()));
+                }
                 "otto_surface_style_manager_v1" => {
                     state.otto_surface_style_manager =
                         Some(registry.bind(name, version.min(2), qh, ()));
@@ -542,6 +619,9 @@ impl Dispatch<wl_seat::WlSeat, ()> for TestClientState {
             if caps.contains(wl_seat::Capability::Keyboard) && state.wl_keyboard.is_none() {
                 state.wl_keyboard = Some(seat.get_keyboard(qh, ()));
             }
+            if caps.contains(wl_seat::Capability::Pointer) && state.wl_pointer.is_none() {
+                state.wl_pointer = Some(seat.get_pointer(qh, ()));
+            }
         }
     }
 }
@@ -566,6 +646,83 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for TestClientState {
                 state.keys.push((key, pressed));
             }
             _ => {}
+        }
+    }
+}
+
+impl Dispatch<wl_pointer::WlPointer, ()> for TestClientState {
+    fn event(
+        state: &mut Self,
+        _proxy: &wl_pointer::WlPointer,
+        event: wl_pointer::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // Only the press serials matter here: they are what authorises a drag.
+        if let wl_pointer::Event::Button {
+            serial,
+            state: wayland_client::WEnum::Value(wl_pointer::ButtonState::Pressed),
+            ..
+        } = event
+        {
+            state.last_button_serial = Some(serial);
+        }
+    }
+}
+
+impl Dispatch<wl_data_device_manager::WlDataDeviceManager, ()> for TestClientState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_data_device_manager::WlDataDeviceManager,
+        _event: wl_data_device_manager::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wl_data_device::WlDataDevice, ()> for TestClientState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_data_device::WlDataDevice,
+        event: wl_data_device::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // A drag this client is the source of still gets its own offers back
+        // when it passes over its own surfaces; nothing here needs them.
+        if let wl_data_device::Event::DataOffer { id } = event {
+            id.destroy();
+        }
+    }
+}
+
+impl Dispatch<wl_data_offer::WlDataOffer, ()> for TestClientState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_data_offer::WlDataOffer,
+        _event: wl_data_offer::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wl_data_source::WlDataSource, ()> for TestClientState {
+    fn event(
+        state: &mut Self,
+        _proxy: &wl_data_source::WlDataSource,
+        event: wl_data_source::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if matches!(event, wl_data_source::Event::Cancelled) {
+            state.drag_cancelled = true;
         }
     }
 }

@@ -268,6 +268,38 @@ pub fn draw_balloon_rect(
     builder.detach()
 }
 
+/// Whether a client surface really covers its whole layer with opaque pixels.
+///
+/// `configure_surface_layer` marks every surface layer `content_opaque`, which
+/// is what lets occlusion culling treat a window as an occluder. For a
+/// wlr-layer-shell surface that claim is often a lie: a fullscreen overlay
+/// (the launcher) is mostly transparent, and a backend that renders the output
+/// as ONE tree — winit — then culls the wallpaper and every window under it and
+/// paints the screen black. Smithay already tracks the truth in
+/// `RendererSurfaceState::opaque_regions`, computed from the buffer's alpha
+/// channel and the client's `wl_surface.set_opaque_region`; this reports
+/// whether one of those regions covers the surface whole.
+///
+/// Conservative on purpose: a surface whose opacity is only expressible as a
+/// union of rects reads as non-opaque, which costs some culling but never
+/// erases content.
+pub fn surface_is_fully_opaque(states: &smithay::wayland::compositor::SurfaceData) -> bool {
+    let Some(data) = states
+        .data_map
+        .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>()
+    else {
+        return false;
+    };
+    let data = data.lock().unwrap();
+    let Some(view) = data.view() else {
+        return false;
+    };
+    let full_rect = smithay::utils::Rectangle::from_size(view.dst);
+    data.opaque_regions()
+        .map(|regions| regions.iter().any(|r| r.contains_rect(full_rect)))
+        .unwrap_or(false)
+}
+
 pub fn configure_surface_layer(
     layer: &Layer,
     wvs: &WindowViewSurface,

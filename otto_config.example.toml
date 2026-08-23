@@ -148,6 +148,13 @@ scroll_speed = 1.0
 # Multiple layouts example:
 # xkb_layout = "us,ru"
 # xkb_options = ["grp:win_space_toggle", "caps:escape"]
+#
+# With "altwin:ctrl_win", Cmd and the real Ctrl key produce the same event, so
+# a "Ctrl+W" binding fires from both — closing the window when you meant ^W in
+# a terminal. Otto then matches its shortcuts on Cmd alone and leaves the real
+# Ctrl key to the focused application. That follows the option above; set this
+# to force it either way.
+# mac_style_modifiers = true
 
 # Layer shell (panels, bars, overlays)
 [layer_shell]

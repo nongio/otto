@@ -4,7 +4,7 @@ use super::{App, AppData};
 use crate::protocols::otto_surface_style_manager_v1;
 use smithay_client_toolkit::{
     compositor::CompositorState,
-    output::OutputState,
+    output::{OutputInfo, OutputState},
     seat::SeatState,
     shell::xdg::{window::WindowConfigure, XdgShell},
     shm::Shm,
@@ -49,6 +49,31 @@ static CURRENT_SOURCE: std::sync::Mutex<
 static CURRENT_OFFER: std::sync::Mutex<
     Option<wayland_client::protocol::wl_data_offer::WlDataOffer>,
 > = std::sync::Mutex::new(None);
+
+/// The source backing a drag *this* application started. Held for the same
+/// reason as `CURRENT_SOURCE` — dropping it destroys the `wl_data_source`, and
+/// with it the drag, mid-gesture.
+static CURRENT_DRAG_SOURCE: std::sync::Mutex<
+    Option<smithay_client_toolkit::data_device_manager::data_source::DragSource>,
+> = std::sync::Mutex::new(None);
+
+/// Whether `source` is the one backing our current drag, so the send handler
+/// knows which payload store to answer from.
+pub(crate) fn is_drag_source(
+    source: &wayland_client::protocol::wl_data_source::WlDataSource,
+) -> bool {
+    CURRENT_DRAG_SOURCE
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|drag| drag.inner() == source)
+}
+
+/// The drag we started is over — dropped, cancelled or refused.
+pub(crate) fn drop_drag_source() {
+    *CURRENT_DRAG_SOURCE.lock().unwrap() = None;
+    crate::dnd::clear_payload();
+}
 
 /// Release our claim on the clipboard. Called when the compositor cancels the
 /// source, which is how it says someone else copied.
@@ -248,6 +273,32 @@ impl<'a> AppContext<'a> {
         })
     }
 
+    /// Everything the compositor has said about the outputs it is driving:
+    /// connector name, make and model, position, and the full mode list with
+    /// which one is current and which is preferred.
+    ///
+    /// This is a client's display probe. A settings app offering a resolution
+    /// or a refresh rate has to know what the hardware actually supports, and
+    /// `wl_output` already carries it — no DRM access, no second session, and
+    /// it follows hotplug because the compositor keeps sending events.
+    /// Empty before the context exists, and again before the compositor has
+    /// announced anything — a caller has to be able to ask again rather than
+    /// keep the first answer, since outputs arrive after the app starts and
+    /// come and go with hotplug.
+    pub fn outputs() -> Vec<OutputInfo> {
+        APP_CONTEXT_PTR.with(|ptr| {
+            let Some(data_ptr) = *ptr.borrow() else {
+                return Vec::new();
+            };
+            let state = &unsafe { &*data_ptr }.output_state;
+            // An output is listed as soon as its global is bound but has no
+            // `OutputInfo` until its `done` event lands a few dispatches
+            // later, so this is empty for the app's first frames even though
+            // the compositor is driving a display.
+            state.outputs().filter_map(|o| state.info(&o)).collect()
+        })
+    }
+
     pub fn compositor_state() -> &'static CompositorState {
         Self::with_global(|ctx| unsafe { &*(ctx.compositor_state_ref() as *const CompositorState) })
     }
@@ -400,6 +451,107 @@ impl<'a> AppContext<'a> {
             }
             Some(read_fd)
         })
+    }
+
+    // ------------------------------------------------------------------
+    // Drag and drop. The application-facing API is [`crate::dnd`]; these are
+    // the protocol calls behind it.
+    // ------------------------------------------------------------------
+
+    /// Start a drag from `origin`, offering `mime_types` and `actions`.
+    ///
+    /// See [`crate::dnd::start`] for what the arguments mean.
+    pub(crate) fn start_drag(
+        mime_types: Vec<String>,
+        actions: wayland_client::protocol::wl_data_device_manager::DndAction,
+        origin: &wl_surface::WlSurface,
+        icon: Option<&wl_surface::WlSurface>,
+        serial: u32,
+    ) -> bool {
+        Self::with_global(|ctx| {
+            let (Some(manager), Some(device)) =
+                (&ctx.data.data_device_manager, &ctx.data.data_device)
+            else {
+                tracing::debug!("no data device; cannot start a drag");
+                return false;
+            };
+
+            let qh = Self::queue_handle();
+            let types: Vec<&str> = mime_types.iter().map(String::as_str).collect();
+            // This already sends `set_actions`. `DragSource::set_actions` must
+            // not be called afterwards: a second one on the same source is a
+            // protocol error, and it issues the request twice besides.
+            let source = manager.create_drag_and_drop_source(qh, types, actions);
+            source.start_drag(device, origin, icon, serial);
+            *CURRENT_DRAG_SOURCE.lock().unwrap() = Some(source);
+
+            // The grab has to reach the compositor now. Waiting for the run
+            // loop's next flush would drop the first stretch of pointer motion
+            // out of the drag.
+            if let Err(err) = ctx.data.connection.flush() {
+                tracing::warn!(%err, "could not flush after starting a drag");
+            }
+            true
+        })
+    }
+
+    /// The offer for the drag currently over one of our surfaces.
+    fn drag_offer() -> Option<smithay_client_toolkit::data_device_manager::data_offer::DragOffer> {
+        use smithay_client_toolkit::data_device_manager::data_device::DataDevice;
+        Self::with_global(|ctx| DataDevice::data(ctx.data.data_device.as_ref()?).drag_offer())
+    }
+
+    /// Answer the source at the current position: which type we would take, and
+    /// which action we would perform. See [`crate::dnd::accept`].
+    pub(crate) fn accept_drag(
+        mime: Option<String>,
+        actions: wayland_client::protocol::wl_data_device_manager::DndAction,
+        preferred: wayland_client::protocol::wl_data_device_manager::DndAction,
+    ) {
+        let Some(offer) = Self::drag_offer() else {
+            return;
+        };
+        // The serial is the enter's, and every accept for this drag carries it.
+        offer.accept_mime_type(offer.serial, mime);
+        offer.set_actions(actions, preferred);
+    }
+
+    /// The action the compositor settled on for the current drag.
+    pub(crate) fn drag_selected_action(
+    ) -> wayland_client::protocol::wl_data_device_manager::DndAction {
+        Self::drag_offer().map_or(
+            wayland_client::protocol::wl_data_device_manager::DndAction::empty(),
+            |offer| offer.selected_action,
+        )
+    }
+
+    /// Ask the drag source for `mime`, returning the read end of the pipe.
+    pub(crate) fn receive_drag(mime: &str) -> Option<std::fs::File> {
+        let offer = Self::drag_offer()?;
+        let pipe = match offer.receive(mime.to_string()) {
+            Ok(pipe) => pipe,
+            Err(err) => {
+                tracing::warn!(%err, %mime, "could not receive the dropped data");
+                return None;
+            }
+        };
+        Self::with_global(|ctx| {
+            // The request has to reach the compositor before we block reading.
+            if let Err(err) = ctx.data.connection.flush() {
+                tracing::warn!(%err, "could not flush before reading a drop");
+            }
+        });
+        Some(std::fs::File::from(std::os::fd::OwnedFd::from(pipe)))
+    }
+
+    /// Tell the source the drop was taken, and let the offer go.
+    pub(crate) fn finish_drag() {
+        let Some(offer) = Self::drag_offer() else {
+            return;
+        };
+        offer.finish();
+        offer.destroy();
+        Self::flush();
     }
 
     pub fn flush() {

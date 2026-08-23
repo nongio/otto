@@ -7,6 +7,7 @@ pub mod context;
 mod handlers;
 
 pub use context::AppContext;
+pub use smithay_client_toolkit::seat::keyboard::Modifiers;
 
 use crate::protocols::{
     otto_dock_item_v1, otto_dock_manager_v1, otto_style_transaction_v1,
@@ -18,7 +19,7 @@ use smithay_client_toolkit::{
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{
-        keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers},
+        keyboard::{KeyEvent, KeyboardHandler, Keysym},
         pointer::{PointerEvent, PointerHandler},
         Capability, SeatHandler, SeatState,
     },
@@ -134,6 +135,16 @@ pub trait App {
         _state: wl_keyboard::KeyState,
         _serial: u32,
     ) {
+        // Default: do nothing
+    }
+
+    /// The modifier state changed. Sent by the compositor before the key
+    /// event that the change belongs to, and again on focus, so an app that
+    /// needs to know whether Ctrl is down should read it from here rather
+    /// than tracking `Control_L`/`Control_R` presses — those miss a modifier
+    /// held before the surface took focus, and any chord the compositor
+    /// swallowed.
+    fn on_modifiers(&mut self, _ctx: &AppContext, _modifiers: Modifiers) {
         // Default: do nothing
     }
 
@@ -313,6 +324,10 @@ impl App for DefaultApp {
         serial: u32,
     ) {
         self.inner.on_key_event(ctx, event, state, serial)
+    }
+
+    fn on_modifiers(&mut self, ctx: &AppContext, modifiers: Modifiers) {
+        self.inner.on_modifiers(ctx, modifiers)
     }
 
     fn on_keyboard_leave(&mut self, ctx: &AppContext, surface: &wl_surface::WlSurface) {
@@ -522,6 +537,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         crate::color_scheme::spawn_color_scheme_watcher();
         crate::accent::spawn_accent_watcher();
         crate::icon_theme::spawn_icon_theme_watcher();
+        crate::sound::spawn_theme_watcher();
 
         // Call the app's ready callback
         let ctx = AppContext::new(&app_data.context_data);
@@ -956,9 +972,11 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
         _qh: &QueueHandle<Self>,
         _keyboard: &wl_keyboard::WlKeyboard,
         _serial: u32,
-        _modifiers: Modifiers,
+        modifiers: Modifiers,
         _layout: u32,
     ) {
+        let ctx = AppContext::new(&self.context_data);
+        self.app.on_modifiers(&ctx, modifiers);
     }
 }
 
@@ -1155,33 +1173,58 @@ smithay_client_toolkit::delegate_xdg_popup!(@<A: App + 'static> AppData<A>);
 smithay_client_toolkit::delegate_registry!(@<A: App + 'static> AppData<A>);
 smithay_client_toolkit::delegate_data_device!(@<A: App + 'static> AppData<A>);
 
-// -- Clipboard -------------------------------------------------------------
+// -- Clipboard and drag and drop -------------------------------------------
 //
-// Three traits, because `wl_data_device` carries clipboard and drag-and-drop
-// on the same object. Only the clipboard half is implemented: the drag
-// callbacks are deliberately empty, and dropping a file onto an otto-kit window
-// does nothing rather than doing something half-defined.
+// Three traits, because `wl_data_device` carries both on the same object. The
+// clipboard half lives in [`crate::clipboard`] and the drag half in
+// [`crate::dnd`]; what follows is only the dispatch between them, which turns
+// on one question — is this our own drag source, or the clipboard's?
 
 impl<A: App + 'static> smithay_client_toolkit::data_device_manager::data_device::DataDeviceHandler
     for AppData<A>
 {
+    /// A drag came over one of our surfaces. The offered types are recorded
+    /// here, once, because the application asks for them at every position.
     fn enter(
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
-        _x: f64,
-        _y: f64,
-        _surface: &wl_surface::WlSurface,
+        data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
+        x: f64,
+        y: f64,
+        surface: &wl_surface::WlSurface,
     ) {
+        use smithay_client_toolkit::data_device_manager::data_device::DataDevice;
+        use wayland_client::Proxy;
+
+        let Some(device) = self.context_data.data_device.as_ref() else {
+            return;
+        };
+        if device.inner() != data_device {
+            return;
+        }
+
+        let mimes = DataDevice::data(device)
+            .drag_offer()
+            .map_or_else(Vec::new, |offer| offer.with_mime_types(<[String]>::to_vec));
+        crate::dnd::set_offered_mime_types(mimes);
+        crate::dnd::dispatch(crate::dnd::DragEvent::Enter {
+            surface: surface.id(),
+            x,
+            y,
+        });
     }
 
+    /// The drag left, or was cancelled over us. Either way no drop is coming,
+    /// and anything the application highlighted should stop being highlighted.
     fn leave(
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
         _data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
     ) {
+        crate::dnd::set_offered_mime_types(Vec::new());
+        crate::dnd::dispatch(crate::dnd::DragEvent::Leave);
     }
 
     fn motion(
@@ -1189,17 +1232,33 @@ impl<A: App + 'static> smithay_client_toolkit::data_device_manager::data_device:
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
         _data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
-        _x: f64,
-        _y: f64,
+        x: f64,
+        y: f64,
     ) {
+        crate::dnd::dispatch(crate::dnd::DragEvent::Motion { x, y });
     }
 
+    /// Dropped on us. The position is the offer's own — the drop event does not
+    /// carry one, and the last motion is where the pointer was released.
     fn drop_performed(
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
+        data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
     ) {
+        use smithay_client_toolkit::data_device_manager::data_device::DataDevice;
+
+        let Some(device) = self.context_data.data_device.as_ref() else {
+            return;
+        };
+        if device.inner() != data_device {
+            return;
+        }
+
+        let (x, y) = DataDevice::data(device)
+            .drag_offer()
+            .map_or((0.0, 0.0), |offer| (offer.x, offer.y));
+        crate::dnd::dispatch(crate::dnd::DragEvent::Drop { x, y });
     }
 
     /// The clipboard changed. Record what it offers so a later paste knows
@@ -1257,8 +1316,15 @@ impl<A: App + 'static> smithay_client_toolkit::data_device_manager::data_source:
     ) {
         use std::io::Write;
 
-        let Some(bytes) = crate::clipboard::offered_bytes(&mime) else {
-            tracing::debug!(%mime, "paste asked for a type we do not offer");
+        // A drag and the clipboard can both be live at once, and they keep
+        // their payloads apart, so the source says which store to answer from.
+        let payload = if crate::app_runner::context::is_drag_source(_source) {
+            crate::dnd::payload_for(&mime)
+        } else {
+            crate::clipboard::offered_bytes(&mime)
+        };
+        let Some(bytes) = payload else {
+            tracing::debug!(%mime, "asked for a type we do not offer");
             return;
         };
         let mut file = std::fs::File::from(std::os::fd::OwnedFd::from(fd));
@@ -1268,17 +1334,24 @@ impl<A: App + 'static> smithay_client_toolkit::data_device_manager::data_source:
         // `file` closes here, which is the EOF the reader is waiting for.
     }
 
-    /// Someone else claimed the clipboard. Our payload is dead; drop it rather
-    /// than keeping bytes nobody can ask for.
+    /// Our source is dead: someone else claimed the clipboard, or a drag ended
+    /// over a target that refused it. Either way the payload goes.
     fn cancelled(
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _source: &wayland_client::protocol::wl_data_source::WlDataSource,
+        source: &wayland_client::protocol::wl_data_source::WlDataSource,
     ) {
-        crate::app_runner::context::drop_current_source();
+        if crate::app_runner::context::is_drag_source(source) {
+            crate::app_runner::context::drop_drag_source();
+        } else {
+            crate::app_runner::context::drop_current_source();
+        }
     }
 
+    /// The button came up over a target that accepted. The data has *not*
+    /// necessarily been read yet — the target may ask after the drop — so the
+    /// source stays alive until `dnd_finished`.
     fn dnd_dropped(
         &mut self,
         _conn: &Connection,
@@ -1287,12 +1360,19 @@ impl<A: App + 'static> smithay_client_toolkit::data_device_manager::data_source:
     ) {
     }
 
+    /// The target is done with the transfer. Nothing more can be asked for.
+    ///
+    /// A move is not acted on here: the target performs it. See the module
+    /// documentation on [`crate::dnd`] for why the source does not delete.
     fn dnd_finished(
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _source: &wayland_client::protocol::wl_data_source::WlDataSource,
+        source: &wayland_client::protocol::wl_data_source::WlDataSource,
     ) {
+        if crate::app_runner::context::is_drag_source(source) {
+            crate::app_runner::context::drop_drag_source();
+        }
     }
 
     fn action(
@@ -1305,6 +1385,9 @@ impl<A: App + 'static> smithay_client_toolkit::data_device_manager::data_source:
     }
 }
 
+/// The negotiated action is read from the offer itself, at the moment it
+/// matters — see [`crate::dnd::selected_action`]. These two only announce
+/// changes SCTK has already recorded on the offer, so there is nothing to keep.
 impl<A: App + 'static> smithay_client_toolkit::data_device_manager::data_offer::DataOfferHandler
     for AppData<A>
 {

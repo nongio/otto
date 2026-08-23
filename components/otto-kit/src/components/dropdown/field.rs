@@ -97,7 +97,9 @@ pub fn draw(
         theme.text_primary
     };
     Label::new(label)
-        .with_style(styles::SUBHEADLINE)
+        // The same size the menu lists the values at, so opening the button
+        // does not change the size of the text you were reading.
+        .with_style(styles::BODY)
         .with_color(text_color)
         .centered_on(rect.left + 9.0, rect.center_y())
         .render(canvas);

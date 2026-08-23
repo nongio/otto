@@ -110,10 +110,23 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
                     }
                 }
             }
+            // Read before unmapping: afterwards the focus is already gone.
+            let was_focused = self
+                .seat
+                .get_keyboard()
+                .map(|keyboard| match keyboard.current_focus() {
+                    Some(crate::focus::KeyboardFocusTarget::Window(w)) => w.id() == elem.id(),
+                    None => true,
+                    Some(_) => false,
+                })
+                .unwrap_or(false);
             if let Some(surface) = elem.wl_surface() {
                 self.workspaces.unmap_window(&surface.as_ref().id());
             } else if let Some(space) = self.workspaces.space_mut() {
                 space.unmap_elem(&elem);
+            }
+            if was_focused {
+                self.focus_next_window_after_close();
             }
         }
         if !window.is_override_redirect() {

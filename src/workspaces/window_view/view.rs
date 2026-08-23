@@ -13,8 +13,14 @@ use crate::shell::WindowElement;
 use super::{
     effects::GenieEffect,
     model::{WindowDecorationModel, WindowViewBaseModel},
-    render::{view_window_decoration, view_window_shadow},
+    render::{decoration_for, view_window_decoration, view_window_shadow},
 };
+
+/// How long the titlebar takes to fade between its frosted and its opaque
+/// form. Matches otto-kit's `MATERIAL_FADE`: a window the compositor
+/// decorates and one that draws its own bar should not fade at different
+/// speeds.
+const MATERIAL_FADE: f32 = 0.3;
 
 #[derive(Clone)]
 pub struct WindowView {
@@ -130,11 +136,85 @@ impl WindowView {
         self.decoration_layer.set_hidden(!decorated);
     }
 
+    /// Fade the titlebar's material between its frosted and its opaque form.
+    ///
+    /// The bar is translucent over a blurred backdrop while the window is
+    /// focused and filled in when it is not, and both the tint and the blur
+    /// belong to the layer rather than to the paint — so this is one colour
+    /// animation, not a repaint per frame.
+    ///
+    /// The blend mode is switched at the *opaque* end in both directions, so
+    /// the frost never appears or disappears in view: gaining focus turns the
+    /// blur on while the opaque tint still covers it and then thins the tint
+    /// to reveal it; losing focus thickens the tint back to opaque and only
+    /// drops the blur once nothing can be seen through it. Same sequence
+    /// otto-kit's `Window` runs for a client that draws its own bar.
+    fn fade_decoration_material(&self, model: &WindowDecorationModel, animate: bool) {
+        let frosted = model.active;
+        let tint = decoration_for(model).material_tint(frosted);
+        let color = skia::Color4f::from(tint);
+        let color = layers::types::Color::new_rgba(color.r, color.g, color.b, color.a);
+
+        if frosted {
+            // Blur on first, under a tint that is still opaque.
+            self.decoration_layer
+                .set_blend_mode(layers::types::BlendMode::BackgroundBlur);
+        }
+
+        if !animate {
+            self.decoration_layer.set_background_color(color, None);
+            if !frosted {
+                self.decoration_layer
+                    .set_blend_mode(layers::types::BlendMode::Normal);
+            }
+            return;
+        }
+
+        let transaction = self
+            .decoration_layer
+            .set_background_color(color, Transition::ease_out_quad(MATERIAL_FADE));
+        if !frosted {
+            // A full-window-width gaussian per frame, for a window nobody is
+            // looking at, buys nothing — but it has to run until the bar is
+            // opaque, or the frost is seen going away.
+            transaction.on_finish(
+                move |l: &Layer, _| l.set_blend_mode(layers::types::BlendMode::Normal),
+                true,
+            );
+        }
+    }
+
     /// Push new titlebar state. No-op when nothing changed: this runs on every
     /// commit of a decorated window, and re-rendering the view would repaint
     /// the bar at the client's frame rate.
     pub fn update_decoration(&self, model: WindowDecorationModel) {
         let current = self.view_decoration.get_state();
+        // Focus is the one change that fades rather than lands: everything
+        // else about the bar is redrawn, but the material moves. Done before
+        // the equality check below, since a change of focus alone still has to
+        // reach the layer.
+        // `first` is the very first state a bar is given: the window has just
+        // appeared, and there is no previous material to fade from.
+        let first = current.width == 0.0;
+        if first || current.corner_radius != model.corner_radius || current.scale != model.scale {
+            // The tint is the layer's background now, so the layer has to
+            // carry the bar's shape: rounded across the top to sit inside the
+            // window's frame, square at the bottom where the client's content
+            // continues. The layer is sized in physical pixels.
+            let radius = model.corner_radius * model.scale.max(1.0);
+            self.decoration_layer.set_border_corner_radius(
+                layers::types::BorderRadius {
+                    top_left: radius,
+                    top_right: radius,
+                    bottom_right: 0.0,
+                    bottom_left: 0.0,
+                },
+                None,
+            );
+        }
+        if first || current.active != model.active || current.dark != model.dark {
+            self.fade_decoration_material(&model, !first);
+        }
         if current.width == model.width
             && current.height == model.height
             && current.title == model.title

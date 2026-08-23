@@ -319,6 +319,89 @@ impl HeadlessHandle {
         })
     }
 
+    // ── Drag and drop ────────────────────────────────────────────────────
+
+    /// How many layers hang under the drag-icon view right now.
+    ///
+    /// One drag's icon is one layer (plus one per subsurface). Between drags
+    /// there should be none: anything still here is a picture the next drag
+    /// would show behind its own.
+    pub fn dnd_icon_layer_count(&self) -> usize {
+        self.query(|state| state.workspaces.dnd_view.content_layer.children().len())
+    }
+
+    /// How many drag-icon surfaces the compositor is still tracking for the
+    /// sweep. Grows during a drag and is emptied by the next one.
+    pub fn dnd_tracked_layer_count(&self) -> usize {
+        self.query(|state| state.dnd_layer_ids.len())
+    }
+
+    /// How many surfaces the compositor is holding a scene layer for.
+    ///
+    /// The blunt instrument a leak hunt wants: it counts every surface layer
+    /// in the compositor, so anything a drag creates and fails to take down
+    /// shows up here whether or not the drag view is where it was left.
+    pub fn surface_layer_count(&self) -> usize {
+        self.query(|state| state.surface_layers.len())
+    }
+
+    /// How many nodes the scene graph holds, all told. Catches a layer that
+    /// was dropped from the compositor's own map but never taken out of the
+    /// scene — which looks like nothing until it is drawn again.
+    pub fn scene_node_count(&self) -> usize {
+        self.query(|state| state.layers_engine.scene().snapshot().nodes.len())
+    }
+
+    /// The keys of every parentless node in the scene arena.
+    ///
+    /// A node with no parent is either a real scene root or an orphan: one
+    /// detached from the tree and never freed. `cleanup_nodes` only walks the
+    /// root's descendants, so an orphan is invisible to it and stays in the
+    /// arena for good — which makes this list the place a leak shows itself.
+    pub fn scene_root_keys(&self) -> Vec<String> {
+        self.query(|state| {
+            state
+                .layers_engine
+                .scene()
+                .snapshot()
+                .nodes
+                .iter()
+                .map(|n| n.key.clone())
+                .collect()
+        })
+    }
+
+    /// One line per parentless scene node: key, size, child count.
+    /// Diagnostic company for [`Self::scene_root_keys`].
+    pub fn scene_root_details(&self) -> Vec<String> {
+        self.query(|state| {
+            state
+                .layers_engine
+                .scene()
+                .snapshot()
+                .nodes
+                .iter()
+                .map(|n| {
+                    format!(
+                        "{} id={} {}x{} children={} hidden={} content={:?}",
+                        n.key,
+                        n.id,
+                        n.local_bounds.width,
+                        n.local_bounds.height,
+                        n.children.len(),
+                        n.hidden,
+                        n.content
+                    )
+                })
+                .collect()
+        })
+    }
+
+    /// Whether a drag icon is currently being carried.
+    pub fn dnd_icon_present(&self) -> bool {
+        self.query(|state| state.dnd_icon.is_some())
+    }
+
     /// Check whether any layer is currently animating (scene has pending damage).
     pub fn scene_has_damage(&self) -> bool {
         self.query(|state| state.scene_element.update())
@@ -934,6 +1017,12 @@ fn run_headless_loop(
             query(&mut state);
             let _ = result_tx.send(());
         }
+
+        // Both real backends do this once per frame from their render path:
+        // the drag icon follows the cursor, and the layers its surface tree
+        // needs are built (and, between drags, swept) here. Headless draws
+        // nothing, but that bookkeeping is exactly what tests want to watch.
+        state.update_dnd();
 
         // Update the scene graph (layout computation, no GPU)
         state.scene_element.update();

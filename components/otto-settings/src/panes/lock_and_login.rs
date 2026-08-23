@@ -11,7 +11,7 @@ pub fn build() -> Pane {
         icon: "lock",
         groups: vec![
             group(
-                Some("Lock"),
+                "Lock",
                 vec![
                     // Seconds, matching the setting's own unit — a select of
                     // pretty intervals would have to invent choices the
@@ -29,17 +29,17 @@ pub fn build() -> Pane {
                     Row::new("Lock screen", Control::Select("otto-lock".into()))
                         .detail("Applies the next time the screen locks")
                         .id("lock.locker_command"),
-                    Row::new("Lock screen arguments", Control::Value(String::new()))
+                    Row::new("Lock screen arguments", Control::Text(String::new()))
                         .id("lock.locker_args"),
                 ],
             ),
             group(
-                Some("Login"),
+                "Login",
                 vec![
                     Row::new("Greeter", Control::Select("otto-greeter".into()))
                         .detail("Applies at the next login")
                         .id("login.greeter_command"),
-                    Row::new("Greeter arguments", Control::Value(String::new()))
+                    Row::new("Greeter arguments", Control::Text(String::new()))
                         .id("login.greeter_args"),
                 ],
             ),

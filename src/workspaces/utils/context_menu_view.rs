@@ -326,6 +326,9 @@ fn render_menu(state: &ContextMenuState, _view: &View<ContextMenuState>) -> Laye
                 &style_for_closure,
                 w,
                 h,
+                // The compositor's own menus are short: they are measured to
+                // fit and never scroll, so the list always sits at the top.
+                0.0,
             );
             layers::skia::Rect::from_xywh(0.0, 0.0, w, h)
         };

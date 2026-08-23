@@ -29,6 +29,10 @@ pub struct Theme {
     /// missing portal looks like the default rather than like a failure.
     pub accent: Color,
     pub accent_gray: Color,
+    /// The palette's red — for what stands apart from the accent rather than
+    /// with it: a count that must not read as another selection, a delete that
+    /// must not read as an ordinary button.
+    pub accent_red: Color,
 
     // Fill colors (backgrounds)
     pub fill_primary: Color,
@@ -72,6 +76,7 @@ impl Theme {
         Self {
             accent: Color::from_argb(0xFF, 0x0A, 0x84, 0xFF),
             accent_gray: Color::from_argb(0xFF, 0x8E, 0x8E, 0x93),
+            accent_red: Color::from_argb(0xFF, 0xFF, 0x3B, 0x30),
 
             fill_primary: Color::from_argb(0x35, 0x00, 0x00, 0x00),
             fill_secondary: Color::from_argb(0x14, 0x00, 0x00, 0x00),
@@ -102,6 +107,7 @@ impl Theme {
         Self {
             accent: Color::from_argb(0xFF, 0x0A, 0x84, 0xFF),
             accent_gray: Color::from_argb(0xFF, 0x8E, 0x8E, 0x93),
+            accent_red: Color::from_argb(0xFF, 0xFF, 0x45, 0x3A),
 
             // Semi-transparent whites for layering on dark backgrounds
             fill_primary: Color::from_argb(0x40, 0xFF, 0xFF, 0xFF),

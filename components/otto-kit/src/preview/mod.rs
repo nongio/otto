@@ -72,7 +72,10 @@ impl Pixels {
 /// `scale` multiplies the *fitted* size rather than the source's own, so 1.0
 /// is always "the whole picture, as large as the box allows" whatever the
 /// image and the box happen to be. `offset` then drags that blown-up rect
-/// away from the centre it is otherwise pinned to.
+/// away from the centre it is otherwise pinned to, as far as the picture has
+/// slack over its box and no further. `band` is the exception to that "no
+/// further": a host pulling the picture past its stop puts the overshoot
+/// there, where nothing clamps it.
 ///
 /// Only [`Preview::Pixels`] honours it. Everything else is laid out to fit by
 /// construction and [`clamp_zoom`] pins it back to [`Zoom::FIT`], so a host
@@ -85,6 +88,18 @@ pub struct Zoom {
     /// How far the zoomed content is dragged from centred, in the box's own
     /// pixels.
     pub offset: (f32, f32),
+    /// How far the picture is pulled *past* its stop, in the same pixels —
+    /// the rubber band, which a host holds only while a gesture is stretching
+    /// it or a spring is bringing it home.
+    ///
+    /// Kept apart from `offset` rather than folded into it because the two
+    /// answer different questions: `offset` is where the picture is allowed
+    /// to be, and is clamped on every call, while this is a temporary
+    /// displacement that is deliberately not. Everything that reads a `Zoom`
+    /// to decide what may happen next — how far there is left to pan,
+    /// whether the picture is at fit — reads `offset` and is unaffected;
+    /// only the drawing adds this in.
+    pub band: (f32, f32),
 }
 
 impl Default for Zoom {
@@ -98,6 +113,7 @@ impl Zoom {
     pub const FIT: Zoom = Zoom {
         scale: 1.0,
         offset: (0.0, 0.0),
+        band: (0.0, 0.0),
     };
 
     /// The furthest in a preview goes. Past roughly this a decode meant for a
@@ -196,6 +212,10 @@ pub const ROW_HEIGHT: f32 = 26.0;
 pub const LINE_HEIGHT: f32 = 17.0;
 /// Width reserved for a row's size column.
 pub const SIZE_COLUMN: f32 = 84.0;
+
+/// Clear space between a row's name and the size beside it, so a cropped name
+/// stops short of the number rather than touching it.
+const NAME_GAP: f32 = 8.0;
 /// Gutter width for line numbers.
 pub const GUTTER: f32 = 46.0;
 pub const HERO: f32 = 128.0;
@@ -284,6 +304,11 @@ pub fn clamp_zoom(bounds: Rect, preview: &Preview, zoom: Zoom) -> Zoom {
             zoom.offset.0.clamp(-slack_x, slack_x),
             zoom.offset.1.clamp(-slack_y, slack_y),
         ),
+        // Carried through untouched: the band is the one part of a zoom that
+        // is meant to be out of range, and a host that is not banding has it
+        // at zero anyway. A picture snapped back to fit has nothing to be
+        // stretched past, though, so that case drops it.
+        band: if scale == 1.0 { (0.0, 0.0) } else { zoom.band },
     }
 }
 
@@ -325,6 +350,9 @@ pub fn zoom_about(
         Zoom {
             scale: target.scale,
             offset: (moved.0 - inner.center_x(), moved.1 - inner.center_y()),
+            // A pinch places the picture outright, so whatever it was being
+            // stretched by is over.
+            band: (0.0, 0.0),
         },
     )
 }
@@ -333,8 +361,8 @@ pub fn zoom_about(
 /// the zoom's offset.
 fn zoomed(inner: Rect, fitted: Rect, zoom: Zoom) -> Rect {
     let (w, h) = (fitted.width() * zoom.scale, fitted.height() * zoom.scale);
-    let cx = inner.center_x() + zoom.offset.0;
-    let cy = inner.center_y() + zoom.offset.1;
+    let cx = inner.center_x() + zoom.offset.0 + zoom.band.0;
+    let cy = inner.center_y() + zoom.offset.1 + zoom.band.1;
     Rect::from_ltrb(cx - w / 2.0, cy - h / 2.0, cx + w / 2.0, cy + h / 2.0)
 }
 
@@ -580,6 +608,12 @@ fn draw_rows(
     let mut image_paint = Paint::default();
     image_paint.set_anti_alias(true);
 
+    // The same clip the text preview takes. A listing is content of unknown
+    // length in both directions, and a row that ends up half outside the panel
+    // must be cut off by it rather than drawn across whatever is next to it.
+    canvas.save();
+    canvas.clip_rect(geometry.content, None, false);
+
     for (index, rect) in geometry.row_rects.iter().enumerate() {
         let Some(row) = rows.get(first_row + index) else {
             break;
@@ -604,7 +638,12 @@ fn draw_rows(
         }
 
         let cy = rect.center_y();
-        Label::new(row.name.clone())
+        // The size column is reserved whether or not this row has a size in
+        // it: cropping every name to the same edge keeps the listing a column,
+        // where cropping only the rows that need it would leave a ragged one.
+        let name_font = styles::SUBHEADLINE.font();
+        let room = (rect.right - SIZE_COLUMN - NAME_GAP - text_left).max(0.0);
+        Label::new(crate::typography::ellipsize(&name_font, &row.name, room))
             .with_style(styles::SUBHEADLINE)
             .with_color(theme.text_primary)
             .centered_on(text_left, cy)
@@ -620,6 +659,8 @@ fn draw_rows(
                 .render(canvas);
         }
     }
+
+    canvas.restore();
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -801,6 +842,56 @@ mod tests {
         );
     }
 
+    /// A zip full of long entry names must stay inside its panel. Without a
+    /// bound the name is drawn at its natural width and runs straight through
+    /// the size column and out of the preview.
+    #[test]
+    fn a_long_row_name_is_cropped_to_the_room_it_has() {
+        let font = styles::SUBHEADLINE.font();
+        let name = "a-very-long-archive-entry-name-that-keeps-going.tar.gz";
+        let room = 120.0;
+
+        let cropped = crate::typography::ellipsize(&font, name, room);
+
+        assert!(cropped.ends_with('\u{2026}'), "not cropped: {cropped:?}");
+        assert!(
+            font.measure_str(&cropped, None).0 <= room,
+            "cropped to {:?}, still {} wide for {room}",
+            cropped,
+            font.measure_str(&cropped, None).0
+        );
+    }
+
+    /// The crop leaves short names exactly as they are — an ellipsis on a name
+    /// that fits is a lie about the file.
+    #[test]
+    fn a_name_that_fits_is_left_alone() {
+        let font = styles::SUBHEADLINE.font();
+        assert_eq!(crate::typography::ellipsize(&font, "a.txt", 500.0), "a.txt");
+    }
+
+    /// Every row a listing draws is inside the panel it was laid out against,
+    /// which is what the clip in `draw_rows` is there to guarantee even when
+    /// the arithmetic above it changes.
+    #[test]
+    fn a_listing_lays_every_row_inside_its_panel() {
+        let preview = Preview::Rows {
+            rows: vec![Row::default(); 500],
+            truncated: true,
+            summary: String::new(),
+        };
+        let bounds = Rect::from_xywh(0.0, 0.0, 260.0, 300.0);
+        let geometry = layout(bounds, &preview, 0, Zoom::FIT);
+
+        assert!(!geometry.row_rects.is_empty(), "nothing was laid out");
+        for rect in &geometry.row_rects {
+            assert!(
+                bounds.contains(*rect),
+                "{rect:?} escapes the panel {bounds:?}"
+            );
+        }
+    }
+
     #[test]
     fn scrolling_a_listing_shows_fewer_rows_at_the_end() {
         let preview = Preview::Rows {
@@ -854,6 +945,7 @@ mod tests {
             Zoom {
                 scale: 1.01,
                 offset: (30.0, 0.0),
+                ..Zoom::FIT
             },
         );
         assert_eq!(nearly, Zoom::FIT);
@@ -867,6 +959,7 @@ mod tests {
             Zoom {
                 scale: 1.0,
                 offset: (120.0, -80.0),
+                ..Zoom::FIT
             },
         );
         assert_eq!(clamped.offset, (0.0, 0.0));
@@ -884,6 +977,7 @@ mod tests {
             Zoom {
                 scale: 2.0,
                 offset: (10_000.0, 10_000.0),
+                ..Zoom::FIT
             },
         );
         // Twice 400 wide in a 400-wide box leaves 200 of slack sideways, and
@@ -896,6 +990,52 @@ mod tests {
         assert!(drawn.bottom >= inner.bottom, "{drawn:?}");
     }
 
+    /// The band is the one displacement the clamp leaves alone: it is what a
+    /// host stretches the picture by while a gesture pulls past its stop, and
+    /// it draws exactly that far past it.
+    #[test]
+    fn a_banded_zoom_draws_past_the_stop() {
+        let bounds = image_box();
+        let stopped = clamp_zoom(
+            bounds,
+            &image(),
+            Zoom {
+                scale: 2.0,
+                offset: (10_000.0, 0.0),
+                ..Zoom::FIT
+            },
+        );
+        let banded = clamp_zoom(
+            bounds,
+            &image(),
+            Zoom {
+                band: (30.0, 0.0),
+                ..stopped
+            },
+        );
+        // The pan itself is still at its stop — only the stretch is new.
+        assert_eq!(banded.offset, stopped.offset);
+
+        let held = layout(bounds, &image(), 0, stopped).content;
+        let stretched = layout(bounds, &image(), 0, banded).content;
+        assert!(
+            (stretched.left - held.left - 30.0).abs() < 0.01,
+            "{stretched:?} {held:?}"
+        );
+
+        // A picture snapped back to fit has nothing left to be stretched past.
+        let refitted = clamp_zoom(
+            bounds,
+            &image(),
+            Zoom {
+                scale: 1.0,
+                band: (30.0, 0.0),
+                ..Zoom::FIT
+            },
+        );
+        assert!(refitted.is_fit(), "{refitted:?}");
+    }
+
     #[test]
     fn only_images_zoom() {
         let text = Preview::Text {
@@ -906,6 +1046,7 @@ mod tests {
         let asked = Zoom {
             scale: 4.0,
             offset: (12.0, 12.0),
+            ..Zoom::FIT
         };
         assert!(clamp_zoom(image_box(), &text, asked).is_fit());
         assert_eq!(

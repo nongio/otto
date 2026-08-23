@@ -25,7 +25,7 @@ contract. Those are defined here once, and consumed — not redefined — elsewh
 - Perform the file operations a desktop is expected to have: rename, new
   folder, copy, move, move to trash, delete permanently — each on a background
   worker, with progress, cancellation that leaves nothing half-written, and
-  one level of undo.
+  undo.
 - Open a directory of 10,000 files responsively, with the same guarantees the
   picker makes: first rows within a frame of the first batch, full frame rate
   while scrolling, and no filesystem call on the UI thread.
@@ -81,9 +81,10 @@ A client-decorated toplevel. Layout:
 - **Path bar** — clickable ancestor segments; ancestors collapse into an
   overflow control when the path is too long for the width.
 - **Sidebar** — places: the XDG user directories that exist, the user's
-  bookmarks, Trash, and currently mounted volumes. A directory can be dragged
-  onto the sidebar to bookmark it once drag and drop exists; until then,
-  bookmarking is a menu action on the selection.
+  bookmarks, Trash, and currently mounted volumes. A place takes a drop, which
+  files into that place's directory; dragging a directory onto the sidebar to
+  *bookmark* it is a separate gesture and is not yet built, so bookmarking is
+  still a menu action on the selection.
 - **File view** — the shared list / icon / column presentation. List and icon
   ship in v1. Every scrolling pane draws **only the rows its scroll view is
   asking for**: the visible band, taken from the scroll view's own content
@@ -94,6 +95,24 @@ A client-decorated toplevel. Layout:
   View anchor, so what is painted and what is clickable cannot disagree. This
   is what the 10,000-file goal above rests on — measuring and shaping the text
   of a row nobody can see is most of the cost of a frame.
+- **Thumbnails in place of icons** — an entry whose thumbnail is available is
+  drawn as itself rather than as its type's icon, in all three presentations:
+  list rows, grid cells, and the column view's rows. The three take different
+  routes to the screen — the first two draw immediately, while a Miller column
+  records its rows into a cached picture — so a thumbnail reaching one of them
+  says nothing about the others, and column view is what the browser opens in. The picture is **fitted, never cropped**: it keeps its own proportions
+  inside the box the icon would have had and sits on the same baseline, so a
+  panorama and a portrait line up with the icons around them, and it is never
+  enlarged past its own pixels. A hairline closes its edge, without which a
+  photograph with a pale sky has no boundary against the window. Everything
+  with no thumbnail — every folder, and every file where none was found —
+  keeps its icon, so the two are always mixed and must agree on geometry.
+- **Only what is on screen is fetched, a few at a time** — the visible range of
+  the pane the user is looking at, capped at four outstanding fetches. A folder
+  of ten thousand pictures therefore costs what a folder of thirty costs. A
+  fetch that finds nothing is remembered for the window's lifetime so it is not
+  retried every frame, and a thumbnail landing invalidates only the panes that
+  could show it, through the pane content key.
 - **Row density** — rows are compact and **abut with no gap between them**, in
   list and column views alike: a listing is scanned rather than read, and the
   fewer pixels between one name and the next, the more of the directory the
@@ -101,10 +120,23 @@ A client-decorated toplevel. Layout:
   row's full height, and a **contiguous run of selected rows is drawn as one
   shape**: rounded on top only at the run's first row, rounded on the bottom
   only at its last, square where one selected row meets the next.
+- **Icon-view selection is icon-sized** — cells do not touch, so the rule above
+  is inverted: a cell-wide wash would read as a block of colour rather than as
+  one picked-out file. The highlight is a rounded square standing a few points
+  off the icon on every side, and the caption wears a pill of its own beneath
+  it. The two meet edge to edge and read as one highlight.
 The sidebar and the header band are translucent materials over the
 compositor's backdrop blur, the sidebar heavily tinted and the header only
 slightly, so the frost runs across the whole top of the window. The file area
 below the header is opaque: a wall of small text needs one flat ground.
+
+An **unfocused window steps back**: the title and subtitle drop a step down
+the text scale, the traffic lights go gray, the blur behind the window is
+dropped, and the sidebar, header and action row are filled in to full opacity
+since there is no longer anything blurred for them to be translucent over.
+This is the toolkit's behaviour rather than the browser's — see
+[otto-kit-window-focus](otto-kit-window-focus.md) — and applies to the
+picker's window as well, minus the traffic lights it does not have.
 
 - **Status bar** — the entry count, the selection count and its total size, and
   the free space on the filesystem holding the current directory. It is the
@@ -172,6 +204,39 @@ The hairlines between columns are still drawn in the window, so a sideways pan
 — unlike a vertical scroll — does still repaint it, or they would be left
 behind while the columns slide.
 
+### The preview column
+
+Column view ends in a preview of the single selected entry, when there is room
+for one. It is laid out from the bottom up — the facts, then the name above
+them, and whatever is left over is the preview's — so the name and the facts sit
+on the same line whatever the file is, instead of riding up and down with the
+size of the thing above them.
+
+**Everything is cropped to fit.** The name and each fact are truncated with an
+ellipsis to the column's width, and the stage above them is clipped, so no
+preview can draw over the caption or out of the column. This is not left to the
+decoders being well behaved: the content belongs to a *file* — an archive with
+hundreds of long entry names, a text file with no line breaks — and the crop is
+what makes the column's size a property of the column rather than of whatever
+was selected. In a listing (an archive's contents) the size column is reserved
+on every row whether or not that row has a size, so the names crop to a common
+edge and the listing reads as a column instead of a ragged one.
+
+**A card falls back to a picture.** A metadata card is a title, a subtitle and a
+table of facts, and this column already carries every one of those in the
+caption below — drawn as a card it says the same things twice, in the space
+meant for the thing itself. What the card has that the caption does not is its
+artwork: cover art, an embedded thumbnail, an mp4's poster frame. That is shown
+as the picture it is, and a card with none falls back to the file's own icon,
+drawn large.
+
+**A decoder that gave up is not a blank panel**, and neither is one still
+running: the file's own icon is still true, and drawn large it is a preview of a
+kind rather than a placeholder apologising for itself.
+
+**Selecting does not pan to it.** The preview opens where it is; the stack is
+aligned by navigation, not by a selection changing what the last column holds.
+
 ### Places
 
 The sidebar's places come from three sources:
@@ -197,12 +262,33 @@ or renamed in place.
 
 ### Opening
 
-Double-click, or Enter on the selection:
+Double-click, or Ctrl+O. Return is not the key here — it is spelled for rename,
+the way it is on macOS. Double-click opens in every view: in column view a
+directory is already open by the time the second click lands, since that view
+shows a child eagerly on the first, but a file there needs the double-click like
+anywhere else.
 
-- A directory is navigated into, in this window.
-- A file is opened in its default application, resolved from the file's MIME
-  type through the desktop's associations. The application is started
-  detached — a new session, its stdio closed — so it outlives the browser.
+**Opening is acknowledged before it happens.** A ghost of the whole selection —
+its highlight, its icon and its name, drawn by the same code that drew it in the
+listing — grows out of itself and fades over 280ms. Handing a file to another
+process or re-reading a directory can take long enough that a double-click with
+no answer reads as one that did not land. The ghost echoes the selection rather
+than the icon alone, so it reads as *that file* opening: in the grid the caption
+pill goes with it, in the row views the highlight band does.
+
+- A directory is navigated into, in this window. **Ctrl+double-click opens it
+  in a new window instead** — a second `otto-files` process pointed at that
+  directory, since the app shell is one toplevel per process. The Ctrl+click
+  that starts the pair still toggles the row into the selection the way a
+  single Ctrl+click does; the second click opens rather than toggling back out.
+  In the picker, which answers one request in one window, Ctrl+click only ever
+  toggles.
+- A file is handed to `xdg-open`, started detached — stdio closed, reaped on a
+  thread of its own — so the application outlives the browser. The desktop's own
+  answer to "what opens this", rather than one resolved here: it already knows
+  about `mimeapps.list`, the portal and the fallbacks, and a file manager that
+  disagreed with the rest of the session about what opens a `.pdf` would be the
+  thing that was wrong.
 - An executable file is *not* run. It is opened in its default application like
   any other file, or reported as having none. Running a program by
   double-clicking it in a file manager is a well-known way to be tricked into
@@ -238,19 +324,50 @@ leave the keyboard one row off from the highlight.
 
 Identical to the picker, including the type-ahead-is-not-search distinction, the
 anchor-based multi-select rules and rubber-band selection. See
-[file-picker.md](./file-picker.md) under *Keyboard*. The browser adds:
+[file-picker.md](./file-picker.md) under *Keyboard*.
+
+A plain click on empty space inside a pane — past the last row, between grid
+cells, on the background — selects nothing, in every view. The pane still takes
+the keyboard, since the click was in it, and in column view the panes to its
+right close with the selection: they are there because something in that pane
+was selected, and now nothing is. Clicks on the header, the sidebar and the
+status strip are not clicks on nothing and change no selection.
+
+**The rubber band.** In icon view that click is the corner of a rubber band: a
+press on empty space and a drag sweeps a rectangle out over the grid, and
+everything it touches is selected. A cell counts as caught the moment the band
+touches its rect at all, so a band flicked through a row of icons takes the
+row; enclosing each one is not required. The selection is recomputed from the
+band on every motion rather than accumulated, so pulling the band back off an
+entry gives it up again. A band with no extent at all — a click that never
+travels — catches nothing, which is exactly the "selects nothing" rule above:
+the two are one behaviour, not two.
+
+Held with Ctrl or Shift the band *adds* to what was already selected, the way
+Ctrl+click does, and the press does not clear first. The band is anchored in
+the pane's content coordinates, not on the screen, so scrolling the wheel
+mid-drag keeps it around the same files and lets it reach past the bottom of
+the window. Releasing puts the band away and leaves the selection it made.
+
+There is no band in list or column view. Rows there span their pane's whole
+width, so a rectangle could only ever say what dragging down the rows already
+says; the plain click-clears rule is the whole of the empty-space behaviour in
+those two.
+
+The browser adds:
 
 | Key | Effect |
 | --- | --- |
 | Space | quick view of the selection (see below) |
 | Return / F2 | rename the entry at the cursor, inline, with the extension unselected — in every view mode, icon view included |
-| Delete | move the selection to trash |
-| Shift+Delete | delete the selection permanently, after confirmation |
+| Delete / Ctrl+Delete / Ctrl+Backspace | move the selection to trash — the modified forms because the chord people reach for is Cmd+Delete, and on a keyboard whose big key is Backspace that arrives as Ctrl+Backspace. Plain Backspace goes up a directory instead, and always has |
+| Shift+Delete | delete the selection permanently, after confirmation — **not built**; the chord is deliberately inert rather than trashing, which is the wrong answer to a keystroke that means "and I mean it" |
 | Ctrl+C / Ctrl+X / Ctrl+V | copy / cut / paste |
 | Ctrl+Z | undo the last operation |
-| Ctrl+N | new window |
+| Ctrl+N | new window, at the **default location** (the home directory for now, a preference later) rather than at this window's directory — a new window is a fresh start, and inheriting wherever the focused window was pointed makes it read as a copy of that window. Ctrl+double-click is the gesture for "that directory, in another window". Nothing in the picker, which answers one request in one window |
+| Ctrl+O | open the entry at the cursor — exactly what a double-click does: descend into a directory, or activate a file (in the picker, accept it). Return is not free for this, since it renames |
 | Ctrl+I | show info for the selection |
-| Ctrl+1 / Ctrl+2 | list / icon view |
+| Ctrl+1 / Ctrl+2 / Ctrl+3 | list / icon / column view |
 | Escape | cancel an inline rename, else clear the search field, else clear the selection |
 
 Return renames, in every view mode; F2 is an alias for it, for the Linux
@@ -270,7 +387,9 @@ progress, and can cancel it.
 - **New folder** — creates `untitled folder`, disambiguating with a numeric
   suffix, and immediately enters inline rename on it.
 - **Copy and move** — the clipboard holds paths and a copy/cut intent. Paste
-  into a directory starts the operation. A move within one filesystem is a
+  into a directory starts the operation, and so does a drop on one: a drag is
+  the same operation reached with the pointer, and both run through the same
+  code with the same conflict rules. A move within one filesystem is a
   rename syscall and is instantaneous; a move across filesystems is copy,
   verify, then unlink the source, and the source is unlinked only after the
   destination is fully written and fsynced.
@@ -294,11 +413,29 @@ progress, and can cancel it.
   filesystems in the name of trashing it.
 - **Delete permanently** — always confirmed, always says it cannot be undone,
   and is not undoable.
-- **Undo** — one level, within the session. A move is undone by moving back; a
-  trash by restoring from trash; a copy by deleting what was created; a rename
-  by renaming back; a new folder by removing it if still empty. A permanent
-  delete is not undoable and the undo action says so rather than being silently
-  absent.
+- **Undo** — a stack, within the session, 32 operations deep. A move is undone
+  by moving back; a trash by restoring from trash; a copy by taking away what
+  was created; a rename by renaming back; a new folder by removing it if still
+  empty. A permanent delete is not undoable and the undo action says so rather
+  than being silently absent.
+
+  Undoable means *changed a file*. Selecting, navigating, sorting and switching
+  view are not on the stack: a Ctrl+Z that could spend itself taking back a
+  click would make the ones that take back a delete unreliable, because the
+  user would never know which of the two the next press was going to reach.
+
+  What goes on the stack is the list of changes an operation actually made, not
+  the operation as asked for. A paste of ten files that moves eight, skips one
+  and fails on one records the eight, and undoing puts back exactly those. A
+  copy that replaced an existing file records nothing for that file — removing
+  the copy would not bring the original back, so it is honestly not undoable.
+
+  **Nothing undo does is itself unrecoverable.** Taking back a copy trashes it
+  rather than deleting it; only a directory this browser created, and that is
+  still empty, is removed outright. An undo that put a file back where the name
+  is now taken says so and leaves both files alone rather than choosing for the
+  user. There is no redo: undoing a delete is a *restore*, and re-deleting it
+  would be a second trip to the trash rather than the inverse of anything.
 - **Progress** — an operation shorter than 500 ms shows nothing. Beyond that,
   the status bar shows the current file, the count, and a cancel action; per-byte
   progress appears for files above 32 MB.
@@ -306,6 +443,121 @@ progress, and can cancel it.
   reports which files were done, which failed and why, and offers to continue
   with the rest or to stop. It does not abort silently and it does not retry
   in a loop.
+
+### Sounds
+
+File operations are audible, from the desktop's XDG sound theme — the same
+player the compositor uses for its volume clicks and its lock chime, so the
+browser sounds like part of the desktop rather than like an application with
+opinions about audio. Otto publishes the theme name over the settings portal
+(`org.gnome.desktop.sound theme-name`) and otto-kit plays through it.
+
+The sound follows the **effect**, not the command:
+
+| Outcome | Sound |
+| --- | --- |
+| files arrived — a paste, a drop, a restore | `drag-accept`, else `device-added`, else `complete` |
+| files went away — a delete, or an undo that took a copy back | `trash-empty`, else `device-removed` |
+| nothing happened | silence |
+
+Choosing from the outcome is what makes undo sound right with no special case:
+undoing a delete is a restore, so it gets the arriving sound; undoing a copy
+takes files away, so it gets the other one.
+
+The preference order exists because the sound naming spec is thinner than a
+desktop needs — there is no "paste" event — and theme coverage of the drag
+events is patchy. The first name the installed theme actually has is the one
+that plays. A theme with none of them is silent, which is a normal outcome and
+not an error.
+
+### Drag and drop
+
+Files are dragged out of the browser and dropped onto it, including onto itself.
+Both directions speak `wl_data_device`, so a drag to another application is the
+same gesture as one within the window.
+
+**Starting a drag.** A press on a row arms; travelling `6pt` with the button
+still down starts. Below that the press stays an ordinary click, so an unsteady
+hand still selects and a double-click still opens. The whole selection travels,
+not the row under the pointer: dragging one of several selected files takes all
+of them. The payload is the same three types a copy puts on the clipboard —
+`x-special/gnome-copied-files`, `text/uri-list`, `text/plain` — which is what
+makes the drag legible to other file managers and to text editors.
+
+**The drag image is shaped like the view it came from.** Every dragged file is
+drawn, each where it sits on screen right now and with the alignment its view
+gives it, so the picture under the cursor reads as the files being carried
+rather than as a new object invented for the drag. Icons are drawn plain and
+only the *name* is highlighted: the accent pill behind a name says "this one is
+coming" without the picture turning into a second selection rectangle over the
+one still showing in the window. The thumbnail travels with it where there is
+one. Up to fifty are drawn — the fifty nearest the entry grabbed, put back in
+listing order so the pile stacks the way the eye saw it — and a count badge at
+the cursor's bottom right says how many are coming in total. The cap bounds the
+drag surface as much as the clutter: the picture is one surface the size of the
+bounding box of what it holds, so drawing the whole of a select-all would ask
+for one as tall as the listing.
+
+The badge is the palette's **red**, not the accent. The names travelling under
+it are already highlighted in the accent, and a badge in that same colour reads
+as one more of them instead of as the count of them.
+
+**Taking a drop.** Every target resolves to a *directory*: a directory row or
+cell, a pane's background, or a sidebar place. Dropping on a file is not a
+thing, so a hit on one lands in the directory that file is in. The target is
+outlined while the drag is over it — an accent ring, drawn over the rows, whose
+corners take the shape of what it outlines: rounded around a grid cell or a
+sidebar place, which have rounded highlights of their own, and square around a
+Miller column, a pane or a row band, where a rounded ring would read as a
+separate object floating over the target rather than as the target being picked
+out — and resolved again at the drop's own position rather than trusting the
+last motion, since a release may land somewhere no motion reported.
+
+**The conversation is per-position.** The browser answers every enter and every
+motion, even to say no: a target that accepts once and goes quiet has told the
+source it stopped accepting. Over anything that is not a directory, or under a
+drag carrying no files, it answers `None`, and the cursor says the drop will be
+refused.
+
+**A drop is a paste.** It runs `paste` with the same `KeepBoth` conflict rule,
+so a drop cannot destroy an existing file, and a directory dropped into itself
+is refused with a message by the same check the clipboard path uses. Files
+dropped back into the directory they already live in are skipped when the action
+is a move — there is nothing to do — but kept when it is a copy, which is how a
+duplicate is made.
+
+**A move is performed by the receiver.** The source deletes nothing when the
+drop finishes. A foreign target that accepted `text/uri-list` has not
+necessarily written those files anywhere, and deleting on its say-so would lose
+them; the receiving file manager has the paths and can do the move itself.
+
+**A drop from this window is served from memory.** Source and target are one
+thread, so asking for the payload over the pipe would block that thread waiting
+for a write only it could make. The drag's own payload is read directly instead,
+and the source is still told the transfer finished.
+
+**A refused drop flies home.** The compositor animates the icon back to the
+point it was grabbed by — `initial position + grab offset`, not the cursor's
+start, or it lands short by however far into the file the user happened to
+press, which is a different distance every time. An accepted drop is not
+animated: the files are where they were asked to go and the listing says so, and
+an icon flying away as well is a flourish over an answer already given.
+
+The picture is taken down **when the flight lands**, not when the next drag
+sweeps it up. An icon has to outlive its own drag — that is what the flight is
+— but tying its teardown to the next drag leaves it, and the buffer behind it,
+in the scene for the rest of a session in which the user drags once. The
+teardown rides an animation of its own rather than the flight's `on_finish`: a
+later `set_position` on that layer replaces the transaction and drops its
+handlers without a word. The next drag still sweeps, as a safety net for a
+flight that never lands and for an icon whose client exited mid-air.
+
+**A drop does not move the view.** The reload a drop causes keeps every pane
+scrolled exactly where it was, and the entry that landed is not scrolled to.
+
+With `OTTO_FILES_PANE_SUBS=1` the Miller columns are subsurfaces over the
+window's own canvas, so the drop outline is hidden behind them; that mode is
+opt-in and needs its own drop feedback.
 
 ### Get Info
 
@@ -381,6 +633,18 @@ What the browser does:
   so both routes feed one decision about what the gesture means.
 - Enter still opens the selection in its default application. The previewer
   never launches anything.
+- **Losing the keyboard closes the panel.** A preview is a preview of what
+  *this* window has selected; once focus is on another window there is nothing
+  for it to be a preview of, and a card left floating over a background window
+  is just litter. The signal is `wl_keyboard.leave` on the browser's own
+  toplevel — a leave on the Get Info panel is focus moving between two of the
+  browser's windows and does not count.
+- **This is also how expose reaches it.** The panel is a subsurface, not a
+  popup, so the compositor's popup dismissal on the way into Show All cannot
+  take it down. Otto drops keyboard focus when expose opens (see
+  `Otto::enter_expose_focus`), and the browser closes on that leave like any
+  other. Restoring the panel on the way back is deliberately not done: expose
+  ends by focusing a window, which is a fresh start.
 
 Quick view **consumes** the thumbnail cache and the file-type detection defined
 below, and may **produce** into the thumbnail cache under the same rules. It
@@ -428,6 +692,18 @@ These three are defined here and consumed by the picker, by quick view, and by
 anything else that grows a need for them.
 
 ### 1. The thumbnail cache
+
+**Implemented: the reading half.** `otto_files::thumbcache` resolves, validates
+and reads shared-cache entries, and `otto_files::thumbnails` is the per-window
+store and scheduler over it. The browser consumes what every other file manager
+has already written — verified against the real cache on a developer machine,
+where all 4,686 checkable entries agreed on the key and every live source file
+resolved. **Otto does not yet write into the cache**: generation happens in
+process and is kept in memory only, so the *Writing*, *Eviction* and *Other
+Otto components may write into it* rules below describe the intended end state,
+not current behaviour. Publishing into a cache the whole desktop reads is a
+promise about the bytes and their size, and it is deliberately a separate step
+from consuming it.
 
 **It is the freedesktop shared thumbnail cache, not an Otto-private one.**
 Location, keying and validity follow the freedesktop thumbnail managing
@@ -637,14 +913,18 @@ to "delete" something and breaks restore. The alternative that is correct
 requires `.Trash-$uid` handling with its own security rules. Refusing clearly is
 better than either, and it is a small, self-contained thing to add later.
 
-**Drag and drop is absent, not deferred quietly.** otto-kit has no
-`wl_data_device` support of any kind, so this is a toolkit project first. It is
-named here so its absence is understood as a known gap rather than an oversight.
+**Drag and drop moves by default and copies when asked.** A drag between two
+directories on one filesystem is a move — what every other file manager does —
+and the browser says so by asking the compositor for `move`, preferring it out
+of `copy | move`. It is a *preference*, not a decision: the compositor picks
+the action from what both sides offer, and a source that only offers a copy
+gets a copy. The negotiated action is read at the drop, never assumed from what
+was asked for, because assuming it is how files get moved that were meant to be
+copied.
 
 ## Out of scope for v1, explicitly
 
-Column view (the model supports it; the renderer is v2). Drag and drop, in or
-out. Tabs. Split views. Network and virtual filesystems. Mounting and ejecting.
+Column view (the model supports it; the renderer is v2). Tabs. Split views. Network and virtual filesystems. Mounting and ejecting.
 Content search and any index. Batch rename. Archive browsing or extraction.
 File comparison. Tags, labels, colours, or any metadata Otto would have to store
 itself. Custom per-directory view settings beyond sort order. Templates. Running

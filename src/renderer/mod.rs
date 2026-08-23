@@ -115,6 +115,64 @@ impl crate::renderer::BlitCurrentFrame for SkiaRenderer {
     }
 }
 
+impl SkiaRenderer {
+    /// Like [`BlitCurrentFrame::blit_current_frame`], but writes the rows in
+    /// the opposite order.
+    ///
+    /// The winit backend draws into a bottom-up GL window surface, so a
+    /// straight blit hands screen-capture clients an upside-down image. The
+    /// GL blit can do the flip for free by swapping the destination's
+    /// vertical bounds, which is not expressible through the `Rectangle` the
+    /// trait takes — hence this separate entry point. Only the winit
+    /// screencopy path uses it; the udev path keeps the plain blit.
+    #[profiling::function]
+    pub fn blit_current_frame_flipped(
+        &mut self,
+        dst_dmabuf: &mut smithay::backend::allocator::dmabuf::Dmabuf,
+        src: Rectangle<i32, Physical>,
+        dst: Rectangle<i32, Physical>,
+    ) -> Result<(), GlesError> {
+        use smithay::backend::renderer::Bind;
+
+        let src_fbo = self.get_current_fbo()?.fbo;
+        let prev_target = self.current_target.clone();
+
+        self.bind(dst_dmabuf)?;
+        let dst_target = SkiaTarget::Dmabuf(dst_dmabuf.weak());
+        let dst_fbo = self
+            .buffers
+            .get(&dst_target)
+            .ok_or(GlesError::FramebufferBindingError)?
+            .fbo;
+
+        unsafe {
+            self.gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, src_fbo);
+            self.gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, dst_fbo);
+
+            // Destination bottom and top are swapped: that is the flip.
+            self.gl.BlitFramebuffer(
+                src.loc.x,
+                src.loc.y,
+                src.loc.x + src.size.w,
+                src.loc.y + src.size.h,
+                dst.loc.x,
+                dst.loc.y + dst.size.h,
+                dst.loc.x + dst.size.w,
+                dst.loc.y,
+                ffi::COLOR_BUFFER_BIT,
+                ffi::LINEAR,
+            );
+
+            self.gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, 0);
+            self.gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, 0);
+        }
+
+        self.current_target = prev_target;
+
+        Ok(())
+    }
+}
+
 impl BlitCurrentFrame for UdevRenderer<'_> {
     type Error = GlesError;
 

@@ -464,8 +464,29 @@ impl Otto<UdevData> {
             .as_ref()
             .map(|suspended| (suspended.location, suspended.was_primary));
 
+        // Every mode the connector can drive, not only the one in use. A
+        // `wl_output` carries the whole list, and for a client that is the
+        // only display probe there is — the settings app fills its resolution
+        // and refresh pickers from it. Modes are sent when a client binds the
+        // global, so they have to be on the output before it is published.
+        let advertise_modes = |output: &Output| {
+            for drm_mode in connector.modes() {
+                let mut mode = WlMode::from(*drm_mode);
+                if mode.refresh == 0 {
+                    let refresh_mhz = drm_mode.vrefresh() as i32 * 1000;
+                    mode.refresh = if refresh_mhz > 0 {
+                        refresh_mhz
+                    } else {
+                        60 * 1000
+                    };
+                }
+                output.add_mode(mode);
+            }
+        };
+
         let (output, global) = match suspended {
             Some(suspended) => {
+                advertise_modes(&suspended.output);
                 let global = suspended.global.unwrap_or_else(|| {
                     suspended
                         .output
@@ -484,6 +505,7 @@ impl Otto<UdevData> {
                         serial_number: String::new(),
                     },
                 );
+                advertise_modes(&output);
                 let global = output.create_global::<Otto<UdevData>>(&self.display_handle);
                 (output, global)
             }

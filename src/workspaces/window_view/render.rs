@@ -1,4 +1,4 @@
-use layers::{prelude::*, types::BlendMode, types::Size};
+use layers::{prelude::*, types::Size};
 use otto_kit::components::titlebar::{WindowControl, WindowDecoration};
 
 use crate::config::Config;
@@ -29,9 +29,16 @@ pub fn decoration_for(state: &WindowDecorationModel) -> WindowDecoration {
         controls_hovered: state.controls_hovered,
         pressed: state.pressed.and_then(control_from_index),
         sharing: state.sharing,
-        // The layer carries `BackgroundBlur`, so the compositor already blurs
-        // what is behind it — blurring again in the paint would double up.
+        // The layer carries `BackgroundBlur` while the window is focused, so
+        // the compositor already blurs what is behind it — blurring again in
+        // the paint would double up. An unfocused window has no blur, so its
+        // bar is filled in rather than left translucent over the desktop.
         backdrop_blur: 0.0,
+        blurred: state.active,
+        // The tint rides on the decoration layer instead of this paint, so
+        // focus can fade it between the frosted and the opaque form without
+        // repainting the bar — see `WindowView::fade_decoration_material`.
+        tint_on_layer: true,
         ..Default::default()
     }
 }
@@ -72,7 +79,10 @@ pub fn view_window_decoration(
             },
             None,
         ))
-        .blend_mode(BlendMode::BackgroundBlur)
+        // The blend mode and the tint are not set here: they are animated on
+        // the layer itself when focus changes, and a rebuild of this tree
+        // would snap them back to whatever this said. See
+        // `WindowView::fade_decoration_material`, which owns both.
         .content(Some(draw))
         .pointer_events(false)
         .build()

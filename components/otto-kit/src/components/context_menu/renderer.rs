@@ -7,6 +7,9 @@ use skia_safe::{Canvas, Paint, RRect, Rect};
 /// Stateless drawing - all data passed as parameters.
 pub struct ContextMenuRenderer;
 
+/// Height of the strip a scroll arrow sits in, at either end of a capped menu.
+const ARROW_STRIP: f32 = 14.0;
+
 impl ContextMenuRenderer {
     /// Calculate menu dimensions from items and style
     ///
@@ -15,15 +18,39 @@ impl ContextMenuRenderer {
         Self::measure_items(state.items(), style)
     }
 
+    /// The height the items want, padding included, in logical points and
+    /// before any [`ContextMenuStyle::max_height`] cap.
+    pub fn content_height(items: &[MenuItem], style: &ContextMenuStyle) -> f32 {
+        items
+            .iter()
+            .map(|item| style.item_height_of(item))
+            .sum::<f32>()
+            + style.vertical_padding * 2.0
+    }
+
+    /// How much taller the items are than the menu is allowed to be — what
+    /// there is to scroll. Zero when everything fits.
+    pub fn overflow(items: &[MenuItem], style: &ContextMenuStyle) -> f32 {
+        match style.max_height {
+            Some(max) => (Self::content_height(items, style) - max).max(0.0),
+            None => 0.0,
+        }
+    }
+
     /// Calculate dimensions for specific items (used for submenus)
     ///
     /// Returned dimensions are already multiplied by `style.draw_scale`.
     pub fn measure_items(items: &[MenuItem], style: &ContextMenuStyle) -> (f32, f32) {
         let s = style.draw_scale;
 
-        // Calculate height from items (item heights are in logical pixels)
-        let height: f32 = items.iter().map(|item| style.item_height_of(item)).sum();
-        let height = (height + style.vertical_padding * 2.0) * s;
+        // Calculate height from items (item heights are in logical pixels).
+        // A list longer than the menu may be tall is capped here, not cut
+        // short: the surplus scrolls (see `render_depth`).
+        let height = Self::content_height(items, style);
+        let height = match style.max_height {
+            Some(max) => height.min(max),
+            None => height,
+        } * s;
 
         // Use provided width or compute from content, then scale
         let width = style
@@ -89,6 +116,7 @@ impl ContextMenuRenderer {
         style: &ContextMenuStyle,
         width: f32,
         height: f32,
+        scroll: f32,
     ) {
         let s = style.draw_scale;
         let logical_w = width / s;
@@ -100,10 +128,80 @@ impl ContextMenuRenderer {
         // Draw background and border at logical (unscaled) dimensions
         Self::draw_background(canvas, style, logical_w, logical_h);
 
+        // The list scrolls inside the menu's box, so it is clipped to it and
+        // slid up by the offset. The clip is the menu's own rounded shape, so
+        // a row passing the top or bottom edge is cut by the corner rather
+        // than spilling square out of it.
+        let scroll = scroll.clamp(0.0, Self::overflow(items, style));
+        canvas.save();
+        if scroll > 0.0 || style.max_height.is_some() {
+            canvas.clip_rrect(
+                RRect::new_rect_xy(
+                    Rect::from_xywh(0.0, 0.0, logical_w, logical_h),
+                    style.corner_radius,
+                    style.corner_radius,
+                ),
+                None,
+                Some(true),
+            );
+        }
+        canvas.translate((0.0, -scroll));
+
         // Draw menu items with states
         Self::draw_items_with_selection(canvas, items, selected, style, logical_w);
 
         canvas.restore();
+
+        // The arrows go on last, over the list: they mark which way there is
+        // more to see, and a row sliding under one has to disappear behind it
+        // rather than through it.
+        let overflow = Self::overflow(items, style);
+        if overflow > 0.0 {
+            if scroll > 0.5 {
+                Self::draw_scroll_arrow(canvas, style, logical_w, 0.0, true);
+            }
+            if scroll < overflow - 0.5 {
+                Self::draw_scroll_arrow(canvas, style, logical_w, logical_h - ARROW_STRIP, false);
+            }
+        }
+
+        canvas.restore();
+    }
+
+    /// One end's scroll affordance: a strip in the menu's own colour with a
+    /// chevron in it, hiding the row that runs under it and pointing at the
+    /// rows past the edge.
+    fn draw_scroll_arrow(
+        canvas: &Canvas,
+        style: &ContextMenuStyle,
+        width: f32,
+        top: f32,
+        up: bool,
+    ) {
+        let strip = Rect::from_xywh(0.0, top, width, ARROW_STRIP);
+        let mut fill = Paint::default();
+        fill.set_color(style.background_color());
+        fill.set_anti_alias(true);
+        canvas.draw_rect(strip, &fill);
+
+        let mut chevron = Paint::default();
+        chevron.set_color(style.theme.text_secondary);
+        chevron.set_anti_alias(true);
+        chevron.set_style(skia_safe::paint::Style::Stroke);
+        chevron.set_stroke_width(1.4);
+        chevron.set_stroke_cap(skia_safe::PaintCap::Round);
+        chevron.set_stroke_join(skia_safe::PaintJoin::Round);
+
+        let cx = width / 2.0;
+        let cy = top + ARROW_STRIP / 2.0;
+        let (half_w, half_h) = (4.5, 2.5);
+        let tip_y = if up { cy - half_h } else { cy + half_h };
+        let base_y = if up { cy + half_h } else { cy - half_h };
+        let mut path = skia_safe::PathBuilder::new();
+        path.move_to(skia_safe::Point::new(cx - half_w, base_y));
+        path.line_to(skia_safe::Point::new(cx, tip_y));
+        path.line_to(skia_safe::Point::new(cx + half_w, base_y));
+        canvas.draw_path(&path.detach(), &chevron);
     }
 
     /// Draw menu background and border
@@ -177,15 +275,20 @@ impl ContextMenuRenderer {
         x: f32,
         y: f32,
     ) -> Option<usize> {
-        Self::hit_test_items(state.items(), style, x, y)
+        Self::hit_test_items(state.items(), style, x, y, state.scroll())
     }
 
     /// Hit test specific items (for depth-specific testing)
+    ///
+    /// `scroll` is how far the list is scrolled inside the menu's box: the
+    /// pointer arrives in the box's coordinates, and the items have moved up
+    /// by that much underneath it.
     pub fn hit_test_items(
         items: &[MenuItem],
         style: &ContextMenuStyle,
         x: f32,
         y: f32,
+        scroll: f32,
     ) -> Option<usize> {
         // Use the same width logic as measure_items
         let total_width = style
@@ -195,15 +298,19 @@ impl ContextMenuRenderer {
             return None;
         }
 
-        // Check if inside vertical bounds (with padding)
-        let total_height = style.vertical_padding
-            + items
-                .iter()
-                .map(|item| style.item_height_of(item))
-                .sum::<f32>();
-        if y < style.vertical_padding || y > total_height {
+        // The pointer must be inside the *box*, which a capped menu ends
+        // before its items do.
+        let content_height = Self::content_height(items, style);
+        let box_height = match style.max_height {
+            Some(max) => content_height.min(max),
+            None => content_height,
+        };
+        if y < style.vertical_padding || y > box_height - style.vertical_padding {
             return None;
         }
+
+        // Into the list's own coordinates, which have slid up by `scroll`.
+        let y = y + scroll.clamp(0.0, Self::overflow(items, style));
 
         // Calculate position relative to first item
         let mut current_y = style.vertical_padding;

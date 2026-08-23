@@ -84,6 +84,12 @@ bound the action to; release it and the switcher commits and disappears.
 Applications are ordered most-recently-used first, so a single `Ctrl+Tab` press
 and release flips between the last two apps.
 
+Committing on an app focuses the window of that app you used last. If that
+window is on another workspace, the screen scrolls there. `` Ctrl+` `` steps
+through all of the app's windows in turn — across workspaces, in workspace
+order — so an app with a window on each of two workspaces alternates between
+them.
+
 ### Which monitor it appears on
 
 By default the switcher appears on the monitor **under the pointer**. To pin it
