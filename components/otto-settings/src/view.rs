@@ -359,6 +359,26 @@ pub struct ButtonHit {
     pub button: &'static str,
 }
 
+/// A button being held down, so it can be drawn pressed.
+///
+/// A button acts on *release*, not on press. That is what gives a pressed
+/// state something to mean — and what lets a press be taken back by sliding
+/// off the button before letting go.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Pressed {
+    /// A row's push button, by its row's label and its own.
+    Button {
+        row: &'static str,
+        button: &'static str,
+    },
+    /// A file row's "Choose…", by the setting it edits.
+    Choose(&'static str),
+    /// A shortcut line's remove button.
+    Remove(usize),
+    /// The button that adds a shortcut line.
+    Add,
+}
+
 /// What a press on the shortcuts group means.
 ///
 /// Separate from every other hit test because a shortcut line is three
@@ -498,6 +518,8 @@ pub struct Settings {
     /// Whether the surface carries compositor background blur, so the sidebar
     /// can be painted as a translucent material rather than a flat fill.
     pub blurred: bool,
+    /// The button under a held pointer, drawn pressed. See [`Pressed`].
+    pub pressed: Option<Pressed>,
     /// Pointer state of the traffic lights: the app draws its own decoration,
     /// so revealing the glyphs on hover is the app's job too.
     pub controls: WindowControlsState,
@@ -522,6 +544,7 @@ impl Settings {
             open_picker: None,
             toggle_flips: HashMap::new(),
             blurred: false,
+            pressed: None,
             controls: WindowControlsState::new(),
             editing: None,
         }
@@ -546,6 +569,16 @@ impl Settings {
     pub fn with_blur(mut self, blurred: bool) -> Self {
         self.blurred = blurred;
         self
+    }
+
+    pub fn with_pressed(mut self, pressed: Option<Pressed>) -> Self {
+        self.pressed = pressed;
+        self
+    }
+
+    /// Whether `pressed` is this row's push button.
+    fn button_pressed(&self, row: &str, button: &str) -> bool {
+        matches!(self.pressed, Some(Pressed::Button { row: r, button: b }) if r == row && b == button)
     }
 
     /// Draw against the surface's actual size rather than the size it was
@@ -1525,7 +1558,13 @@ impl Settings {
             Control::Shortcut { index } => self.render_shortcut(canvas, *index, label_x, right, cy),
             Control::AddShortcut => {
                 let button = add_shortcut_rect(label_x, cy);
-                widgets::line_button(canvas, button, true, &self.theme);
+                widgets::line_button(
+                    canvas,
+                    button,
+                    true,
+                    self.pressed == Some(Pressed::Add),
+                    &self.theme,
+                );
                 widgets::text_centered_y(
                     canvas,
                     "Add shortcut",
@@ -1550,8 +1589,20 @@ impl Settings {
                     None => widgets::text_field(canvas, field, value, &self.theme),
                 }
             }
-            Control::Button(labels) => widgets::buttons(canvas, right, cy, labels, &self.theme),
-            Control::File(value) => widgets::file_field(canvas, right, cy, value, &self.theme),
+            Control::Button(labels) => {
+                let held = labels
+                    .iter()
+                    .position(|button| self.button_pressed(row.label, button));
+                widgets::buttons(canvas, right, cy, labels, held, &self.theme)
+            }
+            Control::File(value) => widgets::file_field(
+                canvas,
+                right,
+                cy,
+                value,
+                matches!(self.pressed, Some(Pressed::Choose(id)) if Some(id) == row.id),
+                &self.theme,
+            ),
             Control::Value(value) => {
                 // Shortcut rows read as key combinations; everything else is
                 // plain secondary text.
@@ -1633,7 +1684,13 @@ impl Settings {
             None => widgets::field_box(canvas, keys, &line.keys, "Unassigned", &self.theme),
         }
 
-        widgets::line_button(canvas, remove, false, &self.theme);
+        widgets::line_button(
+            canvas,
+            remove,
+            false,
+            self.pressed == Some(Pressed::Remove(index)),
+            &self.theme,
+        );
     }
 
     /// Displays arrangement canvas, drawn from `y` down. It occupies

@@ -226,11 +226,22 @@ pub fn button_rects(right: f32, cy: f32, labels: &[&str]) -> Vec<Rect> {
 }
 
 /// A row's push buttons, in the rects [`button_rects`] places them at.
-pub fn buttons(canvas: &Canvas, right: f32, cy: f32, labels: &[&str], theme: &Theme) {
+pub fn buttons(
+    canvas: &Canvas,
+    right: f32,
+    cy: f32,
+    labels: &[&str],
+    pressed: Option<usize>,
+    theme: &Theme,
+) {
     let style = styles::SUBHEADLINE;
-    for (label, rect) in labels.iter().zip(button_rects(right, cy, labels)) {
+    for (index, (label, rect)) in labels
+        .iter()
+        .zip(button_rects(right, cy, labels))
+        .enumerate()
+    {
         let rrect = RRect::new_rect_xy(rect, 6.0, 6.0);
-        canvas.draw_rrect(rrect, &fill(theme.fill_tertiary));
+        canvas.draw_rrect(rrect, &fill(button_fill(pressed == Some(index), theme)));
         canvas.draw_rrect(rrect, &stroke(theme.fill_secondary, 1.0));
         let width = style.font().measure_str(label, None).0;
         text_centered_y(
@@ -250,6 +261,19 @@ const CHOOSE_GAP: f32 = 8.0;
 /// The path field beside it.
 const FILE_FIELD_W: f32 = 196.0;
 
+/// A push button's ground.
+///
+/// Pressed is one step further up the same fill scale the button already
+/// stands on, rather than a colour of its own: it then reads as pressed in
+/// both colour schemes, and against whatever the row sits on.
+fn button_fill(pressed: bool, theme: &Theme) -> skia_safe::Color {
+    if pressed {
+        theme.fill_secondary
+    } else {
+        theme.fill_tertiary
+    }
+}
+
 /// Where the "Choose…" button sits, for drawing and for hit-testing.
 pub fn choose_rect(right: f32, cy: f32) -> Rect {
     Rect::from_xywh(right - CHOOSE_W, cy - CONTROL_H / 2.0, CHOOSE_W, CONTROL_H)
@@ -261,7 +285,7 @@ pub fn choose_rect(right: f32, cy: f32) -> Rect {
 /// fit, the *head* is elided — the file's own name is what identifies it, and
 /// truncating that away to keep `/home/user/` would leave the one part nobody
 /// needs.
-pub fn file_field(canvas: &Canvas, right: f32, cy: f32, value: &str, theme: &Theme) {
+pub fn file_field(canvas: &Canvas, right: f32, cy: f32, value: &str, pressed: bool, theme: &Theme) {
     let button = choose_rect(right, cy);
     let field = Rect::from_xywh(
         button.left - CHOOSE_GAP - FILE_FIELD_W,
@@ -290,7 +314,7 @@ pub fn file_field(canvas: &Canvas, right: f32, cy: f32, value: &str, theme: &The
     canvas.restore();
 
     let brrect = RRect::new_rect_xy(button, 6.0, 6.0);
-    canvas.draw_rrect(brrect, &fill(theme.fill_tertiary));
+    canvas.draw_rrect(brrect, &fill(button_fill(pressed, theme)));
     canvas.draw_rrect(brrect, &stroke(theme.fill_secondary, 1.0));
     let label = "Choose…";
     let label_w = style.font().measure_str(label, None).0;
@@ -336,9 +360,9 @@ pub const LINE_BUTTON: f32 = 24.0;
 
 /// A "+" or "−" button. `plus` picks which stroke it gets — the two are the
 /// same control, and drawing them from one function keeps them identical.
-pub fn line_button(canvas: &Canvas, rect: Rect, plus: bool, theme: &Theme) {
+pub fn line_button(canvas: &Canvas, rect: Rect, plus: bool, pressed: bool, theme: &Theme) {
     let rrect = RRect::new_rect_xy(rect, 6.0, 6.0);
-    canvas.draw_rrect(rrect, &fill(theme.fill_tertiary));
+    canvas.draw_rrect(rrect, &fill(button_fill(pressed, theme)));
     canvas.draw_rrect(rrect, &stroke(theme.fill_secondary, 1.0));
 
     let mut paint = stroke(theme.text_primary, 1.6);

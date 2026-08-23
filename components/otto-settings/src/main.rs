@@ -88,6 +88,10 @@ struct SettingsApp {
     /// The text row that currently has the keyboard, if any. `None` means no
     /// field is being edited and key presses are nobody's.
     editing: Arc<Mutex<Option<Editing>>>,
+    /// The button being held down, if any. A button acts on release, so the
+    /// press has to be remembered in between — and drawn, which is the whole
+    /// point of remembering it.
+    pressed: Arc<Mutex<Option<view::Pressed>>>,
     /// Modifier state, kept from `on_modifiers` so a key press can be read
     /// with the modifiers that were down when it arrived.
     modifiers: Arc<Mutex<Mods>>,
@@ -328,6 +332,7 @@ fn current_settings(
     size: &Arc<Mutex<(f32, f32)>>,
     toggle_flips: &Arc<Mutex<HashMap<&'static str, toggle::Flip>>>,
     editing: &Arc<Mutex<Option<Editing>>>,
+    pressed: &Arc<Mutex<Option<view::Pressed>>>,
 ) -> Settings {
     let (w, h) = *size.lock().unwrap();
     let flips = toggle_flips
@@ -342,6 +347,7 @@ fn current_settings(
     )
     .with_size(w, h)
     .with_toggle_flips(flips)
+    .with_pressed(*pressed.lock().unwrap())
     .with_editing(
         editing
             .lock()
@@ -559,6 +565,45 @@ fn open_menu(
     );
 }
 
+/// Whether the pointer is still on the button it went down on.
+///
+/// Re-run against the *current* pane rather than remembered as a rectangle:
+/// the pane can have been rebuilt between the press and the release — a
+/// shortcut line removed, a display selected — and a stale rectangle would
+/// fire whatever moved into its place.
+fn released_on(settings: &Settings, held: view::Pressed, x: f32, y: f32, offset: f32) -> bool {
+    match held {
+        view::Pressed::Button { row, button } => settings
+            .button_hit(x, y, offset)
+            .is_some_and(|hit| hit.row == row && hit.button == button),
+        view::Pressed::Choose(id) => settings.file_hit(x, y, offset) == Some(id),
+        view::Pressed::Remove(index) => matches!(
+            settings.shortcut_hit(x, y, offset),
+            Some(view::ShortcutHit::Remove(hit)) if hit == index
+        ),
+        view::Pressed::Add => matches!(
+            settings.shortcut_hit(x, y, offset),
+            Some(view::ShortcutHit::Add)
+        ),
+    }
+}
+
+/// Do what a button does, once it has been both pressed and released on.
+fn activate(held: view::Pressed) {
+    match held {
+        // Push buttons belong to the pane that drew them, and a row label is
+        // unique within one, so both are offered the press and only the owner
+        // acts.
+        view::Pressed::Button { row, button } => {
+            panes::displays::press(row, button);
+            panes::general::press(row, button);
+        }
+        view::Pressed::Choose(id) => open_file_picker(id),
+        view::Pressed::Remove(index) => keyboard::remove(index),
+        view::Pressed::Add => keyboard::add(),
+    }
+}
+
 /// Push one change to the compositor, reporting a refusal rather than letting
 /// the UI show a value that was never accepted.
 fn apply(id: &str, value: settings_client::Value) {
@@ -721,6 +766,7 @@ impl SettingsApp {
             &self.size,
             &self.toggle_flips,
             &self.editing,
+            &self.pressed,
         )
         .with_open_dropdown(*self.open_dropdown.lock().unwrap())
         .with_open_picker(*self.open_picker.lock().unwrap());
@@ -1009,6 +1055,7 @@ impl App for SettingsApp {
         let pane_dirty = self.pane_dirty.clone();
         let size_hit = self.size.clone();
         let editing_hit = self.editing.clone();
+        let pressed_hit = self.pressed.clone();
         let redraw = window.clone();
         AppContext::register_pointer_callback(move |events| {
             for event in events {
@@ -1074,8 +1121,13 @@ impl App for SettingsApp {
                         // here rather than cached because a successful Set
                         // changes what the next one would hit.
                         let offset = scroll.lock().unwrap().offset();
-                        let settings =
-                            current_settings(&selected, &size_hit, &toggle_flips, &editing_hit);
+                        let settings = current_settings(
+                            &selected,
+                            &size_hit,
+                            &toggle_flips,
+                            &editing_hit,
+                            &pressed_hit,
+                        );
 
                         // A press anywhere but on the field being edited is
                         // an answer to it, not an abandonment: commit before
@@ -1147,8 +1199,15 @@ impl App for SettingsApp {
                                         }
                                     }
                                 }
-                                ShortcutHit::Remove(index) => keyboard::remove(index),
-                                ShortcutHit::Add => keyboard::add(),
+                                // Both act on release; the press only lights
+                                // the button up. See `view::Pressed`.
+                                ShortcutHit::Remove(index) => {
+                                    *pressed_hit.lock().unwrap() =
+                                        Some(view::Pressed::Remove(index));
+                                }
+                                ShortcutHit::Add => {
+                                    *pressed_hit.lock().unwrap() = Some(view::Pressed::Add);
+                                }
                             }
                             mark_pane_dirty(&pane_dirty);
                         } else if let Some(color) = settings.color_hit(x, y, offset) {
@@ -1173,7 +1232,8 @@ impl App for SettingsApp {
                             );
                             mark_pane_dirty(&pane_dirty);
                         } else if let Some(id) = settings.file_hit(x, y, offset) {
-                            open_file_picker(id);
+                            *pressed_hit.lock().unwrap() = Some(view::Pressed::Choose(id));
+                            mark_pane_dirty(&pane_dirty);
                         } else if let Some(index) = settings.screen_hit(x, y, offset) {
                             // The arrangement is a picker: the rows under it
                             // are the settings of whichever screen is chosen
@@ -1181,11 +1241,10 @@ impl App for SettingsApp {
                             model::select_output(index);
                             mark_pane_dirty(&pane_dirty);
                         } else if let Some(button) = settings.button_hit(x, y, offset) {
-                            // Push buttons belong to the pane that drew them,
-                            // and a row label is unique within one, so both
-                            // are offered the press and only the owner acts.
-                            panes::displays::press(button.row, button.button);
-                            panes::general::press(button.row, button.button);
+                            *pressed_hit.lock().unwrap() = Some(view::Pressed::Button {
+                                row: button.row,
+                                button: button.button,
+                            });
                             mark_pane_dirty(&pane_dirty);
                         } else if let Some(label) = settings.unbound_toggle_hit(x, y, offset) {
                             // A switch the compositor does not serve. It has no
@@ -1242,6 +1301,32 @@ impl App for SettingsApp {
                     PointerEventKind::Release { .. } => {
                         scroll.lock().unwrap().on_pointer_up();
                         *dragging.lock().unwrap() = None;
+
+                        // A button acts here, not on the press — and only if
+                        // the pointer is still on the one it went down on. A
+                        // press slid off before letting go is taken back,
+                        // which is what every other button on the desktop
+                        // does and the only reason a pressed state is worth
+                        // drawing.
+                        // Bound before the body: a lock guard in an `if let`
+                        // scrutinee lives as long as the body does, and
+                        // `current_settings` takes the same lock.
+                        let held = pressed_hit.lock().unwrap().take();
+                        if let Some(held) = held {
+                            mark_pane_dirty(&pane_dirty);
+                            let settings = current_settings(
+                                &selected,
+                                &size_hit,
+                                &toggle_flips,
+                                &editing_hit,
+                                &pressed_hit,
+                            );
+                            let offset = scroll.lock().unwrap().offset();
+                            if released_on(&settings, held, x, y, offset) {
+                                activate(held);
+                            }
+                            redraw.request_frame();
+                        }
                     }
                     PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
                         let (win_w, win_h) = *size_hit.lock().unwrap();
@@ -1257,10 +1342,35 @@ impl App for SettingsApp {
                             scroll.on_pointer_move(px, py);
                             scroll.on_pointer_drag(px, py);
                         }
+                        // Sliding off a held button un-presses it, and back
+                        // on presses it again, so the highlight always says
+                        // what letting go now would do.
+                        let held_button = *pressed_hit.lock().unwrap();
+                        if let Some(held) = held_button {
+                            let settings = current_settings(
+                                &selected,
+                                &size_hit,
+                                &toggle_flips,
+                                &editing_hit,
+                                &pressed_hit,
+                            );
+                            let offset = scroll.lock().unwrap().offset();
+                            if !released_on(&settings, held, x, y, offset) {
+                                *pressed_hit.lock().unwrap() = None;
+                                mark_pane_dirty(&pane_dirty);
+                                redraw.request_frame();
+                            }
+                        }
+
                         let held = dragging.lock().unwrap().clone();
                         if let Some(id) = held {
-                            let settings =
-                                current_settings(&selected, &size_hit, &toggle_flips, &editing_hit);
+                            let settings = current_settings(
+                                &selected,
+                                &size_hit,
+                                &toggle_flips,
+                                &editing_hit,
+                                &pressed_hit,
+                            );
                             if let Some(value) = settings.drag_value(&id, x) {
                                 apply(&id, value);
                                 mark_pane_dirty(&pane_dirty);
@@ -1552,6 +1662,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         size: Arc::new(Mutex::new((view::WINDOW_W, view::WINDOW_H))),
         controls: Arc::new(Mutex::new(WindowControlsState::new())),
         editing: Arc::new(Mutex::new(None)),
+        pressed: Arc::new(Mutex::new(None)),
         modifiers: Arc::new(Mutex::new(Mods::default())),
         frosted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     })
