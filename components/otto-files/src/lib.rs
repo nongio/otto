@@ -27,3 +27,4 @@ pub mod scene;
 pub mod thumbcache;
 pub mod thumbnails;
 pub mod view;
+pub mod watch;

@@ -2870,37 +2870,13 @@ impl Browser {
     /// usually still on screen. Reloading only the destination leaves the source
     /// column listing files that are no longer there.
     ///
-    /// Reloading the whole stack is the blunt version. The directory watcher the
-    /// spec calls for makes this unnecessary: any directory on screen would
-    /// notice its own changes, whoever made them, including changes made by
-    /// another application. Until that exists this is what keeps the view
-    /// truthful.
+    /// Re-reading is in place: a column keeps its selection, cursor and scroll
+    /// while only its listing is replaced. The watcher would get here on its
+    /// own within a debounce, but an operation the user just performed should
+    /// not visibly lag behind their own hand.
     fn reload_all(&mut self) {
-        for depth in 0..self.columns.len() {
-            let path = self.columns[depth].path.clone();
-            let keep = self.columns[depth].selection.clone();
-            let cursor = self.columns[depth].cursor;
-            let offset = self.columns[depth].scroll.offset();
-
-            // The measurements come over with the position. Without them the
-            // fresh view has no content and no viewport, so its `max_offset`
-            // is zero and the offset below is clamped straight to the top —
-            // a reload after a drop or a paste would scroll the pane away
-            // from whatever the user was looking at. The next metrics sync
-            // re-measures both against the new listing and re-clamps.
-            let viewport = self.columns[depth].scroll.state.viewport();
-            let content = self.columns[depth].scroll.state.content_length();
-
-            let mut column = Column::new(path);
-            column.selection = keep;
-            column.cursor = cursor;
-            column.anchor = cursor;
-            // Only the position is carried over: any momentum belonged to the
-            // old listing.
-            column.scroll.state.set_viewport(viewport);
-            column.scroll.state.set_content_length(content);
-            column.scroll.state.set_offset(offset);
-            self.columns[depth] = column;
+        for column in &mut self.columns {
+            column.reload();
         }
     }
 
@@ -3174,12 +3150,79 @@ impl Browser {
     /// index 0 from an empty cursor, so there is nowhere that needs one.
     fn poll(&mut self) -> bool {
         let mut changed = false;
+        let mut refreshed = false;
+        let mut vanished = None;
         for depth in 0..self.columns.len() {
             if self.columns[depth].poll() {
                 changed = true;
             }
+            if std::mem::take(&mut self.columns[depth].refreshed) {
+                refreshed = true;
+            }
+            // The shallowest one wins: everything below it is inside it, so
+            // it is gone too.
+            if self.columns[depth].gone && vanished.is_none() {
+                vanished = Some(depth);
+            }
+        }
+        if refreshed {
+            self.resync_cursors();
+        }
+        if let Some(depth) = vanished {
+            self.follow_vanished(depth);
+            changed = true;
         }
         changed
+    }
+
+    /// Put every cursor back on what is selected, after a listing was replaced
+    /// underneath it.
+    ///
+    /// The selection is by name and survives; the cursor is an index into the
+    /// visible order and does not, so a file appearing above the selection
+    /// would otherwise leave the keyboard one row off from the highlight.
+    /// Nothing is scrolled: a change somebody else made must not move the
+    /// view out from under the person reading it.
+    fn resync_cursors(&mut self) {
+        for depth in 0..self.columns.len() {
+            let Some(first) = self.columns[depth].selection.iter().next().cloned() else {
+                continue;
+            };
+            let index = self.visible(depth).iter().position(|e| e.name == first);
+            self.columns[depth].cursor = index;
+            self.columns[depth].anchor = index;
+        }
+    }
+
+    /// A displayed directory was deleted or moved away: go to the nearest
+    /// ancestor that still exists, and say why.
+    fn follow_vanished(&mut self, depth: usize) {
+        let path = self.columns[depth].path.clone();
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+
+        if depth > 0 {
+            // Its parent is on screen already — drop it and everything under
+            // it, and leave the parent showing.
+            self.columns.truncate(depth);
+            self.active = self.columns.len() - 1;
+            self.reveal_pane(self.active);
+        } else {
+            let home = model::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+            let surviving = path
+                .ancestors()
+                .skip(1)
+                .find(|p| p.is_dir())
+                .map(|p| p.to_path_buf())
+                .unwrap_or(home);
+            self.columns = vec![Column::new(surviving)];
+            self.active = 0;
+            self.pan.scroll_to(0.0);
+        }
+        self.status = Some(format!("\u{201c}{name}\u{201d} is no longer there"));
+        self.dirty = true;
     }
 
     fn loading(&self) -> bool {
@@ -6426,5 +6469,149 @@ mod dnd_tests {
 
         assert_eq!(browser.drop_target, None, "the outline goes with the drop");
         assert!(browser.dirty, "and the window repaints");
+    }
+}
+
+#[cfg(test)]
+mod watch_tests {
+    use super::*;
+
+    /// A real directory, swept up on drop. Watching is about the filesystem
+    /// changing, so these tests need one.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn holding(names: &[&str]) -> Self {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+            let path = std::env::temp_dir().join(format!(
+                "otto-files-watch-app-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).expect("temp dir");
+            for name in names {
+                std::fs::write(path.join(name), b"").expect("temp file");
+            }
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn browser_over(names: &[&str]) -> (Browser, TempDir) {
+        let dir = TempDir::holding(names);
+        let mut browser = Browser::new(dir.0.clone());
+        browser.mode = ViewMode::List;
+        assert!(settle(&mut browser, |b| !b.loading()));
+        (browser, dir)
+    }
+
+    fn at_cursor(browser: &Browser) -> Option<String> {
+        let index = browser.columns[browser.active].cursor?;
+        Some(browser.visible(browser.active)[index].name.clone())
+    }
+
+    /// Drive the browser's own poll until `done`, or give up. This is the
+    /// frame loop's job in a running window; a test has to do it by hand, and
+    /// a watch-driven refresh takes a debounce plus a worker read to land.
+    fn settle(browser: &mut Browser, done: impl Fn(&Browser) -> bool) -> bool {
+        for _ in 0..400 {
+            browser.poll();
+            if done(browser) {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        false
+    }
+
+    /// The whole point of watching: a file another application creates shows
+    /// up without the user asking for a refresh.
+    #[test]
+    fn a_file_created_underneath_appears_on_its_own() {
+        let (mut browser, dir) = browser_over(&["one.txt"]);
+        std::fs::write(dir.0.join("two.txt"), b"x").expect("write");
+
+        let landed = settle(&mut browser, |b| {
+            b.visible(0).iter().any(|e| e.name == "two.txt")
+        });
+        assert!(landed, "the new file never appeared");
+    }
+
+    /// A refresh must not disturb what the user is doing: the selection is
+    /// held by name and survives, and the cursor is put back on it even though
+    /// the new file sorts above it and moved every index down one.
+    #[test]
+    fn a_refresh_keeps_the_selection_and_the_cursor_together() {
+        let (mut browser, dir) = browser_over(&["m.txt", "z.txt"]);
+        browser.mode = ViewMode::List;
+        let index = browser
+            .visible(0)
+            .iter()
+            .position(|e| e.name == "z.txt")
+            .expect("listed");
+        browser.select(0, index);
+
+        std::fs::write(dir.0.join("a.txt"), b"x").expect("write");
+        let landed = settle(&mut browser, |b| {
+            b.visible(0).iter().any(|e| e.name == "a.txt")
+        });
+        assert!(landed, "the new file never appeared");
+
+        assert!(browser.columns[0].selection.contains("z.txt"));
+        assert_eq!(at_cursor(&browser).as_deref(), Some("z.txt"));
+    }
+
+    /// A refresh must not move the view. The listing is replaced in place,
+    /// so the scroll view — its offset and its measurements — is never rebuilt
+    /// out from under whoever is reading it.
+    #[test]
+    fn a_refresh_leaves_the_scroll_where_it_was() {
+        let names: Vec<String> = (0..200).map(|i| format!("f{i:03}.txt")).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let (mut browser, dir) = browser_over(&refs);
+
+        // Measurements first: an offset means nothing against a pane that has
+        // never been sized, and would be clamped straight back to zero.
+        let column = &mut browser.columns[0];
+        column
+            .scroll
+            .state
+            .set_viewport(Rect::from_xywh(0.0, 0.0, 600.0, 400.0));
+        column.scroll.state.set_content_length(4000.0);
+        column.scroll.state.set_offset(750.0);
+        let before = column.scroll.offset();
+        assert!(before > 0.0);
+
+        std::fs::write(dir.0.join("aaa.txt"), b"x").expect("write");
+        let landed = settle(&mut browser, |b| {
+            b.visible(0).iter().any(|e| e.name == "aaa.txt")
+        });
+        assert!(landed, "the new file never appeared");
+        assert_eq!(browser.columns[0].scroll.offset(), before);
+    }
+
+    /// A directory that goes away takes its pane with it: the window lands on
+    /// the nearest place that still exists rather than showing a listing of
+    /// something that is not there.
+    #[test]
+    fn losing_the_directory_falls_back_to_an_ancestor() {
+        let dir = TempDir::holding(&[]);
+        let child = dir.0.join("sub");
+        std::fs::create_dir_all(&child).expect("child dir");
+
+        let mut browser = Browser::new(child.clone());
+        assert!(settle(&mut browser, |b| !b.loading()));
+
+        std::fs::remove_dir_all(&child).expect("remove");
+        let moved = settle(&mut browser, |b| b.current_path() != child);
+        assert!(moved, "the window stayed on a directory that is gone");
+        assert_eq!(browser.current_path(), dir.0);
     }
 }

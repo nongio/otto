@@ -183,12 +183,26 @@ pub struct Column {
     /// The filtered, sorted order of `snapshot`, recomputed only when
     /// something it depends on moves. See [`SortCache`].
     pub sorted: std::cell::RefCell<SortCache>,
+    /// This directory's inotify watch. Dropped with the column, which is what
+    /// keeps the watch set equal to what is on screen.
+    watch: crate::watch::DirWatch,
+    /// Set when a snapshot landed because the *directory* changed rather than
+    /// because the user navigated. The cursor is an index, so it has to be
+    /// re-derived after one of these; the selection is by name and does not.
+    pub refreshed: bool,
+    /// Set when the directory itself was deleted or moved away. The pane
+    /// showing it has to go somewhere that still exists.
+    pub gone: bool,
+    /// An in-place re-read is in flight, so the snapshot it delivers is the
+    /// one that sets `refreshed`.
+    reload_pending: bool,
 }
 
 impl Column {
     pub fn new(path: PathBuf) -> Self {
         let mut loader = Directory::new();
         loader.load(&path);
+        let watch = crate::watch::DirWatch::new(&path);
         Self {
             path,
             snapshot: Snapshot::default(),
@@ -199,6 +213,10 @@ impl Column {
             scroll: ScrollView::new(Rect::new_empty()),
             epoch: 0,
             sorted: std::cell::RefCell::new(SortCache::default()),
+            watch,
+            refreshed: false,
+            gone: false,
+            reload_pending: false,
         }
     }
 
@@ -206,12 +224,31 @@ impl Column {
         self.loader.loading
     }
 
-    /// Take a finished read, if one has arrived. Returns whether anything
-    /// changed, so the caller knows to repaint.
+    /// Re-read this directory, keeping everything the user positioned: the
+    /// selection (held by name), the scroll offset and the scroll metrics.
+    /// Only the listing is replaced.
+    pub fn reload(&mut self) {
+        self.loader.load(&self.path);
+        self.reload_pending = true;
+    }
+
+    /// Take a finished read, if one has arrived, and start a fresh one when
+    /// the directory has changed underneath. Returns whether anything changed,
+    /// so the caller knows to repaint.
     pub fn poll(&mut self) -> bool {
+        match self.watch.take() {
+            // A re-read in place: `snapshot` is replaced, and nothing the user
+            // positioned — selection, scroll offset — is touched.
+            Some(crate::watch::Change::Modified) => {
+                self.reload();
+            }
+            Some(crate::watch::Change::Gone) => self.gone = true,
+            None => {}
+        }
         match self.loader.poll() {
             Some(snapshot) => {
                 self.snapshot = snapshot;
+                self.refreshed = std::mem::take(&mut self.reload_pending);
                 // The only place the listing is ever replaced, so the only
                 // place the sorted order can go stale under it.
                 self.epoch = self.epoch.wrapping_add(1);
