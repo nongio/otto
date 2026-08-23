@@ -3337,6 +3337,10 @@ impl Browser {
 struct FilesApp {
     window: Option<Window>,
     state: Arc<Mutex<Browser>>,
+    /// The panel materials' fade, which the scene runs and this drains: the
+    /// blur it wants switched, and whether it is still running. Held here
+    /// because the window is — see `scene::FrostState`.
+    frost: Option<Arc<scene::FrostState>>,
     /// The modifier state, as the compositor reports it in
     /// `wl_keyboard.modifiers` — not inferred from the text a chord produces
     /// (Ctrl+I is historically a TAB character and Ctrl+H a backspace, so
@@ -3425,6 +3429,16 @@ impl App for FilesApp {
         // up, which is the case the immediate-mode chrome still covers: the
         // window then draws without its grounds rather than not at all.
         let scene = Arc::new(Mutex::new(window.layer_node().map(scene::Scene::new)));
+
+        // The panels are this client's own layers, so the fade between their
+        // translucent and their filled-in forms is the scene's to run — and
+        // with it the only moment the blur can be switched without being seen
+        // doing it. The window stops following focus and waits to be told; see
+        // `scene::FrostState`, which `on_update` drains.
+        if let Some(scene) = scene.lock().unwrap().as_ref() {
+            window.set_fades_own_material(true);
+            self.frost = Some(scene.frost_state());
+        }
 
         let state = Arc::clone(&self.state);
         window.on_draw(move |canvas| {
@@ -3567,6 +3581,19 @@ impl App for FilesApp {
     /// [`AppContext::request_wakeup`] — and this is where that wakeup turns
     /// into a frame.
     fn on_update(&mut self, _ctx: &AppContext) {
+        // The scene decides when the compositor's backdrop blur may be
+        // switched — it owns the fade the switch has to hide under — but the
+        // window is what carries the request, so it is applied here.
+        if let (Some(frost), Some(window)) = (self.frost.as_ref(), self.window.as_ref()) {
+            let fading = frost.is_fading();
+            if let Some(frosted) = frost.take_pending() {
+                window.set_frost(frosted);
+            }
+            if fading {
+                window.request_frame();
+            }
+        }
+
         let (repaint, preview_target, scrolled_only, thumb_jobs) = {
             let mut browser = self.state.lock().unwrap();
             let changed = browser.poll();
@@ -3722,7 +3749,10 @@ impl App for FilesApp {
         let browser = self.state.lock().unwrap();
         let animating = browser.scroll_animating()
             || browser.quickview_animating()
-            || browser.opening.is_some();
+            || browser.opening.is_some()
+            // The panel materials' fade runs on this client's own engine, and
+            // an engine only advances when it is ticked.
+            || self.frost.as_ref().is_some_and(|frost| frost.is_fading());
         animating.then(|| std::time::Duration::from_millis(8))
     }
 
@@ -5534,6 +5564,7 @@ fn run_app(
         window: None,
         info_window: Rc::new(RefCell::new(None)),
         state: Arc::clone(&state),
+        frost: None,
         modifiers: Arc::new(Mutex::new(Modifiers::default())),
         context_menu: None,
         quickview_target: Arc::new(Mutex::new(None)),

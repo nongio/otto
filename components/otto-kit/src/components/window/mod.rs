@@ -67,6 +67,9 @@ pub struct Window {
     /// of focus can tell which way it is going. Not the same as
     /// `blur_wanted`: this follows activation too.
     frosted: Arc<AtomicBool>,
+    /// The application fades its own materials, and so owns the moment the
+    /// frost may be switched — see [`Window::set_fades_own_material`].
+    fades_own_material: Arc<AtomicBool>,
 }
 
 impl Window {
@@ -102,6 +105,7 @@ impl Window {
             blur_wanted: Arc::new(AtomicBool::new(false)),
             material: Arc::new(RwLock::new(None)),
             frosted: Arc::new(AtomicBool::new(false)),
+            fades_own_material: Arc::new(AtomicBool::new(false)),
         };
         // Hand the default to the compositor too, so the background is carried
         // by the style from the first frame and a window that never calls
@@ -252,6 +256,37 @@ impl Window {
         self.blur_wanted.load(Ordering::Relaxed)
     }
 
+    /// Hand the frost's timing to the application.
+    ///
+    /// A window told its material by [`Window::set_material`] fades that
+    /// material itself and hides the blur toggle under the opaque end of the
+    /// fade, so focus is all it needs to know. An application that composites
+    /// its *own* materials — panels on its own scene, the way otto-files does
+    /// — owns that fade, and so owns the only moment the toggle is invisible.
+    /// With this set the window stops following focus and waits to be told:
+    /// [`Window::set_frost`] before the panels start to thin, and again once
+    /// they have finished filling in.
+    pub fn set_fades_own_material(&self, fades: bool) {
+        self.fades_own_material.store(fades, Ordering::Relaxed);
+    }
+
+    /// Turn the compositor's backdrop blur on or off now, for a window that
+    /// has taken the timing over with [`Window::set_fades_own_material`].
+    ///
+    /// Still subject to the application having asked for a blurred backdrop at
+    /// all: under a compositor that carries no surface style, or with the blur
+    /// switched off, this does nothing.
+    pub fn set_frost(&self, frosted: bool) {
+        let Some(style) = self.surface_style() else {
+            return;
+        };
+        let frosted = frosted && self.blur_wanted.load(Ordering::Relaxed);
+        if self.frosted.swap(frosted, Ordering::Relaxed) == frosted {
+            return;
+        }
+        self.set_blend_mode(&style, frosted);
+    }
+
     /// The colour the compositor tints the frost with.
     ///
     /// Give it the *translucent* material — the colour the window should have
@@ -295,8 +330,23 @@ impl Window {
             return;
         };
         let Some(material) = self.material.read().ok().and_then(|m| *m) else {
+            let frost = self.wants_frost();
+            if self.fades_own_material.load(Ordering::Relaxed) {
+                // Only the *off* direction is the application's to time.
+                // Turning the frost on is safe at any moment before its
+                // materials start to thin, and a configure always lands
+                // before the frame that thins them — where waiting to be
+                // told would cost a frame of translucent panels over an
+                // unblurred desktop. Turning it off is the opposite: it
+                // waits for them to fill in, and the application says when
+                // with `set_frost`.
+                if frost {
+                    self.set_frost(true);
+                }
+                return;
+            }
             // No material to fade: the blend mode is all there is to set.
-            self.set_blend_mode(&style, self.wants_frost());
+            self.set_blend_mode(&style, frost);
             return;
         };
 

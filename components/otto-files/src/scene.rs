@@ -69,7 +69,56 @@ pub struct Scene {
     /// blur is in the key because it decides whether they are translucent —
     /// see [`Scene::sync_materials`].
     materials: Option<(bool, bool)>,
+    /// Turns the compositor's backdrop blur on and off. The scene owns that
+    /// timing because it owns the fade the toggle has to hide under — see
+    /// [`Scene::sync_materials`]. `None` before the window has handed it over,
+    /// and where there is no blur to switch at all.
+    frost: std::sync::Arc<FrostState>,
+    /// When the engine was last ticked, so a fade advances by real time.
+    last_tick: std::time::Instant,
 }
+
+/// What the scene needs from its host while the panel materials fade.
+///
+/// Shared rather than called back into, because both of these belong to the
+/// `Window` — and a `Window` is not `Send`, so it cannot ride the engine's own
+/// animation callbacks, which are.
+#[derive(Default)]
+pub struct FrostState {
+    /// The compositor's backdrop blur, to be switched once it is safe:
+    /// entering the frost that is immediately, while the panels are still
+    /// filled in; leaving it, not until they have finished filling in again.
+    /// Taken by the host, which owns the window.
+    pending: std::sync::Mutex<Option<bool>>,
+    /// Whether a fade is still running. The engine only advances when it is
+    /// driven, so a fade that stopped being drawn would stop halfway: the host
+    /// keeps ticking and repainting while this is set.
+    fading: std::sync::atomic::AtomicBool,
+}
+
+impl FrostState {
+    /// The blur switch the scene is waiting on, if any. Cleared by the read —
+    /// it is an instruction, not a state.
+    pub fn take_pending(&self) -> Option<bool> {
+        self.pending.lock().ok().and_then(|mut p| p.take())
+    }
+
+    pub fn is_fading(&self) -> bool {
+        self.fading.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn request(&self, frosted: bool) {
+        if let Ok(mut pending) = self.pending.lock() {
+            *pending = Some(frosted);
+        }
+    }
+}
+
+/// How long the panel materials take to fade between translucent and filled
+/// in. Matches otto-kit's own `MATERIAL_FADE`: a window that composites its
+/// materials and one that hands them to the window should not fade at
+/// different speeds.
+const MATERIAL_FADE: f32 = 0.3;
 
 /// One Miller column: the pane itself, and the strip of rows inside it that
 /// the scroll offset moves.
@@ -175,6 +224,8 @@ impl Scene {
             preview_key: None,
             layout: None,
             materials: None,
+            frost: Default::default(),
+            last_tick: std::time::Instant::now(),
         }
     }
 
@@ -198,8 +249,14 @@ impl Scene {
         self.sync_layout(f);
         self.sync_panes(f);
         // One tick, so the changes above are folded into the scene before the
-        // host renders it. Nothing here animates, so the delta is zero.
-        self.engine.update(0.0);
+        // host renders it. The delta is zero unless the panel materials are
+        // mid-fade — that is the only thing here that animates, and everything
+        // else would rather not have time pass under it.
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(self.last_tick).as_secs_f32();
+        self.last_tick = now;
+        self.engine
+            .update(if self.frost.is_fading() { elapsed } else { 0.0 });
     }
 
     /// Panel materials. These are the backgrounds the panes "should not draw":
@@ -218,24 +275,82 @@ impl Scene {
                 view::opaque(color)
             })
         };
-        if self.materials == Some((dark, f.blurred)) {
+        let previous = self.materials;
+        if previous == Some((dark, f.blurred)) {
             return;
         }
         self.materials = Some((dark, f.blurred));
 
-        self.sidebar
-            .set_background_color(fill(theme.material_sidebar), None);
+        // The blur only ever changes under a cover. Entering the frost the
+        // window has already turned it on — a configure lands before this
+        // frame, while the panels are still filled in. Leaving it, it stays on
+        // until they have finished filling in again, which is what the
+        // transaction below waits for. So what the eye follows is the material
+        // thinning or thickening, never the frost arriving or leaving.
+        //
+        // Only a change of *blur* fades. A change of colour scheme is a
+        // different set of colours rather than the same one at a different
+        // opacity, and crossfading it would run every panel through a wrong
+        // intermediate.
+        let fades = previous
+            .is_some_and(|(was_dark, was_blurred)| was_dark == dark && was_blurred != f.blurred);
+        let transition = fades.then(|| Transition::ease_out_quad(MATERIAL_FADE));
+
+        let sidebar = self
+            .sidebar
+            .set_background_color(fill(theme.material_sidebar), transition.clone());
         self.header
-            .set_background_color(fill(view::header_material()), None);
+            .set_background_color(fill(view::header_material()), transition.clone());
         // The action row is the same material as the header, and for the same
         // reason: it is chrome laid over the window's blur, not a hole in it.
         // Without a ground it reads as bare blur with buttons floating on it.
         self.footer
-            .set_background_color(fill(view::header_material()), None);
+            .set_background_color(fill(view::header_material()), transition.clone());
+        // The content ground is opaque either way — there is no blur behind
+        // the file area to be translucent over — so it never fades.
         self.content
             .set_background_color(paint_color(view::content_ground()), None);
         self.preview
             .set_background_color(paint_color(view::content_ground()), None);
+
+        if !fades {
+            // Nothing to wait for: the panels are already where they belong.
+            if !f.blurred {
+                self.frost.request(false);
+            }
+            return;
+        }
+
+        // Any of the panels' transactions would do as the clock; the sidebar is
+        // the widest of them and the one the frost is most visible through.
+        self.frost
+            .fading
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let frost = self.frost.clone();
+        let leaving = !f.blurred;
+        sidebar.on_finish(
+            move |_: &Layer, _| {
+                frost
+                    .fading
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                // Leaving the frost: only now, with the panels opaque again,
+                // is the blur safe to drop.
+                if leaving {
+                    frost.request(false);
+                }
+            },
+            true,
+        );
+    }
+
+    /// The blur switch the scene is waiting on, and whether a fade is still
+    /// running.
+    ///
+    /// The scene fades the panel materials, so it is the only thing that knows
+    /// when they are opaque enough to hide the switch — but the switch belongs
+    /// to the window. See [`FrostState`].
+    pub fn frost_state(&self) -> std::sync::Arc<FrostState> {
+        self.frost.clone()
     }
 
     fn sync_layout(&mut self, f: &Frame) {
