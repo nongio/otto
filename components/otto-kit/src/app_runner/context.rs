@@ -4,7 +4,7 @@ use super::{App, AppData};
 use crate::protocols::otto_surface_style_manager_v1;
 use smithay_client_toolkit::{
     compositor::CompositorState,
-    output::OutputState,
+    output::{OutputInfo, OutputState},
     seat::SeatState,
     shell::xdg::{window::WindowConfigure, XdgShell},
     shm::Shm,
@@ -270,6 +270,21 @@ impl<'a> AppContext<'a> {
             let data = unsafe { &*data_ptr };
             let ctx = AppContext::new(data);
             f(&ctx)
+        })
+    }
+
+    /// Everything the compositor has said about the outputs it is driving:
+    /// connector name, make and model, position, and the full mode list with
+    /// which one is current and which is preferred.
+    ///
+    /// This is a client's display probe. A settings app offering a resolution
+    /// or a refresh rate has to know what the hardware actually supports, and
+    /// `wl_output` already carries it — no DRM access, no second session, and
+    /// it follows hotplug because the compositor keeps sending events.
+    pub fn outputs() -> Vec<OutputInfo> {
+        Self::with_global(|ctx| {
+            let state = ctx.output_state_ref();
+            state.outputs().filter_map(|o| state.info(&o)).collect()
         })
     }
 

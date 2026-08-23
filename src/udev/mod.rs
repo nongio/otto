@@ -424,7 +424,9 @@ pub fn probe_displays() {
             }
 
             for mode in connector_info.modes() {
-                let refresh = (mode.vrefresh() as f32) / 1000.0;
+                // `vrefresh` is already whole Hz — the same units the display
+                // profiles in `config.displays` match against.
+                let refresh = mode.vrefresh() as f32;
                 #[allow(clippy::disallowed_macros)]
                 {
                     println!(

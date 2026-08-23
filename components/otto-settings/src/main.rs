@@ -33,7 +33,7 @@ use otto_kit::components::window::resize;
 use otto_kit::prelude::*;
 use otto_kit::protocols::otto_surface_style_v1;
 use otto_kit::CursorShape;
-use panes::keyboard;
+use panes::{displays, keyboard};
 use smithay_client_toolkit::reexports::client::protocol::{wl_keyboard, wl_surface};
 use smithay_client_toolkit::reexports::client::Proxy;
 use smithay_client_toolkit::seat::keyboard::KeyEvent;
@@ -310,6 +310,12 @@ fn select_ids() -> Vec<&'static str> {
     // be built later: the list is editable, and a line added at runtime has to
     // find its menu already made.
     ids.extend_from_slice(keyboard::slot_ids());
+    // The Displays pane's resolution and refresh pop-ups. They already come
+    // back from the walk above — both rows carry an `id` — but only while the
+    // pane has a display to show, and a session that gains its first output
+    // later would find no menu made. Adding them unconditionally costs two
+    // entries; `HashMap` collapses the duplicates.
+    ids.extend_from_slice(displays::slot_ids());
     ids
 }
 
@@ -462,8 +468,21 @@ fn open_menu(
     // A shortcut line's action is the one pop-up whose choices are not a
     // setting's: they are the builtin actions listed in `panes::keyboard`,
     // and what is picked goes back to that list rather than onto the bus.
+    // A display's mode pop-ups are answered by the pane from the compositor's
+    // own probe rather than from the settings schema, which serves no
+    // per-output mode. Checked before the schema so a future setting of the
+    // same name could not quietly take the row over.
+    let display_slot = displays::menu_choices(select.id);
     let slot = keyboard::slot_index(select.id);
-    let choices: Vec<discovery::Choice> = if slot.is_some() {
+    let choices: Vec<discovery::Choice> = if let Some(values) = display_slot {
+        values
+            .into_iter()
+            .map(|value| discovery::Choice {
+                label: value.clone(),
+                value,
+            })
+            .collect()
+    } else if slot.is_some() {
         keyboard::actions()
             .iter()
             .map(|action| discovery::Choice {
@@ -519,9 +538,13 @@ fn open_menu(
         selected,
         move |index| {
             if let Some(value) = values.get(index) {
-                match slot {
-                    Some(line) => keyboard::set_action(line, value.clone()),
-                    None => apply(id, settings_client::Value::Text(value.clone())),
+                if displays::menu_choices(id).is_some() {
+                    displays::choose(id, value);
+                } else {
+                    match slot {
+                        Some(line) => keyboard::set_action(line, value.clone()),
+                        None => apply(id, settings_client::Value::Text(value.clone())),
+                    }
                 }
             }
             *chosen_open.lock().unwrap() = None;

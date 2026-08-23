@@ -313,6 +313,31 @@ pub enum OutputKind {
     Virtual,
 }
 
+/// One mode a display can be driven at, as `wl_output` reports it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Mode {
+    pub width: i32,
+    pub height: i32,
+    /// Millihertz — the units `wl_output` uses. Zero where the compositor has
+    /// no meaningful rate to report, which is the normal case for a virtual
+    /// output.
+    pub refresh_mhz: i32,
+}
+
+impl Mode {
+    /// The mode's resolution, as the Resolution pop-up lists it.
+    pub fn resolution(&self) -> String {
+        format!("{} \u{00d7} {}", self.width, self.height)
+    }
+
+    /// The mode's refresh rate, as the Refresh rate pop-up lists it. Two
+    /// decimals because 59.94 and 60.00 are different modes and a display
+    /// often offers both.
+    pub fn refresh(&self) -> String {
+        format!("{:.2} Hz", self.refresh_mhz as f32 / 1000.0)
+    }
+}
+
 /// Outputs shown in the Displays arrangement canvas. Positions and sizes are
 /// in compositor logical pixels; the canvas scales them to fit.
 #[derive(Clone)]
@@ -331,11 +356,54 @@ pub struct Output {
     /// its place in the arrangement so re-enabling it puts it back where it
     /// was.
     pub enabled: bool,
+    /// Every mode the display can be driven at, in the order the compositor
+    /// announced them. Empty only for an output that reported none.
+    pub modes: Vec<Mode>,
+    /// Index into `modes` of the one in use — what the two pop-ups show.
+    pub mode: usize,
 }
 
 impl Output {
     pub fn is_virtual(&self) -> bool {
         matches!(self.kind, OutputKind::Virtual)
+    }
+
+    /// The mode this display is being driven at.
+    pub fn current_mode(&self) -> Option<Mode> {
+        self.modes.get(self.mode).copied()
+    }
+
+    /// The resolutions on offer, each listed once. A display commonly
+    /// advertises the same size at several rates; the Resolution pop-up is
+    /// about size alone, and the rate is the other pop-up's business.
+    pub fn resolutions(&self) -> Vec<String> {
+        let mut seen: Vec<String> = Vec::new();
+        for mode in &self.modes {
+            let label = mode.resolution();
+            if !seen.contains(&label) {
+                seen.push(label);
+            }
+        }
+        seen
+    }
+
+    /// The rates on offer *at the current resolution*. Listing every rate the
+    /// display supports would offer combinations it cannot actually drive.
+    pub fn refresh_rates(&self) -> Vec<String> {
+        let Some(current) = self.current_mode() else {
+            return Vec::new();
+        };
+        let mut seen: Vec<String> = Vec::new();
+        for mode in &self.modes {
+            if (mode.width, mode.height) != (current.width, current.height) {
+                continue;
+            }
+            let label = mode.refresh();
+            if !seen.contains(&label) {
+                seen.push(label);
+            }
+        }
+        seen
     }
 }
 
@@ -356,46 +424,81 @@ struct Arrangement {
 }
 
 impl Default for Arrangement {
-    /// Two panels and one virtual output — the shape `otto_config.example.toml`
-    /// documents, so the pane shows what a virtual output looks like before
-    /// anyone adds one.
+    /// Whatever the compositor is driving right now.
+    ///
+    /// `wl_output` is the probe: it carries each output's name, its place in
+    /// the desktop's coordinate space, and — since the compositor advertises
+    /// the connector's whole mode list, not just the one in use — every
+    /// resolution and refresh rate the hardware offers. That is what fills
+    /// the two pop-ups. It costs no DRM access and it is the same list
+    /// `otto --probe` prints.
     fn default() -> Self {
-        Self {
-            outputs: vec![
-                Output {
-                    name: "eDP-1".into(),
-                    x: 0.0,
-                    y: 560.0,
-                    width: 1128.0,
-                    height: 752.0,
-                    primary: true,
-                    kind: OutputKind::Physical,
-                    enabled: true,
-                },
-                Output {
-                    name: "HDMI-A-1".into(),
-                    x: 1128.0,
-                    y: 0.0,
-                    width: 2560.0,
-                    height: 1440.0,
-                    primary: false,
-                    kind: OutputKind::Physical,
-                    enabled: true,
-                },
-                Output {
-                    name: "virtual-1".into(),
-                    x: 3688.0,
-                    y: 0.0,
-                    width: 1920.0,
-                    height: 1080.0,
-                    primary: false,
-                    kind: OutputKind::Virtual,
-                    enabled: true,
-                },
-            ],
-            selected: 1,
-        }
+        let outputs = probe();
+        // Nothing here says which display is primary — `wl_output` carries no
+        // such notion, and `org.otto.Settings` serves no per-output setting to
+        // ask (see the doc comment on `crate::panes::displays`). The
+        // compositor announces its outputs in the order it brought them up,
+        // which starts with the one it made primary, so the first is the
+        // closest thing to an answer available.
+        let selected = 0;
+        Self { outputs, selected }
     }
+}
+
+/// Ask the compositor what it is driving.
+fn probe() -> Vec<Output> {
+    otto_kit::AppContext::outputs()
+        .into_iter()
+        .enumerate()
+        .map(|(index, info)| {
+            let current = info.modes.iter().position(|m| m.current).unwrap_or(0);
+            let modes: Vec<Mode> = info
+                .modes
+                .iter()
+                .map(|m| Mode {
+                    width: m.dimensions.0,
+                    height: m.dimensions.1,
+                    refresh_mhz: m.refresh_rate,
+                })
+                .collect();
+            // Logical size and position are what the arrangement lays out in;
+            // the compositor sends them through `xdg_output`. The fallback
+            // divides the mode by the integer scale, which is the same figure
+            // whenever the scale is not fractional.
+            let (width, height) = info.logical_size.unwrap_or_else(|| {
+                let (w, h) = modes
+                    .get(current)
+                    .map(|m| (m.width, m.height))
+                    .unwrap_or((1920, 1080));
+                (w / info.scale_factor.max(1), h / info.scale_factor.max(1))
+            });
+            let (x, y) = info.logical_position.unwrap_or(info.location);
+            Output {
+                // `name` is the connector for a physical output. It is only
+                // absent on a compositor too old to send it, where the model
+                // string is the only handle left.
+                name: info.name.clone().unwrap_or_else(|| info.model.clone()),
+                x: x as f32,
+                y: y as f32,
+                width: width as f32,
+                height: height as f32,
+                primary: index == 0,
+                // What `src/virtual_output/mod.rs` stamps on the outputs it
+                // creates. Nothing else in the protocol distinguishes a
+                // headless output from a panel.
+                kind: if info.make == "Otto" && info.model == "Virtual" {
+                    OutputKind::Virtual
+                } else {
+                    OutputKind::Physical
+                },
+                // An output the compositor has turned off has no `wl_output`
+                // at all, so everything the probe returns is running.
+                enabled: true,
+                mode: current,
+                modes,
+            }
+        })
+        .collect()
 }
 
 fn arrangement() -> &'static RwLock<Arrangement> {
@@ -449,6 +552,41 @@ pub fn make_selected_primary() {
     }
 }
 
+/// Drive the selected screen at `resolution`, keeping its refresh rate where
+/// the display offers that size at the same rate. The labels come from
+/// [`Mode::resolution`], so they always match a mode this output has.
+pub fn set_selected_resolution(resolution: &str) {
+    with_selected(|output| {
+        let rate = output.current_mode().map(|m| m.refresh_mhz);
+        let matches = |m: &Mode| m.resolution() == resolution;
+        // The same rate first, so changing only the resolution does not
+        // silently change the refresh too.
+        let index = output
+            .modes
+            .iter()
+            .position(|m| matches(m) && Some(m.refresh_mhz) == rate)
+            .or_else(|| output.modes.iter().position(matches));
+        if let Some(index) = index {
+            output.mode = index;
+        }
+    });
+}
+
+/// Drive the selected screen at `rate`, at the resolution it is already on.
+pub fn set_selected_refresh(rate: &str) {
+    with_selected(|output| {
+        let Some(current) = output.current_mode() else {
+            return;
+        };
+        let index = output.modes.iter().position(|m| {
+            (m.width, m.height) == (current.width, current.height) && m.refresh() == rate
+        });
+        if let Some(index) = index {
+            output.mode = index;
+        }
+    });
+}
+
 /// Move the selected screen's top-left corner.
 pub fn set_selected_position(x: Option<f32>, y: Option<f32>) {
     with_selected(|output| {
@@ -492,6 +630,14 @@ pub fn add_virtual_output() {
         primary: false,
         kind: OutputKind::Virtual,
         enabled: true,
+        // A headless output has no hardware to take a mode list from, so the
+        // one it is created at is the only one it offers.
+        modes: vec![Mode {
+            width: 1920,
+            height: 1080,
+            refresh_mhz: 60_000,
+        }],
+        mode: 0,
     });
     arrangement.selected = arrangement.outputs.len() - 1;
 }

@@ -45,11 +45,62 @@ const VIRTUAL: &str = "Virtual displays";
 const ADD: &str = "Add";
 const REMOVE: &str = "Remove";
 
+/// Pop-up identifiers for the two rows filled from the display probe.
+///
+/// They look like setting identifiers because that is the handle a pop-up row
+/// needs — `view.rs` reports the row's `id` and `main.rs` keys the menu pool
+/// by it — but they name no setting: `org.otto.Settings` serves none for a
+/// per-output mode. `main.rs` recognises them by [`menu_choices`] answering
+/// and routes what is picked back to [`choose`] instead of onto the bus, the
+/// same way a shortcut line's action pop-up is routed to `panes::keyboard`.
+pub const RESOLUTION_ID: &str = "display.resolution";
+pub const REFRESH_ID: &str = "display.refresh";
+
+/// The pop-up rows this pane owns, for the menu pool built at startup.
+pub fn slot_ids() -> &'static [&'static str] {
+    &[RESOLUTION_ID, REFRESH_ID]
+}
+
+/// The choices `id`'s pop-up offers, or `None` if `id` is not one of ours.
+///
+/// Read off the selected display's mode list, which is the compositor's
+/// answer rather than this app's guess — see the probe in [`crate::model`].
+pub fn menu_choices(id: &str) -> Option<Vec<String>> {
+    let outputs = model::outputs();
+    let selected = outputs.get(model::selected_output())?;
+    match id {
+        RESOLUTION_ID => Some(selected.resolutions()),
+        REFRESH_ID => Some(selected.refresh_rates()),
+        _ => None,
+    }
+}
+
+/// Apply a choice made in one of those pop-ups.
+pub fn choose(id: &str, value: &str) {
+    match id {
+        RESOLUTION_ID => model::set_selected_resolution(value),
+        REFRESH_ID => model::set_selected_refresh(value),
+        _ => {}
+    }
+}
+
 pub fn build() -> Pane {
     let outputs = model::outputs();
-    let selected = outputs
-        .get(model::selected_output())
-        .expect("the arrangement always has a selected output");
+    let Some(selected) = outputs.get(model::selected_output()) else {
+        // The probe found nothing to show. Only reachable when the compositor
+        // has announced no output at all — a headless session with no virtual
+        // output — and a pane that says so beats one that panics.
+        return Pane {
+            name: "Displays",
+            icon: "monitor",
+            groups: vec![model::untitled(vec![Row::new(
+                "No displays",
+                Control::Value(String::new()),
+            )
+            .detail("The compositor is not driving any output")])],
+        };
+    };
+    let mode = selected.current_mode();
 
     let count = model::virtual_output_count();
     Pane {
@@ -63,12 +114,14 @@ pub fn build() -> Pane {
                 vec![
                     Row::new(
                         "Resolution",
-                        Control::Select(format!(
-                            "{} × {}",
-                            selected.width as u32, selected.height as u32
-                        )),
-                    ),
-                    Row::new("Refresh rate", Control::Select("60.00 Hz".into())),
+                        Control::Select(mode.map(|m| m.resolution()).unwrap_or_default()),
+                    )
+                    .id(RESOLUTION_ID),
+                    Row::new(
+                        "Refresh rate",
+                        Control::Select(mode.map(|m| m.refresh()).unwrap_or_default()),
+                    )
+                    .id(REFRESH_ID),
                     Row::new(
                         "Scale",
                         Control::Slider {
