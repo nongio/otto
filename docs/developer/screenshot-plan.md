@@ -3,9 +3,13 @@
 A plan for the D-Bus screenshot portal Otto does not have yet, and how it
 would sit on top of the screencopy machinery that already exists.
 
-> **Status: not implemented.** No `org.freedesktop.impl.portal.Screenshot`
-> exists in `xdg-desktop-portal-otto`, and `otto.portal` declares only
-> `ScreenCast` and `Settings`.
+> **Status: partly built.** `org.freedesktop.impl.portal.Screenshot` now
+> exists (`src/portal/screenshot.rs`, interface version 2) and `otto.portal`
+> declares it alongside `ScreenCast`, `Settings`, `Access` and `FileChooser`.
+> What it does today is shell out to `grim` for the whole output set and hand
+> back a `file://` URI, gating `interactive` requests behind the Access dialog.
+> The phases below — Otto-drawn region and window selection, the colour picker,
+> capture without an external binary — are still the plan.
 >
 > **This is not the same thing as taking a screenshot on Otto today.** The
 > `zwlr_screencopy_v1` Wayland protocol is already in production

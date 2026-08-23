@@ -60,13 +60,13 @@ Packages come from the [GitHub Releases](https://github.com/nongio/otto/releases
 - **A Dock that is a real task manager** — pinned apps, running apps and minimized windows in one strip. Icons magnify on approach, bounce while an app is launching, auto-hide when you want the space back, and the whole thing resizes by dragging its handle.
 - **Workspaces that animate** — multiple workspaces per monitor, each monitor independent, drag windows between them, configurable backgrounds.
 - **Exposé and an app switcher** — `PageUp` (or a three-finger swipe up) spreads every window out with live previews; `Ctrl+Tab` walks apps, cycles windows within an app, and can close them. Both appear on the monitor under your pointer.
-- **Window management that stays out of the way** — animated fullscreen/maximize, snap to halves, minimize to the Dock, and new windows placed where they overlap the least.
+- **Window management that stays out of the way** — animated fullscreen/maximize, snap to halves, minimize to the Dock, and new windows placed where they overlap the least. Otto draws the title bar for clients that want a server-side one, on both `xdg-decoration` and KDE's `org_kde_kwin_server_decoration`, so the controls keep working while an application is busy.
 - **A top bar and a dynamic island** — clock, tray and application menus over DBusMenu; notifications, ongoing activities and permission dialogs in a floating panel; compositor-drawn volume and brightness indicators.
 - **Multi-monitor that holds up** — per-output rendering, hotplug, arrangement and modes from the config, virtual outputs created on demand.
 - **Lock, login and power** — `ext-session-lock-v1` locking with a PAM-backed locker, lock on hotkey / power button / lid close / idle timeout (respecting `idle-inhibit`), a greetd login screen with password and fingerprint, and Otto-owned lid-suspend with clamshell awareness.
 - **Screen sharing and remote desktop** — XDG Desktop Portal backend over PipeWire, sharing a whole output or a single window, with AirPlay receivers as a target; `otto-rdp` serves a virtual output over RDP with TLS and hardware H.264 where available.
 - **X11 apps, including fullscreen games** — keyboard focus for globally-active clients, output scale via XSETTINGS, direct scanout.
-- **A settings app** — `otto-settings` edits the configuration live over D-Bus, so you don't have to hand-write TOML (you still can; the compositor picks up file edits).
+- **Applications of its own** — `otto-files` browses the filesystem and doubles as the desktop's file picker, with thumbnails, drag and drop and a quick-view panel; `otto-settings` edits the configuration live over D-Bus, so you don't have to hand-write TOML (you still can; the compositor picks up file edits); `otto-launcher` starts apps and switches windows from the keyboard. All are first versions — useful day to day, still filling in.
 - **Rendering built for this** — a Skia pipeline with KMS multi-plane scanout (Dock, app switcher, popups and topmost windows on their own hardware planes) and cross-plane backdrop blur.
 - **Input and theming** — natural and two-finger scrolling, keyboard remapping, fully configurable shortcuts, dark/light themes, accent colors, night shift through hardware gamma tables.
 
@@ -74,7 +74,7 @@ Packages come from the [GitHub Releases](https://github.com/nongio/otto/releases
 
 ### Not there yet
 
-- **Screen capture:** a built-in screenshot UI, and per-window capture through `wlr-screencopy` (whole-output and region capture already work with `grim`; per-window capture *is* available through the screen-sharing portal).
+- **Screen capture:** a screenshot UI for picking a region or a window interactively, and per-window capture through `wlr-screencopy`. Whole-output and region capture already work with `grim`, the desktop portal answers screenshot requests from applications, and per-window capture *is* available through the screen-sharing portal.
 - **Multi-monitor:** display mirroring.
 - **Dock:** favorite locations; moving Dock code out of the compositor core.
 - **Input:** scroll acceleration.
@@ -243,10 +243,12 @@ Otto is the compositor plus a set of components, each under `components/` and bu
 | `otto-greeter` | Login screen client speaking greetd's IPC |
 | `otto-auth-ui` | Authentication panel shared by the locker and the greeter |
 | `otto-settings` | Settings app, driving the compositor over D-Bus |
+| `otto-files` | File manager, and the desktop's file picker |
+| `otto-quickview` | Sandboxed preview decoder behind Files' quick view |
 | `otto-launcher` | Keyboard-driven launcher — type to filter apps and windows |
 | `otto-rdp` | RDP bridge serving a virtual output to a remote client |
 | `otto-kit` | UI toolkit the Otto clients are built on |
-| `xdg-desktop-portal-otto` | XDG Desktop Portal backend for screen sharing |
+| `xdg-desktop-portal-otto` | XDG Desktop Portal backend: screen sharing, file picker, screenshots, settings, permission dialogs |
 | `apps-manager` | Debug tool for `ext_foreign_toplevel_list_v1` |
 
 To exercise a component against a running compositor:

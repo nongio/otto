@@ -140,7 +140,10 @@ Two things fall out of that indirection:
   not invalidate the layer's cached picture.
 - **The closure returns its damage rect**, converted from buffer pixels into
   layer-local coordinates using the same scale and offset the texture is drawn
-  with. That returned rect is the source of truth for partial repaint.
+  with. It is not the only source: `Layer::add_damage` / `set_damage` write
+  `pending_damage` on the node, which the next paint unions with the returned
+  rect on equal footing — and unlike the return value, those also mark
+  followers as needing paint.
 
 Buffer pixels are not physical pixels — a client painting at buffer scale 2 on
 a 1.5× output hands over a 60 px buffer for 45 physical px — so the closure
@@ -172,7 +175,7 @@ Three per-layer flags do most of the performance work:
 
 | Flag | Effect |
 |------|--------|
-| `picture_cached` | Records the draw closure into a Skia picture and replays it. Opacity and transform animations then cost a replay, not a re-rasterisation. Set on client surface layers. |
+| `picture_cached` | Records the draw closure into a Skia picture (a display list, not a bitmap) and replays it. Opacity and transform animations then cost a replay, not a re-rasterisation. **On by default for every node** — the calls that matter are the ones turning it *off*, for layers that mirror another subtree. |
 | `image_cached` | Rasterises to a bitmap. Right for expensive, static content — the window shadow uses it. |
 | `content_opaque` | Tells the engine the layer fully covers its bounds, so what is underneath can be skipped. |
 
@@ -251,8 +254,11 @@ if let Some(txn_id) = active_transaction {
 }
 ```
 
-`change_*` produces a change the engine can animate; `set_*` applies now. That
-distinction is the whole protocol in miniature — and it is the same one Otto's
+`change_*` produces a change the engine can animate; `set_*` applies now —
+with the caveat that "now" means *when no transition is attached*. Given one,
+`set_*` leaves the model value alone and lets an animation interpolate it, and
+a `change_*` on its own animates nothing until it is scheduled through
+`add_animated_changes`. That distinction is the whole protocol in miniature — and it is the same one Otto's
 own UI code uses, because clients and the compositor are driving the same
 engine.
 
