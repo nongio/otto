@@ -11,35 +11,27 @@ You can try it inside your current session in about a minute — [jump to Try it
 > **Testing phase.** Many features are ready for daily use, but Otto is not finished and not yet fully stable. Playing with it, breaking it and telling us about it is genuinely the most useful thing you can do right now.
 > Feedback and questions: [`#otto-compositor:matrix.org`](https://matrix.to/#/#otto-compositor:matrix.org).
 
-## See it move
+## See it
 
-<video src="https://github.com/user-attachments/assets/014df942-4a79-43f5-9562-73f1858152ba" autoplay muted loop playsinline></video>
+![The Otto desktop](./assets/press/01-desktop-hero.png)
 
-*Windows minimize into the Dock with a genie effect.*
+*Wallpaper, top bar, Dock, Files browsing poster thumbnails, the user guide in a browser window.*
 
-<video src="https://github.com/user-attachments/assets/eb631d10-8417-4124-9472-52a9eef9a856" autoplay muted loop playsinline></video>
+![Exposé](./assets/press/03-expose.png)
 
-*Exposé lays out every open window — previews are live, not screenshots.*
+*Exposé, with the workspace strip on top — the window previews are live, not screenshots.*
 
-<video src="https://github.com/user-attachments/assets/dedfed16-6713-4a70-b5aa-e0057c6d4aad" autoplay muted loop playsinline></video>
+![Files in column view](./assets/press/04-files-column-view.png)
 
-*Drag a window from one workspace to another.*
+*`otto-files` in column view, previewing the selected image.*
 
-<video src="https://github.com/user-attachments/assets/5a2a9cab-8e25-4c69-aeec-d21bed02542f" autoplay muted loop playsinline></video>
+![Settings](./assets/press/05-settings.png)
 
-*The workspace selector, with visual previews.*
+*`otto-settings` editing the running compositor's configuration over D-Bus.*
 
-<video src="https://github.com/user-attachments/assets/62b745c4-f873-4961-91e4-5a1679155fdf" autoplay muted loop playsinline></video>
+![Dark desktop](./assets/press/06-dark-desktop.png)
 
-*Application switcher with icons, names and background blur.*
-
-<video src="https://github.com/user-attachments/assets/9abad978-319d-4699-a5a4-f34f8b3e3560" autoplay muted loop playsinline></video>
-
-*The Dock as a task manager: running apps, minimized windows, pinned launchers.*
-
-<video src="https://github.com/user-attachments/assets/eef1a894-b80e-4db0-b638-341bca321fb0" autoplay muted loop playsinline></video>
-
-*Navigating between applications from the Dock.*
+*A dark Dock and top bar over a monochrome wallpaper.*
 
 ## Try it
 
