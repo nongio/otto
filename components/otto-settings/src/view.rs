@@ -2,6 +2,7 @@
 
 use otto_kit::components::color_picker::{self, WellInteraction};
 use otto_kit::components::dropdown::{self, DropdownInteraction};
+use otto_kit::components::text_input::TextInput;
 use otto_kit::components::titlebar::{
     Titlebar, TitlebarGroup, WindowControls, WindowControlsState,
 };
@@ -10,6 +11,7 @@ use skia_safe::{ClipOp, Contains, Point, RRect};
 
 use crate::glyphs;
 use crate::model::{self, Control, Pane, Row};
+use crate::panes::keyboard;
 use crate::settings_client::{self, Value};
 use crate::widgets;
 use std::collections::HashMap;
@@ -148,6 +150,52 @@ pub fn text_rect(right: f32, cy: f32) -> Rect {
     )
 }
 
+/// Width of the key combination field on a shortcut line. Fixed, not
+/// measured: it is what the field's [`TextInput`] is sized to when an edit
+/// starts, and a width that moved with the window would put the caret
+/// somewhere other than where the click landed.
+pub const SHORTCUT_KEYS_W: f32 = 168.0;
+/// Widest the action pop-up gets before the keys field starts pushing it back.
+const SHORTCUT_SELECT_W: f32 = 208.0;
+const SHORTCUT_GAP: f32 = 8.0;
+
+/// The three controls of a shortcut line — action pop-up, keys field, remove
+/// button — laid out between the row's leading and trailing edges.
+///
+/// Drawing and hit-testing both come through here, so a press can never land
+/// somewhere different from what was drawn.
+fn shortcut_rects(left: f32, right: f32, cy: f32) -> (Rect, Rect, Rect) {
+    let remove = Rect::from_xywh(
+        right - widgets::LINE_BUTTON,
+        cy - widgets::LINE_BUTTON / 2.0,
+        widgets::LINE_BUTTON,
+        widgets::LINE_BUTTON,
+    );
+    let keys = Rect::from_xywh(
+        remove.left - SHORTCUT_GAP - SHORTCUT_KEYS_W,
+        cy - widgets::CONTROL_H / 2.0,
+        SHORTCUT_KEYS_W,
+        widgets::CONTROL_H,
+    );
+    let action = Rect::from_ltrb(
+        left,
+        cy - dropdown::field::HEIGHT / 2.0,
+        (left + SHORTCUT_SELECT_W).min(keys.left - SHORTCUT_GAP),
+        cy + dropdown::field::HEIGHT / 2.0,
+    );
+    (action, keys, remove)
+}
+
+/// The "+" button on the trailing line of the shortcuts group.
+fn add_shortcut_rect(left: f32, cy: f32) -> Rect {
+    Rect::from_xywh(
+        left,
+        cy - widgets::LINE_BUTTON / 2.0,
+        widgets::LINE_BUTTON,
+        widgets::LINE_BUTTON,
+    )
+}
+
 /// The colour well's rect within a row. Its width follows the hex text, so
 /// the control is measured rather than fixed; drawing, hit-testing and popup
 /// anchoring all come through here.
@@ -228,6 +276,24 @@ pub struct TextHit {
     pub local_x: f32,
 }
 
+/// What a press on the shortcuts group means.
+///
+/// Separate from every other hit test because a shortcut line is three
+/// controls in one row, and none of them changes a setting: the list they edit
+/// lives in [`keyboard`], not in the compositor.
+pub enum ShortcutHit {
+    /// The action pop-up, carrying what [`Settings::select_hit`]'s caller
+    /// needs to open a menu over it.
+    Action(SelectHit),
+    /// The key combination field, with the offset of the press inside it so
+    /// the caret lands under the pointer.
+    Keys { index: usize, offset_x: f32 },
+    /// The "−" button: delete this line.
+    Remove(usize),
+    /// The "+" button: append one.
+    Add,
+}
+
 /// A click that landed on a control bound to a setting.
 pub struct Hit {
     pub id: &'static str,
@@ -288,9 +354,7 @@ fn preview_image(path: &str) -> Option<skia_safe::Image> {
             return cached.clone();
         }
         let decoded = decode_preview(path);
-        cache
-            .borrow_mut()
-            .insert(path.to_string(), decoded.clone());
+        cache.borrow_mut().insert(path.to_string(), decoded.clone());
         decoded
     })
 }
@@ -313,12 +377,9 @@ fn decode_preview(path: &str) -> Option<skia_safe::Image> {
     );
     let info = skia_safe::ImageInfo::new_n32_premul((w, h), None);
     let mut surface = skia_safe::surfaces::raster(&info, None, None)?;
-    surface.canvas().draw_image_rect(
-        &full,
-        None,
-        Rect::from_iwh(w, h),
-        &Paint::default(),
-    );
+    surface
+        .canvas()
+        .draw_image_rect(&full, None, Rect::from_iwh(w, h), &Paint::default());
     Some(surface.image_snapshot())
 }
 
@@ -357,9 +418,12 @@ pub struct Settings {
     /// Pointer state of the traffic lights: the app draws its own decoration,
     /// so revealing the glyphs on hover is the app's job too.
     pub controls: WindowControlsState,
-    /// The text row being edited, and the live field editing it. A row not
-    /// named here draws its value as static text.
-    pub editing: Option<(&'static str, TextInput)>,
+    /// What is being typed into right now, and the field doing the typing.
+    ///
+    /// One field serves both a settings row and a shortcut line's key
+    /// combination — see `EditTarget` in `main.rs`. `None`, the usual case,
+    /// draws every value as static text.
+    pub editing: Option<(crate::EditTarget, TextInput)>,
 }
 
 impl Settings {
@@ -380,8 +444,17 @@ impl Settings {
         }
     }
 
-    /// The row whose text field has the keyboard, with the field itself.
-    pub fn with_editing(mut self, editing: Option<(&'static str, TextInput)>) -> Self {
+    /// The live editor for `target`, if that is what currently has the
+    /// keyboard.
+    fn editing_field(&self, target: crate::EditTarget) -> Option<&TextInput> {
+        self.editing
+            .as_ref()
+            .filter(|(editing, _)| *editing == target)
+            .map(|(_, input)| input)
+    }
+
+    /// Carry an in-progress edit into this frame.
+    pub fn with_editing(mut self, editing: Option<(crate::EditTarget, TextInput)>) -> Self {
         self.editing = editing;
         self
     }
@@ -790,6 +863,64 @@ impl Settings {
         })
     }
 
+    /// What a click on the shortcuts group lands on, if anything.
+    ///
+    /// Tried before [`Self::select_hit`] by the caller: a shortcut line's
+    /// action *is* a pop-up button, but one whose choices and target are the
+    /// pane's rather than the settings schema's.
+    pub fn shortcut_hit(&self, x: f32, y: f32, scroll_offset: f32) -> Option<ShortcutHit> {
+        let viewport = self.viewport();
+        if !viewport.contains(Point::new(x, y)) {
+            return None;
+        }
+
+        let content_width = self.width - SIDEBAR_W;
+        let local = Point::new(x - viewport.left, y - viewport.top + scroll_offset);
+
+        let (row, rect) = self
+            .row_rects(content_width)
+            .into_iter()
+            .find(|(_, rect)| rect.contains(local))?;
+        let left = rect.left + 14.0;
+        let right = rect.right - 14.0;
+        let cy = rect.center_y();
+
+        match &row.control {
+            Control::Shortcut { index } => {
+                let (action, keys, remove) = shortcut_rects(left, right, cy);
+                if remove.contains(local) {
+                    return Some(ShortcutHit::Remove(*index));
+                }
+                if keys.contains(local) {
+                    return Some(ShortcutHit::Keys {
+                        index: *index,
+                        offset_x: local.x - keys.left,
+                    });
+                }
+                if dropdown::field::hit_test(action, local.x, local.y) {
+                    // Window-local for the popup's anchor, like `select_hit`:
+                    // the menu is placed against the surface, not against
+                    // content that has been scrolled under it.
+                    return Some(ShortcutHit::Action(SelectHit {
+                        id: keyboard::slot_id(*index)?,
+                        rect: Rect::from_xywh(
+                            action.left + viewport.left,
+                            action.top + viewport.top - scroll_offset,
+                            action.width(),
+                            action.height(),
+                        ),
+                        current: keyboard::lines().get(*index)?.action.clone(),
+                    }));
+                }
+                None
+            }
+            Control::AddShortcut => add_shortcut_rect(left, cy)
+                .contains(local)
+                .then_some(ShortcutHit::Add),
+            _ => None,
+        }
+    }
+
     /// The colour well a click lands on, if any. Like a dropdown, a well does
     /// not change a value on press — it opens a picker.
     pub fn color_hit(&self, x: f32, y: f32, scroll_offset: f32) -> Option<ColorHit> {
@@ -811,7 +942,11 @@ impl Settings {
         };
 
         let color = Color::from(*argb);
-        let well = well_rect(rect.right - 14.0, Self::control_band(row, rect).center_y(), color);
+        let well = well_rect(
+            rect.right - 14.0,
+            Self::control_band(row, rect).center_y(),
+            color,
+        );
         if !color_picker::well::hit_test(well, local.x, local.y) {
             return None;
         }
@@ -1059,12 +1194,7 @@ impl Settings {
             Some(image) => {
                 let mut paint = Paint::default();
                 paint.set_anti_alias(true);
-                canvas.draw_image_rect(
-                    image,
-                    None,
-                    box_rect,
-                    &paint,
-                );
+                canvas.draw_image_rect(image, None, box_rect, &paint);
             }
             None => {
                 let mut paint = Paint::default();
@@ -1227,12 +1357,25 @@ impl Settings {
                     &self.theme,
                 );
             }
+            Control::Shortcut { index } => self.render_shortcut(canvas, *index, label_x, right, cy),
+            Control::AddShortcut => {
+                let button = add_shortcut_rect(label_x, cy);
+                widgets::line_button(canvas, button, true, &self.theme);
+                widgets::text_centered_y(
+                    canvas,
+                    "Add shortcut",
+                    button.right + 10.0,
+                    cy,
+                    widgets::CONTROL_TEXT,
+                    self.theme.text_secondary,
+                );
+            }
             Control::Text(value) => {
                 let field = text_rect(right, cy);
-                match self.editing.as_ref().filter(|(id, _)| Some(*id) == row.id) {
+                match self.editing_field(crate::EditTarget::Setting(row.id.unwrap_or_default())) {
                     // The live field owns the value while it is being edited:
                     // what the model holds is the last committed one.
-                    Some((_, input)) => {
+                    Some(input) => {
                         canvas.save();
                         canvas.translate((field.left, field.top));
                         input.render_at(canvas, field.width(), field.height());
@@ -1289,6 +1432,41 @@ impl Settings {
             };
             widgets::restart_pill(canvas, x, pill_cy);
         }
+    }
+
+    /// One shortcut line: the action it runs, the combination that triggers
+    /// it, and the button that deletes it.
+    fn render_shortcut(&self, canvas: &Canvas, index: usize, left: f32, right: f32, cy: f32) {
+        let Some(line) = keyboard::lines().into_iter().nth(index) else {
+            return;
+        };
+        let (action, keys, remove) = shortcut_rects(left, right, cy);
+
+        dropdown::field::draw(
+            canvas,
+            action,
+            &line.action,
+            if keyboard::slot_id(index) == self.open_dropdown {
+                DropdownInteraction::Open
+            } else {
+                DropdownInteraction::Normal
+            },
+            &self.theme,
+        );
+
+        // While this line is being typed the toolkit's field owns the box —
+        // it is the only thing that can draw a caret and a selection.
+        match self.editing_field(crate::EditTarget::ShortcutKeys(index)) {
+            Some(input) => {
+                canvas.save();
+                canvas.translate((keys.left, keys.top));
+                input.render_at(canvas, keys.width(), keys.height());
+                canvas.restore();
+            }
+            None => widgets::field_box(canvas, keys, &line.keys, "Unassigned", &self.theme),
+        }
+
+        widgets::line_button(canvas, remove, false, &self.theme);
     }
 
     /// Displays arrangement canvas, drawn from `y` down. It occupies

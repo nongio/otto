@@ -257,6 +257,53 @@ pub fn file_field(canvas: &Canvas, right: f32, cy: f32, value: &str, theme: &The
     );
 }
 
+/// Editable-looking field drawn into a rect the caller has measured, for
+/// controls that share a row and so cannot each claim a fixed width.
+///
+/// `placeholder` stands in while the value is empty, so a freshly added
+/// shortcut says what is missing rather than showing a blank box.
+pub fn field_box(canvas: &Canvas, rect: Rect, value: &str, placeholder: &str, theme: &Theme) {
+    let rrect = RRect::new_rect_xy(rect, 6.0, 6.0);
+    canvas.draw_rrect(rrect, &fill(theme.fill_quaternary));
+    canvas.draw_rrect(rrect, &stroke(theme.fill_secondary, 1.0));
+    canvas.save();
+    canvas.clip_rrect(rrect, ClipOp::Intersect, true);
+    let (text, color) = if value.is_empty() {
+        (placeholder, theme.text_tertiary)
+    } else {
+        (value, theme.text_primary)
+    };
+    text_centered_y(
+        canvas,
+        text,
+        rect.left + 9.0,
+        rect.center_y(),
+        styles::SUBHEADLINE,
+        color,
+    );
+    canvas.restore();
+}
+
+/// Side of the square "+"/"−" buttons that add and remove a line.
+pub const LINE_BUTTON: f32 = 24.0;
+
+/// A "+" or "−" button. `plus` picks which stroke it gets — the two are the
+/// same control, and drawing them from one function keeps them identical.
+pub fn line_button(canvas: &Canvas, rect: Rect, plus: bool, theme: &Theme) {
+    let rrect = RRect::new_rect_xy(rect, 6.0, 6.0);
+    canvas.draw_rrect(rrect, &fill(theme.fill_tertiary));
+    canvas.draw_rrect(rrect, &stroke(theme.fill_secondary, 1.0));
+
+    let mut paint = stroke(theme.text_primary, 1.6);
+    paint.set_stroke_cap(skia_safe::paint::Cap::Round);
+    let (cx, cy) = (rect.center_x(), rect.center_y());
+    let arm = 5.0;
+    canvas.draw_line(Point::new(cx - arm, cy), Point::new(cx + arm, cy), &paint);
+    if plus {
+        canvas.draw_line(Point::new(cx, cy - arm), Point::new(cx, cy + arm), &paint);
+    }
+}
+
 /// Key combination shown as individual keycaps.
 pub fn key_combo(canvas: &Canvas, right: f32, cy: f32, combo: &str, theme: &Theme) {
     let keys: Vec<&str> = combo.split('+').map(|k| k.trim()).collect();

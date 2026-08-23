@@ -27,17 +27,19 @@ use std::sync::{Arc, Mutex};
 use otto_kit::components::color_picker::{ColorPickerPopup, Swatch};
 use otto_kit::components::dropdown::DropdownMenu;
 use otto_kit::components::scroll::ScrollSurfaces;
+use otto_kit::components::text_input::{KeyMods, TextInput, TextInputKey, TextInputResponse};
 use otto_kit::components::titlebar::{WindowControl, WindowControlsState};
 use otto_kit::components::window::resize;
 use otto_kit::prelude::*;
 use otto_kit::protocols::otto_surface_style_v1;
 use otto_kit::CursorShape;
+use panes::keyboard;
 use smithay_client_toolkit::reexports::client::protocol::{wl_keyboard, wl_surface};
 use smithay_client_toolkit::reexports::client::Proxy;
 use smithay_client_toolkit::seat::keyboard::KeyEvent;
 use smithay_client_toolkit::seat::pointer::{AxisScroll, PointerEventKind};
 use smithay_client_toolkit::shell::xdg::XdgSurface;
-use view::{Settings, WINDOW_H, WINDOW_W};
+use view::{Settings, ShortcutHit, WINDOW_H, WINDOW_W};
 
 struct SettingsApp {
     window: Option<Window>,
@@ -99,13 +101,28 @@ struct SettingsApp {
     frosted: Arc<std::sync::atomic::AtomicBool>,
 }
 
-/// A text field with the keyboard: which setting it edits, and the live editor.
+/// A text field with the keyboard: what it edits, and the live editor.
 ///
 /// The value being typed lives here, not in the model — the model holds the
 /// last *committed* value, which is what a cancelled edit falls back to.
 struct Editing {
-    id: &'static str,
+    target: EditTarget,
     input: TextInput,
+}
+
+/// What a field being typed into writes back to when it is committed.
+///
+/// One editor serves both because everything else about them is identical —
+/// the caret, the blink, the key translation, the commit-on-click-elsewhere.
+/// Only the destination differs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EditTarget {
+    /// A row bound to `org.otto.Settings`, written back through `apply`.
+    Setting(&'static str),
+    /// The key combination on one shortcut line, written back to the
+    /// process-local store in `panes::keyboard` — shortcuts are not in the
+    /// served schema, so there is nowhere else for them to go.
+    ShortcutKeys(usize),
 }
 
 /// The modifiers a text field cares about.
@@ -272,6 +289,11 @@ fn select_ids() -> Vec<&'static str> {
             }
         }
     }
+    // The shortcut lines' action pop-ups. There is one slot per line the pane
+    // can hold rather than one per line it holds *now*, because a menu cannot
+    // be built later: the list is editable, and a line added at runtime has to
+    // find its menu already made.
+    ids.extend_from_slice(keyboard::slot_ids());
     ids
 }
 
@@ -303,7 +325,7 @@ fn current_settings(
             .lock()
             .unwrap()
             .as_ref()
-            .map(|edit| (edit.id, edit.input.clone())),
+            .map(|edit| (edit.target, edit.input.clone())),
     )
 }
 
@@ -414,9 +436,6 @@ fn open_menu(
         window.request_frame();
         return;
     }
-    let Some(desc) = settings_client::describe(select.id) else {
-        return;
-    };
     let Some(parent) = window
         .surface()
         .map(|s| s.xdg_window().xdg_surface().clone())
@@ -424,18 +443,35 @@ fn open_menu(
         return;
     };
 
-    let choices: Vec<discovery::Choice> = if !desc.choices.is_empty() {
-        desc.choices
+    // A shortcut line's action is the one pop-up whose choices are not a
+    // setting's: they are the builtin actions listed in `panes::keyboard`,
+    // and what is picked goes back to that list rather than onto the bus.
+    let slot = keyboard::slot_index(select.id);
+    let choices: Vec<discovery::Choice> = if slot.is_some() {
+        keyboard::actions()
             .iter()
-            .map(|c| discovery::Choice {
-                label: desc.display(c),
-                value: c.clone(),
+            .map(|action| discovery::Choice {
+                label: (*action).to_string(),
+                value: (*action).to_string(),
             })
             .collect()
     } else {
-        match discovery::choices_for(select.id, &select.current) {
-            Some(choices) => choices,
-            None => return,
+        let Some(desc) = settings_client::describe(select.id) else {
+            return;
+        };
+        if !desc.choices.is_empty() {
+            desc.choices
+                .iter()
+                .map(|c| discovery::Choice {
+                    label: desc.display(c),
+                    value: c.clone(),
+                })
+                .collect()
+        } else {
+            match discovery::choices_for(select.id, &select.current) {
+                Some(choices) => choices,
+                None => return,
+            }
         }
     };
     if choices.is_empty() {
@@ -467,7 +503,10 @@ fn open_menu(
         selected,
         move |index| {
             if let Some(value) = values.get(index) {
-                apply(id, settings_client::Value::Text(value.clone()));
+                match slot {
+                    Some(line) => keyboard::set_action(line, value.clone()),
+                    None => apply(id, settings_client::Value::Text(value.clone())),
+                }
             }
             *chosen_open.lock().unwrap() = None;
             mark_pane_dirty(&chosen_dirty);
@@ -583,11 +622,38 @@ fn commit_edit(editing: &Arc<Mutex<Option<Editing>>>) -> bool {
     let Some(edit) = editing.lock().unwrap().take() else {
         return false;
     };
-    apply(
-        edit.id,
-        settings_client::Value::Text(edit.input.value().to_string()),
-    );
+    match edit.target {
+        EditTarget::Setting(id) => apply(
+            id,
+            settings_client::Value::Text(edit.input.value().to_string()),
+        ),
+        // Trimmed because the compositor's trigger parser splits on `+` and
+        // trims each part, so surrounding space is noise either way — better
+        // not to store it than to store something that only parses by luck.
+        EditTarget::ShortcutKeys(index) => {
+            keyboard::set_keys(index, edit.input.value().trim().to_string())
+        }
+    }
     true
+}
+
+/// Start typing into a field, with the caret where the press landed.
+///
+/// `width` is the field's own, which differs between a settings row and a
+/// shortcut line — the editor needs it to scroll the caret into view.
+fn start_edit(
+    editing: &Arc<Mutex<Option<Editing>>>,
+    target: EditTarget,
+    value: String,
+    offset_x: f32,
+    width: f32,
+    dark: bool,
+) {
+    let mut input =
+        TextInput::new(value, text_input_style(dark)).with_size(width, widgets::CONTROL_H);
+    input.state.set_focused(true);
+    input.on_pointer_down(offset_x, 1, false);
+    *editing.lock().unwrap() = Some(Editing { target, input });
 }
 
 /// Stop editing without sending anything — Escape, and a keyboard focus lost
@@ -610,9 +676,14 @@ impl SettingsApp {
     /// whole point of them and no help at all here, so anything else that
     /// changes how the pane looks has to invalidate it explicitly.
     fn sync_pane(&mut self, repaint: bool) {
-        let settings = current_settings(&self.selected, &self.size, &self.toggle_flips, &self.editing)
-            .with_open_dropdown(*self.open_dropdown.lock().unwrap())
-            .with_open_picker(*self.open_picker.lock().unwrap());
+        let settings = current_settings(
+            &self.selected,
+            &self.size,
+            &self.toggle_flips,
+            &self.editing,
+        )
+        .with_open_dropdown(*self.open_dropdown.lock().unwrap())
+        .with_open_picker(*self.open_picker.lock().unwrap());
 
         let mut scroll = self.scroll.lock().unwrap();
         // The scroll view drives surfaces that live inside the pane, so its
@@ -970,18 +1041,84 @@ impl App for SettingsApp {
                         // here rather than cached because a successful Set
                         // changes what the next one would hit.
                         let offset = scroll.lock().unwrap().offset();
-                        let settings = current_settings(&selected, &size_hit, &toggle_flips, &editing_hit);
+                        let settings =
+                            current_settings(&selected, &size_hit, &toggle_flips, &editing_hit);
 
                         // A press anywhere but on the field being edited is
                         // an answer to it, not an abandonment: commit before
                         // the press does whatever else it does.
-                        let same_field = settings.text_hit(x, y, offset).map(|hit| hit.id)
-                            == editing_hit.lock().unwrap().as_ref().map(|edit| edit.id);
+                        let same_field = settings
+                            .text_hit(x, y, offset)
+                            .map(|hit| EditTarget::Setting(hit.id))
+                            == editing_hit.lock().unwrap().as_ref().map(|edit| edit.target);
                         if !same_field && commit_edit(&editing_hit) {
                             mark_pane_dirty(&pane_dirty);
                         }
 
-                        if let Some(color) = settings.color_hit(x, y, offset) {
+                        // A shortcut line is three controls in one row, none of
+                        // them a setting, so it is asked first — its action
+                        // pop-up would otherwise fall through to `select_hit`,
+                        // which looks the identifier up in the schema and finds
+                        // nothing.
+                        let shortcut = settings.shortcut_hit(x, y, offset);
+                        // Pressing anywhere but inside the field being typed
+                        // into accepts what is in it, the way clicking away
+                        // from a rename does.
+                        let stays_open = match (&shortcut, editing_hit.lock().unwrap().as_ref()) {
+                            (Some(ShortcutHit::Keys { index, .. }), Some(edit)) => {
+                                edit.target == EditTarget::ShortcutKeys(*index)
+                            }
+                            _ => false,
+                        };
+                        if !stays_open {
+                            commit_edit(&editing_hit);
+                        }
+
+                        if let Some(hit) = shortcut {
+                            match hit {
+                                ShortcutHit::Action(select) => open_menu(
+                                    &dropdowns,
+                                    &open_dropdown,
+                                    &pane_dirty,
+                                    &redraw,
+                                    select,
+                                    event_serial(&event.kind),
+                                ),
+                                ShortcutHit::Keys { index, offset_x } => {
+                                    // A second press in the field already open
+                                    // moves the caret. Starting over would
+                                    // reload the line and throw away whatever
+                                    // has been typed but not committed.
+                                    let moved = {
+                                        let mut editing = editing_hit.lock().unwrap();
+                                        match editing.as_mut().filter(|edit| {
+                                            edit.target == EditTarget::ShortcutKeys(index)
+                                        }) {
+                                            Some(edit) => {
+                                                edit.input.on_pointer_down(offset_x, 1, false);
+                                                true
+                                            }
+                                            None => false,
+                                        }
+                                    };
+                                    if !moved {
+                                        if let Some(keys) = keyboard::keys(index) {
+                                            start_edit(
+                                                &editing_hit,
+                                                EditTarget::ShortcutKeys(index),
+                                                keys,
+                                                offset_x,
+                                                view::SHORTCUT_KEYS_W,
+                                                settings.dark,
+                                            );
+                                        }
+                                    }
+                                }
+                                ShortcutHit::Remove(index) => keyboard::remove(index),
+                                ShortcutHit::Add => keyboard::add(),
+                            }
+                            mark_pane_dirty(&pane_dirty);
+                        } else if let Some(color) = settings.color_hit(x, y, offset) {
                             open_picker_for(
                                 &pickers,
                                 &open_picker,
@@ -1008,24 +1145,28 @@ impl App for SettingsApp {
                             // Moving between fields commits the one being
                             // left: a click elsewhere is an answer, not an
                             // abandonment.
+                            let target = EditTarget::Setting(text.id);
                             let already = {
                                 let current = editing_hit.lock().unwrap();
-                                current.as_ref().map(|edit| edit.id) == Some(text.id)
+                                current.as_ref().map(|edit| edit.target) == Some(target)
                             };
-                            if !already {
-                                let mut input = TextInput::editing(
+                            if already {
+                                // A second press in the field already open
+                                // moves the caret. Starting over would reload
+                                // the row and throw away what has been typed
+                                // but not committed.
+                                if let Some(edit) = editing_hit.lock().unwrap().as_mut() {
+                                    edit.input.on_pointer_down(text.local_x, 1, false);
+                                }
+                            } else {
+                                start_edit(
+                                    &editing_hit,
+                                    target,
                                     text.current.clone(),
-                                    text_input_style(settings.dark),
-                                )
-                                .with_size(widgets::TEXT_W, widgets::CONTROL_H);
-                                input.state.set_focused(true);
-                                *editing_hit.lock().unwrap() = Some(Editing {
-                                    id: text.id,
-                                    input,
-                                });
-                            }
-                            if let Some(edit) = editing_hit.lock().unwrap().as_mut() {
-                                edit.input.on_pointer_down(text.local_x, 1, false);
+                                    text.local_x,
+                                    widgets::TEXT_W,
+                                    settings.dark,
+                                );
                             }
                             mark_pane_dirty(&pane_dirty);
                         } else if let Some(hit) = settings.hit(x, y, offset) {
@@ -1066,7 +1207,8 @@ impl App for SettingsApp {
                         }
                         let held = dragging.lock().unwrap().clone();
                         if let Some(id) = held {
-                            let settings = current_settings(&selected, &size_hit, &toggle_flips, &editing_hit);
+                            let settings =
+                                current_settings(&selected, &size_hit, &toggle_flips, &editing_hit);
                             if let Some(value) = settings.drag_value(&id, x) {
                                 apply(&id, value);
                                 mark_pane_dirty(&pane_dirty);
@@ -1103,7 +1245,11 @@ impl App for SettingsApp {
         // else still has to repaint the sidebar, which is why this runs before
         // the size early-out below.
         let frosted = window.background_blur() && window.is_activated();
-        if self.frosted.swap(frosted, std::sync::atomic::Ordering::Relaxed) != frosted {
+        if self
+            .frosted
+            .swap(frosted, std::sync::atomic::Ordering::Relaxed)
+            != frosted
+        {
             window.request_frame();
         }
         // A configure with no size is the compositor letting the client
@@ -1230,14 +1376,21 @@ impl App for SettingsApp {
             Keysym::BackSpace => Some(TextInputKey::Backspace),
             Keysym::Delete => Some(TextInputKey::Delete),
             Keysym::a if ctrl => Some(TextInputKey::SelectAll),
-            // A modifier pressed on its own carries no text and is not an
-            // edit: `on_modifiers` already recorded what it changed.
-            _ => event
-                .utf8
-                .as_ref()
-                .and_then(|text| text.chars().next())
-                .filter(|c| !c.is_control())
-                .map(TextInputKey::Char),
+            // Whatever the keymap produced, as a whole: an input method can
+            // commit more than one character at a time, and taking only the
+            // first would silently drop the rest. A modifier pressed on its
+            // own produces nothing here — `on_modifiers` already recorded
+            // what it changed.
+            _ => {
+                let text: String = event
+                    .utf8
+                    .as_deref()
+                    .unwrap_or_default()
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .collect();
+                (!text.is_empty()).then_some(TextInputKey::Text(text))
+            }
         };
         let Some(key) = key else { return };
 
@@ -1301,6 +1454,8 @@ impl App for SettingsApp {
     /// While the scroll view is animating the app needs a steady clock, not
     /// just the next input event.
     fn idle_timeout(&self) -> Option<std::time::Duration> {
+        // A blinking caret needs one too: nothing else wakes the loop while
+        // the user is looking at a field they have stopped typing into.
         let animating = self.scroll.lock().unwrap().is_animating()
             || !self.toggle_flips.lock().unwrap().is_empty()
             // A blinking caret needs the same steady clock, and for the same

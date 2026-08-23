@@ -34,6 +34,15 @@ pub enum Control {
     File(String),
     /// Static informational value, not editable here.
     Value(String),
+    /// One editable shortcut line: the action pop-up, the key combination
+    /// field, and the button that deletes it.
+    ///
+    /// `index` is the line's position in [`crate::panes::keyboard`]'s list,
+    /// which is what every hit test and edit is addressed by — the row itself
+    /// holds no state, since the model is rebuilt on every frame.
+    Shortcut { index: usize },
+    /// The trailing line that appends a shortcut.
+    AddShortcut,
 }
 
 pub struct Row {
