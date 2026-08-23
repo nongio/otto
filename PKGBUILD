@@ -1,7 +1,12 @@
 # Maintainer: Riccardo Canalicchio <riccardo.canalicchio@gmail.com>
 
 pkgname=otto-bin
-pkgver=0.15.0
+pkgver=1.0.0rc1
+# Cargo's version (names the release tarball) and the git tag. They differ
+# from pkgver for a prerelease: '-' is illegal in pkgver, and pacman sorts
+# a '~' suffix *after* the plain version rather than before it.
+_ver=1.0.0-rc.1
+_tag=v1.0.0-rc1
 pkgrel=1
 pkgdesc="A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail, inspired by familiar macOS interactions."
 url="https://github.com/nongio/otto"
@@ -11,7 +16,7 @@ provides=("otto")
 conflicts=("otto")
 depends=("libdrm" "systemd-libs" "mesa" "libxkbcommon" "wayland" "libinput" "dbus" "seatd" "pipewire" "freetype2" "fontconfig" "pixman" "noto-fonts" "gstreamer" "gst-plugins-base-libs")
 optdepends=("xdg-desktop-portal: Desktop integration" "fprintd: fingerprint unlock for otto-lock and otto-greeter" "greetd: login manager otto --login hosts a greeter for" "gst-plugin-pipewire: otto-rdp video capture" "gst-plugins-bad: otto-rdp hardware H.264 (VA-API)")
-source=("https://github.com/nongio/otto/releases/download/v$pkgver/otto-$pkgver-x86_64.tar.gz")
+source=("https://github.com/nongio/otto/releases/download/$_tag/otto-$_ver-x86_64.tar.gz")
 sha256sums=("SKIP")
 # Files pacman must never clobber: a modified config becomes .pacnew on
 # upgrade and .pacsave on removal, instead of being silently overwritten or

@@ -1,7 +1,7 @@
 # Maintainer: Riccardo Canalicchio <riccardo.canalicchio@gmail.com>
 
 pkgname=otto-git
-pkgver=0.15.0.r130.gbb267e87
+pkgver=1.0.0rc1.r0.g97675cf6
 pkgrel=1
 pkgdesc="A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail, inspired by familiar macOS interactions."
 url="https://github.com/nongio/otto"
@@ -18,8 +18,20 @@ backup=("etc/pam.d/otto-lock")
 
 pkgver() {
     cd "$startdir"
-    git describe --long --tags 2>/dev/null | sed 's/^v//;s/-/.r/;s/-/./' ||
-    printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+    local described hash commits version
+    described=$(git describe --long --tags 2>/dev/null) || {
+        printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+        return
+    }
+    # git describe ends in -<commits>-g<hash>; everything before that is the
+    # tag, which may carry hyphens of its own (v1.0.0-rc1). Strip from the
+    # right, then drop the tag's hyphens, since pkgver may not contain any.
+    described=${described#v}
+    hash=${described##*-}
+    described=${described%-*}
+    commits=${described##*-}
+    version=${described%-*}
+    printf "%s.r%s.%s" "${version//-/}" "$commits" "$hash"
 }
 
 build() {

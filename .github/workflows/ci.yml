@@ -357,4 +357,5 @@ jobs:
           body_path: release_notes.md
           generate_release_notes: true
           draft: true
-          prerelease: false
+          # v1.0.0-rc1 and friends are pre-releases; plain v1.0.0 is not.
+          prerelease: ${{ contains(github.ref_name, '-rc') }}
