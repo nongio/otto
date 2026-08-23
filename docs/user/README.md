@@ -54,5 +54,5 @@ If you are installing Otto for the first time, start with
 |------|----------------|
 | [Troubleshooting](troubleshooting.md) | Logs, common failures, and how to report a bug |
 
-Questions and feedback are welcome in the Matrix room
+Questions and feedback are welcome on [Discord](https://discord.gg/AdXkrYKuz) or in the Matrix room
 [`#otto-compositor:matrix.org`](https://matrix.to/#/#otto-compositor:matrix.org).
