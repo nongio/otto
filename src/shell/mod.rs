@@ -553,6 +553,23 @@ impl<BackendData: Backend> Otto<BackendData> {
                     client_owns_size,
                     shared_gravity,
                 );
+                // …then correct the opacity claim it just made. Layer-shell
+                // (and lock) surfaces are routinely fullscreen and mostly
+                // transparent — the launcher is a fullscreen overlay with a
+                // search field on it — and a blanket `content_opaque` turns
+                // one into an occluder that culls the wallpaper and every
+                // window beneath it. That is invisible on the KMS path, where
+                // each plane subtree is rendered in isolation, and blacks out
+                // the whole screen on winit, which composites the output as a
+                // single tree. Ask the client instead: opaque only where it
+                // declared an opaque region (or committed a buffer with no
+                // alpha at all). Cheap enough to redo every commit — this is a
+                // plain field write in lay-rs, it schedules nothing.
+                let fully_opaque = smithay::wayland::compositor::with_states(
+                    &surface_info.get(surface_id).unwrap().0,
+                    crate::workspaces::utils::surface_is_fully_opaque,
+                );
+                surface_layer.set_content_opaque(fully_opaque);
 
                 // Set up parent-child relationship
                 // Only append if there's a parent - root surface is handled separately below

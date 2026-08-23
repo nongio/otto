@@ -520,6 +520,7 @@ pub fn run_winit() {
                 } else {
                     backend.buffer_age().unwrap_or(0)
                 };
+                let mut pending_screencopy = std::mem::take(&mut state.pending_screencopy_frames);
                 let render_res = backend.bind().and_then(|(renderer, mut framebuffer)| {
                     #[cfg(feature = "profile-with-puffin")]
                     profiling::puffin::profile_scope!("render_output");
@@ -566,15 +567,60 @@ pub fn run_winit() {
                     #[cfg(feature = "fps_ticker")]
                     elements.push(WorkspaceRenderElements::Fps(fps_element.clone()));
 
-                    let scene_element = state
-                        .workspaces
-                        .output_workspaces
-                        .get(&output.name())
-                        .map(|ows| state.scene_element.for_output_layer(&ows.output_layer))
-                        .unwrap_or_else(|| state.scene_element.clone());
-                    elements.push(WorkspaceRenderElements::Scene(scene_element));
+                    // Exposé hides `workspaces_layer`, and the per-output
+                    // `expose` layer is a CHILD of it — so a single top-down
+                    // `for_output_layer(output_layer)` re-render prunes the
+                    // whole exposé subtree with its hidden ancestor and the
+                    // previews come out black. The KMS path never sees this
+                    // because it renders exposé as its own plane subtree,
+                    // which ignores ancestor visibility.
+                    //
+                    // So for exactly as long as exposé is up, composite the way
+                    // the plane path decomposes the output: one isolated
+                    // subtree per plane, stacked top→bottom, the windows
+                    // subtree dropped just like the windows plane. Same stack
+                    // (and the same `expose_active` test) as
+                    // `render_virtual_outputs` in `udev/render.rs`. Outside
+                    // exposé the tree render stands: it is the cheaper path —
+                    // plane subtrees deliberately skip occlusion culling.
+                    let expose_active = state.workspaces.is_expose_transitioning()
+                        || state.workspaces.get_show_all();
+                    let ows = state.workspaces.output_workspaces.get(&output.name());
+                    let scene_stack: Vec<crate::render_elements::scene_element::SceneElement> =
+                        match ows {
+                            Some(ows) if expose_active => {
+                                let pos = ows.output_layer.render_position();
+                                let origin = (pos.x, pos.y);
+                                // The lock plane stays in the stack rather than
+                                // replacing it (as the virtual-output path does):
+                                // it is hidden while unlocked, and exposé cannot
+                                // be open on a locked session anyway.
+                                vec![
+                                    state.scene_element.for_plane_subtree(&ows.lock_plane, origin),
+                                    state.scene_element.for_plane_subtree(&ows.dock_plane, origin),
+                                    state
+                                        .scene_element
+                                        .for_plane_subtree(&ows.switcher_plane, origin),
+                                    state
+                                        .scene_element
+                                        .for_plane_subtree(&ows.overlay_plane, origin),
+                                    state
+                                        .scene_element
+                                        .for_plane_subtree(&ows.expose_layer, origin),
+                                    state
+                                        .scene_element
+                                        .for_plane_subtree(&ows.background_plane, origin),
+                                ]
+                            }
+                            Some(ows) => {
+                                vec![state.scene_element.for_output_layer(&ows.output_layer)]
+                            }
+                            None => vec![state.scene_element.clone()],
+                        };
+                    elements
+                        .extend(scene_stack.into_iter().map(WorkspaceRenderElements::Scene));
 
-                    render_output(
+                    let render_output_result = render_output(
                         &output,
                         &all_window_elements,
                         elements,
@@ -587,8 +633,27 @@ pub fn run_winit() {
                     .map_err(|err| match err {
                         OutputDamageTrackerError::Rendering(err) => err.into(),
                         _ => unreachable!(),
-                    })
+                    });
+
+                    // Serve any waiting wlr-screencopy client (grim, wf-recorder,
+                    // …) from the frame we just drew. Without this the winit
+                    // backend accepts the capture request and never answers it.
+                    if render_output_result.is_ok() && !pending_screencopy.is_empty() {
+                        crate::state::screencopy::complete_screencopy_for_output_skia(
+                            &mut pending_screencopy,
+                            &output,
+                            renderer,
+                        );
+                    }
+
+                    render_output_result
                 });
+
+                // Anything not served above (wrong output, or a failed render)
+                // goes back on the queue for the next frame.
+                state
+                    .pending_screencopy_frames
+                    .append(&mut pending_screencopy);
 
                 match render_res {
                     Ok(render_output_result) => {
@@ -747,6 +812,54 @@ pub fn run_winit() {
         } else {
             state.workspaces.refresh_space();
             state.popups.cleanup();
+            // Debug: `echo ActionName > $OTTO_ACTION_FILE` (default
+            // /tmp/otto-action) executes a builtin
+            // shortcut action as if its key was pressed. Mirrors the udev
+            // hook — virtual-keyboard input bypasses the libinput shortcut
+            // layer, so harnesses need this to drive compositor UI remotely.
+            let action_file = std::env::var("OTTO_ACTION_FILE")
+                .unwrap_or_else(|_| "/tmp/otto-action".to_string());
+            if let Ok(name) = std::fs::read_to_string(&action_file) {
+                let _ = std::fs::remove_file(&action_file);
+                let name = name.trim();
+                let resolved = crate::config::shortcuts::parse_builtin_name(name)
+                    .map(crate::config::shortcuts::ShortcutAction::Builtin)
+                    .and_then(|a| {
+                        Config::with(|c| crate::input::actions::resolve_shortcut_action(c, &a))
+                    });
+                match resolved {
+                    Some(action) => {
+                        info!("executing debug action: {name}");
+                        use crate::input::actions::KeyAction;
+                        match action {
+                            KeyAction::ExposeShowAll => state.handle_expose_show_all(),
+                            KeyAction::ExposeShowDesktop => state.handle_expose_show_desktop(),
+                            KeyAction::WorkspaceNum(i) => state.handle_workspace_num(i),
+                            // The window-management actions live in the
+                            // windowed *keyboard* dispatcher
+                            // (`process_input_event_windowed`), not in
+                            // `process_common_key_action` — which warns and
+                            // drops anything it does not own. Without these
+                            // arms the debug hook could never drive the app
+                            // switcher or the tiling actions: they logged
+                            // "executing debug action" and then did nothing.
+                            KeyAction::ApplicationSwitchNext => state.handle_app_switcher_next(),
+                            KeyAction::ApplicationSwitchPrev => state.handle_app_switcher_prev(),
+                            KeyAction::ApplicationSwitchQuit => state.handle_app_switcher_quit(),
+                            KeyAction::ApplicationSwitchNextWindow => {
+                                state.handle_app_switcher_next_window()
+                            }
+                            KeyAction::ToggleMaximize => state.handle_toggle_maximize(),
+                            KeyAction::TileLeft => state.handle_tile_left(),
+                            KeyAction::TileRight => state.handle_tile_right(),
+                            KeyAction::CloseWindow => state.handle_close_window(),
+                            other => state.process_common_key_action(other),
+                        }
+                        state.backend_data.request_redraw();
+                    }
+                    None => warn!("unknown debug action: {name}"),
+                }
+            }
             display_handle.flush_clients().unwrap();
         }
     }
