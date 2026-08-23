@@ -70,10 +70,15 @@ GetIconTheme()             → s         icon theme name, empty to auto-detect
 GetAccentColor()           → (ddd)     accent as sRGB in 0.0..=1.0
 
 ListOutputs()              → aa{sv}    every output, physical and virtual
+SetOutputProfile(connector: s, width: u, height: u,
+                 refresh_hz: d, x: i, y: i,
+                 primary: b)           → s   status, always pending-restart
 AddVirtualOutput(name: s, width: u, height: u,
                  refresh_hz: d, interactive: b,
                  persist: b)           → u   PipeWire node id
 RemoveVirtualOutput(name: s)           → ()
+
+ConfigPath()               → s         the file a change is written to
 ```
 
 ### Portal getters
@@ -93,6 +98,17 @@ identifier for "the second display". They get their own three methods instead.
 `height`, `refresh` (millihertz), `x`, `y`, `scale`, and `virtual`. A client
 drawing a display arrangement reads it from here rather than inventing one.
 
+`SetOutputProfile` writes `displays.named.<connector>` — the same profile the
+compositor resolves when it brings that output up — so a resolution, refresh
+rate, position or primary choice survives a restart. It is keyed by connector
+because that is the handle the config has; see the Open section for why that
+identity is not the last word. **It applies at the next start, never now**, and
+says so: a modeset made from under a running session cannot be undone if the
+display does not come back, and that is worse than a restart. A zero width or
+height leaves the resolution unset and a zero rate leaves the refresh unset, so
+moving a display need not name a mode for it. Primary is a choice *among*
+displays, so a client turning it on for one must write it off for the others.
+
 `AddVirtualOutput` creates a PipeWire-backed output on the running compositor
 and answers with the node id to capture from. It takes effect immediately: a
 virtual screen you must restart to get is useless for the thing it is mostly
@@ -101,6 +117,15 @@ config so it returns next session; the entry is written only after the output
 actually came up, for the same reason `Set` persists only after a successful
 apply. `RemoveVirtualOutput` tears one down and drops its config entry, and
 refuses physical outputs — unmapping one would black out a real screen.
+
+### The configuration file
+
+`ConfigPath` answers with the file a changed setting is written to. Otto's
+configuration is layered and the writable layer is whichever sits on top — a
+local `otto_config.toml` next to the running binary outranks
+`~/.config/otto/config.toml` — so a client cannot work it out for itself. It is
+worth showing: everything a settings app changes lands there, and anything it
+does not offer is edited by hand.
 
 **`Describe`** returns one dictionary per setting. Keys:
 
