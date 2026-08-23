@@ -39,6 +39,10 @@ Smithay's damage tracker, and why an idle desktop renders nothing.
 `position: Absolute` — which most of Otto does, since it positions things
 itself.
 
+The layer itself — its full property set, how a change becomes an animated
+transaction, how content closures and picture caching work — is
+[Layers](layers.md). The rest of this page is the tree.
+
 ## The engine and the root
 
 One `Engine` is created in `Otto::init` (`src/state/mod.rs`) and shared as
