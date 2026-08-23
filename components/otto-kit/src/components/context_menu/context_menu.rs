@@ -954,8 +954,7 @@ impl ContextMenu {
 
         // Hit test
         let style_borrowed = style.borrow();
-        let item_index =
-            ContextMenuRenderer::hit_test_items(&items, &style_borrowed, x, y, scroll);
+        let item_index = ContextMenuRenderer::hit_test_items(&items, &style_borrowed, x, y, scroll);
         drop(style_borrowed);
 
         if let Some(idx) = item_index {
@@ -1038,7 +1037,7 @@ impl ContextMenu {
     #[allow(clippy::too_many_arguments)]
     fn handle_scroll_static(
         state: &Rc<RefCell<ContextMenuState>>,
-        popups: &Rc<RefCell<Vec<Rc<RefCell<Option<PopupSurface>>>>>>,
+        popups: &PopupStack,
         style: &Rc<RefCell<ContextMenuStyle>>,
         depth: usize,
         delta: f32,
