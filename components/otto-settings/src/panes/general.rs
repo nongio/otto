@@ -63,6 +63,42 @@ pub fn build() -> Pane {
                 "Language",
                 vec![Row::new("Preferred languages", Control::Text("en".into())).id("locales")],
             ),
+            // Not a setting: where the settings go. Otto's configuration is
+            // layered, and which file is the writable one depends on what
+            // exists on this machine — so it is worth being able to read it
+            // off the pane rather than work it out. Everything this app
+            // changes lands there, and anything it does not offer can be
+            // edited by hand.
+            group(
+                "Configuration",
+                vec![Row::new(CONFIG_FILE, Control::Button(&[OPEN])).detail(
+                    crate::settings_client::config_path()
+                        .unwrap_or_else(|| "not known — the compositor is not answering".into()),
+                )],
+            ),
         ],
+    }
+}
+
+/// The row that shows where settings are written, and the button that opens
+/// it. Matched by label, the way every unbound row in this app is.
+const CONFIG_FILE: &str = "Configuration file";
+const OPEN: &str = "Open";
+
+/// A press on this pane's push buttons.
+pub fn press(row: &str, button: &str) {
+    if row != CONFIG_FILE || button != OPEN {
+        return;
+    }
+    let Some(path) = crate::settings_client::config_path() else {
+        return;
+    };
+    // Handed to the desktop rather than to a named editor: which application
+    // opens a TOML file is the user's choice, and `xdg-open` is where that
+    // choice is recorded. Spawned and forgotten — the editor outlives this
+    // app, and waiting on it would freeze the pane.
+    match std::process::Command::new("xdg-open").arg(&path).spawn() {
+        Ok(_) => {}
+        Err(err) => eprintln!("could not open {path}: {err}"),
     }
 }

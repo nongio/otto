@@ -516,6 +516,58 @@ pub fn set(id: &str, value: Value) -> SetOutcome {
     }
 }
 
+/// The file a changed setting is written to, as the compositor reports it.
+///
+/// Asked rather than worked out: configuration is layered, and which layer is
+/// writable depends on what exists on this machine.
+///
+/// Only a *successful* answer is cached. Caching the failure would freeze the
+/// row at "not known" for the whole run over one call that came too early or
+/// reached a compositor too old to answer.
+pub fn config_path() -> Option<String> {
+    static PATH: RwLock<Option<String>> = RwLock::new(None);
+    if let Some(path) = PATH.read().ok().and_then(|p| p.clone()) {
+        return Some(path);
+    }
+    let Some(Some(connection)) = CONNECTION.get() else {
+        return None;
+    };
+    let path = call::<_, String>(connection, "ConfigPath", &()).ok()?;
+    if let Ok(mut cached) = PATH.write() {
+        *cached = Some(path.clone());
+    }
+    Some(path)
+}
+
+/// Persist how one display should be driven. Applies at the next start — see
+/// `SetOutputProfile` in the compositor's settings service.
+///
+/// A zero size leaves the resolution unset and a zero rate leaves the refresh
+/// unset, so moving a display does not have to name a mode for it.
+pub fn set_output_profile(
+    connector: &str,
+    width: u32,
+    height: u32,
+    refresh_hz: f64,
+    x: i32,
+    y: i32,
+    primary: bool,
+) -> SetOutcome {
+    let Some(Some(connection)) = CONNECTION.get() else {
+        return SetOutcome::Failed("not connected to the compositor".into());
+    };
+    let status: zbus::Result<String> = call(
+        connection,
+        "SetOutputProfile",
+        &(connector, width, height, refresh_hz, x, y, primary),
+    );
+    match status {
+        Ok(status) if status == "pending-restart" => SetOutcome::PendingRestart,
+        Ok(_) => SetOutcome::Applied,
+        Err(err) => SetOutcome::Failed(err.to_string()),
+    }
+}
+
 /// Drop a setting back to whatever the lower config layers provide.
 #[allow(dead_code)] // wired when rows grow a revert affordance
 pub fn reset(id: &str) -> SetOutcome {

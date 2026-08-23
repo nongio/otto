@@ -1181,7 +1181,11 @@ impl App for SettingsApp {
                             model::select_output(index);
                             mark_pane_dirty(&pane_dirty);
                         } else if let Some(button) = settings.button_hit(x, y, offset) {
+                            // Push buttons belong to the pane that drew them,
+                            // and a row label is unique within one, so both
+                            // are offered the press and only the owner acts.
                             panes::displays::press(button.row, button.button);
+                            panes::general::press(button.row, button.button);
                             mark_pane_dirty(&pane_dirty);
                         } else if let Some(label) = settings.unbound_toggle_hit(x, y, offset) {
                             // A switch the compositor does not serve. It has no

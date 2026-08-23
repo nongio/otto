@@ -83,7 +83,64 @@ pub fn choose(id: &str, value: &str) {
     match id {
         RESOLUTION_ID => model::set_selected_resolution(value),
         REFRESH_ID => model::set_selected_refresh(value),
-        _ => {}
+        _ => return,
+    }
+    save_selected();
+}
+
+/// Write the selected display's profile to the configuration.
+///
+/// Keyed by connector, under `displays.named.<connector>` — the same profile
+/// the compositor reads when it brings that output up. It applies at the next
+/// start rather than now: a mode change is a modeset, and one made from under
+/// a running session that cannot be undone if the display does not come back
+/// is worse than one you restart for.
+///
+/// A virtual output is not written here. It is not a connector the compositor
+/// resolves a profile for — it is an entry in `[[virtual_outputs]]`, which has
+/// its own writer on the bus.
+fn save_selected() {
+    let outputs = model::outputs();
+    let Some(selected) = outputs.get(model::selected_output()) else {
+        return;
+    };
+    save(selected);
+}
+
+/// Write every display's profile.
+///
+/// Which screen is primary is a choice *among* the displays, not a flag on
+/// one: making this one primary takes it off the others, and a configuration
+/// that recorded only the winner would come back with two.
+fn save_all() {
+    for output in model::outputs() {
+        save(&output);
+    }
+}
+
+fn save(output: &model::Output) {
+    if output.is_virtual() {
+        return;
+    }
+    let mode = output.current_mode();
+    let outcome = crate::settings_client::set_output_profile(
+        &output.name,
+        mode.map(|m| m.width as u32).unwrap_or(0),
+        mode.map(|m| m.height as u32).unwrap_or(0),
+        mode.map(|m| m.refresh_mhz as f64 / 1000.0).unwrap_or(0.0),
+        output.x as i32,
+        output.y as i32,
+        output.primary,
+    );
+    match outcome {
+        crate::settings_client::SetOutcome::Failed(why) => {
+            eprintln!("{}: {why}", output.name);
+        }
+        _ => println!(
+            "{}: saved to {}, takes effect after a restart",
+            output.name,
+            crate::settings_client::config_path().unwrap_or_else(|| "the configuration".into()),
+        ),
     }
 }
 
@@ -218,8 +275,9 @@ pub fn commit_text(label: &str, text: &str) {
         WIDTH => model::set_selected_size(Some(value as i32), None),
         HEIGHT => model::set_selected_size(None, Some(value as i32)),
         REFRESH => model::set_selected_refresh_hz(value),
-        _ => {}
+        _ => return,
     }
+    save_selected();
 }
 
 /// A press on one of this pane's unbound switches.
@@ -229,9 +287,14 @@ pub fn toggle(label: &str) {
         // Primary is a choice among the displays rather than a per-display
         // flag, so the switch only ever turns *on*: taking it off would leave
         // the desktop with nowhere to put the dock.
-        PRIMARY => model::make_selected_primary(),
-        _ => {}
+        PRIMARY => {
+            model::make_selected_primary();
+            save_all();
+            return;
+        }
+        _ => return,
     }
+    save_selected();
 }
 
 /// A press on one of this pane's push buttons.
