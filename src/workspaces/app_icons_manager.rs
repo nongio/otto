@@ -13,8 +13,8 @@ use layers::{
 
 use crate::workspaces::{
     dock::{
-        draw_app_icon, draw_badge, draw_progress, setup_badge_layer, setup_progress_layer,
-        BASE_ICON_SIZE,
+        badge_size, draw_app_icon, draw_badge, draw_progress, setup_badge_layer,
+        setup_progress_layer, BASE_ICON_SIZE,
     },
     Application,
 };
@@ -166,7 +166,9 @@ impl AppIconsManager {
         if let Some(text) = pending {
             let entries = self.entries.read().unwrap();
             if let Some(entry) = entries.get(app_id) {
-                entry.badge_layer.set_draw_content(draw_badge(text));
+                entry
+                    .badge_layer
+                    .set_draw_content(draw_badge(text, badge_size(BASE_ICON_SIZE)));
                 entry.badge_layer.set_opacity(1.0_f32, None);
             }
         }
@@ -268,7 +270,9 @@ impl AppIconsManager {
         if let Some(entry) = entries.get(app_id) {
             match text {
                 Some(t) if !t.is_empty() => {
-                    entry.badge_layer.set_draw_content(draw_badge(t));
+                    entry
+                        .badge_layer
+                        .set_draw_content(draw_badge(t, badge_size(BASE_ICON_SIZE)));
                     entry
                         .badge_layer
                         .set_opacity(1.0_f32, Some(Transition::ease_in_quad(0.15)));

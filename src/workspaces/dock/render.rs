@@ -11,9 +11,23 @@ use crate::{
     },
 };
 
+/// The badge circle's diameter for an icon `icon_width` wide.
+pub fn badge_size(icon_width: f32) -> f32 {
+    icon_width * 0.4
+}
+
 /// Draw a badge (red circle with white text), sized to fill the layer bounds.
-pub fn draw_badge(text: String) -> ContentDrawFunction {
+///
+/// `size` is what the layer will measure once laid out. A badge whose text is
+/// set before its first layout pass is handed a zero size here, and the digit
+/// drawn into that recording would be invisible for as long as the recording
+/// is reused — leaving a red circle with nothing in it.
+pub fn draw_badge(text: String, size: f32) -> ContentDrawFunction {
     let draw_fn = move |canvas: &layers::skia::Canvas, w: f32, h: f32| -> layers::skia::Rect {
+        let (w, h) = (
+            if w > 0.0 { w } else { size },
+            if h > 0.0 { h } else { size },
+        );
         if text.is_empty() {
             return layers::skia::Rect::from_xywh(0.0, 0.0, w, h);
         }
@@ -79,7 +93,7 @@ pub fn draw_progress(value: f64) -> ContentDrawFunction {
 /// Configure a badge overlay layer (initially hidden; caller must call set_opacity to show it).
 /// The layer is positioned to float at the top-right corner of the icon content area.
 pub fn setup_badge_layer(layer: &Layer, icon_width: f32) {
-    let badge_size = icon_width * 0.4;
+    let badge_size = badge_size(icon_width);
     let tree = LayerTreeBuilder::default()
         .key("badge")
         .layout_style(taffy::Style {
