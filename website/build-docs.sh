@@ -10,6 +10,141 @@ OUTPUT_DIR="$SCRIPT_DIR/content"
 mkdir -p "$OUTPUT_DIR"
 
 # ============================================
+# PAGE METADATA
+# ============================================
+# Search engines see two things per page: the <title> and the meta
+# description. Neither can come from the document itself — an H1 like
+# "Audio" is meaningless in a result list, and the first paragraph is
+# written to be read after you have arrived, not before.
+#
+# So both are written here, keyed by output slug (developer pages are
+# prefixed "dev/" because the two guides share slug names). Keep titles
+# under ~60 characters and descriptions under ~160, or they get cut off
+# mid-word in the result. A page missing an entry still builds; it just
+# falls back to the generic site title and description.
+declare -A PAGE_TITLE=(
+    [readme]="Otto User Guide - Wayland Compositor Documentation"
+    [getting-started]="Getting Started with Otto - Install and First Run"
+    [desktop-tour]="Otto Desktop Tour - What Every Element Does"
+    [window-management]="Window Management in Otto - Move, Resize, Tile"
+    [workspaces]="Workspaces in Otto - Multiple Desktops on Wayland"
+    [expose-and-switcher]="Expose and App Switcher - Otto Window Overview"
+    [dock]="The Otto Dock - Running Apps, Bookmarks, Autohide"
+    [topbar]="Otto Top Bar - Clock, Tray, and Global Menus"
+    [dynamic-island]="Dynamic Island - Notifications and Live Activities"
+    [keyboard-shortcuts]="Otto Keyboard Shortcuts - Syntax and Actions"
+    [gestures]="Touchpad Gestures in Otto - Swipe and Pinch"
+    [files]="Otto Files - File Manager, Thumbnails, Quick View"
+    [settings]="Otto Settings - Live Configuration Editor"
+    [launcher]="Otto Launcher - Start Apps and Switch Windows"
+    [configuration]="Configuring Otto - Config Files and How They Merge"
+    [display]="Display Setup in Otto - Scaling and Multi-Monitor"
+    [theming]="Theming Otto - Dark Mode, Accent, Fonts, Wallpaper"
+    [input]="Input Settings in Otto - Keyboard, Touchpad, Pointer"
+    [audio]="Audio in Otto - UI Sounds and Sound Themes"
+    [power-management]="Power Management in Otto - Lid, Suspend, Clamshell"
+    [night-shift]="Night Shift in Otto - Color Temperature at Night"
+    [autostart]="Autostart in Otto - exec_once, XDG, and systemd"
+    [clipboard]="Wayland Clipboard Persistence and History in Otto"
+    [desktop-widgets]="How to Set Up eww Desktop Widgets on Wayland"
+    [lock-screen]="Otto Lock Screen - Idle Lock and Fingerprint Unlock"
+    [login-greeter]="Otto as a Login Greeter - greetd Setup"
+    [screen-sharing]="Screen Sharing in Otto - Portal, OBS, Browsers"
+    [remote-desktop]="Remote Desktop for Otto - RDP and Virtual Outputs"
+    [troubleshooting]="Troubleshooting Otto - Logs and Common Failures"
+    [dev/readme]="Otto Developer Guide - Architecture Overview"
+    [dev/project-structure]="Otto Project Structure - Crates and Building"
+    [dev/rendering]="Otto Rendering Pipeline - Scene Graph to Skia"
+    [dev/render_loop]="Otto Render Loop - Scheduling and Damage Tracking"
+    [dev/wayland]="Wayland Protocols in Otto - Handlers and State"
+    [dev/scene-graph]="The Otto Scene Graph - Layer Tree and KMS Planes"
+    [dev/layers]="Layers in Otto - Properties, Transactions, Caching"
+    [dev/drm_plane]="DRM Planes in Otto - Hardware Scanout"
+    [dev/dock-design]="Otto Dock Internals - Data Flow and Magnification"
+    [dev/expose]="Expose Internals in Otto - Layout and Mirrors"
+    [dev/window-move]="Interactive Window Moves in Otto"
+    [dev/foreign-toplevel]="Foreign Toplevel - Exposing Otto's Window List"
+    [dev/screenshare]="Screen Capture Internals - Portal and PipeWire"
+    [dev/color-scheme-setting]="Color Scheme - Telling Apps Light or Dark"
+    [dev/settings-dbus-api]="org.otto.Settings D-Bus API Reference"
+    [dev/rdp-virtual-output]="RDP Bridge and Virtual Outputs in Otto"
+    [dev/remote-desktop-indicator]="Remote Desktop Indicator in Otto"
+    [dev/otto-kit-roadmap]="otto-kit Roadmap - UI Toolkit Gap Analysis"
+    [dev/sc-layer-protocol-design]="Surface Style Protocol Design (Superseded)"
+    [dev/screenshot-plan]="Screenshot Portal Plan (Not Implemented)"
+    [dev/airplay-screenshare]="AirPlay Screencast Exploration in Otto"
+)
+
+declare -A PAGE_DESC=(
+    [readme]="How to use Otto, a Wayland compositor with a Skia-rendered desktop: windows, workspaces, expose, the dock, and every configuration option."
+    [getting-started]="Install Otto, choose a backend (DRM, winit or X11), start your first session, and work through the first-run checklist."
+    [desktop-tour]="A guided tour of the Otto desktop: the top bar, dock, dynamic island, workspace selector and window decorations, and what each one does."
+    [window-management]="Move, resize, maximize, minimize, tile and fullscreen windows in Otto, and control where newly opened windows are placed."
+    [workspaces]="Create and switch workspaces, move windows between them, and run independent per-monitor workspaces in Otto."
+    [expose-and-switcher]="See every open window at once with Expose, and switch between applications from the keyboard with Otto's app switcher."
+    [dock]="Otto's compositor-drawn dock: pinned bookmarks, running apps, minimized windows, magnification, autohide and screen position."
+    [topbar]="Configure Otto's top bar: the clock, system tray icons, and the global application menu bar that apps export."
+    [dynamic-island]="Otto's dynamic island collects notifications, media controls, system HUDs and permission dialogs into one adaptive surface."
+    [keyboard-shortcuts]="Every keyboard action Otto can bind, the modifier syntax it accepts, and how to override or remove the defaults."
+    [gestures]="Three-finger swipes to change workspaces and a four-finger pinch for Expose, plus how to tune touchpad gestures in Otto."
+    [files]="Browse and manage files with Otto Files: column and grid views, thumbnails, file operations, quick view and the file picker."
+    [settings]="Change Otto's configuration while it runs: display arrangement, keyboard shortcuts, appearance and input, all applied live."
+    [launcher]="Start applications and jump to open windows from the keyboard with Otto's launcher, including search and result ordering."
+    [configuration]="Where Otto's TOML configuration files live, the order they merge in, and how per-backend overrides work."
+    [display]="Set resolution, refresh rate and fractional scaling, arrange multiple monitors, and create virtual outputs in Otto."
+    [theming]="Set Otto's light or dark scheme, accent color, fonts, wallpaper, cursor and icon themes, and how those reach GTK and Qt apps."
+    [input]="Configure keyboard layout and repeat rate, touchpad tap and scroll behaviour, and pointer acceleration in Otto."
+    [audio]="Enable or replace Otto's interface sound effects, and point the compositor at a different freedesktop sound theme."
+    [power-management]="Control what Otto does on lid close and power button, configure idle suspend, and run reliably in clamshell mode."
+    [night-shift]="Warm the display's color temperature on a schedule and control screen brightness with Otto's built-in night shift."
+    [autostart]="Start programs with your Otto session using exec_once, XDG autostart entries, or systemd's graphical-session target."
+    [clipboard]="Why Wayland clipboard contents vanish when an app closes, and which clipboard manager to run with Otto so they persist."
+    [desktop-widgets]="Set up eww desktop widgets on Otto step by step: install it, build a first widget, copy a complete system HUD config, and fix the common problems."
+    [lock-screen]="Lock your Otto session, set idle auto-lock, and configure PAM for password or fingerprint unlock."
+    [login-greeter]="Use Otto as your login screen with greetd, including session selection, autologin and appearance."
+    [screen-sharing]="Share your screen from Otto: xdg-desktop-portal setup, capture in browsers and OBS, AirPlay, and taking screenshots."
+    [remote-desktop]="Serve an Otto session over RDP with otto-rdp, create virtual outputs, and connect from Windows, macOS or mobile clients."
+    [troubleshooting]="Find Otto's logs, diagnose the most common startup and rendering failures, and gather what a useful bug report needs."
+    [dev/readme]="How Otto is built: Smithay for Wayland, Skia for drawing, and a retained lay-rs scene graph - plus where to start reading the source."
+    [dev/project-structure]="Where everything lives in the Otto repository, what each Cargo feature flag turns on, and how to build the workspace."
+    [dev/rendering]="How Otto turns its scene graph into render elements, draws them with Skia, and submits finished frames to the display."
+    [dev/render_loop]="When Otto wakes up, when it decides to render, and how damage tracking limits each frame to what actually changed."
+    [dev/wayland]="The one-big-state pattern behind Otto's Wayland protocol handlers, and how to find the code implementing any protocol."
+    [dev/scene-graph]="How Otto's layer tree is shaped, how Wayland surfaces enter it, and when a subtree is promoted to a KMS hardware plane."
+    [dev/layers]="The unit Otto's scene tree is built from: layer properties, content closures, animation transactions, caching and damage."
+    [dev/drm_plane]="Handing parts of the scene to display hardware instead of the GPU: plane selection, format filtering and per-frame validation."
+    [dev/dock-design]="How Otto's compositor-drawn dock is built: where its data comes from, how its layers are arranged, and the magnification animation."
+    [dev/expose]="How Otto's all-windows overview works: layout maths, window mirrors, drag-and-drop, and behaviour across multiple outputs."
+    [dev/window-move]="How Otto implements interactive window drags, from the pointer grab through to the animation that settles the window."
+    [dev/foreign-toplevel]="How Otto publishes its window list to taskbars, docks and launchers through the foreign-toplevel Wayland protocols."
+    [dev/screenshare]="Otto's screen capture architecture: the xdg-desktop-portal backend, PipeWire streams, wlr-screencopy and single-window capture."
+    [dev/color-scheme-setting]="How Otto tells GTK and Qt applications whether the desktop is currently in light or dark mode."
+    [dev/settings-dbus-api]="The wire contract for Otto's settings service: the interfaces, properties and signals on org.otto.Settings."
+    [dev/rdp-virtual-output]="How otto-rdp serves a virtual output over RDP: creating the output, encoding frames, and mapping input back into the session."
+    [dev/remote-desktop-indicator]="The sharing indicator otto-rdp publishes while a remote client is watching the session, and how the compositor draws it."
+    [dev/otto-kit-roadmap]="What Otto's UI toolkit provides today, what is still missing, and the planned direction. Partially built - read it as a plan."
+    [dev/sc-layer-protocol-design]="The original design behind otto-surface-style-v1, kept for context. Superseded by the protocol Otto actually ships."
+    [dev/screenshot-plan]="A design for screenshot support through the desktop portal. Not implemented - a proposal rather than documentation."
+    [dev/airplay-screenshare]="Notes from validating AirPlay as a screencast target for Otto. An exploration, not a shipped feature."
+)
+
+# Pages with a screenshot worth using as the social-card image.
+declare -A PAGE_IMAGE=(
+    [desktop-widgets]="images/desktop-widgets.jpg"
+    [lock-screen]="images/lock-screen.jpg"
+    [login-greeter]="images/login-greeter.jpg"
+)
+
+# Emit the metadata front-matter lines for one page, given its metadata key.
+emit_meta() {
+    local key="$1"
+    [ -n "${PAGE_TITLE[$key]:-}" ] && echo "page_title: \"${PAGE_TITLE[$key]}\""
+    [ -n "${PAGE_DESC[$key]:-}" ]  && echo "description: \"${PAGE_DESC[$key]}\""
+    [ -n "${PAGE_IMAGE[$key]:-}" ] && echo "image: \"${PAGE_IMAGE[$key]}\""
+    return 0
+}
+
+# ============================================
 # USER GUIDE (one Hugo page per doc, not concatenated)
 # ============================================
 rm -f "$OUTPUT_DIR"/*.md
@@ -38,6 +173,7 @@ USER_FILES=(
     "user/night-shift.md"
     "user/autostart.md"
     "user/clipboard.md"
+    "user/desktop-widgets.md"
     "user/lock-screen.md"
     "user/login-greeter.md"
     "user/screen-sharing.md"
@@ -67,6 +203,7 @@ for file in "${USER_FILES[@]}"; do
     {
         echo "---"
         echo "title: \"$title\""
+        emit_meta "$slug"
         if [ "$slug" != "readme" ]; then
             echo 'layout: "doc"'
         fi
@@ -91,7 +228,9 @@ perl -i -pe '
 IMAGE_SRC="$DOCS_DIR/user/images"
 if [ -d "$IMAGE_SRC" ]; then
     mkdir -p "$SCRIPT_DIR/assets/images"
-    cp "$IMAGE_SRC"/*.png "$SCRIPT_DIR/assets/images/" 2>/dev/null
+    # Screenshots are JPEG: as PNGs these were 1-2 MB each, which is the
+    # page's largest paint and its slowest one.
+    cp "$IMAGE_SRC"/*.jpg "$IMAGE_SRC"/*.png "$SCRIPT_DIR/assets/images/" 2>/dev/null
 fi
 
 # ============================================
@@ -152,6 +291,7 @@ for file in "${DEVELOPER_FILES[@]}"; do
     {
         echo "---"
         echo "title: \"$title\""
+        emit_meta "dev/$slug"
         echo 'layout: "doc"'
         echo "---"
         echo ""

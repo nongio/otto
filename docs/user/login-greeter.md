@@ -4,7 +4,7 @@ Otto can be your login screen. Started with `--login`, it runs as a host
 compositor for a greeter client — the role `cage` plays for `gtkgreet` — and
 `otto-greeter` provides the login panel.
 
-![The Otto login greeter](images/login-greeter.png)
+![The Otto login greeter](images/login-greeter.jpg)
 
 The same panel [otto-lock](lock-screen.md) uses, plus the session picker bottom
 left — click it to cycle through the installed sessions. The power controls

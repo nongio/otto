@@ -33,6 +33,10 @@ You can try it inside your current session in about a minute — [jump to Try it
 
 *A dark Dock and top bar over a monochrome wallpaper.*
 
+![Desktop widgets](./assets/press/07-desktop-widgets.jpg)
+
+*Third-party `wlr-layer-shell` widgets ([eww](https://github.com/elkowar/eww)) on the desktop layer, behind windows and above the wallpaper — see [Desktop Widgets](https://nongio.github.io/otto/desktop-widgets/).*
+
 ## Try it
 
 **Zero risk:** Otto runs as a window inside the desktop you're using right now.

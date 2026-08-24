@@ -4,7 +4,7 @@ Locking hides your session behind an opaque surface on every monitor and routes
 all input to the locker. Everything underneath — windows, workspaces, focus,
 running programs — is untouched and comes back exactly as you left it.
 
-![The Otto lock screen](images/lock-screen.png)
+![The Otto lock screen](images/lock-screen.jpg)
 
 The clock and date sit top left, the panel is centred, and sleep, restart and
 power sit bottom right. The panel carries the account's avatar — or its initials
