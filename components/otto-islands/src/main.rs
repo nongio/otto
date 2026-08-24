@@ -829,6 +829,11 @@ impl IslandApp {
                     .or(default_action)
                     .unwrap_or_else(|| "default".to_string());
                 emit_action_invoked(nid, action_key);
+                // The notification is gone from the island either way, so the
+                // sender has to hear about it — an app that tracks its own
+                // notifications would otherwise think this one is still up.
+                // Reason 2: dismissed by the user, by acting on it.
+                emit_notification_closed(nid, 2);
             }
         }
     }
