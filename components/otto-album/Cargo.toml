@@ -1,0 +1,22 @@
+[package]
+name = "otto-album"
+version = "0.1.0"
+edition = "2021"
+description = "Otto Album — a vinyl session on the desktop: the sleeve, the record, and what is playing"
+
+[[bin]]
+name = "otto-album"
+path = "src/main.rs"
+
+[dependencies]
+otto-kit = { path = "../otto-kit" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+zbus = { version = "4", default-features = false, features = ["blocking", "tokio"] }
+smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dependencies.skia-safe]
+version = "=0.93"
+features = ["gl", "textlayout", "svg", "skottie"]
