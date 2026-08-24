@@ -64,4 +64,5 @@ package() {
     install -Dm644 resources/otto-settings.desktop "$pkgdir/usr/share/applications/otto-settings.desktop"
     install -Dm644 components/xdg-desktop-portal-otto/otto.portal "$pkgdir/usr/share/xdg-desktop-portal/portals/otto.portal"
     install -Dm644 components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.service"
+    install -Dm644 components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service "$pkgdir/usr/lib/systemd/user/xdg-desktop-portal-otto.service"
 }

@@ -4,6 +4,12 @@ Locking hides your session behind an opaque surface on every monitor and routes
 all input to the locker. Everything underneath — windows, workspaces, focus,
 running programs — is untouched and comes back exactly as you left it.
 
+![The Otto lock screen](images/lock-screen.png)
+
+The clock and date sit top left, the panel is centred, and sleep, restart and
+power sit bottom right. The panel carries the account's avatar — or its initials
+when there is no avatar file — the account name, and the password field.
+
 ## Otto-lock
 
 Otto uses `ext-session-lock-v1`, the Wayland protocol designed for this. Its
