@@ -106,6 +106,11 @@ notifications that have not been read.
   it keeps counting; only dismissing it (Close zone, an inline action, the
   default action, or `CloseNotification`) takes it off the badge.
 - The badge clears with the last of them.
+- A notification that identifies itself no other way — no `desktop-entry` hint
+  and no app name, as when a terminal forwards an escape sequence on an app's
+  behalf — is attributed to the process that made the D-Bus call, resolved
+  through its executable name (`ghostty` → `com.mitchellh.ghostty`). Without
+  this, everything sent that way is anonymous and badges nothing.
 - **Transient** notifications never badge: they opt out of persistence by
   definition. Neither do non-notification activities (a media island, a
   progress readout) — nothing there is waiting to be read.
