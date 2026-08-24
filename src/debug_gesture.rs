@@ -21,7 +21,14 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
-const SCRIPT_PATH: &str = "/tmp/otto-gesture";
+/// Default script path. `OTTO_GESTURE_FILE` overrides it, so a nested test
+/// compositor can be driven without the udev session on the same machine
+/// picking the script up and swiping the user's real desktop.
+const DEFAULT_SCRIPT_PATH: &str = "/tmp/otto-gesture";
+
+fn script_path() -> String {
+    std::env::var("OTTO_GESTURE_FILE").unwrap_or_else(|_| DEFAULT_SCRIPT_PATH.to_string())
+}
 
 enum Step {
     Begin,
@@ -36,10 +43,11 @@ static QUEUE: Mutex<VecDeque<Step>> = Mutex::new(VecDeque::new());
 
 /// Parse the script file into `queue` and delete it, so one write runs once.
 fn load_script(queue: &mut VecDeque<Step>) {
-    let Ok(text) = std::fs::read_to_string(SCRIPT_PATH) else {
+    let path = script_path();
+    let Ok(text) = std::fs::read_to_string(&path) else {
         return;
     };
-    let _ = std::fs::remove_file(SCRIPT_PATH);
+    let _ = std::fs::remove_file(&path);
 
     let mut gestures = 0usize;
     for line in text.lines() {

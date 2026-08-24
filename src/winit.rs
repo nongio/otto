@@ -812,6 +812,9 @@ pub fn run_winit() {
         } else {
             state.workspaces.refresh_space();
             state.popups.cleanup();
+            // Scripted-gesture driver, same hook udev installs. Costs a file
+            // existence check per iteration until a script appears.
+            crate::debug_gesture::tick(&mut state);
             // Debug: `echo ActionName > $OTTO_ACTION_FILE` (default
             // /tmp/otto-action) executes a builtin
             // shortcut action as if its key was pressed. Mirrors the udev
