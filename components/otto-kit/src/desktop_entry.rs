@@ -32,6 +32,11 @@ pub struct AppInfo {
 static CACHE: std::sync::LazyLock<RwLock<HashMap<String, Option<AppInfo>>>> =
     std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
 
+/// Separate cache for [`lookup_app_by_binary`]: its keys are program names,
+/// which must not answer a plain `app_id` lookup.
+static BINARY_CACHE: std::sync::LazyLock<RwLock<HashMap<String, Option<AppInfo>>>> =
+    std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
+
 /// Look up app info for the given `app_id`.
 ///
 /// Searches XDG desktop entry paths for a `.desktop` file whose filename
@@ -124,6 +129,78 @@ fn load_app_info(app_id: &str) -> Option<AppInfo> {
         app_id: app_id.to_string(),
         categories,
     })
+}
+
+/// Look up app info for a program name — the basename of an executable, as
+/// found in `/proc/<pid>/comm` or an `Exec=` line.
+///
+/// This is the loose cousin of [`lookup_app`], for when all that is known
+/// about an app is which binary it is: a notification that arrives with no
+/// `desktop-entry` hint, say, identified only by the process that sent it.
+/// `ghostty` finds `com.mitchellh.ghostty.desktop`, which `lookup_app` alone
+/// would miss.
+///
+/// Matching, in order: the desktop file id, its last reverse-DNS segment, then
+/// the program its `Exec=` line runs. Results are cached, `None` included.
+pub fn lookup_app_by_binary(binary: &str) -> Option<AppInfo> {
+    if binary.is_empty() {
+        return None;
+    }
+    if let Some(cached) = BINARY_CACHE.read().unwrap().get(binary) {
+        return cached.clone();
+    }
+
+    let result = lookup_app(binary).or_else(|| load_app_info_by_binary(binary));
+
+    BINARY_CACHE
+        .write()
+        .unwrap()
+        .insert(binary.to_string(), result.clone());
+    result
+}
+
+fn load_app_info_by_binary(binary: &str) -> Option<AppInfo> {
+    let mut by_exec = None;
+
+    for path in freedesktop_desktop_entry::Iter::new(freedesktop_desktop_entry::default_paths()) {
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+
+        // `ghostty` naming `com.mitchellh.ghostty` — the common case, and
+        // unambiguous enough to take straight away.
+        if stem
+            .rsplit('.')
+            .next()
+            .map(|seg| seg.eq_ignore_ascii_case(binary))
+            .unwrap_or(false)
+        {
+            return lookup_app(stem);
+        }
+
+        // An Exec match is weaker — several entries can launch the same
+        // program with different arguments — so it is only used if no id
+        // matches at all.
+        if by_exec.is_none() {
+            let runs_binary = DesktopEntry::from_path(path.clone(), Some(&["en"]))
+                .ok()
+                .and_then(|entry| entry.exec().map(|s| s.to_string()))
+                .and_then(|exec| exec.split_whitespace().next().map(|s| s.to_string()))
+                .map(|program| {
+                    std::path::Path::new(&program)
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .map(|name| name.eq_ignore_ascii_case(binary))
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false);
+            if runs_binary {
+                by_exec = Some(stem.to_string());
+            }
+        }
+    }
+
+    by_exec.as_deref().and_then(lookup_app)
 }
 
 fn find_desktop_entry(app_id: &str) -> Option<DesktopEntry> {

@@ -13,8 +13,8 @@ use layers::{
 
 use crate::workspaces::{
     dock::{
-        draw_app_icon, draw_badge, draw_progress, setup_badge_layer, setup_progress_layer,
-        BASE_ICON_SIZE,
+        badge_size, draw_app_icon, draw_badge, draw_progress, setup_badge_layer,
+        setup_progress_layer, BASE_ICON_SIZE,
     },
     Application,
 };
@@ -39,6 +39,12 @@ pub struct AppIconsManager {
     /// `render_node_tree` can produce output for mirror followers.
     pub container: Layer,
     entries: RwLock<HashMap<String, AppIconEntry>>,
+    /// Badge text per canonical app key, kept even when no icon stack exists
+    /// yet: a notification can badge an app before the dock has built its
+    /// icon, and the badge is applied as soon as the stack appears.
+    badges: RwLock<HashMap<String, String>>,
+    /// Memoized `app_id` → canonical key resolution (see `canonical_key`).
+    key_cache: RwLock<HashMap<String, String>>,
 }
 
 impl std::fmt::Debug for AppIconsManager {
@@ -62,6 +68,8 @@ impl AppIconsManager {
             engine,
             container,
             entries: RwLock::new(HashMap::new()),
+            badges: RwLock::new(HashMap::new()),
+            key_cache: RwLock::new(HashMap::new()),
         }
     }
 
@@ -136,6 +144,35 @@ impl AppIconsManager {
                 icon_id,
             },
         );
+
+        // A badge may have been set before this stack existed (a notification
+        // arriving for an app the dock had not drawn yet) — apply it now. It
+        // may also be filed under a looser id than this key, e.g. "Ghostty"
+        // for `com.mitchellh.ghostty`, since there was nothing to resolve
+        // against at the time; re-file it under the key that now exists.
+        let pending = {
+            let mut badges = self.badges.write().unwrap();
+            let loose_key = badges
+                .keys()
+                .find(|key| key.as_str() != app_id && matches_app_key(app_id, key))
+                .cloned();
+            if let Some(loose_key) = loose_key {
+                if let Some(text) = badges.remove(&loose_key) {
+                    badges.insert(app_id.to_string(), text);
+                }
+            }
+            badges.get(app_id).cloned()
+        };
+        if let Some(text) = pending {
+            let entries = self.entries.read().unwrap();
+            if let Some(entry) = entries.get(app_id) {
+                entry
+                    .badge_layer
+                    .set_draw_content(draw_badge(text, badge_size(BASE_ICON_SIZE)));
+                entry.badge_layer.set_opacity(1.0_f32, None);
+            }
+        }
+
         stack
     }
 
@@ -160,13 +197,82 @@ impl AppIconsManager {
         }
     }
 
+    /// Resolve an arbitrary `app_id` to the key the icon stacks are filed
+    /// under (`Application::match_id`, i.e. the desktop file stem).
+    ///
+    /// A notification carries whatever the sending app put in its
+    /// `desktop-entry` hint — `com.mitchellh.ghostty`, `Ghostty`,
+    /// `ghostty.desktop` — while the dock files its icon under the desktop
+    /// file stem. Without this, badges from a notification daemon would land
+    /// on a key nothing draws.
+    pub fn canonical_key(&self, app_id: &str) -> String {
+        if let Some(cached) = self.key_cache.read().unwrap().get(app_id) {
+            return cached.clone();
+        }
+
+        let resolved = self.resolve_key(app_id);
+        // Only memoize a resolution that actually landed somewhere. Falling
+        // back to the raw id can happen simply because the app's icon stack
+        // does not exist yet, and that answer must not be cached forever.
+        if resolved != app_id {
+            self.key_cache
+                .write()
+                .unwrap()
+                .insert(app_id.to_string(), resolved.clone());
+        }
+        resolved
+    }
+
+    fn resolve_key(&self, app_id: &str) -> String {
+        {
+            let entries = self.entries.read().unwrap();
+            if entries.contains_key(app_id) {
+                return app_id.to_string();
+            }
+        }
+
+        // The dock's own resolution path: desktop entry → file stem.
+        if let Some(stem) =
+            otto_kit::desktop_entry::lookup_app(app_id).and_then(|info| info.desktop_file_id)
+        {
+            return stem;
+        }
+
+        // No desktop entry. An app_name like "Ghostty" can still name a known
+        // icon stack whose key ends in that segment (`com.mitchellh.ghostty`).
+        let entries = self.entries.read().unwrap();
+        if let Some(key) = entries.keys().find(|key| matches_app_key(key, app_id)) {
+            return key.clone();
+        }
+
+        app_id.to_string()
+    }
+
     /// Show or hide the badge on the dock/switcher icon for `app_id`.
+    ///
+    /// The text is remembered per app, so an icon stack built later still
+    /// shows it.
     pub fn update_badge(&self, app_id: &str, text: Option<String>) {
+        let app_id = &self.canonical_key(app_id);
+        match text.as_deref() {
+            Some(t) if !t.is_empty() => {
+                self.badges
+                    .write()
+                    .unwrap()
+                    .insert(app_id.clone(), t.to_string());
+            }
+            _ => {
+                self.badges.write().unwrap().remove(app_id);
+            }
+        }
+
         let entries = self.entries.read().unwrap();
         if let Some(entry) = entries.get(app_id) {
             match text {
                 Some(t) if !t.is_empty() => {
-                    entry.badge_layer.set_draw_content(draw_badge(t));
+                    entry
+                        .badge_layer
+                        .set_draw_content(draw_badge(t, badge_size(BASE_ICON_SIZE)));
                     entry
                         .badge_layer
                         .set_opacity(1.0_f32, Some(Transition::ease_in_quad(0.15)));
@@ -182,6 +288,7 @@ impl AppIconsManager {
 
     /// Show or hide the progress bar on the dock/switcher icon for `app_id`.
     pub fn update_progress(&self, app_id: &str, value: Option<f64>) {
+        let app_id = &self.canonical_key(app_id);
         let entries = self.entries.read().unwrap();
         if let Some(entry) = entries.get(app_id) {
             match value {
@@ -200,5 +307,113 @@ impl AppIconsManager {
                 }
             }
         }
+    }
+}
+
+/// Whether `loose` names the app filed under `key` — the same string, or the
+/// last dotted segment of a reverse-DNS key ("Ghostty" for
+/// `com.mitchellh.ghostty`). Both comparisons ignore case and a trailing
+/// `.desktop`.
+fn matches_app_key(key: &str, loose: &str) -> bool {
+    let key = key.strip_suffix(".desktop").unwrap_or(key);
+    let loose = loose.strip_suffix(".desktop").unwrap_or(loose);
+    if key.eq_ignore_ascii_case(loose) {
+        return true;
+    }
+    key.rsplit('.')
+        .next()
+        .map(|seg| seg.eq_ignore_ascii_case(loose))
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workspaces::apps_info::Application;
+
+    fn manager() -> (Arc<Engine>, AppIconsManager) {
+        let engine = Engine::create(1000.0, 1000.0);
+        let icons = AppIconsManager::new(engine.clone());
+        (engine, icons)
+    }
+
+    fn settle(engine: &Arc<Engine>) {
+        for _ in 0..60 {
+            engine.update(0.016);
+        }
+    }
+
+    fn badge_opacity(icons: &AppIconsManager, app_id: &str) -> f32 {
+        icons
+            .entries
+            .read()
+            .unwrap()
+            .get(app_id)
+            .expect("icon stack")
+            .badge_layer
+            .opacity()
+    }
+
+    #[test]
+    fn badge_survives_an_icon_stack_that_does_not_exist_yet() {
+        let (engine, icons) = manager();
+
+        // The notification lands before the dock has drawn the app.
+        icons.update_badge("com.example.mail", Some("3".into()));
+        icons.get_or_create_stack(
+            "com.example.mail",
+            &Application::test_new("com.example.mail"),
+        );
+        settle(&engine);
+
+        assert_eq!(badge_opacity(&icons, "com.example.mail"), 1.0);
+    }
+
+    #[test]
+    fn clearing_a_badge_hides_it() {
+        let (engine, icons) = manager();
+        icons.get_or_create_stack(
+            "com.example.mail",
+            &Application::test_new("com.example.mail"),
+        );
+        icons.update_badge("com.example.mail", Some("3".into()));
+        settle(&engine);
+        assert_eq!(badge_opacity(&icons, "com.example.mail"), 1.0);
+
+        icons.update_badge("com.example.mail", None);
+        settle(&engine);
+        assert_eq!(badge_opacity(&icons, "com.example.mail"), 0.0);
+        assert!(icons.badges.read().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_loose_app_name_badges_the_stack_it_names() {
+        let (engine, icons) = manager();
+
+        // No desktop entry to resolve against, and no stack yet: the badge is
+        // parked under the name the notification used.
+        icons.update_badge("Mail", Some("1".into()));
+        icons.get_or_create_stack(
+            "com.example.mail",
+            &Application::test_new("com.example.mail"),
+        );
+        settle(&engine);
+        assert_eq!(badge_opacity(&icons, "com.example.mail"), 1.0);
+
+        // …and the next update for the same loose name finds it.
+        icons.update_badge("Mail", Some("2".into()));
+        settle(&engine);
+        assert_eq!(
+            icons.badges.read().unwrap().get("com.example.mail"),
+            Some(&"2".to_string())
+        );
+    }
+
+    #[test]
+    fn app_key_matching_ignores_case_and_desktop_suffix() {
+        assert!(matches_app_key("com.mitchellh.ghostty", "Ghostty"));
+        assert!(matches_app_key("com.mitchellh.ghostty", "ghostty.desktop"));
+        assert!(matches_app_key("ghostty", "Ghostty"));
+        assert!(!matches_app_key("com.mitchellh.ghostty", "mail"));
     }
 }

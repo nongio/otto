@@ -1,4 +1,6 @@
-use smithay::reexports::wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource};
+use smithay::reexports::wayland_server::{
+    backend::ClientId, Client, DataInit, Dispatch, DisplayHandle, Resource,
+};
 
 use crate::{
     otto_dock::protocol::{
@@ -79,5 +81,38 @@ impl<BackendData: Backend> Dispatch<OttoDockItemV1, DockItem, Otto<BackendData>>
                     .update_progress_for_app(&app_id, opt_value);
             }
         }
+    }
+
+    /// The client went away (or dropped the item). A badge is only meaningful
+    /// while the client that set it is alive — a notification daemon that
+    /// exits must not leave a stale count stuck on a dock icon.
+    fn destroyed(
+        state: &mut Otto<BackendData>,
+        _client: ClientId,
+        item: &OttoDockItemV1,
+        data: &DockItem,
+    ) {
+        let resource_id = item.id();
+        state.otto_dock.dock_items.remove(&resource_id);
+
+        let Some(app_id) = data.app_id.as_deref() else {
+            return;
+        };
+
+        // Another item may have taken over this app_id in the meantime; only
+        // the one still registered owns the badge.
+        let owns = state
+            .otto_dock
+            .app_id_to_resource
+            .get(app_id)
+            .map(|r| r.id() == resource_id)
+            .unwrap_or(false);
+        if !owns {
+            return;
+        }
+
+        state.otto_dock.app_id_to_resource.remove(app_id);
+        state.workspaces.dock.update_badge_for_app(app_id, None);
+        state.workspaces.dock.update_progress_for_app(app_id, None);
     }
 }

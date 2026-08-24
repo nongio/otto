@@ -52,6 +52,8 @@ impl NotificationDaemon {
         actions: Vec<String>,
         hints: HashMap<String, Value<'_>>,
         expire_timeout: i32,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(connection)] connection: &zbus::Connection,
     ) -> zbus::fdo::Result<u32> {
         // Parse hints
         let priority = parse_urgency(&hints);
@@ -61,8 +63,14 @@ impl NotificationDaemon {
         let transient = parse_bool_hint(&hints, "transient");
         let resident = parse_bool_hint(&hints, "resident");
 
-        // Determine app_id: prefer desktop-entry hint, fall back to app_name
-        let app_id = desktop_entry.unwrap_or_else(|| app_name.to_string());
+        // Determine app_id: prefer the desktop-entry hint, then app_name.
+        // A notification forwarded from a terminal escape sequence carries
+        // neither — the sending process is then the only thing that says
+        // which app this is.
+        let app_id = match desktop_entry.or_else(|| non_empty(app_name)) {
+            Some(id) => id,
+            None => sender_app_id(connection, &header).await.unwrap_or_default(),
+        };
 
         // Resolve icon: prefer app_icon param, then image-path hint, then app_id
         let icon = if !app_icon.is_empty() {
@@ -178,6 +186,37 @@ impl NotificationDaemon {
         id: u32,
         action_key: &str,
     ) -> zbus::Result<()>;
+}
+
+/// The app id of whichever process made this D-Bus call, resolved through its
+/// executable name.
+///
+/// Used only when a notification identifies itself no other way. Returns the
+/// desktop file id, so it lines up with what the dock files icons under.
+async fn sender_app_id(
+    connection: &zbus::Connection,
+    header: &zbus::message::Header<'_>,
+) -> Option<String> {
+    let sender = header.sender()?.to_owned();
+    let pid = zbus::fdo::DBusProxy::new(connection)
+        .await
+        .ok()?
+        .get_connection_unix_process_id(sender.into())
+        .await
+        .ok()?;
+
+    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+    let comm = comm.trim();
+
+    let app_id = otto_kit::desktop_entry::lookup_app_by_binary(comm)
+        .and_then(|info| info.desktop_file_id)
+        .unwrap_or_else(|| comm.to_string());
+    tracing::debug!(pid, comm, app_id, "notification attributed to its sender");
+    Some(app_id)
+}
+
+fn non_empty(s: &str) -> Option<String> {
+    (!s.is_empty()).then(|| s.to_string())
 }
 
 fn parse_urgency(hints: &HashMap<String, Value>) -> Priority {
