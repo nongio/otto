@@ -404,7 +404,7 @@ impl WorkspaceSelectorView {
                     name: w.display_name(i),
                     index: w.index,
                     workspace_node: Some(w.windows_layer.id()),
-                    background_node: Some(w.workspace_background.id()),
+                    background_node: Some(w.wallpaper_group.id()),
                     workspace_width: width,
                     workspace_height: height,
                     fullscreen: w.get_fullscreen_mode(),

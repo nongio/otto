@@ -35,6 +35,15 @@ pub struct WorkspaceView {
     /// Container for background_view + layer_shell_bg_mirror.
     /// NodeRef for the background KMS plane.
     pub workspace_background: Layer,
+    /// Mirror of the per-output wlr-layer-shell *bottom* container — the
+    /// desktop widget layer. Held so exposé can fade it out: unlike the
+    /// wallpaper below it, it is chrome, not part of the overview.
+    pub layer_shell_bottom_mirror: Layer,
+    /// Wallpaper only — the config background plus the wlr `background`
+    /// layers, without the widget layer above them. The workspace selector
+    /// replicates *this* rather than `workspace_background`, so a desktop
+    /// widget never appears inside a workspace preview.
+    pub wallpaper_group: Layer,
 
     fullscreen_mode: Arc<AtomicBool>,
     is_fullscreen_animating: Arc<AtomicBool>,
@@ -84,6 +93,7 @@ impl WorkspaceView {
         _parent: &Layer,
         overlay_layer: Layer,
         layer_shell_background: &Layer,
+        layer_shell_bottom: &Layer,
     ) -> Self {
         println!("add_workspace {}", index);
 
@@ -123,7 +133,22 @@ impl WorkspaceView {
         // workspace_background is NOT attached here — the caller (Workspaces) places it
         // into the shared backgrounds_root so all workspaces' backgrounds live in one
         // layer tree that can be rendered as a single KMS plane.
-        let _ = layers_engine.append_layer(&background_layer, Some(workspace_background.id));
+        // Wallpaper pieces live one level down so the selector can replicate
+        // the wallpaper alone. Widgets stay a direct child of
+        // `workspace_background`, which is still what the background KMS
+        // plane renders — the split is about what a *preview* shows, not
+        // about what reaches the screen.
+        let wallpaper_group = layers_engine.new_layer();
+        wallpaper_group.set_key(format!("workspace_wallpaper_{}", index));
+        wallpaper_group.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        wallpaper_group.set_size(layers::types::Size::percent(1.0, 1.0), None);
+        wallpaper_group.set_pointer_events(false);
+        let _ = layers_engine.append_layer(&wallpaper_group, Some(workspace_background.id));
+
+        let _ = layers_engine.append_layer(&background_layer, Some(wallpaper_group.id));
 
         // Mirror the per-output wlr-layer-shell background container into this workspace,
         // above the config-driven background_view and below windows.
@@ -138,7 +163,24 @@ impl WorkspaceView {
         layer_shell_bg_mirror.set_picture_cached(false);
         layer_shell_background.add_follower_node(&layer_shell_bg_mirror);
         layer_shell_bg_mirror.set_pointer_events(false);
-        let _ = layers_engine.append_layer(&layer_shell_bg_mirror, Some(workspace_background.id));
+        let _ = layers_engine.append_layer(&layer_shell_bg_mirror, Some(wallpaper_group.id));
+
+        // The widget layer sits on the same plane, directly above the
+        // wallpaper and still behind every window. Appended after the
+        // wallpaper mirror so it stacks on top of it.
+        let layer_shell_bottom_mirror = layers_engine.new_layer();
+        layer_shell_bottom_mirror.set_key(format!("layer_shell_bottom_mirror_{}", index));
+        layer_shell_bottom_mirror.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        layer_shell_bottom_mirror.set_size(layers::types::Size::percent(1.0, 1.0), None);
+        layer_shell_bottom_mirror.set_draw_content(layer_shell_bottom.as_content());
+        layer_shell_bottom_mirror.set_picture_cached(false);
+        layer_shell_bottom.add_follower_node(&layer_shell_bottom_mirror);
+        layer_shell_bottom_mirror.set_pointer_events(false);
+        let _ =
+            layers_engine.append_layer(&layer_shell_bottom_mirror, Some(workspace_background.id));
 
         // windows_layer is NOT attached here — the caller places it into windows_plane.
 
@@ -158,6 +200,7 @@ impl WorkspaceView {
             &background_layer,
             overlay_layer,
             layer_shell_background,
+            layer_shell_bottom,
         );
 
         let window_selector_view = Arc::new(window_selector_view);
@@ -178,6 +221,8 @@ impl WorkspaceView {
             layers_engine,
             windows_layer,
             workspace_background,
+            layer_shell_bottom_mirror,
+            wallpaper_group,
             fullscreen_mode: Arc::new(AtomicBool::new(false)),
             is_fullscreen_animating: Arc::new(AtomicBool::new(false)),
             name: Arc::new(RwLock::new(None)),
