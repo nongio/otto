@@ -36,7 +36,8 @@ use crate::{
     shell::WindowElement,
     state::{Backend, Otto},
     workspaces::{
-        AppSwitcherView, DockView, WindowDecorationView, WindowSelectorView, WorkspaceSelectorView,
+        AppSwitcherView, DockView, WindowDecorationView, WindowResizeView, WindowSelectorView,
+        WorkspaceSelectorView,
     },
 };
 
@@ -758,6 +759,15 @@ where
 
 impl<B: Backend> From<WindowDecorationView> for PointerFocusTarget<B> {
     fn from(value: WindowDecorationView) -> Self {
+        let d = InteractiveView {
+            view: Box::new(value),
+        };
+        PointerFocusTarget::View(d)
+    }
+}
+
+impl<B: Backend> From<WindowResizeView> for PointerFocusTarget<B> {
+    fn from(value: WindowResizeView) -> Self {
         let d = InteractiveView {
             view: Box::new(value),
         };

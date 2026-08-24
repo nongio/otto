@@ -49,7 +49,8 @@ mod workspace_selector;
 pub use background::BackgroundView;
 pub use window_selector::{WindowSelectorView, WindowSelectorWindow};
 pub use window_view::{
-    WindowDecorationModel, WindowDecorationView, WindowView, WindowViewBaseModel, WindowViewSurface,
+    resize_edges_at, WindowDecorationModel, WindowDecorationView, WindowResizeView, WindowView,
+    WindowViewBaseModel, WindowViewSurface,
 };
 
 pub use app_icons_manager::AppIconsManager;

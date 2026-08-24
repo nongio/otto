@@ -2,12 +2,14 @@ mod decoration_view;
 mod effects;
 mod model;
 pub(crate) mod render;
+mod resize_view;
 mod view;
 
 pub use decoration_view::WindowDecorationView;
 pub use model::WindowDecorationModel;
 pub use model::WindowViewBaseModel;
 pub use model::WindowViewSurface;
+pub use resize_view::{resize_edges_at, WindowResizeView};
 pub use view::WindowView;
 
 #[cfg(test)]
