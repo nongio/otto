@@ -1,6 +1,7 @@
 mod activity;
 mod dbus_service;
 mod dialog;
+mod dock_badges;
 mod notifications;
 mod renderer;
 mod state;
@@ -21,6 +22,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 use crate::activity::Activity;
 use crate::dbus_service::{DialogService, IslandService, DBUS_NAME};
 use crate::dialog::{DialogHit, DialogId, DialogResponse, DialogView};
+use crate::dock_badges::DockBadges;
 use crate::renderer::{
     animate_to, apply_island_style, draw_centered, set_size_and_position, COMPACT_H, MINI_H,
 };
@@ -154,6 +156,8 @@ struct IslandApp {
     last_input_region: Option<Vec<(i32, i32, i32, i32)>>,
     /// The currently-presented Access-style dialog, if any.
     dialog: Option<DialogPanel>,
+    /// Unread-notification counts published onto the dock icons.
+    dock_badges: DockBadges,
 }
 
 impl IslandApp {
@@ -174,6 +178,7 @@ impl IslandApp {
             last_layer_size: None,
             last_input_region: None,
             dialog: None,
+            dock_badges: DockBadges::new(),
         }
     }
 
@@ -233,6 +238,10 @@ impl IslandApp {
         let state = self.state.lock().unwrap();
         let notifications: Vec<Activity> = state.activities.clone();
         drop(state);
+
+        // The dock shows what is still waiting to be read, whether or not the
+        // island for it is still on screen.
+        self.dock_badges.sync(&notifications);
 
         // Remove islands whose notification is gone.
         let mut removed_island = false;

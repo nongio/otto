@@ -73,7 +73,9 @@ Islands sharing an `app_id` overlap into one deck, newest at the front (right-ha
 
 1. Notification arrives → island created, opens Expanded (see *Arrival*).
 2. Another notification from the same app → its own island, joining that app's deck at the front.
-3. Notification times out → island removed, with a dismiss animation.
+3. Notification times out → the island stops announcing itself and settles
+   into its deck. It is *not* removed: an unread notification stays, and keeps
+   counting towards the app's dock badge.
 4. User clicks an open island → invokes an action or closes it, and the notification is dismissed.
 5. `replaces_id` → updates the notification in place (no reorder).
 
@@ -86,6 +88,43 @@ On an Expanded island:
 - **Anywhere else (the body)** → the default action: same as above with the notification's default action id, or `"default"`.
 
 An action button always wins over the close zone; the buttons sit in the body row, clear of it.
+
+### Dock badges
+
+An island lives at the top of the screen and eventually settles into a Mini
+circle, which is a poor place to notice three unread messages from an hour ago.
+The count therefore also rides on the app's dock icon, the way a macOS dock
+badge does.
+
+otto-islands is the session's notification daemon, so it is the only thing that
+knows the counts. It publishes them through `otto_dock_v1`: one
+`otto_dock_item_v1` per app, `set_badge` carrying the number of that app's
+notifications that have not been read.
+
+- The count is the number of the app's outstanding notifications — those still
+  in the island's state. A notification that timed out has *not* been read, so
+  it keeps counting; only dismissing it (Close zone, an inline action, the
+  default action, or `CloseNotification`) takes it off the badge.
+- The badge clears with the last of them.
+- **Transient** notifications never badge: they opt out of persistence by
+  definition. Neither do non-notification activities (a media island, a
+  progress readout) — nothing there is waiting to be read.
+- Counts above 99 read as `99+`.
+- Badges are diffed against what is already applied, so a state change that
+  leaves the counts alone sends nothing.
+
+On the compositor side:
+
+- The `app_id` a notification carries is whatever the sending app put in its
+  `desktop-entry` hint — `com.mitchellh.ghostty`, `Ghostty`,
+  `ghostty.desktop` — while the dock files its icons under the desktop file
+  stem. `AppIconsManager` resolves the id to that key before applying a badge.
+- A badge for an app the dock has not drawn yet is remembered and applied when
+  its icon stack appears, so a notification that arrives before its app is
+  running is not lost.
+- The badge belongs to the client that set it: when the dock item is destroyed
+  — including a daemon that exits — the badge is cleared, rather than leaving a
+  stale count stuck on an icon.
 
 ### Focus timeout
 
@@ -142,6 +181,7 @@ The card **grows to fit**: its height is the one-line height plus a line for eac
 - `org.otto.Island1` — custom API for creating arbitrary activities.
 - `org.freedesktop.Notifications` — standard notification daemon. Each notification becomes its own island; `app_id` only decides which deck it joins.
 - `NotificationClosed` and `ActionInvoked` are emitted so senders learn what the user did.
+- `otto_dock_v1` — outbound: the unread count per app, published as a dock badge (see *Dock badges*).
 
 ## Constants
 
@@ -162,6 +202,7 @@ The card **grows to fit**: its height is the one-line height plus a line for eac
 | ACTION_ROW_H | 18 | Height of the inline action button row |
 | PEEK_STEP | 8 | Deck offset at rest |
 | FAN_STEP | 20 | Deck offset while the group is hovered |
+| MAX_COUNT | 99 | Dock badge count above which it reads `99+` |
 | MAX_STACK | 5 | Deck depth past which bubbles pile up at one offset |
 | ARRIVAL_READ_SECS | 6 | How long a new notification stays open to be read |
 | FOCUS_TIMEOUT_SECS | 4 | Inactivity before the focused island shrinks to Mini |
