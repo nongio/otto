@@ -81,9 +81,18 @@ done
 # links instead of leaving the raw ".md" filename in the href.
 perl -i -pe '
     s{\]\(README\.md\)}{](/)}gi;
+    s{\]\(images/([A-Za-z0-9_.-]+)\)}{](/images/$1)}g;
     s{\]\(([a-zA-Z0-9_-]+)\.md#([a-zA-Z0-9_-]+)\)}{](/$1/#$2)}g;
     s{\]\(([a-zA-Z0-9_-]+)\.md\)}{](/$1/)}g;
 ' "$OUTPUT_DIR"/*.md
+
+# Screenshots referenced as images/<name>.png above are served from the
+# static dir, the same way the developer guide's diagrams are.
+IMAGE_SRC="$DOCS_DIR/user/images"
+if [ -d "$IMAGE_SRC" ]; then
+    mkdir -p "$SCRIPT_DIR/assets/images"
+    cp "$IMAGE_SRC"/*.png "$SCRIPT_DIR/assets/images/" 2>/dev/null
+fi
 
 # ============================================
 # DEVELOPER GUIDE

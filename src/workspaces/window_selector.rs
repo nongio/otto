@@ -92,6 +92,10 @@ pub struct DragState {
 #[derive(Clone)]
 pub struct WindowSelectorView {
     pub window_selector_root: layers::prelude::Layer,
+    /// Exposé's copy of the wlr-layer-shell `bottom` (desktop widget) layer.
+    /// Exposé fades this one out; the workspace's own copy is hidden wholesale
+    /// with `workspaces_layer` the moment the gesture starts.
+    pub layer_shell_bottom_expose_mirror: layers::prelude::Layer,
     pub window_selector_windows_container: layers::prelude::Layer,
     pub window_selector_view: layers::prelude::Layer,
     pub drag_overlay_layer: layers::prelude::Layer,
@@ -142,6 +146,7 @@ impl WindowSelectorView {
         background_layer: &Layer,
         drag_overlay_layer: Layer,
         layer_shell_background: &Layer,
+        layer_shell_bottom: &Layer,
     ) -> Self {
         let window_selector_root = layers_engine.new_layer();
         window_selector_root.set_layout_style(taffy::Style {
@@ -235,6 +240,26 @@ impl WindowSelectorView {
         layer_shell_background.add_follower_node(&layer_shell_bg_expose_mirror);
         let _ = window_selector_root.add_sublayer(&layer_shell_bg_expose_mirror);
 
+        // The widget layer needs a mirror here purely so it can *leave*
+        // gracefully. `workspaces_layer` — which owns the real one — is hidden
+        // outright the instant the exposé gesture starts, so a widget that
+        // lived only there would vanish in a single frame no matter what its
+        // opacity said. This copy is what the fade actually animates, and it
+        // is deliberately not part of what the workspace previews replicate.
+        let layer_shell_bottom_expose_mirror = layers_engine.new_layer();
+        layer_shell_bottom_expose_mirror
+            .set_key(format!("layer_shell_bottom_expose_mirror_{}", index));
+        layer_shell_bottom_expose_mirror.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        layer_shell_bottom_expose_mirror.set_size(layers::types::Size::percent(1.0, 1.0), None);
+        layer_shell_bottom_expose_mirror.set_draw_content(layer_shell_bottom.as_content());
+        layer_shell_bottom_expose_mirror.set_picture_cached(false);
+        layer_shell_bottom_expose_mirror.set_pointer_events(false);
+        layer_shell_bottom.add_follower_node(&layer_shell_bottom_expose_mirror);
+        let _ = window_selector_root.add_sublayer(&layer_shell_bottom_expose_mirror);
+
         let window_selector_windows_container = layers_engine.new_layer();
         window_selector_windows_container
             .set_key(format!("window_selector_windows_container_{}", index));
@@ -316,6 +341,7 @@ impl WindowSelectorView {
         Self {
             view,
             window_selector_root,
+            layer_shell_bottom_expose_mirror,
             window_selector_windows_container,
             window_selector_view,
             drag_overlay_layer,

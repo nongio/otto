@@ -80,9 +80,15 @@ pub struct OutputWorkspaces {
     pub workspaces_layer: Layer,
     /// Per-output expose layer (window overview mode).
     pub expose_layer: Layer,
-    /// Per-output container for wlr-layer-shell background/bottom surfaces.
-    /// Mirrored into each workspace view and expose window selector.
+    /// Per-output container for wlr-layer-shell *background* surfaces — the
+    /// wallpaper. Mirrored into each workspace view and expose window selector.
     pub layer_shell_background: Layer,
+    /// Per-output container for wlr-layer-shell *bottom* surfaces — the desktop
+    /// widget layer (and, later, desktop icons). Kept apart from the wallpaper
+    /// because it is not part of the exposé overview: it is mirrored only into
+    /// the workspace views, and fades out with the rest of the chrome when the
+    /// overview opens.
+    pub layer_shell_bottom: Layer,
     pub workspace_views: Vec<Arc<WorkspaceView>>,
     /// Single layer containing all workspace backgrounds, child of workspaces_layer.
     /// Rendered as a single KMS background plane; scrolls in sync automatically.
@@ -1932,6 +1938,26 @@ impl Workspaces {
             let expose_layer = self.expose_layer.clone();
             let layer_shell_overlay_ref = self.layer_shell_overlay.clone();
             let layer_shell_top_ref = self.layer_shell_top.clone();
+            // The widget layer fades with the chrome, but its mirrors live one
+            // per workspace view rather than in a single container, so they are
+            // collected here and driven as a group.
+            // Exposé's copies, not the workspace ones. `workspaces_layer` —
+            // which owns the workspace copy — is hidden outright as soon as
+            // the gesture starts, so fading that one animates a layer nobody
+            // can see. The exposé mirror is what stays on screen through the
+            // transition, so that is what has to fade.
+            let layer_shell_bottom_mirrors: Vec<Layer> = self
+                .output_workspaces
+                .values()
+                .flat_map(|ows| ows.workspace_views.iter())
+                .map(|workspace| {
+                    workspace
+                        .window_selector_view
+                        .layer_shell_bottom_expose_mirror
+                        .clone()
+                })
+                .collect();
+            let layer_shell_bottom_mirrors_ref = layer_shell_bottom_mirrors.clone();
             let show_all_ref = self.show_all.clone();
             let show_all_gesture_ref = self.show_all_gesture.clone();
             let expose_gesture_active_ref = self.expose_gesture_active.clone();
@@ -2076,6 +2102,10 @@ impl Workspaces {
                             layer_shell_overlay_ref.set_opacity(if show_all { 0.0_f32 } else { 1.0_f32 }, None);
                             layer_shell_top_ref.set_opacity(if show_all { 0.0_f32 } else { 1.0_f32 }, None);
                             layer_shell_top_ref.set_hidden(show_all);
+                            for mirror in layer_shell_bottom_mirrors_ref.iter() {
+                                mirror.set_opacity(if show_all { 0.0_f32 } else { 1.0_f32 }, None);
+                                mirror.set_hidden(show_all);
+                            }
                         } else {
                             // Fullscreen: keep layers hidden and transparent
                             layer_shell_top_ref.set_hidden(true);
@@ -2098,9 +2128,29 @@ impl Workspaces {
                 .set_opacity(layer_shell_fade_opacity, transition.clone());
             self.layer_shell_top
                 .set_opacity(layer_shell_fade_opacity, transition.clone());
+            tracing::debug!(
+                target: "otto::fade",
+                "delta={delta:.3} opacity={layer_shell_fade_opacity:.3} show_all={show_all} \
+                 end={end_gesture} animated={} mirrors={} hidden={:?}",
+                transition.is_some(),
+                layer_shell_bottom_mirrors.len(),
+                layer_shell_bottom_mirrors
+                    .iter()
+                    .map(|m| m.hidden())
+                    .collect::<Vec<_>>(),
+            );
+            for mirror in layer_shell_bottom_mirrors.iter() {
+                if layer_shell_fade_opacity > 0.0 {
+                    mirror.set_hidden(false);
+                }
+                mirror.set_opacity(layer_shell_fade_opacity, transition.clone());
+            }
             // When fully faded out without an ongoing animation, hide immediately
             if layer_shell_fade_opacity == 0.0 && transition.is_none() {
                 self.layer_shell_top.set_hidden(true);
+                for mirror in layer_shell_bottom_mirrors.iter() {
+                    mirror.set_hidden(true);
+                }
             }
         }
         // Animate dock position
@@ -3816,6 +3866,8 @@ impl Workspaces {
                 {
                     ows.layer_shell_background
                         .set_size(layers::types::Size::points(w, h), None);
+                    ows.layer_shell_bottom
+                        .set_size(layers::types::Size::points(w, h), None);
                     ows.output_layer
                         .set_size(layers::types::Size::points(w, h), None);
                 }
@@ -3891,12 +3943,26 @@ impl Workspaces {
         // Attach layer_shell_background to the scene root (not the output_layer) so it
         // doesn't get rendered directly — it only serves as a content source for mirror
         // layers inside workspaces and expose views.
+        // Same treatment for the widget layer: an offscreen content source,
+        // mirrored where it should appear. Sized and positioned identically so
+        // the two mirrors line up pixel for pixel.
+        let layer_shell_bottom = self.layers_engine.new_layer();
+        layer_shell_bottom.set_key(format!("layer_shell_bottom_{}", output.name()));
+        layer_shell_bottom.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        layer_shell_bottom.set_size(layers::types::Size::points(phys_w, phys_h), None);
+        layer_shell_bottom.set_pointer_events(false);
+        layer_shell_bottom.set_hidden(true);
+
         if let Some(root) = self
             .layers_engine
             .scene_root()
             .and_then(|id| self.layers_engine.get_layer(&id))
         {
             let _ = root.add_sublayer(&layer_shell_background);
+            let _ = root.add_sublayer(&layer_shell_bottom);
         }
 
         // Single container for all workspace backgrounds, first child of workspaces_layer
@@ -4126,6 +4192,7 @@ impl Workspaces {
                 &workspaces_layer,
                 self.overlay_layer.clone(),
                 &layer_shell_background,
+                &layer_shell_bottom,
             ));
             let _ = expose_layer.add_sublayer(&workspace.window_selector_view.window_selector_root);
             // Attach this workspace's background into the shared background_plane
@@ -4149,6 +4216,7 @@ impl Workspaces {
             workspaces_layer,
             expose_layer,
             layer_shell_background,
+            layer_shell_bottom,
             workspace_views,
             background_plane,
             windows_plane,
@@ -4298,6 +4366,7 @@ impl Workspaces {
                     &ows.workspaces_layer,
                     overlay_layer.clone(),
                     &ows.layer_shell_background,
+                    &ows.layer_shell_bottom,
                 ));
                 let _ = ows
                     .expose_layer
@@ -4369,6 +4438,7 @@ impl Workspaces {
                 &ows.workspaces_layer,
                 overlay_layer.clone(),
                 &ows.layer_shell_background,
+                &ows.layer_shell_bottom,
             ));
             // Wire the new workspace into this output's planes exactly like
             // map_output_with_primary does, so its background/windows actually
@@ -6151,8 +6221,15 @@ impl Workspaces {
         match wlr_layer {
             WlrLayer::Background | WlrLayer::Bottom => {
                 if let Some(ows) = self.output_workspaces.get(&output.name()) {
-                    ows.layer_shell_background.set_hidden(false);
-                    let _ = ows.layer_shell_background.add_sublayer(&layer);
+                    // Wallpaper and widgets go to different containers: only
+                    // the wallpaper belongs in the exposé overview.
+                    let container = if matches!(wlr_layer, WlrLayer::Bottom) {
+                        &ows.layer_shell_bottom
+                    } else {
+                        &ows.layer_shell_background
+                    };
+                    container.set_hidden(false);
+                    let _ = container.add_sublayer(&layer);
                 } else {
                     tracing::warn!(
                         "create_layer_shell_layer: no output_workspaces entry for output '{}' \
