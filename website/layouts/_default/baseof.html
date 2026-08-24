@@ -12,8 +12,28 @@
         <link rel="icon" type="image/png" sizes="16x16" href="{{ "favicon-16x16.png" | relURL }}">
         <link rel="manifest" href="{{ "site.webmanifest" | relURL }}">
 
-        <title>{{ .Title | default .Site.Title }}</title>
-        <meta name="description" content="Otto Wayland Compositor Documentation" />
+        {{/* Search results and social cards get their own text, not the
+             on-page heading: an H1 like "Audio" says nothing in a result
+             list. build-docs.sh writes page_title/description/image per
+             page; these fall back to something sane if a page has none. */}}
+        {{ $pageTitle := .Params.page_title | default (cond .IsHome .Site.Title (printf "%s - Otto Wayland Compositor" .Title)) }}
+        {{ $pageDesc := .Params.description | default "Documentation for Otto, a Wayland compositor with a Skia-rendered, animation-first desktop." }}
+        {{ $pageImage := (.Params.image | default "android-chrome-512x512.png") | absURL }}
+
+        <title>{{ $pageTitle }}</title>
+        <meta name="description" content="{{ $pageDesc }}" />
+        <link rel="canonical" href="{{ .Permalink }}" />
+
+        <meta property="og:type" content="{{ cond .IsHome "website" "article" }}" />
+        <meta property="og:site_name" content="Otto" />
+        <meta property="og:title" content="{{ $pageTitle }}" />
+        <meta property="og:description" content="{{ $pageDesc }}" />
+        <meta property="og:url" content="{{ .Permalink }}" />
+        <meta property="og:image" content="{{ $pageImage }}" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content="{{ $pageTitle }}" />
+        <meta name="twitter:description" content="{{ $pageDesc }}" />
+        <meta name="twitter:image" content="{{ $pageImage }}" />
 
         <link rel="stylesheet" media="screen" href="{{ "css/main.css" | relURL }}">
         <link rel="stylesheet" media="print" href="{{ "css/print.css" | relURL }}">

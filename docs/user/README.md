@@ -49,6 +49,7 @@ versions: useful day to day, still filling in.
 | [Night Shift](night-shift.md) | Color temperature and brightness |
 | [Autostart](autostart.md) | `exec_once`, XDG autostart, systemd integration |
 | [Clipboard](clipboard.md) | Clipboard persistence and history managers |
+| [Desktop Widgets](desktop-widgets.md) | Running layer-shell widgets and dashboards on the desktop |
 
 ## Sessions and remote access
 
