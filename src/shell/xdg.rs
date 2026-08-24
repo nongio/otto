@@ -35,8 +35,8 @@ use crate::{
 
 use super::{
     fullscreen_output_geometry, FullscreenSurface, PointerMoveSurfaceGrab,
-    PointerResizeSurfaceGrab, ResizeData, ResizeState, SurfaceData, TouchMoveSurfaceGrab,
-    WindowElement,
+    PointerResizeSurfaceGrab, ResizeData, ResizeEdge, ResizeState, SurfaceData,
+    TouchMoveSurfaceGrab, WindowElement,
 };
 
 impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
@@ -1476,6 +1476,67 @@ impl<BackendData: Backend> Otto<BackendData> {
             return;
         };
         self.begin_pointer_move(window, &surface, seat, start_data, serial);
+    }
+
+    /// Start a pointer resize grab for a window Otto itself decorated.
+    ///
+    /// A server-decorated client has no frame of its own to grab, so it never
+    /// sends `resize_request`; the press landed on Otto's own border strip
+    /// (see [`crate::workspaces::WindowResizeView`]) and the grab's focus is
+    /// that view rather than the client.
+    ///
+    /// Must not be called from inside a pointer dispatch — see the note at the
+    /// call site in `WindowResizeView::on_button`.
+    pub fn resize_request_ssd(
+        &mut self,
+        window: &crate::shell::WindowElement,
+        seat: &Seat<Self>,
+        serial: Serial,
+        edges: ResizeEdge,
+    ) {
+        let Some(pointer) = seat.get_pointer() else {
+            return;
+        };
+        if !pointer.has_grab(serial) {
+            return;
+        }
+        let Some(start_data) = pointer.grab_start_data() else {
+            return;
+        };
+        let Some(toplevel) = window.toplevel().cloned() else {
+            return;
+        };
+        // A maximized or fullscreen window has no free size to drag.
+        if window.is_maximized() || window.is_fullscreen() {
+            return;
+        }
+        let Some(initial_window_location) = self.workspaces.element_location(window) else {
+            return;
+        };
+        let initial_window_size = window.geometry().size;
+
+        with_states(toplevel.wl_surface(), move |states| {
+            states
+                .data_map
+                .get::<RefCell<SurfaceData>>()
+                .unwrap()
+                .borrow_mut()
+                .resize_state = ResizeState::Resizing(ResizeData {
+                edges,
+                initial_window_location,
+                initial_window_size,
+            });
+        });
+
+        let grab = PointerResizeSurfaceGrab {
+            start_data,
+            window: window.clone(),
+            edges,
+            initial_window_location,
+            initial_window_size,
+            last_window_size: initial_window_size,
+        };
+        pointer.set_grab(self, grab, serial, Focus::Clear);
     }
 
     /// Install the move grab: restore a maximized/tiled window under the

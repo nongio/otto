@@ -515,7 +515,12 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
             WindowSurface::Wayland(xdg) => {
                 xdg.with_pending_state(|state| {
                     state.states.set(xdg_toplevel::State::Resizing);
-                    state.size = Some(self.last_window_size);
+                    // The drag is measured on the window rect, titlebar
+                    // included; the client only ever owns what is under the
+                    // bar. Configuring it with the full rect makes a
+                    // server-decorated window gain the bar's height on every
+                    // resize (see `WindowElement::client_size`).
+                    state.size = Some(self.window.client_size(self.last_window_size));
                 });
                 xdg.send_pending_configure();
 
@@ -596,7 +601,7 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
                 WindowSurface::Wayland(xdg) => {
                     xdg.with_pending_state(|state| {
                         state.states.unset(xdg_toplevel::State::Resizing);
-                        state.size = Some(self.last_window_size);
+                        state.size = Some(self.window.client_size(self.last_window_size));
                     });
                     xdg.send_pending_configure();
 
@@ -777,7 +782,7 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
             WindowSurface::Wayland(xdg) => {
                 xdg.with_pending_state(|state| {
                     state.states.unset(xdg_toplevel::State::Resizing);
-                    state.size = Some(self.last_window_size);
+                    state.size = Some(self.window.client_size(self.last_window_size));
                 });
                 xdg.send_pending_configure();
 
@@ -899,7 +904,12 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
             WindowSurface::Wayland(xdg) => {
                 xdg.with_pending_state(|state| {
                     state.states.set(xdg_toplevel::State::Resizing);
-                    state.size = Some(self.last_window_size);
+                    // The drag is measured on the window rect, titlebar
+                    // included; the client only ever owns what is under the
+                    // bar. Configuring it with the full rect makes a
+                    // server-decorated window gain the bar's height on every
+                    // resize (see `WindowElement::client_size`).
+                    state.size = Some(self.window.client_size(self.last_window_size));
                 });
                 xdg.send_pending_configure();
 

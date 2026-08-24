@@ -294,6 +294,12 @@ vibrancy even though the content behind it lives on other planes.
   candidates that lose the plane auction, GPU-composite, and demote every
   plane below them (z-order). The demotion re-import restores the root
   surface's draw content.
+- A window Otto decorates itself carries its titlebar on a compositor
+  layer above the client, and the client's content starts one bar height
+  below the window's origin. The promoted buffer is placed at that
+  content origin, not at the window's — placing it at the window origin
+  scans the client out over its own titlebar, which is invisible to a
+  screenshot (screencopy forces a composite) and shows only on hardware.
 ### Promotion tiers
 
 A hardware plane scans out a rectangle of pixels: it cannot clip to a shape,

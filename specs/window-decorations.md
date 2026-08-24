@@ -18,6 +18,8 @@ one of them can still be decorated.
   draws nothing above it.
 - The title bar is compositor-owned: dragging it moves the window and its
   controls act on the window regardless of what the client is doing.
+- A window Otto decorates can be resized by dragging its edges, without any
+  cooperation from the client.
 - A window's layout geometry accounts for the title bar when it has one, and
   reclaims that space when it loses it.
 
@@ -63,7 +65,22 @@ appears, and discarded if the surface dies first.
   other, zoom the window instead: maximized windows are restored, others are
   maximized, and that press starts no move.
 - The window's geometry in the layout includes the strip, so mapping,
-  maximizing and tiling all account for its height.
+  maximizing and tiling all account for its height. A resize configures the
+  client with the size *under* the bar, so a window does not gain the bar's
+  height every time it is dragged.
+
+**Resize borders.** A server-decorated client has no frame of its own to grab,
+and never asks the compositor to resize it — so Otto offers the border itself:
+
+- A strip along the window's own edges, a few points wide, is hit-tested ahead
+  of both the titlebar and the client's surfaces. The corners take both of
+  their edges, so a press in a top corner resizes rather than moves.
+- The pointer over the strip shows the resize cursor for the edge it would
+  grab, and a press there starts a compositor resize grab.
+- Maximized, fullscreen and minimized windows have no border: there is no free
+  size to drag. Neither do windows too small to have an interior left.
+- Clients that draw their own decoration keep their own affordances and get no
+  border from Otto.
 
 **Activation.** A client that draws its own decoration needs to know when it
 has the focus, so every mapped toplevel's `activated` state follows the

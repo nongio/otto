@@ -491,6 +491,28 @@ impl<BackendData: Backend> Otto<BackendData> {
             ));
         }
 
+        // Resize borders. A server-decorated client draws no frame of its
+        // own, so it never offers a resize edge: the strip along the window's
+        // own border is Otto's, and it is hit-tested ahead of both the
+        // titlebar and the client's surfaces (a press in the top corners
+        // resizes rather than moves).
+        if under.is_none() {
+            if let Some((window, loc)) = self.workspaces.element_under(pos) {
+                if window.is_decorated()
+                    && !window.is_minimised()
+                    && !window.is_maximized()
+                    && !window.is_fullscreen()
+                {
+                    let local = pos - loc.to_f64();
+                    let size = smithay::desktop::space::SpaceElement::geometry(window).size;
+                    if let Some(edges) = crate::workspaces::resize_edges_at(local, size) {
+                        let view = crate::workspaces::WindowResizeView::new(window.clone(), edges);
+                        return Some((view.into(), loc.to_f64()));
+                    }
+                }
+            }
+        }
+
         // Server-side titlebars. The strip belongs to the compositor, not to
         // the client, so it is checked before the window's surface tree — the
         // client's surfaces start below it anyway.

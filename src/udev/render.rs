@@ -2514,6 +2514,12 @@ pub(super) fn render_output_frame<'a>(
                 };
                 let pos = win.base_layer().render_position();
                 let geo_loc = win.geometry().loc.to_f64().to_physical(scale);
+                // The window layer's origin is the top of the SSD titlebar;
+                // the client's own content starts one bar below it (the scene
+                // offsets `content_layer` by the same amount). Without this
+                // the client buffer is folded in — and scanned out — a bar too
+                // high, painting over the titlebar Otto drew.
+                let deco_y = win.decoration_height() as f64 * scale.y;
                 let entry = smithay::wayland::compositor::with_states(&wl_surface, |states| {
                     let data = states.data_map.get::<RendererSurfaceStateUserData>()?;
                     let guard = data.lock().unwrap();
@@ -2529,7 +2535,7 @@ pub(super) fn render_output_frame<'a>(
                         dmabuf,
                         layers::skia::Rect::from_xywh(
                             (pos.x as f64 - geo_loc.x + off.x) as f32,
-                            (pos.y as f64 - geo_loc.y + off.y) as f32,
+                            (pos.y as f64 + deco_y - geo_loc.y + off.y) as f32,
                             size.w as f32,
                             size.h as f32,
                         ),
@@ -2642,8 +2648,13 @@ pub(super) fn render_output_frame<'a>(
                             // back by geometry.loc.
                             let pos = win.base_layer().render_position();
                             let geo_loc = win.geometry().loc.to_f64().to_physical(scale);
+                            // Server-side decorated windows keep their titlebar
+                            // in the windows plane while the client buffer goes
+                            // to its own plane: the buffer belongs BELOW the bar,
+                            // exactly where `content_layer` sits in the scene.
                             let buf_x = pos.x as f64 - geo_loc.x;
-                            let buf_y = pos.y as f64 - geo_loc.y;
+                            let buf_y =
+                                pos.y as f64 + win.decoration_height() as f64 * scale.y - geo_loc.y;
                             let elem =
                                 smithay::wayland::compositor::with_states(&wl_surface, |states| {
                                     // Same location math as the tree walk in
