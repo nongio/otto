@@ -55,7 +55,9 @@ otto-kit = { path = "components/otto-kit" }
 
 [dependencies.laye-rs]
 git = "https://github.com/nongio/layers"
-tag = "v1.13.0"
+# Tracking main until the next lay-rs release is tagged — otto needs the
+# follower-damage and content-opacity fixes (nongio/layers#22).
+branch = "main"
 # local development: path = "../layers"
 features = ["export-taffy"]
 
