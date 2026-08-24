@@ -17,7 +17,7 @@ shell-words = "1.1"
 
 [dependencies.laye-rs]
 git = "https://github.com/nongio/layers"
-tag = "v1.13.0"
+branch = "main"
 features = ["export-taffy"]
 
 [dependencies.skia-safe]
