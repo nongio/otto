@@ -1,7 +1,10 @@
 [package]
 name = "otto-auth-ui"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "The authentication panel Otto shows when it needs a password — shared by the greeter and the lock screen"
 
 [dependencies]

@@ -1,12 +1,12 @@
 [package]
 name = "otto"
-authors = ["Riccardo Canalicchio <riccardo.canalicchio@gmail.com>"]
-version = "1.0.0-rc.1"
-edition = "2021"
-license = "MIT"
+authors.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 rust-version = "1.87.0"
 description = "A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail, inspired by familiar macOS interactions."
-repository = "https://github.com/nongio/otto"
+repository.workspace = true
 
 [dependencies]
 bitflags = "2.2.1"
@@ -178,6 +178,15 @@ members = [
     "sample-clients/submenu",
     "sample-clients/submenu-gtk",
     "sample-clients/deadlock-test",]
+
+# One version for the whole repo: otto and every component crate inherit these
+# via `version.workspace = true` (see docs/developer/versioning.md).
+[workspace.package]
+version = "1.0.0-rc.2"
+edition = "2021"
+authors = ["Riccardo Canalicchio <riccardo.canalicchio@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/nongio/otto"
 
 
 

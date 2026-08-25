@@ -1,10 +1,11 @@
 [package]
 name = "xdg-desktop-portal-otto"
-version = "0.1.0"
-edition = "2021"
-authors = ["Riccardo Canalicchio <riccardo.canalicchio(at)gmail.com"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 description = "Otto implementation of the org.freedesktop.portal interface"
-license = "MIT"
+license.workspace = true
+repository.workspace = true
 publish = false
 
 [dependencies]
