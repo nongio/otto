@@ -55,9 +55,9 @@ otto-kit = { path = "components/otto-kit" }
 
 [dependencies.laye-rs]
 git = "https://github.com/nongio/layers"
-# Tracking main until the next lay-rs release is tagged — otto needs the
-# follower-damage and content-opacity fixes (nongio/layers#22).
-branch = "main"
+# Pinned to a release: v1.14.0 carries the mirror/opacity repaint fixes
+# (nongio/layers#22, #23) that Otto's follower layers and fading popups need.
+tag = "v1.14.0"
 # local development: path = "../layers"
 features = ["export-taffy"]
 
@@ -320,3 +320,4 @@ files = [
     ["components/xdg-desktop-portal-otto/portals.conf.example", "/usr/share/doc/otto/portals.conf.example", "644"],
     ["components/otto-lock/otto-lock.pam", "/etc/pam.d/otto-lock", "644"],
 ]
+

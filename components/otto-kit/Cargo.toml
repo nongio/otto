@@ -35,7 +35,7 @@ debugger = ["laye-rs/debugger"]
 
 [dependencies.laye-rs]
 git = "https://github.com/nongio/layers"
-branch = "main"
+tag = "v1.14.0"
 # local development: path = "../../../layers"
 features = ["export-taffy"]
 
