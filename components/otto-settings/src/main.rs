@@ -964,8 +964,10 @@ impl App for SettingsApp {
                                     needs_redraw = true;
                                 }
                                 view::TitlebarHit::Drag => {
+                                    // Dragging moves the window; a double
+                                    // click zooms it.
                                     if let Some(seat) = AppContext::seat_state().seats().next() {
-                                        redraw.start_move(&seat, *serial);
+                                        redraw.titlebar_press(&seat, *serial, x, y);
                                     }
                                 }
                             }

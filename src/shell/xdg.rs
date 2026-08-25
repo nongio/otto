@@ -1054,13 +1054,17 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             // browser restoring a maximized window) must not then be re-placed
             // by a heuristic meant for windows that never said where they want
             // to be.
+            // Asking twice must not cost the window its restore target: a
+            // second `maximize_request` would store the MAXIMIZED geometry as
+            // `unmaximised_rect`, and unmaximizing would then restore the
+            // window to the size it already has — looking like nothing
+            // happened at all.
+            if window.is_maximized() {
+                return;
+            }
             window.set_is_maximized(true);
             self.pending_initial_placement.remove(&id);
 
-            if let Some(mut view) = self.workspaces.get_window_view(&id) {
-                view.unmaximised_rect = current_element_geometry;
-                self.workspaces.set_window_view(&id, view);
-            }
             // Maximize onto the output the window actually lives on — the
             // space it is mapped in is authoritative, including for windows
             // on a virtual (RDP) output. Only an unmapped window falls back
@@ -1086,6 +1090,19 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             // Usable area = output minus exclusive zones minus (non-autohide) dock
             let new_geometry = self.usable_zone(&output);
 
+            // Remember what to restore to. A client that asked to be
+            // maximized before it ever committed a buffer has no geometry
+            // yet, and an empty rect would restore to nothing at all — give
+            // it the size a fresh window gets instead.
+            if let Some(mut view) = self.workspaces.get_window_view(&id) {
+                view.unmaximised_rect = if current_element_geometry.size.is_empty() {
+                    default_restored_rect(new_geometry)
+                } else {
+                    current_element_geometry
+                };
+                self.workspaces.set_window_view(&id, view);
+            }
+
             let transition = Transition::ease_out(0.3);
             let animation = self
                 .layers_engine
@@ -1104,6 +1121,15 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             let new_width = new_client_size.w as f32;
             let new_height = new_client_size.h as f32;
 
+            // The client is told it is maximized NOW, not on the animation's
+            // last frame: a client that draws its own decoration decides from
+            // this state whether its zoom control maximizes or restores, and
+            // one that never hears it asks to be maximized over and over.
+            // Only the size is animated.
+            surface.with_pending_state(|state| {
+                state.states.set(xdg_toplevel::State::Maximized);
+            });
+
             let s = surface.clone();
             self.layers_engine.on_animation_update(
                 animation,
@@ -1112,9 +1138,6 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                     let height = current_height.interpolate(&new_height, p) as i32;
                     let size = Rectangle::new((0, 0).into(), (width, height).into());
                     s.with_pending_state(|state| {
-                        if (p - 1.0).abs() < f32::EPSILON {
-                            state.states.set(xdg_toplevel::State::Maximized);
-                        }
                         state.size = Some(size.size);
                     });
                     s.send_configure();
@@ -1134,16 +1157,33 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
     }
 
     fn unmaximize_request(&mut self, surface: ToplevelSurface) {
-        if !surface
-            .with_pending_state(|state| state.states.contains(xdg_toplevel::State::Maximized))
-        {
+        let id = surface.wl_surface().id();
+        let Some(window) = self.workspaces.get_window_for_surface(&id).cloned() else {
+            return;
+        };
+        // The window's own flag decides, not the toplevel's pending
+        // `Maximized` state: the two are set together, but the flag is the
+        // one the rest of the compositor reads, and a request that disagrees
+        // with it would restore a window that is not maximized.
+        if !window.is_maximized() {
             return;
         }
-
-        let id = surface.wl_surface().id();
-        let window = self.workspaces.get_window_for_surface(&id).unwrap().clone();
         window.set_is_maximized(false);
-        if let Some(view) = self.workspaces.get_window_view(&id) {
+
+        if let Some(mut view) = self.workspaces.get_window_view(&id) {
+            // Nothing to restore to means restoring to nothing: the window
+            // would be configured 0x0, keep the size it has, and the click
+            // would look like it did nothing at all.
+            if view.unmaximised_rect.size.is_empty() {
+                let zone = self
+                    .workspaces
+                    .output_for_window(&window)
+                    .map(|output| self.usable_zone(&output))
+                    .unwrap_or(view.unmaximised_rect);
+                view.unmaximised_rect = default_restored_rect(zone);
+                self.workspaces.set_window_view(&id, view.clone());
+            }
+
             let current_element_geometry = self
                 .workspaces
                 .element_geometry(&window)
@@ -1165,6 +1205,12 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             let new_width = new_client_size.w as f32;
             let new_height = new_client_size.h as f32;
 
+            // Dropped up front, for the same reason it is set up front in
+            // `maximize_request`.
+            surface.with_pending_state(|state| {
+                state.states.unset(xdg_toplevel::State::Maximized);
+            });
+
             let s = surface.clone();
             self.layers_engine.on_animation_update(
                 animation,
@@ -1173,9 +1219,6 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                     let height = current_height.interpolate(&new_height, p) as i32;
                     let size = Rectangle::new((0, 0).into(), (width, height).into());
                     s.with_pending_state(|state| {
-                        if (p - 1.0).abs() < f32::EPSILON {
-                            state.states.unset(xdg_toplevel::State::Maximized);
-                        }
                         state.size = Some(size.size);
                     });
                     s.send_configure();
@@ -1552,21 +1595,48 @@ impl<BackendData: Backend> Otto<BackendData> {
         let Some(pointer) = seat.get_pointer() else {
             return;
         };
-        let mut initial_window_location = self.workspaces.element_location(window).unwrap();
+        let initial_window_location = self.workspaces.element_location(window).unwrap();
 
-        // If the surface is maximized or tiled, restore it as the drag begins.
+        // A maximized or tiled window is restored INTO the drag, by the grab
+        // itself, once the pointer has actually travelled — see
+        // `PointerMoveSurfaceGrab::motion`. Doing it here instead would make a
+        // plain click on the titlebar unmaximize the window, and would eat the
+        // first press of the double click that zooms it.
         let id = surface.wl_surface().id();
-        let is_maximized = surface
-            .with_pending_state(|state| state.states.contains(xdg_toplevel::State::Maximized));
+        let is_maximized = window.is_maximized();
         let is_tiled = self
             .workspaces
             .get_window_view(&id)
             .map(|v| v.tiled_zone.is_some())
             .unwrap_or(false);
-        if is_maximized || is_tiled {
-            // Get current maximized/tiled geometry before restoring
-            let maximized_geometry = self.workspaces.element_geometry(window).unwrap();
-            let pointer_location = pointer.current_location();
+
+        let grab = PointerMoveSurfaceGrab {
+            start_data,
+            window: window.clone(),
+            initial_window_location,
+            active_zone: None,
+            pending_restore: is_maximized || is_tiled,
+            drag_origin: pointer.current_location(),
+        };
+
+        pointer.set_grab(self, grab, serial, Focus::Clear);
+    }
+
+    /// Restore a maximized or tiled window into a drag that has just started,
+    /// keeping the point the user grabbed under the cursor.
+    ///
+    /// Returns the window's new origin, for the grab to measure from.
+    pub fn restore_window_for_drag(
+        &mut self,
+        window: &crate::shell::WindowElement,
+        pointer_location: smithay::utils::Point<f64, smithay::utils::Logical>,
+    ) -> Option<smithay::utils::Point<i32, smithay::utils::Logical>> {
+        let surface = window.toplevel()?.clone();
+        let id = surface.wl_surface().id();
+        let initial_window_location;
+        {
+            // The geometry it is being restored FROM.
+            let maximized_geometry = self.workspaces.element_geometry(window)?;
 
             // Calculate grab point relative to maximized window
             let grab_offset_x = pointer_location.x - maximized_geometry.loc.x as f64;
@@ -1616,19 +1686,17 @@ impl<BackendData: Backend> Otto<BackendData> {
                 initial_window_location = (new_x as i32, new_y as i32).into();
             } else {
                 // Fallback: position window centered under cursor
-                let pos = pointer.current_location();
-                initial_window_location = (pos.x as i32, pos.y as i32).into();
+                initial_window_location =
+                    (pointer_location.x as i32, pointer_location.y as i32).into();
             }
         }
 
-        let grab = PointerMoveSurfaceGrab {
-            start_data,
-            window: window.clone(),
-            initial_window_location,
-            active_zone: None,
-        };
+        // The window is no longer maximized as far as the rest of the
+        // compositor is concerned either — the flag and the state the client
+        // was just told go together.
+        window.set_is_maximized(false);
 
-        pointer.set_grab(self, grab, serial, Focus::Clear);
+        Some(initial_window_location)
     }
 
     /// Snap `window` into the given tiling `zone` on its current output, animating
@@ -1912,4 +1980,20 @@ fn clamp_popup_to_target(
     if geo.loc.y < target.loc.y {
         geo.loc.y = target.loc.y;
     }
+}
+
+/// Where a window goes when it is unmaximized but never had a size of its own
+/// — a client that asked to be maximized before its first buffer.
+///
+/// Two thirds of the usable zone, centred in it: big enough to work in, small
+/// enough that the restore is unmistakable.
+fn default_restored_rect(
+    zone: Rectangle<i32, smithay::utils::Logical>,
+) -> Rectangle<i32, smithay::utils::Logical> {
+    let size = (zone.size.w * 2 / 3, zone.size.h * 2 / 3);
+    let loc = (
+        zone.loc.x + (zone.size.w - size.0) / 2,
+        zone.loc.y + (zone.size.h - size.1) / 2,
+    );
+    Rectangle::new(loc.into(), size.into())
 }

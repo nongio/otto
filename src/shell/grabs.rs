@@ -41,7 +41,20 @@ pub struct PointerMoveSurfaceGrab<B: Backend + 'static> {
     /// The snap zone currently previewed under the cursor while Ctrl is held
     /// during the drag. `None` when no zone is active. Applied on button release.
     pub active_zone: Option<crate::workspaces::TileZone>,
+    /// The window is maximized or tiled and gets restored under the cursor —
+    /// but only once the drag has actually travelled. Restoring at button-down
+    /// would make a *click* unmaximize the window, and would eat the first
+    /// press of the double click that zooms it.
+    pub pending_restore: bool,
+    /// Where the drag is measured from. The press location to begin with, and
+    /// the pointer's position at the moment a pending restore fires — after
+    /// which the window has a new origin under the cursor.
+    pub drag_origin: Point<f64, Logical>,
 }
+
+/// How far the pointer travels before a press counts as a drag, and a
+/// maximized window is restored into it.
+const DRAG_THRESHOLD: f64 = 6.0;
 
 /// Whether Ctrl is held right now, read from the keyboard itself.
 ///
@@ -89,7 +102,22 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
             return;
         };
         let scale = output.current_scale().fractional_scale();
-        let delta = event.location - self.start_data.location;
+
+        // A maximized or tiled window is restored into the drag, not at the
+        // press: until the pointer has travelled, it stays where it is.
+        if self.pending_restore {
+            let travel = event.location - self.start_data.location;
+            if travel.x.abs() < DRAG_THRESHOLD && travel.y.abs() < DRAG_THRESHOLD {
+                return;
+            }
+            self.pending_restore = false;
+            if let Some(location) = state.restore_window_for_drag(&self.window, event.location) {
+                self.initial_window_location = location;
+            }
+            self.drag_origin = event.location;
+        }
+
+        let delta = event.location - self.drag_origin;
         let new_location = self.initial_window_location.to_f64() + delta;
 
         state

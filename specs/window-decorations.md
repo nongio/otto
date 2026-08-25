@@ -64,6 +64,12 @@ appears, and discarded if the surface dies first.
 - Two presses on the bar away from the controls, within 400 ms and 6 px of each
   other, zoom the window instead: maximized windows are restored, others are
   maximized, and that press starts no move.
+- A maximized or tiled window is restored *into* the drag — when the pointer
+  has travelled 6 px, not when the button goes down. Restoring at the press
+  would make a bare click unmaximize the window, and would spend the first
+  press of the double click above: the client is told it is no longer
+  maximized, so the second press asks to maximize a window that already
+  looks maximized and nothing appears to happen.
 - The window's geometry in the layout includes the strip, so mapping,
   maximizing and tiling all account for its height. A resize configures the
   client with the size *under* the bar, so a window does not gain the bar's
@@ -81,6 +87,25 @@ and never asks the compositor to resize it — so Otto offers the border itself:
   size to drag. Neither do windows too small to have an interior left.
 - Clients that draw their own decoration keep their own affordances and get no
   border from Otto.
+
+**Zoom.** Maximizing and restoring animate the window's size, but the
+`maximized` state itself is sent on the *first* configure of that animation,
+not the last: a client that draws its own decoration decides from that state
+whether its own zoom control maximizes or restores, and a client that never
+hears it asks to be maximized over and over. A window that is already
+maximized ignores a further maximize request — honouring it would overwrite
+the geometry it has to restore to with the maximized one, and unmaximizing
+would then appear to do nothing. A window that asked to be maximized before it
+ever had a size of its own restores to a default rect (two thirds of the
+usable zone, centred) rather than to an empty one.
+
+**Client-drawn title bars.** A client that decorates itself owns these
+gestures too, so otto-kit offers them from `Window`: a press on the title bar's
+drag area starts a compositor move, and two such presses within 400 ms and 6 px
+of each other maximize the window, or restore it if it already is — the same
+thresholds the server-side bar uses. Otto's own applications (Files, Settings)
+go through it, so a client-decorated window answers a double click on its bar
+the way a server-decorated one does.
 
 **Activation.** A client that draws its own decoration needs to know when it
 has the focus, so every mapped toplevel's `activated` state follows the

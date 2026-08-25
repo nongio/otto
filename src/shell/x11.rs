@@ -929,6 +929,9 @@ impl<BackendData: Backend> Otto<BackendData> {
             window: element.clone(),
             initial_window_location,
             active_zone: None,
+            // X11 windows are restored above, before the grab is installed.
+            pending_restore: false,
+            drag_origin: self.pointer.current_location(),
         };
 
         let pointer = self.pointer.clone();

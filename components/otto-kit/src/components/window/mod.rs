@@ -6,6 +6,7 @@ use smithay_client_toolkit::seat::pointer::PointerEvent;
 use smithay_client_toolkit::shell::xdg::window::WindowConfigure;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 use wayland_client::protocol::wl_seat;
 
 use crate::app_runner::AppContext;
@@ -23,6 +24,9 @@ fn default_layer_augmentation(layer: &otto_surface_style_v1::OttoSurfaceStyleV1)
 
 type CanvasDrawFn = Arc<Mutex<Option<Box<dyn FnMut(&skia_safe::Canvas) + Send>>>>;
 
+/// When and where the last press on the title bar landed.
+type PressMark = Arc<Mutex<Option<(Instant, (f32, f32))>>>;
+
 /// How long the material takes to fade between its frosted and opaque forms,
 /// in seconds.
 ///
@@ -31,6 +35,12 @@ type CanvasDrawFn = Arc<Mutex<Option<Box<dyn FnMut(&skia_safe::Canvas) + Send>>>
 /// follows is the tint thinning or thickening, and the toggle underneath it is
 /// always hidden by a fully opaque cover.
 const MATERIAL_FADE: f64 = 0.3;
+
+/// How long after a press on the titlebar a second one still counts as a
+/// double click, and how far it may wander in the meantime. Matches the
+/// compositor's own server-side titlebar.
+const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
+const DOUBLE_CLICK_SLOP: f32 = 6.0;
 
 /// Window component using ToplevelSurface
 ///
@@ -70,6 +80,9 @@ pub struct Window {
     /// The application fades its own materials, and so owns the moment the
     /// frost may be switched — see [`Window::set_fades_own_material`].
     fades_own_material: Arc<AtomicBool>,
+    /// When and where the last press on the titlebar landed, for the double
+    /// click that zooms the window — see [`Window::titlebar_press`].
+    last_titlebar_press: PressMark,
 }
 
 impl Window {
@@ -106,6 +119,7 @@ impl Window {
             material: Arc::new(RwLock::new(None)),
             frosted: Arc::new(AtomicBool::new(false)),
             fades_own_material: Arc::new(AtomicBool::new(false)),
+            last_titlebar_press: Arc::new(Mutex::new(None)),
         };
         // Hand the default to the compositor too, so the background is carried
         // by the style from the first frame and a window that never calls
@@ -663,6 +677,39 @@ impl Window {
                 surface.xdg_window().move_(seat, serial);
             }
         }
+    }
+
+    /// A press that landed on the titlebar's drag area.
+    ///
+    /// Two presses in the same place zoom the window; anything else starts a
+    /// move. Applications that draw their own titlebar should call this
+    /// instead of [`Window::start_move`], so a client-decorated window
+    /// behaves like a server-decorated one.
+    ///
+    /// `x`/`y` are surface-local, as they arrive on the pointer event.
+    pub fn titlebar_press(&self, seat: &wl_seat::WlSeat, serial: u32, x: f32, y: f32) {
+        if self.take_double_click(x, y) {
+            self.toggle_maximized();
+        } else {
+            self.start_move(seat, serial);
+        }
+    }
+
+    /// Whether a press at this surface-local point closes a double click,
+    /// remembering it either way.
+    fn take_double_click(&self, x: f32, y: f32) -> bool {
+        let now = Instant::now();
+        let Ok(mut last) = self.last_titlebar_press.lock() else {
+            return false;
+        };
+        let doubled = last.is_some_and(|(at, (px, py))| {
+            now.duration_since(at) < DOUBLE_CLICK_INTERVAL
+                && (x - px).abs() <= DOUBLE_CLICK_SLOP
+                && (y - py).abs() <= DOUBLE_CLICK_SLOP
+        });
+        // A double click consumes its history, so a third press starts over.
+        *last = if doubled { None } else { Some((now, (x, y))) };
+        doubled
     }
 
     /// Whether the compositor's last configure said the window is maximized.
