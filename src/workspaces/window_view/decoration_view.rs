@@ -4,13 +4,7 @@
 //! this view asks that same struct what is under the pointer, so a click can
 //! never land somewhere different from what was drawn.
 
-use std::{
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use otto_kit::components::titlebar::WindowControl;
 use smithay::{
@@ -32,28 +26,24 @@ const BTN_LEFT: u32 = 0x110;
 const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 const DOUBLE_CLICK_SLOP: f32 = 6.0;
 
-/// When and where a press on the titlebar landed.
-type PressMark = Arc<Mutex<Option<(Instant, (f32, f32))>>>;
-
 /// A window's titlebar, as an input target.
+///
+/// Carries no state of its own: a fresh one is built on every hit test (see
+/// `Otto::surface_under`), so anything it remembered would be dropped before
+/// the next event — the double-click mark lives on [`crate::Otto`] instead.
 #[derive(Clone)]
 pub struct WindowDecorationView {
     pub window: WindowElement,
-    /// A press that started on the bar (rather than on a control) — the drag
-    /// that follows moves the window.
-    press_on_bar: Arc<AtomicBool>,
-    /// When and where the last press on the bar landed, for double-click
-    /// detection.
-    last_press: PressMark,
 }
 
 impl WindowDecorationView {
     pub fn new(window: WindowElement) -> Self {
-        Self {
-            window,
-            press_on_bar: Arc::new(AtomicBool::new(false)),
-            last_press: Arc::new(Mutex::new(None)),
-        }
+        Self { window }
+    }
+
+    /// Identifies the window across the views built for it.
+    fn key(&self) -> usize {
+        self.window.base_layer().id.0.into()
     }
 
     fn control_index(control: WindowControl) -> u8 {
@@ -85,16 +75,26 @@ impl WindowDecorationView {
 
     /// Whether a press at this titlebar-local point closes a double click,
     /// remembering it either way.
-    fn take_double_click(&self, x: f32, y: f32) -> bool {
+    fn take_double_click<B: crate::state::Backend>(
+        &self,
+        data: &mut crate::Otto<B>,
+        x: f32,
+        y: f32,
+    ) -> bool {
         let now = Instant::now();
-        let mut last = self.last_press.lock().unwrap();
-        let doubled = last.is_some_and(|(at, (px, py))| {
-            now.duration_since(at) < DOUBLE_CLICK_INTERVAL
+        let key = self.key();
+        let doubled = data.last_titlebar_press.is_some_and(|(at, (px, py), k)| {
+            k == key
+                && now.duration_since(at) < DOUBLE_CLICK_INTERVAL
                 && (x - px).abs() <= DOUBLE_CLICK_SLOP
                 && (y - py).abs() <= DOUBLE_CLICK_SLOP
         });
         // A double click consumes its history, so a third press starts over.
-        *last = if doubled { None } else { Some((now, (x, y))) };
+        data.last_titlebar_press = if doubled {
+            None
+        } else {
+            Some((now, (x, y), key))
+        };
         doubled
     }
 
@@ -169,10 +169,6 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowDecorat
         data.set_cursor(&CursorImageStatus::Named(CursorIcon::default()));
     }
 
-    fn on_leave(&self, _serial: smithay::utils::Serial, _time: u32) {
-        self.press_on_bar.store(false, Ordering::SeqCst);
-    }
-
     fn on_leave_with_data(
         &self,
         data: &mut crate::Otto<Backend>,
@@ -208,9 +204,9 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowDecorat
         match event.state {
             ButtonState::Pressed => {
                 if let Some(control) = control {
-                    self.last_press.lock().unwrap().take();
+                    data.last_titlebar_press = None;
                     self.update_model(data, true, Some(Self::control_index(control)));
-                } else if self.take_double_click(x, y) {
+                } else if self.take_double_click(data, x, y) {
                     // Two clicks on the bar zoom the window instead of moving
                     // it, so no move grab is started for this press.
                     self.toggle_maximized(data);
@@ -224,7 +220,6 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowDecorat
                     // non-reentrant lock — doing it inline deadlocks the
                     // compositor. Defer to an idle callback, which runs after
                     // the dispatch has released the lock.
-                    self.press_on_bar.store(true, Ordering::SeqCst);
                     let window = self.window.clone();
                     let seat = seat.clone();
                     let serial = event.serial;
@@ -234,7 +229,6 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowDecorat
                 }
             }
             ButtonState::Released => {
-                self.press_on_bar.store(false, Ordering::SeqCst);
                 let was_pressed = self
                     .view(data)
                     .and_then(|v| v.decoration_state().pressed)

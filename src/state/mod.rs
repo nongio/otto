@@ -293,6 +293,12 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub pointer: PointerHandle<Otto<BackendData>>,
     /// Cached pointer location (logical) to avoid deadlock when accessing during button events
     pub last_pointer_location: (f64, f64),
+    /// When and where the last press on a server-side titlebar landed, for
+    /// double-click detection. Kept here rather than on the decoration view:
+    /// that view is rebuilt on every hit test, so anything it remembers is
+    /// gone by the next event.
+    /// `(when, titlebar-local point, window key)`.
+    pub last_titlebar_press: Option<(std::time::Instant, (f32, f32), usize)>,
     /// Cached pointer position in physical pixels, updated on every pointer move.
     /// Use `get_cursor_position()` to read. This avoids the deadlock that occurs
     /// when locking `cursor_status` from button/DnD handlers.
@@ -941,6 +947,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             seat,
             pointer,
             last_pointer_location: (0.0, 0.0),
+            last_titlebar_press: None,
             cursor_physical_position: (0.0, 0.0),
             clock,
             gamma_control_manager,

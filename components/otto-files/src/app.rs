@@ -5217,7 +5217,9 @@ impl FilesApp {
                             && view::place_at(x, y, browser.places.len()).is_none()
                         {
                             if let Some(seat) = AppContext::seat_state().seats().next() {
-                                window_for_events.start_move(&seat, serial);
+                                // A double click on the header zooms the
+                                // window instead of moving it.
+                                window_for_events.titlebar_press(&seat, serial, x, y);
                             }
                             return;
                         }
