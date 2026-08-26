@@ -26,6 +26,10 @@ use crate::{
     state::{Backend, Otto},
 };
 
+/// The tiling zones a window can be snapped to, re-exported for tests and
+/// external callers driving the headless compositor.
+pub use crate::workspaces::TileZone;
+
 const OUTPUT_NAME: &str = "headless";
 const DEFAULT_WIDTH: i32 = 1920;
 const DEFAULT_HEIGHT: i32 = 1080;
@@ -595,6 +599,191 @@ impl HeadlessHandle {
         })
     }
 
+    // ── Tiling and maximize ──────────────────────────────────────────────
+
+    /// Give keyboard focus to the window with this title, so the shortcut
+    /// entry points (which act on the focused window) have a target.
+    pub fn focus_window(&self, title: &str) {
+        let title = title.to_string();
+        self.with_state(move |state| {
+            let Some(window) = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .cloned()
+            else {
+                return;
+            };
+            state.set_keyboard_focus_on_window(&window);
+        });
+    }
+
+    /// Fire the tile shortcut for `zone` at the focused window — the same
+    /// entry point the `TileWindowLeft` / `TileWindowRight` bindings use,
+    /// toggle semantics included.
+    pub fn tile_focused(&self, zone: crate::workspaces::TileZone) {
+        self.with_state(move |state| {
+            state.tile_focused_window(zone);
+        });
+    }
+
+    /// Fire the maximize toggle at the focused window.
+    pub fn toggle_maximize_focused(&self) {
+        self.with_state(|state| {
+            state.toggle_maximize_focused_window();
+        });
+    }
+
+    /// The zone this window is snapped to, if any.
+    pub fn window_tiled_zone(&self, title: &str) -> Option<crate::workspaces::TileZone> {
+        let title = title.to_string();
+        self.query(move |state| {
+            let window = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .cloned()?;
+            state
+                .workspaces
+                .get_window_view(&window.id())
+                .and_then(|view| view.tiled_zone)
+        })
+    }
+
+    /// The floating rect this window would be restored to — what untiling
+    /// and unmaximizing aim at. `(x, y, width, height)` in logical pixels.
+    pub fn window_floating_rect(&self, title: &str) -> Option<(i32, i32, i32, i32)> {
+        let title = title.to_string();
+        self.query(move |state| {
+            let window = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .cloned()?;
+            let rect = state
+                .workspaces
+                .get_window_view(&window.id())?
+                .unmaximised_rect;
+            Some((rect.loc.x, rect.loc.y, rect.size.w, rect.size.h))
+        })
+    }
+
+    /// The area a maximized window fills on the headless output — output
+    /// geometry minus exclusive zones and the dock. `(x, y, width, height)`.
+    pub fn usable_zone(&self) -> (i32, i32, i32, i32) {
+        self.query(|state| {
+            let output = state
+                .workspaces
+                .outputs()
+                .find(|o| o.name() == OUTPUT_NAME)
+                .cloned()
+                .expect("headless output");
+            state.recalculate_exclusive_zones(&output);
+            let zone = state.usable_zone(&output);
+            (zone.loc.x, zone.loc.y, zone.size.w, zone.size.h)
+        })
+    }
+
+    /// Park the window with this title at a known spot, so a test has a
+    /// floating position that no tiling zone would land on by accident.
+    pub fn move_window(&self, title: &str, x: i32, y: i32) {
+        let title = title.to_string();
+        self.with_state(move |state| {
+            let Some(window) = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .cloned()
+            else {
+                return;
+            };
+            state.workspaces.map_window(&window, (x, y), true, None);
+        });
+    }
+
+    /// Give this window Otto's server-side titlebar, as a client binding
+    /// `xdg-decoration` and asking for `ServerSide` would. `TestClient` does
+    /// not speak the protocol, and a window with no bar has nothing to
+    /// double-click.
+    pub fn decorate_window(&self, title: &str) {
+        let title = title.to_string();
+        self.with_state(move |state| {
+            let Some(surface) = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .and_then(|w| w.toplevel())
+                .map(|t| t.wl_surface().clone())
+            else {
+                return;
+            };
+            state.set_surface_decorated(&surface, true);
+        });
+    }
+
+    /// Double-click the middle of this window's titlebar, the gesture that
+    /// zooms a window. Drives the real decoration hit-testing.
+    pub fn double_click_titlebar(&self, title: &str) {
+        let Some((x, y, w, _)) = self.window_logical_geometry(title) else {
+            return;
+        };
+        let title_owned = title.to_string();
+        let decoration_height = self.query(move |state| {
+            state
+                .workspaces
+                .spaces_elements()
+                .find(|win| win.xdg_title() == title_owned)
+                .map(|win| win.decoration_height())
+                .unwrap_or(0)
+        });
+        // Middle of the bar, clear of the window controls on the left.
+        assert!(
+            decoration_height > 0,
+            "window {title} has no titlebar to double-click"
+        );
+        let point = ((x + w / 2) as f64, (y + decoration_height / 2) as f64);
+        // Both clicks in ONE visit to the compositor thread: a round-trip
+        // through this channel costs ~250ms, and two of them would push the
+        // second press past the 400ms double-click window.
+        self.with_state(move |state| {
+            state.synthetic_pointer_move(point.0, point.1);
+            for _ in 0..2 {
+                state.synthetic_pointer_button_inner(true, false);
+                state.synthetic_pointer_button_inner(false, false);
+            }
+        });
+    }
+
+    /// Whether this window is currently maximized.
+    pub fn window_is_maximized(&self, title: &str) -> bool {
+        let title = title.to_string();
+        self.query(move |state| {
+            state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .map(|w| w.is_maximized())
+                .unwrap_or(false)
+        })
+    }
+
+    /// Start an interactive resize on this window, without dragging it: the
+    /// part the tiling state cares about is that a hand-resize un-tiles.
+    pub fn begin_window_resize(&self, title: &str) {
+        let title = title.to_string();
+        self.with_state(move |state| {
+            let Some(window) = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .cloned()
+            else {
+                return;
+            };
+            state.clear_tiled_marker(&window);
+        });
+    }
+
     // ── App switcher ─────────────────────────────────────────────────────
     //
     // The panel's app list is rebuilt off the workspace model by a background
@@ -891,6 +1080,14 @@ impl Otto<HeadlessData> {
 
     /// Press or release the left pointer button.
     fn synthetic_pointer_button(&mut self, pressed: bool) {
+        self.synthetic_pointer_button_inner(pressed, true)
+    }
+
+    /// `refocus` drives Otto's click-to-focus. Skipping it keeps a synthetic
+    /// multi-click inside the double-click interval: raising and refocusing a
+    /// window rebuilds the workspace model, which costs far more than 400ms in
+    /// a debug build, and an already-focused window gains nothing from it.
+    fn synthetic_pointer_button_inner(&mut self, pressed: bool, refocus: bool) {
         use smithay::{
             backend::input::ButtonState, input::pointer::ButtonEvent, utils::SERIAL_COUNTER,
         };
@@ -903,7 +1100,7 @@ impl Otto<HeadlessData> {
         };
 
         // BTN_LEFT = 0x110
-        if !self.workspaces.get_show_all() && pressed {
+        if refocus && !self.workspaces.get_show_all() && pressed {
             self.focus_window_under_cursor(serial);
         }
         let pointer = self.pointer.clone();

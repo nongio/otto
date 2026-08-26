@@ -197,6 +197,19 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
         };
 
         window.set_maximized(false).unwrap();
+
+        // Unmaximizing is the inverse of maximizing: a window that was tiled
+        // when it got maximized lands back on its tile, not on the floating
+        // rect two steps back.
+        if let Some(zone) = self
+            .workspaces
+            .get_window_view(&elem.id())
+            .and_then(|view| view.tiled_zone)
+        {
+            self.apply_tile(&elem, zone);
+            return;
+        }
+
         if let Some(old_geo) = window
             .user_data()
             .get::<OldGeometry>()
@@ -679,12 +692,17 @@ impl<BackendData: Backend> Otto<BackendData> {
 
         window.set_maximized(true).unwrap();
         window.configure(geometry).unwrap();
-        window.user_data().insert_if_missing(OldGeometry::default);
-        window
-            .user_data()
-            .get::<OldGeometry>()
-            .unwrap()
-            .save(old_geo);
+        // A tiled window keeps the rect it had before it was tiled — saving
+        // here would overwrite the floating rect with the tile, and untiling
+        // later would restore the half-screen the window already has.
+        if !self.is_tiled(&elem) {
+            window.user_data().insert_if_missing(OldGeometry::default);
+            window
+                .user_data()
+                .get::<OldGeometry>()
+                .unwrap()
+                .save(old_geo);
+        }
         self.workspaces.map_window_on_output(
             &output,
             &elem,
@@ -692,6 +710,14 @@ impl<BackendData: Backend> Otto<BackendData> {
             false,
             Some(Transition::ease_out(0.3)),
         );
+    }
+
+    /// Whether `elem` is currently snapped to a tiling zone.
+    fn is_tiled(&self, elem: &crate::shell::WindowElement) -> bool {
+        self.workspaces
+            .get_window_view(&elem.id())
+            .map(|v| v.tiled_zone.is_some())
+            .unwrap_or(false)
     }
 
     /// Snap an X11 window into a tiling target rectangle (logical pixels).
@@ -717,17 +743,21 @@ impl<BackendData: Backend> Otto<BackendData> {
             return;
         };
 
-        let old_geo = self
-            .workspaces
-            .space()
-            .and_then(|s| s.element_bbox(&elem))
-            .unwrap();
-        window.user_data().insert_if_missing(OldGeometry::default);
-        window
-            .user_data()
-            .get::<OldGeometry>()
-            .unwrap()
-            .save(old_geo);
+        // Only the first snap records the floating rect: re-tiling to another
+        // zone, or tiling a window that is already maximized, must not lose it.
+        if !self.is_tiled(&elem) && !window.is_maximized() {
+            let old_geo = self
+                .workspaces
+                .space()
+                .and_then(|s| s.element_bbox(&elem))
+                .unwrap();
+            window.user_data().insert_if_missing(OldGeometry::default);
+            window
+                .user_data()
+                .get::<OldGeometry>()
+                .unwrap()
+                .save(old_geo);
+        }
 
         let _ = window.set_maximized(maximize);
         let _ = window.configure(target);
