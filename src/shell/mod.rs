@@ -855,6 +855,10 @@ pub struct SurfaceData {
 /// and don't implement `xdg-dialog-v1`, so "small" is the only thing that
 /// actually distinguishes a dialog from a document window across toolkits.
 const DIALOG_MAX_FRACTION: f64 = 0.6;
+/// Logical pixels a centred window steps down and right when the spot it
+/// would take is already occupied, and how many times it may step.
+const CASCADE_STEP: i32 = 32;
+const CASCADE_MAX_STEPS: usize = 8;
 
 impl<BackendData: crate::state::Backend> crate::state::Otto<BackendData> {
     /// Re-place a freshly mapped window now that its real size is known.
@@ -934,10 +938,39 @@ impl<BackendData: crate::state::Backend> crate::state::Otto<BackendData> {
             return;
         }
 
-        let location = smithay::utils::Point::<i32, Logical>::from((
+        let centre = smithay::utils::Point::<i32, Logical>::from((
             usable.loc.x + (usable.size.w - size.w) / 2,
             usable.loc.y + (usable.size.h - size.h) / 2,
         ));
+
+        // Two windows of the same size centre on the same point and stack
+        // exactly, leaving the one underneath without an edge to click. Step
+        // each new arrival down and to the right until it clears what is
+        // already there, the way a cascade does.
+        let taken: Vec<smithay::utils::Point<i32, Logical>> = self
+            .workspaces
+            .spaces_elements()
+            .filter(|other| other.id() != id)
+            .filter_map(|other| self.workspaces.element_location(other))
+            .collect();
+        let mut location = centre;
+        for _ in 0..CASCADE_MAX_STEPS {
+            let collides = taken.iter().any(|p| {
+                (p.x - location.x).abs() < CASCADE_STEP && (p.y - location.y).abs() < CASCADE_STEP
+            });
+            if !collides {
+                break;
+            }
+            location.x += CASCADE_STEP;
+            location.y += CASCADE_STEP;
+        }
+        // A cascade that would hang off the usable area is worse than the
+        // stack it was avoiding — go back to the centre.
+        if location.x + size.w > usable.loc.x + usable.size.w
+            || location.y + size.h > usable.loc.y + usable.size.h
+        {
+            location = centre;
+        }
 
         tracing::debug!(
             "settle_initial_placement: centering {}x{} dialog at {:?}",

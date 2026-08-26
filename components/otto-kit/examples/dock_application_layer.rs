@@ -56,7 +56,7 @@ impl DockApp {
                         Some((&src_rect, skia_safe::canvas::SrcRectConstraint::Fast)),
                         // dst_rect,
                         dst_rect,
-                        &skia_safe::Paint::new(&white, None),
+                        &skia_safe::Paint::new(white, None),
                     );
                 }
             }
@@ -86,7 +86,7 @@ impl App for DockApp {
             surface_style.set_corner_radius(20.0);
         }
 
-        self.draw_icon(&layer_surface.base_surface());
+        self.draw_icon(layer_surface.base_surface());
         // Get the otto_dock_manager global and assign this layer surface to the dock
         // let wl_surface = layer_surface.wl_surface();
         // if let Some(dock_manager) = AppContext::otto_dock_manager() {

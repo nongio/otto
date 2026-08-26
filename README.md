@@ -155,6 +155,7 @@ makepkg -si
 
 Otto appears in your login manager (GDM, SDDM, LightDM, …) as "Otto" in the session menu. Select it and log in.
 
+- The packages install `/etc/otto/config.toml` and never overwrite a modified one on upgrade. Edit it to configure the whole machine, or copy it to `~/.config/otto/config.toml` for just your user. On a HiDPI display set `screen_scale = 2.0`. If that file is missing, Otto falls back to compiled-in defaults and you get an empty Dock with no pinned apps.
 - Screen sharing requires `xdg-desktop-portal` on your system.
 - Using Otto as the login screen (`otto --login` with `otto-greeter`) requires `greetd`. On Debian/Ubuntu, copy the shipped `otto-lock.pam` example to `/etc/pam.d/otto-lock` before using the screen locker — the Arch and Fedora packages install it for you.
 - Otto handles the lid switch and the power button itself. Set `HandleLidSwitch=ignore` and `HandlePowerKey=ignore` in `logind.conf` for those to work.
@@ -228,8 +229,8 @@ Every hotkey is configurable in the `[keyboard_shortcuts]` section:
 
 ```toml
 [keyboard_shortcuts]
-"Ctrl+Esc" = "Quit"
-"Ctrl+Return" = { run = { cmd = "terminator", args = [] } }
+"Ctrl+Return" = { open_default = { role = "terminal", fallback = "foot" } }
+"Ctrl+Space" = { run = { cmd = "otto-launcher", args = [] } }
 "Logo+Space" = { open_default = "file_manager" }
 "Logo+B" = { open_default = "browser" }
 "Ctrl+1" = { builtin = "Workspace", index = 0 }

@@ -45,7 +45,7 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// Show or hide Otto's titlebar for a surface, whichever protocol asked.
     /// The KDE path has no toplevel state to configure, so this is the half
     /// both protocols share.
-    pub(crate) fn set_surface_decorated(&mut self, surface: &WlSurface, server_side: bool) {
+    pub fn set_surface_decorated(&mut self, surface: &WlSurface, server_side: bool) {
         let id = surface.id();
         let Some(window) = self.workspaces.get_window_for_surface(&id) else {
             // No window yet — the KDE protocol lets a client negotiate before

@@ -139,6 +139,15 @@ Commits are parsed by [git-cliff](https://git-cliff.org) to generate `CHANGELOG.
 Common types: `feat`, `fix`, `refactor`, `doc`, `perf`, `style`, `test`, `chore`, `ci`.
 Keep the subject line short (50 chars or fewer). Omit a body unless the change genuinely needs explanation.
 
+## Versioning
+
+All workspace crates share one version, inherited from `[workspace.package]` in
+the root `Cargo.toml` — components are never versioned individually. Bump with
+`scripts/set-version.sh <version> [--tag]`; see
+[docs/developer/versioning.md](./docs/developer/versioning.md). New workspace
+members must use `version.workspace = true` (plus `authors`, `edition`,
+`license`, `repository`).
+
 ## Spec Sync
 
 After implementing a behavior change, check if a spec exists in `specs/` for the affected feature. If so, update it to match. If none exists and the feature is non-trivial, create one from `specs/SPEC-TEMPLATE.md`. See `.github/instructions/spec-sync.instructions.md` for details.

@@ -475,12 +475,7 @@ impl App for Ab {
                 .lock()
                 .unwrap()
                 .set_viewport(Rect::from_wh(PANE_W, PANE_H));
-            let surfaces = ScrollSurfaces::new(
-                &parent,
-                pane(),
-                AppContext::scale_factor() as f32,
-                Color::from_rgb(0x24, 0x26, 0x2B),
-            )?;
+            let surfaces = ScrollSurfaces::new(&parent, pane(), Color::from_rgb(0x24, 0x26, 0x2B))?;
             {
                 use wayland_client::Proxy;
                 *self.band_id.lock().unwrap() = Some(surfaces.content_surface().id());

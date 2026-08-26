@@ -813,7 +813,7 @@ fn bench_layers_vs_immediate_egl() {
     };
     println!("  EGL window up: {}×{} GLES2 RGBA8\n", PANE_W, PANE_H);
 
-    let mut floor;
+    let floor;
     // Floor: what a frame costs with no content at all. If this is close to
     // the arms below, the frame boundary — not the drawing — is what is being
     // measured, and the comparison means nothing.

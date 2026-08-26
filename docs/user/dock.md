@@ -27,6 +27,8 @@ background so a slow icon theme never stalls the compositor.
 | Click it again | Cycle to that app's next window |
 | Click a bookmark | Focus the running instance, or launch it |
 | Click a minimized window | Restore it with the genie animation |
+| Right-click an icon | Context menu: Open, Keep in Dock, Quit |
+| Drag an icon along the dock | Reorder it; neighbours move out of the way |
 
 While a launch is in flight the icon **bounces**, so you know the click landed
 before the window shows up.
@@ -39,9 +41,9 @@ screen edge always reach the dock rather than the window behind.
 ```toml
 [dock]
 bookmarks = [
-  { desktop_id = "org.gnome.Nautilus.desktop" },
-  { desktop_id = "org.mozilla.firefox.desktop", label = "Web", exec_args = ["--private-window"] },
-  { desktop_id = "org.gnome.Terminal.desktop" },
+  { desktop_id = "otto-files.desktop" },
+  { desktop_id = "firefox.desktop", label = "Private", exec_args = ["--private-window"] },
+  { desktop_id = "otto-settings.desktop" },
 ]
 ```
 
@@ -56,8 +58,19 @@ Find desktop ids with `ls /usr/share/applications ~/.local/share/applications`.
 Bookmarks behave exactly like running apps once launched — same icon, same
 hover, same window cycling.
 
-There is no way to pin an app by dragging it into the dock yet; bookmarks are
-config-only.
+### Pinning and reordering without the config file
+
+Right-click any icon — a bookmark or a running app that is not yet in the
+dock — and pick **Keep in Dock** to pin it; the same entry, ticked, unpins it
+again. The menu also offers **Open** (for an app that is not running) and
+**Quit** (for one that is).
+
+Drag an icon along the dock to reorder it. The icons it passes shuffle aside so
+the order you are about to commit is visible before you let go, and a press that
+does not move still launches or focuses the app.
+
+Both are written back to `bookmarks` in your config, so the dock comes back the
+same way next login.
 
 ## Appearance and behaviour
 
@@ -125,6 +138,22 @@ blends between the original icon (`0.0`) and the flat tint (`1.0`). All three
 keys apply live, so dragging the tint strength in Settings repaints the dock as
 you drag.
 
+## Badges and progress
+
+An icon can carry a small **badge** in its corner — a count drawn over the
+icon — and a **progress bar** across its foot.
+
+Badges are how unread notifications show up: `otto-islands` is the session's
+notification daemon, so it is the only thing that knows how many notifications
+an application still has outstanding, and it publishes that count to the dock.
+The badge is attached to the sending application's icon even when that app is
+not in the dock yet. Notifications that arrive without a desktop-entry hint
+(one forwarded from a terminal escape sequence, for instance) are attributed by
+resolving the sending process to its desktop entry.
+
+Dismissing the notifications clears the badge. Both the badge and the progress
+bar scale with the icon, so they follow magnification.
+
 ## Visuals
 
 The dock bar uses background blur and picks its colours from the active theme,
@@ -142,7 +171,7 @@ display profile sets `primary = true` — see [Display](display.md).
 
 ## Not yet supported
 
-- Pinning by drag-and-drop
-- Right-click context menus on dock icons
 - Bookmarked folders and locations
+- Dragging an application into the dock from outside it (the Files window, a
+  launcher result) — pinning is the context menu's job
 - A per-monitor dock

@@ -24,7 +24,7 @@ use crate::dbus_service::{DialogService, IslandService, DBUS_NAME};
 use crate::dialog::{DialogHit, DialogId, DialogResponse, DialogView};
 use crate::dock_badges::DockBadges;
 use crate::renderer::{
-    animate_to, apply_island_style, draw_centered, set_size_and_position, COMPACT_H, MINI_H,
+    animate_to, apply_island_style, draw_content, set_size_and_position, COMPACT_H, MINI_H,
 };
 use crate::state::{IslandState, SharedState};
 
@@ -200,7 +200,7 @@ impl IslandApp {
         let wl = self.wl_surface()?;
         let surface =
             SubsurfaceSurface::new(&wl, 0, 0, renderer::SLOT_BUF_W, renderer::SLOT_BUF_H).ok()?;
-        apply_island_style(&surface, MINI_H as f64 / 2.0, ContentsGravity::Center);
+        apply_island_style(&surface, MINI_H as f64 / 2.0, ContentsGravity::TopLeft);
         // Center coordinates (anchor point is 0.5, 0.5).
         let cx = self.layer_width() / 2.0;
         let cy = BAR_HEIGHT / 2.0;
@@ -538,15 +538,15 @@ impl IslandApp {
                 h,
             };
             if self.islands[idx].last_content.as_ref() != Some(&content) {
-                let surface = &self.islands[idx].surface;
+                let surface = &mut self.islands[idx].surface;
                 match mode {
-                    IslandMode::Mini => draw_centered(surface, w, h, |canvas| {
+                    IslandMode::Mini => draw_content(surface, w, h, |canvas| {
                         renderer::draw_mini(canvas, &activity.icon, w, h);
                     }),
-                    IslandMode::Compact => draw_centered(surface, w, h, |canvas| {
+                    IslandMode::Compact => draw_content(surface, w, h, |canvas| {
                         renderer::draw_pill(canvas, &activity.icon, &activity.title, w, h);
                     }),
-                    IslandMode::Expanded => draw_centered(surface, w, h, |canvas| {
+                    IslandMode::Expanded => draw_content(surface, w, h, |canvas| {
                         renderer::draw_card(canvas, &activity, w, h);
                     }),
                 }
@@ -935,7 +935,7 @@ impl IslandApp {
 
         let selected = panel.selected.clone();
         let view = panel.view.clone();
-        panel.surface.draw(|canvas| {
+        draw_content(&mut panel.surface, w, h, |canvas| {
             dialog::draw_dialog(canvas, &view, &selected, &layout);
         });
 

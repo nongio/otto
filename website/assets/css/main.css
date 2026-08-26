@@ -400,40 +400,19 @@ main > section:first-child > h1 + p a {
 }
 
 
-section section:after {
-   content: " ";
-   display: block;
-   width: 100%;
-   height: calc(33vh - (1.7em * 2));
-}
-
+/* Headings scroll away with their prose. They used to pin to the top of the
+   viewport, which meant every h2 and h3 latched and released as you went —
+   the offset moved smoothly but the page looked like it was jumping. What is
+   left is ordinary vertical rhythm: space above a heading to separate it from
+   the section before, little below it, so it reads as attached to the text it
+   introduces. */
 h2, h3 {
-   position: -webkit-sticky;
-   position: sticky;
-   top: 0;
-   margin: 0 0;
-   padding: calc(1.7em *0.5) 7em calc(1.7em *0.5) 0;
-   z-index: 50;
+   margin: calc(1.7em * 1.5) 0 0;
+   padding: 0 7em 0 0;
 }
 
 h3 {
    white-space: nowrap;
-}
-
-@media (min-width: 901px) and (min-height: 800px) {
-   h2, h3 {
-      padding-top: calc(1.7em * 1.5);
-   }
-}
-
-h2:after, h3:after {
-   content: " ";
-   position: absolute;
-   top: calc(1.7em *-0.5);
-   left: 0;
-   right: 0;
-   bottom: 0;
-   z-index: -1;
 }
 
 h4, h5, h6 {
@@ -549,7 +528,7 @@ pre {
    position: relative;
    width: 100%;
    box-sizing: border-box;
-   margin: 7rem auto;
+   margin: 2rem auto;
    padding: 2.5em 2px 2px;
    font-size: 14px;
    line-height: 1.8;
@@ -610,10 +589,6 @@ body {
 #TableOfContents {
    background: rgba(255,255,255,0.6);
 }
-h2:after, h3:after {
-   background: rgba(255,255,255,1);
-   box-shadow: 0 0 25px rgba(255,255,255,1);
-}
 main ul li:before {
    background: rgba(0,0,0,1);
 }
@@ -634,10 +609,6 @@ pre code {
    }
    #TableOfContents {
       background: rgba(0,0,0,0.6);
-   }
-   h2:after, h3:after {
-      background: rgba(0,0,0,1);
-      box-shadow: 0 0 25px rgba(0,0,0,1);
    }
    main ul li:before {
       background: rgba(230,230,230,1);
@@ -665,11 +636,6 @@ pre code {
 :root[data-theme="dark"] #TableOfContents {
    background: rgba(0,0,0,0.6);
 }
-:root[data-theme="dark"] h2:after,
-:root[data-theme="dark"] h3:after {
-   background: rgba(0,0,0,1);
-   box-shadow: 0 0 25px rgba(0,0,0,1);
-}
 :root[data-theme="dark"] main ul li:before {
    background: rgba(230,230,230,1);
 }
@@ -689,11 +655,6 @@ pre code {
 }
 :root[data-theme="light"] #TableOfContents {
    background: rgba(255,255,255,0.6);
-}
-:root[data-theme="light"] h2:after,
-:root[data-theme="light"] h3:after {
-   background: rgba(255,255,255,1);
-   box-shadow: 0 0 25px rgba(255,255,255,1);
 }
 :root[data-theme="light"] main ul li:before {
    background: rgba(0,0,0,1);

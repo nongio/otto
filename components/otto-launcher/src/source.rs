@@ -138,7 +138,7 @@ pub fn rank(items: &[Item], query: &str) -> Vec<Match> {
 
     // Ties keep source order — a stable sort, so an unscored browse and a
     // fully tied query look the same.
-    matches.sort_by(|a, b| b.score.cmp(&a.score));
+    matches.sort_by_key(|m| std::cmp::Reverse(m.score));
     matches
 }
 

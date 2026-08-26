@@ -140,17 +140,17 @@ After `FOCUS_TIMEOUT_SECS` of no interaction, the focused island shrinks back to
 All subsurfaces use `otto-surface-style-v1`:
 
 - `set_background_color(...)` — near-black bubble material
-- `set_corner_radius(r)` — circle for Mini, pill radius for Compact, `CARD_RADIUS` for Expanded (noticeably squarer than the pill it grew out of)
+- `set_corner_radius(r)` — circle for Mini, pill radius for Compact, `CARD_RADIUS` for Expanded (noticeably squarer than the pill it grew out of). Radii are **logical**: the compositor multiplies them by the output scale itself, so a client that pre-scales gets a radius scaled twice
 - `set_masks_to_bounds(Enabled)` — clip content
 - `set_shadow(...)` — drop shadow
 - `set_blend_mode(BackgroundBlur)` — frosted glass
-- `set_contents_gravity(Center)` — content anchored center
+- `set_contents_gravity(TopLeft)` — buffer (0,0) is the island's top-left corner, so where content lands never depends on the layer's current (animating) size. `Center` was found to place the visible slice of the buffer at a different, size-dependent origin per island and is not used
 
 No opacity manipulation. All elements are always fully visible.
 
 ## Rendering
 
-Content is drawn with Skia into each subsurface's buffer. The buffer (`SLOT_BUF_W` x `SLOT_BUF_H`) is larger than any card so content can be drawn at target size before the compositor spring-animates the visual bounds.
+Content is drawn with Skia into each subsurface's buffer. Before each draw the buffer is **resized to exactly the mode's content size** (`draw_content`), and content is drawn from the origin; the compositor spring-animates the visual bounds over the retained buffer. `SLOT_BUF_W` x `SLOT_BUF_H` is only the size a subsurface is created at, before its first draw.
 
 Geometry pushed to `otto-surface-style-v1` is in **physical pixels** and must use the real output scale (`AppContext::fractional_scale()`), not the client's fixed 2x raster buffer scale.
 
@@ -213,5 +213,5 @@ The card **grows to fit**: its height is the one-line height plus a line for eac
 | FOCUS_TIMEOUT_SECS | 4 | Inactivity before the focused island shrinks to Mini |
 | CASCADE_STAGGER_SECS | 0.035 | Per-island delay as a push travels outward |
 | DESTROY_DELAY_SECS | 0.8 | How long a destroyed surface is kept for its exit animation |
-| SLOT_BUF_W | 460 | Subsurface buffer width |
-| SLOT_BUF_H | 140 | Subsurface buffer height |
+| SLOT_BUF_W | 460 | Subsurface buffer width at creation (resized to content on first draw) |
+| SLOT_BUF_H | 140 | Subsurface buffer height at creation |

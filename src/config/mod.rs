@@ -90,7 +90,10 @@ fn config_cell() -> &'static RwLock<Arc<Config>> {
 impl Default for Config {
     fn default() -> Self {
         let mut config = Self {
-            screen_scale: 2.0,
+            // 1.0, not the author's HiDPI 2.0: this is what a fresh install
+            // with no /etc/otto/config.toml runs at, and a 2.0 default makes
+            // the cursor and every panel twice the size it should be.
+            screen_scale: 1.0,
             displays: DisplaysConfig::default(),
             cursor_theme: "Notwaita-Black".to_string(),
             icon_theme: None,
@@ -239,7 +242,12 @@ impl Config {
         }
 
         if !found_any_config {
-            warn!("No configuration file found, using default config");
+            warn!(
+                "No configuration file found, using default config. \
+                 Copy /etc/otto/config.example.toml to \
+                 ~/.config/otto/config.toml (or /etc/otto/config.toml) to \
+                 customise the dock, displays and input."
+            );
         }
 
         report_where_settings_are_written();
@@ -2076,6 +2084,45 @@ mod tests {
         assert!(
             config.exec_once.is_empty(),
             "exec_once should default to empty"
+        );
+    }
+
+    /// The example config is what the packages install as
+    /// `/etc/otto/config.toml`, so it is the default a fresh install runs
+    /// with. It has to parse, and it has to bring up the desktop the user
+    /// guide describes — every binding in it resolves, the bar and the
+    /// island start, and the dock is not empty.
+    #[test]
+    fn shipped_example_config_is_a_usable_default() {
+        let toml_str = include_str!("../../otto_config.example.toml");
+        let mut config: Config = toml::from_str(toml_str).expect("example config deserializes");
+        config.rebuild_shortcut_bindings();
+
+        let started: Vec<&str> = config.exec_once.iter().map(|e| e.cmd.as_str()).collect();
+        assert!(started.contains(&"otto-bar"), "the top bar autostarts");
+        assert!(
+            started.contains(&"otto-islands"),
+            "the dynamic island autostarts"
+        );
+
+        assert!(!config.dock.bookmarks.is_empty(), "the dock has bookmarks");
+        assert!(
+            config.displays.named.is_empty() && config.displays.generic.is_empty(),
+            "no display profile forces a mode or a position on unknown hardware"
+        );
+
+        // Every binding in the file resolved: a skipped one only warns.
+        assert_eq!(
+            config.shortcut_bindings().len(),
+            config.keyboard_shortcuts.len(),
+            "every shipped shortcut parses"
+        );
+        assert!(
+            !config.shortcut_bindings().iter().any(|b| matches!(
+                b.action,
+                shortcuts::ShortcutAction::Builtin(shortcuts::BuiltinAction::Quit)
+            )),
+            "quitting rides on the always-on keys, not a shipped binding"
         );
     }
 }

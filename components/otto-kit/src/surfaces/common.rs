@@ -198,6 +198,11 @@ impl BaseWaylandSurface {
     /// Draw on the surface using the shared Skia context
     ///
     /// The draw_fn callback is called for custom rendering.
+    /// Current buffer size in logical points, as passed to `new` or `resize`.
+    pub fn size(&self) -> (i32, i32) {
+        (self.width, self.height)
+    }
+
     pub fn draw<F>(&self, draw_fn: F)
     where
         F: FnOnce(&skia_safe::Canvas),

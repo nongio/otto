@@ -21,10 +21,12 @@ sha256sums=("SKIP")
 # Files pacman must never clobber: a modified config becomes .pacnew on
 # upgrade and .pacsave on removal, instead of being silently overwritten or
 # deleted when swapping between the otto-bin/otto-git/otto-nightly-bin variants.
-backup=("etc/pam.d/otto-lock")
+backup=("etc/otto/config.toml" "etc/pam.d/otto-lock")
 
 package() {
-    cd "$srcdir/otto-$pkgver"
+    # The tarball directory is named after Cargo's version, which is not
+    # pkgver: '-' is illegal in pkgver, so 1.0.0-rc.1 becomes 1.0.0rc1.
+    cd "$srcdir/otto-$_ver"
     
     # Install binaries
     install -Dm755 target/release/otto "$pkgdir/usr/bin/otto"
@@ -45,11 +47,13 @@ package() {
     install -Dm644 components/xdg-desktop-portal-otto/portals.conf.example "$pkgdir/usr/share/doc/otto/portals.conf.example"
     
     # Install configuration
-    # An example, not the config: the package must never own
-    # /etc/otto/config.toml. Owning it means a reinstall or a switch between
-    # the otto, otto-git and otto-nightly-bin packages moves whatever the
-    # administrator wrote there aside as a .pacsave and drops the stock file
-    # in its place. Copy this to config.toml to use it.
+    # Both the live config and the example it was copied from. config.toml is
+    # in backup(), so an upgrade leaves a modified one alone and writes
+    # .pacnew beside it; only removing the package (switching between the
+    # otto-bin, otto-git and otto-nightly-bin variants) moves it to .pacsave.
+    # Shipping it matters: with no config at all Otto falls back to
+    # compiled-in defaults, which is an empty dock and no bookmarks.
+    install -Dm644 otto_config.example.toml "$pkgdir/etc/otto/config.toml"
     install -Dm644 otto_config.example.toml "$pkgdir/etc/otto/config.example.toml"
     # PAM stack otto-lock authenticates against; without it PAM falls through
     # to `other`, which denies everything.
@@ -61,5 +65,25 @@ package() {
     install -Dm644 resources/otto-settings.desktop "$pkgdir/usr/share/applications/otto-settings.desktop"
     install -Dm644 components/xdg-desktop-portal-otto/otto.portal "$pkgdir/usr/share/xdg-desktop-portal/portals/otto.portal"
     install -Dm644 components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.service"
-    install -Dm644 components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service "$pkgdir/usr/lib/systemd/user/xdg-desktop-portal-otto.service"
+    # The v1.0.0-rc1 tarball shipped without this unit, and the D-Bus service
+    # file above names it in SystemdService=. Synthesise it when it is absent
+    # so the portal still activates; drop the fallback once every supported
+    # release tarball carries the file.
+    _unit=components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service
+    if [ ! -f "$_unit" ]; then
+        _unit="$srcdir/xdg-desktop-portal-otto.service"
+        cat > "$_unit" <<'UNIT'
+[Unit]
+Description=Portal service (Otto implementation)
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=dbus
+BusName=org.freedesktop.impl.portal.desktop.otto
+ExecStart=/usr/libexec/xdg-desktop-portal-otto
+Restart=on-failure
+UNIT
+    fi
+    install -Dm644 "$_unit" "$pkgdir/usr/lib/systemd/user/xdg-desktop-portal-otto.service"
 }

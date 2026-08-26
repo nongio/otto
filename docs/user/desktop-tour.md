@@ -38,6 +38,10 @@ in the config), **running applications**, and **minimized windows**.
 - An icon **bounces** while a launch is in progress, so you know the click
   registered before the window appears.
 - Clicking a minimized window restores it with the genie animation.
+- Right-clicking an icon opens a menu — open the app, quit it, or keep it in
+  the dock. Dragging an icon along the dock reorders it.
+- An icon can carry a **badge**: the count of notifications that app has
+  outstanding, published by the dynamic island.
 
 The dock can auto-hide, and its size and magnification are configurable — see
 [Dock](dock.md).
@@ -87,8 +91,10 @@ New windows are placed where they overlap existing windows the least, rather
 than cascading from the corner. Maximize and fullscreen are animated; minimize
 uses a genie effect that sucks the window into its dock icon.
 
-Otto always asks applications to draw their own decorations (client-side), so
-title bars and window buttons come from the app's own toolkit. See
+Decorations depend on what the application asks for. One that requests
+client-side decorations — GTK and Electron apps do — keeps drawing its own title
+bar. One that expresses no preference is told *server-side* and gets Otto's own
+title bar, window controls and resize borders. See
 [Window Management](window-management.md).
 
 ## Workspaces

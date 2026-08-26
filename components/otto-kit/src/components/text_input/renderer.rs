@@ -333,7 +333,7 @@ mod tests {
 
     #[test]
     fn long_text_scrolls_to_keep_the_caret_in_view() {
-        let mut s = TextInputState::new(&"long text ".repeat(20));
+        let mut s = TextInputState::new("long text ".repeat(20));
         let style = style();
         let width = 100.0;
         TextInputRenderer::ensure_caret_visible(&mut s, &style, width);

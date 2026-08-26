@@ -99,12 +99,7 @@ impl App for Probe {
             scroll.set_content_length(ROWS as f32 * ROW_H);
         }
 
-        let surfaces = ScrollSurfaces::new(
-            &parent,
-            pane(),
-            AppContext::scale_factor() as f32,
-            Color::from_rgb(0x24, 0x26, 0x2B),
-        )?;
+        let surfaces = ScrollSurfaces::new(&parent, pane(), Color::from_rgb(0x24, 0x26, 0x2B))?;
         *self.surfaces.lock().unwrap() = Some(surfaces);
 
         let scroll = self.scroll.clone();

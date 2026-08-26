@@ -79,7 +79,7 @@ impl SettingsPortal {
     }
 
     /// Gets a proxy to the Otto Settings D-Bus interface.
-    async fn get_settings_proxy(&self) -> fdo::Result<OttoSettingsProxy> {
+    async fn get_settings_proxy(&self) -> fdo::Result<OttoSettingsProxy<'_>> {
         OttoSettingsProxy::new(&self.client.connection)
             .await
             .map_err(|err| {
@@ -133,8 +133,7 @@ impl SettingsPortal {
 
     /// Helper to match namespace patterns (supports trailing wildcard).
     fn matches_namespace(namespace: &str, pattern: &str) -> bool {
-        if pattern.ends_with(".*") {
-            let prefix = &pattern[..pattern.len() - 2];
+        if let Some(prefix) = pattern.strip_suffix(".*") {
             namespace.starts_with(prefix)
         } else {
             namespace == pattern

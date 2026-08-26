@@ -68,6 +68,15 @@ If applying fails, the value must not be persisted and the caller must be told
 why. A value that is valid but cannot be applied live is persisted, announced,
 and reported as pending a restart.
 
+"As far as it can" is, for a restart-required setting, not at all: the running
+configuration keeps the value the session started with. Writing the new value
+into the running configuration would not make it live — nothing reconciles
+against it — but it would let whatever happens to re-read the value half-apply
+the change (a new display scale reaching each window's next commit while the
+outputs, the bar and maximized geometry keep the old one). Reading the setting
+back after such a change answers with the persisted value, the one the next
+start will use, so the app and a later `Get` agree on what was set.
+
 ### The settings interface
 
 The compositor exposes a settings service with these operations (the exact

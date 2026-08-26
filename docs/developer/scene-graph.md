@@ -14,6 +14,18 @@ If you only read one thing: **`src/workspaces/` does not draw. It edits this
 tree.** Drawing happens later, once per frame, and only for the parts that
 changed.
 
+## The whole chain at a glance
+
+The tree's top-level shape is not a drawing convenience — it *is* how Otto
+decomposes the screen for the display hardware. Each of the output's direct
+children is rendered into its own buffer, and each buffer is offered to the KMS
+plane it was cut out for:
+
+![Scene subtree to hardware plane](diagrams/subtree-to-plane.svg)
+
+The rest of this page unpacks the left column; [Layers](layers.md) is the unit
+those subtrees are built from, and [DRM Planes](drm_plane.md) is the right one.
+
 ## What a layer is
 
 A layer is a node with visual properties — position, size, opacity, transform,

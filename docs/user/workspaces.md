@@ -131,7 +131,7 @@ Wallpaper and background colour are set globally under
 
 ## Not yet supported
 
-- Naming workspaces
 - Dragging a workspace from one monitor to another
 - Assigning applications to a workspace by rule
-- Persisting the workspace layout across restarts
+- Remembering how many workspaces each monitor had across a restart (their
+  names are remembered, the count is not)

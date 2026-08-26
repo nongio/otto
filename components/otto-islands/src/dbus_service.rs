@@ -37,8 +37,7 @@ impl IslandService {
         priority: &str,
         live: bool,
     ) -> zbus::fdo::Result<u64> {
-        let priority =
-            Priority::try_from(priority).map_err(|e| zbus::fdo::Error::InvalidArgs(e))?;
+        let priority = Priority::try_from(priority).map_err(zbus::fdo::Error::InvalidArgs)?;
 
         let progress = if progress < 0.0 {
             None

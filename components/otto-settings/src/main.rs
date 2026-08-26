@@ -919,7 +919,6 @@ impl App for SettingsApp {
         let surfaces = ScrollSurfaces::new(
             &parent,
             view::pane_viewport(WINDOW_W, WINDOW_H),
-            AppContext::scale_factor() as f32,
             view::pane_background(current_color_scheme() == ColorScheme::Dark),
         )?;
         let content_id = surfaces.content_surface().id();

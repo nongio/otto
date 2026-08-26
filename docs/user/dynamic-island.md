@@ -54,6 +54,13 @@ Multiple islands sit as a centred horizontal row, oldest on the left.
 
 Hovering any island grows it slightly — an invitation, not a mode change.
 
+### Dock badges
+
+Because `otto-islands` is the session's notification daemon, it is also what
+feeds the unread counts badged onto [dock](dock.md) icons. An application's
+badge counts the notifications it still has outstanding, and clears as they are
+dismissed.
+
 ### Actions
 
 Notifications carrying actions render them as buttons on the card. Clicking one

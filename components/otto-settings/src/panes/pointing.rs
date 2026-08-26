@@ -47,8 +47,8 @@ pub fn build() -> Pane {
                         "Scrolling speed",
                         Control::Slider {
                             value: 1.0,
-                            min: 0.0,
-                            max: 10.0,
+                            min: 0.1,
+                            max: 2.0,
                             readout: "1.0".into(),
                         },
                     )

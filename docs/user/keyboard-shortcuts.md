@@ -211,8 +211,9 @@ For reference, this is what `/etc/otto/config.toml` binds:
 
 ```toml
 [keyboard_shortcuts]
-"Ctrl+Esc"                  = "Quit"
-"Ctrl+Return"               = { run = { cmd = "terminator", args = [] } }
+"Ctrl+Return"               = { open_default = { role = "terminal", fallback = "xdg-terminal-exec" } }
+"Ctrl+Space"                = { run = { cmd = "otto-launcher", args = [] } }
+"Ctrl+Shift+P"              = { run = { cmd = "otto-launcher", args = ["--windows"] } }
 
 "Ctrl+1"                    = { builtin = "Workspace", index = 0 }
 "Ctrl+2"                    = { builtin = "Workspace", index = 1 }
@@ -242,9 +243,10 @@ For reference, this is what `/etc/otto/config.toml` binds:
 "XF86AudioStop"             = "MediaStop"
 ```
 
-Note that `Ctrl+Esc` quits and `Ctrl+Q` quits the *highlighted app in the
-switcher* — both are easy to hit by accident. Rebinding them is a reasonable
-first customization.
+Quitting the session is not in the table: `Logo+Q` and `Ctrl+Alt+Backspace`
+are always on (see above). Note that `Ctrl+Q` quits the *highlighted app in the
+switcher*, which is easy to hit by accident; rebinding it is a reasonable first
+customization.
 
 ## Shortcuts and applications
 

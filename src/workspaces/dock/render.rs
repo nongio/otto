@@ -257,6 +257,40 @@ pub fn setup_miniwindow_icon(layer: &Layer, inner_layer: &Layer, icon_width: f32
     inner_layer.build_layer_tree(&inner_tree);
 }
 
+/// Widest a tooltip balloon may get, in logical points, arrow excluded.
+const MAX_LABEL_BODY_WIDTH: f32 = 280.0;
+
+/// Shorten `text` until it fits `max_width`, appending an ellipsis.
+///
+/// Measured with the same font and paint the balloon draws with, so what fits
+/// here is exactly what fits on screen.
+fn elide_to_width(
+    text: &str,
+    font: &layers::skia::Font,
+    paint: &layers::skia::Paint,
+    max_width: f32,
+) -> String {
+    if max_width <= 0.0 || font.measure_str(text, Some(paint)).1.width() <= max_width {
+        return text.to_string();
+    }
+    // Char boundaries, so a multi-byte title never splits mid-codepoint.
+    let cuts: Vec<usize> = text.char_indices().map(|(i, _)| i).collect();
+    // Largest prefix whose elided form still fits; 0 chars always qualifies.
+    let mut best = 0;
+    let (mut lo, mut hi) = (0, cuts.len().saturating_sub(1));
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        let candidate = format!("{}\u{2026}", &text[..cuts[mid]]);
+        if font.measure_str(&candidate, Some(paint)).1.width() <= max_width {
+            best = mid;
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    format!("{}\u{2026}", &text[..cuts[best]])
+}
+
 /// Build the tooltip balloon shown while hovering a dock element.
 ///
 /// The balloon always points at the element it belongs to, so its arrow — and
@@ -276,13 +310,18 @@ pub fn setup_label(new_layer: &Layer, label_text: String, position: DockPosition
         )
     });
 
-    let text = label_text.clone();
     let paint = layers::skia::Paint::default();
-    let text_bounds = font.measure_str(label_text, Some(&paint));
+    let text_padding_h = 15.0 * scale;
+    // Long window titles would otherwise grow the balloon until it runs past
+    // the screen edge and gets clipped mid-word: elide instead.
+    let max_text_width = MAX_LABEL_BODY_WIDTH * scale - text_padding_h * 2.0;
+    let label_text = elide_to_width(&label_text, &font, &paint, max_text_width);
+
+    let text = label_text.clone();
+    let text_bounds = font.measure_str(&label_text, Some(&paint));
 
     let text_bounds = text_bounds.1;
     let arrow_height = 10.0 * scale;
-    let text_padding_h = 15.0 * scale;
     let text_padding_v = 7.0 * scale;
     let safe_margin = 50.0 * scale;
     // The text box, without the arrow that sticks out of one of its edges.
@@ -537,6 +576,32 @@ mod tests {
     /// nothing about where the tooltip is drawn.
     fn balloon_rect(label: &Layer) -> layers::skia::Rect {
         label.render_layer().global_shape_bounds
+    }
+
+    /// A very long window title must not grow the balloon without bound: it is
+    /// elided so the tooltip stays inside its cap instead of being clipped.
+    #[test]
+    #[serial]
+    fn long_titles_are_elided_to_the_max_width() {
+        let _ = Config::update(|c| c.dock.position = DockPosition::Bottom);
+        let scale = Config::with(|c| c.screen_scale as f32);
+        let (_engine, _slot, label) = label_scene(DockPosition::Bottom);
+        let short = balloon_rect(&label).width();
+
+        let long = "The Otto Scene Graph - Layer Tree and KMS Planes - a very long title";
+        setup_label(&label, long.to_string(), DockPosition::Bottom);
+        _engine.update(0.0);
+        let wide = balloon_rect(&label).width();
+
+        assert!(
+            wide > short,
+            "a longer title should still widen the balloon ({wide} vs {short})"
+        );
+        assert!(
+            wide <= MAX_LABEL_BODY_WIDTH * scale + 1.0,
+            "balloon {wide} wider than the {} cap",
+            MAX_LABEL_BODY_WIDTH * scale
+        );
     }
 
     #[test]

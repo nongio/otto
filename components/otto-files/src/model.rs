@@ -1753,7 +1753,7 @@ mod paste_tests {
         let t = Tmp::new("trash");
         let victim = t.file("gone.txt", "bye");
 
-        let result = move_to_trash(&[victim.clone()]);
+        let result = move_to_trash(std::slice::from_ref(&victim));
 
         assert_eq!(result.trashed, 1, "{:?}", result.errors);
         assert!(!victim.exists());

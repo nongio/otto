@@ -331,7 +331,7 @@ mod tests {
         fs::write(dir.join("Papirus/index.theme"), "[Icon Theme]\n").unwrap();
         fs::create_dir_all(dir.join("Incomplete")).unwrap();
 
-        let found = scan_themes(&[dir.clone()], is_icon_theme_dir);
+        let found = scan_themes(std::slice::from_ref(&dir), is_icon_theme_dir);
         assert_eq!(found, vec!["Papirus"]);
 
         fs::remove_dir_all(&dir).ok();
@@ -356,7 +356,10 @@ mod tests {
         // Present but not executable: must not count.
         fs::write(dir.join("swaylock"), "not executable").unwrap();
 
-        let found = find_in_dirs(&["otto-lock", "swaylock", "hyprlock"], &[dir.clone()]);
+        let found = find_in_dirs(
+            &["otto-lock", "swaylock", "hyprlock"],
+            std::slice::from_ref(&dir),
+        );
         assert_eq!(found, vec!["otto-lock"]);
 
         fs::remove_dir_all(&dir).ok();

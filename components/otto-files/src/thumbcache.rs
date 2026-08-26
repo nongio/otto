@@ -454,10 +454,7 @@ mod tests {
             // full digest without panicking on the chunking.
             assert_eq!(md5(&input).len(), 16);
         }
-        assert_eq!(
-            hex(&md5(&vec![b'x'; 56])),
-            "668a72d5ba17f08e62dabcafad6db14b"
-        );
+        assert_eq!(hex(&md5(&[b'x'; 56])), "668a72d5ba17f08e62dabcafad6db14b");
     }
 
     #[test]

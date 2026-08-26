@@ -464,6 +464,9 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                     });
                 });
 
+                let window = window.clone();
+                self.clear_tiled_marker(&window);
+
                 let grab = TouchResizeSurfaceGrab {
                     start_data,
                     window: window.clone(),
@@ -517,6 +520,9 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 initial_window_size,
             });
         });
+
+        let window = window.clone();
+        self.clear_tiled_marker(&window);
 
         let grab = PointerResizeSurfaceGrab {
             start_data,
@@ -1094,13 +1100,20 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             // maximized before it ever committed a buffer has no geometry
             // yet, and an empty rect would restore to nothing at all — give
             // it the size a fresh window gets instead.
+            //
+            // A tiled window keeps the rect it had BEFORE it was tiled: the
+            // geometry it has right now is the tile, and overwriting with it
+            // would lose the floating rect for good — untiling later would
+            // then "restore" the window to the half-screen it already has.
             if let Some(mut view) = self.workspaces.get_window_view(&id) {
-                view.unmaximised_rect = if current_element_geometry.size.is_empty() {
-                    default_restored_rect(new_geometry)
-                } else {
-                    current_element_geometry
-                };
-                self.workspaces.set_window_view(&id, view);
+                if view.tiled_zone.is_none() {
+                    view.unmaximised_rect = if current_element_geometry.size.is_empty() {
+                        default_restored_rect(new_geometry)
+                    } else {
+                        current_element_geometry
+                    };
+                    self.workspaces.set_window_view(&id, view);
+                }
             }
 
             let transition = Transition::ease_out(0.3);
@@ -1170,66 +1183,19 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         }
         window.set_is_maximized(false);
 
-        if let Some(mut view) = self.workspaces.get_window_view(&id) {
-            // Nothing to restore to means restoring to nothing: the window
-            // would be configured 0x0, keep the size it has, and the click
-            // would look like it did nothing at all.
-            if view.unmaximised_rect.size.is_empty() {
-                let zone = self
-                    .workspaces
-                    .output_for_window(&window)
-                    .map(|output| self.usable_zone(&output))
-                    .unwrap_or(view.unmaximised_rect);
-                view.unmaximised_rect = default_restored_rect(zone);
-                self.workspaces.set_window_view(&id, view.clone());
-            }
-
-            let current_element_geometry = self
-                .workspaces
-                .element_geometry(&window)
-                .unwrap_or(view.unmaximised_rect);
-
-            let transition = Transition::ease_out(0.3);
-            let animation = self
-                .layers_engine
-                .add_animation_from_transition(&transition, false);
-
-            // Both rects are decorated (space) geometry — strip the titlebar
-            // before handing sizes to the client.
-            let current_client_size = window.client_size(current_element_geometry.size);
-            let new_client_size = window.client_size(view.unmaximised_rect.size);
-
-            let current_width = current_client_size.w as f32;
-            let current_height = current_client_size.h as f32;
-
-            let new_width = new_client_size.w as f32;
-            let new_height = new_client_size.h as f32;
-
-            // Dropped up front, for the same reason it is set up front in
-            // `maximize_request`.
-            surface.with_pending_state(|state| {
-                state.states.unset(xdg_toplevel::State::Maximized);
-            });
-
-            let s = surface.clone();
-            self.layers_engine.on_animation_update(
-                animation,
-                move |p: f32| {
-                    let width = current_width.interpolate(&new_width, p) as i32;
-                    let height = current_height.interpolate(&new_height, p) as i32;
-                    let size = Rectangle::new((0, 0).into(), (width, height).into());
-                    s.with_pending_state(|state| {
-                        state.size = Some(size.size);
-                    });
-                    s.send_configure();
-                },
-                false,
-            );
-            self.layers_engine.start_animation(animation, 0.0);
-
-            self.workspaces
-                .map_window(&window, view.unmaximised_rect.loc, true, Some(transition));
+        // Unmaximizing is the inverse of maximizing: a window that was tiled
+        // when it got maximized lands back on its tile, not two steps back on
+        // the floating rect. Untiling from there is a separate gesture.
+        let tiled_zone = self
+            .workspaces
+            .get_window_view(&id)
+            .and_then(|view| view.tiled_zone);
+        if let Some(zone) = tiled_zone {
+            self.apply_tile(&window, zone);
+            return;
         }
+
+        self.restore_to_floating(&window);
     }
 
     fn minimize_request(&mut self, surface: ToplevelSurface) {
@@ -1553,6 +1519,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         if window.is_maximized() || window.is_fullscreen() {
             return;
         }
+        self.clear_tiled_marker(window);
         let Some(initial_window_location) = self.workspaces.element_location(window) else {
             return;
         };
@@ -1830,7 +1797,141 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
     }
 
+    /// Forget that `window` is tiled, without moving it: a window the user
+    /// resizes by hand is floating again at whatever size the drag leaves it,
+    /// and the tile shortcut must snap it afresh rather than untile it to a
+    /// rect that no longer means anything.
+    pub fn clear_tiled_marker(&mut self, window: &WindowElement) {
+        let id = window.id();
+        let Some(mut view) = self.workspaces.get_window_view(&id) else {
+            return;
+        };
+        if view.tiled_zone.is_none() {
+            return;
+        }
+        view.tiled_zone = None;
+        self.workspaces.set_window_view(&id, view);
+
+        if let Some(toplevel) = window.toplevel() {
+            toplevel.with_pending_state(|state| {
+                state.states.unset(xdg_toplevel::State::TiledLeft);
+                state.states.unset(xdg_toplevel::State::TiledRight);
+                state.states.unset(xdg_toplevel::State::TiledTop);
+                state.states.unset(xdg_toplevel::State::TiledBottom);
+            });
+        }
+    }
+
+    /// Drop `window` out of its tile, back to the floating rect saved when it
+    /// was first snapped. Clears the tiled marker and the tiled/maximized
+    /// states the client was told about.
+    pub fn untile(&mut self, window: &WindowElement) {
+        let id = window.id();
+        let Some(mut view) = self.workspaces.get_window_view(&id) else {
+            return;
+        };
+        if view.tiled_zone.is_none() {
+            return;
+        }
+        view.tiled_zone = None;
+        self.workspaces.set_window_view(&id, view);
+        window.set_is_maximized(false);
+        self.restore_to_floating(window);
+    }
+
+    /// Animate `window` back to its saved floating rect, dropping every
+    /// maximized/tiled state. Shared by unmaximize and untile — the caller
+    /// owns `is_maximized` and `tiled_zone`, this only moves the window.
+    pub fn restore_to_floating(&mut self, window: &WindowElement) {
+        match window.underlying_surface() {
+            WindowSurface::Wayland(_) => {}
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(x11) => {
+                let x11 = x11.clone();
+                self.unmaximize_request_x11(&x11);
+                return;
+            }
+            #[cfg(not(feature = "xwayland"))]
+            _ => return,
+        }
+
+        let Some(surface) = window.toplevel().cloned() else {
+            return;
+        };
+        let id = surface.wl_surface().id();
+        let Some(mut view) = self.workspaces.get_window_view(&id) else {
+            return;
+        };
+
+        // Nothing to restore to means restoring to nothing: the window
+        // would be configured 0x0, keep the size it has, and the click
+        // would look like it did nothing at all.
+        if view.unmaximised_rect.size.is_empty() {
+            let zone = self
+                .workspaces
+                .output_for_window(window)
+                .map(|output| self.usable_zone(&output))
+                .unwrap_or(view.unmaximised_rect);
+            view.unmaximised_rect = default_restored_rect(zone);
+            self.workspaces.set_window_view(&id, view.clone());
+        }
+
+        let current_element_geometry = self
+            .workspaces
+            .element_geometry(window)
+            .unwrap_or(view.unmaximised_rect);
+
+        let transition = Transition::ease_out(0.3);
+        let animation = self
+            .layers_engine
+            .add_animation_from_transition(&transition, false);
+
+        // Both rects are decorated (space) geometry — strip the titlebar
+        // before handing sizes to the client.
+        let current_client_size = window.client_size(current_element_geometry.size);
+        let new_client_size = window.client_size(view.unmaximised_rect.size);
+
+        let current_width = current_client_size.w as f32;
+        let current_height = current_client_size.h as f32;
+
+        let new_width = new_client_size.w as f32;
+        let new_height = new_client_size.h as f32;
+
+        // Dropped up front, for the same reason it is set up front in
+        // `maximize_request`.
+        surface.with_pending_state(|state| {
+            state.states.unset(xdg_toplevel::State::Maximized);
+            state.states.unset(xdg_toplevel::State::TiledLeft);
+            state.states.unset(xdg_toplevel::State::TiledRight);
+            state.states.unset(xdg_toplevel::State::TiledTop);
+            state.states.unset(xdg_toplevel::State::TiledBottom);
+        });
+
+        let s = surface.clone();
+        self.layers_engine.on_animation_update(
+            animation,
+            move |p: f32| {
+                let width = current_width.interpolate(&new_width, p) as i32;
+                let height = current_height.interpolate(&new_height, p) as i32;
+                let size = Rectangle::new((0, 0).into(), (width, height).into());
+                s.with_pending_state(|state| {
+                    state.size = Some(size.size);
+                });
+                s.send_configure();
+            },
+            false,
+        );
+        self.layers_engine.start_animation(animation, 0.0);
+
+        self.workspaces
+            .map_window(window, view.unmaximised_rect.loc, true, Some(transition));
+    }
+
     /// Snap the keyboard-focused window into `zone` (keyboard-shortcut entry point).
+    ///
+    /// The shortcut toggles: asking for the zone a window is already tiled to
+    /// drops it back to its floating rect. Asking for the OTHER zone re-tiles
+    /// it, keeping the floating rect it has held since the first snap.
     pub fn tile_focused_window(&mut self, zone: crate::workspaces::TileZone) {
         let Some(window) = self
             .seat
@@ -1843,6 +1944,19 @@ impl<BackendData: Backend> Otto<BackendData> {
         else {
             return;
         };
+
+        // Keyed off the stored zone, never off geometry: a window the user
+        // resized after tiling is floating again, and comparing rects would
+        // have it untile to a stale position instead of snapping.
+        let current_zone = self
+            .workspaces
+            .get_window_view(&window.id())
+            .and_then(|view| view.tiled_zone);
+        if current_zone == Some(zone) && !window.is_maximized() {
+            self.untile(&window);
+            return;
+        }
+
         self.apply_tile(&window, zone);
     }
 

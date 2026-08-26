@@ -10,7 +10,7 @@ locales = ["en_US", "en"]  # Language preferences for app names/desktop entries,
 cursor_size = 24
 font_family = "Inter"
 cursor_theme = "Notwaita-Black"
-icon_theme = "Adwaita"  # Uncomment to override auto-detection (e.g., "WhiteSur", "Papirus", "Adwaita")
+icon_theme = "Adwaita"  # Icon theme under /usr/share/icons (e.g. "Papirus", "WhiteSur"); lookups fall back to hicolor
 theme_scheme = "Light"  # "Light" or "Dark" - exposed via XDG Desktop Portal Settings
 # gtk_theme = "Adwaita"  # Optional: for documentation/reference only
 # background_image = "/usr/share/otto/background.jpg"
@@ -28,16 +28,20 @@ keyboard_repeat_rate = 30
 # Each entry is spawned non-blocking (fire-and-forget). Otto does not
 # restart crashed processes; use systemd or another supervisor for that.
 #
-# [[exec_once]]
-# cmd = "otto-bar"
-# args = []
+# The top bar and the dynamic island (notifications, activities, portal
+# dialogs) are separate programs; nothing starts them unless listed here.
+[[exec_once]]
+cmd = "otto-bar"
+args = []
+
+[[exec_once]]
+cmd = "otto-islands"
+args = []
+
+# Third-party helpers work the same way:
 #
 # [[exec_once]]
-# cmd = "waybar"
-# args = []
-#
-# [[exec_once]]
-# cmd = "dunst"
+# cmd = "nm-applet"
 # args = []
 #
 # [[exec_once]]
@@ -78,17 +82,23 @@ keyboard_repeat_rate = 30
 # (Type=notify in the unit file). Can also be triggered with the --systemd-notify CLI flag.
 # systemd_notify = true
 
-# Display profiles (optional)
-[displays.named."winit"]
-resolution = { width = 1280, height = 1000 }
-refresh_hz = 60.0
-position = { x = 0, y = 0 }
-
-[[displays.generic]]
-match = { connector_prefix = "HDMI" }
-resolution = { width = 1920, height = 1080 }
-refresh_hz = 60.0
-position = { x = 1920, y = 0 }
+# Display profiles (optional) — pin a monitor's mode and position. Without a
+# profile every output runs its preferred mode, and outputs are laid out left
+# to right in the order they appear. `otto --probe` prints connector names and
+# the modes each one offers.
+#
+# Named profiles match a connector exactly:
+# [displays.named."eDP-1"]
+# primary = true
+# resolution = { width = 2256, height = 1504 }
+# refresh_hz = 60.0
+# position = { x = 0, y = 0 }
+#
+# Generic profiles match a pattern, and apply to every connector that fits:
+# [[displays.generic]]
+# match = { connector_prefix = "HDMI" }
+# refresh_hz = 60.0             # keep the preferred resolution, pick 60 Hz
+# position = { x = 1920, y = 0 }
 
 # Virtual outputs (optional) — headless outputs streamed via PipeWire.
 # Each entry creates a compositor output with no physical display.
@@ -209,15 +219,17 @@ sound_enabled = true
 # Uses freedesktop.org Sound Theme specification for sound lookup
 # Common themes: "freedesktop", "Pop", "ocean"
 # Sounds are loaded from /usr/share/sounds/{theme}/stereo/{event}.oga
-sound_theme = "freedesktop"  # Uncomment to override auto-detection
+# sound_theme = "freedesktop"  # Uncomment to override auto-detection
 
 # You can also place custom sounds in resources/ directory:
 #   resources/audio-volume-change.oga - Custom volume change sound
 # Custom sounds take precedence over theme sounds.
 
+# Logo+Q, Ctrl+Alt+Backspace (quit), Ctrl+Alt+Escape (lock) and Ctrl+Alt+F<n>
+# (VT switch) are always on and need no entry here.
 [keyboard_shortcuts]
-"Ctrl+Esc" = "Quit"
-"Ctrl+Return" = { run = { cmd = "terminator", args = [] } }
+# Terminal: whatever mimeapps.list names as the default, else the fallback.
+"Ctrl+Return" = { open_default = { role = "terminal", fallback = "xdg-terminal-exec" } }
 # App launcher (Otto's own launcher; --windows lists open windows instead of apps)
 "Ctrl+Space" = { run = { cmd = "otto-launcher", args = [] } }
 "Ctrl+Shift+P" = { run = { cmd = "otto-launcher", args = ["--windows"] } }
@@ -272,11 +284,15 @@ autohide = false
 # The effect intensity is controlled by genie_scale and genie_span above.
 magnification = true
 
+# Pinned apps, by desktop file id. An id with no desktop file installed is
+# skipped with a warning, so listing apps you may not have is harmless.
 bookmarks = [
-  { desktop_id = "org.gnome.Nautilus.desktop" },
-  { desktop_id = "org.mozilla.firefox.desktop", label = "Web", exec_args = ["--private-window"] },
-  { desktop_id = "org.gnome.Terminal.desktop" }
+  { desktop_id = "otto-files.desktop" },
+  { desktop_id = "firefox.desktop" },
+  { desktop_id = "otto-settings.desktop" }
 ]
+# Bookmarks can also carry a label and extra arguments:
+# { desktop_id = "firefox.desktop", label = "Private", exec_args = ["--private-window"] }
 
 [appswitcher]
 # Show the app switcher (cmd-tab panel) on the output the pointer is on

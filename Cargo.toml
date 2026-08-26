@@ -1,12 +1,12 @@
 [package]
 name = "otto"
-authors = ["Riccardo Canalicchio <riccardo.canalicchio@gmail.com>"]
-version = "1.0.0-rc.1"
-edition = "2021"
-license = "MIT"
+authors.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 rust-version = "1.87.0"
 description = "A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail, inspired by familiar macOS interactions."
-repository = "https://github.com/nongio/otto"
+repository.workspace = true
 
 [dependencies]
 bitflags = "2.2.1"
@@ -179,6 +179,15 @@ members = [
     "sample-clients/submenu-gtk",
     "sample-clients/deadlock-test",]
 
+# One version for the whole repo: otto and every component crate inherit these
+# via `version.workspace = true` (see docs/developer/versioning.md).
+[workspace.package]
+version = "1.0.0-rc.2"
+edition = "2021"
+authors = ["Riccardo Canalicchio <riccardo.canalicchio@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/nongio/otto"
+
 
 
 [package.metadata.deb]
@@ -216,6 +225,8 @@ assets = [
     ["resources/otto-settings.desktop", "usr/share/applications/", "644"],
     ["components/xdg-desktop-portal-otto/otto.portal", "usr/share/xdg-desktop-portal/portals/", "644"],
     ["components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service", "usr/share/dbus-1/services/", "644"],
+    # The D-Bus service file above names this unit in SystemdService=.
+    ["components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service", "usr/lib/systemd/user/", "644"],
     ["components/xdg-desktop-portal-otto/portals.conf.example", "usr/share/doc/otto/", "644"],
     # Debian's PAM stack is `common-auth`, not the `system-auth` this file
     # includes, so it ships as an example to copy to /etc/pam.d/otto-lock
@@ -247,6 +258,7 @@ assets = [
     { source = "resources/otto.desktop", dest = "/usr/share/wayland-sessions/otto.desktop", mode = "644" },
     { source = "components/xdg-desktop-portal-otto/otto.portal", dest = "/usr/share/xdg-desktop-portal/portals/otto.portal", mode = "644" },
     { source = "components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service", dest = "/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.service", mode = "644" },
+    { source = "components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service", dest = "/usr/lib/systemd/user/xdg-desktop-portal-otto.service", mode = "644" },
     { source = "components/xdg-desktop-portal-otto/portals.conf.example", dest = "/usr/share/doc/otto/portals.conf.example", mode = "644", doc = true },
     { source = "components/otto-lock/otto-lock.pam", dest = "/etc/pam.d/otto-lock", mode = "644", config = true },
 ]

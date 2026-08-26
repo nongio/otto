@@ -297,7 +297,7 @@ pub enum TitlebarHit {
 
 /// What a window-local point hits in the titlebar, if anything.
 pub fn titlebar_hit(x: f32, y: f32, width: f32) -> Option<TitlebarHit> {
-    if y < 0.0 || y > TITLEBAR_H || x < 0.0 || x > width {
+    if !(0.0..=TITLEBAR_H).contains(&y) || !(0.0..=width).contains(&x) {
         return None;
     }
     match window_controls_hit().control_at(x, y) {
@@ -2016,7 +2016,20 @@ mod tests {
 
     #[test]
     fn hit_testing_still_reaches_a_row_that_is_only_visible_when_scrolled() {
-        let settings = tallest_pane();
+        // The tallest pane is not necessarily one with a toggle in it, and a
+        // toggle is what this test aims at — so pick the tallest pane that
+        // overflows its viewport AND has one, rather than assuming the two
+        // coincide (they stopped coinciding once a row was removed).
+        let settings = (0..model::panes().len())
+            .map(|i| Settings::new(i, false))
+            .filter(|s| s.pane_content_height() > s.viewport().height())
+            .filter(|s| {
+                s.row_rects(s.width - SIDEBAR_W)
+                    .iter()
+                    .any(|(row, _)| matches!(row.control, Control::Toggle(_)))
+            })
+            .max_by(|a, b| a.pane_content_height().total_cmp(&b.pane_content_height()))
+            .expect("a scrolling pane with a toggle in it");
         let viewport = settings.viewport();
         let offset = settings.pane_content_height() - viewport.height();
 

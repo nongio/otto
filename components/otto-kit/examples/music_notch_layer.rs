@@ -139,7 +139,7 @@ impl Island {
         &self,
         canvas: &skia_safe::Canvas,
         canvas_w: f32,
-        canvas_h: f32,
+        _canvas_h: f32,
         pill_w: f32,
         pill_h: f32,
         pill_y: f32,
@@ -559,7 +559,6 @@ impl IslandFeature for MusicFeature {
 struct NotificationFeature {
     title: String,
     body: String,
-    app_icon: Option<Image>,
 }
 
 impl IslandFeature for NotificationFeature {
@@ -731,7 +730,6 @@ fn sync_island_features(viz: &VisualizerState, island: &mut Island) {
         island.notification = Some(Box::new(NotificationFeature {
             title: notif.title.clone(),
             body: notif.body.clone(),
-            app_icon: None,
         }));
     } else {
         island.notification = None;

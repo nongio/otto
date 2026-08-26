@@ -5,11 +5,23 @@
 //! validate, apply, persist and announce identically. The order is fixed by
 //! `specs/settings-app.md`: validate → apply → persist → announce, and a failure
 //! to apply persists nothing.
+//!
+//! A setting the schema marks `Restart` is applied *as far as it can be*, which
+//! is not at all: it is persisted and reported, but the running configuration
+//! keeps the value the session started with. Writing it into the running
+//! configuration would not make it live — nothing reconciles against it — it
+//! would only let the code paths that happen to re-read it half-apply the
+//! change (a new `screen_scale` would reach every window's next commit while
+//! the outputs, the bar and the maximized geometry kept the old one). The
+//! values written this session that the running system does not carry live in
+//! [`pending`], and `Get`/`GetAll` answer from it so a client sees what the
+//! next start will use.
 
 pub mod apply;
 pub mod schema;
 pub mod value;
 
+use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
 
 use schema::{Apply, Invalid, SettingSpec};
@@ -105,17 +117,64 @@ fn config_toml(config: &Config) -> toml::Value {
     toml::Value::try_from(config).expect("config is always valid toml")
 }
 
-/// The current effective value of every setting, in schema order.
-pub fn all_values() -> Vec<(&'static str, SettingValue)> {
-    let doc = config_toml(&Config::current());
+/// The `Restart` settings written this session, keyed by identifier: what the
+/// next start will use where the running configuration still has the value
+/// this session started with. A key is dropped again when the two agree.
+fn pending() -> &'static Mutex<BTreeMap<&'static str, SettingValue>> {
+    static PENDING: OnceLock<Mutex<BTreeMap<&'static str, SettingValue>>> = OnceLock::new();
+    PENDING.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+/// Record that `spec` will be `value` at the next start, where `running` is
+/// what the session is using now.
+fn note_pending(spec: &SettingSpec, value: &SettingValue, running: &SettingValue) {
+    let mut pending = pending().lock().unwrap_or_else(|p| p.into_inner());
+    if value == running {
+        pending.remove(spec.id);
+    } else {
+        pending.insert(spec.id, value.clone());
+    }
+}
+
+/// The value a client is told for `spec`: what the next start will use for a
+/// setting that is waiting on one, the running value otherwise.
+fn reported_in(config_toml: &toml::Value, spec: &SettingSpec) -> SettingValue {
+    if spec.apply == Apply::Restart {
+        let pending = pending().lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(value) = pending.get(spec.id) {
+            return value.clone();
+        }
+    }
+    value_in(config_toml, spec)
+}
+
+/// Every setting as a client sees it, in schema order.
+fn reported_values(config: &Config) -> Vec<(&'static str, SettingValue)> {
+    let doc = config_toml(config);
     schema::SETTINGS
         .iter()
-        .map(|spec| (spec.id, value_in(&doc, spec)))
+        .map(|spec| (spec.id, reported_in(&doc, spec)))
         .collect()
 }
 
-/// The current effective value of one setting.
+/// The current effective value of every setting, in schema order.
+///
+/// For a `Restart` setting changed this session, "effective" means the value
+/// the next start will use — the one that was persisted — not the one the
+/// running session is still on.
+pub fn all_values() -> Vec<(&'static str, SettingValue)> {
+    reported_values(&Config::current())
+}
+
+/// The current effective value of one setting — see [`all_values`].
 pub fn value_of(id: &str) -> Option<SettingValue> {
+    let spec = schema::lookup(id)?;
+    Some(reported_in(&config_toml(&Config::current()), spec))
+}
+
+/// The value the running session is using for `id`, regardless of what has
+/// been persisted since.
+fn running_value(id: &str) -> Option<SettingValue> {
     let spec = schema::lookup(id)?;
     Some(value_in(&config_toml(&Config::current()), spec))
 }
@@ -190,6 +249,26 @@ pub fn set<B: Backend + 'static>(
         return Ok(status_for(spec));
     }
 
+    // A restart setting is not applied: the running configuration keeps what
+    // the session started with (see the module doc), and the value only has
+    // to be one the configuration can hold before it is persisted.
+    if spec.apply == Apply::Restart {
+        let next = config_with(&Config::current(), id, &value)
+            .map_err(|reason| SetError::ApplyFailed(reason.to_string()))?;
+        if value_in(&config_toml(&next), spec) != value {
+            return Err(SetError::ApplyFailed(format!(
+                "`{id}` could not be stored in the configuration"
+            )));
+        }
+        crate::config::persist_key(id, &value.to_toml())
+            .map_err(|reason| SetError::ApplyFailed(format!("could not persist: {reason}")))?;
+        if let Some(running) = running_value(id) {
+            note_pending(spec, &value, &running);
+        }
+        announce(&[(id.to_string(), value)]);
+        return Ok(Status::PendingRestart);
+    }
+
     // Apply. The previous snapshot is kept so a failure can leave the running
     // system exactly as it was — nothing is persisted unless the apply worked.
     let previous = Config::current();
@@ -255,27 +334,83 @@ pub fn reset<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result<Stat
 }
 
 /// Apply and announce every setting whose effective value differs between two
-/// configuration snapshots.
+/// configuration snapshots, `next` being the one a reload just installed.
+///
+/// Live settings are applied. Restart settings are put back to what `previous`
+/// — the running session — had, and the reloaded value is what the next start
+/// will use, so it is recorded as pending and announced instead.
 pub fn reconcile<B: Backend + 'static>(state: &mut Otto<B>, previous: &Config, next: &Config) {
-    let before = config_toml(previous);
-    let after = config_toml(next);
+    let before = reported_values(previous);
+    let previous_toml = config_toml(previous);
+    let next_toml = config_toml(next);
 
-    let mut changes = Vec::new();
     for spec in schema::SETTINGS {
-        let old = value_in(&before, spec);
-        let new = value_in(&after, spec);
-        if old == new {
+        if spec.apply != Apply::Restart {
             continue;
         }
-        if spec.apply == Apply::Live {
+        note_pending(
+            spec,
+            &value_in(&next_toml, spec),
+            &value_in(&previous_toml, spec),
+        );
+    }
+    let pinned = Config::update(|config| {
+        if let Some(restored) = with_restart_settings_of(config, &previous_toml) {
+            *config = restored;
+        }
+    });
+
+    for spec in schema::SETTINGS {
+        if spec.apply == Apply::Live && value_in(&previous_toml, spec) != value_in(&next_toml, spec)
+        {
             if let Err(reason) = apply::apply_live(state, spec.id) {
                 tracing::warn!("Could not apply `{}` live: {reason}", spec.id);
             }
         }
-        changes.push((spec.id.to_string(), new));
     }
 
+    let after = reported_values(&pinned);
+    let changes: Vec<(String, SettingValue)> = before
+        .iter()
+        .zip(after)
+        .filter(|((_, old), (_, new))| old != new)
+        .map(|(_, (id, new))| (id.to_string(), new))
+        .collect();
     announce(&changes);
+}
+
+/// A copy of `config` whose `Restart` settings carry the values in `source`.
+///
+/// `None` if the result is not a configuration the compositor accepts, which
+/// cannot happen for values that came out of a `Config` in the first place.
+fn with_restart_settings_of(config: &Config, source: &toml::Value) -> Option<Config> {
+    let mut doc = config_toml(config);
+    for spec in schema::SETTINGS {
+        if spec.apply != Apply::Restart {
+            continue;
+        }
+        match toml_at(source, spec.id) {
+            Some(value) => toml_set(&mut doc, spec.id, value.clone()).ok()?,
+            // An unset `Option` field: take the key out so it stays unset.
+            None => toml_unset(&mut doc, spec.id),
+        }
+    }
+    doc.try_into().ok()
+}
+
+/// Remove a dotted path from a TOML document, if present.
+fn toml_unset(doc: &mut toml::Value, path: &str) {
+    let (parent, leaf) = path.rsplit_once('.').unwrap_or(("", path));
+    let mut value = doc;
+    for segment in parent.split('.').filter(|s| !s.is_empty()) {
+        let Some(next) = value.get_mut(segment) else {
+            return;
+        };
+        value = next;
+    }
+    if let Some(table) = value.as_table_mut() {
+        table.remove(leaf);
+    }
 }
 
 fn status_for(spec: &SettingSpec) -> Status {
@@ -457,6 +592,42 @@ mod tests {
             &SettingValue::Str("sideways".into())
         )
         .is_err());
+    }
+
+    #[test]
+    fn a_restart_setting_is_reported_as_pending_but_left_out_of_the_running_config() {
+        let spec = schema::lookup("cursor_theme").expect("exists");
+        assert_eq!(spec.apply, Apply::Restart);
+        let running = config_toml(&Config::default());
+        let was = value_in(&running, spec);
+        let wanted = SettingValue::Str("Adwaita-pending".into());
+
+        note_pending(spec, &wanted, &was);
+        assert_eq!(reported_in(&running, spec), wanted);
+        // The running configuration is what it was; only the report changed.
+        assert_eq!(value_in(&running, spec), was);
+
+        // Writing the running value back clears the pending entry.
+        note_pending(spec, &was, &was);
+        assert_eq!(reported_in(&running, spec), was);
+        assert!(!pending().lock().unwrap().contains_key(spec.id));
+    }
+
+    #[test]
+    fn restart_settings_are_restored_from_the_previous_snapshot() {
+        let previous = Config::default();
+        let mut next = Config::default();
+        next.screen_scale = 2.0;
+        next.dock.autohide = true;
+        next.icon_theme = Some("Papirus".into());
+
+        let restored =
+            with_restart_settings_of(&next, &config_toml(&previous)).expect("valid config");
+        // Restart settings go back to the running values.
+        assert_eq!(restored.screen_scale, previous.screen_scale);
+        assert_eq!(restored.icon_theme, previous.icon_theme);
+        // A live setting is left as reloaded.
+        assert!(restored.dock.autohide);
     }
 
     #[test]

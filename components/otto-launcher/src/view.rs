@@ -187,7 +187,7 @@ impl Palette {
         );
         self.highlight
             .set_border_corner_radius(BorderRadius::new_single(9.0), None);
-        self.highlight.set_opacity(0.0, None);
+        self.highlight.set_opacity(0.0_f32, None);
     }
 
     /// The surface's size changed. Everything that does not depend on the
@@ -314,7 +314,7 @@ impl Palette {
             // not failed to find anything — and the card is the field alone.
             let rows = match empty_message {
                 Some(message) => {
-                    self.rows[0].layer.set_opacity(1.0, None);
+                    self.rows[0].layer.set_opacity(1.0_f32, None);
                     self.rows[0].layer.set_draw_content(draw_message(
                         message.to_string(),
                         title_font.clone(),
@@ -325,10 +325,10 @@ impl Palette {
                 None => 0,
             };
             for row in self.rows.iter().skip(rows) {
-                row.layer.set_opacity(0.0, None);
+                row.layer.set_opacity(0.0_f32, None);
                 row.layer.set_draw_content(draw_nothing());
             }
-            self.highlight.set_opacity(0.0, None);
+            self.highlight.set_opacity(0.0_f32, None);
             self.visible = rows;
             self.apply_card_height(rows, Some(Transition::ease_out_quad(0.12)));
             return;
@@ -336,7 +336,7 @@ impl Palette {
 
         for (row_index, row) in self.rows.iter().enumerate() {
             let Some(item) = items.get(offset + row_index) else {
-                row.layer.set_opacity(0.0, None);
+                row.layer.set_opacity(0.0_f32, None);
                 row.layer.set_draw_content(draw_nothing());
                 continue;
             };
@@ -346,7 +346,7 @@ impl Palette {
                 .as_deref()
                 .and_then(|name| resolve_icon(&mut self.icons, name));
 
-            row.layer.set_opacity(1.0, None);
+            row.layer.set_opacity(1.0_f32, None);
             row.layer.set_draw_content(draw_row(
                 icon,
                 item.title.clone(),
@@ -363,7 +363,7 @@ impl Palette {
         // The selection slides. `selected` is an index into the whole match
         // list; on screen it is however far it is past the scroll offset.
         let on_screen = selected.saturating_sub(offset);
-        self.highlight.set_opacity(1.0, None);
+        self.highlight.set_opacity(1.0_f32, None);
         self.highlight.set_position(
             LayerPoint {
                 x: ROW_INSET,
@@ -387,7 +387,7 @@ impl Palette {
 
     fn apply_card_height(&self, rows: usize, transition: Option<Transition>) {
         self.divider
-            .set_opacity(if rows == 0 { 0.0 } else { 1.0 }, None);
+            .set_opacity(if rows == 0 { 0.0_f32 } else { 1.0_f32 }, None);
         let height = self.card_height(rows);
         self.card
             .set_size(LayerSize::points(CARD_W, height), transition);

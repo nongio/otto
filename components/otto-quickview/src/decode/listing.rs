@@ -356,7 +356,7 @@ mod tests {
     #[test]
     fn dos_epoch_is_the_dos_epoch() {
         // 1980-01-01 00:00:00, the earliest a zip can express.
-        assert_eq!(dos_timestamp(0b0000000_0001_00001, 0), 315_532_800);
+        assert_eq!(dos_timestamp(0b0000_0000_0010_0001, 0), 315_532_800);
     }
 
     #[test]
