@@ -329,6 +329,25 @@ fn run(
                 data: Bytes::from(pixels),
             });
             data.last_layout = Some(layout);
+            // Debug aid: OTTO_RDP_DUMP=<path> writes the first captured
+            // frame as a binary PPM (BGRx -> RGB) and never writes again. The
+            // ground truth for "what is actually in the stream?", with no RDP
+            // client in the way — the one capture path that still works on a
+            // stack whose dmabufs no gst/screencopy consumer can negotiate.
+            static DUMP_PATH: std::sync::LazyLock<Option<String>> =
+                std::sync::LazyLock::new(|| std::env::var("OTTO_RDP_DUMP").ok());
+            static DUMPED: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+            if let Some(path) = DUMP_PATH.as_deref() {
+                if !DUMPED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    let mut ppm = format!("P6\n{dw} {dh}\n255\n").into_bytes();
+                    ppm.extend(frame.data.chunks_exact(4).flat_map(|p| [p[2], p[1], p[0]]));
+                    match std::fs::write(&path, &ppm) {
+                        Ok(()) => tracing::info!("dumped frame to {path}"),
+                        Err(e) => tracing::warn!("frame dump to {path} failed: {e}"),
+                    }
+                }
+            }
             data.latest.set(Arc::clone(&frame));
             // Send fails only when no RDP client is connected — fine.
             let receivers = data.tx.send(frame).unwrap_or(0);
@@ -340,10 +359,12 @@ fn run(
         })
         .register()?;
 
-    // Offer 32-bit formats WITH the LINEAR DRM modifier: Otto's stream
-    // advertises dmabuf-only formats whose modifier property is MANDATORY
-    // (linear is the only one offered — see screenshare/pipewire_stream.rs),
-    // so a pod without a modifier never intersects ("no more input formats").
+    // Offer 32-bit formats WITH a DRM modifier: Otto's stream advertises
+    // dmabuf-only formats whose modifier property is MANDATORY, so a pod
+    // without a modifier never intersects ("no more input formats").
+    // LINEAR is the preferred value, but a GPU stack with no explicit-modifier
+    // support (software GL, older drivers) advertises only the implicit
+    // DRM_FORMAT_MOD_INVALID — accept that too, or the link never forms.
     // Linear dmabufs stay CPU-mappable, which the process callback relies on.
     let obj = spa::pod::object!(
         spa::utils::SpaTypes::ObjectParamFormat,
@@ -377,7 +398,8 @@ fn run(
                 spa::utils::ChoiceFlags::empty(),
                 spa::utils::ChoiceEnum::Enum {
                     default: 0, // DRM_FORMAT_MOD_LINEAR
-                    alternatives: vec![0],
+                    // 0x00ff_ffff_ffff_ffff = DRM_FORMAT_MOD_INVALID (implicit)
+                    alternatives: vec![0, 0x00ff_ffff_ffff_ffff],
                 },
             ))),
         },
