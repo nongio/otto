@@ -941,7 +941,7 @@ mod tests {
             Found::Thumbnail(red_image(64, 64)),
         );
 
-        let owned = vec![entry];
+        let owned = [entry];
         let entries: Vec<&Entry> = owned.iter().collect();
         let pane = PaneData {
             entries,

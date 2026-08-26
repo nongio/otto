@@ -32,15 +32,12 @@ pub fn uri_to_path(uri: &str) -> Option<std::path::PathBuf> {
     while at < bytes.len() {
         if bytes[at] == b'%' && at + 2 < bytes.len() {
             let hex = std::str::from_utf8(&bytes[at + 1..at + 3]).ok()?;
-            match u8::from_str_radix(hex, 16) {
-                Ok(byte) => {
-                    out.push(byte);
-                    at += 3;
-                    continue;
-                }
-                // A stray '%' is a literal '%', not a failure: filenames
-                // contain them.
-                Err(_) => {}
+            // A stray '%' is a literal '%', not a failure: filenames
+            // contain them.
+            if let Ok(byte) = u8::from_str_radix(hex, 16) {
+                out.push(byte);
+                at += 3;
+                continue;
             }
         }
         out.push(bytes[at]);

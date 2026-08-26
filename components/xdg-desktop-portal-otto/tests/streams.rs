@@ -25,7 +25,7 @@ fn streams_value_encodes_required_metadata() {
         buffer_kind: Some("DMA".to_string()),
     };
 
-    let owned = build_streams_value_from_descriptors(&[descriptor.clone()])
+    let owned = build_streams_value_from_descriptors(std::slice::from_ref(&descriptor))
         .expect("should build streams value");
 
     let value: Value = owned.into();

@@ -11,6 +11,10 @@ pub enum Priority {
 }
 
 impl Priority {
+    // Used by `IslandState::top_activity`/`second_activity`, which are not
+    // yet wired into the render loop but are kept for the planned
+    // priority-based dual-island selection.
+    #[allow(dead_code)]
     pub fn rank(&self) -> u8 {
         match self {
             Priority::Low => 0,
@@ -45,6 +49,9 @@ impl From<u8> for Priority {
     }
 }
 
+// Reserved for the `ActivityRenderer` trait below, part of the planned
+// per-mode activity content rendering that isn't wired up yet.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PresentationMode {
     Idle,
@@ -64,7 +71,11 @@ pub struct NotificationAction {
 pub enum ActivitySource {
     DBus,
     Notification,
+    // Portal is reserved for the in-progress portal-access-dialog source;
+    // Internal is exercised only by dock_badges tests so far.
+    #[allow(dead_code)]
     Portal,
+    #[allow(dead_code)]
     Internal,
 }
 
@@ -78,6 +89,8 @@ pub struct Activity {
     pub progress: Option<f64>,
     pub timeout_ms: u32,
     pub priority: Priority,
+    // Set by callers but not yet read by the renderer/state update loop.
+    #[allow(dead_code)]
     pub live: bool,
     pub created_at: Instant,
     pub expired: bool,
@@ -86,6 +99,8 @@ pub struct Activity {
     pub category: Option<String>,
     pub image_path: Option<String>,
     pub transient: bool,
+    // Set by callers but not yet read by the renderer/state update loop.
+    #[allow(dead_code)]
     pub resident: bool,
     pub notification_id: Option<u32>,
     pub source: ActivitySource,
@@ -95,6 +110,7 @@ pub struct Activity {
 ///
 /// Each activity type (generic, media, timer, etc.) implements this to
 /// draw itself appropriately for the given mode.
+#[allow(dead_code)] // reserved for planned per-activity-type content renderers
 pub trait ActivityRenderer {
     /// Preferred surface size (width, height) for this mode.
     fn size(&self, mode: PresentationMode) -> (f32, f32);

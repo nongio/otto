@@ -401,7 +401,7 @@ impl Panel {
         );
         self.card
             .set_border_corner_radius(BorderRadius::new_single(PANEL_RADIUS), None);
-        self.card.set_border_width(1.0, None);
+        self.card.set_border_width(1.0_f32, None);
         self.card.set_border_color(
             PaintColor::Solid {
                 color: lay_color(Color::from_argb(46, 255, 255, 255)),
@@ -412,7 +412,7 @@ impl Panel {
             .set_shadow_color(LayerColor::new_rgba(0.0, 0.0, 0.0, 0.35), None);
         self.card
             .set_shadow_offset(LayerPoint { x: 0.0, y: 10.0 }, None);
-        self.card.set_shadow_radius(24.0, None);
+        self.card.set_shadow_radius(24.0_f32, None);
 
         self.touch_id = LottiePlayer::from_json(TOUCH_ID)
             .map_err(|err| tracing::warn!(%err, "the Touch ID animation could not be loaded"))
@@ -424,7 +424,7 @@ impl Panel {
         self.fingerprint.set_picture_cached(false);
         self.fingerprint
             .set_size(LayerSize::points(TOUCH_ID_W, TOUCH_ID_H), None);
-        self.fingerprint.set_opacity(0.0, None);
+        self.fingerprint.set_opacity(0.0_f32, None);
 
         self.avatar
             .set_border_corner_radius(BorderRadius::new_single(AVATAR / 2.0), None);
@@ -438,7 +438,7 @@ impl Panel {
         );
         self.field
             .set_border_corner_radius(BorderRadius::new_single(FIELD_H / 2.0), None);
-        self.field.set_border_width(1.0, None);
+        self.field.set_border_width(1.0_f32, None);
         self.field.set_border_color(
             PaintColor::Solid {
                 color: lay_color(with_alpha(self.appearance.accent, 190)),
@@ -475,7 +475,7 @@ impl Panel {
         );
         self.use_password
             .set_border_corner_radius(BorderRadius::new_single(PASSWORD_BUTTON_H / 2.0), None);
-        self.use_password.set_opacity(0.0, None);
+        self.use_password.set_opacity(0.0_f32, None);
 
         for (action, layer) in &self.power {
             layer.set_background_color(
@@ -677,13 +677,17 @@ impl Panel {
         // mark stands in the field's place and an empty box beside it would
         // only invite typing that goes nowhere.
         self.field.set_opacity(
-            if busy || finger.is_some() { 0.0 } else { 1.0 },
+            if busy || finger.is_some() {
+                0.0_f32
+            } else {
+                1.0_f32
+            },
             Some(fade()),
         );
         self.prompt
-            .set_opacity(if busy { 0.0 } else { 1.0 }, Some(fade()));
+            .set_opacity(if busy { 0.0_f32 } else { 1.0_f32 }, Some(fade()));
         self.busy
-            .set_opacity(if busy { 1.0 } else { 0.0 }, Some(fade()));
+            .set_opacity(if busy { 1.0_f32 } else { 0.0_f32 }, Some(fade()));
 
         if let Some(message) = view.busy {
             self.busy.set_draw_content(draw_busy(
@@ -719,10 +723,10 @@ impl Panel {
                     color,
                     fingerprint,
                 ));
-                self.status.set_opacity(1.0, Some(fade()));
+                self.status.set_opacity(1.0_f32, Some(fade()));
             }
             None => {
-                self.status.set_opacity(0.0, Some(fade()));
+                self.status.set_opacity(0.0_f32, Some(fade()));
             }
         }
 
@@ -734,7 +738,7 @@ impl Panel {
                 self.session.set_size(LayerSize::points(width, 34.0), None);
                 self.session
                     .set_draw_content(draw_session_label(label, font));
-                self.session.set_opacity(1.0, Some(fade()));
+                self.session.set_opacity(1.0_f32, Some(fade()));
                 self.session_hitbox = Some(Rect::from_xywh(
                     SCREEN_MARGIN,
                     self.size.1 - SCREEN_MARGIN - 34.0,
@@ -743,20 +747,26 @@ impl Panel {
                 ));
             }
             None => {
-                self.session.set_opacity(0.0, Some(fade()));
+                self.session.set_opacity(0.0_f32, Some(fade()));
                 self.session_hitbox = None;
             }
         }
 
         for (_, layer) in &self.power {
-            layer.set_opacity(if view.power { 1.0 } else { 0.0 }, Some(fade()));
+            layer.set_opacity(if view.power { 1.0_f32 } else { 0.0_f32 }, Some(fade()));
         }
 
         // A busy panel is past the conversation: there is nothing left to
         // choose between.
         self.password_offered = view.offer_password && !busy;
-        self.use_password
-            .set_opacity(if self.password_offered { 1.0 } else { 0.0 }, Some(fade()));
+        self.use_password.set_opacity(
+            if self.password_offered {
+                1.0_f32
+            } else {
+                0.0_f32
+            },
+            Some(fade()),
+        );
     }
 
     fn update_avatar(&mut self, user: Option<&User>) {
@@ -828,7 +838,7 @@ impl Panel {
         // not one interval after the last frame of whatever preceded it.
         self.mark_drawn_at.set(None);
         self.fingerprint
-            .set_opacity(if finger.is_some() { 1.0 } else { 0.0 }, Some(fade));
+            .set_opacity(if finger.is_some() { 1.0_f32 } else { 0.0_f32 }, Some(fade));
 
         let Some(player) = self.touch_id.clone() else {
             return;

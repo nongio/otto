@@ -192,10 +192,10 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for FocusState {
             zwlr_foreign_toplevel_handle_v1::Event::Done => {
                 state.update_focused();
             }
-            zwlr_foreign_toplevel_handle_v1::Event::Closed => {
-                if state.toplevels.remove(&id).is_some() {
-                    state.update_focused();
-                }
+            zwlr_foreign_toplevel_handle_v1::Event::Closed
+                if state.toplevels.remove(&id).is_some() =>
+            {
+                state.update_focused();
             }
             _ => {}
         }

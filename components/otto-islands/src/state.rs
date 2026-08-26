@@ -209,6 +209,9 @@ impl IslandState {
     }
 
     /// Remove all activities whose timeout has expired.
+    // Not yet called: expiry is currently driven by `check_expired_refocus`
+    // above. Kept for the planned timeout-based removal pass.
+    #[allow(dead_code)]
     pub fn expire_timeouts(&mut self) {
         let now = Instant::now();
         let len_before = self.activities.len();
@@ -221,6 +224,10 @@ impl IslandState {
     }
 
     /// The highest-priority, most-recent activity (for the left "O" surface).
+    // Not yet wired to the render loop, which currently selects by
+    // `created_at` alone in main.rs; reserved for planned priority-aware
+    // dual-island selection.
+    #[allow(dead_code)]
     pub fn top_activity(&self) -> Option<&Activity> {
         self.activities
             .iter()
@@ -285,6 +292,8 @@ impl IslandState {
     }
 
     /// The second activity (for the right "o" surface).
+    // Not yet wired to the render loop; see `top_activity` above.
+    #[allow(dead_code)]
     pub fn second_activity(&self) -> Option<&Activity> {
         if self.activities.len() < 2 {
             return None;

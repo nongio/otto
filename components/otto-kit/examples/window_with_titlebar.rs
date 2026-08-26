@@ -23,10 +23,7 @@ impl App for WindowWithTitlebarApp {
         window.on_pointer_event(move |events| {
             for event in events {
                 // Check if this is a press event in the titlebar region
-                if let PointerEventKind::Press {
-                    serial, button: _, ..
-                } = event.kind
-                {
+                if let PointerEventKind::Press { serial, .. } = event.kind {
                     // Click in titlebar area (top 28px), but avoid window controls area on the right
                     if event.position.1 < 28.0 && event.position.0 < 680.0 {
                         if let Some(seat) = AppContext::seat_state().seats().next() {

@@ -38,12 +38,9 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
             version,
         } = event
         {
-            match &interface[..] {
-                "ext_foreign_toplevel_list_v1" => {
-                    println!("Found ext_foreign_toplevel_list_v1 v{}", version);
-                    registry.bind::<ExtForeignToplevelListV1, _, _>(name, version.min(1), qh, ());
-                }
-                _ => {}
+            if &interface[..] == "ext_foreign_toplevel_list_v1" {
+                println!("Found ext_foreign_toplevel_list_v1 v{}", version);
+                registry.bind::<ExtForeignToplevelListV1, _, _>(name, version.min(1), qh, ());
             }
         }
     }

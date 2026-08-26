@@ -831,7 +831,7 @@ pub fn draw_drag_image(
             &paint,
         );
 
-        Label::new(&count.to_string())
+        Label::new(count.to_string())
             .with_style(styles::FOOTNOTE_EMPHASIZED)
             .with_color(Color::WHITE)
             .centered_on(badge.center_x(), badge.center_y())
@@ -3624,7 +3624,7 @@ pub fn draw_info(
     // A file that could not be read at all says so instead of showing a
     // permissions grid for a mode it never managed to load.
     if let Some(reason) = &info.error {
-        Label::new(&elide(reason, 40))
+        Label::new(elide(reason, 40))
             .with_style(styles::CALLOUT)
             .with_color(Color::from_argb(0xFF, 0xD7, 0x3A, 0x2E))
             .centered_on(sheet.left + 24.0, y + 8.0)

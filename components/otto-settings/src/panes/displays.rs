@@ -320,10 +320,8 @@ pub fn press(row: &str, button: &str) {
     }
     match button {
         ADD => model::add_virtual_output(),
-        REMOVE => {
-            if !model::remove_selected_virtual_output() {
-                eprintln!("displays: only a virtual display can be removed");
-            }
+        REMOVE if !model::remove_selected_virtual_output() => {
+            eprintln!("displays: only a virtual display can be removed");
         }
         _ => {}
     }
