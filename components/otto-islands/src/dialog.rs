@@ -15,8 +15,6 @@ use otto_kit::SubsurfaceSurface;
 use skia_safe::{Canvas, Color, Paint, RRect, Rect};
 use tokio::sync::oneshot;
 
-use crate::renderer::buffer_scale;
-
 pub type DialogId = u64;
 
 // ---------------------------------------------------------------------------
@@ -333,16 +331,12 @@ fn draw_text_centered(
 }
 
 /// Draw the dialog content into the (already background-styled) subsurface
-/// canvas. Content is centered within the buffer, matching the pill/card model.
+/// canvas. The buffer is sized to the panel by `draw_content`, so content is
+/// drawn from the origin, matching the pill/card model.
 /// `selected[gi]` is the chosen option index for group `gi`.
 pub fn draw_dialog(canvas: &Canvas, view: &DialogView, selected: &[usize], layout: &DialogLayout) {
-    // Center the panel within the buffer (same convention as `draw_centered`).
-    let ox = (DIALOG_BUF_W as f32 - layout.width) / 2.0;
-    let oy = (DIALOG_BUF_H as f32 - layout.height) / 2.0;
-
-    canvas.clear(Color::TRANSPARENT);
+    let _ = (layout.width, layout.height);
     canvas.save();
-    canvas.translate((ox, oy));
 
     let w = layout.width;
     let cx = w / 2.0;
@@ -577,11 +571,11 @@ pub fn apply_dialog_style(surface: &SubsurfaceSurface) {
             c.b() as f64 / 255.0,
             c.a() as f64 / 255.0,
         );
-        ss.set_corner_radius(PANEL_RADIUS as f64 * buffer_scale());
+        ss.set_corner_radius(PANEL_RADIUS as f64);
         ss.set_masks_to_bounds(ClipMode::Enabled);
         ss.set_shadow(0.35, 24.0, 0.0, 8.0, 0.0, 0.0, 0.0);
         ss.set_blend_mode(BlendMode::BackgroundBlur);
-        ss.set_contents_gravity(ContentsGravity::Center);
+        ss.set_contents_gravity(ContentsGravity::TopLeft);
         ss.set_anchor_point(0.5, 0.5);
     }
 }

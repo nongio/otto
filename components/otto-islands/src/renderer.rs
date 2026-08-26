@@ -475,7 +475,7 @@ pub fn apply_island_style(
 ) {
     if let Some(ss) = surface.base_surface().surface_style() {
         ss.set_background_color(0.03, 0.03, 0.03, 1.0);
-        ss.set_corner_radius(radius * buffer_scale());
+        ss.set_corner_radius(radius);
         ss.set_masks_to_bounds(ClipMode::Enabled);
         ss.set_shadow(0.2, 2.0, 0.0, 8.0, 0.0, 0.0, 0.0);
         ss.set_blend_mode(BlendMode::BackgroundBlur);
@@ -546,7 +546,7 @@ pub fn animate_to_with_opacity(
             }
             resize_anim.set_timing_function(&resize_timing);
             scene_surface.set_size(w as f64 * buffer_scale(), h as f64 * buffer_scale());
-            scene_surface.set_corner_radius(radius * buffer_scale());
+            scene_surface.set_corner_radius(radius);
             if let Some(o) = opacity {
                 scene_surface.set_opacity(o);
             }
@@ -576,7 +576,7 @@ pub fn animate_enter_pop(surface: &otto_kit::SubsurfaceSurface, radius: f64) {
     if let Some(scene_surface) = surface.base_surface().surface_style() {
         // Start state, applied outside any transaction so it is instant.
         scene_surface.set_scale(FROM_SCALE, FROM_SCALE);
-        scene_surface.set_corner_radius(FROM_RADIUS * buffer_scale());
+        scene_surface.set_corner_radius(FROM_RADIUS);
         scene_surface.set_opacity(0.0);
 
         if let Some(scene) = AppContext::surface_style_manager() {
@@ -590,7 +590,7 @@ pub fn animate_enter_pop(surface: &otto_kit::SubsurfaceSurface, radius: f64) {
             anim.set_timing_function(&timing);
 
             scene_surface.set_scale(1.0, 1.0);
-            scene_surface.set_corner_radius(radius * buffer_scale());
+            scene_surface.set_corner_radius(radius);
             scene_surface.set_opacity(1.0);
 
             anim.commit();
@@ -619,19 +619,25 @@ pub fn animate_dismiss(surface: &otto_kit::SubsurfaceSurface, scale: f64) {
     }
 }
 
-/// Draw content centered in the subsurface buffer.
-pub fn draw_centered(
-    surface: &otto_kit::SubsurfaceSurface,
-    content_w: f32,
-    content_h: f32,
+/// Paint one island's content: size the buffer to exactly `w x h` logical
+/// points, then draw from the origin.
+///
+/// The surface style uses `ContentsGravity::TopLeft`, so buffer (0,0) is the
+/// island's top-left corner and nothing here depends on the layer's current
+/// (animating) size. Every mode gets a buffer its own size — a Mini pill no
+/// longer carries a 460x140 slot of which a 28x28 corner is visible.
+pub fn draw_content(
+    surface: &mut otto_kit::SubsurfaceSurface,
+    w: f32,
+    h: f32,
     draw_fn: impl FnOnce(&Canvas),
 ) {
+    let (bw, bh) = (w.ceil() as i32, h.ceil() as i32);
+    if surface.base_surface().size() != (bw, bh) {
+        surface.resize(bw, bh);
+    }
     surface.draw(|canvas| {
-        let tx = (SLOT_BUF_W as f32 - content_w) / 2.0;
-        let ty = (SLOT_BUF_H as f32 - content_h) / 2.0;
-        canvas.save();
-        canvas.translate((tx, ty));
+        canvas.clear(Color::TRANSPARENT);
         draw_fn(canvas);
-        canvas.restore();
     });
 }
