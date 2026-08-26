@@ -2,6 +2,134 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.0-rc.2] - 2026-08-26
+
+### 🚀 Features
+
+- *(expose)* Desktop widget layer in exposé, docs screenshots, gesture harness (#152)
+
+### 🐛 Bug Fixes
+
+- *(shell)* SSD titlebar under scanout, and resize borders (#151)
+- *(shell)* Double click a titlebar to zoom the window (#154)
+
+### 📚 Documentation
+
+- Desktop widgets guide, page titles and descriptions (#153)
+
+### ⚙️ Miscellaneous Tasks
+
+- Usable defaults, island scaling, tiling and input polish (#156)
+- *(release)* Point the binary PKGBUILD at v1.0.0-rc.2
+
+## [1.0.0-rc1] - 2026-08-23
+
+### 🚀 Features
+
+- Fuzzy font finder (#65)
+- Wlr layer background support (#68)
+- Autostart (#69)
+- Add otto topbar component (#84)
+- Otto-islands — experimental notification manager (#86)
+- *(perf)* Per-window frame callback throttling (#92)
+- *(test)* Headless integration testing framework and expose bug fixes (#93)
+- *(dock)* Add dedicated dot_layer for running app indicator (#95)
+- Implement wlr-screencopy-v1 protocol (#94)
+- *(input)* Implement wlr-virtual-pointer-unstable-v1 (#96)
+- *(screencopy)* Unify with screenshare dmabuf blit path (#98)
+- *(dock)* Bounce app icon while a launch is in progress (#102)
+- *(tiling)* Snap windows to left/right halves and maximize (#104)
+- *(placement)* Place new windows by least overlap (#105)
+- *(kms)* Plane scanout and cross-plane backdrop blur (#110)
+- *(output)* Per-output rendering and virtual outputs (#111)
+- *(remote)* RDP bridge, AirPlay screenshare, XWayland fullscreen games (#112)
+- *(shell)* Popup overlay blur, portal access dialog, lid power (#109)
+- *(lock)* Session lock and login greeter (#113)
+- *(lock)* Idle lock, packaging, dock/expose fixes (#114)
+- *(screenshare)* Share a single window (#121)
+- *(dock)* Drag the handle to resize the dock
+- *(kit)* Shared toolkit for Otto's apps
+- *(shell)* Dock, window decorations, exposé and plane scanout
+- *(config)* Bind the launcher to Ctrl+Space in the example config
+
+### 🐛 Bug Fixes
+
+- Various otto bug fixes and refactors (#83)
+- Send output_enter in wlr-foreign-toplevel protocol (#89)
+- Popup crash and subsurface rendering (#91)
+- *(scale)* Correct otto-bar sizing on fractional-scale outputs (#119)
+- *(planes)* Map plane damage without the workspace scroll (#122)
+- *(portal)* Lowercase impl portal version property (screencast cursor mode) (#123)
+- *(blur)* Tone-map the backdrop blur so panels stay readable (#126)
+- *(portal)* Restore an approved screencast source instead of asking twice (#125)
+- *(tiling)* Widen drag side snap zones (#135)
+- *(config)* Keep dock defaults and hand-edited keys intact (#132)
+- *(lock)* Lock screen buttons are not clickable (#128)
+- *(expose)* Keep the top bar hidden during a workspace swipe (#129)
+- *(config)* Drop dock keys older builds copied into the user config (#133)
+- *(website)* Resolve static asset links against baseURL
+- *(website)* Create content/ dir before build, drop stale README merge hack
+- *(website)* Canonify root-relative cross-links against baseURL
+- *(ci)* Drop otto-settings from deb/rpm assets
+- *(packaging)* Ship the desktop apps in every package format
+- *(packaging)* Keep user config across Arch upgrades
+- *(packaging)* Keep user config across Arch upgrades
+- *(files)* Hide Quick View chrome while the card is tiny
+- *(render)* Unstick virtual output streaming
+
+### 🚜 Refactor
+
+- Update otto-kit with new features and components (#81)
+- Migrate otto to use otto-kit features (#82)
+
+### 📚 Documentation
+
+- Add AGENTS instructions and specs (#80)
+- Refresh README and drop stale plan notes (#116)
+- Add user guide covering the desktop and its features (#117)
+- Recommend region-qualified locale identifiers in config (#118)
+- Refresh the developer guide and add architecture diagrams
+- *(website)* One page per developer doc, like the user guide
+- Add a scene graph page
+
+### ⚡ Performance
+
+- *(renderer)* Fix GL/Skia format mapping and defer GPU fence wait
+- *(planes)* Sync once per frame, and fix expose gesture flicker (#139)
+
+### 🧪 Testing
+
+- *(screenshare)* Headless e2e tests for the screencast control plane
+- *(rdp)* Cover the bridge's logic and the compositor contract it runs on
+- *(shell)* Cover expose previews, click-to-raise and app switcher order
+- End-to-end coverage for screenshare, the RDP bridge and shell interactions
+
+### ⚙️ Miscellaneous Tasks
+
+- Upgrade skia-safe 0.88 → 0.93, layers 1.7 → 1.8 (#85)
+- Bump pinned toolchain to 1.97.0 (#130)
+- Install libpam0g-dev so otto-lock links against libpam
+- Build the release binaries once, not once per package job
+- Cache the packaging tools again
+- Ignore makepkg's in-tree srcdir extraction
+- *(release)* 1.0.0-rc.1
+
+### Apps
+
+- File browser, app launcher and settings (#141)
+
+### Docs
+
+- Layers page, app guides, and a sidebar fix (#149)
+
+### Islands
+
+- One island per notification, growing row that pushes its neighbours (#147)
+
+### Toolkit
+
+- The shared foundation Otto's apps are built on (#143)
+
 ## [0.15.0] - 2026-03-20
 
 ### 🚀 Features
@@ -12,6 +140,8 @@ All notable changes to this project will be documented in this file.
 - Audio and brightness osd attached to fn keys (#48)
 - *(power-management)* Lid close detection (#49)
 - *(audio)* Add configurable volume sound feedback with XDG Sound Th… (#50)
+- Virtual outputs streamed via PipeWire (#53)
+- *(multi-monitor)* Per-output independent workspace sets (wip) (#56)
 
 ### 🐛 Bug Fixes
 
@@ -19,10 +149,18 @@ All notable changes to this project will be documented in this file.
 - *(pkgbuild)* Fix nightly prepare() failing on re-run and broaden gitignore
 - Popup grabs not released
 - Minimise window on auto-hide dock (#73)
+- *(packaging)* Fix Arch PKGBUILD and remove it from release tarball
+
+### 📚 Documentation
+
+- Document new features
 
 ### ⚙️ Miscellaneous Tasks
 
+- Update unreleased updates in changelog
+- Cargo fmt and clippy
 - *(pkgbuild)* Reset PKGBUILD-git pkgver placeholder
+- *(release)* V0.15.0
 
 ### Fix
 
@@ -31,8 +169,6 @@ All notable changes to this project will be documented in this file.
 ### Wip
 
 - Otto-kit frontend ui components (#54)
-- Virtual outputs streamed via PipeWire (#53)
-- *(multi-monitor)* Per-output independent workspace sets (wip) (#56)
 
 ## [0.14.0] - 2026-02-06
 
@@ -52,6 +188,7 @@ All notable changes to this project will be documented in this file.
 
 ### 📚 Documentation
 
+- Separate user / developer documentation
 - Separate user / developer documentation
 - Update config example
 
