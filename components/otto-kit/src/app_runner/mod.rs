@@ -534,6 +534,14 @@ impl<A: App + 'static> AppRunnerWithType<A> {
 
         // Background watchers. They find their own home — an app with a plain
         // `fn main` follows the portal just like an async one does.
+        //
+        // The generation is read *before* they start: an answer that lands
+        // while `on_app_ready` runs has to reach the app as a change, not be
+        // folded into the first pass. What the app pushed to the compositor
+        // during `on_app_ready` — a window's material, say — was built from
+        // the default scheme, and only `on_theme_changed` replaces it. Seen
+        // as the settings app keeping a light frost under dark content.
+        let theme_generation_seen = crate::portal_runtime::theme_generation();
         crate::color_scheme::spawn_color_scheme_watcher();
         crate::accent::spawn_accent_watcher();
         crate::icon_theme::spawn_icon_theme_watcher();
@@ -547,6 +555,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
             conn,
             event_queue,
             app_data,
+            theme_generation_seen,
         })
     }
 
@@ -564,6 +573,9 @@ pub struct AppRunnerInitialized<A: App + 'static> {
     conn: Connection,
     event_queue: wayland_client::EventQueue<AppData<A>>,
     app_data: AppData<A>,
+    /// The theme generation last delivered to the app — taken before the
+    /// watchers were spawned, so nothing they answered during init is lost.
+    theme_generation_seen: u64,
 }
 
 impl<A: App + 'static> AppRunnerInitialized<A> {
@@ -578,9 +590,7 @@ impl<A: App + 'static> AppRunnerInitialized<A> {
 
         // Ensure wakeup pipe exists before entering the loop.
         let wake_fd = AppContext::wakeup_read_fd();
-        // The watchers may already have answered before the first pass, and a
-        // first-run notification is wasted work: the app paints anyway.
-        let mut theme_generation_seen = crate::portal_runtime::theme_generation();
+        let mut theme_generation_seen = self.theme_generation_seen;
 
         while !self.app_data.exit {
             // 1. Drain any events already queued (no I/O).
