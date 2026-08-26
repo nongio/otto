@@ -237,7 +237,7 @@ assets = [
 [package.metadata.generate-rpm]
 # RPM forbids a hyphen in Version; "~rc1" is the RPM idiom and sorts
 # before 1.0.0, which "1.0.0-rc.1" would not.
-version = "1.0.0~rc1"
+version = "1.0.0~rc.2"
 assets = [
     { source = "target/release/otto", dest = "/usr/bin/otto", mode = "755" },
     { source = "target/release/otto-bar", dest = "/usr/bin/otto-bar", mode = "755" },

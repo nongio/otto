@@ -200,7 +200,15 @@ jobs:
         run: chmod +x target/release/*
       - name: Build Arch tarball
         run: |
-          PKGVER=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          # Read the version out of [workspace.package]. Not `head -1` on the
+          # first `version = ` line: the crate inherits with
+          # `version.workspace = true`, so the first such line in the file
+          # belongs to a [dependencies.*] table and names that dependency.
+          PKGVER=$(sed -n '/^\[workspace.package\]/,/^\[/p' Cargo.toml | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
+          if [ -z "$PKGVER" ]; then
+              echo "no [workspace.package] version found in Cargo.toml" >&2
+              exit 1
+          fi
           TARBALL="otto-${PKGVER}-x86_64.tar.gz"
           tmpdir=$(mktemp -d)
           PKGDIR="otto-${PKGVER}"

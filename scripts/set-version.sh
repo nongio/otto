@@ -75,6 +75,25 @@ PKG
 
 echo "PKGBUILD pointed at v$version"
 
+# generate-rpm carries its own version because rpm wants a '~' where semver
+# writes '-': 1.0.0-rc.2 -> 1.0.0~rc.2, which rpm sorts *below* 1.0.0 so the
+# final release upgrades over its own prereleases.
+python3 - "$version" <<'RPM'
+import pathlib, re, sys
+version = sys.argv[1].replace("-", "~")
+path = pathlib.Path("Cargo.toml")
+text = path.read_text()
+new, n = re.subn(
+    r'(?ms)^(\[package\.metadata\.generate-rpm\]\n(?:(?!^\[).*?\n)??)version = "[^"]+"$',
+    lambda m: m.group(1) + 'version = "%s"' % version,
+    text, count=1)
+if n != 1:
+    sys.exit("no [package.metadata.generate-rpm] version found in Cargo.toml")
+path.write_text(new)
+RPM
+
+echo "rpm version set to ${version/-/\~}"
+
 # Refresh Cargo.lock (untracked here, but keep the local one consistent).
 cargo metadata --format-version 1 >/dev/null
 
