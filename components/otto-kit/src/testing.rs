@@ -24,8 +24,8 @@ use std::{
 use wayland_client::{
     protocol::{
         wl_buffer, wl_callback, wl_compositor, wl_data_device, wl_data_device_manager,
-        wl_data_offer, wl_data_source, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm,
-        wl_shm_pool, wl_surface,
+        wl_data_offer, wl_data_source, wl_keyboard, wl_pointer, wl_region, wl_registry, wl_seat,
+        wl_shm, wl_shm_pool, wl_surface,
     },
     Connection, Dispatch, EventQueue, QueueHandle,
 };
@@ -34,6 +34,9 @@ use wayland_protocols::xdg::shell::client::{
 };
 
 use crate::protocols::{otto_surface_style_manager_v1, otto_surface_style_v1};
+use wayland_protocols::ext::background_effect::v1::client::{
+    ext_background_effect_manager_v1, ext_background_effect_surface_v1,
+};
 
 /// Shared state for the test client's Wayland event dispatching.
 #[derive(Debug)]
@@ -45,6 +48,10 @@ pub struct TestClientState {
     /// The compositor-side material protocol, when the compositor advertises it.
     pub otto_surface_style_manager:
         Option<otto_surface_style_manager_v1::OttoSurfaceStyleManagerV1>,
+    pub ext_background_effect_manager:
+        Option<ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1>,
+    /// The `capabilities` bitmask the background-effect global sent on bind.
+    pub background_effect_capabilities: Option<u32>,
     pub shm_formats: Vec<wl_shm::Format>,
     /// The seat's keyboard, once the compositor announces the capability.
     pub wl_keyboard: Option<wl_keyboard::WlKeyboard>,
@@ -75,6 +82,8 @@ impl TestClientState {
             wl_seat: None,
             xdg_wm_base: None,
             otto_surface_style_manager: None,
+            ext_background_effect_manager: None,
+            background_effect_capabilities: None,
             shm_formats: Vec::new(),
             wl_keyboard: None,
             keys: Vec::new(),
@@ -166,6 +175,33 @@ impl TestClient {
         style.set_background_color(0.9, 0.9, 0.9, 0.85);
         style.set_blend_mode(otto_surface_style_v1::BlendMode::BackgroundBlur);
         Some(style)
+    }
+
+    /// Ask for the standard `ext-background-effect-v1` blur behind `surface`,
+    /// the way foot or wezterm do with a translucent background: the whole
+    /// surface as the blur region. Takes effect on the surface's next commit.
+    ///
+    /// Returns the effect object so the caller can keep it alive — dropping
+    /// it removes the blur on the next commit. Returns `None` when the
+    /// compositor does not advertise `ext_background_effect_manager_v1`.
+    pub fn request_background_blur(
+        &self,
+        surface: &wl_surface::WlSurface,
+        width: i32,
+        height: i32,
+    ) -> Option<ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1> {
+        let manager = self.state.ext_background_effect_manager.as_ref()?;
+        let effect = manager.get_background_effect(surface, &self.qh, ());
+        let region = self
+            .state
+            .wl_compositor
+            .as_ref()
+            .expect("compositor not bound")
+            .create_region(&self.qh, ());
+        region.add(0, 0, width, height);
+        effect.set_blur_region(Some(&region));
+        region.destroy();
+        Some(effect)
     }
 
     /// Ask the compositor to round the surface's corners, the way every
@@ -541,6 +577,10 @@ impl Dispatch<wl_registry::WlRegistry, ()> for TestClientState {
                     state.otto_surface_style_manager =
                         Some(registry.bind(name, version.min(2), qh, ()));
                 }
+                "ext_background_effect_manager_v1" => {
+                    state.ext_background_effect_manager =
+                        Some(registry.bind(name, version.min(1), qh, ()));
+                }
                 _ => {}
             }
         }
@@ -783,6 +823,49 @@ impl Dispatch<otto_surface_style_v1::OttoSurfaceStyleV1, ()> for TestClientState
         _state: &mut Self,
         _proxy: &otto_surface_style_v1::OttoSurfaceStyleV1,
         _event: otto_surface_style_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wl_region::WlRegion, ()> for TestClientState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_region::WlRegion,
+        _event: wl_region::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1, ()>
+    for TestClientState
+{
+    fn event(
+        state: &mut Self,
+        _proxy: &ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1,
+        event: ext_background_effect_manager_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let ext_background_effect_manager_v1::Event::Capabilities { flags } = event {
+            state.background_effect_capabilities = Some(u32::from(flags));
+        }
+    }
+}
+
+impl Dispatch<ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1, ()>
+    for TestClientState
+{
+    fn event(
+        _state: &mut Self,
+        _proxy: &ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1,
+        _event: ext_background_effect_surface_v1::Event,
         _data: &(),
         _conn: &Connection,
         _qh: &QueueHandle<Self>,

@@ -973,6 +973,91 @@ mod headless_tests {
         handle.stop();
     }
 
+    // ── ext-background-effect-v1 ─────────────────────────────────────────
+
+    /// A client that commits a blur region through the standard protocol
+    /// gets the same frost an otto-kit popup gets: its surface layer flips to
+    /// `BackgroundBlur` and the window counts as carrying a compositor-drawn
+    /// material (so it stays off a raw scanout plane). Destroying the effect
+    /// object takes both back on the next commit.
+    #[test]
+    #[serial]
+    fn background_effect_blur_follows_commits() {
+        use layers::types::BlendMode;
+
+        let handle = start_compositor();
+        let mut client = connect_client(&handle);
+
+        let toplevel = client.create_toplevel("blur-me", 640, 480);
+        handle.wait(Duration::from_millis(100));
+        let _ = client.roundtrip();
+
+        assert_eq!(
+            client.state.background_effect_capabilities,
+            Some(1),
+            "the global must advertise the blur capability on bind"
+        );
+
+        fn material_and_blend(handle: &HeadlessHandle, title: &'static str) -> (bool, BlendMode) {
+            handle.query(move |state| {
+                let window = state
+                    .workspaces
+                    .spaces_elements()
+                    .find(|w| w.xdg_title() == title)
+                    .expect("window mapped");
+                let blend = state
+                    .surface_layers
+                    .get(&window.id())
+                    .expect("surface layer")
+                    .render_layer()
+                    .blend_mode;
+                (window.has_material(), blend)
+            })
+        }
+
+        assert_eq!(
+            material_and_blend(&handle, "blur-me"),
+            (false, BlendMode::Normal),
+            "a plain window starts without a material"
+        );
+
+        // Pending until the surface commits: the region alone changes nothing.
+        let surface = toplevel.lock().unwrap().surface.clone();
+        let effect = client
+            .request_background_blur(&surface, 640, 480)
+            .expect("ext_background_effect_manager_v1 advertised");
+        let _ = client.roundtrip();
+        handle.wait(Duration::from_millis(50));
+        assert_eq!(
+            material_and_blend(&handle, "blur-me"),
+            (false, BlendMode::Normal),
+            "set_blur_region is double-buffered"
+        );
+
+        toplevel.lock().unwrap().commit_frame();
+        let _ = client.roundtrip();
+        handle.wait(Duration::from_millis(100));
+        assert_eq!(
+            material_and_blend(&handle, "blur-me"),
+            (true, BlendMode::BackgroundBlur),
+            "the commit applies the blur to the surface layer"
+        );
+
+        // Destroying the effect removes the blur on the next commit.
+        effect.destroy();
+        let _ = client.roundtrip();
+        toplevel.lock().unwrap().commit_frame();
+        let _ = client.roundtrip();
+        handle.wait(Duration::from_millis(100));
+        assert_eq!(
+            material_and_blend(&handle, "blur-me"),
+            (false, BlendMode::Normal),
+            "destroying the effect object takes the blur back"
+        );
+
+        handle.stop();
+    }
+
     // ── Expose: moving a window to another workspace ─────────────────────
 
     /// Pick a preview up in expose and drop it on another workspace's

@@ -379,6 +379,11 @@ pub struct Otto<BackendData: Backend + 'static> {
     // Map from surface ID to list of surface styles augmenting that surface
     pub surfaces_style: HashMap<ObjectId, Vec<crate::surface_style::SurfaceStyle>>,
     pub style_transactions: HashMap<ObjectId, crate::surface_style::StyleTransaction>,
+    /// `ext-background-effect-v1`: surfaces whose scene layer this compositor
+    /// switched to `BackgroundBlur` because the client committed a blur
+    /// region. Keyed by surface, present only while the blur is on — see
+    /// `Otto::apply_background_effect`.
+    pub background_effects: HashMap<ObjectId, bool>,
     // Map from surface ID to its rendering layer in the scene graph
     pub surface_layers: HashMap<ObjectId, layers::prelude::Layer>,
     /// Tracks which parent ObjectId each surface layer was last appended to,
@@ -789,6 +794,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         // Create minimal sc_layer shell global
         crate::surface_style::create_style_manager_global::<BackendData>(&dh);
 
+        // ext-background-effect-v1: the standard way for a terminal or panel
+        // to ask for the frost otto-surface-style gives otto-kit apps.
+        crate::background_effect::BackgroundEffectState::new::<Self>(&dh);
+
         // Create otto_dock protocol global
         let otto_dock = crate::otto_dock::handlers::OttoDockState::new::<Self>(&dh);
 
@@ -992,6 +1001,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             // Surface style protocol
             surfaces_style: HashMap::new(),
             style_transactions: HashMap::new(),
+            background_effects: HashMap::new(),
             surface_layer_parents: HashMap::new(),
             surface_children_order: HashMap::new(),
             surface_layers: HashMap::new(),

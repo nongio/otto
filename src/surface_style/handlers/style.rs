@@ -7,7 +7,7 @@ use crate::{
     state::Backend,
     surface_style::handlers::{
         accumulate_change, clip_mode_enabled, find_active_transaction_for_client,
-        refresh_window_material, trigger_window_update, wl_fixed_to_f32, OttoLayerUserData,
+        trigger_window_update, wl_fixed_to_f32, OttoLayerUserData,
     },
     Otto,
 };
@@ -250,7 +250,7 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleV1, OttoLayerUserData> for O
                         s.background_alpha = alpha;
                     }
                 }
-                refresh_window_material(state, &surface_id);
+                state.refresh_window_material(&surface_id);
             }
 
             otto_surface_style_v1::Request::SetCornerRadius { radius } => {
@@ -278,7 +278,7 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleV1, OttoLayerUserData> for O
                         s.rounded = radius > 0.0;
                     }
                 }
-                refresh_window_material(state, &surface_id);
+                state.refresh_window_material(&surface_id);
             }
 
             otto_surface_style_v1::Request::SetBorder {
@@ -321,7 +321,7 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleV1, OttoLayerUserData> for O
                         s.bordered = width > 0.0 && alpha > 0.0;
                     }
                 }
-                refresh_window_material(state, &surface_id);
+                state.refresh_window_material(&surface_id);
             }
 
             otto_surface_style_v1::Request::SetShadow {
@@ -463,7 +463,7 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleV1, OttoLayerUserData> for O
                         s.background_blur = blend_mode == LayrsBlendMode::BackgroundBlur;
                     }
                 }
-                refresh_window_material(state, &surface_id);
+                state.refresh_window_material(&surface_id);
             }
 
             otto_surface_style_v1::Request::SetZOrder { z_order } => {

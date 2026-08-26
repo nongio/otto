@@ -76,6 +76,7 @@ Handlers are split roughly like this:
 | `ext_session_lock_v1` | `src/state/session_lock_handler.rs`, `src/lock.rs` | |
 | `zwlr_screencopy_manager_v1` | `src/state/screencopy.rs` | |
 | foreign toplevel (both protocols) | `src/state/foreign_toplevel_list_handler.rs`, `src/state/wlr_foreign_toplevel.rs` | see [foreign-toplevel.md](foreign-toplevel.md) |
+| `ext_background_effect_manager_v1` | `src/background_effect.rs` | Standard blur-behind; maps onto the same `BackgroundBlur` layer path as `otto-surface-style`. See [specs/background-effect.md](../../specs/background-effect.md) |
 
 ## Otto's own protocols
 
