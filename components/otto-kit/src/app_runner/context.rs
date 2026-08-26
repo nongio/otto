@@ -173,6 +173,12 @@ static EXIT_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 
 static DISPLAY_SCALE_FACTOR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(2);
 
+/// Whether [`AppContext::set_scale_factor`] has already taken a value. The
+/// scale is latched for the lifetime of the process — see
+/// [`AppContext::fractional_scale`] for why.
+static SCALE_FACTOR_LATCHED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// Preferred fractional scale in 120ths, as sent by `wp_fractional_scale_v1`.
 /// 0 means the compositor has not sent one yet — callers fall back to the
 /// integer `wl_surface` scale.
@@ -309,8 +315,14 @@ impl<'a> AppContext<'a> {
         DISPLAY_SCALE_FACTOR.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Update the stored display scale factor (called from CompositorHandler).
+    /// Record the display scale factor (called from CompositorHandler).
+    ///
+    /// Only the first value is kept; later `scale_factor_changed` events are
+    /// ignored until the process restarts.
     pub(crate) fn set_scale_factor(factor: i32) {
+        if SCALE_FACTOR_LATCHED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
         DISPLAY_SCALE_FACTOR.store(factor, std::sync::atomic::Ordering::Relaxed);
     }
 
@@ -320,6 +332,12 @@ impl<'a> AppContext<'a> {
     /// handed to the compositor in physical pixels — surface-style sizes and
     /// positions — must use this: on a 1.5x output the integer factor is 2, and
     /// scaling by it makes a surface a third too large.
+    ///
+    /// Latched at startup. A surface fixes its buffer scale when it is created
+    /// and never re-rasters, so letting this follow a live scale change would
+    /// move the geometry out from under a buffer that stayed put — the panel
+    /// keeps its old pixels at a new size. A scale change takes effect on the
+    /// next restart, which is how the compositor-side chrome treats it too.
     pub fn fractional_scale() -> f64 {
         match DISPLAY_FRACTIONAL_SCALE_120.load(std::sync::atomic::Ordering::Relaxed) {
             0 => Self::scale_factor().max(1) as f64,
@@ -328,8 +346,17 @@ impl<'a> AppContext<'a> {
     }
 
     /// Store the preferred scale from `wp_fractional_scale_v1` (in 120ths).
+    ///
+    /// First one wins: 0 is the "nothing received yet" sentinel, so the
+    /// compare-exchange takes the compositor's opening value and ignores every
+    /// later `preferred_scale`. See [`Self::fractional_scale`].
     pub(crate) fn set_fractional_scale_120(scale_120: u32) {
-        DISPLAY_FRACTIONAL_SCALE_120.store(scale_120, std::sync::atomic::Ordering::Relaxed);
+        let _ = DISPLAY_FRACTIONAL_SCALE_120.compare_exchange(
+            0,
+            scale_120,
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 
     pub fn xdg_shell_state() -> &'static XdgShell {
@@ -1305,5 +1332,27 @@ impl<'a> AppContext<'a> {
         }
 
         RENDERER_EXIT_FLAG.store(false, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod scale_latch_tests {
+    use super::*;
+
+    /// The compositor's opening `preferred_scale` is the one the process keeps:
+    /// a later change must not move geometry under buffers that never re-raster.
+    #[test]
+    fn fractional_scale_ignores_later_changes() {
+        DISPLAY_FRACTIONAL_SCALE_120.store(0, std::sync::atomic::Ordering::Relaxed);
+
+        AppContext::set_fractional_scale_120(180); // 1.5x
+        assert_eq!(AppContext::fractional_scale(), 1.5);
+
+        AppContext::set_fractional_scale_120(240); // user switches to 2x
+        assert_eq!(
+            AppContext::fractional_scale(),
+            1.5,
+            "scale change should wait for a restart"
+        );
     }
 }

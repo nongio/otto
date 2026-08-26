@@ -187,6 +187,12 @@ snapping.
 - Multi-output positions are computed from each output's geometry scaled by its
   own fractional scale. This is exact for a single output and correct for
   side-by-side outputs at a shared scale; mixed-scale layouts are untested.
+- **A client's scale is latched at startup.** `AppContext::fractional_scale`
+  keeps the compositor's opening `preferred_scale` and ignores every later one,
+  because a surface fixes its buffer scale when it is created and never
+  re-rasters. Letting the geometry follow a live scale change would resize the
+  layer under pixels that stayed put. A scale change lands on the next client
+  restart, matching how the compositor-side chrome already treats it.
 
 ## Rationale
 
