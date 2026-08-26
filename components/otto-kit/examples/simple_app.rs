@@ -207,6 +207,8 @@ fn render_menu(state: &ContextMenuState, _view: &View<ContextMenuState>) -> Laye
                 &style_for_closure,
                 w,
                 h,
+                // The example's menus are short enough to never scroll.
+                0.0,
             );
             skia_safe::Rect::from_xywh(0.0, 0.0, w, h)
         };
