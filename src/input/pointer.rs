@@ -306,12 +306,27 @@ impl<BackendData: Backend> Otto<BackendData> {
         &self,
         pos: Point<f64, Logical>,
     ) -> Option<(PointerFocusTarget<BackendData>, Point<f64, Logical>)> {
-        let output = self.workspaces.outputs().find(|o| {
-            let geometry = self.workspaces.output_geometry(o).unwrap();
-            geometry.contains(pos.to_i32_round())
+        let (output, output_geo) = self.workspaces.outputs().find_map(|o| {
+            let geometry = self.workspaces.output_geometry(o)?;
+            geometry
+                .contains(pos.to_i32_round())
+                .then_some((o, geometry))
         })?;
         let scale = output.current_scale().fractional_scale();
-        let physical_pos = pos.to_physical(scale);
+        // Every output subtree renders at the scene origin, so lay-rs bounds
+        // (the dock, the chrome layers, their popups) are OUTPUT-LOCAL, while
+        // `pos` is in the global layout. Rebase onto the output under the
+        // pointer before probing the scene: on an output that is not at the
+        // global origin (a second monitor, a virtual output placed beside the
+        // physical one) every scene hit test otherwise missed by the output's
+        // offset, so the dock and layer-shell surfaces ignored the pointer.
+        // Wayland surfaces and windows keep using the global `pos`.
+        let scene_origin = output_geo.loc;
+        let local_physical_pos = Point::<f64, Logical>::from((
+            pos.x - scene_origin.x as f64,
+            pos.y - scene_origin.y as f64,
+        ))
+        .to_physical(scale);
         let mut under = None;
 
         // A locked session sees nothing below the lock surface. Returning None
@@ -406,8 +421,10 @@ impl<BackendData: Backend> Otto<BackendData> {
                 if !popups.is_empty() {
                     let lay_layer = &layer_shell_surf.layer;
                     let render_pos = lay_layer.render_position();
-                    let layer_abs_pos: Point<f64, Logical> =
-                        Point::from((render_pos.x as f64 / scale, render_pos.y as f64 / scale));
+                    let layer_abs_pos: Point<f64, Logical> = Point::from((
+                        render_pos.x as f64 / scale + scene_origin.x as f64,
+                        render_pos.y as f64 / scale + scene_origin.y as f64,
+                    ));
                     let cursor_rel_layer = pos - layer_abs_pos;
                     // Match Smithay's LayerSurface::surface_under approach:
                     // offset = popup_location - popup.geometry().loc
@@ -449,10 +466,14 @@ impl<BackendData: Backend> Otto<BackendData> {
             });
             for layer_shell_surf in layer_surfs {
                 let lay_layer = &layer_shell_surf.layer;
-                if lay_layer.cointains_point((physical_pos.x as f32, physical_pos.y as f32)) {
+                if lay_layer
+                    .cointains_point((local_physical_pos.x as f32, local_physical_pos.y as f32))
+                {
                     let render_pos = lay_layer.render_position();
-                    let layer_abs_pos: Point<f64, Logical> =
-                        Point::from((render_pos.x as f64 / scale, render_pos.y as f64 / scale));
+                    let layer_abs_pos: Point<f64, Logical> = Point::from((
+                        render_pos.x as f64 / scale + scene_origin.x as f64,
+                        render_pos.y as f64 / scale + scene_origin.y as f64,
+                    ));
                     let ls = layer_shell_surf.layer_surface().clone();
                     let relative_pos = pos - layer_abs_pos;
                     // Gate on the parent surface's input region so that
@@ -483,7 +504,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                 .is_some_and(|p| p.name() == output.name())
             && self
                 .workspaces
-                .is_cursor_over_dock(physical_pos.x as f32, physical_pos.y as f32)
+                .is_cursor_over_dock(local_physical_pos.x as f32, local_physical_pos.y as f32)
         {
             under = Some((
                 self.workspaces.dock.as_ref().clone().into(),
@@ -563,10 +584,14 @@ impl<BackendData: Backend> Otto<BackendData> {
                     continue;
                 }
                 let lay_layer = &layer_shell_surf.layer;
-                if lay_layer.cointains_point((physical_pos.x as f32, physical_pos.y as f32)) {
+                if lay_layer
+                    .cointains_point((local_physical_pos.x as f32, local_physical_pos.y as f32))
+                {
                     let render_pos = lay_layer.render_position();
-                    let layer_abs_pos: Point<f64, Logical> =
-                        Point::from((render_pos.x as f64 / scale, render_pos.y as f64 / scale));
+                    let layer_abs_pos: Point<f64, Logical> = Point::from((
+                        render_pos.x as f64 / scale + scene_origin.x as f64,
+                        render_pos.y as f64 / scale + scene_origin.y as f64,
+                    ));
                     let ls = layer_shell_surf.layer_surface().clone();
                     let relative_pos = pos - layer_abs_pos;
                     if !point_in_surface_input_region(ls.wl_surface(), relative_pos) {
