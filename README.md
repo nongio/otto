@@ -229,8 +229,8 @@ Every hotkey is configurable in the `[keyboard_shortcuts]` section:
 
 ```toml
 [keyboard_shortcuts]
-"Ctrl+Esc" = "Quit"
-"Ctrl+Return" = { run = { cmd = "terminator", args = [] } }
+"Ctrl+Return" = { open_default = { role = "terminal", fallback = "foot" } }
+"Ctrl+Space" = { run = { cmd = "otto-launcher", args = [] } }
 "Logo+Space" = { open_default = "file_manager" }
 "Logo+B" = { open_default = "browser" }
 "Ctrl+1" = { builtin = "Workspace", index = 0 }

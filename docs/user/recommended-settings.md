@@ -132,9 +132,9 @@ Read with the two `[input]` lines above, every `Ctrl+…` in that table is a
 
 Two things deliberately *not* bound: `Cmd+C`, `Cmd+V` and `Cmd+X` have no
 entries, because step 1 already delivers them to applications as copy, paste
-and cut — binding them in Otto would take them away. And `Ctrl+Esc` is left as
-the shipped `Quit`; on a Mac-style layout that is `Cmd+Esc`, which is hard to
-press by accident.
+and cut — binding them in Otto would take them away. And nothing is bound to
+quit the session: `Logo+Q` and `Ctrl+Alt+Backspace` are always on, and neither
+is easy to press by accident.
 
 ### Escape hatches
 

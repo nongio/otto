@@ -41,9 +41,9 @@ screen edge always reach the dock rather than the window behind.
 ```toml
 [dock]
 bookmarks = [
-  { desktop_id = "org.gnome.Nautilus.desktop" },
-  { desktop_id = "org.mozilla.firefox.desktop", label = "Web", exec_args = ["--private-window"] },
-  { desktop_id = "org.gnome.Terminal.desktop" },
+  { desktop_id = "otto-files.desktop" },
+  { desktop_id = "firefox.desktop", label = "Private", exec_args = ["--private-window"] },
+  { desktop_id = "otto-settings.desktop" },
 ]
 ```
 
