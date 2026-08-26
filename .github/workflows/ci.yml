@@ -54,7 +54,7 @@ jobs:
       - name: Run headless integration tests
         run: cargo test --features headless --test headless_basic
       - name: Run shell interaction tests
-        run: cargo test --features headless --test workspace_selector --test app_switcher
+        run: cargo test --features headless --test workspace_selector --test app_switcher --test tiling
       - name: Run screencast integration tests
         run: cargo test --features headless --test screenshare
       - name: Run RDP bridge integration tests
