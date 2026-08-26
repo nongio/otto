@@ -64,7 +64,11 @@ pub struct ScrollSurfaces {
     band: Band,
     /// Viewport in the parent surface's coordinates.
     viewport: Rect,
-    scale: f32,
+    /// The scale the clip's style geometry was last pushed with. The preferred
+    /// scale arrives after these surfaces are built, so the first push is
+    /// always the integer fallback and has to be redone once the real one
+    /// lands.
+    configured_scale: f32,
     /// Background painted into the clip surface, repainted only when it or the
     /// viewport changes.
     background: Color,
@@ -78,12 +82,21 @@ pub struct ScrollSurfaces {
 }
 
 impl ScrollSurfaces {
+    /// The output's fractional scale, read fresh every time.
+    ///
+    /// Not cached: `wp_fractional_scale_v1` delivers the preferred scale
+    /// asynchronously, and these surfaces are usually built before the first
+    /// event arrives — a value snapshotted in the constructor is the integer
+    /// fallback, and stays wrong for the life of the pane.
+    fn scale(&self) -> f32 {
+        crate::app_runner::AppContext::fractional_scale() as f32
+    }
+
     /// Build the surfaces under `parent`, with the pane occupying `viewport`
     /// in the parent's coordinate space.
     pub fn new(
         parent: &WlSurface,
         viewport: Rect,
-        scale: f32,
         background: Color,
     ) -> Result<Self, SurfaceError> {
         let clip = SubsurfaceSurface::new(
@@ -125,7 +138,7 @@ impl ScrollSurfaces {
             thumb,
             band: Band::empty(),
             viewport,
-            scale,
+            configured_scale: 0.0,
             background,
             thumb_size: (0.0, 0.0),
             last_top: None,
@@ -200,6 +213,18 @@ impl ScrollSurfaces {
     where
         F: FnOnce(&Canvas, Rect),
     {
+        // `wp_fractional_scale_v1` reports the output's scale asynchronously,
+        // so the geometry pushed when the pane was built used the integer
+        // fallback. Re-push everything that scaled by it — otherwise the pane
+        // keeps the position and size of a 2x output on a 1.25x one, sitting
+        // too far right and reaching past the window.
+        if self.configured_scale != self.scale() {
+            self.configure_clip();
+            self.band = Band::empty();
+            self.last_top = None;
+            self.last_thumb_top = None;
+        }
+
         let state = &view.state;
         debug_assert_eq!(
             state.axis(),
@@ -225,18 +250,19 @@ impl ScrollSurfaces {
     /// The clip box: claims its bounds so the compositor stops re-deriving
     /// them, clips whatever moves inside it, and paints the pane background.
     fn configure_clip(&mut self) {
+        self.configured_scale = self.scale();
         if let Some(style) = self.clip.layer() {
             style.set_size(
-                (self.viewport.width() * self.scale) as f64,
-                (self.viewport.height() * self.scale) as f64,
+                (self.viewport.width() * self.scale()) as f64,
+                (self.viewport.height() * self.scale()) as f64,
             );
             // Claiming the size stops the compositor deriving *both* size and
             // position from the surface tree, so the position the subsurface
             // was created with no longer reaches the layer — without this the
             // pane is drawn at the window's origin, on top of the chrome.
             style.set_position(
-                (self.viewport.left * self.scale) as f64,
-                (self.viewport.top * self.scale) as f64,
+                (self.viewport.left * self.scale()) as f64,
+                (self.viewport.top * self.scale()) as f64,
             );
             style.set_clip_children(ClipMode::Enabled);
         }
@@ -256,7 +282,10 @@ impl ScrollSurfaces {
         let height = self.band.height();
         self.band_surface.resize(width as i32, height as i32);
         if let Some(style) = self.band_surface.layer() {
-            style.set_size((width * self.scale) as f64, (height * self.scale) as f64);
+            style.set_size(
+                (width * self.scale()) as f64,
+                (height * self.scale()) as f64,
+            );
         }
 
         let rect = self.band.rect(0.0, width);
@@ -264,7 +293,7 @@ impl ScrollSurfaces {
         if std::env::var_os("OTTO_PANE_DEBUG").is_some() {
             eprintln!(
                 "[banddbg] paint band origin={origin:.0} h={height:.0} w={width:.0} scale={} viewport={:?}",
-                self.scale, self.viewport
+                self.scale(), self.viewport
             );
         }
         self.band_surface.draw(|canvas| {
@@ -295,7 +324,7 @@ impl ScrollSurfaces {
         }
 
         if let Some(style) = self.band_surface.layer() {
-            style.set_position(0.0, (top * self.scale) as f64);
+            style.set_position(0.0, (top * self.scale()) as f64);
         }
         // The pointer is hit-tested against the subsurface position, so it has
         // to follow — rounded, which is under a point out and invisible to a
@@ -326,8 +355,8 @@ impl ScrollSurfaces {
                 .resize(THUMB_STRIP_W as i32, rect.height().max(1.0) as i32);
             if let Some(style) = self.thumb.layer() {
                 style.set_size(
-                    (THUMB_STRIP_W * self.scale) as f64,
-                    (rect.height() * self.scale) as f64,
+                    (THUMB_STRIP_W * self.scale()) as f64,
+                    (rect.height() * self.scale()) as f64,
                 );
             }
             let color = theme.fill_secondary;
@@ -355,8 +384,8 @@ impl ScrollSurfaces {
             if self.last_thumb_top != Some(rect.top) {
                 self.last_thumb_top = Some(rect.top);
                 style.set_position(
-                    ((self.viewport.width() - THUMB_STRIP_W) * self.scale) as f64,
-                    (rect.top * self.scale) as f64,
+                    ((self.viewport.width() - THUMB_STRIP_W) * self.scale()) as f64,
+                    (rect.top * self.scale()) as f64,
                 );
             }
             if self.last_opacity != Some(opacity) {

@@ -24,11 +24,18 @@
 //! [`crate::model`] — see the doc comment there for why that exists rather
 //! than nothing.
 //!
-//! Scale is the one exception: `DisplayProfile` has no per-output scale field
-//! at all today, only the single top-level `screen_scale` (see
-//! `src/settings/schema.rs`). So although this row is drawn under a
-//! per-display header, it is bound to that global identifier — it is the
-//! only scale setting Otto actually has.
+//! Scale is a global, not a per-display setting: the only scale Otto has is
+//! the top-level `screen_scale` (`DisplayProfile` carries no per-output field,
+//! see `src/settings/schema.rs`), so it sits in its own group rather than with
+//! the selected display's rows.
+//!
+//! It is written like any other setting and takes effect at the next start,
+//! never live. Changing it under a running session does not propagate:
+//! otto-bar keeps rendering at the old scale, already-maximized windows keep
+//! their pre-change geometry, and this app's own detail view has hardcoded
+//! dimensions and does not reflow — applying it live would leave the desktop
+//! unusable. The schema marks it `Restart`, so a changed value carries the
+//! restart pill until the session comes back.
 
 use crate::model::{self, group, Control, Pane, Row};
 
@@ -43,6 +50,7 @@ const WIDTH: &str = "Width";
 const HEIGHT: &str = "Height";
 const REFRESH: &str = "Refresh rate";
 const VIRTUAL: &str = "Virtual displays";
+const SCALE: &str = "Display scale";
 
 /// The push buttons on the [`VIRTUAL`] row.
 const ADD: &str = "Add";
@@ -172,16 +180,6 @@ pub fn build() -> Pane {
                 mode_rows(selected)
                     .into_iter()
                     .chain([
-                        Row::new(
-                            "Scale",
-                            Control::Slider {
-                                value: 2.0,
-                                min: 0.5,
-                                max: 4.0,
-                                readout: "200%".into(),
-                            },
-                        )
-                        .id("screen_scale"),
                         Row::new(ACTIVE, Control::Toggle(selected.enabled))
                             .detail("An inactive display keeps its place in the arrangement"),
                         Row::new(PRIMARY, Control::Toggle(selected.primary))
@@ -194,6 +192,24 @@ pub fn build() -> Pane {
                         Row::new(Y_POSITION, Control::Text(position_text(selected.y))),
                     ])
                     .collect(),
+            ),
+            group(
+                SCALE,
+                vec![Row::new(
+                    SCALE,
+                    // Placeholders: the schema owns the range and the step
+                    // (0.5 to 4.0 by quarters), and `Row::id` takes them from
+                    // it. The readout's `%` is this pane's choice and is what
+                    // keeps it rendering as a percentage.
+                    Control::Slider {
+                        value: 1.0,
+                        min: 0.5,
+                        max: 4.0,
+                        readout: "100%".into(),
+                    },
+                )
+                .id("screen_scale")
+                .detail("Applies at the next login. The desktop does not reflow live")],
             ),
             group(
                 VIRTUAL,
