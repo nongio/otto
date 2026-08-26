@@ -90,7 +90,10 @@ fn config_cell() -> &'static RwLock<Arc<Config>> {
 impl Default for Config {
     fn default() -> Self {
         let mut config = Self {
-            screen_scale: 2.0,
+            // 1.0, not the author's HiDPI 2.0: this is what a fresh install
+            // with no /etc/otto/config.toml runs at, and a 2.0 default makes
+            // the cursor and every panel twice the size it should be.
+            screen_scale: 1.0,
             displays: DisplaysConfig::default(),
             cursor_theme: "Notwaita-Black".to_string(),
             icon_theme: None,
@@ -239,7 +242,12 @@ impl Config {
         }
 
         if !found_any_config {
-            warn!("No configuration file found, using default config");
+            warn!(
+                "No configuration file found, using default config. \
+                 Copy /etc/otto/config.example.toml to \
+                 ~/.config/otto/config.toml (or /etc/otto/config.toml) to \
+                 customise the dock, displays and input."
+            );
         }
 
         report_where_settings_are_written();

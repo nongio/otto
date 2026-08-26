@@ -14,7 +14,7 @@ makedepends=("git" "rust" "cargo" "libdisplay-info" "clang")
 optdepends=("xdg-desktop-portal: Desktop integration" "fprintd: fingerprint unlock for otto-lock and otto-greeter" "greetd: login manager otto --login hosts a greeter for" "gst-plugin-pipewire: otto-rdp video capture" "gst-plugins-bad: otto-rdp hardware H.264 (VA-API)")
 source=()
 sha256sums=()
-backup=("etc/pam.d/otto-lock")
+backup=("etc/otto/config.toml" "etc/pam.d/otto-lock")
 
 pkgver() {
     cd "$startdir"
@@ -72,11 +72,13 @@ package() {
     install -Dm644 components/xdg-desktop-portal-otto/portals.conf.example "$pkgdir/usr/share/doc/otto/portals.conf.example"
 
     # Install configuration
-    # An example, not the config: the package must never own
-    # /etc/otto/config.toml. Owning it means a reinstall or a switch between
-    # the otto, otto-git and otto-nightly-bin packages moves whatever the
-    # administrator wrote there aside as a .pacsave and drops the stock file
-    # in its place. Copy this to config.toml to use it.
+    # Both the live config and the example it was copied from. config.toml is
+    # in backup(), so an upgrade leaves a modified one alone and writes
+    # .pacnew beside it; only removing the package (switching between the
+    # otto-bin, otto-git and otto-nightly-bin variants) moves it to .pacsave.
+    # Shipping it matters: with no config at all Otto falls back to
+    # compiled-in defaults, which is an empty dock and no bookmarks.
+    install -Dm644 otto_config.example.toml "$pkgdir/etc/otto/config.toml"
     install -Dm644 otto_config.example.toml "$pkgdir/etc/otto/config.example.toml"
     # PAM stack otto-lock authenticates against; without it PAM falls through
     # to `other`, which denies everything.
