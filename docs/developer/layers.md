@@ -11,6 +11,10 @@ see [The Scene Graph](scene-graph.md).
 
 ![Layers](diagrams/layers.svg)
 
+A layer is the unit; [The Scene Graph](scene-graph.md) is the tree they form,
+and [its overview diagram](scene-graph.md#the-whole-chain-at-a-glance) shows how
+whole subtrees of them become hardware planes.
+
 A `Layer` value is a handle, not the thing itself: an `Arc<Engine>`, a
 `NodeRef` into the scene arena, a Taffy node id, and an `Arc<ModelLayer>`.
 Cloning one is free and clones nothing — two `Layer`s with the same id *are*

@@ -1,0 +1,153 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 660" width="900" height="660" role="img" aria-label="Each top-level scene subtree becomes one buffer, which Smithay tries to put on one KMS plane: dock, switcher, overlay, promoted window, expose, windows, background">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.3; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.3; }
+    .grn  { fill: #dafbe1; stroke: #2da44e; stroke-width: 1.3; }
+    .pur  { fill: #fbefff; stroke: #a475f9; stroke-width: 1.3; }
+    .warn { fill: #fff8c5; stroke: #d4a72c; stroke-width: 1.3; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.1; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 12.5px; }
+    .tb   { fill: #1f2328; font-size: 12.5px; font-weight: 600; }
+    .th   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 10.5px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .ln   { stroke: #8b949e; stroke-width: 1.2; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grn { fill: #0f2f18; stroke: #3fb950; }
+      .pur { fill: #21162e; stroke: #a475f9; }
+      .warn{ fill: #2d2200; stroke: #b08800; }
+      .grp { stroke: #6e7681; }
+      .t, .tb, .th { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <text class="th" x="20" y="24">One scene subtree  →  one buffer  →  one hardware plane</text>
+  <text class="tm" x="20" y="41">Front-most first. Per output: every output owns its own copy of this whole column.</text>
+
+  <text class="tb" x="34"  y="66">Scene subtree  (lay-rs)</text>
+  <text class="tb" x="320" y="66">Buffer  (SceneDmabufElement)</text>
+  <text class="tb" x="612" y="66">Hardware</text>
+
+  <!-- ── dock ─────────────────────────────────────────── -->
+  <rect class="acc" x="20" y="76" width="248" height="40" rx="6"/>
+  <text class="t mono" x="32" y="93">dock_plane</text>
+  <text class="tm" x="32" y="108">the dock</text>
+  <path class="ln" d="M268 96 L308 96"/>
+  <rect class="grn" x="308" y="76" width="252" height="40" rx="6"/>
+  <text class="t mono" x="320" y="93">"dock"</text>
+  <text class="tm" x="320" y="108">a strip along its edge, not full screen</text>
+  <path class="ln" d="M560 96 L600 96"/>
+  <rect class="box" x="600" y="76" width="280" height="40" rx="6"/>
+  <text class="t" x="612" y="93">overlay plane</text>
+  <text class="tm" x="612" y="108">pushed only while the dock is visible</text>
+
+  <!-- ── switcher ─────────────────────────────────────── -->
+  <rect class="acc" x="20" y="124" width="248" height="40" rx="6"/>
+  <text class="t mono" x="32" y="141">switcher_plane</text>
+  <text class="tm" x="32" y="156">the app switcher</text>
+  <path class="ln" d="M268 144 L308 144"/>
+  <rect class="grn" x="308" y="124" width="252" height="40" rx="6"/>
+  <text class="t mono" x="320" y="141">"switcher"</text>
+  <text class="tm" x="320" y="156">a strip, not full screen</text>
+  <path class="ln" d="M560 144 L600 144"/>
+  <rect class="box" x="600" y="124" width="280" height="40" rx="6"/>
+  <text class="t" x="612" y="141">overlay plane</text>
+  <text class="tm" x="612" y="156">only while the switcher is alive</text>
+
+  <!-- ── overlay ──────────────────────────────────────── -->
+  <rect class="acc" x="20" y="172" width="248" height="46" rx="6"/>
+  <text class="t mono" x="32" y="189">overlay_plane</text>
+  <text class="tm" x="32" y="204">layer-shell top + overlay, popups,</text>
+  <text class="tm" x="32" y="215">OSD, workspace selector, DnD icon</text>
+  <path class="ln" d="M268 195 L308 195"/>
+  <rect class="grn" x="308" y="172" width="252" height="46" rx="6"/>
+  <text class="t mono" x="320" y="189">"overlay"</text>
+  <text class="tm" x="320" y="204">full screen, ARGB</text>
+  <path class="ln" d="M560 195 L600 195"/>
+  <rect class="box" x="600" y="172" width="280" height="46" rx="6"/>
+  <text class="t" x="612" y="189">overlay plane</text>
+  <text class="tm" x="612" y="204">blurs the composite below it</text>
+
+  <!-- ── promoted window ──────────────────────────────── -->
+  <rect class="pur" x="20" y="226" width="248" height="46" rx="6"/>
+  <text class="t mono" x="32" y="243">promoted_plane</text>
+  <text class="tm" x="32" y="258">the topmost window, lifted out of</text>
+  <text class="tm" x="32" y="269">the windows plane</text>
+  <path class="ln" d="M268 249 L308 249"/>
+  <rect class="pur" x="308" y="226" width="252" height="46" rx="6"/>
+  <text class="t mono" x="320" y="243">"window"</text>
+  <text class="tm" x="320" y="258">the window's own bounds, shadow</text>
+  <text class="tm" x="320" y="269">included — origin moves with it</text>
+  <path class="ln" d="M560 249 L600 249"/>
+  <rect class="box" x="600" y="226" width="280" height="46" rx="6"/>
+  <text class="t" x="612" y="243">overlay plane</text>
+  <text class="tm" x="612" y="258">or the client's own buffer, straight</text>
+  <text class="tm" x="612" y="269">to scanout, when it can take it</text>
+
+  <!-- ── workspaces_layer group ───────────────────────── -->
+  <rect class="grp" x="10" y="284" width="268" height="172" rx="10"/>
+  <text class="tm" x="22" y="302">workspaces_layer — one scroll moves all three</text>
+
+  <rect class="acc" x="20" y="310" width="248" height="40" rx="6"/>
+  <text class="t mono" x="32" y="327">expose_layer</text>
+  <text class="tm" x="32" y="342">the all-windows overview</text>
+  <path class="ln" d="M268 330 L308 330"/>
+  <rect class="grn" x="308" y="310" width="252" height="40" rx="6"/>
+  <text class="t mono" x="320" y="327">"expose"</text>
+  <text class="tm" x="320" y="342">full screen, ARGB</text>
+  <path class="ln" d="M560 330 L600 330"/>
+  <rect class="box" x="600" y="310" width="280" height="40" rx="6"/>
+  <text class="t" x="612" y="327">overlay plane</text>
+  <text class="tm" x="612" y="342">replaces the windows plane while up</text>
+
+  <rect class="acc" x="20" y="358" width="248" height="40" rx="6"/>
+  <text class="t mono" x="32" y="375">windows_plane</text>
+  <text class="tm" x="32" y="390">every workspace's windows</text>
+  <path class="ln" d="M268 378 L308 378"/>
+  <rect class="grn" x="308" y="358" width="252" height="40" rx="6"/>
+  <text class="t mono" x="320" y="375">"windows"</text>
+  <text class="tm" x="320" y="390">full screen, ARGB</text>
+  <path class="ln" d="M560 378 L600 378"/>
+  <rect class="box" x="600" y="358" width="280" height="40" rx="6"/>
+  <text class="t" x="612" y="375">overlay plane</text>
+
+  <rect class="acc" x="20" y="406" width="248" height="40" rx="6"/>
+  <text class="t mono" x="32" y="423">background_plane</text>
+  <text class="tm" x="32" y="438">wallpaper, desktop widgets</text>
+  <path class="ln" d="M268 426 L308 426"/>
+  <rect class="grn" x="308" y="406" width="252" height="40" rx="6"/>
+  <text class="t mono" x="320" y="423">"bg"</text>
+  <text class="tm" x="320" y="438">full screen, XRGB, opaque</text>
+  <path class="ln" d="M560 426 L600 426"/>
+  <rect class="warn" x="600" y="406" width="280" height="40" rx="6"/>
+  <text class="t" x="612" y="423">PRIMARY plane only</text>
+  <text class="tm" x="612" y="438">never an overlay — it would hide the rest</text>
+
+  <!-- ── notes ────────────────────────────────────────── -->
+  <rect class="box" x="20" y="480" width="418" height="76" rx="8"/>
+  <text class="tb" x="32" y="500">The names collide on purpose</text>
+  <text class="tm" x="32" y="517">A “…_plane” in the scene is a lay-rs layer, not a KMS plane.</text>
+  <text class="tm" x="32" y="531">They share a name because the tree's top-level shape IS the</text>
+  <text class="tm" x="32" y="545">plane decomposition — but only the right column is hardware.</text>
+
+  <rect class="box" x="462" y="480" width="418" height="76" rx="8"/>
+  <text class="tb" x="474" y="500">Nothing here is guaranteed</text>
+  <text class="tm" x="474" y="517">Smithay TEST_ONLYs every element against the hardware each</text>
+  <text class="tm" x="474" y="531">frame. Whatever loses its plane is composited into PRIMARY —</text>
+  <text class="tm" x="474" y="545">correct, just more GPU. An underrun drops the budget a step.</text>
+
+  <rect class="box" x="20" y="568" width="860" height="72" rx="8"/>
+  <text class="tb" x="32" y="588">Why split the tree this way at all</text>
+  <text class="tm" x="32" y="605">A subtree is re-rendered only when damage lands under it, and a plane is re-flipped only when its buffer changed. A blinking cursor</text>
+  <text class="tm" x="32" y="619">touches the windows plane alone; the wallpaper, dock and overlay buffers are untouched and keep scanning out. An idle desktop</text>
+  <text class="tm" x="32" y="633">reaches zero re-renders and zero page flips. The lock plane is the exception with no plane of its own — it composites.</text>
+</svg>

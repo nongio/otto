@@ -42,6 +42,14 @@ Minimized windows are not shown.
 Previews are **live**, not screenshots — a playing video keeps playing in its
 preview.
 
+### Desktop widgets
+
+Widgets that live on the desktop — anything on the layer-shell *bottom* layer,
+such as a conky panel or a desktop clock — stay on screen while exposé is open
+and fade with the rest of the desktop instead of vanishing the moment the
+gesture starts. They are deliberately left out of the workspace previews in the
+selector strip, which show the wallpaper alone.
+
 ### The workspace selector
 
 While exposé is open, a strip of live workspace previews sits above the grid,

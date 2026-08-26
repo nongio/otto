@@ -20,16 +20,38 @@ The focused window's name and menus appear in the [Top Bar](topbar.md).
 ## Moving and resizing
 
 Drag a window by its title bar to move it; drag an edge or corner to resize.
-On a server-side title bar Otto starts the move itself. Everywhere else both
-are driven by the application: Otto starts the move or resize when the app asks
-it to, which is what happens when you grab the parts of the window its toolkit
-designates for that.
+
+On a window Otto decorates, both are the compositor's own: the title bar starts
+the move, and a narrow strip along the window's four edges and corners — about
+six points wide, hit-tested ahead of everything else — starts a resize. Such a
+window draws no frame of its own and so never asks for a resize; the border is
+what gives it one. The cursor changes over it to name the edge you would grab.
+
+On a window that draws its own decorations, both are driven by the application:
+Otto starts the move or resize when the app asks it to, which is what happens
+when you grab the parts of the window its toolkit designates for that.
 
 Dragging a **maximized** window unmaximizes it and keeps the grab point under
 your pointer, proportionally — so the window shrinks to its restored size around
 where you grabbed it rather than jumping away.
 
 There is no modifier-drag (`Alt`+drag) to move a window from anywhere yet.
+
+### Drag to tile
+
+Hold `Ctrl` while dragging a window and Otto previews where it would land — a
+translucent rectangle over the target area, animating as you move between
+zones. Release to snap the window there; let go of `Ctrl` first and the drag
+stays an ordinary move.
+
+| Where the pointer is | Zone |
+|----------------------|------|
+| Top band of the usable area, its middle half | Maximize |
+| Left of centre | Left half |
+| Right of centre | Right half |
+
+Only a narrow column down the middle arms no zone at all, so nudging a window
+off centre is enough to tile it to that side.
 
 ## Decorations
 
@@ -75,7 +97,8 @@ These are one-shot geometry changes, not a managed tiling mode: nothing keeps
 the two windows in sync, and moving or resizing either one afterwards just
 works normally. Tiling a maximized window unmaximizes it first.
 
-There is no drag-to-edge snapping yet — tiling is keyboard-only.
+The same three targets are reachable with the pointer — see
+[Drag to tile](#drag-to-tile).
 
 ## Fullscreen
 
@@ -149,8 +172,7 @@ Two things get special handling:
 
 ## What is not there yet
 
-- Drag-to-edge tiling and quarter tiles
+- Quarter tiles, and tiling without holding `Ctrl`
 - A modifier-drag to move or resize from anywhere in a window
 - Window rules (per-app placement, size, workspace assignment)
 - Always-on-top / sticky windows
-- Per-window capture (see [Screen Sharing](screen-sharing.md))

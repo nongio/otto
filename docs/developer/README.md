@@ -27,6 +27,7 @@ and hands the whole tree to the renderer as a single render element. Most of
 
 | Page | What it covers |
 |------|----------------|
+| [otto-kit](otto-kit.md) | The toolkit the apps and the compositor's own chrome are built on |
 | [Dock](dock-design.md) | The compositor-drawn dock: data flow, layers, magnification |
 | [Exposé](expose.md) | The all-windows overview: layout, mirrors, drag-and-drop, multi-output |
 | [Window Move](window-move.md) | How interactive window drags are implemented |
@@ -36,6 +37,7 @@ and hands the whole tree to the renderer as a single render element. Most of
 | [Color Scheme](color-scheme-setting.md) | How apps learn whether Otto is in light or dark mode |
 | [Settings D-Bus API](settings-dbus-api.md) | The `org.otto.Settings` wire contract |
 | [RDP Bridge](rdp-virtual-output.md) | Serving a virtual output over RDP (`otto-rdp`) |
+| [Versioning & Releases](versioning.md) | One workspace version for the compositor and every component, and how to bump it |
 | [Remote-Desktop Indicator](remote-desktop-indicator.md) | The sharing indicator `otto-rdp` publishes while a client is watching |
 
 ## Design docs and plans
@@ -47,7 +49,7 @@ at the top — check that before trusting the details.
 |------|--------|
 | [otto-kit Roadmap](otto-kit-roadmap.md) | Partially built — gap analysis for the UI toolkit |
 | [Surface Style Protocol](sc-layer-protocol-design.md) | Superseded — the original design behind `otto-surface-style-v1` |
-| [Screenshot Portal Plan](screenshot-plan.md) | Not implemented |
+| [Screenshot Portal Plan](screenshot-plan.md) | Partly built — the portal exists and shells out to `grim`; Otto-drawn selection is still the plan |
 | [AirPlay Screenshare](airplay-screenshare.md) | Exploration only |
 
 ## Specs

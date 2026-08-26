@@ -8,7 +8,8 @@ user: what the desktop is made of, how to drive it, and how to configure it.
 
 If you are installing Otto for the first time, start with
 [Getting Started](getting-started.md), then take the
-[Desktop Tour](desktop-tour.md).
+[Desktop Tour](desktop-tour.md). Once it runs,
+[Recommended Settings](recommended-settings.md) is a config worth stealing from.
 
 ## Using the desktop
 
@@ -41,6 +42,7 @@ versions: useful day to day, still filling in.
 | Page | What it covers |
 |------|----------------|
 | [Configuration](configuration.md) | Where config files live and how they merge |
+| [Recommended Settings](recommended-settings.md) | The config Otto's author runs — a Mac-like keyboard and the rest |
 | [Display](display.md) | Scaling, monitor arrangement, modes, virtual outputs, panels |
 | [Theming](theming.md) | Light/dark, accent color, fonts, wallpaper, cursors, icons |
 | [Input](input.md) | Keyboard layout and repeat, touchpad, pointer acceleration |

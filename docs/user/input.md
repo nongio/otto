@@ -149,7 +149,9 @@ devices — mice and touchpads alike.
 
 `scroll_speed` is a software multiplier applied to scroll events. `1.0` leaves
 them alone, `2.0` doubles them, `0.5` halves them. Use it when a mouse wheel's
-notches move too far.
+notches move too far. The Settings app offers `0.1` to `2.0`; libinput reports
+finger scrolling in the same units as pointer motion, so `1.0` is already the
+finger's own travel and there is little reason to go past double it.
 
 Scroll *acceleration* (speed varying with how fast you spin the wheel) is not
 implemented.

@@ -33,6 +33,10 @@ something for the planes to take.
 
 ![Plane decomposition](diagrams/planes.svg)
 
+For the same decomposition seen from the other end — which scene subtree each
+of these buffers is rendered from — see
+[the overview in The Scene Graph](scene-graph.md#the-whole-chain-at-a-glance).
+
 Per output, front to back: the dock strip, the app-switcher strip, overlay UI,
 exposé, the promoted client window, the windows buffer, and the background.
 Each of those is a subtree of the `lay-rs` scene — see

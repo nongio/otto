@@ -63,22 +63,57 @@ A successful call returns a request object path immediately.
 In a browser, click "Share screen"; in a video call, pick screen sharing. The
 portal takes over from there:
 
-1. A **permission dialog** appears in the
-   [dynamic island](dynamic-island.md) — who is asking, and what for.
-2. You grant or deny.
-3. On grant, Otto starts a PipeWire stream of the chosen monitor and hands the
-   node to the application.
+1. A **permission and source dialog** appears in the
+   [dynamic island](dynamic-island.md): who is asking, and a list of what you
+   can share.
+2. You pick a source and grant, or cancel.
+3. On grant, Otto starts a PipeWire stream of that source and hands the node to
+   the application.
 
-`otto-islands` is what renders that dialog. **If it is not running, the request
-is denied** rather than left hanging — a screenshare that cannot ask fails
-closed.
+`otto-islands` is what renders that dialog with icons. If it is not running,
+Otto falls back to another desktop's standard Access dialog (same choices,
+without icons); if that is unreachable either, the request is denied rather
+than left hanging — a screenshare that cannot ask fails closed.
 
-### Choosing which monitor
+### Choosing a source
 
-There is no graphical source picker yet. Without one, Otto shares the first
-monitor it enumerates.
+The dialog lists, in order:
 
-To override, write the connector name into a file:
+- every **monitor**, by connector name — including virtual outputs, so
+  `virtual-1` is shareable like any other screen;
+- every open **window**, by its title (or its app id if it has none), with its
+  application icon.
+
+The first entry is preselected.
+
+### Sharing one window
+
+Pick a window in that list and Otto captures that window alone: what is shared
+is the window's own content, so windows stacked over it do not leak into the
+stream, and the size follows the window rather than the screen. A window Otto
+decorates shows a sharing indicator in its title bar while it is being
+captured.
+
+Only the window's identity is remembered — if it moves, is resized or changes
+monitor mid-share, the stream follows it.
+
+### Being asked only once
+
+Apps that ask for persistence get a **restore token**. The next time the same
+app starts a session it hands the token back and Otto re-uses the source that
+was already approved instead of prompting again. This matters in practice for
+Chrome, which creates a session twice — once for the preview inside its own
+picker, once for the real capture — and would otherwise ask you twice for the
+same share.
+
+A token written by another desktop's portal is rejected, and a token naming a
+source that no longer exists (an unplugged monitor, a closed window) falls back
+to asking.
+
+### When no dialog is reachable
+
+If neither dialog backend can be reached, Otto shares one monitor without
+asking. Which one comes from a file:
 
 ```sh
 echo "HDMI-A-1" > ~/.config/otto/screencast-output
@@ -86,10 +121,8 @@ echo "HDMI-A-1" > ~/.config/otto/screencast-output
 
 It is read fresh on every share request, so you can change it between sessions
 without restarting anything. Use a name from `otto --probe`, or a virtual output
-name like `virtual-1`.
-
-If the name does not match any available output, Otto logs a warning and falls
-back to the first one.
+name like `virtual-1`. If the name does not match any available output, Otto
+logs a warning and falls back to the first one.
 
 ### Cursor
 
@@ -155,8 +188,9 @@ That path runs `grim`, so install it if you want portal screenshots to work.
 
 There is no built-in screenshot UI for selecting a region or a window
 interactively, and **per-window capture through screencopy is not implemented**
-— screencopy captures whole outputs or rectangles of them. Per-window capture
-*is* available through the screen-sharing portal.
+— screencopy captures whole outputs or rectangles of them. Sharing a single
+window *is* available through the screen-sharing portal; see
+[Sharing one window](#sharing-one-window).
 
 ## AirPlay
 
@@ -166,8 +200,9 @@ the very portal you just configured:
 
 1. Set up a non-interactive virtual output (AirPlay mirroring has no input
    channel — it is view-only).
-2. Point `~/.config/otto/screencast-output` at it.
-3. Run doubletake and pick your receiver.
+2. Run doubletake and pick your receiver.
+3. Choose that virtual output in Otto's share dialog — it is listed with the
+   physical monitors.
 
 Otto does not implement the AirPlay protocol itself. The sender side requires
 Apple's FairPlay handshake, which no clean-room implementation exists for.
@@ -202,8 +237,10 @@ node ids.
 **The permission dialog never appears.** `otto-islands` is not running. Start
 it (`[[exec_once]]`) and try again.
 
-**The wrong monitor is shared.** See
-[Choosing which monitor](#choosing-which-monitor) above.
+**The wrong source is shared.** Pick it in the dialog — see
+[Choosing a source](#choosing-a-source). If no dialog appeared at all, Otto took
+the fallback path; see
+[When no dialog is reachable](#when-no-dialog-is-reachable).
 
 **The video is mangled — torn, sheared or wrongly coloured.** This is a dmabuf
 modifier negotiation problem between Otto and the consumer. Capture a log with:
@@ -220,8 +257,8 @@ backend are both on the session bus the sandbox sees.
 
 ## Not yet implemented
 
-- A graphical source picker (window thumbnails, region selection)
-- Per-window capture
-- Restore tokens — every share asks permission again
+- A graphical source picker with window thumbnails and region selection — the
+  consent dialog lists sources by name
+- Region capture (a rectangle of an output) through the portal
 - Multiple simultaneous outputs in one session (the first is used)
 - Audio capture
