@@ -482,9 +482,9 @@ pub static SETTINGS: &[SettingSpec] = &[
         "Scroll speed",
         "Software multiplier applied to scroll events.",
         Live,
-        0.0,
-        10.0,
-        0.25,
+        0.1,
+        2.0,
+        0.05,
     ),
     ranged(
         "input.pointer_accel_speed",
