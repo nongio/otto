@@ -1337,6 +1337,12 @@ pub struct VirtualOutputConfig {
     /// headless outputs are invisible, so reaching them loses content.
     #[serde(default)]
     pub interactive: bool,
+    /// When true this output becomes the primary one, so the dock, app
+    /// switcher and expose render on it. A headless-only setup (remote
+    /// desktop served from a virtual output) needs this: otherwise the
+    /// chrome stays on a physical screen nobody is looking at.
+    #[serde(default)]
+    pub primary: bool,
 }
 
 fn default_virtual_refresh_hz() -> f64 {

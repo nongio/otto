@@ -36,6 +36,20 @@ interactive = true          # required for remote input
 `interactive = true` is what allows remote pointer and keyboard events to be
 aimed at that output. Without it the feed is view-only.
 
+On a machine with no screen of its own — a server or VM you only ever reach
+over RDP — add `primary = true` as well:
+
+```toml
+primary = true              # dock, app switcher and expose live here
+```
+
+Otto's chrome (the dock, the app switcher, expose, layer-shell panels) is
+attached to the primary output, and windows that do not ask for an output
+open there. Without `primary = true` all of that goes to the physical
+connector — which on a headless box is a screen nobody is looking at, leaving
+the remote session with windows but no dock. Do not set it on a machine you
+also use locally: it moves the chrome off your physical display.
+
 Otto logs the PipeWire node id at startup:
 
 ```
@@ -182,6 +196,17 @@ AVC420 and the fallback did not kick in. Retry with `--bitmap`.
 
 **Input does nothing.** The virtual output needs `interactive = true`, and
 `--output` must name the output you are actually serving.
+
+**The dock and the top bar are missing, or clicking them does nothing.** On a
+machine with no display of its own, set `primary = true` on the virtual output —
+otherwise the chrome belongs to the physical connector.
+
+**The bridge starts, finds the node, and then no frames ever arrive.** Its
+capture stream is stuck in `Paused` with nothing linking it to Otto. Check with
+`pw-link -l`; if there is no link, the session manager is not doing video
+policy — `pipewire-media-session` does not. Run `wireplumber` instead, or link
+by hand: `pw-link otto:output_1 otto-rdp:input_1`. A virtual output only renders
+while something is consuming it, so "no link" also means "no frames exist".
 
 **mstsc or the mobile app refuses to connect.** You need `--tls`.
 

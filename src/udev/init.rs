@@ -497,7 +497,9 @@ pub fn run_udev() {
                     .position
                     .map(|p| (p.x, p.y).into())
                     .unwrap_or_else(|| (0, 0).into());
-                state.workspaces.map_output(&output, position);
+                state
+                    .workspaces
+                    .map_output_with_primary(&output, position, vout_config.primary);
 
                 match crate::virtual_output::VirtualOutputState::start(
                     output,

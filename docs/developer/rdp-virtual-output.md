@@ -78,6 +78,8 @@ resolution = { width = 1920, height = 1080 }
 refresh_hz = 30.0
 position = { x = 1440, y = 0 }
 interactive = true        # pointer/focus can reach it → remote control works
+primary = true            # headless box only: chrome + default window
+                          # placement move to this output
 ```
 
 ```sh

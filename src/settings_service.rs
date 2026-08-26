@@ -321,6 +321,9 @@ impl SettingsInterface {
             refresh_hz,
             position: None,
             interactive,
+            // Runtime-created outputs never steal primary from the session
+            // that is already running; that is a config-time decision.
+            primary: false,
         };
 
         let (response_tx, response_rx) = oneshot::channel();
