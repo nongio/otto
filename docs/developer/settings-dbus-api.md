@@ -165,10 +165,16 @@ in place of the token while continuing to `Set` the token. When absent, the
 tokens are already fit to show.
 
 `apply` is what the setting does when set: `live` takes effect immediately;
-`restart` is persisted but needs a compositor restart; `unsupported` cannot be
-changed on this system or in this build (a display setting under a windowed
-backend, say) and `Set` will reject it. It must be truthful — a `Set` that
-silently does nothing is worse than one that refuses.
+`restart` is persisted but needs a compositor restart — the running session is
+left exactly as it was, so nothing that happens to re-read the value can
+half-apply it; `unsupported` cannot be changed on this system or in this build
+(a display setting under a windowed backend, say) and `Set` will reject it. It
+must be truthful — a `Set` that silently does nothing is worse than one that
+refuses.
+
+`Get` and `GetAll` answer for a `restart` setting with the value the next start
+will use: after a `Set` they return the persisted value, not the one the running
+session is still on.
 
 **`Set`** performs validate → apply → persist → announce, in that order. It
 returns a status string:
