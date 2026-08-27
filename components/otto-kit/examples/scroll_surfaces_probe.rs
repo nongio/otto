@@ -14,6 +14,10 @@
 //! the terminal prints one line per band repaint — nothing at all for the
 //! frames in between, which is the entire point.
 
+// A single-threaded probe: the Arc<Mutex<..>> state mirrors the shape a real
+// otto-kit app uses, and the lay-rs values inside it are not Send.
+#![allow(clippy::arc_with_non_send_sync)]
+
 use std::sync::{Arc, Mutex};
 
 use otto_kit::components::scroll::{ScrollSurfaces, ScrollView};

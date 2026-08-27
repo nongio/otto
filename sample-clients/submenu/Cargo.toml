@@ -14,3 +14,6 @@ tempfile = "3.13"
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32.9", default-features = false, features = ["client"] }
 wayland-scanner = "0.31.7"
+
+[lints]
+workspace = true

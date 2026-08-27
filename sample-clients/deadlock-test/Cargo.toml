@@ -8,3 +8,6 @@ publish = false
 
 [dependencies]
 x11rb = { version = "0.13", features = ["allow-unsafe-code"] }
+
+[lints]
+workspace = true

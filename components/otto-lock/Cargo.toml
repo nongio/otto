@@ -26,3 +26,6 @@ features = ["gl", "textlayout", "svg", "skottie"]
 [[example]]
 name = "lock_cycle"
 path = "examples/lock_cycle.rs"
+
+[lints]
+workspace = true

@@ -181,6 +181,15 @@ members = [
 
 # One version for the whole repo: otto and every component crate inherit these
 # via `version.workspace = true` (see docs/developer/versioning.md).
+# Lints shared by every member (each manifest opts in with `[lints] workspace
+# = true`), so a local `cargo clippy` agrees with CI.
+[workspace.lints.clippy]
+# Protocol method signatures set their own arity: Notify from
+# org.freedesktop.Notifications takes eight arguments, and the state and
+# rendering calls that carry one through inherit the shape. Bundling them into
+# structs to satisfy a counter would hide the correspondence, not clarify it.
+too_many_arguments = "allow"
+
 [workspace.package]
 version = "1.0.0-rc.2"
 edition = "2021"
@@ -333,3 +342,6 @@ files = [
     ["components/otto-lock/otto-lock.pam", "/etc/pam.d/otto-lock", "644"],
 ]
 
+
+[lints]
+workspace = true

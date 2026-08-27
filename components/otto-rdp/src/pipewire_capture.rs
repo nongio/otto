@@ -334,7 +334,7 @@ fn run(
             let receivers = data.tx.send(frame).unwrap_or(0);
             static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if n < 3 || n % 60 == 0 {
+            if n < 3 || n.is_multiple_of(60) {
                 tracing::info!("captured frame #{n} ({width}x{height}), {receivers} RDP subscriber(s)");
             }
         })
@@ -498,59 +498,6 @@ fn scale_rows(
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::scale_rows;
-
-    /// 1:1 must copy exactly, honouring stride padding.
-    #[test]
-    fn identity_copy_strips_stride_padding() {
-        let (w, h) = (2u32, 2u32);
-        let stride = 12; // 2px * 4B + 4B padding
-        let mut src = vec![0u8; stride * h as usize];
-        for (i, px) in [10u8, 20, 30, 40].iter().enumerate() {
-            let (x, y) = (i % 2, i / 2);
-            let p = y * stride + x * 4;
-            src[p..p + 4].copy_from_slice(&[*px, *px, *px, 255]);
-        }
-        let out = scale_rows(&src, w, h, stride, w, h);
-        assert_eq!(out.len(), 16);
-        assert_eq!(out[0], 10);
-        assert_eq!(out[4], 20);
-        assert_eq!(out[8], 30);
-        assert_eq!(out[12], 40);
-    }
-
-    /// 2x2 -> 1x1 must average all four pixels (box filter, not nearest).
-    #[test]
-    fn downscale_averages_footprint() {
-        let stride = 8;
-        // values 0, 100, 200, 255 -> mean 138 (integer div)
-        let src = vec![
-            0, 0, 0, 255, 100, 100, 100, 255, // row 0
-            200, 200, 200, 255, 255, 255, 255, 255, // row 1
-        ];
-        let out = scale_rows(&src, 2, 2, stride, 1, 1);
-        assert_eq!(out.len(), 4);
-        let expected = (0 + 100 + 200 + 255) / 4;
-        assert_eq!(out[0] as u32, expected);
-        assert_eq!(out[3], 255, "alpha preserved");
-    }
-
-    /// Non-integer ratios must stay in bounds and fill every pixel.
-    #[test]
-    fn non_integer_ratio_is_in_bounds() {
-        let (w, h) = (2880u32, 1920u32);
-        let stride = w as usize * 4;
-        let src = vec![77u8; stride * h as usize];
-        let (dw, dh) = (736u32, 1374u32);
-        let out = scale_rows(&src, w, h, stride, dw, dh);
-        assert_eq!(out.len(), dw as usize * dh as usize * 4);
-        // Uniform source -> every output pixel is the same value, none left 0.
-        assert!(out.chunks(4).all(|p| p[0] == 77), "all pixels filled");
-    }
-}
-
 /// RAII mmap of a dmabuf fd.
 struct Mmap {
     ptr: *mut libc::c_void,
@@ -588,4 +535,57 @@ fn map_dmabuf(fd: i32, len: usize) -> Option<Mmap> {
         return None;
     }
     Some(Mmap { ptr, len })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scale_rows;
+
+    /// 1:1 must copy exactly, honouring stride padding.
+    #[test]
+    fn identity_copy_strips_stride_padding() {
+        let (w, h) = (2u32, 2u32);
+        let stride = 12; // 2px * 4B + 4B padding
+        let mut src = vec![0u8; stride * h as usize];
+        for (i, px) in [10u8, 20, 30, 40].iter().enumerate() {
+            let (x, y) = (i % 2, i / 2);
+            let p = y * stride + x * 4;
+            src[p..p + 4].copy_from_slice(&[*px, *px, *px, 255]);
+        }
+        let out = scale_rows(&src, w, h, stride, w, h);
+        assert_eq!(out.len(), 16);
+        assert_eq!(out[0], 10);
+        assert_eq!(out[4], 20);
+        assert_eq!(out[8], 30);
+        assert_eq!(out[12], 40);
+    }
+
+    /// 2x2 -> 1x1 must average all four pixels (box filter, not nearest).
+    #[test]
+    fn downscale_averages_footprint() {
+        let stride = 8;
+        // values 0, 100, 200, 255 -> mean 138 (integer div)
+        let src = vec![
+            0, 0, 0, 255, 100, 100, 100, 255, // row 0
+            200, 200, 200, 255, 255, 255, 255, 255, // row 1
+        ];
+        let out = scale_rows(&src, 2, 2, stride, 1, 1);
+        assert_eq!(out.len(), 4);
+        let expected = [0, 100, 200, 255].iter().sum::<u32>() / 4;
+        assert_eq!(out[0] as u32, expected);
+        assert_eq!(out[3], 255, "alpha preserved");
+    }
+
+    /// Non-integer ratios must stay in bounds and fill every pixel.
+    #[test]
+    fn non_integer_ratio_is_in_bounds() {
+        let (w, h) = (2880u32, 1920u32);
+        let stride = w as usize * 4;
+        let src = vec![77u8; stride * h as usize];
+        let (dw, dh) = (736u32, 1374u32);
+        let out = scale_rows(&src, w, h, stride, dw, dh);
+        assert_eq!(out.len(), dw as usize * dh as usize * 4);
+        // Uniform source -> every output pixel is the same value, none left 0.
+        assert!(out.chunks(4).all(|p| p[0] == 77), "all pixels filled");
+    }
 }

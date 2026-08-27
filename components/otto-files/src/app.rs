@@ -29,6 +29,10 @@ const BTN_RIGHT: u32 = 0x111;
 use model::{Column, Entry, Place, SortKey};
 use view::ViewMode;
 
+/// What a drag carries: the entries to draw, where the grab happened, and the
+/// bounding box they were gathered from.
+type DragItems = (Vec<view::DragItem>, (f32, f32), (f32, f32));
+
 /// How soon a second press on the same column divider must land to count as
 /// a double-click rather than the start of a fresh drag.
 const DOUBLE_CLICK_WINDOW: std::time::Duration = std::time::Duration::from_millis(400);
@@ -905,9 +909,9 @@ impl Browser {
         ));
         let pan = self.pan.offset();
 
-        for depth in 0..depth_count {
+        for (depth, &count) in counts.iter().enumerate() {
             let viewport = view::pane_viewport(width, height, mode, depth, pan, miller_w);
-            let content = view::pane_content_height(width, height, mode, counts[depth]);
+            let content = view::pane_content_height(width, height, mode, count);
             // A column being re-read has no entries *yet*, and telling its
             // scroll view how long *that* is would clamp the offset to the top
             // — permanently, since the offset is not restored when the listing
@@ -2606,7 +2610,7 @@ impl Browser {
     /// the moment the drag begins, which is what lets them start where they
     /// were and gather from there. The nearest [`view::DRAG_ITEMS_MAX`] to the
     /// grab are the ones shown; the badge still counts them all.
-    fn drag_items(&self, x: f32, y: f32) -> Option<(Vec<view::DragItem>, (f32, f32), (f32, f32))> {
+    fn drag_items(&self, x: f32, y: f32) -> Option<DragItems> {
         let (depth, grabbed) = self.entry_at(x, y)?;
         let names: Vec<String> = self
             .selected_entries()
@@ -4932,13 +4936,13 @@ impl FilesApp {
                                 continue;
                             }
                         }
-                        PointerEventKind::Release { button, .. } if button != BTN_RIGHT => {
-                            if browser.footer_pressed.is_some() {
-                                browser.footer_release(hit);
-                                drop(browser);
-                                window_for_events.request_frame();
-                                continue;
-                            }
+                        PointerEventKind::Release { button, .. }
+                            if button != BTN_RIGHT && browser.footer_pressed.is_some() =>
+                        {
+                            browser.footer_release(hit);
+                            drop(browser);
+                            window_for_events.request_frame();
+                            continue;
                         }
                         _ => {}
                     }

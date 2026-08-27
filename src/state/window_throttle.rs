@@ -254,8 +254,6 @@ mod tests {
         // a singleton (equal to every other null()) so for multi-window
         // tests we need distinct ids. This scaffolding synthesises ids by
         // leaking small allocations — fine for tests, never used in prod.
-        use std::time::Instant;
-
         use smithay::reexports::wayland_server::backend::ObjectId;
         // Fall back to null for now; most tests can operate with the null
         // singleton plus boolean flags. Tests that need distinct ids will

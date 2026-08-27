@@ -1622,7 +1622,7 @@ impl App for SettingsApp {
             // A blinking caret needs the same steady clock, and for the same
             // reason: nothing else is going to ask for the next frame.
             || self.editing.lock().unwrap().is_some();
-        animating.then(|| IDLE_TICK)
+        animating.then_some(IDLE_TICK)
     }
 }
 

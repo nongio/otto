@@ -244,7 +244,7 @@ impl RdpServerDisplayUpdates for Updates {
                     };
                     static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    if n < 3 || n % 60 == 0 {
+                    if n < 3 || n.is_multiple_of(60) {
                         tracing::info!(
                             "sending bitmap #{n} to RDP client ({}x{})",
                             frame.width,
@@ -399,10 +399,6 @@ impl RdpServerInputHandler for InputForwarder {
                 vertical: -(y as f64) / 120.0 * 15.0,
                 horizontal: (x as f64) / 120.0 * 15.0,
             }),
-            other => {
-                tracing::debug!("unhandled mouse event: {other:?}");
-                None
-            }
         };
         if let Some(cmd) = cmd {
             let _ = self.tx.send(cmd);
