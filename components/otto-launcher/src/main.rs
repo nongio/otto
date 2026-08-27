@@ -510,15 +510,11 @@ fn at_least_opaque(colour: skia_safe::Color, min_alpha: u8) -> skia_safe::Color 
     )
 }
 
-/// Ask the compositor for the card's material: the frost, and the shape it is
-/// cut to.
-///
-/// None of this can be drawn client-side. A blur needs the pixels behind the
-/// surface, and the only process that has them is the compositor — so the card
-/// declares what it wants to look like and paints its text on top of the
-/// result. `material_medium` is the same token the bar's menus use, so the
-/// launcher reads as the same kind of surface as the rest of the desktop.
-fn apply_card_material(card: &SubsurfaceSurface) {
+/// The card's frost colour, which is the one part of the material that follows
+/// the colour scheme. Split out of `apply_card_material` so a theme that lands
+/// after the card exists can be applied without also rewinding the entrance
+/// state that function sets.
+fn apply_card_colour(card: &SubsurfaceSurface) {
     let Some(style) = card.base_surface().surface_style() else {
         tracing::warn!("no otto-surface-style; the card will not be frosted");
         return;
@@ -538,6 +534,21 @@ fn apply_card_material(card: &SubsurfaceSurface) {
         colour.b as f64,
         colour.a as f64,
     );
+}
+
+/// Ask the compositor for the card's material: the frost, and the shape it is
+/// cut to.
+///
+/// None of this can be drawn client-side. A blur needs the pixels behind the
+/// surface, and the only process that has them is the compositor — so the card
+/// declares what it wants to look like and paints its text on top of the
+/// result. `material_medium` is the same token the bar's menus use, so the
+/// launcher reads as the same kind of surface as the rest of the desktop.
+fn apply_card_material(card: &SubsurfaceSurface) {
+    apply_card_colour(card);
+    let Some(style) = card.base_surface().surface_style() else {
+        return;
+    };
     style.set_blend_mode(BlendMode::BackgroundBlur);
     style.set_corner_radius(RADIUS as f64 * AppContext::fractional_scale());
     style.set_masks_to_bounds(ClipMode::Enabled);
@@ -624,6 +635,21 @@ impl App for Launcher {
             palette.set_size(width as f32, height as f32);
         }
         self.sized = true;
+        self.dirty = true;
+    }
+
+    /// The portal answers the colour scheme asynchronously, so the launcher is
+    /// usually already up — and drawn in the default light — by the time the
+    /// answer arrives. Recolour everything that was built from it.
+    fn on_theme_changed(&mut self, _ctx: &AppContext) {
+        let dark = dark();
+        self.input.style = field_style(dark);
+        if let Some(palette) = self.palette.as_mut() {
+            palette.set_dark(dark);
+        }
+        if let Some(card) = self.card.as_ref() {
+            apply_card_colour(card);
+        }
         self.dirty = true;
     }
 

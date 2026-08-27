@@ -109,6 +109,13 @@ the list, keeping the selection on the same item where that item still exists.
   only where it is drawn: the compositor still hit-tests the pointer against the
   subsurface's own position and reports coordinates relative to it, so hover
   lands on the wrong row. Both must be set.
+- **The colour scheme arrives after the card does.** The scheme comes from the
+  settings portal, which answers asynchronously — normally after the launcher
+  has built its surfaces and drawn its first frame from the default (light)
+  scheme. Everything that was coloured from it — row text, field text, the
+  divider and highlight, and the card's frost colour — must be rebuilt when the
+  answer lands, or the launcher shows dark-theme text on a dark card. Rebuilding
+  the frost must not also rewind the card's entrance state.
 - **The query field must be laid out before it is drawn.** A field with no width
   scrolls its own text out of its clip, and the launcher then looks like it is
   ignoring the keyboard while the list filters correctly.

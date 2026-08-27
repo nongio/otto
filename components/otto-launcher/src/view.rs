@@ -150,6 +150,18 @@ impl Palette {
         palette
     }
 
+    /// Switch the colour scheme. The portal answers after the palette is
+    /// built, so this is the normal path into dark, not an edge case. Only the
+    /// two layer colours are set here — the row text reads `dark` on every
+    /// `update`, and the caller marks itself dirty.
+    pub fn set_dark(&mut self, dark: bool) {
+        if self.dark == dark {
+            return;
+        }
+        self.dark = dark;
+        self.style();
+    }
+
     /// The card's scene root, for a host that needs to draw it directly — the
     /// preview example renders this subtree into a raster surface.
     pub fn card_layer(&self) -> &Layer {

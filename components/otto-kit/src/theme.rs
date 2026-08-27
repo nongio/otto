@@ -87,7 +87,7 @@ impl Theme {
             text_secondary: Color::from_argb(0x80, 0x00, 0x00, 0x00),
             text_tertiary: Color::from_argb(0x40, 0x00, 0x00, 0x00),
 
-            material_titlebar: Color::from_argb(0xCC, 0xEA, 0xEA, 0xEA),
+            material_titlebar: Color::from_argb(0xE4, 0xEA, 0xEA, 0xEA),
             // Sidebars sit over compositor blur, but they are a window's own
             // ground and carry small text: at 0x8C the backdrop read straight
             // through and the wallpaper competed with the rows. Keep enough
@@ -120,7 +120,7 @@ impl Theme {
             text_tertiary: Color::from_argb(0x40, 0xFF, 0xFF, 0xFF),
 
             // Dark translucent surfaces
-            material_titlebar: Color::from_argb(0xBF, 0x28, 0x28, 0x28),
+            material_titlebar: Color::from_argb(0xE6, 0x28, 0x28, 0x28),
             material_sidebar: Color::from_argb(0xF0, 0x1E, 0x1E, 0x1E),
             material_medium: Color::from_argb(0x83, 0x28, 0x28, 0x28),
             material_popup: Color::from_argb(0xD8, 0x28, 0x28, 0x28),
