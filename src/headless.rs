@@ -92,13 +92,18 @@ impl Default for HeadlessConfig {
 
 /// Handle to a running headless compositor instance.
 ///
+/// A closure sent to the compositor thread to run against live state. Boxed
+/// because every query is a different closure, `Send` because it crosses a
+/// channel, `FnOnce` because it runs once and is dropped.
+type Query = Box<dyn FnOnce(&mut Otto<HeadlessData>) + Send>;
+
 /// The compositor runs on a background thread. Use this handle to get the
 /// Wayland socket name, run queries against compositor state, and stop it.
 pub struct HeadlessHandle {
     pub socket_name: String,
     compositor_thread: Option<JoinHandle<()>>,
     running: Arc<std::sync::atomic::AtomicBool>,
-    query_tx: Sender<Box<dyn FnOnce(&mut Otto<HeadlessData>) + Send>>,
+    query_tx: Sender<Query>,
     result_rx: Receiver<()>,
 }
 
@@ -108,8 +113,7 @@ impl HeadlessHandle {
     /// Returns a handle once the compositor is ready to accept Wayland clients.
     pub fn start(config: HeadlessConfig) -> Self {
         let (ready_tx, ready_rx) = mpsc::channel::<String>();
-        let (query_tx, query_rx) =
-            mpsc::channel::<Box<dyn FnOnce(&mut Otto<HeadlessData>) + Send>>();
+        let (query_tx, query_rx) = mpsc::channel::<Query>();
         let (result_tx, result_rx) = mpsc::channel::<()>();
 
         let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
@@ -1133,7 +1137,7 @@ impl Drop for HeadlessHandle {
 fn run_headless_loop(
     config: HeadlessConfig,
     ready_tx: Sender<String>,
-    query_rx: Receiver<Box<dyn FnOnce(&mut Otto<HeadlessData>) + Send>>,
+    query_rx: Receiver<Query>,
     result_tx: Sender<()>,
     running: Arc<std::sync::atomic::AtomicBool>,
 ) {

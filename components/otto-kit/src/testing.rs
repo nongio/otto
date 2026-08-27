@@ -569,10 +569,11 @@ impl Dispatch<wl_shm::WlShm, ()> for TestClientState {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        if let wl_shm::Event::Format { format } = event {
-            if let wayland_client::WEnum::Value(fmt) = format {
-                state.shm_formats.push(fmt);
-            }
+        if let wl_shm::Event::Format {
+            format: wayland_client::WEnum::Value(fmt),
+        } = event
+        {
+            state.shm_formats.push(fmt);
         }
     }
 }

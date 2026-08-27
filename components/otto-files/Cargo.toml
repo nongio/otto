@@ -37,3 +37,6 @@ path = "src/main.rs"
 [lib]
 name = "otto_files"
 path = "src/lib.rs"
+
+[lints]
+workspace = true

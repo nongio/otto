@@ -67,3 +67,6 @@ name = "pane_paint"
 path = "benches/pane_paint.rs"
 harness = false
 
+
+[lints]
+workspace = true

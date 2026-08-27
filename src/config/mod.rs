@@ -1476,6 +1476,9 @@ mod tests {
     /// files — the local override in particular is resolved against the
     /// working directory, which is the checkout when tests run.
     struct ConfigEnv {
+        /// Held only to keep the directory alive: dropping it deletes the
+        /// tree every other field points into.
+        #[allow(dead_code)]
         dir: tempfile::TempDir,
         /// The temporary directory as the process sees it once it is the
         /// working directory, which is what the layer paths are built from.

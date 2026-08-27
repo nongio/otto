@@ -41,6 +41,10 @@
 //! Without it the previewer would re-exec the host as a *host*, which would
 //! start a second file browser instead of decoding anything.
 
+// The doctest above spells out `fn main` deliberately: where in `main` the
+// call goes is the thing being documented.
+#![allow(clippy::needless_doctest_main)]
+
 pub mod decode;
 pub mod opening;
 pub mod payload;

@@ -191,7 +191,7 @@ impl AppState {
             .fill_rect(8, 8, SUBMENU_SIZE.0 - 16, item_height - 12, first_color);
         self.submenu_buffer.fill_rect(
             8,
-            (item_height + 4) as u32,
+            item_height + 4,
             SUBMENU_SIZE.0 - 16,
             item_height - 12,
             second_color,
@@ -326,9 +326,8 @@ impl Dispatch<XdgToplevel, ()> for AppState {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        match event {
-            xdg_toplevel::Event::Close => state.running = false,
-            _ => {}
+        if let xdg_toplevel::Event::Close = event {
+            state.running = false
         }
     }
 }
@@ -372,17 +371,15 @@ impl Dispatch<WlPointer, ()> for AppState {
                 button,
                 state: btn_state,
                 ..
-            } => {
-                if button == RIGHT_BUTTON
-                    && btn_state == WEnum::Value(wl_pointer::ButtonState::Pressed)
-                {
-                    state.submenu_visible = !state.submenu_visible;
-                    if !state.submenu_visible {
-                        state.pointer_on_submenu = false;
-                        state.hover_item = None;
-                    }
-                    state.needs_redraw = true;
+            } if button == RIGHT_BUTTON
+                && btn_state == WEnum::Value(wl_pointer::ButtonState::Pressed) =>
+            {
+                state.submenu_visible = !state.submenu_visible;
+                if !state.submenu_visible {
+                    state.pointer_on_submenu = false;
+                    state.hover_item = None;
                 }
+                state.needs_redraw = true;
             }
             _ => {}
         }

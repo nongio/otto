@@ -125,19 +125,6 @@ impl GenieEffect {
         }
     }
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// `GenieEffect::new` unwraps the shader compilation, so a typo in the
-    /// SkSL takes down the compositor at the first minimize.
-    #[test]
-    fn genie_shader_compiles() {
-        let effect = GenieEffect::new();
-        effect.set_direction(true, true);
-        effect.set_direction(false, false);
-    }
-}
 
 impl layers::prelude::Effect for GenieEffect {
     fn init(&self, layer: &Layer) {
@@ -173,5 +160,19 @@ impl layers::prelude::Effect for GenieEffect {
     }
     fn finish(&self, layer: &Layer) {
         layer.set_image_filter(None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `GenieEffect::new` unwraps the shader compilation, so a typo in the
+    /// SkSL takes down the compositor at the first minimize.
+    #[test]
+    fn genie_shader_compiles() {
+        let effect = GenieEffect::new();
+        effect.set_direction(true, true);
+        effect.set_direction(false, false);
     }
 }

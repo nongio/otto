@@ -9,7 +9,103 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A PR that gets pushed to twice in a minute used to run every job three times
+# over. Superseded runs on the same ref are cancelled; runs on main and on tags
+# publish artifacts, so those are never cancelled.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # Which areas of the repo the diff touches. Every other job reads these
+  # outputs to decide what is worth running: a change under
+  # components/otto-rdp does not need the compositor's headless suite, and a
+  # change under src/ does not need otto-rdp's GStreamer bin rebuilt.
+  #
+  # Anything shared (the lockfile, the workspace manifest, the toolchain, the
+  # UI toolkit every component links, this file) sets *every* flag — the safe
+  # default is to run more, never less.
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      compositor: ${{ steps.filter.outputs.compositor }}
+      ui: ${{ steps.filter.outputs.ui }}
+      rdp: ${{ steps.filter.outputs.rdp }}
+      portal: ${{ steps.filter.outputs.portal }}
+      packaging: ${{ steps.filter.outputs.packaging }}
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Classify changed paths
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+
+          # workflow_dispatch, a tag build, or a first push to a new branch has
+          # no usable base to diff against: treat everything as changed.
+          if [ -z "${BASE_SHA:-}" ] \
+             || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+              echo "no diff base ($BASE_SHA); running everything"
+              FILES='__all__'
+          else
+              FILES=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+              echo "changed files:"
+              echo "$FILES" | sed 's/^/  /'
+          fi
+
+          # Matches any path, so a missing base turns every filter on.
+          if [ "$FILES" = '__all__' ]; then FILES=$(git ls-files); fi
+
+          matches() { echo "$FILES" | grep -qE "$1"; }
+
+          # Nothing in the tree is unaffected by these.
+          SHARED='^(Cargo\.lock|Cargo\.toml|rust-toolchain\.toml)$|^\.github/workflows/ci\.yml$'
+          # The UI toolkit: linked by otto and by every component except the
+          # RDP bridge and the portal backend, which are leaf crates (verified
+          # with `cargo tree -p <crate> | grep otto-kit`).
+          KIT='^components/otto-kit/'
+          COMPOSITOR='^(src|tests|protocols|resources)/|^otto_config.*\.toml$'
+          RDP='^components/otto-rdp/'
+          PORTAL='^components/xdg-desktop-portal-otto/'
+          # Every component except the two with their own filters above.
+          UI='^components/(?!otto-rdp/|xdg-desktop-portal-otto/)|^sample-clients/'
+          PACKAGING='^PKGBUILD|^(Cargo\.toml)$|^(resources|scripts)/|^\.github/workflows/ci\.yml$'
+
+          shared=false; matches "$SHARED" && shared=true
+          kit=false; matches "$KIT" && kit=true
+
+          for name in compositor rdp portal; do
+              case $name in
+                  # otto-kit reaches the compositor and the UI components, but
+                  # not the two leaf crates below.
+                  compositor) pat=$COMPOSITOR; extra=$kit ;;
+                  rdp)        pat=$RDP;        extra=false ;;
+                  portal)     pat=$PORTAL;     extra=false ;;
+              esac
+              if $shared || $extra || matches "$pat"; then v=true; else v=false; fi
+              echo "$name=$v" >> "$GITHUB_OUTPUT"
+              eval "$name=$v"
+          done
+
+          # -P for the negative lookahead; plain -E cannot express it.
+          if $shared || $kit || echo "$FILES" | grep -qP "$UI"; then ui=true; else ui=false; fi
+          echo "ui=$ui" >> "$GITHUB_OUTPUT"
+
+          if matches "$PACKAGING"; then packaging=true; else packaging=false; fi
+          echo "packaging=$packaging" >> "$GITHUB_OUTPUT"
+
+          if $compositor || $ui || $rdp || $portal; then rust=true; else rust=false; fi
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+
+          echo "--- compositor=$compositor ui=$ui rdp=$rdp portal=$portal packaging=$packaging rust=$rust"
+
   format:
     runs-on: ubuntu-24.04
     steps:
@@ -29,7 +125,12 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
   
+  # One job rather than several: every step shares a single target directory,
+  # so splitting them apart would pay for the compositor's dependency graph
+  # once per job. Individual steps are gated instead.
   check:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout sources
@@ -47,23 +148,54 @@ jobs:
           cache-on-failure: true
       - name: System dependencies
         run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev hicolor-icon-theme fonts-dejavu-core
-      - name: Clippy
-        run: cargo clippy --features "default" -- -D warnings
+      # Clippy mirrors the test steps below: every crate CI compiles is
+      # linted, and each area is linted only when that area changed.
+      # `--all-targets` reaches tests, examples and benches, and the headless
+      # feature is what makes tests/*.rs more than an empty file.
+      - name: Clippy (compositor)
+        if: needs.changes.outputs.compositor == 'true'
+        run: cargo clippy -p otto --all-targets --features "default,headless" -- -D warnings
+      - name: Clippy (components)
+        # Everything with no filter of its own, sample clients included.
+        # submenu-gtk is the one exception: it needs GTK development libraries
+        # that no job here installs, and nothing in CI compiles it — the
+        # release build names its packages explicitly, and `--lib --workspace`
+        # skips it because it has no lib target.
+        if: needs.changes.outputs.ui == 'true'
+        run: cargo clippy --workspace --exclude otto --exclude otto-rdp --exclude xdg-desktop-portal-otto --exclude submenu-gtk --all-targets -- -D warnings
+      - name: Clippy (RDP bridge)
+        if: needs.changes.outputs.rdp == 'true'
+        run: cargo clippy -p otto-rdp --all-targets -- -D warnings
+      - name: Clippy (portal backend)
+        if: needs.changes.outputs.portal == 'true'
+        run: cargo clippy -p xdg-desktop-portal-otto --all-targets -- -D warnings
       - name: Run tests
+        # otto-rdp is bin-only, so this never covers it — see the RDP step.
+        if: needs.changes.outputs.compositor == 'true' || needs.changes.outputs.ui == 'true'
         run: cargo test --lib --workspace
       - name: Run headless integration tests
+        if: needs.changes.outputs.compositor == 'true'
         run: cargo test --features headless --test headless_basic
       - name: Run shell interaction tests
-        run: cargo test --features headless --test workspace_selector --test app_switcher --test tiling
+        if: needs.changes.outputs.compositor == 'true'
+        run: cargo test --features headless --test workspace_selector --test app_switcher --test tiling --test dnd_icons
       - name: Run screencast integration tests
+        if: needs.changes.outputs.compositor == 'true' || needs.changes.outputs.portal == 'true'
         run: cargo test --features headless --test screenshare
       - name: Run RDP bridge integration tests
+        # The compositor half of the bridge: the protocols otto-rdp drives.
+        if: needs.changes.outputs.compositor == 'true' || needs.changes.outputs.rdp == 'true'
         run: cargo test --features headless --test rdp_bridge
       - name: Run RDP bridge unit tests
+        # The bridge half. Expensive (GStreamer), and nothing outside
+        # components/otto-rdp can affect it, so it is gated tightly.
+        if: needs.changes.outputs.rdp == 'true'
         run: cargo test -p otto-rdp
       - name: Run portal backend tests
+        if: needs.changes.outputs.portal == 'true'
         run: cargo test -p xdg-desktop-portal-otto
       - name: Run font matching tests
+        if: needs.changes.outputs.compositor == 'true'
         run: cargo test --lib -p otto -- workspaces::utils::tests --ignored
   
   # Every packaged binary is compiled exactly once here. build-deb, build-rpm
@@ -280,6 +412,10 @@ jobs:
             To update, re-download the tarball and re-run `makepkg`.
 
   validate-pkgbuild:
+    needs: changes
+    # `release` depends on this job, so it must not be skipped on a tag build
+    # even if the diff classifier saw no packaging paths.
+    if: needs.changes.outputs.packaging == 'true' || github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     container:
       image: archlinux:latest

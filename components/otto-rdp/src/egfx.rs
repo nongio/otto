@@ -390,7 +390,7 @@ impl Driver {
         if self
             .current
             .as_ref()
-            .map_or(true, |c| !Arc::ptr_eq(c, &handle))
+            .is_none_or(|c| !Arc::ptr_eq(c, &handle))
         {
             self.current = Some(Arc::clone(&handle));
             self.surface = None;
@@ -476,7 +476,7 @@ impl Driver {
         };
 
         Self::emit(&sender, channel_id, messages);
-        if self.sent < 3 || self.sent % 120 == 0 {
+        if self.sent < 3 || self.sent.is_multiple_of(120) {
             tracing::info!(
                 "sent AVC420 frame #{} to RDP client ({} bytes{})",
                 self.sent,

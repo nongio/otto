@@ -16,3 +16,6 @@ serde = { version = "1", features = ["derive"] }
 [dependencies.skia-safe]
 version = "=0.93"
 features = ["gl", "textlayout", "svg"]
+
+[lints]
+workspace = true

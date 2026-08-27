@@ -32,3 +32,6 @@ laye-rs = { git = "https://github.com/nongio/layers", tag = "v1.14.0", features 
 [[example]]
 name = "preview"
 path = "examples/preview.rs"
+
+[lints]
+workspace = true

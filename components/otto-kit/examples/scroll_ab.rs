@@ -36,6 +36,10 @@
 //! SCROLL_AB_AUTO=1 cargo run --release -p otto-kit --example scroll_ab -- surfaces
 //! ```
 
+// A single-threaded probe: the Arc<Mutex<..>> state mirrors the shape a real
+// otto-kit app uses, and the lay-rs values inside it are not Send.
+#![allow(clippy::arc_with_non_send_sync)]
+
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;

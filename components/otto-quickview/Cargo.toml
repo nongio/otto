@@ -34,3 +34,6 @@ features = ["export-taffy"]
 [dependencies.skia-safe]
 version = "=0.93"
 features = ["gl", "textlayout", "svg", "skottie"]
+
+[lints]
+workspace = true

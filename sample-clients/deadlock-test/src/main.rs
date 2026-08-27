@@ -396,7 +396,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let vals: Vec<u32> = values.collect();
             eprintln!(
                 "WM_HINTS: flags=0x{:x} input={} initial_state={}",
-                vals.get(0).unwrap_or(&0),
+                vals.first().unwrap_or(&0),
                 vals.get(1).unwrap_or(&0),
                 vals.get(2).unwrap_or(&0)
             );

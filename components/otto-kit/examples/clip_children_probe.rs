@@ -18,6 +18,10 @@
 //! not, they spill across the whole window (and past it) and the design needs
 //! `wp_viewport` instead.
 
+// A single-threaded probe: the Arc<Mutex<..>> state mirrors the shape a real
+// otto-kit app uses, and the lay-rs values inside it are not Send.
+#![allow(clippy::arc_with_non_send_sync)]
+
 use std::sync::{Arc, Mutex};
 
 use otto_kit::prelude::*;
