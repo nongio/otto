@@ -55,17 +55,19 @@ pub enum Kind {
 
 impl Kind {
     /// A human-readable name, for the Kind column.
+    ///
+    /// `Other` deliberately shares Document's wording: a file whose type is
+    /// unrecognised is still, to a user, a document.
     pub fn label(self) -> &'static str {
         match self {
-            Kind::Folder => "Folder",
-            Kind::Image => "Image",
-            Kind::Video => "Movie",
-            Kind::Audio => "Audio",
-            Kind::Text => "Text",
-            Kind::Document => "Document",
-            Kind::Archive => "Archive",
-            Kind::Application => "Application",
-            Kind::Other => "Document",
+            Kind::Folder => crate::t!("files-kind-folder"),
+            Kind::Image => crate::t!("files-kind-image"),
+            Kind::Video => crate::t!("files-kind-movie"),
+            Kind::Audio => crate::t!("files-kind-audio"),
+            Kind::Text => crate::t!("files-kind-text"),
+            Kind::Document | Kind::Other => crate::t!("files-kind-document"),
+            Kind::Archive => crate::t!("files-kind-archive"),
+            Kind::Application => crate::t!("files-kind-application"),
         }
     }
 

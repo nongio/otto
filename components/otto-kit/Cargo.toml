@@ -31,6 +31,11 @@ lazy_static = "1.4"
 libc = "0.2"
 pipewire = "0.9"
 freedesktop-desktop-entry = "0.7.5"
+# Localisation. fluent-bundle carries the .ftl parser, the selector runtime and
+# the CLDR plural rules; unic-langid does BCP 47 parsing and negotiation.
+fluent-bundle = "0.15"
+unic-langid = { version = "0.9", features = ["macros"] }
+intl-memoizer = "0.5"
 
 [features]
 default = []
