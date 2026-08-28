@@ -92,6 +92,12 @@ async fn main() {
             .init();
     }
 
+    // Load the string catalogues before any chrome is built — the dock's
+    // context menus are assembled during construction. `config.locales`
+    // rather than the environment: it is the setting the user edits, and it
+    // is what the components are told over the portal.
+    otto_kit::i18n::init(&otto::configured_locales());
+
     #[cfg(feature = "profile-with-tracy")]
     profiling::tracy_client::Client::start();
 

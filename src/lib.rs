@@ -53,4 +53,12 @@ mod workspaces;
 
 mod config;
 mod theme;
+
+/// The user's preferred locales, most preferred first.
+///
+/// Exposed so `main` can load the string catalogues before any chrome is
+/// built, without opening up the whole config module.
+pub fn configured_locales() -> Vec<String> {
+    config::Config::with(|c| c.locales.clone())
+}
 mod utils;

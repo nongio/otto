@@ -1838,32 +1838,46 @@ impl DockView {
         let position = self.position();
         // Flat entries rather than a "Position ▸" submenu: the dock's own click
         // handling only hit-tests the top level.
-        let position_item = |label: &str, value: DockPosition, action: &str| {
-            MenuItem::action(if position == value {
-                format!("✓ {label}")
-            } else {
-                label.to_string()
-            })
-            .with_action_id(action)
-        };
+        // The tick is part of the catalogue string rather than glued on here:
+        // where it sits relative to the label is a local convention, and a
+        // language that wants it elsewhere can move it.
+        let position_item =
+            |on: &'static str, off: &'static str, value: DockPosition, action: &str| {
+                MenuItem::action(if position == value { on } else { off }).with_action_id(action)
+            };
 
         let items = vec![
             MenuItem::action(if autohide {
-                "✓ Auto-hide"
+                otto_kit::t!("dock-auto-hide-on")
             } else {
-                "Auto-hide"
+                otto_kit::t!("dock-auto-hide")
             })
             .with_action_id("toggle_autohide"),
             MenuItem::action(if magnification {
-                "✓ Magnification"
+                otto_kit::t!("dock-magnification-on")
             } else {
-                "Magnification"
+                otto_kit::t!("dock-magnification")
             })
             .with_action_id("toggle_magnification"),
             MenuItem::separator(),
-            position_item("Bottom", DockPosition::Bottom, "position_bottom"),
-            position_item("Left", DockPosition::Left, "position_left"),
-            position_item("Right", DockPosition::Right, "position_right"),
+            position_item(
+                otto_kit::t!("dock-position-bottom-on"),
+                otto_kit::t!("dock-position-bottom"),
+                DockPosition::Bottom,
+                "position_bottom",
+            ),
+            position_item(
+                otto_kit::t!("dock-position-left-on"),
+                otto_kit::t!("dock-position-left"),
+                DockPosition::Left,
+                "position_left",
+            ),
+            position_item(
+                otto_kit::t!("dock-position-right-on"),
+                otto_kit::t!("dock-position-right"),
+                DockPosition::Right,
+                "position_right",
+            ),
         ];
 
         let mut context_menu_lock = self.context_menu.write().unwrap();
@@ -1924,14 +1938,14 @@ impl DockView {
         if running {
             items.push(MenuItem::separator());
         } else {
-            items.push(MenuItem::action("Open").with_action_id("open"));
+            items.push(MenuItem::action(otto_kit::t!("dock-open")).with_action_id("open"));
             items.push(MenuItem::separator());
         }
 
         let keep_label = if bookmarked {
-            "✓ Keep in Dock"
+            otto_kit::t!("dock-keep-in-dock-on")
         } else {
-            "Keep in Dock"
+            otto_kit::t!("dock-keep-in-dock")
         };
         let keep_action = if bookmarked {
             "remove_from_dock"
@@ -1943,7 +1957,7 @@ impl DockView {
         if running {
             items.push(MenuItem::separator());
             items.push(
-                MenuItem::action("Quit")
+                MenuItem::action(otto_kit::t!("dock-quit"))
                     .with_action_id("quit")
                     .with_shortcut("⌘Q"),
             );
