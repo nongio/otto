@@ -80,46 +80,53 @@ fn trigger_window_update<BackendData: Backend>(
     }
 }
 
-/// Re-derive whether the compositor draws anything for `surface_id`'s window
-/// that the client's buffer does not already contain — a background colour, a
-/// backdrop blur, a rounded clip, a border — and take the window off its
-/// scanout plane if it is on one.
-///
-/// A material lives on the window's own scene layer, and promotion picks how
-/// to make room for the plane: a plain window has that whole layer hidden, a
-/// material one only has its texture blanked so the material keeps rendering
-/// (see `Workspaces::set_scanout_windows`). A window already promoted the
-/// plain way when the material arrives has the wrong treatment and would show
-/// no frost, so it is demoted here; the next candidate pass re-promotes it
-/// with the material intact.
-///
-/// Only the window's own surface counts: a subsurface keeps rendering in the
-/// windows plane even while the root is promoted, so a material on one is not
-/// at risk.
-fn refresh_window_material<BackendData: Backend>(
-    state: &mut Otto<BackendData>,
-    surface_id: &smithay::reexports::wayland_server::backend::ObjectId,
-) {
-    let material = state
-        .surfaces_style
-        .get(surface_id)
-        .map(|styles| {
-            styles
-                .iter()
-                .any(|s| s.background_alpha > 0.0 || s.background_blur || s.rounded || s.bordered)
-        })
-        .unwrap_or(false);
+impl<BackendData: Backend> Otto<BackendData> {
+    /// Re-derive whether the compositor draws anything for `surface_id`'s
+    /// window that the client's buffer does not already contain — a
+    /// background colour, a backdrop blur, a rounded clip, a border — and
+    /// take the window off its scanout plane if it is on one.
+    ///
+    /// Two protocols feed this: `otto-surface-style` (all four kinds) and
+    /// `ext-background-effect-v1` (blur only, see
+    /// [`Otto::apply_background_effect`]).
+    ///
+    /// A material lives on the window's own scene layer, and promotion picks
+    /// how to make room for the plane: a plain window has that whole layer
+    /// hidden, a material one only has its texture blanked so the material
+    /// keeps rendering (see `Workspaces::set_scanout_windows`). A window
+    /// already promoted the plain way when the material arrives has the wrong
+    /// treatment and would show no frost, so it is demoted here; the next
+    /// candidate pass re-promotes it with the material intact.
+    ///
+    /// Only the window's own surface counts: a subsurface keeps rendering in
+    /// the windows plane even while the root is promoted, so a material on
+    /// one is not at risk.
+    pub(crate) fn refresh_window_material(
+        &mut self,
+        surface_id: &smithay::reexports::wayland_server::backend::ObjectId,
+    ) {
+        let styled = self
+            .surfaces_style
+            .get(surface_id)
+            .map(|styles| {
+                styles.iter().any(|s| {
+                    s.background_alpha > 0.0 || s.background_blur || s.rounded || s.bordered
+                })
+            })
+            .unwrap_or(false);
+        let material = styled || self.background_effects.contains_key(surface_id);
 
-    let Some(window) = state.workspaces.get_window_for_surface(surface_id).cloned() else {
-        return;
-    };
-    if window.set_has_material(material) == material {
-        return;
-    }
-    if material {
-        // It may already be on a plane: take it back this frame rather than
-        // waiting for the next candidate pass.
-        state.workspaces.remove_scanout_window(surface_id);
+        let Some(window) = self.workspaces.get_window_for_surface(surface_id).cloned() else {
+            return;
+        };
+        if window.set_has_material(material) == material {
+            return;
+        }
+        if material {
+            // It may already be on a plane: take it back this frame rather than
+            // waiting for the next candidate pass.
+            self.workspaces.remove_scanout_window(surface_id);
+        }
     }
 }
 

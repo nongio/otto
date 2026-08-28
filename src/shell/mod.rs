@@ -367,6 +367,9 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
                 }
             }
         }
+        // The commit above created or refreshed the surface's layer; now
+        // the blur region it carried can be applied to that layer.
+        self.apply_background_effect(surface);
         self.popups.commit(surface);
 
         // ensure_initial_configure(surface, self.space(), &mut self.popups)
@@ -378,6 +381,7 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
     fn destroyed(&mut self, surface: &WlSurface) {
         // Clean up the layer for this surface
         self.destroy_layer_for_surface(&surface.id());
+        self.forget_background_effect(&surface.id());
 
         // A decoration mode stashed for a surface that never became a toplevel
         // has nothing left to apply to.
