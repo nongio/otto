@@ -18,6 +18,7 @@ use super::tree::A11yTree;
 use crate::components::menu_item::{MenuItem, MenuItemKind};
 use crate::components::text_input::TextInputState;
 use crate::focus::FocusId;
+use crate::preview::Preview;
 
 fn bounds_of(rect: SkRect) -> Rect {
     Rect::new(
@@ -468,5 +469,367 @@ mod tests {
         let update = tree.finish();
         let node = find(&update, FocusId::new("sep"));
         assert_eq!(node.role(), Role::Splitter);
+    }
+}
+
+/// The previewer, described.
+///
+/// A preview is drawn as one picture — an image, a page of text, a listing, a
+/// card of facts — and none of that reaches an assistive technology by itself.
+/// This lives in the toolkit rather than in a host because the previewer does:
+/// every host that embeds [`crate::preview`] describes it the same way, and a
+/// host that adds a preview does not have to work out how.
+impl A11yTree {
+    /// Describes an open preview of `name`.
+    ///
+    /// What a screen reader gets depends on what there is to give: text and
+    /// listings are read, a picture can only be named and measured, and a
+    /// preview that failed says why rather than staying silent.
+    pub fn preview(&mut self, id: FocusId, bounds: SkRect, name: &str, preview: &Preview) {
+        match preview {
+            Preview::Pixels { pages, page, .. } => {
+                self.control(id, bounds, Role::Image, true, |node| {
+                    node.set_label(name.to_owned());
+                    // A page number is the one thing about a rendered page that
+                    // can be said without seeing it, and it is what tells the
+                    // user they are part-way through a document.
+                    node.set_description(if *pages > 1 {
+                        format!("Preview, page {page} of {pages}")
+                    } else {
+                        "Preview".to_owned()
+                    });
+                });
+            }
+            Preview::Text {
+                lines, truncated, ..
+            } => {
+                // The text itself, which is the whole point of a text preview:
+                // a screen reader can read it, where a sighted user reads the
+                // panel.
+                //
+                // It has to be *runs*, not a value: AT-SPI's Text interface
+                // exists only for a node with text-run children, and a
+                // document carrying its text in `value` alone reads as an
+                // empty document. One run per line, so line-by-line review
+                // lands where the lines are.
+                let lines: Vec<String> = lines.clone();
+                let truncated = *truncated;
+                let name = name.to_owned();
+
+                self.group_with(
+                    id,
+                    Role::Document,
+                    |node| {
+                        node.set_bounds(bounds_of(bounds));
+                        node.set_label(name);
+                        if truncated {
+                            node.set_description("Preview, shortened".to_owned());
+                        }
+                    },
+                    |tree| {
+                        for (index, line) in lines.into_iter().enumerate() {
+                            tree.node(
+                                FocusId::new(format!("preview-line-{index}")),
+                                Role::TextRun,
+                                |node| {
+                                    // The newline is part of the run: the Text
+                                    // interface hands out one string, and
+                                    // without it every line runs into the next
+                                    // — both read aloud and for line-by-line
+                                    // review.
+                                    let line = format!("{line}\n");
+                                    // `character_lengths` is what maps a
+                                    // character offset onto the string; without
+                                    // it a range request walks off the end.
+                                    let lengths: Vec<u8> =
+                                        line.chars().map(|c| c.len_utf8() as u8).collect();
+                                    node.set_value(line);
+                                    node.set_character_lengths(lengths);
+                                },
+                            );
+                        }
+                    },
+                );
+            }
+            Preview::Rows {
+                rows,
+                truncated,
+                summary,
+            } => {
+                let summary = summary.clone();
+                let truncated = *truncated;
+                let entries: Vec<(String, String)> = rows
+                    .iter()
+                    .map(|row| {
+                        let kind = if row.is_dir { "Folder" } else { "File" };
+                        (row.name.clone(), format!("{kind}, {}", bytes(row.size)))
+                    })
+                    .collect();
+
+                self.group_with(
+                    id,
+                    Role::List,
+                    |node| {
+                        node.set_bounds(bounds_of(bounds));
+                        node.set_label(name.to_owned());
+                        node.set_description(if truncated {
+                            format!("{summary}, shortened")
+                        } else {
+                            summary
+                        });
+                    },
+                    |tree| {
+                        for (index, (label, description)) in entries.into_iter().enumerate() {
+                            // The rows are drawn into one layer, so there is no
+                            // rectangle to give each of them; they can be read
+                            // in order, not pointed at.
+                            tree.node(
+                                FocusId::new(format!("preview-row-{index}")),
+                                Role::ListItem,
+                                |node| {
+                                    node.set_label(label);
+                                    node.set_description(description);
+                                },
+                            );
+                        }
+                    },
+                );
+            }
+            Preview::Card {
+                title,
+                subtitle,
+                facts,
+                ..
+            } => {
+                let title = title.clone();
+                let subtitle = subtitle.clone();
+                let facts: Vec<(String, String)> = facts
+                    .iter()
+                    .map(|fact| (fact.key.clone(), fact.value.clone()))
+                    .collect();
+
+                self.group_with(
+                    id,
+                    Role::Group,
+                    |node| {
+                        node.set_bounds(bounds_of(bounds));
+                        node.set_label(title);
+                        node.set_description(subtitle);
+                    },
+                    |tree| {
+                        // Each fact as its own labelled value: read as "Size,
+                        // 4.2 MB" rather than as one run-together paragraph.
+                        for (index, (key, value)) in facts.into_iter().enumerate() {
+                            tree.node(
+                                FocusId::new(format!("preview-fact-{index}")),
+                                Role::Label,
+                                |node| {
+                                    node.set_label(key);
+                                    node.set_value(value);
+                                },
+                            );
+                        }
+                    },
+                );
+            }
+            Preview::Unavailable { reason } => {
+                // Announced rather than left out: "no preview, and here is why"
+                // is information, and silence reads as a preview still loading.
+                self.status(id, bounds, format!("{name}: {reason}"));
+            }
+        }
+    }
+}
+
+/// A size, as a preview row says it.
+fn bytes(size: u64) -> String {
+    const UNITS: [&str; 5] = ["bytes", "kB", "MB", "GB", "TB"];
+    let mut value = size as f64;
+    let mut unit = 0;
+    while value >= 1000.0 && unit + 1 < UNITS.len() {
+        value /= 1000.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{size} {}", UNITS[0])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+    use crate::accessibility::tree::node_id;
+    use crate::preview::{Fact, Pixels, Preview, Row};
+
+    fn find(update: &accesskit::TreeUpdate, id: FocusId) -> &Node {
+        &update
+            .nodes
+            .iter()
+            .find(|(node_id_, _)| *node_id_ == node_id(id))
+            .expect("node missing")
+            .1
+    }
+
+    fn rect() -> SkRect {
+        SkRect::from_wh(400.0, 300.0)
+    }
+
+    const PREVIEW: FocusId = FocusId::from_raw(0x9001);
+
+    /// A text preview is the one kind a screen reader can actually read, so
+    /// the text has to be in the tree rather than described from outside.
+    #[test]
+    fn a_text_preview_carries_its_text() {
+        let mut tree = A11yTree::new("Files");
+        tree.preview(
+            PREVIEW,
+            rect(),
+            "notes.txt",
+            &Preview::Text {
+                lines: vec!["first".into(), "second".into()],
+                truncated: true,
+                language: String::new(),
+            },
+        );
+
+        let update = tree.finish();
+        let node = find(&update, PREVIEW);
+        assert_eq!(node.description().as_deref(), Some("Preview, shortened"));
+
+        // The text lives in runs under the document: that is the only shape
+        // AT-SPI's Text interface is offered for.
+        let runs: Vec<&str> = node
+            .children()
+            .iter()
+            .filter_map(|id| {
+                let run = &update.nodes.iter().find(|(node_id, _)| node_id == id)?.1;
+                (run.role() == Role::TextRun).then(|| run.value()).flatten()
+            })
+            .collect();
+        assert_eq!(runs, vec!["first\n", "second\n"]);
+    }
+
+    /// A picture cannot be read, only named — and the page number is the one
+    /// thing about a rendered page worth saying.
+    #[test]
+    fn a_paged_preview_says_where_it_is() {
+        let mut tree = A11yTree::new("Files");
+        tree.preview(
+            PREVIEW,
+            rect(),
+            "report.pdf",
+            &Preview::Pixels {
+                pixels: Pixels {
+                    width: 800,
+                    height: 600,
+                    intrinsic_width: 800,
+                    intrinsic_height: 600,
+                    data: Vec::new(),
+                },
+                pages: 12,
+                page: 3,
+            },
+        );
+
+        let update = tree.finish();
+        let node = find(&update, PREVIEW);
+        assert_eq!(node.role(), Role::Image);
+        assert_eq!(node.description().as_deref(), Some("Preview, page 3 of 12"));
+    }
+
+    #[test]
+    fn an_archive_listing_is_a_list_of_its_entries() {
+        let mut tree = A11yTree::new("Files");
+        tree.preview(
+            PREVIEW,
+            rect(),
+            "photos.zip",
+            &Preview::Rows {
+                rows: vec![
+                    Row {
+                        name: "cover.png".into(),
+                        size: 2_400_000,
+                        mtime: 0,
+                        icon: String::new(),
+                        is_dir: false,
+                    },
+                    Row {
+                        name: "raw".into(),
+                        size: 0,
+                        mtime: 0,
+                        icon: String::new(),
+                        is_dir: true,
+                    },
+                ],
+                truncated: false,
+                summary: "2 items".into(),
+            },
+        );
+
+        let update = tree.finish();
+        let list = find(&update, PREVIEW);
+        assert_eq!(list.children().len(), 2);
+
+        let first = &update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == list.children()[0])
+            .unwrap()
+            .1;
+        assert_eq!(first.label().as_deref(), Some("cover.png"));
+        assert_eq!(first.description().as_deref(), Some("File, 2.4 MB"));
+    }
+
+    /// A preview that failed says why. Silence reads as one still loading.
+    #[test]
+    fn a_preview_that_failed_says_so() {
+        let mut tree = A11yTree::new("Files");
+        tree.preview(
+            PREVIEW,
+            rect(),
+            "clip.mov",
+            &Preview::Unavailable {
+                reason: "no decoder".into(),
+            },
+        );
+
+        let update = tree.finish();
+        let node = find(&update, PREVIEW);
+        assert_eq!(node.value().as_deref(), Some("clip.mov: no decoder"));
+    }
+
+    #[test]
+    fn a_metadata_card_reads_each_fact_as_its_own() {
+        let mut tree = A11yTree::new("Files");
+        tree.preview(
+            PREVIEW,
+            rect(),
+            "song.flac",
+            &Preview::Card {
+                title: "Song".into(),
+                subtitle: "Artist".into(),
+                facts: vec![Fact {
+                    key: "Duration".into(),
+                    value: "3:41".into(),
+                }],
+                hero: None,
+            },
+        );
+
+        let update = tree.finish();
+        let card = find(&update, PREVIEW);
+        assert_eq!(card.label().as_deref(), Some("Song"));
+        assert_eq!(card.children().len(), 1);
+
+        let fact = &update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == card.children()[0])
+            .unwrap()
+            .1;
+        assert_eq!(fact.label().as_deref(), Some("Duration"));
+        assert_eq!(fact.value().as_deref(), Some("3:41"));
     }
 }

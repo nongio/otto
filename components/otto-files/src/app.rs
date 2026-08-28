@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
+use otto_kit::accessibility::{A11yTree, Action, ActionRequest, Role};
 use otto_kit::clipboard;
 use otto_kit::components::context_menu::ContextMenu;
 use otto_kit::components::scroll::{Axis, ScrollView};
@@ -3430,6 +3431,22 @@ impl Browser {
 // App shell
 // ---------------------------------------------------------------------------
 
+/// The listing's identity for assistive technologies.
+const FILES_LIST: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xF11E_5000);
+/// The line shown in place of a listing that could not be read.
+const FILES_STATUS: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xF11E_5001);
+
+/// The column view's preview of the selected file.
+const PREVIEW_PANE: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xF11E_5003);
+
+/// The preview panel's, when one is open.
+const QUICKVIEW: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xF11E_5002);
+
+/// One listing row's, by its position in the visible order.
+fn row_focus(index: usize) -> otto_kit::focus::FocusId {
+    otto_kit::focus::FocusId::new(format!("entry-{index}"))
+}
+
 struct FilesApp {
     window: Option<Window>,
     state: Arc<Mutex<Browser>>,
@@ -3669,6 +3686,12 @@ impl App for FilesApp {
         self.install_frame_loop(&window);
         AppContext::register_window(window.clone());
         self.window = Some(window);
+
+        // Visible to assistive technologies. Nothing is built until one
+        // attaches — see `App::accessibility`.
+        if let Some(surface) = self.window.as_ref().and_then(Window::surface_id) {
+            AppContext::enable_accessibility(&surface);
+        }
         Ok(())
     }
 
@@ -3680,6 +3703,159 @@ impl App for FilesApp {
     /// on another thread wakes the loop instead — see
     /// [`AppContext::request_wakeup`] — and this is where that wakeup turns
     /// into a frame.
+    /// What a screen reader reads: the listing of the column that has the
+    /// keyboard, as the list it is drawn as.
+    ///
+    /// The browser moves its own cursor with the arrows, so there is no
+    /// traversal ring here — the cursor row *is* the focus, which is what makes
+    /// each file read out as the user moves through the directory.
+    fn accessibility(
+        &mut self,
+        _ctx: &AppContext,
+        _surface: &wayland_client::backend::ObjectId,
+    ) -> Option<A11yTree> {
+        let browser = self.state.lock().ok()?;
+        let depth = browser.active.min(browser.columns.len().saturating_sub(1));
+        let column = browser.columns.get(depth)?;
+
+        let title = column
+            .path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| column.path.display().to_string());
+
+        let mut tree = A11yTree::new(title.clone());
+
+        // A directory that could not be read is what the pane shows instead of
+        // a listing, so it is what the tree says too.
+        if let Some(error) = &column.snapshot.error {
+            tree.status(
+                FILES_STATUS,
+                Rect::from_wh(browser.size.0, browser.size.1),
+                error.clone(),
+            );
+            return Some(tree);
+        }
+
+        let entries = browser.visible(depth);
+        let cursor = column.cursor;
+        let selection = &column.selection;
+
+        // Where each row is, in whichever way this view lays them out. A wrong
+        // rectangle is worse than none — mouse review would land on the file
+        // next to the one it named — so each mode uses its own geometry, the
+        // same functions that draw and hit-test it.
+        let area = Rect::from_wh(browser.size.0, browser.size.1);
+        let scroll = column.scroll.state.offset();
+        let count = entries.len();
+        let placement: Box<dyn Fn(usize) -> Rect> = match browser.mode {
+            ViewMode::List => {
+                let strip = view::RowStrip::list(browser.size.0, count, scroll);
+                Box::new(move |index| strip.rect(index))
+            }
+            ViewMode::Columns => {
+                let pane = view::miller_pane_rect(
+                    depth,
+                    browser.content_h(),
+                    browser.pan.offset(),
+                    browser.miller_w,
+                );
+                let strip = view::RowStrip::miller(pane, count, scroll);
+                Box::new(move |index| strip.rect(index))
+            }
+            ViewMode::Grid => {
+                let cells =
+                    view::content_viewport(browser.size.0, browser.content_h(), ViewMode::Grid);
+                Box::new(move |index| view::grid_cell_rect(cells, index, scroll))
+            }
+        };
+
+        tree.region(FILES_LIST, area, Role::List, "Files", |tree| {
+            for (index, entry) in entries.iter().enumerate() {
+                let bounds = placement(index);
+                tree.control(row_focus(index), bounds, Role::ListItem, true, |node| {
+                    node.set_label(entry.name.clone());
+                    // What the Kind column says, plus the size for a file: the
+                    // two things that tell one listing row from another when
+                    // the names are similar.
+                    let mut description = entry.kind_label().to_owned();
+                    if let Some(size) = entry.size.filter(|_| !entry.is_dir) {
+                        description.push_str(", ");
+                        description.push_str(&crate::model::format_size(size));
+                    }
+                    node.set_description(description);
+                    node.set_selected(selection.contains(&entry.name));
+                    node.add_action(Action::Click);
+                });
+            }
+        });
+
+        // The column view shows a preview of the selected file beside the
+        // listing. It is not what the keyboard is on — the listing is — but it
+        // is on screen and it is about the file being read out, so it is
+        // described where it sits.
+        if let Some(preview) = browser
+            .preview
+            .as_ref()
+            .filter(|_| browser.preview_visible())
+            .and_then(|state| state.decoded.as_ref().map(|p| (&state.path, p)))
+        {
+            let (path, decoded) = preview;
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let pane = view::preview_pane_rect(
+                browser.columns.len(),
+                browser.content_h(),
+                browser.pan.offset(),
+                browser.miller_w,
+            );
+            tree.preview(PREVIEW_PANE, pane, &name, decoded);
+        }
+
+        // An open preview *is* what the user is looking at, so it takes the
+        // focus — and the previewer describes itself, whatever it is showing.
+        // See `A11yTree::preview`.
+        if let Some(session) = browser.quickview.as_ref().filter(|s| s.closing.is_none()) {
+            let panel = browser
+                .quickview_panel
+                .unwrap_or_else(|| session.panel(area));
+            tree.preview(QUICKVIEW, panel, &session.name, &session.preview);
+            tree.set_focus(QUICKVIEW);
+        } else if let Some(cursor) = cursor.filter(|c| *c < entries.len()) {
+            tree.set_focus(row_focus(cursor));
+        }
+
+        Some(tree)
+    }
+
+    /// A screen reader picked a row: select it, exactly as a click does.
+    fn on_accessibility_action(
+        &mut self,
+        _ctx: &AppContext,
+        _surface: &wayland_client::backend::ObjectId,
+        request: &ActionRequest,
+    ) {
+        if !matches!(request.action, Action::Click) {
+            return;
+        }
+
+        let Ok(mut browser) = self.state.lock() else {
+            return;
+        };
+        let depth = browser.active.min(browser.columns.len().saturating_sub(1));
+        let count = browser.visible_len(depth);
+        let target = (0..count).find(|index| {
+            otto_kit::accessibility::node_id(row_focus(*index)) == request.target_node
+        });
+        let Some(index) = target else { return };
+
+        browser.press_entry(depth, index);
+        drop(browser);
+        self.render();
+    }
+
     fn on_update(&mut self, _ctx: &AppContext) {
         // The scene decides when the compositor's backdrop blur may be
         // switched — it owns the fade the switch has to hide under — but the
