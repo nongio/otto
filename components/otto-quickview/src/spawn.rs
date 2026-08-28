@@ -58,10 +58,10 @@ pub fn open(path: &Path) -> Result<Opened, String> {
     let metadata = file.metadata().map_err(|err| format!("{err}"))?;
     let kind = metadata.file_type();
     if kind.is_fifo() || kind.is_socket() || kind.is_char_device() || kind.is_block_device() {
-        return Err("this is not a file that can be previewed".into());
+        return Err(otto_kit::t_owned!("quickview-error-not-previewable"));
     }
     if !kind.is_file() && !kind.is_dir() {
-        return Err("this is not a file that can be previewed".into());
+        return Err(otto_kit::t_owned!("quickview-error-not-previewable"));
     }
 
     Ok(Opened {
@@ -86,7 +86,12 @@ pub fn decode(opened: Opened, request: &Request) -> PreviewPayload {
     let started = Instant::now();
     let executable = match std::env::current_exe() {
         Ok(path) => path,
-        Err(err) => return payload::unavailable(format!("cannot find the previewer: {err}")),
+        Err(err) => {
+            return payload::unavailable(otto_kit::t_owned!(
+                "quickview-error-previewer-missing",
+                error = err.to_string()
+            ))
+        }
     };
 
     let budget = request.budget;
@@ -116,7 +121,12 @@ pub fn decode(opened: Opened, request: &Request) -> PreviewPayload {
         .env(
             "RUST_LOG",
             std::env::var("RUST_LOG").unwrap_or_else(|_| "error".into()),
-        );
+        )
+        // The locale is not a capability, and the worker writes the strings
+        // the user reads — the reason a preview is unavailable, a card's
+        // facts. With the environment cleared it would otherwise fall back to
+        // English while the rest of the desktop is not.
+        .env("LANGUAGE", otto_kit::i18n::current_locale());
 
     // SAFETY: runs in the forked child between `fork` and `exec`. Everything
     // called here is either async-signal-safe or is a raw syscall wrapper.
@@ -150,7 +160,10 @@ pub fn decode(opened: Opened, request: &Request) -> PreviewPayload {
         Err(err) => {
             // SAFETY: the descriptor was not consumed by a successful spawn.
             unsafe { libc::close(file_fd) };
-            return payload::unavailable(format!("cannot start the previewer: {err}"));
+            return payload::unavailable(otto_kit::t_owned!(
+                "quickview-error-previewer-start",
+                error = err.to_string()
+            ));
         }
     };
     // The child has its own copy now.
@@ -160,7 +173,9 @@ pub fn decode(opened: Opened, request: &Request) -> PreviewPayload {
     // block in `read_to_end` with no way to notice time passing.
     let mut stdout = match child.stdout.take() {
         Some(stdout) => stdout,
-        None => return payload::unavailable("the previewer produced no output"),
+        None => {
+            return payload::unavailable(otto_kit::t_owned!("quickview-error-previewer-no-output"))
+        }
     };
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
@@ -170,13 +185,17 @@ pub fn decode(opened: Opened, request: &Request) -> PreviewPayload {
     });
 
     let payload = match receiver.recv_timeout(DEADLINE) {
-        Ok(Ok(bytes)) => payload::decode(&bytes)
-            .unwrap_or_else(|| payload::unavailable("the previewer produced something unreadable")),
-        Ok(Err(err)) => payload::unavailable(format!("the previewer failed: {err}")),
+        Ok(Ok(bytes)) => payload::decode(&bytes).unwrap_or_else(|| {
+            payload::unavailable(otto_kit::t_owned!("quickview-error-previewer-unreadable"))
+        }),
+        Ok(Err(err)) => payload::unavailable(otto_kit::t_owned!(
+            "quickview-error-previewer-failed",
+            error = err.to_string()
+        )),
         Err(_) => {
             // Overran. This is the case a thread could not have recovered from.
             let _ = child.kill();
-            payload::unavailable("this file took too long to preview")
+            payload::unavailable(otto_kit::t_owned!("quickview-error-timeout"))
         }
     };
 

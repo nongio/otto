@@ -85,6 +85,9 @@ async fn main() {
         )
         .init();
 
+    // Before the first string is looked up and before anything is drawn.
+    otto_kit::i18n::init_from_desktop();
+
     // The icon theme comes from the XDG settings portal, and the watcher that
     // reads it needs a tokio runtime present — which is why `main` is async.
     // Without it `current_icon_theme()` stays empty, `freedesktop-icons`

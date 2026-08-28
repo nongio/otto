@@ -25,16 +25,21 @@ const MAX_DECODE_PIXELS: u64 = 64 * 1024 * 1024;
 pub fn raster(file: &mut File, request: &Request) -> PreviewPayload {
     let bytes = match read_capped(file, request.budget.max_read) {
         Ok(bytes) => bytes,
-        Err(err) => return payload::unavailable(format!("cannot read the image: {err}")),
+        Err(err) => {
+            return payload::unavailable(otto_kit::t_owned!(
+                "quickview-error-read-image",
+                error = err.to_string()
+            ))
+        }
     };
     let data = Data::new_copy(&bytes);
     let Some(mut codec) = Codec::from_data(data) else {
-        return payload::unavailable("not an image this build can decode");
+        return payload::unavailable(otto_kit::t_owned!("quickview-error-image-unsupported"));
     };
 
     let intrinsic = codec.dimensions();
     if intrinsic.width <= 0 || intrinsic.height <= 0 {
-        return payload::unavailable("the image reports no size");
+        return payload::unavailable(otto_kit::t_owned!("quickview-error-image-no-size"));
     }
 
     let target = target_size(intrinsic, request);
@@ -59,7 +64,12 @@ pub fn raster(file: &mut File, request: &Request) -> PreviewPayload {
 
     let image = match codec.get_image(info, None) {
         Ok(image) => image,
-        Err(err) => return payload::unavailable(format!("the image did not decode: {err:?}")),
+        Err(err) => {
+            return payload::unavailable(otto_kit::t_owned!(
+                "quickview-error-image-decode",
+                error = format!("{err:?}")
+            ))
+        }
     };
 
     match to_pixels(&image, intrinsic) {
@@ -68,7 +78,7 @@ pub fn raster(file: &mut File, request: &Request) -> PreviewPayload {
             pages: 1,
             page: 1,
         },
-        None => payload::unavailable("the decoded image could not be read back"),
+        None => payload::unavailable(otto_kit::t_owned!("quickview-error-image-readback")),
     }
 }
 
@@ -78,7 +88,12 @@ pub fn raster(file: &mut File, request: &Request) -> PreviewPayload {
 pub fn svg(file: &mut File, request: &Request) -> PreviewPayload {
     let bytes = match read_capped(file, request.budget.max_read.min(64 * 1024 * 1024)) {
         Ok(bytes) => bytes,
-        Err(err) => return payload::unavailable(format!("cannot read the drawing: {err}")),
+        Err(err) => {
+            return payload::unavailable(otto_kit::t_owned!(
+                "quickview-error-read-drawing",
+                error = err.to_string()
+            ))
+        }
     };
 
     // Skia's own `LocalResourceProvider` would happily open whatever an
@@ -87,13 +102,13 @@ pub fn svg(file: &mut File, request: &Request) -> PreviewPayload {
     // and offers fonts only. The network namespace already forbids the remote
     // case; this forbids the local one at the same time.
     let Ok(mut dom) = skia_safe::svg::Dom::from_bytes(&bytes, SealedResources) else {
-        return payload::unavailable("the drawing could not be parsed");
+        return payload::unavailable(otto_kit::t_owned!("quickview-error-drawing-parse"));
     };
 
     let width = request.width.clamp(1, 8192) as i32;
     let height = request.height.clamp(1, 8192) as i32;
     let Some(mut surface) = skia_safe::surfaces::raster_n32_premul((width, height)) else {
-        return payload::unavailable("no surface to draw the drawing on");
+        return payload::unavailable(otto_kit::t_owned!("quickview-error-drawing-surface"));
     };
     dom.set_container_size(skia_safe::Size::new(width as f32, height as f32));
     dom.render(surface.canvas());
@@ -105,7 +120,7 @@ pub fn svg(file: &mut File, request: &Request) -> PreviewPayload {
             pages: 1,
             page: 1,
         },
-        None => payload::unavailable("the drawing could not be read back"),
+        None => payload::unavailable(otto_kit::t_owned!("quickview-error-drawing-readback")),
     }
 }
 
@@ -166,15 +181,18 @@ fn pixel_count(size: ISize) -> u64 {
 fn too_large(intrinsic: ISize, request: &Request) -> PreviewPayload {
     PreviewPayload::Card {
         title: request.name.clone(),
-        subtitle: "Too large to preview".into(),
+        subtitle: otto_kit::t_owned!("quickview-image-too-large"),
         facts: vec![
             crate::payload::Fact {
-                key: "Dimensions".into(),
+                key: otto_kit::t_owned!("quickview-fact-dimensions"),
                 value: format!("{} × {}", intrinsic.width, intrinsic.height),
             },
             crate::payload::Fact {
-                key: "Pixels".into(),
-                value: format!("{} megapixels", pixel_count(intrinsic) / 1_000_000),
+                key: otto_kit::t_owned!("quickview-fact-pixels"),
+                value: otto_kit::t_owned!(
+                    "quickview-megapixels",
+                    count = (pixel_count(intrinsic) / 1_000_000) as f64
+                ),
             },
         ],
         hero: None,

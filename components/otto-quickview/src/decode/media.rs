@@ -30,11 +30,11 @@ pub fn generic(metadata: &Metadata, request: &Request, mime: &str) -> PreviewPay
         subtitle: filetype::kind_of(mime).label().to_string(),
         facts: vec![
             Fact {
-                key: "Kind".into(),
+                key: otto_kit::t_owned!("quickview-fact-kind"),
                 value: describe(mime),
             },
             Fact {
-                key: "Size".into(),
+                key: otto_kit::t_owned!("quickview-fact-size"),
                 value: human_size(metadata.len()),
             },
         ],
@@ -53,23 +53,23 @@ pub fn audio(
 
     let mut facts = Vec::new();
     for (key, value) in [
-        ("Artist", tags.artist.as_deref()),
-        ("Album", tags.album.as_deref()),
-        ("Year", tags.year.as_deref()),
+        ("quickview-fact-artist", tags.artist.as_deref()),
+        ("quickview-fact-album", tags.album.as_deref()),
+        ("quickview-fact-year", tags.year.as_deref()),
     ] {
         if let Some(value) = value.filter(|value| !value.is_empty()) {
             facts.push(Fact {
-                key: key.into(),
+                key: otto_kit::t_owned!(key),
                 value: value.to_string(),
             });
         }
     }
     facts.push(Fact {
-        key: "Kind".into(),
+        key: otto_kit::t_owned!("quickview-fact-kind"),
         value: describe(mime),
     });
     facts.push(Fact {
-        key: "Size".into(),
+        key: otto_kit::t_owned!("quickview-fact-size"),
         value: human_size(metadata.len()),
     });
 
@@ -97,22 +97,22 @@ pub fn video(
 
     if let Some((width, height)) = mp4_dimensions(&head) {
         facts.push(Fact {
-            key: "Dimensions".into(),
+            key: otto_kit::t_owned!("quickview-fact-dimensions"),
             value: format!("{width} × {height}"),
         });
     }
     if let Some(seconds) = mp4_duration(&head) {
         facts.push(Fact {
-            key: "Duration".into(),
+            key: otto_kit::t_owned!("quickview-fact-duration"),
             value: clock(seconds),
         });
     }
     facts.push(Fact {
-        key: "Kind".into(),
+        key: otto_kit::t_owned!("quickview-fact-kind"),
         value: describe(mime),
     });
     facts.push(Fact {
-        key: "Size".into(),
+        key: otto_kit::t_owned!("quickview-fact-size"),
         value: human_size(metadata.len()),
     });
 

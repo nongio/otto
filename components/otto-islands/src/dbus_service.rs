@@ -168,12 +168,12 @@ impl DialogService {
         let grant_label = if !grant_label.is_empty() {
             grant_label.to_string()
         } else if groups.is_empty() {
-            "Allow".to_string()
+            otto_kit::t_owned!("islands-dialog-allow")
         } else {
-            "Continue".to_string()
+            otto_kit::t_owned!("islands-dialog-continue")
         };
         let deny_label = if deny_label.is_empty() {
-            "Deny".to_string()
+            otto_kit::t_owned!("islands-dialog-deny")
         } else {
             deny_label.to_string()
         };
