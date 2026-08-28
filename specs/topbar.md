@@ -1,7 +1,7 @@
 # Top Bar
 
 **Status:** draft
-**Related specs:** context-menus.md, dynamic-island.md, notification-daemon.md
+**Related specs:** context-menus.md, dynamic-island.md, notification-daemon.md, localisation.md
 
 ## Summary
 
@@ -10,6 +10,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 ## Goals
 
 - Display the focused window's application name and global menu in a macOS-style menu bar on the left.
+- Present the bar's own strings and its clock format in the user's language. Application names and menu entries come from the applications themselves and are shown as they arrive.
 - Host StatusNotifierItem (SNI) tray icons on the right, with tooltips and context menus.
 - Show a system clock on the far right.
 - Coexist with the Dynamic Island by leaving the horizontal center of the bar visually unoccupied.
@@ -83,7 +84,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 
 ### Clock (Right Zone)
 
-27. The clock displays the current local time. Default format: `HH:MM` (24-hour). Configurable to include date or switch to 12-hour format.
+27. The clock displays the current local time. The default format is the one the active locale's catalogue carries — weekday, day, month and a 24-hour time in most locales, a 12-hour time with the month first in `en-US` (see localisation.md). An explicit clock format in the bar's own configuration overrides it. Whether seconds are shown is a user setting, and it changes how often the bar redraws.
 28. Clicking the clock opens a calendar popup (future milestone; not in initial implementation).
 
 ### Animations & Visual Behavior
@@ -102,6 +103,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 - **Menu root changes while open:** Close the current open menu and re-fetch before re-opening.
 - **HiDPI / fractional scaling:** The bar must render at the output's native scale. All sizes are in logical points; the bar converts to physical pixels using the output's *fractional* scale (`wp_fractional_scale_v1`), not the integer buffer scale — on a 1.5x output the integer scale is 2, and sizing by it pushes the panels past their exclusive zone and over the window below.
 - **Theme change:** Re-apply colors within one second without restarting. Use the color-scheme D-Bus portal (`org.freedesktop.portal.Settings`) to track system theme.
+- **Language change:** Unlike the colour scheme, the language is fixed for the life of the process and takes effect at the next start of the bar (see localisation.md).
 - **Multiple monitors:** Primary-output bar shows all three zones. Secondary-output bars (if enabled) show only tray + clock.
 - **Right-to-left locales:** Zone order reverses (right zone on left, left zone on right). Menu popup alignment mirrors accordingly.
 

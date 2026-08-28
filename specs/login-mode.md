@@ -1,7 +1,7 @@
 # Login Mode
 
 **Status:** draft
-**Related specs:** [multi-output](./multi-output.md), [workspaces-multi-output](./workspaces-multi-output.md)
+**Related specs:** [multi-output](./multi-output.md), [workspaces-multi-output](./workspaces-multi-output.md), [localisation](./localisation.md)
 
 ## Summary
 
@@ -198,6 +198,14 @@ prefix followed by a JSON payload, in both directions.
   are ignored until greetd asks a question, *unless* the user has asked for the
   password field: anything typed into that gap would otherwise be echoed
   unmasked and then lost when the prompt arrived.
+- Text arriving from greetd — every `auth_message`, and the errors under them —
+  is displayed as it arrives, in whatever language the authentication stack
+  produced it. The greeter's own labels (the username and password prompts it
+  shows before greetd has asked anything, its status lines, the button that
+  abandons the fingerprint reader) and its clock format come from Otto's
+  catalogues. The greeter runs before any user session exists, so the settings
+  portal is usually absent and it takes its language from its own environment
+  ([localisation](./localisation.md)).
 - greetd replies with `auth_message`, `success`, or `error`:
   - `auth_message` of type `secret` — prompt, input masked.
   - `auth_message` of type `visible` — prompt, input echoed.
