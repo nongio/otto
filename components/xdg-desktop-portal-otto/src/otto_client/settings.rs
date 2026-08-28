@@ -31,6 +31,9 @@ trait OttoSettings {
     /// The XDG sound theme name apps play their event sounds from.
     async fn get_sound_theme(&self) -> Result<String>;
 
+    /// The user's preferred locales, most preferred first.
+    async fn get_locales(&self) -> Result<Vec<String>>;
+
     /// Get the accent colour as sRGB components in `0.0..=1.0`, already in the
     /// shape `org.freedesktop.appearance accent-color` calls for.
     async fn get_accent_color(&self) -> Result<(f64, f64, f64)>;
