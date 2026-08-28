@@ -2163,7 +2163,7 @@ fn draw_sidebar(canvas: &Canvas, f: &Frame) {
             .render(canvas);
     }
 
-    Label::new("Places")
+    Label::new(otto_kit::t!("files-places"))
         .with_style(styles::SUBHEADLINE_EMPHASIZED)
         .with_color(theme.text_tertiary)
         .centered_on(20.0, 54.0)
@@ -2479,9 +2479,19 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
     if let Some(error) = pane.error {
         draw_centered(canvas, area, error, theme.text_secondary);
     } else if pane.loading {
-        draw_centered(canvas, area, "Loading…", theme.text_tertiary);
+        draw_centered(
+            canvas,
+            area,
+            otto_kit::t!("files-loading"),
+            theme.text_tertiary,
+        );
     } else if pane.entries.is_empty() {
-        draw_centered(canvas, area, "This folder is empty.", theme.text_tertiary);
+        draw_centered(
+            canvas,
+            area,
+            otto_kit::t!("files-folder-empty"),
+            theme.text_tertiary,
+        );
     } else {
         // Only the rows of cells the viewport is asking for are drawn.
         let band = pane.band(area);
@@ -2738,7 +2748,12 @@ fn draw_list(canvas: &Canvas, f: &Frame) {
         return;
     }
     if pane.loading {
-        draw_centered(canvas, viewport, "Loading…", theme.text_tertiary);
+        draw_centered(
+            canvas,
+            viewport,
+            otto_kit::t!("files-loading"),
+            theme.text_tertiary,
+        );
         canvas.restore();
         return;
     }

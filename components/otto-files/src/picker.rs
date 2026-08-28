@@ -37,17 +37,17 @@ impl Mode {
     /// The window title to use when the request supplies none.
     pub fn default_title(self) -> &'static str {
         match self {
-            Self::Open => "Open",
-            Self::Save => "Save As",
-            Self::SaveFiles => "Save Files",
+            Self::Open => otto_kit::t!("files-picker-open"),
+            Self::Save => otto_kit::t!("files-picker-save-as"),
+            Self::SaveFiles => otto_kit::t!("files-picker-save-files"),
         }
     }
 
     /// The confirm button's text when the request supplies none.
     pub fn default_accept_label(self) -> &'static str {
         match self {
-            Self::Open => "Open",
-            Self::Save | Self::SaveFiles => "Save",
+            Self::Open => otto_kit::t!("common-open"),
+            Self::Save | Self::SaveFiles => otto_kit::t!("common-save"),
         }
     }
 }
@@ -111,7 +111,7 @@ impl Filter {
     /// supplies none.
     pub fn all_files() -> Self {
         Self {
-            label: "All Files".to_string(),
+            label: otto_kit::t_owned!("files-picker-all-files"),
             globs: vec!["*".to_string()],
             unresolved: false,
             matches_directories: true,
@@ -254,15 +254,15 @@ pub enum SaveAction {
 pub fn save_action(name: &str, existing: Option<bool>) -> SaveAction {
     let trimmed = name.trim();
     if trimmed.is_empty() {
-        return SaveAction::Blocked("Enter a name");
+        return SaveAction::Blocked(otto_kit::t!("files-save-enter-a-name"));
     }
     // A name is one path component. `/` would silently write somewhere the
     // user is not looking, which is worse than refusing it.
     if trimmed.contains('/') {
-        return SaveAction::Blocked("A name cannot contain \u{201c}/\u{201d}");
+        return SaveAction::Blocked(otto_kit::t!("files-save-name-has-slash"));
     }
     if trimmed == "." || trimmed == ".." {
-        return SaveAction::Blocked("That name is reserved");
+        return SaveAction::Blocked(otto_kit::t!("files-save-name-reserved"));
     }
     match existing {
         Some(true) => SaveAction::Descend,

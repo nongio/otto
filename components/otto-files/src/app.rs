@@ -1282,9 +1282,12 @@ impl Browser {
                     column.selection.clear();
                     column.selection.insert(new_name.clone());
                 }
-                self.status = Some(format!("Renamed to \u{201c}{new_name}\u{201d}"));
+                self.status = Some(otto_kit::t_owned!(
+                    "files-renamed-to",
+                    name = new_name.as_str()
+                ));
                 self.record_undo(
-                    "Rename",
+                    otto_kit::t!("files-undo-rename"),
                     vec![model::Change::Moved {
                         from: session.original.clone(),
                         to: target.clone(),
@@ -1293,7 +1296,10 @@ impl Browser {
                 self.reload_all();
             }
             Err(err) => {
-                self.status = Some(format!("Couldn\u{2019}t rename: {err}"));
+                self.status = Some(otto_kit::t_owned!(
+                    "files-rename-failed",
+                    error = err.to_string()
+                ));
             }
         }
         self.dirty = true;
@@ -1448,7 +1454,10 @@ impl Browser {
         let exe = match std::env::current_exe() {
             Ok(exe) => exe,
             Err(err) => {
-                self.status = Some(format!("Couldn\u{2019}t open a new window: {err}"));
+                self.status = Some(otto_kit::t_owned!(
+                    "files-new-window-failed",
+                    error = err.to_string()
+                ));
                 self.dirty = true;
                 return;
             }
@@ -1468,7 +1477,10 @@ impl Browser {
                 });
             }
             Err(err) => {
-                self.status = Some(format!("Couldn\u{2019}t open a new window: {err}"));
+                self.status = Some(otto_kit::t_owned!(
+                    "files-new-window-failed",
+                    error = err.to_string()
+                ));
                 self.dirty = true;
             }
         }
@@ -1600,7 +1612,10 @@ impl Browser {
                 });
             }
             Err(err) => {
-                self.status = Some(format!("Couldn\u{2019}t open that file: {err}"));
+                self.status = Some(otto_kit::t_owned!(
+                    "files-open-failed",
+                    error = err.to_string()
+                ));
                 self.dirty = true;
             }
         }
@@ -2427,7 +2442,14 @@ impl Browser {
         let summary = result.summary();
         self.status = (!summary.is_empty()).then_some(summary);
         Self::play_op_sound(&result);
-        self.record_undo(if clip.cut { "Move" } else { "Copy" }, result.changes);
+        self.record_undo(
+            if clip.cut {
+                otto_kit::t!("files-undo-move")
+            } else {
+                otto_kit::t!("files-undo-copy")
+            },
+            result.changes,
+        );
         self.reload_all();
         self.dirty = true;
     }
@@ -2594,7 +2616,14 @@ impl Browser {
         let summary = result.summary();
         self.status = (!summary.is_empty()).then_some(summary);
         Self::play_op_sound(&result);
-        self.record_undo(if move_them { "Move" } else { "Copy" }, result.changes);
+        self.record_undo(
+            if move_them {
+                otto_kit::t!("files-undo-move")
+            } else {
+                otto_kit::t!("files-undo-copy")
+            },
+            result.changes,
+        );
         self.reload_all();
     }
 
@@ -2735,31 +2764,33 @@ impl Browser {
 
         if let [only] = entries.as_slice() {
             if only.is_dir {
-                items.push(MenuItem::action("Open").with_action_id("open"));
+                items.push(MenuItem::action(otto_kit::t!("common-open")).with_action_id("open"));
             }
-            items.push(MenuItem::action("Get Info").with_action_id("get_info"));
-            items.push(MenuItem::action("Rename").with_action_id("rename"));
+            items.push(MenuItem::action(otto_kit::t!("files-get-info")).with_action_id("get_info"));
+            items.push(MenuItem::action(otto_kit::t!("common-rename")).with_action_id("rename"));
         }
 
         if entries.is_empty() {
-            items.push(MenuItem::action("New Folder").with_action_id("new_folder"));
+            items.push(
+                MenuItem::action(otto_kit::t!("files-new-folder")).with_action_id("new_folder"),
+            );
             let can_paste = !self.clipboard.is_empty()
                 || clipboard::first_available(clipboard::file_mime_preference()).is_some();
             if can_paste {
                 items.push(MenuItem::separator());
-                items.push(MenuItem::action("Paste").with_action_id("paste"));
+                items.push(MenuItem::action(otto_kit::t!("common-paste")).with_action_id("paste"));
             }
         } else {
             if !items.is_empty() {
                 items.push(MenuItem::separator());
             }
-            items.push(MenuItem::action("Cut").with_action_id("cut"));
-            items.push(MenuItem::action("Copy").with_action_id("copy"));
+            items.push(MenuItem::action(otto_kit::t!("common-cut")).with_action_id("cut"));
+            items.push(MenuItem::action(otto_kit::t!("common-copy")).with_action_id("copy"));
             items.push(MenuItem::separator());
             let label = if entries.len() == 1 {
-                "Move to Trash".to_string()
+                otto_kit::t_owned!("files-move-to-trash")
             } else {
-                format!("Move {} Items to Trash", entries.len())
+                otto_kit::t_owned!("files-move-count-to-trash", count = entries.len() as f64)
             };
             items.push(MenuItem::action(label).with_action_id("trash"));
         }
@@ -2800,7 +2831,7 @@ impl Browser {
     /// Ctrl+Z — take back the last operation that changed files.
     fn undo_last(&mut self) {
         let Some(step) = self.undo.pop() else {
-            self.status = Some("Nothing to undo".to_string());
+            self.status = Some(otto_kit::t_owned!("files-nothing-to-undo"));
             self.dirty = true;
             return;
         };
@@ -2808,7 +2839,7 @@ impl Browser {
         let result = model::undo(&step.changes);
         Self::play_op_sound(&result);
         self.status = Some(if result.errors.is_empty() {
-            format!("Undid {}", step.label)
+            otto_kit::t_owned!("files-undid", label = step.label)
         } else {
             result.errors[0].clone()
         });
@@ -2833,7 +2864,7 @@ impl Browser {
         let summary = result.summary();
         self.status = (!summary.is_empty()).then_some(summary);
         Self::play_op_sound(&result);
-        self.record_undo("Delete", result.changes);
+        self.record_undo(otto_kit::t!("files-undo-delete"), result.changes);
         self.reload_all();
         self.dirty = true;
     }
@@ -2858,10 +2889,16 @@ impl Browser {
                     self.select(depth, index);
                     self.start_rename();
                 }
-                self.status = Some(format!("New folder \u{201c}{name}\u{201d}"));
+                self.status = Some(otto_kit::t_owned!(
+                    "files-new-folder-created",
+                    name = name.as_str()
+                ));
             }
             Err(err) => {
-                self.status = Some(format!("Couldn\u{2019}t create folder: {err}"));
+                self.status = Some(otto_kit::t_owned!(
+                    "files-new-folder-failed",
+                    error = err.to_string()
+                ));
             }
         }
         self.dirty = true;
@@ -3225,7 +3262,7 @@ impl Browser {
             self.active = 0;
             self.pan.scroll_to(0.0);
         }
-        self.status = Some(format!("\u{201c}{name}\u{201d} is no longer there"));
+        self.status = Some(otto_kit::t_owned!("files-gone", name = name.as_str()));
         self.dirty = true;
     }
 

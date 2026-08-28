@@ -34,7 +34,7 @@ impl Entry {
     /// The Kind column's text.
     pub fn kind_label(&self) -> &'static str {
         if self.is_dir {
-            "Folder"
+            otto_kit::t!("files-kind-folder")
         } else {
             self.kind.label()
         }
@@ -67,10 +67,10 @@ pub enum SortKey {
 impl SortKey {
     pub fn label(self) -> &'static str {
         match self {
-            SortKey::Name => "Name",
-            SortKey::Size => "Size",
-            SortKey::Kind => "Kind",
-            SortKey::Modified => "Date Modified",
+            SortKey::Name => otto_kit::t!("files-column-name"),
+            SortKey::Size => otto_kit::t!("files-column-size"),
+            SortKey::Kind => otto_kit::t!("files-column-kind"),
+            SortKey::Modified => otto_kit::t!("files-column-date-modified"),
         }
     }
 }
@@ -444,7 +444,9 @@ pub fn places() -> Vec<Place> {
     };
 
     places.push(Place {
-        label: "Home".to_string(),
+        // Not a directory name — the folder on disk is called whatever the
+        // user's login is — so this one is always translated.
+        label: otto_kit::t_owned!("files-home"),
         path: home.clone(),
         icon: "user-home",
     });
@@ -453,26 +455,60 @@ pub fn places() -> Vec<Place> {
     // here rather than by a crate: it is five lines of shell-ish assignment.
     let configured = user_dirs(&home);
 
-    const WANTED: &[(&str, &str, &str)] = &[
-        ("XDG_DESKTOP_DIR", "Desktop", "user-desktop"),
-        ("XDG_DOCUMENTS_DIR", "Documents", "folder-documents"),
-        ("XDG_DOWNLOAD_DIR", "Downloads", "folder-download"),
-        ("XDG_MUSIC_DIR", "Music", "folder-music"),
-        ("XDG_PICTURES_DIR", "Pictures", "folder-pictures"),
-        ("XDG_VIDEOS_DIR", "Videos", "folder-videos"),
+    const WANTED: &[(&str, &str, &str, &str)] = &[
+        (
+            "XDG_DESKTOP_DIR",
+            "Desktop",
+            "user-desktop",
+            "files-desktop",
+        ),
+        (
+            "XDG_DOCUMENTS_DIR",
+            "Documents",
+            "folder-documents",
+            "files-documents",
+        ),
+        (
+            "XDG_DOWNLOAD_DIR",
+            "Downloads",
+            "folder-download",
+            "files-downloads",
+        ),
+        ("XDG_MUSIC_DIR", "Music", "folder-music", "files-music"),
+        (
+            "XDG_PICTURES_DIR",
+            "Pictures",
+            "folder-pictures",
+            "files-pictures",
+        ),
+        ("XDG_VIDEOS_DIR", "Videos", "folder-videos", "files-videos"),
     ];
 
-    for (key, fallback_name, icon) in WANTED {
+    for (key, fallback_name, icon, message) in WANTED {
         let path = configured
             .iter()
             .find(|(k, _)| k == key)
             .map(|(_, v)| v.clone())
             .unwrap_or_else(|| home.join(fallback_name));
         if path.is_dir() {
-            let label = path
+            let on_disk = path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| (*fallback_name).to_string());
+            // These are real folders, and the sidebar should agree with what
+            // the terminal and every other application show. A system set up
+            // in another language already named them in that language, so the
+            // name on disk is both truthful and localised, and it wins.
+            //
+            // The catalogue is only consulted when the folder still carries
+            // its English default — an account created before the language
+            // was chosen, or one made by hand — where translating the shortcut
+            // is a kindness rather than a lie.
+            let label = if on_disk == *fallback_name {
+                otto_kit::t_owned!(message)
+            } else {
+                on_disk
+            };
             places.push(Place { label, path, icon });
         }
     }
@@ -522,21 +558,35 @@ pub fn home_dir() -> Option<PathBuf> {
 
 /// Human-readable size, the way a file manager writes it.
 pub fn format_size(bytes: u64) -> String {
-    const UNITS: &[&str] = &["bytes", "KB", "MB", "GB", "TB"];
+    // Under a kilobyte the count is exact and needs a plural rule — one byte,
+    // two bytes, and whatever the local grammar does with 2 and 5.
     if bytes < 1000 {
-        return format!("{bytes} bytes");
+        return otto_kit::t_owned!("files-size-bytes", count = bytes as f64);
     }
-    let mut value = bytes as f64;
+
+    const UNITS: &[&str] = &[
+        "files-size-kb",
+        "files-size-mb",
+        "files-size-gb",
+        "files-size-tb",
+    ];
+    // Divided once up front: anything reaching here is at least a kilobyte,
+    // and UNITS starts at KB rather than at bytes, so the counter and the unit
+    // it names stay in step.
+    let mut value = bytes as f64 / 1000.0;
     let mut unit = 0;
     while value >= 1000.0 && unit < UNITS.len() - 1 {
         value /= 1000.0;
         unit += 1;
     }
-    if value < 10.0 {
-        format!("{value:.1} {}", UNITS[unit])
+    // One decimal below ten, none above: the extra digit stops a 1 GB file and
+    // a 9 GB file from looking the same, and is noise once the number is wide.
+    let rendered = if value < 10.0 {
+        format!("{value:.1}")
     } else {
-        format!("{value:.0} {}", UNITS[unit])
-    }
+        format!("{value:.0}")
+    };
+    otto_kit::t_owned!(UNITS[unit], value = rendered)
 }
 
 /// Date, as a listing shows it. Deliberately plain: no locale formatting, and
@@ -550,12 +600,30 @@ pub fn format_time(time: SystemTime) -> String {
     let (year, month, day) = civil_from_days(days);
     let time_of_day = secs.rem_euclid(86_400);
     let (hour, minute) = (time_of_day / 3600, (time_of_day % 3600) / 60);
+    // Assembled from parts rather than formatted from a pattern, because the
+    // month names have to be translated too — and the order of the parts is
+    // itself a local convention, which is why the carrier string owns it.
     const MONTHS: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        "files-month-jan",
+        "files-month-feb",
+        "files-month-mar",
+        "files-month-apr",
+        "files-month-may",
+        "files-month-jun",
+        "files-month-jul",
+        "files-month-aug",
+        "files-month-sep",
+        "files-month-oct",
+        "files-month-nov",
+        "files-month-dec",
     ];
-    format!(
-        "{day} {} {year} at {hour:02}:{minute:02}",
-        MONTHS[(month as usize - 1).min(11)]
+    let month = otto_kit::t!(MONTHS[(month as usize - 1).min(11)]);
+    otto_kit::t_owned!(
+        "files-date-modified",
+        day = day.to_string(),
+        month = month,
+        year = year.to_string(),
+        time = format!("{hour:02}:{minute:02}")
     )
 }
 
@@ -610,12 +678,23 @@ mod tests {
     #[test]
     fn epoch_formats_correctly() {
         // A fixed point, so the date arithmetic is pinned rather than trusted.
-        assert_eq!(
-            format_time(SystemTime::UNIX_EPOCH),
-            "1 Jan 1970 at 00:00".to_string()
-        );
-        let d = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
-        assert_eq!(format_time(d), "14 Nov 2023 at 22:13");
+        //
+        // Asserted part by part rather than as one string: the order of day,
+        // month and year is now the locale's business — en-GB puts the day
+        // first, en-US the month — and pinning one ordering here would make
+        // this test fail on a correctly translated desktop. What it is
+        // actually guarding is `civil_from_days`, and that shows up in the
+        // parts whatever order they are printed in.
+        for (secs, day, month, year, time) in [
+            (0u64, "1", "Jan", "1970", "00:00"),
+            (1_700_000_000, "14", "Nov", "2023", "22:13"),
+        ] {
+            let at = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+            let rendered = format_time(at);
+            for part in [day, month, year, time] {
+                assert!(rendered.contains(part), "{rendered:?} is missing {part:?}");
+            }
+        }
     }
 }
 
