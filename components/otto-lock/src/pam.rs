@@ -164,9 +164,9 @@ impl Attempt {
             // it. Report it as a refusal so the panel offers another go.
             Err(TryRecvError::Disconnected) => {
                 self.finished = true;
-                Some(Event::Ended(Outcome::Denied(
-                    "Authentication service failed".to_string(),
-                )))
+                Some(Event::Ended(Outcome::Denied(otto_kit::t_owned!(
+                    "lock-error-service-failed"
+                ))))
             }
         }
     }
@@ -238,7 +238,7 @@ fn converse(
     answers: &Receiver<String>,
 ) -> Outcome {
     let Ok(user_c) = CString::new(user) else {
-        return Outcome::Denied("Invalid user name".to_string());
+        return Outcome::Denied(otto_kit::t_owned!("lock-error-invalid-user"));
     };
 
     // Lives for as long as the handle does: PAM keeps the pointer and calls
@@ -253,7 +253,7 @@ fn converse(
     let status = unsafe { pam_start(service.as_ptr(), user_c.as_ptr(), &conv, &mut pamh) };
     if status != PAM_SUCCESS || pamh.is_null() {
         tracing::error!(status, "pam_start failed");
-        return Outcome::Denied("Authentication is unavailable".to_string());
+        return Outcome::Denied(otto_kit::t_owned!("lock-error-unavailable"));
     }
 
     let outcome = authenticate(pamh);
@@ -295,7 +295,7 @@ fn authenticate(pamh: *mut PamHandle) -> Outcome {
 fn strerror(pamh: *mut PamHandle, status: c_int) -> String {
     let message = unsafe { pam_strerror(pamh, status) };
     if message.is_null() {
-        return format!("Authentication failed ({status})");
+        return otto_kit::t_owned!("lock-error-auth-failed", status = status.to_string());
     }
     unsafe { CStr::from_ptr(message) }
         .to_string_lossy()

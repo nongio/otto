@@ -103,7 +103,7 @@ impl Conversation {
         Self {
             stage: Stage::Authenticating,
             user: User::current(),
-            prompt: "Password".to_string(),
+            prompt: otto_kit::t_owned!("lock-prompt-password"),
             input: String::new(),
             secret: true,
             question_pending: false,
@@ -149,7 +149,7 @@ impl Conversation {
         self.password_requested = true;
         self.secret = true;
         self.input.clear();
-        self.prompt = "Password".to_string();
+        self.prompt = otto_kit::t_owned!("lock-prompt-password");
         // The hint was about the reader, which is no longer what is being
         // asked for; the error, if any, was about a finger that missed.
         self.info = None;
@@ -168,9 +168,10 @@ impl Conversation {
         let status = match (&self.stage, self.error.as_deref(), self.info.as_deref()) {
             // The finger was recognised: the mark says so, but the line under
             // it should stop asking for one.
-            (Stage::Accepted { .. }, ..) => {
-                Some(Status::Fingerprint("Authenticated", Finger::Accepted))
-            }
+            (Stage::Accepted { .. }, ..) => Some(Status::Fingerprint(
+                otto_kit::t!("lock-status-authenticated"),
+                Finger::Accepted,
+            )),
             // The reader is still what is being waited on, whatever it last
             // said — a missed finger is reported and then asked for again, and
             // taking the mark away for that would say the reader was done.
@@ -178,14 +179,14 @@ impl Conversation {
                 self.error
                     .as_deref()
                     .or(self.info.as_deref())
-                    .unwrap_or("Place your finger on the reader"),
+                    .unwrap_or_else(|| otto_kit::t!("lock-status-place-finger")),
                 Finger::Awaited,
             )),
             // Waiting on a reader that is holding up a password nobody can send
             // yet. Saying so is the difference between a slow unlock and a
             // broken one.
             _ if self.submit_when_asked => {
-                Some(Status::Info("Waiting for the fingerprint reader\u{2026}"))
+                Some(Status::Info(otto_kit::t!("lock-status-waiting-for-reader")))
             }
             (_, Some(error), _) => Some(Status::Error(error)),
             (_, None, Some(info)) => Some(Status::Info(info)),
@@ -330,14 +331,14 @@ impl Locker {
         }
 
         let Some(user) = self.session.user.as_ref() else {
-            self.session.error = Some("No user to authenticate".to_string());
+            self.session.error = Some(otto_kit::t_owned!("lock-error-no-user"));
             return;
         };
 
         tracing::info!(user = %user.name, "Authenticating");
         self.attempt = Some(Attempt::start(&user.name));
         self.session.question_pending = false;
-        self.session.prompt = "Password".to_string();
+        self.session.prompt = otto_kit::t_owned!("lock-prompt-password");
     }
 
     /// Collect whatever PAM has said. Returns whether the panel needs
@@ -532,10 +533,24 @@ impl Locker {
     /// Whether this is allowed from a locked session is polkit's call, not the
     /// locker's; if it refuses, say so on the panel rather than failing mute.
     fn power(&mut self, action: PowerAction) {
-        let verb = match action {
-            PowerAction::Suspend => "suspend",
-            PowerAction::Restart => "reboot",
-            PowerAction::Shutdown => "poweroff",
+        // The verb is systemctl's, not the user's: it goes on the command
+        // line, and the panel gets a message keyed by the action instead.
+        let (verb, denied, failed) = match action {
+            PowerAction::Suspend => (
+                "suspend",
+                "lock-power-suspend-denied",
+                "lock-power-suspend-failed",
+            ),
+            PowerAction::Restart => (
+                "reboot",
+                "lock-power-restart-denied",
+                "lock-power-restart-failed",
+            ),
+            PowerAction::Shutdown => (
+                "poweroff",
+                "lock-power-shutdown-denied",
+                "lock-power-shutdown-failed",
+            ),
         };
         tracing::info!(verb, "power action requested");
 
@@ -551,14 +566,16 @@ impl Locker {
                 let reason = stderr.lines().next().unwrap_or("").trim().to_string();
                 tracing::warn!(verb, status = ?output.status, %stderr, "systemctl refused");
                 self.session.error = Some(if reason.is_empty() {
-                    format!("Not permitted to {verb}")
+                    otto_kit::t_owned!(denied)
                 } else {
+                    // systemd's own diagnosis, which says more than anything
+                    // here could; it comes back in the system's language.
                     reason
                 });
             }
             Err(err) => {
                 tracing::warn!(verb, %err, "could not run systemctl");
-                self.session.error = Some(format!("Could not {verb}: {err}"));
+                self.session.error = Some(otto_kit::t_owned!(failed, error = err.to_string()));
             }
         }
     }
@@ -638,7 +655,7 @@ impl Locker {
 fn prompt_label(text: &str) -> String {
     let label = text.trim().trim_end_matches(':').trim_end().to_string();
     if label.is_empty() {
-        "Password".to_string()
+        otto_kit::t_owned!("lock-prompt-password")
     } else {
         label
     }
@@ -861,6 +878,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
+    // Before the first string is looked up and before anything is drawn: the
+    // catalogue is fixed by the first lookup, and the locker draws at once.
+    otto_kit::i18n::init_from_desktop();
+
     AppRunner::new(Locker::new()).run()?;
     Ok(())
 }
@@ -879,7 +900,7 @@ mod tests {
     fn prompt_labels_lose_their_terminal_punctuation() {
         assert_eq!(prompt_label("Password: "), "Password");
         assert_eq!(prompt_label("Verification code:"), "Verification code");
-        assert_eq!(prompt_label("   "), "Password");
+        assert_eq!(prompt_label("   "), otto_kit::t!("lock-prompt-password"));
     }
 
     /// A lock screen authenticates the user it runs as, so there is no name to
