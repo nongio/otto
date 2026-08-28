@@ -87,6 +87,38 @@ parts of the scene can be promoted to overlay planes.
 
 **x11** — Otto as an X11 client. Basic and not actively maintained.
 
+## Sampling a client's texture
+
+A client's buffer is drawn through a Skia shader in
+`workspaces::utils::configure_surface_layer`, and which filter that shader uses
+is chosen per surface by `surface_filter`. Bicubic (Catmull-Rom) is the
+general-purpose answer but costs ~12-16x nearest in the fragment shader, so a
+buffer that needs no resampling is copied instead.
+
+Whether it needs resampling is a question about **physical pixels**, not about
+the layer. The scale and translation the gate looks at describe the texture's
+mapping onto its layer; that only says what reaches the framebuffer if the
+layer itself starts on a whole physical pixel. Surface origins are logical
+values multiplied by the output scale, so on a fractional scale they land
+mid-pixel (logical 101 x 1.65 = 166.65) unless something rounds them.
+
+Two rules keep that honest, and they only work together:
+
+- `configure_surface_layer` **rounds every surface origin it sets** to a whole
+  physical pixel. Half a pixel of placement accuracy is worth less than the
+  identity mapping it buys back, which is both the crisp result and the cheap
+  one.
+- `surface_filter` takes `pixel_grid_aligned` and falls back to bicubic without
+  it — for `client_owns_size` surfaces, whose position comes from the client.
+
+Dropping either one puts a 1:1 buffer through a point sample half a pixel off,
+which shows up as doubled and dropped rows of pixels across every window on a
+fractionally scaled output.
+
+Clients that are not fractional-scale aware hand over an integer-scaled buffer
+(a 2x buffer on a 1.65x output, `scale = 0.825`) and take the bicubic path.
+That is a real resample and there is nothing to snap away.
+
 ## Getting frames out
 
 Two independent capture paths exist, and they share one GPU blit:
