@@ -621,8 +621,14 @@ impl Otto<UdevData> {
                         {
                             Some(id)
                         } else {
-                            // Still settling — keep whatever is promoted now.
-                            already
+                            // Still settling. The *new* candidate waits, but
+                            // whatever is promoted now does not get to stay:
+                            // its plane scans out above the windows plane, so
+                            // a window that is no longer the top one would sit
+                            // over the one that is — which is what a newly
+                            // mapped window comes up behind. Demotion is
+                            // immediate, promotion is not.
+                            None
                         }
                     }
                 }
