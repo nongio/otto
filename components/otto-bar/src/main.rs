@@ -19,6 +19,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
+    // Before any string is read — the clock's format comes from the
+    // catalogue. Asks the compositor rather than reading LANG, so that
+    // "Preferred languages" moves the bar too.
+    otto_kit::i18n::init_from_desktop();
+
     let app = TopBarApp::new();
     AppRunner::new(app).run()?;
     Ok(())

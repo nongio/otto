@@ -17,7 +17,9 @@ wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop"] }
-chrono = "0.4"
+# `unstable-locales` is what makes %A and %B render in the user's language;
+# without it chrono emits English names whatever the locale says.
+chrono = { version = "0.4", features = ["unstable-locales"] }
 tokio = { version = "1", features = ["full"] }
 zbus = { version = "4", default-features = false, features = ["tokio"] }
 futures-util = "0.3"
