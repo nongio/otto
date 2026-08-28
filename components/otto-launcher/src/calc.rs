@@ -33,7 +33,7 @@ impl Calculator {
 
 impl Source for Calculator {
     fn label(&self) -> &'static str {
-        "Calc"
+        otto_kit::t!("launcher-badge-calc")
     }
 
     /// Nothing to browse: an answer exists only for a question.

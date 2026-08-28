@@ -97,7 +97,7 @@ impl Apps {
 
 impl Source for Apps {
     fn label(&self) -> &'static str {
-        "App"
+        otto_kit::t!("launcher-badge-app")
     }
 
     fn items(&mut self) -> Vec<Item> {
