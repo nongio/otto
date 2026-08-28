@@ -10,6 +10,7 @@
     allow(dead_code, unused_imports)
 )]
 
+pub mod a11y;
 pub mod audio;
 pub mod background_effect;
 #[cfg(any(feature = "udev", feature = "xwayland", feature = "headless"))]

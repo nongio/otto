@@ -362,6 +362,10 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// Virtual outputs defined in config, each streamed via PipeWire.
     pub virtual_outputs: Vec<crate::virtual_output::VirtualOutputState>,
 
+    /// Accessibility — the keyboard monitor assistive technologies grab keys
+    /// through, and the D-Bus half of it until the service thread takes it.
+    pub a11y: crate::a11y::A11yState,
+
     // foreign toplevel list - maps surface ObjectId to unified toplevel handles (both protocols)
     pub foreign_toplevels: HashMap<ObjectId, foreign_toplevel_shared::ForeignToplevelHandles>,
 
@@ -1006,6 +1010,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             screenshare_sessions: HashMap::new(),
             screenshare_manager: None,
             virtual_outputs: Vec::new(),
+
+            // accessibility
+            a11y: crate::a11y::A11yState::new(),
 
             // foreign toplevel list
             foreign_toplevels: HashMap::new(),

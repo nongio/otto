@@ -27,6 +27,13 @@ D-Bus client that reads a described schema, sets values, and observes changes.
   rate) graphically.
 - The app is usable with keyboard alone, and every setting it presents is
   reachable by search.
+- The app describes itself to assistive technologies, and what a screen reader
+  can reach is what the keyboard can reach — see
+  [accessibility](accessibility.md). Tab enters the sidebar, which is one stop:
+  the arrows move between panes and the selection follows immediately, Home and
+  End go to the ends. Tab again moves on to the pane's own controls, each its
+  own stop, where Space activates a switch or a button and the arrows move a
+  slider. A shortcut line is the one control not reachable yet.
 
 ## Non-Goals
 

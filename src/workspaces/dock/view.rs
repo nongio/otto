@@ -1202,6 +1202,18 @@ impl DockView {
             }
         });
     }
+    /// Where an application's dock icon is on screen, in physical pixels.
+    ///
+    /// Read by the accessibility layer so an assistive technology can find the
+    /// icon spatially — mouse review reads whatever is under the pointer, and
+    /// without bounds there is nothing under it. The icon's own layer is the
+    /// authority, so magnification is accounted for by construction.
+    pub fn app_icon_bounds(&self, match_id: &str) -> Option<skia::Rect> {
+        let layers = self.app_layers.read().unwrap();
+        let bounds = layers.get(match_id)?.layer.render_bounds_transformed();
+        (!bounds.is_empty()).then_some(bounds)
+    }
+
     fn get_app_layers(&self) -> Vec<Layer> {
         let app_layers = self.app_layers.read().unwrap();
         app_layers

@@ -4,12 +4,14 @@ use smithay::wayland::{
 use smithay::{
     backend::input::{Event, InputBackend, KeyState, KeyboardKeyEvent},
     desktop::layer_map_for_output,
-    input::keyboard::{FilterResult, Keysym, ModifiersState},
+    input::keyboard::{xkb, FilterResult, Keysym, ModifiersState},
     utils::{IsAlive, SERIAL_COUNTER as SCOUNTER},
     wayland::shell::wlr_layer::{
         KeyboardInteractivity, Layer as WlrLayer, LayerSurfaceCachedState,
     },
 };
+
+use std::time::Duration;
 
 use crate::{config::Config, state::Backend, Otto};
 
@@ -317,6 +319,15 @@ impl<BackendData: Backend> Otto<BackendData> {
             .map(|inhibitor| inhibitor.is_active())
             .unwrap_or(false);
 
+        // Assistive technologies are offered the key before anything else in
+        // the session sees it. Cloned out of `self` because `keyboard.input`
+        // borrows the state for the duration of the filter.
+        let a11y = self.a11y.keyboard.clone();
+        let repeat_delay = Duration::from_millis(
+            Config::with(|config| config.keyboard_repeat_delay).max(0) as u64,
+        );
+        let event_time = Duration::from_millis(u64::from(time));
+
         let action = keyboard
             .input(
                 self,
@@ -326,6 +337,24 @@ impl<BackendData: Backend> Otto<BackendData> {
                 time,
                 |_, modifiers, handle| {
                     let keysym = handle.modified_sym();
+
+                    // A screen reader's own keys never reach the session: no
+                    // shortcut fires, the focused client is not told, and a
+                    // toggle does not flip. Its release is swallowed too, so a
+                    // client never sees half of a keystroke.
+                    let serialized = modifiers.serialized;
+                    let grabbed = a11y.process_key(
+                        repeat_delay,
+                        event_time,
+                        keycode.raw() as u16,
+                        matches!(state, KeyState::Released),
+                        serialized.depressed | serialized.latched | serialized.locked,
+                        keysym,
+                        xkb::keysym_to_utf32(keysym),
+                    );
+                    if grabbed {
+                        return FilterResult::Intercept(KeyAction::None);
+                    }
 
                     // Debug plane PNG dumps. Shift-modified so clients still
                     // receive plain digit keys even in debug-kms builds.

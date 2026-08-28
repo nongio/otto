@@ -646,7 +646,13 @@ impl CompositorInterface {
 }
 
 /// Starts the D-Bus service on the session bus.
-pub async fn run_dbus_service(compositor_tx: Sender<CompositorCommand>) -> zbus::Result<()> {
+///
+/// `a11y` is present only for a session that owns the screen and has
+/// accessibility enabled; see [`crate::a11y`].
+pub async fn run_dbus_service(
+    compositor_tx: Sender<CompositorCommand>,
+    a11y: Option<crate::a11y::A11yDbusParts>,
+) -> zbus::Result<()> {
     let connection = Connection::session().await?;
     let settings_tx = compositor_tx.clone();
 
@@ -670,6 +676,40 @@ pub async fn run_dbus_service(compositor_tx: Sender<CompositorCommand>) -> zbus:
 
     // Register the Settings interface
     crate::settings_service::register_settings_interface(&connection, settings_tx).await?;
+
+    // Accessibility: assistive technologies watch and grab keys through this.
+    // The well-known name comes last, so an AT that sees the name appear finds
+    // the interface already there.
+    if let Some(a11y) = a11y {
+        match crate::a11y::keyboard_monitor::register(&connection, a11y.keyboard, a11y.key_events)
+            .await
+        {
+            Ok(()) => match connection
+                .request_name(crate::a11y::keyboard_monitor::BUS_NAME)
+                .await
+            {
+                Ok(()) => {
+                    // The pointer half of the same object. at-spi2-core builds
+                    // one device from both interfaces, so a manager that
+                    // serves only the keyboard is not one Orca can use.
+                    if let Err(err) = crate::a11y::pointer_locator::register(
+                        &connection,
+                        a11y.pointer,
+                        a11y.pointer_moves,
+                    )
+                    .await
+                    {
+                        tracing::warn!("Could not register the a11y pointer locator: {err}");
+                    }
+                    info!("Accessibility manager started at org.freedesktop.a11y.Manager")
+                }
+                // Another compositor, or a stale one, already owns it. Otto
+                // keeps running; only assistive technologies are affected.
+                Err(err) => tracing::warn!("Could not own the a11y manager name: {err}"),
+            },
+            Err(err) => tracing::warn!("Could not register the a11y manager: {err}"),
+        }
+    }
 
     info!("D-Bus service started at org.otto.ScreenCast");
 

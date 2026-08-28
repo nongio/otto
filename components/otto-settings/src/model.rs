@@ -11,6 +11,7 @@ use crate::panes;
 use crate::settings_client::{self, Value};
 
 /// One row in a pane.
+#[derive(Clone)]
 pub enum Control {
     /// On/off switch.
     Toggle(bool),

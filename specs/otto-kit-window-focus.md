@@ -1,7 +1,7 @@
 # otto-kit Window Focus
 
 **Status:** stable
-**Related specs:** [window-decorations](window-decorations.md), [file-browser](file-browser.md), [settings-app](settings-app.md)
+**Related specs:** [window-decorations](window-decorations.md), [file-browser](file-browser.md), [settings-app](settings-app.md), [accessibility](accessibility.md)
 
 ## Summary
 
@@ -22,6 +22,9 @@ nothing to composite.
   over.
 
 ## Non-Goals
+
+- Focus *inside* the window — which control the keyboard is on. That is the
+  level below this one; see [accessibility](accessibility.md).
 
 - Compositor-drawn title bars — see [window-decorations](window-decorations.md).
 - Dimming the window's *content*. A background window's file list, text or

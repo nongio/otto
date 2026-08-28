@@ -341,6 +341,7 @@ where
                     // this they keep resolving against wherever the physical
                     // mouse last was.
                     state.last_pointer_location = (new_location.x, new_location.y);
+                    state.a11y.pointer.set(new_location.x, new_location.y);
                     let hit_output = focused.as_ref().or(data.output.as_ref());
                     let scale = hit_output
                         .map(|o| o.current_scale().fractional_scale())

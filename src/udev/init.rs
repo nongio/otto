@@ -461,8 +461,36 @@ pub fn run_udev() {
     /*
      * Start the screenshare D-Bus service
      */
-    match crate::screenshare::ScreenshareManager::start(&event_loop.handle()) {
+    // Accessibility rides on the same D-Bus thread. Only this backend offers
+    // it: a nested Otto would take the name from the session hosting it.
+    let accessible = crate::config::Config::with(|config| config.accessibility.enabled);
+    let a11y = accessible.then(|| state.a11y.take_dbus_parts()).flatten();
+
+    match crate::screenshare::ScreenshareManager::start(&event_loop.handle(), a11y) {
         Ok(manager) => {
+            // The shell's own accessible tree. Registered here rather than with
+            // the state because it needs the command channel the service just
+            // created — an assistive technology clicking a dock icon takes the
+            // same path as any other request to focus an application.
+            if accessible {
+                let chrome = crate::a11y::chrome::ShellAccessibility::new(
+                    manager.command_sender.clone(),
+                    std::sync::Arc::downgrade(&state.workspaces.dock),
+                    std::sync::Arc::downgrade(&state.workspaces.app_switcher),
+                    state.workspaces.show_all.clone(),
+                    state.workspaces.window_views.clone(),
+                );
+                crate::utils::Observable::add_listener(&mut state.workspaces, chrome.clone());
+                // Describe the desktop as it stands, rather than waiting for
+                // something to change it: an assistive technology attaching to
+                // an idle session would otherwise be told the shell is empty.
+                state
+                    .workspaces
+                    .with_model(|model| crate::utils::Observer::notify(chrome.as_ref(), model));
+                state.a11y.chrome = Some(chrome);
+                tracing::info!("Shell accessibility published");
+            }
+
             state.screenshare_manager = Some(manager);
             tracing::info!("Screenshare D-Bus service started");
         }

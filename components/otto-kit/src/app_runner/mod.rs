@@ -111,6 +111,37 @@ pub trait App {
         true
     }
 
+    /// Describes a surface for assistive technologies — a screen reader reads
+    /// what this returns, and nothing else.
+    ///
+    /// Only asked for surfaces passed to `AppContext::enable_accessibility`,
+    /// and only while an assistive technology is attached, so an application
+    /// pays nothing for implementing it in a session with none. Build the tree
+    /// from the same state the paint uses, so the two cannot disagree; the
+    /// focused control is filled in from the surface's focus ring, and does not
+    /// have to be set here.
+    ///
+    /// Returning `None` means "nothing to expose right now" — a window that is
+    /// still loading, say. See [`crate::accessibility`].
+    fn accessibility(
+        &mut self,
+        _ctx: &AppContext,
+        _surface: &wayland_client::backend::ObjectId,
+    ) -> Option<crate::accessibility::A11yTree> {
+        None
+    }
+
+    /// An assistive technology asked for something: a control clicked, a value
+    /// set, a focus moved. Act on it as though the user had done it by hand.
+    fn on_accessibility_action(
+        &mut self,
+        _ctx: &AppContext,
+        _surface: &wayland_client::backend::ObjectId,
+        _request: &crate::accessibility::ActionRequest,
+    ) {
+        // Default: do nothing
+    }
+
     /// Called when a keyboard event occurs
     /// Override this to handle keyboard input
     /// `serial` is the input serial from the Wayland compositor - save this to use for popup grabs!
@@ -304,6 +335,23 @@ impl App for DefaultApp {
 
     fn on_close(&mut self) -> bool {
         self.inner.on_close()
+    }
+
+    fn accessibility(
+        &mut self,
+        ctx: &AppContext,
+        surface: &wayland_client::backend::ObjectId,
+    ) -> Option<crate::accessibility::A11yTree> {
+        self.inner.accessibility(ctx, surface)
+    }
+
+    fn on_accessibility_action(
+        &mut self,
+        ctx: &AppContext,
+        surface: &wayland_client::backend::ObjectId,
+        request: &crate::accessibility::ActionRequest,
+    ) {
+        self.inner.on_accessibility_action(ctx, surface, request)
     }
 
     fn on_keyboard_event(
@@ -613,6 +661,10 @@ impl<A: App + 'static> AppRunnerInitialized<A> {
                 break;
             }
 
+            // After `on_update`, so a tree describes the state the application
+            // has just settled on rather than the previous pass's.
+            pump_accessibility(&mut self.app_data);
+
             // An app that asked to stop has usually just sent something it
             // needs delivered — a locker's unlock request — so flush before
             // dropping the connection.
@@ -915,17 +967,116 @@ impl<A: App + 'static> ShmHandler for AppData<A> {
     }
 }
 
+/// Runs the accessibility side of one pass of the run loop: delivers whatever
+/// assistive technologies asked for, then re-describes the surfaces one is
+/// listening to.
+///
+/// Everything here is skipped when no assistive technology is attached — the
+/// mailbox is empty and nothing is wanted — so the cost in an ordinary session
+/// is one map lookup per accessible surface.
+fn pump_accessibility<A: App + 'static>(data: &mut AppData<A>) {
+    let surfaces = AppContext::accessible_surfaces();
+    if surfaces.is_empty() {
+        return;
+    }
+
+    let keyboard_focus = AppContext::keyboard_focus();
+
+    for surface in surfaces {
+        let (wanted, actions) = AppContext::accessibility_pending(&surface);
+
+        for request in &actions {
+            let ctx = AppContext::new(&data.context_data);
+            data.app.on_accessibility_action(&ctx, &surface, request);
+        }
+
+        AppContext::set_accessibility_window_focus(
+            &surface,
+            keyboard_focus.as_ref() == Some(&surface),
+        );
+
+        if !wanted {
+            continue;
+        }
+
+        let ctx = AppContext::new(&data.context_data);
+        let Some(mut tree) = data.app.accessibility(&ctx, &surface) else {
+            continue;
+        };
+
+        // The focus ring is the default answer for what has the keyboard: it is
+        // what Tab moved, and what the application drew a ring around. An
+        // application that named a node itself keeps it — a list that is one
+        // keyboard stop still has to report *which* row is current.
+        if let Some(focused) = AppContext::focused_control(&surface) {
+            tree.set_default_focus(focused);
+        }
+
+        AppContext::push_accessibility_tree(&surface, tree.finish());
+    }
+}
+
+/// Tab and Shift+Tab walk the focused window's controls.
+///
+/// Returns whether the key was consumed. A window that declared no focusables
+/// consumes nothing, so this is invisible to an application that does its own
+/// keyboard handling — the toolkit only takes Tab once there is somewhere for
+/// it to go.
+fn move_focus_for_key(event: &KeyEvent) -> bool {
+    use crate::focus::FocusMove;
+
+    let Some(surface) = AppContext::keyboard_focus() else {
+        return false;
+    };
+
+    let modifiers = AppContext::current_modifiers();
+    // Ctrl+Tab and friends belong to the application (or the compositor).
+    if modifiers.ctrl || modifiers.alt || modifiers.logo {
+        return false;
+    }
+
+    let direction = match event.keysym {
+        Keysym::Tab if modifiers.shift => FocusMove::Previous,
+        Keysym::Tab => FocusMove::Next,
+        // What most keymaps produce for Shift+Tab.
+        Keysym::ISO_Left_Tab => FocusMove::Previous,
+        _ => return false,
+    };
+
+    let moved = AppContext::with_focus_ring(&surface, |ring| {
+        if ring.entries().is_empty() {
+            None
+        } else {
+            ring.move_focus(direction)
+        }
+    });
+
+    if moved.is_none() {
+        return false;
+    }
+
+    AppContext::update_windows();
+    // The ring moved, so the window looks different and has to paint: waking
+    // the loop alone only gets the application asked whether anything changed,
+    // and as far as it knows nothing has.
+    AppContext::request_window_frame(&surface);
+    AppContext::request_wakeup();
+    true
+}
+
 impl<A: App + 'static> KeyboardHandler for AppData<A> {
     fn enter(
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
         _keyboard: &wl_keyboard::WlKeyboard,
-        _surface: &wl_surface::WlSurface,
+        surface: &wl_surface::WlSurface,
         _serial: u32,
         _raw: &[u32],
         _keysyms: &[Keysym],
     ) {
+        use wayland_client::Proxy;
+        AppContext::set_keyboard_focus(Some(surface.id()));
     }
 
     fn leave(
@@ -937,6 +1088,12 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
         _serial: u32,
     ) {
         use wayland_client::Proxy;
+        // The window keeps its focus ring — it will still be focused where it
+        // was when the keyboard comes back — but no surface of ours holds the
+        // keyboard now.
+        if AppContext::keyboard_focus().as_ref() == Some(&surface.id()) {
+            AppContext::set_keyboard_focus(None);
+        }
         AppContext::dispatch_keyboard_leave(&surface.id());
         let ctx = AppContext::new(&self.context_data);
         self.app.on_keyboard_leave(&ctx, surface);
@@ -950,6 +1107,13 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
         serial: u32,
         event: smithay_client_toolkit::seat::keyboard::KeyEvent,
     ) {
+        // Tab moves the focus between the window's own controls before the
+        // application sees the key — but only in a window that declared any,
+        // so an application that handles Tab itself is unaffected.
+        if move_focus_for_key(&event) {
+            return;
+        }
+
         let ctx = AppContext::new(&self.context_data);
         self.app
             .on_keyboard_event(&ctx, event.raw_code, wl_keyboard::KeyState::Pressed, serial);
@@ -985,6 +1149,7 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
         modifiers: Modifiers,
         _layout: u32,
     ) {
+        AppContext::set_current_modifiers(modifiers);
         let ctx = AppContext::new(&self.context_data);
         self.app.on_modifiers(&ctx, modifiers);
     }

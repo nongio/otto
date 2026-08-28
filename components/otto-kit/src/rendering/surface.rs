@@ -224,5 +224,6 @@ impl Drop for SkiaSurface {
     fn drop(&mut self) {
         // Clean up EGL resources from HashMap
         AppContext::remove_egl_resources(&self.surface_id);
+        AppContext::forget_focus_ring(&self.surface_id);
     }
 }

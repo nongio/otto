@@ -210,6 +210,17 @@ on_lid_close = "auto"
 # holds the keyboard.
 on_power_button = "lock"
 
+# Accessibility
+[accessibility]
+# Own `org.freedesktop.a11y.Manager` so assistive technologies — a screen
+# reader such as Orca — can watch and grab keys, and read Otto's own chrome.
+# A screen reader's keybindings do not work at all without this.
+#
+# Only a session that owns the screen ever claims the name: a nested Otto
+# (`--winit`, `--x11`) leaves it to the compositor hosting it, whatever this
+# says. Requires at-spi2-core to be installed. (default: true)
+enabled = true
+
 # Audio / Sound feedback
 [audio]
 # Enable sound effects for UI events like volume changes (default: true)

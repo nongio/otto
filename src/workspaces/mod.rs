@@ -6,7 +6,7 @@ use std::{
     },
 };
 
-use apps_info::Application;
+pub use apps_info::Application;
 use layers::{
     engine::{Engine, TransactionRef},
     prelude::{taffy, Interpolate, Layer, Spring, TimingFunction, Transition},

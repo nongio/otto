@@ -34,6 +34,7 @@ and hands the whole tree to the renderer as a single render element. Most of
 | [DRM Planes](drm_plane.md) | Handing parts of the scene to display hardware instead of the GPU |
 | [Foreign Toplevel](foreign-toplevel.md) | Exposing the window list to taskbars and launchers |
 | [Screen Sharing](screenshare.md) | Portal, PipeWire, wlr-screencopy, window capture |
+| [Accessibility](accessibility.md) | Key grabs for screen readers, and the shell and kit apps on AT-SPI |
 | [Color Scheme](color-scheme-setting.md) | How apps learn whether Otto is in light or dark mode |
 | [Settings D-Bus API](settings-dbus-api.md) | The `org.otto.Settings` wire contract |
 | [RDP Bridge](rdp-virtual-output.md) | Serving a virtual output over RDP (`otto-rdp`) |

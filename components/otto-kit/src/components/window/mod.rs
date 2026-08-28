@@ -555,6 +555,9 @@ impl Window {
     pub fn close(&self) {
         if let Some(id) = self.surface_id() {
             AppContext::unregister_close_handler(&id);
+            // The window is what an assistive technology was reading; nothing
+            // is left to describe once it is unmapped.
+            AppContext::disable_accessibility(&id);
         }
         if let Ok(mut guard) = self.surface.write() {
             guard.take();

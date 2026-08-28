@@ -376,7 +376,9 @@ pub fn run_winit() {
     state.start_xwayland();
 
     // Start the screenshare D-Bus service
-    match crate::screenshare::ScreenshareManager::start(&event_loop.handle()) {
+    // No accessibility manager: this Otto is a window inside another session,
+    // whose own compositor owns `org.freedesktop.a11y.Manager`.
+    match crate::screenshare::ScreenshareManager::start(&event_loop.handle(), None) {
         Ok(manager) => {
             state.screenshare_manager = Some(manager);
             info!("Screenshare D-Bus service started");

@@ -34,6 +34,8 @@ pub struct Config {
     #[serde(default)]
     pub power_management: PowerManagementConfig,
     #[serde(default)]
+    pub accessibility: AccessibilityConfig,
+    #[serde(default)]
     pub audio: AudioConfig,
     pub font_family: String,
     pub keyboard_repeat_delay: i32,
@@ -103,6 +105,7 @@ impl Default for Config {
             appswitcher: AppSwitcherConfig::default(),
             layer_shell: LayerShellConfig::default(),
             power_management: PowerManagementConfig::default(),
+            accessibility: AccessibilityConfig::default(),
             audio: AudioConfig::default(),
             font_family: "Inter".to_string(),
             keyboard_repeat_delay: 300,
@@ -819,6 +822,25 @@ pub fn save_workspace_names(names: &BTreeMap<String, String>) {
             }
         }
         Err(err) => warn!("Failed to serialize workspace names: {err}"),
+    }
+}
+
+/// What Otto offers assistive technologies — see `specs/accessibility.md`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AccessibilityConfig {
+    /// Own `org.freedesktop.a11y.Manager` and let assistive technologies watch
+    /// and grab keys, and read the shell's own chrome.
+    ///
+    /// Only ever honoured by a session that owns the screen: a nested Otto
+    /// (`--winit`, `--x11`) never claims the name, whatever this says, because
+    /// the name belongs to the compositor the user is actually looking at.
+    pub enabled: bool,
+}
+
+impl Default for AccessibilityConfig {
+    fn default() -> Self {
+        Self { enabled: true }
     }
 }
 

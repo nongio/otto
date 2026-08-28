@@ -23,6 +23,11 @@ anyhow = "1"
 usvg = "0.37.0"
 rand = "0.10"
 tokio = { version = "1", features = ["full"] }
+# Accessibility: the AT-SPI object model for Otto's own chrome. `async-io`
+# (the default) rather than the tokio executor — the adapter is driven from
+# the compositor thread, which is calloop's, not a tokio runtime's.
+accesskit = "0.24"
+accesskit_unix = "0.22"
 fps_ticker = { version = "1.0.0", optional = true }
 xdgkit = "3.2.5"
 freedesktop-icons = "0.2.4"

@@ -35,6 +35,19 @@ thread_local! {
     /// close: the application is not asked, and the process does not exit.
     #[allow(clippy::type_complexity)]
     static CLOSE_HANDLERS: RefCell<HashMap<ObjectId, Box<dyn FnMut()>>> = RefCell::new(HashMap::new());
+
+    /// Keyboard focus below the window: which control in each surface has it,
+    /// and in what order Tab visits them. See [`crate::focus`].
+    static FOCUS_RINGS: RefCell<HashMap<ObjectId, crate::focus::FocusRing>> = RefCell::new(HashMap::new());
+    /// The surface the compositor last gave the keyboard to, if it is ours.
+    static KEYBOARD_FOCUS: RefCell<Option<ObjectId>> = const { RefCell::new(None) };
+    /// Modifier state from the last `wl_keyboard.modifiers`. Kept because a key
+    /// event does not carry it, and Shift+Tab has to be told from Tab.
+    static CURRENT_MODIFIERS: RefCell<super::Modifiers> = RefCell::new(super::Modifiers::default());
+
+    /// One AT-SPI adapter per surface the application made accessible. See
+    /// [`crate::accessibility`].
+    static A11Y_ADAPTERS: RefCell<HashMap<ObjectId, crate::accessibility::SurfaceAdapter>> = RefCell::new(HashMap::new());
 }
 
 /// The data source backing our claim on the clipboard, and the offer backing
@@ -1272,8 +1285,168 @@ impl<'a> AppContext<'a> {
     }
 
     // ========================================================================
+    // Keyboard focus
+    // ========================================================================
+
+    /// Works on a surface's focus ring, creating it on first use.
+    ///
+    /// Called from the application's build pass to declare what can be focused
+    /// (`begin`, `add`.., `end`) and again while drawing to ask what is.
+    pub fn with_focus_ring<R>(
+        surface_id: &ObjectId,
+        f: impl FnOnce(&mut crate::focus::FocusRing) -> R,
+    ) -> R {
+        FOCUS_RINGS.with(|rings| {
+            let mut rings = rings.borrow_mut();
+            let ring = rings.entry(surface_id.clone()).or_default();
+            f(ring)
+        })
+    }
+
+    /// Which control in a surface has the keyboard, if any.
+    /// Moves the keyboard focus within a surface, as Tab would.
+    ///
+    /// What an assistive technology's `Focus` request goes through, so a
+    /// screen reader moving the focus and the user pressing Tab leave the
+    /// application in the same state. Returns whether the control was there to
+    /// be focused.
+    pub fn focus_control(surface_id: &ObjectId, id: Option<crate::focus::FocusId>) -> bool {
+        FOCUS_RINGS.with(|rings| {
+            let mut rings = rings.borrow_mut();
+            let Some(ring) = rings.get_mut(surface_id) else {
+                return false;
+            };
+            match id {
+                Some(id) => ring.focus(id),
+                None => ring.clear(),
+            }
+        })
+    }
+
+    pub fn focused_control(surface_id: &ObjectId) -> Option<crate::focus::FocusId> {
+        FOCUS_RINGS.with(|rings| rings.borrow().get(surface_id).and_then(|r| r.focused()))
+    }
+
+    /// Drops a surface's focus ring. Called when the surface goes away.
+    pub fn forget_focus_ring(surface_id: &ObjectId) {
+        let _ = FOCUS_RINGS.try_with(|rings| {
+            rings.borrow_mut().remove(surface_id);
+        });
+        let _ = KEYBOARD_FOCUS.try_with(|focus| {
+            let mut focus = focus.borrow_mut();
+            if focus.as_ref() == Some(surface_id) {
+                *focus = None;
+            }
+        });
+    }
+
+    /// The surface holding the keyboard, or `None` when no window of this
+    /// application does.
+    pub fn keyboard_focus() -> Option<ObjectId> {
+        KEYBOARD_FOCUS.with(|focus| focus.borrow().clone())
+    }
+
+    pub(crate) fn set_keyboard_focus(surface_id: Option<ObjectId>) {
+        KEYBOARD_FOCUS.with(|focus| *focus.borrow_mut() = surface_id);
+    }
+
+    /// Modifier state as of the last `wl_keyboard.modifiers` event.
+    pub fn current_modifiers() -> super::Modifiers {
+        CURRENT_MODIFIERS.with(|modifiers| *modifiers.borrow())
+    }
+
+    pub(crate) fn set_current_modifiers(modifiers: super::Modifiers) {
+        CURRENT_MODIFIERS.with(|current| *current.borrow_mut() = modifiers);
+    }
+
+    // ========================================================================
+    // Accessibility
+    // ========================================================================
+
+    /// Makes a surface visible to assistive technologies.
+    ///
+    /// Call it once the surface exists. From then on the run loop asks the
+    /// application to describe it through [`crate::App::accessibility`] —
+    /// but only while something is actually listening, so a session with no
+    /// screen reader pays for an idle D-Bus connection and nothing else.
+    pub fn enable_accessibility(surface_id: &ObjectId) {
+        A11Y_ADAPTERS.with(|adapters| {
+            adapters
+                .borrow_mut()
+                .entry(surface_id.clone())
+                .or_insert_with(crate::accessibility::SurfaceAdapter::new);
+        });
+    }
+
+    /// Drops a surface's adapter, ending its AT-SPI presence.
+    ///
+    /// Deliberately not called when a render surface goes away: a Skia surface
+    /// is rebuilt on the first configure and on every resize, while the window
+    /// — and what a screen reader is reading — lives on. It ends with the
+    /// window, in [`crate::components::window::Window::close`].
+    pub fn disable_accessibility(surface_id: &ObjectId) {
+        let _ = A11Y_ADAPTERS.try_with(|adapters| {
+            adapters.borrow_mut().remove(surface_id);
+        });
+    }
+
+    /// The surfaces made accessible, in no particular order.
+    pub(crate) fn accessible_surfaces() -> Vec<ObjectId> {
+        A11Y_ADAPTERS.with(|adapters| adapters.borrow().keys().cloned().collect())
+    }
+
+    /// Whether an assistive technology is waiting for `surface`'s tree, and
+    /// whatever it has asked the application to do since the last pass.
+    pub(crate) fn accessibility_pending(
+        surface_id: &ObjectId,
+    ) -> (bool, Vec<crate::accessibility::ActionRequest>) {
+        A11Y_ADAPTERS.with(|adapters| {
+            let adapters = adapters.borrow();
+            let Some(adapter) = adapters.get(surface_id) else {
+                return (false, Vec::new());
+            };
+            (adapter.mailbox.is_wanted(), adapter.mailbox.take_actions())
+        })
+    }
+
+    /// Hands a freshly built tree to the adapter.
+    pub(crate) fn push_accessibility_tree(surface_id: &ObjectId, update: accesskit::TreeUpdate) {
+        A11Y_ADAPTERS.with(|adapters| {
+            if let Some(adapter) = adapters.borrow_mut().get_mut(surface_id) {
+                adapter.update(|| update);
+            }
+        });
+    }
+
+    /// Tells the adapter whether its surface has the keyboard. A screen reader
+    /// reads the focused window, so without this it has no reason to read any.
+    pub(crate) fn set_accessibility_window_focus(surface_id: &ObjectId, focused: bool) {
+        A11Y_ADAPTERS.with(|adapters| {
+            if let Some(adapter) = adapters.borrow_mut().get_mut(surface_id) {
+                adapter.set_window_focused(focused);
+            }
+        });
+    }
+
+    // ========================================================================
     // Window update loop
     // ========================================================================
+
+    /// Asks the window owning `surface_id` to paint a frame.
+    ///
+    /// Moving the keyboard focus changes what the window looks like — the ring
+    /// is around a different control — but nothing else about the window has
+    /// changed, so without this the new ring is not drawn until something else
+    /// happens to repaint. See `move_focus_for_key`.
+    pub fn request_window_frame(surface_id: &ObjectId) {
+        WINDOWS.with(|windows| {
+            for window in windows.borrow().iter() {
+                if window.surface_id().as_ref() == Some(surface_id) {
+                    window.request_frame();
+                }
+            }
+        });
+    }
 
     pub fn update_windows() {
         WINDOWS.with(|windows| {

@@ -25,8 +25,8 @@ pub const WINDOW_H: f32 = 640.0;
 pub const MIN_W: f32 = 560.0;
 pub const MIN_H: f32 = 360.0;
 pub const CORNER: f32 = 12.0;
-const TITLEBAR_H: f32 = 38.0;
-const SIDEBAR_W: f32 = 214.0;
+pub const TITLEBAR_H: f32 = 38.0;
+pub const SIDEBAR_W: f32 = 214.0;
 const CONTENT_PAD: f32 = 26.0;
 const ROW_H: f32 = 42.0;
 const ROW_H_DETAIL: f32 = 56.0;
@@ -111,9 +111,10 @@ pub fn titlebar_material(dark: bool) -> Color {
     }
 }
 
-/// Sidebar row geometry. Drawing and hit-testing both go through this so the
-/// clickable area cannot drift away from the painted one.
-fn sidebar_item_rect(index: usize) -> Rect {
+/// Sidebar row geometry. Drawing, hit-testing, the keyboard and what a screen
+/// reader is told all go through this, so none of them can drift away from the
+/// painted row.
+pub fn sidebar_item_rect(index: usize) -> Rect {
     const FIRST_ITEM_Y: f32 = TITLEBAR_H + 10.0;
     const ITEM_H: f32 = 30.0;
     const ITEM_STEP: f32 = 32.0;
@@ -123,6 +124,30 @@ fn sidebar_item_rect(index: usize) -> Rect {
         SIDEBAR_W - 16.0,
         ITEM_H,
     )
+}
+
+/// The sidebar as a whole, which is what the keyboard lands on.
+///
+/// One stop for the list, not one per row: Tab enters the sidebar and the
+/// arrows move within it, which is what the list role tells a screen reader to
+/// expect and what every other toolkit does.
+pub const SIDEBAR_FOCUS: FocusId = FocusId::from_raw(0x5EED_5EED);
+
+/// A sidebar row's identity for assistive technologies.
+///
+/// The position is the identity: the sidebar is a fixed list, so a row means
+/// the same thing across every rebuild. Not a keyboard stop of its own — see
+/// [`SIDEBAR_FOCUS`] — but a node an assistive technology can still click.
+pub fn sidebar_focus_id(index: usize) -> FocusId {
+    FocusId::new(format!("pane-{index}"))
+}
+
+/// A pane control's identity for the keyboard and for assistive technologies.
+///
+/// The setting's own id, which is unique within a pane and stable across the
+/// rebuild the view goes through every frame.
+pub fn pane_focus_id(id: &str) -> FocusId {
+    FocusId::new(format!("row-{id}"))
 }
 
 /// The pane whose sidebar row contains `(x, y)`, if any.
@@ -819,6 +844,29 @@ impl Settings {
 
     /// Every row of the selected pane, with the rect it is drawn in, in
     /// content-local coordinates.
+    /// Every row of the current pane that is wired to a setting, with where it
+    /// is in *window* coordinates at the given scroll position.
+    ///
+    /// The same layout the pane is drawn and hit-tested from, so what the
+    /// keyboard reaches and what a screen reader is told cannot drift away
+    /// from what is painted. Rows scrolled out of sight are included: the
+    /// keyboard's job is to reach them, and the caller scrolls to what it
+    /// focuses.
+    pub fn pane_rows(&self, scroll_offset: f32) -> Vec<(&Row, Rect)> {
+        let viewport = self.viewport();
+        let content_width = self.width - SIDEBAR_W;
+        self.row_rects(content_width)
+            .into_iter()
+            .filter(|(row, _)| row.id.is_some())
+            .map(|(row, rect)| {
+                (
+                    row,
+                    rect.with_offset((viewport.left, viewport.top - scroll_offset)),
+                )
+            })
+            .collect()
+    }
+
     fn row_rects(&self, content_width: f32) -> Vec<(&Row, Rect)> {
         self.pane_layout(content_width)
             .groups
@@ -1252,9 +1300,16 @@ impl Settings {
         // No search field: it was drawn but never searched anything, and a
         // control that does nothing is worse than no control. The list starts
         // at the top of the sidebar instead — see `sidebar_item_rect`.
+        // Which row the keyboard is on, if this window has it at all.
+        let focused =
+            AppContext::keyboard_focus().and_then(|surface| AppContext::focused_control(&surface));
+
         for (i, pane) in self.panes.iter().enumerate() {
             let item = sidebar_item_rect(i);
             let selected = i == self.selected;
+            if selected && focused == Some(SIDEBAR_FOCUS) {
+                otto_kit::focus::draw_focus_ring(canvas, item, 7.0);
+            }
             if selected {
                 canvas.draw_rrect(
                     RRect::new_rect_xy(item, 7.0, 7.0),
@@ -1303,6 +1358,11 @@ impl Settings {
         let layout = self.pane_layout(content_width);
         let x0 = CONTENT_PAD;
         let x1 = content_width - CONTENT_PAD;
+
+        // Which row the keyboard is on, if any. Read here rather than passed
+        // in, so every path that paints the pane rings it the same way.
+        let focused =
+            AppContext::keyboard_focus().and_then(|surface| AppContext::focused_control(&surface));
 
         if let Some(area) = layout.arrangement {
             if intersects_band(area, content) {
@@ -1355,6 +1415,14 @@ impl Settings {
             for (i, (row, rect)) in group.rows.iter().enumerate() {
                 if !intersects_band(*rect, content) {
                     continue;
+                }
+                // Around the whole row rather than the control at its edge: the
+                // row is what Tab moves between, and a ring around a switch
+                // alone reads as though only the switch were selected.
+                if let Some(id) = row.id {
+                    if focused == Some(pane_focus_id(id)) {
+                        otto_kit::focus::draw_focus_ring(canvas, rect.with_inset((3.0, 1.0)), 8.0);
+                    }
                 }
                 self.render_row(canvas, row, x0, x1, rect.top, rect.height());
                 if i + 1 < group.rows.len() {

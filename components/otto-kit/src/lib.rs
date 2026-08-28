@@ -2,6 +2,7 @@
 pub mod testing;
 
 pub mod accent;
+pub mod accessibility;
 pub mod app_runner;
 pub mod clipboard;
 pub mod color_scheme;
@@ -10,6 +11,7 @@ pub mod components;
 pub mod desktop_entry;
 pub mod dnd;
 pub mod filetype;
+pub mod focus;
 pub mod i18n;
 pub mod icon_theme;
 pub mod icons;
@@ -34,6 +36,10 @@ pub use components::container::{
 };
 pub use components::label::{Label, LabelBuilder, TextAlign};
 pub use components::layer::{surface::LayerSurface, Layer};
+/// A Wayland object's identity, as the toolkit's own API uses it: surfaces are
+/// keyed by it throughout, so an application should not have to depend on
+/// `wayland-client` to name one.
+pub use wayland_client::backend::ObjectId;
 // pub use components::menu_bar::{surface::MenuBarSurface, MenuBar, MenuBarItem};
 pub use components::window::Window;
 
@@ -84,16 +90,19 @@ pub mod prelude {
     // rather than importing them into scope, where "draw" would be ambiguous.
     // `dropdown::field` follows the same precedent one level deeper, so the
     // draw/client split stays visible: `dropdown::field::draw(..)`.
+    pub use crate::accessibility::{A11yTree, Action, ActionRequest, Role};
     pub use crate::components::toggle::{
         ToggleInteraction, HEIGHT as TOGGLE_HEIGHT, WIDTH as TOGGLE_WIDTH,
     };
     pub use crate::components::window::Window;
     pub use crate::components::{color_picker, dropdown, slider, toggle};
+    pub use crate::focus::{draw_focus_ring, FocusId, FocusMove, FocusRing};
     pub use crate::icon_theme::current_icon_theme;
     pub use crate::icons::{named_icon, named_icon_sized};
     pub use crate::theme::ColorScheme;
     pub use crate::theme::Theme;
     pub use crate::typography::{get_font, get_font_with_fallback, styles, TextStyle};
+    pub use crate::ObjectId;
     pub use skia_safe::{Canvas, Color, Font, Paint, Rect};
     // Add more common types as needed
 }
