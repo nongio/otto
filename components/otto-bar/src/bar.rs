@@ -147,46 +147,51 @@ impl LeftPanel {
         self.menu_state = state;
     }
 
-    /// Hit-test: return the menu item index at position x (in panel coords).
-    pub fn menu_item_at(&self, x: f32) -> Option<usize> {
-        if self.menu_state.items().is_empty() {
-            return None;
-        }
-
+    /// Where every menu item sits, in panel coordinates.
+    ///
+    /// Hit-testing, popup anchoring and what an assistive technology points at
+    /// all come through here, so a click, the popup it opens and the rectangle
+    /// a screen reader highlights cannot end up in three different places.
+    pub fn menu_item_rects(&self) -> Vec<(f32, f32)> {
         let font = otto_kit::typography::get_font_with_fallback(
             "Inter",
             self.style.font_style(),
             self.style.font_size,
         );
         let mut offset = self.style.bar_padding_horizontal;
-        for (i, item) in self.menu_state.items().iter().enumerate() {
-            let cw = self.style.item_content_width(item, &font);
-            let iw = self.style.item_width(cw);
-            if x >= offset && x <= offset + iw {
-                return Some(i);
-            }
-            offset += iw + self.style.item_spacing;
-        }
-        None
+        self.menu_state
+            .items()
+            .iter()
+            .map(|item| {
+                let width = self
+                    .style
+                    .item_width(self.style.item_content_width(item, &font));
+                let placed = (offset, width);
+                offset += width + self.style.item_spacing;
+                placed
+            })
+            .collect()
+    }
+
+    /// Hit-test: return the menu item index at position x (in panel coords).
+    pub fn menu_item_at(&self, x: f32) -> Option<usize> {
+        self.menu_item_rects()
+            .into_iter()
+            .position(|(left, width)| x >= left && x <= left + width)
     }
 
     /// Compute the x-offset of a menu item for popup positioning.
     pub fn item_anchor_x(&self, index: usize) -> f32 {
-        let font = otto_kit::typography::get_font_with_fallback(
-            "Inter",
-            self.style.font_style(),
-            self.style.font_size,
-        );
-        let mut offset = self.style.bar_padding_horizontal;
-        for (i, item) in self.menu_state.items().iter().enumerate() {
-            if i == index {
-                return offset;
-            }
-            let cw = self.style.item_content_width(item, &font);
-            let iw = self.style.item_width(cw);
-            offset += iw + self.style.item_spacing;
+        let placed = self.menu_item_rects();
+        match placed.get(index) {
+            Some((left, _)) => *left,
+            // Past the last item: the trailing edge, which is where a popup
+            // for an item that is not there would have been anchored.
+            None => placed
+                .last()
+                .map(|(left, width)| left + width + self.style.item_spacing)
+                .unwrap_or(self.style.bar_padding_horizontal),
         }
-        offset
     }
 
     pub fn draw(&self, canvas: &Canvas) {
@@ -283,6 +288,18 @@ impl RightPanel {
     }
 
     /// Hit-test: return the tray item index at position x (in panel coords).
+    /// How wide the clock is, which is also where the tray ends.
+    ///
+    /// Measured the same way the panel draws and hit-tests it, so the
+    /// rectangle a screen reader is given is the one on screen.
+    pub fn clock_width(&self) -> f32 {
+        typography::styles::BODY_MEDIUM
+            .font()
+            .measure_str(&self.clock.text, None)
+            .0
+            + BAR_PADDING_H
+    }
+
     pub fn tray_item_at(&self, x: f32) -> Option<usize> {
         if self.tray_menu_state.items().is_empty() {
             return None;

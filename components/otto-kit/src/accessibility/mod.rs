@@ -27,5 +27,6 @@ pub use tree::{node_id, A11yTree, ROOT};
 // depend on `accesskit` itself, and cannot end up on a different version of it
 // than the toolkit.
 pub use accesskit::{
-    Action, ActionData, ActionRequest, Node, Orientation, Role, TextSelection, Toggled,
+    Action, ActionData, ActionRequest, HasPopup, Live, Node, Orientation, Rect, Role,
+    TextSelection, Toggled,
 };

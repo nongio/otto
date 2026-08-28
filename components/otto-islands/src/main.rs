@@ -9,17 +9,30 @@ mod state;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use otto_kit::accessibility::{A11yTree, Action, ActionRequest, Role};
 use otto_kit::protocols::otto_surface_style_v1::{ClipMode, ContentsGravity};
 use otto_kit::surfaces::{LayerShellSurface, SubsurfaceSurface};
-use otto_kit::{App, AppContext, AppRunner};
+use otto_kit::{App, AppContext, AppRunner, ObjectId};
+use skia_safe::Rect;
 use smithay_client_toolkit::compositor::Region;
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
 use wayland_client::protocol::wl_keyboard::KeyState;
+use wayland_client::Proxy;
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::Layer, zwlr_layer_surface_v1::Anchor,
 };
 
-use crate::activity::Activity;
+use crate::activity::{Activity, Priority};
+
+/// One notification's identity for assistive technologies.
+fn island_focus(id: u64) -> otto_kit::focus::FocusId {
+    otto_kit::focus::FocusId::new(format!("island-{id}"))
+}
+
+/// One of its buttons'.
+fn action_focus(id: u64, key: &str) -> otto_kit::focus::FocusId {
+    otto_kit::focus::FocusId::new(format!("island-{id}-{key}"))
+}
 use crate::dbus_service::{DialogService, IslandService, DBUS_NAME};
 use crate::dialog::{DialogHit, DialogId, DialogResponse, DialogView};
 use crate::dock_badges::DockBadges;
@@ -1023,6 +1036,13 @@ impl App for IslandApp {
         }
 
         self.layer_surface = Some(layer_surface);
+
+        // A notification that is not announced has not been delivered. Nothing
+        // is built until an assistive technology attaches — see
+        // `App::accessibility`.
+        if let Some(surface) = self.layer_surface.as_ref() {
+            AppContext::enable_accessibility(&surface.wl_surface().id());
+        }
         Ok(())
     }
 
@@ -1044,6 +1064,117 @@ impl App for IslandApp {
         // through until islands appear; later ones re-commit the region now
         // that the buffer is large enough to carry it.
         self.update_input_region(!first);
+    }
+
+    /// The notifications on screen, as alerts.
+    ///
+    /// Announced rather than merely available: a notification is the one part
+    /// of the desktop that arrives without being asked for, so it is a live
+    /// region — a screen reader reads it when it appears, without the user
+    /// having gone looking. An urgent one interrupts; the rest wait for a gap.
+    fn accessibility(&mut self, _ctx: &AppContext, _surface: &ObjectId) -> Option<A11yTree> {
+        let state = self.state.lock().ok()?;
+        let mut tree = A11yTree::new("Notifications");
+
+        for island in &self.islands {
+            let Some(activity) = state
+                .activities
+                .iter()
+                .find(|a| a.id == island.activity_id)
+                .filter(|a| !a.expired)
+            else {
+                continue;
+            };
+
+            let (w, h, x, y) = island.last_layout;
+            let bounds = Rect::from_xywh(x, y, w, h);
+            let title = activity.title.clone();
+            let body = activity.body.clone();
+            let urgent = matches!(activity.priority, Priority::Critical | Priority::High);
+            let progress = activity.progress;
+            let actions: Vec<(String, String)> = activity
+                .actions
+                .iter()
+                .map(|action| (action.id.clone(), action.label.clone()))
+                .collect();
+            let id = island.activity_id;
+
+            tree.group_with(
+                island_focus(id),
+                Role::Alert,
+                |node| {
+                    node.set_bounds(otto_kit::accessibility::Rect::new(
+                        f64::from(bounds.left),
+                        f64::from(bounds.top),
+                        f64::from(bounds.right),
+                        f64::from(bounds.bottom),
+                    ));
+                    node.set_label(title);
+                    node.set_description(body);
+                    node.set_live(if urgent {
+                        otto_kit::accessibility::Live::Assertive
+                    } else {
+                        otto_kit::accessibility::Live::Polite
+                    });
+                    // A download or a copy: the number is the whole point of
+                    // the island, and it is the one thing that cannot be read
+                    // off a progress bar by looking at it.
+                    if let Some(progress) = progress {
+                        node.set_numeric_value(progress * 100.0);
+                        node.set_min_numeric_value(0.0);
+                        node.set_max_numeric_value(100.0);
+                    }
+                },
+                |tree| {
+                    for (key, label) in actions {
+                        tree.control(action_focus(id, &key), bounds, Role::Button, true, |node| {
+                            node.set_label(label);
+                            node.add_action(Action::Click);
+                        });
+                    }
+                },
+            );
+        }
+
+        // The island the user opened is the one being read; a fresh arrival
+        // announces itself through the live region instead.
+        if let Some(focused) = self.focused_island {
+            tree.set_focus(island_focus(focused));
+        }
+
+        Some(tree)
+    }
+
+    /// A screen reader pressed one of a notification's buttons.
+    fn on_accessibility_action(
+        &mut self,
+        _ctx: &AppContext,
+        _surface: &ObjectId,
+        request: &ActionRequest,
+    ) {
+        if !matches!(request.action, Action::Click) {
+            return;
+        }
+
+        let Ok(state) = self.state.lock() else {
+            return;
+        };
+        // The same signal the buttons on the island emit, so an assistive
+        // technology's press and a pointer's reach the application the same
+        // way.
+        let found = state.activities.iter().find_map(|activity| {
+            let notification_id = activity.notification_id?;
+            activity.actions.iter().find_map(|action| {
+                (otto_kit::accessibility::node_id(action_focus(activity.id, &action.id))
+                    == request.target_node)
+                    .then(|| (notification_id, action.id.clone()))
+            })
+        });
+        drop(state);
+
+        if let Some((notification_id, key)) = found {
+            emit_action_invoked(notification_id, key);
+        }
     }
 
     fn on_update(&mut self, _ctx: &AppContext) {
