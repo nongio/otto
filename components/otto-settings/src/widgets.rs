@@ -140,7 +140,7 @@ pub fn text_field(canvas: &Canvas, rect: Rect, value: &str, theme: &Theme) {
     canvas.clip_rrect(rrect, ClipOp::Intersect, true);
     let style = CONTROL_TEXT;
     let (text, color) = if value.is_empty() {
-        ("Not set".to_string(), theme.text_tertiary)
+        (otto_kit::t_owned!("settings-not-set"), theme.text_tertiary)
     } else {
         (
             elide_tail(value, style, rect.width() - 18.0),
@@ -301,7 +301,10 @@ pub fn file_field(canvas: &Canvas, right: f32, cy: f32, value: &str, pressed: bo
     canvas.clip_rrect(rrect, ClipOp::Intersect, true);
     let style = CONTROL_TEXT;
     let (text, color) = if value.is_empty() {
-        ("No file chosen".to_string(), theme.text_tertiary)
+        (
+            otto_kit::t_owned!("settings-no-file-chosen"),
+            theme.text_tertiary,
+        )
     } else {
         (value.to_string(), theme.text_primary)
     };
@@ -316,7 +319,7 @@ pub fn file_field(canvas: &Canvas, right: f32, cy: f32, value: &str, pressed: bo
     let brrect = RRect::new_rect_xy(button, 6.0, 6.0);
     canvas.draw_rrect(brrect, &fill(button_fill(pressed, theme)));
     canvas.draw_rrect(brrect, &stroke(theme.fill_secondary, 1.0));
-    let label = "Choose…";
+    let label = otto_kit::t!("settings-choose");
     let label_w = style.font().measure_str(label, None).0;
     text_centered_y(
         canvas,

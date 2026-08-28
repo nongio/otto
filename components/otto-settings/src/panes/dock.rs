@@ -7,12 +7,12 @@ use crate::model::{group, untitled, Control, Pane, Row};
 
 pub fn build() -> Pane {
     Pane {
-        name: "Dock",
+        name: otto_kit::t!("settings-pane-dock"),
         icon: "dock",
         groups: vec![
             untitled(vec![
                 Row::new(
-                    "Size",
+                    otto_kit::t!("settings-dock-size"),
                     Control::Slider {
                         value: 1.0,
                         min: 0.5,
@@ -21,16 +21,27 @@ pub fn build() -> Pane {
                     },
                 )
                 .id("dock.size"),
-                Row::new("Position on screen", Control::Select("Bottom".into()))
-                    .id("dock.position"),
-                Row::new("Automatically hide", Control::Toggle(false)).id("dock.autohide"),
-                Row::new("Magnification", Control::Toggle(true)).id("dock.magnification"),
+                Row::new(
+                    otto_kit::t!("settings-dock-position"),
+                    Control::Select("Bottom".into()),
+                )
+                .id("dock.position"),
+                Row::new(
+                    otto_kit::t!("settings-dock-autohide"),
+                    Control::Toggle(false),
+                )
+                .id("dock.autohide"),
+                Row::new(
+                    otto_kit::t!("settings-dock-magnification"),
+                    Control::Toggle(true),
+                )
+                .id("dock.magnification"),
             ]),
             group(
-                "Magnification & icons",
+                otto_kit::t!("settings-group-magnification-and-icons"),
                 vec![
                     Row::new(
-                        "Magnification amount",
+                        otto_kit::t!("settings-dock-magnification-amount"),
                         Control::Slider {
                             value: 0.5,
                             min: 0.0,
@@ -39,10 +50,18 @@ pub fn build() -> Pane {
                         },
                     )
                     .id("dock.genie_scale"),
-                    Row::new("Tint icons", Control::Toggle(false)).id("dock.colorize_icons"),
-                    Row::new("Icon tint", Control::Color(0xFF3B82F6)).id("dock.colorize_color"),
                     Row::new(
-                        "Icon tint strength",
+                        otto_kit::t!("settings-dock-tint-icons"),
+                        Control::Toggle(false),
+                    )
+                    .id("dock.colorize_icons"),
+                    Row::new(
+                        otto_kit::t!("settings-dock-icon-tint"),
+                        Control::Color(0xFF3B82F6),
+                    )
+                    .id("dock.colorize_color"),
+                    Row::new(
+                        otto_kit::t!("settings-dock-icon-tint-strength"),
                         Control::Slider {
                             value: 0.5,
                             min: 0.0,

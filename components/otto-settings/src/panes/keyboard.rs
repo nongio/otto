@@ -178,20 +178,23 @@ pub fn keys(index: usize) -> Option<String> {
 
 pub fn build() -> Pane {
     // One row per line, plus the explainer above them and the "+" below.
-    let mut shortcut_rows = vec![Row::new("Key combination", Control::Value(String::new()))
-        .detail("Ctrl, Alt, Shift or Logo joined by +, then one key: Ctrl+Shift+Return")];
+    let mut shortcut_rows = vec![Row::new(
+        otto_kit::t!("settings-key-combination"),
+        Control::Value(String::new()),
+    )
+    .detail(otto_kit::t!("settings-key-combination-detail"))];
     shortcut_rows.extend((0..lines().len()).map(|index| Row::new("", Control::Shortcut { index })));
     if lines().len() < MAX_SHORTCUTS {
         shortcut_rows.push(Row::new("", Control::AddShortcut));
     }
 
     Pane {
-        name: "Keyboard",
+        name: otto_kit::t!("settings-pane-keyboard"),
         icon: "keyboard",
         groups: vec![
             untitled(vec![
                 Row::new(
-                    "Key repeat delay",
+                    otto_kit::t!("settings-key-repeat-delay"),
                     Control::Slider {
                         value: 300.0,
                         min: 100.0,
@@ -201,7 +204,7 @@ pub fn build() -> Pane {
                 )
                 .id("keyboard_repeat_delay"),
                 Row::new(
-                    "Key repeat rate",
+                    otto_kit::t!("settings-key-repeat-rate"),
                     Control::Slider {
                         value: 30.0,
                         min: 5.0,
@@ -212,22 +215,34 @@ pub fn build() -> Pane {
                 .id("keyboard_repeat_rate"),
             ]),
             group(
-                "Input source",
+                otto_kit::t!("settings-group-input-source"),
                 vec![
                     // Shown, not editable: these are free text with no
                     // discoverable choice list, and the app has no text entry
                     // yet. Binding them at least stops the pane from hiding
                     // what the session is actually using.
-                    Row::new("Layout", Control::Text(String::new())).id("input.xkb_layout"),
-                    Row::new("Variant", Control::Text(String::new())).id("input.xkb_variant"),
-                    Row::new("Options", Control::Text(String::new())).id("input.xkb_options"),
+                    Row::new(
+                        otto_kit::t!("settings-xkb-layout"),
+                        Control::Text(String::new()),
+                    )
+                    .id("input.xkb_layout"),
+                    Row::new(
+                        otto_kit::t!("settings-xkb-variant"),
+                        Control::Text(String::new()),
+                    )
+                    .id("input.xkb_variant"),
+                    Row::new(
+                        otto_kit::t!("settings-xkb-options"),
+                        Control::Text(String::new()),
+                    )
+                    .id("input.xkb_options"),
                 ],
             ),
             // Editable, but not persisted: `[keyboard_shortcuts]` is a table in
             // the config file, and the settings contract has no identifier for
             // a list. Adding, removing and retyping lines all work; nothing
             // leaves the process.
-            group("Shortcuts", shortcut_rows),
+            group(otto_kit::t!("settings-group-shortcuts"), shortcut_rows),
         ],
     }
 }

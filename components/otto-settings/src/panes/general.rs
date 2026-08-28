@@ -7,38 +7,60 @@ use crate::model::{group, Control, Pane, Row};
 
 pub fn build() -> Pane {
     Pane {
-        name: "General",
+        name: otto_kit::t!("settings-pane-general"),
         icon: "settings",
         groups: vec![
             group(
-                "Appearance",
+                otto_kit::t!("settings-group-appearance"),
                 vec![
-                    Row::new("Appearance", Control::Select("Light".into())).id("theme_scheme"),
-                    Row::new("Accent colour", Control::Color(0xFF0A84FF)).id("accent_color"),
-                    Row::new("Font", Control::Text("Inter".into())).id("font_family"),
+                    Row::new(
+                        otto_kit::t!("settings-group-appearance"),
+                        Control::Select("Light".into()),
+                    )
+                    .id("theme_scheme"),
+                    Row::new(
+                        otto_kit::t!("settings-accent-colour"),
+                        Control::Color(0xFF0A84FF),
+                    )
+                    .id("accent_color"),
+                    Row::new(otto_kit::t!("settings-font"), Control::Text("Inter".into()))
+                        .id("font_family"),
                     // Applies to GTK clients rather than to Otto's own
                     // interface, so it sits with the other appearance rows but
                     // is deliberately not called "Appearance".
-                    Row::new("GTK theme", Control::Text(String::new())).id("gtk_theme"),
-                ],
-            ),
-            group(
-                "Desktop",
-                vec![
-                    Row::new("Background colour", Control::Color(0xFF2C2CA0))
-                        .id("background_color"),
-                    Row::new("Background image", Control::File("".into()))
-                        .detail("Chosen through the desktop portal's file picker")
-                        .id("background_image"),
-                ],
-            ),
-            group(
-                "Pointer & icons",
-                vec![
-                    Row::new("Cursor theme", Control::Select("Notwaita-Black".into()))
-                        .id("cursor_theme"),
                     Row::new(
-                        "Cursor size",
+                        otto_kit::t!("settings-gtk-theme"),
+                        Control::Text(String::new()),
+                    )
+                    .id("gtk_theme"),
+                ],
+            ),
+            group(
+                otto_kit::t!("settings-group-desktop"),
+                vec![
+                    Row::new(
+                        otto_kit::t!("settings-background-colour"),
+                        Control::Color(0xFF2C2CA0),
+                    )
+                    .id("background_color"),
+                    Row::new(
+                        otto_kit::t!("settings-background-image"),
+                        Control::File("".into()),
+                    )
+                    .detail(otto_kit::t!("settings-background-image-detail"))
+                    .id("background_image"),
+                ],
+            ),
+            group(
+                otto_kit::t!("settings-group-pointer-and-icons"),
+                vec![
+                    Row::new(
+                        otto_kit::t!("settings-cursor-theme"),
+                        Control::Select("Notwaita-Black".into()),
+                    )
+                    .id("cursor_theme"),
+                    Row::new(
+                        otto_kit::t!("settings-cursor-size"),
                         Control::Slider {
                             value: 24.0,
                             min: 16.0,
@@ -47,21 +69,30 @@ pub fn build() -> Pane {
                         },
                     )
                     .id("cursor_size"),
-                    Row::new("Icon theme", Control::Select("".into())).id("icon_theme"),
+                    Row::new(
+                        otto_kit::t!("settings-icon-theme"),
+                        Control::Select("".into()),
+                    )
+                    .id("icon_theme"),
                 ],
             ),
             // The app switcher has no pane of its own — the workspaces pane
             // was dropped — and this is the only setting it owns.
             group(
-                "Window switcher",
-                vec![
-                    Row::new("Show on the pointer's display", Control::Toggle(false))
-                        .id("appswitcher.follow_cursor"),
-                ],
+                otto_kit::t!("settings-group-window-switcher"),
+                vec![Row::new(
+                    otto_kit::t!("settings-follow-cursor"),
+                    Control::Toggle(false),
+                )
+                .id("appswitcher.follow_cursor")],
             ),
             group(
-                "Language",
-                vec![Row::new("Preferred languages", Control::Text("en".into())).id("locales")],
+                otto_kit::t!("settings-group-language"),
+                vec![Row::new(
+                    otto_kit::t!("settings-preferred-languages"),
+                    Control::Text("en".into()),
+                )
+                .id("locales")],
             ),
             // Not a setting: where the settings go. Otto's configuration is
             // layered, and which file is the writable one depends on what
@@ -70,11 +101,14 @@ pub fn build() -> Pane {
             // changes lands there, and anything it does not offer can be
             // edited by hand.
             group(
-                "Configuration",
-                vec![Row::new(CONFIG_FILE, Control::Button(&[OPEN])).detail(
-                    crate::settings_client::config_path()
-                        .unwrap_or_else(|| "not known — the compositor is not answering".into()),
-                )],
+                otto_kit::t!("settings-group-configuration"),
+                vec![
+                    Row::new(config_file(), Control::Button(open_button())).detail(
+                        crate::settings_client::config_path().unwrap_or_else(|| {
+                            otto_kit::t_owned!("settings-configuration-file-unknown")
+                        }),
+                    ),
+                ],
             ),
         ],
     }
@@ -82,12 +116,22 @@ pub fn build() -> Pane {
 
 /// The row that shows where settings are written, and the button that opens
 /// it. Matched by label, the way every unbound row in this app is.
-const CONFIG_FILE: &str = "Configuration file";
-const OPEN: &str = "Open";
+fn config_file() -> &'static str {
+    otto_kit::t!("settings-configuration-file")
+}
+fn open() -> &'static str {
+    otto_kit::t!("common-open")
+}
+
+/// The row's single button, as the `'static` slice a button row wants.
+fn open_button() -> &'static [&'static str] {
+    static BUTTONS: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    BUTTONS.get_or_init(|| vec![open()])
+}
 
 /// A press on this pane's push buttons.
 pub fn press(row: &str, button: &str) {
-    if row != CONFIG_FILE || button != OPEN {
+    if row != config_file() || button != open() {
         return;
     }
     let Some(path) = crate::settings_client::config_path() else {

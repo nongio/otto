@@ -709,7 +709,10 @@ impl Settings {
 
     /// What the window is called: the app, then the pane you are in.
     pub fn title(&self) -> String {
-        format!("Otto Settings - {}", self.panes[self.selected].name)
+        otto_kit::t_owned!(
+            "settings-window-title",
+            pane = self.panes[self.selected].name
+        )
     }
 
     /// The window's rounded outline, which everything is clipped to.
@@ -1567,7 +1570,7 @@ impl Settings {
                 );
                 widgets::text_centered_y(
                     canvas,
-                    "Add shortcut",
+                    otto_kit::t!("settings-add-shortcut"),
                     button.right + 10.0,
                     cy,
                     widgets::CONTROL_TEXT,

@@ -7,32 +7,47 @@ use crate::model::{group, Control, Pane, Row};
 
 pub fn build() -> Pane {
     Pane {
-        name: "Trackpad & Mouse",
+        name: otto_kit::t!("settings-pane-pointing"),
         icon: "pointer",
         groups: vec![
             group(
-                "Trackpad",
+                otto_kit::t!("settings-group-trackpad"),
                 vec![
-                    Row::new("Tap to click", Control::Toggle(true)).id("input.tap_enabled"),
-                    Row::new("Tap and drag", Control::Toggle(true)).id("input.tap_drag_enabled"),
-                    Row::new("Drag lock", Control::Toggle(false)).id("input.tap_drag_lock_enabled"),
-                    Row::new("Click method", Control::Select("Click with fingers".into()))
-                        .id("input.touchpad_click_method"),
-                    Row::new("Ignore while typing", Control::Toggle(true))
-                        .id("input.touchpad_dwt_enabled"),
-                    Row::new("Natural scrolling", Control::Toggle(true))
-                        .id("input.touchpad_natural_scroll_enabled"),
-                    Row::new("Left-handed", Control::Toggle(false))
+                    Row::new(otto_kit::t!("settings-tap-to-click"), Control::Toggle(true))
+                        .id("input.tap_enabled"),
+                    Row::new(otto_kit::t!("settings-tap-and-drag"), Control::Toggle(true))
+                        .id("input.tap_drag_enabled"),
+                    Row::new(otto_kit::t!("settings-drag-lock"), Control::Toggle(false))
+                        .id("input.tap_drag_lock_enabled"),
+                    Row::new(
+                        otto_kit::t!("settings-click-method"),
+                        Control::Select("Click with fingers".into()),
+                    )
+                    .id("input.touchpad_click_method"),
+                    Row::new(
+                        otto_kit::t!("settings-ignore-while-typing"),
+                        Control::Toggle(true),
+                    )
+                    .id("input.touchpad_dwt_enabled"),
+                    Row::new(
+                        otto_kit::t!("settings-natural-scrolling"),
+                        Control::Toggle(true),
+                    )
+                    .id("input.touchpad_natural_scroll_enabled"),
+                    Row::new(otto_kit::t!("settings-left-handed"), Control::Toggle(false))
                         .id("input.touchpad_left_handed"),
-                    Row::new("Middle-click emulation", Control::Toggle(false))
-                        .id("input.touchpad_middle_emulation_enabled"),
+                    Row::new(
+                        otto_kit::t!("settings-middle-click-emulation"),
+                        Control::Toggle(false),
+                    )
+                    .id("input.touchpad_middle_emulation_enabled"),
                 ],
             ),
             group(
-                "Pointer",
+                otto_kit::t!("settings-group-pointer"),
                 vec![
                     Row::new(
-                        "Tracking speed",
+                        otto_kit::t!("settings-tracking-speed"),
                         Control::Slider {
                             value: 0.0,
                             min: -1.0,
@@ -41,10 +56,13 @@ pub fn build() -> Pane {
                         },
                     )
                     .id("input.pointer_accel_speed"),
-                    Row::new("Acceleration", Control::Select("Adaptive".into()))
-                        .id("input.pointer_accel_profile"),
                     Row::new(
-                        "Scrolling speed",
+                        otto_kit::t!("settings-pointer-acceleration"),
+                        Control::Select("Adaptive".into()),
+                    )
+                    .id("input.pointer_accel_profile"),
+                    Row::new(
+                        otto_kit::t!("settings-scrolling-speed"),
                         Control::Slider {
                             value: 1.0,
                             min: 0.1,
