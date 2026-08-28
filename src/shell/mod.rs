@@ -812,6 +812,23 @@ impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
         let surface_id = surface.wl_surface().id();
 
+        // A layer surface that takes the keyboard — the launcher, a locker, a
+        // panel with a search field — holds it until it goes away, and then
+        // nothing holds it: the focus target is destroyed and every key after
+        // it falls on the floor. The window underneath looks focused, is
+        // marked activated, and is deaf.
+        //
+        // It bites hardest where the layer surface *hands over* to a window:
+        // the launcher activates the window it was asked for, then the key
+        // release that dismissed it arrives and is routed back to the layer
+        // (see `keyboard_key_to_action`), which then dies holding the focus it
+        // just took back.
+        let held_focus = matches!(
+            self.seat.get_keyboard().and_then(|k| k.current_focus()),
+            Some(crate::focus::KeyboardFocusTarget::LayerSurface(ref l))
+                if l.wl_surface().id() == surface_id
+        );
+
         // Remove from our compositor map and clean up lay_rs layer
         if let Some(layer_shell_surface) = self.layer_surfaces.remove(&surface_id) {
             let output = layer_shell_surface.output().clone();
@@ -830,6 +847,31 @@ impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
             );
             // Recalculate exclusive zones after removal
             self.recalculate_exclusive_zones(&output);
+        }
+
+        if held_focus {
+            // Back to the window that had the keyboard most recently, which is
+            // the one the user chose if the layer surface was choosing one —
+            // the launcher activates a window and *then* takes the focus back
+            // for the key release. The topmost window would be the wrong
+            // answer there: it is whatever the stack says, not what was asked
+            // for. Falling back to the workspace's top window covers a layer
+            // surface that was never handing over to anything.
+            match self
+                .workspaces
+                .last_focused_window()
+                .and_then(|id| self.workspaces.get_window_for_surface(&id).cloned())
+            {
+                Some(window) => self.set_keyboard_focus_on_window(&window),
+                None => {
+                    let index = self
+                        .workspaces
+                        .focused_output_workspaces()
+                        .map(|ows| ows.current_workspace)
+                        .unwrap_or_else(|| self.workspaces.get_current_workspace_index());
+                    self.focus_top_window_or_clear(index);
+                }
+            }
         }
 
         // Also unmap from Smithay's layer map
