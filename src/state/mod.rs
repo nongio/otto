@@ -671,6 +671,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 assignments.extend(crate::locale_env::published().iter().cloned());
                 assignments.push(crate::export_rounded_corners());
                 assignments.push(crate::export_window_controls_side());
+                assignments.push(crate::export_color_scheme());
                 let args: Vec<&str> = assignments.iter().map(String::as_str).collect();
 
                 let mut systemctl = vec!["--user", "set-environment"];

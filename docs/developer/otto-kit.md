@@ -34,7 +34,7 @@ components/otto-kit/src/
 ├── icons.rs          Icon lookup
 ├── icon_theme.rs     freedesktop icon theme resolution
 ├── accent.rs         Accent colour, from the settings portal
-├── color_scheme.rs   Light/dark, from the settings portal
+├── color_scheme.rs   Light/dark, from the settings portal or OTTO_COLOR_SCHEME
 ├── protocols/        Otto's own Wayland protocols, generated
 ├── desktop_entry.rs  .desktop parsing
 ├── filetype/         MIME lookup by glob and content
@@ -174,7 +174,10 @@ Both inputs come from the freedesktop settings portal —
 `org.freedesktop.appearance`'s `color-scheme` and `accent-color` — read once at
 startup and then watched for `SettingChanged`, each kept in an atomic. So every
 otto-kit app follows the user's light/dark and accent choice with no code, and
-switches live. Otto's own backend for that portal is
+switches live. The portal backend is optional, so light/dark has a second
+source: the compositor publishes its configured scheme as `OTTO_COLOR_SCHEME`,
+which `color_scheme.rs` falls back to when the portal has answered nothing —
+startup-only, and always outranked by the portal. Otto's own backend for that portal is
 [`xdg-desktop-portal-otto`](settings-dbus-api.md); see
 [Color Scheme](color-scheme-setting.md) for the whole path.
 

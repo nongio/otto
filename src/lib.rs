@@ -89,4 +89,20 @@ pub fn export_window_controls_side() -> String {
     });
     otto_kit::controls_side::export(side)
 }
+
+/// Publish `theme_scheme` the same way.
+///
+/// otto-kit apps normally learn light-versus-dark from the freedesktop
+/// Settings portal, which Otto serves — but the portal backend is optional,
+/// and without it every app fell back to light on a dark desktop. The
+/// environment reaches them whether or not it is running; the portal still
+/// wins wherever it answers, and it is still the only channel that carries a
+/// live change.
+pub fn export_color_scheme() -> String {
+    let scheme = config::Config::with(|c| match c.theme_scheme {
+        theme::ThemeScheme::Dark => otto_kit::theme::ColorScheme::Dark,
+        theme::ThemeScheme::Light => otto_kit::theme::ColorScheme::Light,
+    });
+    otto_kit::color_scheme::export(scheme)
+}
 mod utils;

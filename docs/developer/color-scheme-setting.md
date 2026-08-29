@@ -98,6 +98,35 @@ only the ones with a counterpart are forwarded:
 otto-kit apps pick these up through the watchers in `color_scheme.rs`,
 `accent.rs` and `icon_theme.rs`, started by `AppRunner`.
 
+## When the portal is not there
+
+The portal backend is optional — a session without `xdg-desktop-portal-otto`
+running answers nothing, and `color_scheme.rs` used to fall back to light. On a
+dark desktop that made the top bar and every otto-kit app render light while
+the compositor's own chrome was dark.
+
+So the compositor also publishes the configured scheme in the environment, the
+way it publishes corner rounding and the window-controls side:
+
+```
+OTTO_COLOR_SCHEME=dark    # or light
+```
+
+`otto::export_color_scheme()` (`src/lib.rs`) is called from `main` before
+anything is spawned, and the assignment is pushed into the systemd and D-Bus
+activation environments alongside `WAYLAND_DISPLAY` (`src/state/mod.rs`), so
+a bus-activated helper — which is not a child of the compositor and inherits
+nothing from it — gets it too.
+
+`color_scheme::current_color_scheme()` prefers the portal's answer and only
+falls back to the environment when the portal has reported nothing, so a value
+inherited at startup can never clobber a later, more authoritative reply.
+
+The environment half is **startup-only**: `theme_scheme` is marked `Restart` in
+`src/settings/schema.rs`, and a process reads `OTTO_COLOR_SCHEME` once. Live
+switching still comes from the portal alone — with the portal running, a change
+reaches applications through the relay described above.
+
 ## Accent colour
 
 `accent-color` is served as `(ddd)` — sRGB in `0.0..=1.0`, no alpha, as the

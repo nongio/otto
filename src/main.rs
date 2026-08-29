@@ -108,6 +108,7 @@ async fn main() {
     // processes, and none of them reads Otto's configuration.
     otto::export_rounded_corners();
     otto::export_window_controls_side();
+    otto::export_color_scheme();
 
     #[cfg(feature = "profile-with-tracy")]
     profiling::tracy_client::Client::start();
