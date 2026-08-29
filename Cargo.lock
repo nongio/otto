@@ -3386,9 +3386,9 @@ dependencies = [
 
 [[package]]
 name = "indextree"
-version = "4.7.4"
+version = "4.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb9e21e48c85fa6643a38caca564645a3bbc9211edf506fc8ed690c7e7b4d3c7"
+checksum = "355c27a54366e073e1266ef91b1dd7910dc787294d7e8f92458e2e103bc95e33"
 dependencies = [
  "indextree-macros",
  "rayon",
@@ -3885,8 +3885,8 @@ dependencies = [
 
 [[package]]
 name = "laye-rs"
-version = "1.14.0"
-source = "git+https://github.com/nongio/layers?tag=v1.14.0#51460e5c9cbea65716ff88d5a162de0922181ebc"
+version = "1.15.0"
+source = "git+https://github.com/nongio/layers?tag=v1.15.0#a62932a5b624ac6aa1a974a2abfc22bcc68c2516"
 dependencies = [
  "bezier_easing",
  "bitflags 1.3.2",
@@ -3922,7 +3922,7 @@ dependencies = [
 [[package]]
 name = "layers-debug-server"
 version = "0.3.0"
-source = "git+https://github.com/nongio/layers?tag=v1.14.0#51460e5c9cbea65716ff88d5a162de0922181ebc"
+source = "git+https://github.com/nongio/layers?tag=v1.15.0#a62932a5b624ac6aa1a974a2abfc22bcc68c2516"
 dependencies = [
  "futures",
  "serde",
