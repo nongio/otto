@@ -3960,7 +3960,7 @@ dependencies = [
  "paste",
  "profiling",
  "puffin_http 0.13.0",
- "rand 0.8.5",
+ "rand 0.8.8",
  "rayon",
  "resvg",
  "serde",
@@ -4978,7 +4978,7 @@ dependencies = [
  "pipewire",
  "profiling",
  "puffin_http 0.16.1",
- "rand 0.8.5",
+ "rand 0.10.2",
  "renderdoc",
  "sd-notify",
  "serde",
@@ -5937,9 +5937,9 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
 name = "rand"
-version = "0.8.5"
+version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
+checksum = "e058c7de0b26af77780c769414d6257830bb240f3c38477dbc2c16e5f54d6d4c"
 dependencies = [
  "libc",
  "rand_chacha 0.3.1",
@@ -7933,7 +7933,7 @@ dependencies = [
  "http 1.4.0",
  "httparse",
  "log",
- "rand 0.8.5",
+ "rand 0.8.8",
  "sha1 0.10.6",
  "thiserror 1.0.69",
  "url",
@@ -9536,7 +9536,7 @@ dependencies = [
  "hex",
  "nix 0.29.0",
  "ordered-stream",
- "rand 0.8.5",
+ "rand 0.8.8",
  "serde",
  "serde_repr",
  "sha1 0.10.6",
