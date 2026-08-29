@@ -706,8 +706,14 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
 
         if !container_owns_size {
-            let container_w = (geometry.size.w as f64 * scale_factor) as f32;
-            let container_h = (geometry.size.h as f64 * scale_factor) as f32;
+            // Rounded, not truncated: the size is a logical integer times the
+            // output scale, so on a fractional scale it is fractional (a 34pt
+            // bar at 1.75 is 59.5), and truncating loses most of a pixel off
+            // the far edge. The container's ORIGIN comes from the Taffy
+            // layout, which rounds, so rounding the extent here keeps both
+            // edges on the grid — see `snap_extent_px`.
+            let container_w = (geometry.size.w as f64 * scale_factor).round() as f32;
+            let container_h = (geometry.size.h as f64 * scale_factor).round() as f32;
             layer.set_size(layers::types::Size::points(container_w, container_h), None);
         }
         layer.set_hidden(false);
