@@ -133,10 +133,7 @@ Otto translates what Otto writes, and only that:
   the sentence around it is translated; the error itself arrives in whatever
   language the system produced it, usually English.
 - **Application-supplied text.** Notification summaries and bodies, portal
-  dialog text supplied by the requesting app, window titles, and the names
-  applications give themselves in their desktop entries.
-- **Desktop-entry `Name=` fields**, including Otto's own. Otto reads the plain
-  `Name=`; no localised `Name[xx]` variants are written or read.
+  dialog text supplied by the requesting app, and window titles.
 - **Font, theme and device names.** Font families come from fontconfig, icon,
   cursor and GTK theme names from the themes themselves, and greeter and locker
   names from what is installed. These are proper names of things on the machine,
@@ -144,6 +141,50 @@ Otto translates what Otto writes, and only that:
 - **Identifiers on the wire.** Setting identifiers, D-Bus interface, service and
   member names, configuration keys, and the modifier names in a shortcut
   (`Ctrl`, `Alt`, `Super`) are literal syntax.
+
+### Application names
+
+The name an application shows in the dock, the launcher and the app switcher is
+the application's own, not Otto's — but it is read in Otto's language. A desktop
+entry that carries a `Name[xx]` for the chosen locale is read under that key,
+falling back through the POSIX form (`Name[pt_BR]`), the bare language
+(`Name[pt]`) and finally the plain `Name=`. The locale asked for is the
+interface locale resolved above, not `LANG`: an app's label under the pointer
+has to be in the same language as the menu that opens over it.
+
+Otto's own entries carry no `Name[xx]` yet, so they read as English until they
+do.
+
+### The language applications see
+
+Otto's own components are told the language over the portal, but an ordinary
+application is not: GTK, Qt and gettext all read the environment, and a session
+started with `LANG=en_US.UTF-8` but set to Italian would draw Italian chrome
+around English applications.
+
+So the compositor publishes the configured language into the environment as it
+starts, before anything is spawned:
+
+- `LANGUAGE`, gettext's colon-separated priority list, always. Each configured
+  tag contributes its POSIX form and its bare language (`pt_BR:pt`), and the
+  list is honoured whether or not those locales were ever generated on the
+  machine.
+- `LANG` and `LC_MESSAGES`, only when the locale actually exists here — named
+  the way `setlocale` wants it, `it_IT.UTF-8`. Naming a locale that was never
+  generated is worse than saying nothing: `setlocale` fails and the application
+  falls back to C, losing the very translation this was meant to supply. A tag
+  with no region (`it`) is matched against what is generated to find one.
+- `LC_ALL` is never written. It overrides everything, so a user or a session
+  script that set it meant to.
+
+These go into the compositor's own environment, which every application it
+launches inherits, and — alongside `WAYLAND_DISPLAY` — into the systemd and
+D-Bus activation environments, since a bus-activated service is not Otto's
+child and inherits nothing from it.
+
+This is what makes an application's *own* strings follow the setting: its
+menus, which reach the bar over DBusMenu already translated by the application,
+and the `Name[xx]` in its desktop entry.
 
 ### Format keys
 

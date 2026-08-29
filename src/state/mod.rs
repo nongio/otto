@@ -658,13 +658,22 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     "Nested backend: not exporting WAYLAND_DISPLAY to the session"
                 );
             } else {
-                let assignment = format!("WAYLAND_DISPLAY={socket_name}");
+                // The language goes out with the socket: a bus-activated
+                // service is not Otto's child and inherits nothing from it, so
+                // without this a portal or a helper started on demand would
+                // run in the session's `LANG` while everything Otto spawned
+                // itself runs in the configured one.
+                let mut assignments = vec![format!("WAYLAND_DISPLAY={socket_name}")];
+                assignments.extend(crate::locale_env::published().iter().cloned());
+                let args: Vec<&str> = assignments.iter().map(String::as_str).collect();
+
+                let mut systemctl = vec!["--user", "set-environment"];
+                systemctl.extend_from_slice(&args);
+                let mut dbus = vec!["--systemd"];
+                dbus.extend_from_slice(&args);
                 let exports = [
-                    ("systemctl", vec!["--user", "set-environment", &assignment]),
-                    (
-                        "dbus-update-activation-environment",
-                        vec!["--systemd", &assignment],
-                    ),
+                    ("systemctl", systemctl),
+                    ("dbus-update-activation-environment", dbus),
                 ];
                 for (program, args) in exports {
                     match std::process::Command::new(program).args(&args).output() {
@@ -673,14 +682,17 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                             program,
                             status = ?out.status,
                             stderr = %String::from_utf8_lossy(&out.stderr).trim(),
-                            "Failed to export WAYLAND_DISPLAY"
+                            "Failed to export the session environment"
                         ),
-                        Err(e) => warn!(program, error = ?e, "Failed to export WAYLAND_DISPLAY"),
+                        Err(e) => {
+                            warn!(program, error = ?e, "Failed to export the session environment")
+                        }
                     }
                 }
                 info!(
                     name = socket_name,
-                    "Exported WAYLAND_DISPLAY to the systemd and dbus activation environments"
+                    locale = ?crate::locale_env::published(),
+                    "Exported the session environment to systemd and dbus"
                 );
             }
 
