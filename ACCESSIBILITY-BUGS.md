@@ -43,10 +43,14 @@ window is, and no Otto protocol carries it. The compositor has to say.
 - [x] Only root surfaces are told. A popup or a subsurface moves with its
       parent and describes itself against the parent's origin, so telling it
       where it is would only offer a second, wrong origin to use
-- [ ] Re-run the `getAccessibleAtPoint` sweep across dock, bar and an
-      application window; every point must answer with what is drawn there.
-      Needs a compositor built from this branch — the fix is in the
-      compositor, so a running session from before it cannot show it
+- [x] Verified in a nested Otto: otto-settings reports its window at
+      (504,298) 900x640 instead of (-1,-1), `getAccessibleAtPoint` over a
+      sidebar row answers with that row, and a point outside the window
+      answers with nothing — which is the bug, since the sidebar used to
+      claim the dock's rectangle. Maximising moves the reported rect to the
+      usable area and restoring puts it back, so it follows the window
+- [ ] Re-run the sweep on a real session across dock, bar and an application
+      window once the compositor on this branch is installed
 
 ## Bug: a pop-up can be focused from the keyboard but not opened
 

@@ -14,7 +14,9 @@
 //! surface is actually drawn into rather than from window geometry, because
 //! that is the one number that cannot disagree with what is on screen: it
 //! already carries the decoration offset, the workspace scroll, and every
-//! animation in flight.
+//! animation in flight. The overview is the one thing it does not follow, and
+//! it does not need to — the overview draws scaled copies of the windows
+//! rather than moving them, and describes itself.
 //!
 //! Sent by diffing rather than from the places that move a window, because
 //! there are a dozen of those — mapping, dragging, maximising, a workspace

@@ -514,8 +514,11 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         let registry_state = RegistryState::new(&globals);
         // Version 2 added `set_clip_children`, which a scrolling view needs to
         // make a pane a fixed clipping window for the subsurface moving inside
-        // it. An older compositor still binds at 1 and simply lacks it.
-        let surface_style_manager = globals.bind(&qh, 1..=3, ()).ok();
+        // it; version 3 the output frame; version 4 the desktop frame, without
+        // which this application cannot say where its controls are on screen
+        // and no assistive technology can find them by pointing. An older
+        // compositor still binds at what it has and simply lacks the rest.
+        let surface_style_manager = globals.bind(&qh, 1..=4, ()).ok();
         let wlr_layer_shell: Option<ZwlrLayerShellV1> = globals.bind(&qh, 1..=4, ()).ok();
         let otto_dock_manager = globals.bind(&qh, 1..=1, ()).ok();
         let session_lock_manager = globals.bind(&qh, 1..=1, ()).ok();

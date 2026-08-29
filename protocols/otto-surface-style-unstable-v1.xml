@@ -312,10 +312,11 @@
         the surface's scale for the logical pixels an assistive technology
         works in.
 
-        This reports where the surface is, not how it is being presented. While
-        the compositor is showing the surface transformed — scaled down into the
-        window overview, for instance — the rect is where the untransformed
-        surface would be, and the shell describes the overview itself.
+        This is where the compositor draws the surface itself. It is not
+        affected by the window overview, which draws scaled-down copies rather
+        than moving the windows: a window in the overview keeps reporting where
+        it will be when the overview closes, and the shell describes the
+        overview itself.
       </description>
       <arg name="x" type="fixed" summary="left edge, in desktop coordinates"/>
       <arg name="y" type="fixed" summary="top edge, in desktop coordinates"/>
