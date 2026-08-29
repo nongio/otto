@@ -300,6 +300,27 @@ pub fn surface_is_fully_opaque(states: &smithay::wayland::compositor::SurfaceDat
         .unwrap_or(false)
 }
 
+/// Round a physical-pixel position onto the whole-pixel grid.
+///
+/// A window's position is chosen in logical integers and multiplied by the
+/// output scale, so on a fractional scale it lands mid-pixel (logical 101 x
+/// 1.5 = 151.5). A container layer left there offsets its whole subtree by
+/// half a pixel, and every texture under it is resampled when that subtree is
+/// composited — including a client buffer that matches the output exactly and
+/// was point-sampled 1:1 by the draw closure, because the closure records into
+/// a picture whose transform is applied later. Half a pixel of placement
+/// accuracy does not pay for that.
+///
+/// Snap the ENDPOINTS of a move, not the frames of one: lay-rs interpolates
+/// between two snapped positions, and rounding every interpolated frame would
+/// quantise the animation.
+pub fn snap_position_px(x: f64, y: f64) -> layers::types::Point {
+    layers::types::Point {
+        x: x.round() as f32,
+        y: y.round() as f32,
+    }
+}
+
 /// Which filter to sample a surface's texture with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SurfaceFilter {
@@ -592,6 +613,24 @@ pub fn configure_surface_layer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The initial placement of a window is chosen in logical integers, so on
+    /// a fractional scale it lands mid-pixel and drags its whole subtree off
+    /// the grid with it.
+    #[test]
+    fn a_position_off_the_grid_is_snapped_onto_it() {
+        // logical (101, 7) on a 1.5x output = (151.5, 10.5)
+        let p = snap_position_px(101.0 * 1.5, 7.0 * 1.5);
+        assert_eq!((p.x, p.y), (152.0, 11.0));
+    }
+
+    /// An integer scale never leaves the grid, so snapping is a no-op there —
+    /// the fix costs nothing on the common case.
+    #[test]
+    fn a_position_on_the_grid_is_left_alone() {
+        let p = snap_position_px(101.0 * 2.0, 7.0 * 2.0);
+        assert_eq!((p.x, p.y), (202.0, 14.0));
+    }
 
     /// The whole point of the cheap branches: a window whose client painted a
     /// buffer at exactly the output scale is copied, not resampled.
