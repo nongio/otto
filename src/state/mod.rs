@@ -383,7 +383,8 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// switched to `BackgroundBlur` because the client committed a blur
     /// region. Keyed by surface, present only while the blur is on — see
     /// `Otto::apply_background_effect`.
-    pub background_effects: HashMap<ObjectId, bool>,
+    pub background_effects:
+        HashMap<ObjectId, (smithay::utils::Rectangle<i32, smithay::utils::Logical>, i32)>,
     // Map from surface ID to its rendering layer in the scene graph
     pub surface_layers: HashMap<ObjectId, layers::prelude::Layer>,
     /// Tracks which parent ObjectId each surface layer was last appended to,
