@@ -593,7 +593,8 @@ impl Panel {
         // it, and in a language whose fixed part is longer than English's the
         // whole thing does not fit across the card — which mattered because
         // the error text is the only part that says what actually went wrong.
-        self.status.set_size(LayerSize::points(PANEL_W, STATUS_H), None);
+        self.status
+            .set_size(LayerSize::points(PANEL_W, STATUS_H), None);
 
         // Under the card, so the reason for it — "place your finger" — is read
         // before the way out of it. Its position is in surface coordinates,
@@ -2014,7 +2015,10 @@ mod status_wrap_tests {
                     far longer than any card could hope to show across two lines of text";
         let lines = wrap_status(text, &font(), &Paint::default(), 360.0);
         assert!(lines.len() <= 2, "got {} lines", lines.len());
-        assert_eq!(lines.join(" "), text.split_whitespace().collect::<Vec<_>>().join(" "));
+        assert_eq!(
+            lines.join(" "),
+            text.split_whitespace().collect::<Vec<_>>().join(" ")
+        );
     }
 
     /// A single word wider than the box is left whole rather than broken.
