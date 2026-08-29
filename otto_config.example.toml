@@ -111,6 +111,11 @@ args = []
 # resolution = { width = 1920, height = 1080 }
 # refresh_hz = 60.0
 # position = { x = 3840, y = 0 }   # optional: place next to physical outputs
+# interactive = true               # optional: let pointer/keyboard reach it
+# primary = true                   # optional: put the dock, app switcher and
+#                                  # expose on this output. Only for a headless
+#                                  # box served over RDP — on a machine with a
+#                                  # physical screen it moves the chrome off it.
 
 [input]
 # Touchpad tap-to-click (1-finger = left click, 2-finger = right click, 3-finger = middle click)

@@ -527,13 +527,23 @@ fn run_pipewire_thread(
                 use smithay::backend::allocator::gbm::{GbmBuffer, GbmBufferFlags};
                 let buffer_flags = GbmBufferFlags::RENDERING;
 
-                let bo = match gbm.create_buffer_object_with_modifiers2::<()>(
-                    width,
-                    height,
-                    fourcc,
-                    std::iter::once(modifier),
-                    buffer_flags,
-                ) {
+                // `Invalid` is the *implicit* modifier: the stack has no
+                // explicit-modifier support at all (software GL, older
+                // drivers) and only advertises this one. Its allocator entry
+                // point is the modifier-less `gbm_bo_create` — passing
+                // Invalid to `_with_modifiers2` fails with ENOSYS.
+                let bo = if modifier == smithay::backend::allocator::Modifier::Invalid {
+                    gbm.create_buffer_object::<()>(width, height, fourcc, buffer_flags)
+                } else {
+                    gbm.create_buffer_object_with_modifiers2::<()>(
+                        width,
+                        height,
+                        fourcc,
+                        std::iter::once(modifier),
+                        buffer_flags,
+                    )
+                };
+                let bo = match bo {
                     Ok(bo) => bo,
                     Err(e) => {
                         tracing::error!("Failed to create GBM buffer: {:?}", e);

@@ -32,6 +32,7 @@ Defines how Otto resolves which surface receives a pointer button event. Focus m
 
 - A surface that animates, relayouts, or newly appears under a stationary cursor (e.g. dock launch bounce, autohide slide-in, magnification settle, a popup opening beneath the cursor) must still receive a press even though no motion event preceded it. The press must not be silently dropped or delivered to a stale target.
 - Layer-shell hit testing is gated on the parent surface's input region: a subsurface extending outside the parent's input region must not intercept the press.
+- Compositor-UI hit testing runs against the scene graph, whose coordinates are output-local (see `multi-output.md`), while the pointer position is global. Focus resolution therefore rebases the position onto the output under the pointer before probing the scene, and only for that part of the lookup — application surfaces and windows resolve in global coordinates. On an output that is not at the global origin, skipping the rebase makes every dock and layer-shell press miss.
 - Focus resolution for the compositor UI layer and for application surfaces are independent passes and must both run on press.
 
 ## Rationale
