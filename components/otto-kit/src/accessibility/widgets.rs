@@ -494,9 +494,13 @@ impl A11yTree {
                     // can be said without seeing it, and it is what tells the
                     // user they are part-way through a document.
                     node.set_description(if *pages > 1 {
-                        format!("Preview, page {page} of {pages}")
+                        crate::t_owned!(
+                            "a11y-preview-page",
+                            page = *page as f64,
+                            pages = *pages as f64
+                        )
                     } else {
-                        "Preview".to_owned()
+                        crate::t_owned!("a11y-preview")
                     });
                 });
             }
@@ -523,7 +527,7 @@ impl A11yTree {
                         node.set_bounds(bounds_of(bounds));
                         node.set_label(name);
                         if truncated {
-                            node.set_description("Preview, shortened".to_owned());
+                            node.set_description(crate::t_owned!("a11y-preview-shortened"));
                         }
                     },
                     |tree| {
@@ -561,7 +565,11 @@ impl A11yTree {
                 let entries: Vec<(String, String)> = rows
                     .iter()
                     .map(|row| {
-                        let kind = if row.is_dir { "Folder" } else { "File" };
+                        let kind = if row.is_dir {
+                            crate::t!("files-kind-folder")
+                        } else {
+                            crate::t!("files-kind-document")
+                        };
                         (row.name.clone(), format!("{kind}, {}", bytes(row.size)))
                     })
                     .collect();
@@ -696,7 +704,11 @@ mod preview_tests {
 
         let update = tree.finish();
         let node = find(&update, PREVIEW);
-        assert_eq!(node.description().as_deref(), Some("Preview, shortened"));
+        // Compared against the catalogue rather than against English: the
+        // wording follows the desktop's language, and this test asserts which
+        // message is chosen, not what it says.
+        let shortened = crate::t_owned!("a11y-preview-shortened");
+        assert_eq!(node.description().as_deref(), Some(shortened.as_str()));
 
         // The text lives in runs under the document: that is the only shape
         // AT-SPI's Text interface is offered for.
@@ -736,7 +748,11 @@ mod preview_tests {
         let update = tree.finish();
         let node = find(&update, PREVIEW);
         assert_eq!(node.role(), Role::Image);
-        assert_eq!(node.description().as_deref(), Some("Preview, page 3 of 12"));
+        let paged = crate::t_owned!("a11y-preview-page", page = 3.0, pages = 12.0);
+        assert_eq!(node.description().as_deref(), Some(paged.as_str()));
+        // The paged wording is not the unpaged one, so a document that has
+        // pages is distinguishable from one that has not.
+        assert_ne!(paged, crate::t_owned!("a11y-preview"));
     }
 
     #[test]
@@ -779,7 +795,8 @@ mod preview_tests {
             .unwrap()
             .1;
         assert_eq!(first.label().as_deref(), Some("cover.png"));
-        assert_eq!(first.description().as_deref(), Some("File, 2.4 MB"));
+        let expected = format!("{}, 2.4 MB", crate::t!("files-kind-document"));
+        assert_eq!(first.description().as_deref(), Some(expected.as_str()));
     }
 
     /// A preview that failed says why. Silence reads as one still loading.

@@ -725,7 +725,7 @@ fn describe_row(tree: &mut A11yTree, id: &'static str, row: &model::Row, bounds:
                 // The path is the row's value; an empty one is not "unnamed",
                 // it is a file nobody has chosen yet.
                 node.set_value(if path.is_empty() {
-                    "No file chosen".to_owned()
+                    otto_kit::t_owned!("settings-no-file-chosen")
                 } else {
                     path.clone()
                 });
@@ -1973,7 +1973,7 @@ impl App for SettingsApp {
             FocusId::new("sidebar"),
             Rect::from_xywh(0.0, 0.0, view::SIDEBAR_W, WINDOW_H),
             Role::List,
-            "Categories",
+            otto_kit::t!("a11y-categories"),
             |tree| {
                 for (index, pane) in panes.iter().enumerate() {
                     tree.list_row(
@@ -2007,7 +2007,7 @@ impl App for SettingsApp {
             panes
                 .get(selected)
                 .map(|pane| pane.name)
-                .unwrap_or("Settings"),
+                .unwrap_or(otto_kit::t!("a11y-settings")),
             |tree| {
                 for (row, bounds) in rows {
                     let Some(id) = row.id else { continue };

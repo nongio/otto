@@ -1074,7 +1074,7 @@ impl App for IslandApp {
     /// having gone looking. An urgent one interrupts; the rest wait for a gap.
     fn accessibility(&mut self, _ctx: &AppContext, _surface: &ObjectId) -> Option<A11yTree> {
         let state = self.state.lock().ok()?;
-        let mut tree = A11yTree::new("Notifications");
+        let mut tree = A11yTree::new(otto_kit::t!("a11y-notifications"));
 
         for island in &self.islands {
             let Some(activity) = state

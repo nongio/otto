@@ -164,7 +164,7 @@ impl Snapshot {
         root.set_label("Otto");
 
         let mut dock = Node::new(Role::Toolbar);
-        dock.set_label("Dock");
+        dock.set_label(otto_kit::t!("a11y-dock"));
         for app in &self.dock {
             let id = app.node_id(Section::Dock);
             if !seen.insert(id) {
@@ -176,9 +176,9 @@ impl Snapshot {
             // "running" is the dot under the icon; without it a screen reader
             // cannot tell a launcher from an open application.
             node.set_description(if app.running {
-                "Running".to_owned()
+                otto_kit::t!("a11y-app-running").to_owned()
             } else {
-                "Not running".to_owned()
+                otto_kit::t!("a11y-app-not-running").to_owned()
             });
             node.add_action(Action::Click);
             node.add_action(Action::Focus);
@@ -196,7 +196,7 @@ impl Snapshot {
 
         if self.switcher_open {
             let mut switcher = Node::new(Role::ListBox);
-            switcher.set_label("Application switcher");
+            switcher.set_label(otto_kit::t!("a11y-app-switcher"));
             for (index, app) in self.switcher.iter().enumerate() {
                 let id = app.node_id(Section::Switcher);
                 if !seen.insert(id) {
@@ -223,7 +223,7 @@ impl Snapshot {
 
         if self.expose {
             let mut windows = Node::new(Role::ListBox);
-            windows.set_label("Windows");
+            windows.set_label(otto_kit::t!("a11y-windows"));
             for window in &self.windows {
                 let id = window.node_id();
                 if !seen.insert(id) {
@@ -251,7 +251,7 @@ impl Snapshot {
         }
 
         let mut workspaces = Node::new(Role::ListBox);
-        workspaces.set_label("Workspaces");
+        workspaces.set_label(otto_kit::t!("a11y-workspaces"));
         for (index, name) in self.workspaces.iter().enumerate() {
             let id = workspace_node_id(index);
             if !seen.insert(id) {
@@ -514,7 +514,7 @@ impl ShellAccessibility {
                         ShellWindow {
                             key: format!("{id:?}"),
                             title: if base.title.is_empty() {
-                                "Untitled window".to_owned()
+                                otto_kit::t!("a11y-untitled-window").to_owned()
                             } else {
                                 base.title.clone()
                             },
@@ -618,7 +618,13 @@ mod tests {
 
         let item = node(&update, dock.children()[0]);
         assert_eq!(item.label().as_deref(), Some("Files"));
-        assert_eq!(item.description().as_deref(), Some("Running"));
+        // Against the catalogue, not against English: the description follows
+        // the desktop's language, and what matters here is that the running
+        // dot is described at all.
+        assert_eq!(
+            item.description().as_deref(),
+            Some(otto_kit::t!("a11y-app-running"))
+        );
         assert!(item.supports_action(Action::Click));
     }
 

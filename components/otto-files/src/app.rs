@@ -3770,25 +3770,31 @@ impl App for FilesApp {
             }
         };
 
-        tree.region(FILES_LIST, area, Role::List, "Files", |tree| {
-            for (index, entry) in entries.iter().enumerate() {
-                let bounds = placement(index);
-                tree.control(row_focus(index), bounds, Role::ListItem, true, |node| {
-                    node.set_label(entry.name.clone());
-                    // What the Kind column says, plus the size for a file: the
-                    // two things that tell one listing row from another when
-                    // the names are similar.
-                    let mut description = entry.kind_label().to_owned();
-                    if let Some(size) = entry.size.filter(|_| !entry.is_dir) {
-                        description.push_str(", ");
-                        description.push_str(&crate::model::format_size(size));
-                    }
-                    node.set_description(description);
-                    node.set_selected(selection.contains(&entry.name));
-                    node.add_action(Action::Click);
-                });
-            }
-        });
+        tree.region(
+            FILES_LIST,
+            area,
+            Role::List,
+            otto_kit::t!("files-window-title"),
+            |tree| {
+                for (index, entry) in entries.iter().enumerate() {
+                    let bounds = placement(index);
+                    tree.control(row_focus(index), bounds, Role::ListItem, true, |node| {
+                        node.set_label(entry.name.clone());
+                        // What the Kind column says, plus the size for a file: the
+                        // two things that tell one listing row from another when
+                        // the names are similar.
+                        let mut description = entry.kind_label().to_owned();
+                        if let Some(size) = entry.size.filter(|_| !entry.is_dir) {
+                            description.push_str(", ");
+                            description.push_str(&crate::model::format_size(size));
+                        }
+                        node.set_description(description);
+                        node.set_selected(selection.contains(&entry.name));
+                        node.add_action(Action::Click);
+                    });
+                }
+            },
+        );
 
         // The column view shows a preview of the selected file beside the
         // listing. It is not what the keyboard is on — the listing is — but it

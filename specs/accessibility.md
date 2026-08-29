@@ -97,6 +97,11 @@ The compositor publishes its own chrome as one accessible application, holding:
   the active one selected. Choosing one leaves the overview and focuses that
   window, exactly as clicking its thumbnail does.
 
+Every label the shell and its applications speak comes out of the localisation
+catalogue, so a screen reader talks in the same language the desktop is drawn
+in — a spoken label that stays English beside a translated interface names
+something the user cannot see.
+
 Everything the shell places on screen carries its bounds, in logical pixels
 across the whole layout — the same space the pointer is reported in. Without
 them an assistive technology can read the shell but cannot find any of it by

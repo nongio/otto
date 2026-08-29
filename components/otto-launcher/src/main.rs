@@ -898,31 +898,37 @@ impl App for Launcher {
             .collect();
         let selected = self.selected;
 
-        tree.region(RESULTS, list, Role::ListBox, "Results", |tree| {
-            for (index, title, subtitle) in rows {
-                let on_screen = index - first;
-                let bounds = Rect::from_xywh(
-                    card_x,
-                    card_y + FIELD_H + on_screen as f32 * ROW_H,
-                    card_w,
-                    ROW_H,
-                );
-                tree.control(
-                    row_focus(index),
-                    bounds,
-                    Role::ListBoxOption,
-                    true,
-                    |node| {
-                        node.set_label(title);
-                        if let Some(subtitle) = subtitle {
-                            node.set_description(subtitle);
-                        }
-                        node.set_selected(index == selected);
-                        node.add_action(Action::Click);
-                    },
-                );
-            }
-        });
+        tree.region(
+            RESULTS,
+            list,
+            Role::ListBox,
+            otto_kit::t!("a11y-results"),
+            |tree| {
+                for (index, title, subtitle) in rows {
+                    let on_screen = index - first;
+                    let bounds = Rect::from_xywh(
+                        card_x,
+                        card_y + FIELD_H + on_screen as f32 * ROW_H,
+                        card_w,
+                        ROW_H,
+                    );
+                    tree.control(
+                        row_focus(index),
+                        bounds,
+                        Role::ListBoxOption,
+                        true,
+                        |node| {
+                            node.set_label(title);
+                            if let Some(subtitle) = subtitle {
+                                node.set_description(subtitle);
+                            }
+                            node.set_selected(index == selected);
+                            node.add_action(Action::Click);
+                        },
+                    );
+                }
+            },
+        );
 
         if self.row_count() > 0 {
             tree.set_focus(row_focus(selected));

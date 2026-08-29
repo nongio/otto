@@ -1048,3 +1048,29 @@ islands-dialog-allow = Разрешить
 islands-dialog-continue = Продолжить
 # Refuses the request.
 islands-dialog-deny = Запретить
+
+
+## Accessibility
+##
+## Spoken by a screen reader, never drawn on screen, so these are the only
+## strings in the catalogue with no width limit — say the whole thing rather
+## than abbreviating. They name parts of the desktop a sighted person
+## recognises by shape: read them as answers to "what is this?".
+
+a11y-dock = Док
+a11y-app-running = Запущено
+a11y-app-not-running = Не запущено
+a11y-app-switcher = Переключатель программ
+a11y-windows = Окна
+a11y-workspaces = Рабочие столы
+a11y-untitled-window = Окно без названия
+a11y-menu-bar = Строка меню
+a11y-status = Состояние
+a11y-tray-item = Элемент { $number }
+a11y-notifications = Уведомления
+a11y-categories = Категории
+a11y-results = Результаты
+a11y-settings = Настройки
+a11y-preview = Просмотр
+a11y-preview-page = Просмотр, страница { $page } из { $pages }
+a11y-preview-shortened = Просмотр, сокращённый

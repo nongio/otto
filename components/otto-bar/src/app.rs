@@ -623,12 +623,12 @@ impl App for TopBarApp {
                 })
                 .collect();
 
-            let mut tree = A11yTree::new("Menu bar");
+            let mut tree = A11yTree::new(otto_kit::t!("a11y-menu-bar"));
             tree.region(
                 MENUS,
                 Rect::from_xywh(0.0, 0.0, self.left.width, height),
                 Role::MenuBar,
-                "Menu bar",
+                otto_kit::t!("a11y-menu-bar"),
                 |tree| {
                     for (index, label, x, width) in items {
                         let bounds = Rect::from_xywh(x, 0.0, width, height);
@@ -647,7 +647,7 @@ impl App for TopBarApp {
         }
 
         let height = self.right.height;
-        let mut tree = A11yTree::new("Status");
+        let mut tree = A11yTree::new(otto_kit::t!("a11y-status"));
 
         // A tray icon carries no label of its own — it is an icon. Its tooltip
         // is what the application calls it, and failing that the service name
@@ -664,7 +664,9 @@ impl App for TopBarApp {
                 .clone()
                 .or_else(|| tray.get(index).and_then(|t| t.tooltip.clone()))
                 .or_else(|| tray.get(index).map(tray_name))
-                .unwrap_or_else(|| format!("Tray item {}", index + 1));
+                .unwrap_or_else(|| {
+                    otto_kit::t_owned!("a11y-tray-item", number = index as f64 + 1.0)
+                });
             tree.control(
                 tray_focus(index),
                 Rect::from_xywh(x, y, w, h),
