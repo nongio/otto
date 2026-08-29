@@ -914,6 +914,13 @@ impl Workspaces {
             }
         }
 
+        // Wallpapers are decoded for the largest output; when a bigger one
+        // shows up (including the first one, at startup) the images loaded so
+        // far are now being upscaled, so decode them again at the new size.
+        if background::set_wallpaper_target_px(max_phys_w, max_phys_h) {
+            let _ = self.reload_background();
+        }
+
         // The scene root only needs to fit the largest output.
         if max_phys_w > 0.0 && max_phys_h > 0.0 {
             self.layers_engine.scene_set_size(max_phys_w, max_phys_h);
