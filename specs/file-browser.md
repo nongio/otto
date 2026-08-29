@@ -362,7 +362,7 @@ The browser adds:
 | Return / F2 | rename the entry at the cursor, inline, with the extension unselected — in every view mode, icon view included |
 | Delete / Ctrl+Delete / Ctrl+Backspace | move the selection to trash — the modified forms because the chord people reach for is Cmd+Delete, and on a keyboard whose big key is Backspace that arrives as Ctrl+Backspace. Plain Backspace goes up a directory instead, and always has |
 | Shift+Delete | delete the selection permanently, after confirmation — **not built**; the chord is deliberately inert rather than trashing, which is the wrong answer to a keystroke that means "and I mean it" |
-| Ctrl+C / Ctrl+X / Ctrl+V | copy / cut / paste |
+| Ctrl+C / Ctrl+X / Ctrl+V | copy / cut / paste. These are file management, so the picker does not have them — and while an inline rename holds the keyboard they act on the *name being edited* rather than on the selection, as every other key in the field does |
 | Ctrl+Z | undo the last operation |
 | Ctrl+N | new window, at the **default location** (the home directory for now, a preference later) rather than at this window's directory — a new window is a fresh start, and inheriting wherever the focused window was pointed makes it read as a copy of that window. Ctrl+double-click is the gesture for "that directory, in another window". Nothing in the picker, which answers one request in one window |
 | Ctrl+O | open the entry at the cursor — exactly what a double-click does: descend into a directory, or activate a file (in the picker, accept it). Return is not free for this, since it renames |

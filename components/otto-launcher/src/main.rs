@@ -14,6 +14,7 @@ use std::os::fd::RawFd;
 use std::time::{Duration, Instant};
 
 use otto_kit::accessibility::{A11yTree, Action, ActionRequest, Role};
+use otto_kit::clipboard;
 use otto_kit::components::text_input::{
     KeyMods, TextInput, TextInputKey, TextInputResponse, CARET_BLINK_PERIOD,
 };
@@ -681,7 +682,7 @@ impl App for Launcher {
         _ctx: &AppContext,
         event: &KeyEvent,
         state: wl_keyboard::KeyState,
-        _serial: u32,
+        serial: u32,
     ) {
         // Shift is tracked from the key itself: the runner reports keys, not
         // modifier state, and selection with Shift+arrows needs to know.
@@ -750,6 +751,35 @@ impl App for Launcher {
                 self.input
                     .on_key(TextInputKey::SelectAll, KeyMods::default());
                 self.dirty = true;
+                return;
+            }
+            // Cut and copy hand the selection to the system clipboard; paste
+            // reads it back, since the field holds no clipboard of its own.
+            (_, Some('c')) | (_, Some('x')) => {
+                let cut = control == Some('x');
+                let key = if cut {
+                    TextInputKey::Cut
+                } else {
+                    TextInputKey::Copy
+                };
+                if let TextInputResponse::Clipboard(text) =
+                    self.input.on_key(key, KeyMods::default())
+                {
+                    clipboard::set_text(&text, serial);
+                }
+                if cut {
+                    self.refilter();
+                } else {
+                    self.dirty = true;
+                }
+                return;
+            }
+            (_, Some('v')) => {
+                if let Some(text) = clipboard::text() {
+                    self.input
+                        .on_key(TextInputKey::Paste(text), KeyMods::default());
+                    self.refilter();
+                }
                 return;
             }
             (_, Some('w')) => {

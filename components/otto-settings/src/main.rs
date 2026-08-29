@@ -26,6 +26,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use otto_kit::accessibility::{node_id as a11y_node, A11yTree, Action, ActionRequest, Role};
+use otto_kit::clipboard;
 use otto_kit::components::color_picker::{ColorPickerPopup, Swatch};
 use otto_kit::components::dropdown::DropdownMenu;
 use otto_kit::components::scroll::ScrollSurfaces;
@@ -2008,7 +2009,7 @@ impl App for SettingsApp {
         _ctx: &AppContext,
         event: &KeyEvent,
         state: wl_keyboard::KeyState,
-        _serial: u32,
+        serial: u32,
     ) {
         use smithay_client_toolkit::seat::keyboard::Keysym;
 
@@ -2091,6 +2092,12 @@ impl App for SettingsApp {
             Keysym::BackSpace => Some(TextInputKey::Backspace),
             Keysym::Delete => Some(TextInputKey::Delete),
             Keysym::a if ctrl => Some(TextInputKey::SelectAll),
+            // Cut, copy and paste. The field answers copy and cut with the
+            // text to offer; paste has to arrive with the text already read,
+            // since the widget owns no clipboard of its own.
+            Keysym::c if ctrl => Some(TextInputKey::Copy),
+            Keysym::x if ctrl => Some(TextInputKey::Cut),
+            Keysym::v if ctrl => clipboard::text().map(TextInputKey::Paste),
             // Whatever the keymap produced, as a whole: an input method can
             // commit more than one character at a time, and taking only the
             // first would silently drop the rest. A modifier pressed on its
@@ -2121,6 +2128,9 @@ impl App for SettingsApp {
             }
             Some(TextInputResponse::Cancel) => {
                 cancel_edit(&self.editing);
+            }
+            Some(TextInputResponse::Clipboard(text)) => {
+                clipboard::set_text(&text, serial);
             }
             Some(TextInputResponse::Ignored) | None => return,
             Some(_) => {}

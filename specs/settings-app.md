@@ -290,6 +290,10 @@ generically.
 A search field filters the presented settings by label, description, and
 identifier, and selecting a result reveals that setting in its pane.
 
+An editable text field takes the usual editing keys while it holds the
+keyboard: caret movement, Shift to select, Ctrl+A to select all, and Ctrl+C,
+Ctrl+X and Ctrl+V for copy, cut and paste against the system clipboard.
+
 Each setting shows whether it currently differs from its inherited value, and
 offers a per-setting reset when it does.
 

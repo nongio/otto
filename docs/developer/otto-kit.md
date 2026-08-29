@@ -205,7 +205,11 @@ startup-only, and always outranked by the portal. Otto's own backend for that po
 `filetype` resolves MIME types by glob and by content sniffing, and `preview`
 renders file thumbnails against the shared freedesktop cache — both for
 otto-files and otto-quickview. `clipboard` and `dnd` cover selections and drag
-and drop, `sound` plays feedback sounds, and `lottie` plays Lottie animations
+and drop — `clipboard::set_text` and `clipboard::text` are the plain-text pair
+a text field needs, since `TextInput` owns no clipboard itself: it answers a
+`Copy` or `Cut` key with `TextInputResponse::Clipboard(text)` for the host to
+offer, and takes a paste as `TextInputKey::Paste(text)` already read. `sound`
+plays feedback sounds, and `lottie` plays Lottie animations
 (the greeter and lock screen use it).
 
 ## Building and running

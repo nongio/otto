@@ -4173,6 +4173,11 @@ impl App for FilesApp {
                     Keysym::BackSpace => Some(TextInputKey::Backspace),
                     Keysym::Delete => Some(TextInputKey::Delete),
                     Keysym::a if ctrl => Some(TextInputKey::SelectAll),
+                    // Cut, copy and paste edit the *name* here, not the
+                    // selection in the listing: the field owns the keyboard.
+                    Keysym::c if ctrl => Some(TextInputKey::Copy),
+                    Keysym::x if ctrl => Some(TextInputKey::Cut),
+                    Keysym::v if ctrl => clipboard::text().map(TextInputKey::Paste),
                     _ => event
                         .utf8
                         .as_ref()
@@ -4188,6 +4193,10 @@ impl App for FilesApp {
                     match response {
                         Some(TextInputResponse::Commit) => browser.commit_rename(),
                         Some(TextInputResponse::Cancel) => browser.cancel_rename(),
+                        Some(TextInputResponse::Clipboard(text)) => {
+                            clipboard::set_text(&text, serial);
+                            browser.dirty = true;
+                        }
                         Some(_) => browser.dirty = true,
                         None => {}
                     }
@@ -4232,6 +4241,9 @@ impl App for FilesApp {
                     Keysym::BackSpace => Some(TextInputKey::Backspace),
                     Keysym::Delete => Some(TextInputKey::Delete),
                     Keysym::a if ctrl => Some(TextInputKey::SelectAll),
+                    Keysym::c if ctrl => Some(TextInputKey::Copy),
+                    Keysym::x if ctrl => Some(TextInputKey::Cut),
+                    Keysym::v if ctrl => clipboard::text().map(TextInputKey::Paste),
                     // A chord that is not the field's own is the window's:
                     // Ctrl+W and friends still reach the shortcuts below.
                     _ if ctrl => None,
@@ -4243,8 +4255,12 @@ impl App for FilesApp {
                 };
                 if let Some(key) = editing {
                     let mods = KeyMods { shift, ctrl };
-                    if let Some(input) = browser.save_name.as_mut() {
-                        input.on_key(key, mods);
+                    let response = browser
+                        .save_name
+                        .as_mut()
+                        .map(|input| input.on_key(key, mods));
+                    if let Some(TextInputResponse::Clipboard(text)) = response {
+                        clipboard::set_text(&text, serial);
                     }
                     browser.dirty = true;
                     drop(browser);

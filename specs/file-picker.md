@@ -43,7 +43,9 @@ picker window, and the path the user chooses comes back as a `file://` URI.
   written under the field — when the directory cannot be written to. The name
   field holds the keyboard focus, so printable keys name the file rather than
   driving type-ahead; Up, Down and the page keys still move the listing, and
-  clicking a file copies its name into the field.
+  clicking a file copies its name into the field. Ctrl+C, Ctrl+X and Ctrl+V
+  work on the name text — the picker does no file management, so the chords are
+  free for the field.
 
 ### What is not
 
