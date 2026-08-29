@@ -3341,6 +3341,31 @@ mod tests {
         }
     }
 
+    /// The balloon body comes from the palette's tooltip material, so it
+    /// follows the scheme. Both arms of the tooltip draw used to hold the same
+    /// hardcoded grey — the light material, copied verbatim into the dark one.
+    #[test]
+    #[serial]
+    fn the_tooltip_body_follows_the_theme() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        let body_color = |scheme: crate::theme::ThemeScheme| {
+            Config::update(|c| c.theme_scheme = scheme.clone());
+            let (engine, dock) = dock_at(DockPosition::Bottom);
+            show_first_label(&dock, &engine);
+            let painted = first_entry(&dock).1.render_layer().background_color;
+            let expected = layers::prelude::PaintColor::Solid {
+                color: crate::theme::theme_colors().materials_controls_tooltip,
+            };
+            assert_eq!(painted, expected, "{scheme:?} tooltip is off the palette");
+            painted
+        };
+        let light = body_color(crate::theme::ThemeScheme::Light);
+        let dark = body_color(crate::theme::ThemeScheme::Dark);
+        Config::update(|c| c.theme_scheme = crate::theme::ThemeScheme::Light);
+        assert_ne!(light, dark, "both schemes painted the same tooltip");
+    }
+
     /// The running indicator hugs the screen edge the dock sits on, whether the
     /// dock started there or was moved there.
     #[test]

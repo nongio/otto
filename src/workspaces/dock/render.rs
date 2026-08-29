@@ -373,26 +373,14 @@ pub fn setup_label(new_layer: &Layer, label_text: String, position: DockPosition
 
         let text = text.clone();
 
-        // Paint for the tooltip background
-        let mut paint = layers::skia::Paint::default();
-
-        // choose colors according to theme scheme so tooltip looks correct in dark mode
-        let (bg_col, text_col) = Config::with(|c| match c.theme_scheme {
-            crate::theme::ThemeScheme::Light => (
-                layers::skia::Color4f::new(157.0 / 255.0, 157.0 / 255.0, 157.0 / 255.0, 1.0),
-                theme_colors().text_primary.c4f(),
-            ),
-            crate::theme::ThemeScheme::Dark => (
-                layers::skia::Color4f::new(157.0 / 255.0, 157.0 / 255.0, 157.0 / 255.0, 1.0),
-                theme_colors().text_primary.c4f(),
-            ),
-        });
-        paint.set_color4f(bg_col, None);
-        paint.set_anti_alias(true);
-
-        // // Paint for the text
+        // The balloon body is the layer's own background (see
+        // `background_color` below); all this draw has to add is the label.
+        // Both used to be picked here from a `theme_scheme` match whose two
+        // arms held the same hardcoded #9d9d9d — the *light* tooltip material,
+        // copied verbatim into the dark arm. It never reached the screen
+        // either, the layer background painted over it.
         let mut text_paint = layers::skia::Paint::default();
-        text_paint.set_color4f(text_col, None);
+        text_paint.set_color4f(theme_colors().text_primary.c4f(), None);
         text_paint.set_anti_alias(true);
 
         // // Draw the text inside the tooltip
@@ -443,7 +431,9 @@ pub fn setup_label(new_layer: &Layer, label_text: String, position: DockPosition
             width: taffy::Dimension::Length(label_size_width),
             height: taffy::Dimension::Length(label_size_height),
         })
-        .background_color(theme_colors().materials_ultrathick)
+        // The palette's tooltip material, so the balloon follows the scheme
+        // like the rest of the chrome instead of sitting on one fixed grey.
+        .background_color(theme_colors().materials_controls_tooltip)
         .position(match arrow {
             BalloonArrow::Bottom => Point {
                 x: -label_size_width / 2.0,

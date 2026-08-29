@@ -115,7 +115,9 @@ underneath it.
 - `draw_app_icon` paints the cached freedesktop icon with a drop shadow, and
   draws the running-app indicator dot only for apps that are actually running.
   Without an icon it falls back to a stroked rounded rect.
-- Labels are balloon tooltips with blurred shadows, hidden until hover.
+- Labels are balloon tooltips with blurred shadows, hidden until hover. The
+  balloon body is `theme_colors().materials_controls_tooltip` and the text
+  `text_primary`, so both follow the light/dark palette.
 - The bar uses background blur and colours from `theme_colors()`, and resizes
   with the icon height.
 
