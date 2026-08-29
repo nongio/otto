@@ -858,35 +858,52 @@ pub fn workspace_name_key(output: &str, position: usize) -> String {
 /// Persist custom workspace names into the `[workspaces]` section of the
 /// writable config file, replacing the whole `names` table (the compositor
 /// holds the authoritative set) and leaving every other section alone.
+///
+/// The edit goes through `toml_edit`, so the comments, key order and whitespace
+/// of the rest of a hand-maintained config survive it byte for byte.
 pub fn save_workspace_names(names: &BTreeMap<String, String>) {
     let path = writable_config_path();
-    let raw = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml::Value = raw
-        .parse()
-        .unwrap_or(toml::Value::Table(Default::default()));
-
-    if let Some(table) = doc.as_table_mut() {
-        let workspaces = table
-            .entry("workspaces".to_string())
-            .or_insert_with(|| toml::Value::Table(Default::default()));
-        if let Some(workspaces) = workspaces.as_table_mut() {
-            if let Ok(names) = toml::Value::try_from(names) {
-                workspaces.insert("names".to_string(), names);
-            }
+    let mut doc = match file::load_document(&path) {
+        Ok(doc) => doc,
+        Err(err) => {
+            warn!("Failed to save workspace names: {err}");
+            return;
         }
-    }
+    };
 
-    match toml::to_string_pretty(&doc) {
-        Ok(serialized) => {
-            if let Err(err) = std::fs::write(&path, serialized) {
-                warn!(
-                    "Failed to save workspace names to {}: {err}",
-                    path.display()
-                );
-            }
-        }
-        Err(err) => warn!("Failed to serialize workspace names: {err}"),
+    if let Err(err) = replace_workspace_names(&mut doc, names) {
+        warn!(
+            "Failed to save workspace names to {}: {err}",
+            path.display()
+        );
+        return;
     }
+    if let Err(err) = file::store_document(&path, &doc) {
+        warn!("Failed to save workspace names: {err}");
+    }
+}
+
+/// Put `names` in `[workspaces.names]`, replacing whatever was there.
+///
+/// Fails rather than overwrite a `workspaces` key that is not a table: the user
+/// wrote that, whatever it is.
+fn replace_workspace_names(
+    doc: &mut toml_edit::DocumentMut,
+    names: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    let workspaces = doc
+        .as_table_mut()
+        .entry("workspaces")
+        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
+        .as_table_mut()
+        .ok_or_else(|| "`workspaces` is not a table".to_string())?;
+
+    let mut table = toml_edit::Table::new();
+    for (key, value) in names {
+        table.insert(key, toml_edit::value(value.as_str()));
+    }
+    workspaces.insert("names", toml_edit::Item::Table(table));
+    Ok(())
 }
 
 /// What Otto offers assistive technologies — see `specs/accessibility.md`.
@@ -1886,6 +1903,45 @@ mod tests {
         let out = doc.to_string();
         assert!(out.contains("# hand written"), "{out}");
         assert!(out.contains("# the minimise animation"), "{out}");
+    }
+
+    #[test]
+    #[serial]
+    fn test_saving_workspace_names_keeps_the_rest_of_the_file() {
+        let env = ConfigEnv::new();
+        let config_file = env.user_config(
+            "# my desktop\nscreen_scale = 2.0\n\n[dock]\n# tuned by hand\ngenie_scale = 0.3\n",
+        );
+
+        let mut names = BTreeMap::new();
+        names.insert(workspace_name_key("eDP-1", 0), "Work".to_string());
+        names.insert(workspace_name_key("eDP-1", 1), "Mail".to_string());
+        save_workspace_names(&names);
+
+        let written = fs::read_to_string(&config_file).unwrap();
+        assert!(written.contains("# my desktop"), "{written}");
+        assert!(written.contains("# tuned by hand"), "{written}");
+        assert!(written.contains("genie_scale = 0.3"), "{written}");
+
+        let config: Config = toml::from_str(&written).expect("the file stays parsable");
+        assert_eq!(
+            config.workspaces.names.get("eDP-1:0").map(String::as_str),
+            Some("Work")
+        );
+
+        // Renaming again replaces the table rather than accumulating in it.
+        let mut names = BTreeMap::new();
+        names.insert(workspace_name_key("eDP-1", 0), "Play".to_string());
+        save_workspace_names(&names);
+
+        let written = fs::read_to_string(&config_file).unwrap();
+        assert!(written.contains("# my desktop"), "{written}");
+        let config: Config = toml::from_str(&written).expect("the file stays parsable");
+        assert_eq!(config.workspaces.names.len(), 1);
+        assert_eq!(
+            config.workspaces.names.get("eDP-1:0").map(String::as_str),
+            Some("Play")
+        );
     }
 
     #[test]
