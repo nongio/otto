@@ -310,7 +310,10 @@ window already has changes nothing about the pane and repaints nothing, so an
 idle window draws no frames at all. Pointer events over the pane land on
 those surfaces and are translated back into the pane's coordinates before
 hit-testing; the window's resize edges along the pane's right and bottom stay
-live.
+live. The content surface is taller than the pane and hangs out of it at both
+ends, so it accepts input only over the part the pane actually shows: the
+window takes no clicks below its own bottom edge, and the chrome above the pane
+keeps its own.
 
 ### Shortcuts
 
