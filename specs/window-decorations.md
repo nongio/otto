@@ -74,6 +74,12 @@ appears, and discarded if the surface dies first.
   maximizing and tiling all account for its height. A resize configures the
   client with the size *under* the bar, so a window does not gain the bar's
   height every time it is dragged.
+- The bar is 34 logical points tall, and on a fractional scale that is not a
+  whole number of physical pixels (34 x 1.75 = 59.5). The painted bar and the
+  offset the client's content starts at are both rounded onto the pixel grid,
+  and rounded from the same value, so the bar's bottom edge is a crisp hairline
+  and the client's surfaces still begin exactly where it ends. See
+  [rendering.md](../docs/developer/rendering.md#sizes-not-just-origins).
 
 **Resize borders.** A server-decorated client has no frame of its own to grab,
 and never asks the compositor to resize it — so Otto offers the border itself:

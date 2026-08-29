@@ -1976,11 +1976,22 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             }
 
             if let Some(window_view) = self.workspaces.get_window_view(&id) {
+                // Snap the window box onto the physical pixel grid: both
+                // terms are logical integers multiplied by the output scale,
+                // so on a fractional scale every edge lands mid-pixel and the
+                // shadow and decoration drawn from this model are resampled.
+                let snapped = crate::workspaces::utils::snap_position_px(location.x, location.y);
                 let model = WindowViewBaseModel {
-                    x: location.x as f32,
-                    y: location.y as f32,
-                    w: window_geometry.size.w as f32,
-                    h: window_geometry.size.h as f32,
+                    x: snapped.x,
+                    y: snapped.y,
+                    w: crate::workspaces::utils::snap_extent_px(
+                        location.x as f32,
+                        window_geometry.size.w as f32,
+                    ),
+                    h: crate::workspaces::utils::snap_extent_px(
+                        location.y as f32,
+                        window_geometry.size.h as f32,
+                    ),
                     title,
                     fullscreen,
                     active: is_focused,
@@ -2026,7 +2037,13 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 content_layer.set_position(
                     layers::prelude::Point {
                         x: 0.0,
-                        y: decoration_height as f32 * scale_factor as f32,
+                        // Rounded to match the snapped bar height in
+                        // `view_window_decoration`, so the client's subtree
+                        // starts on a whole pixel instead of on 34 x 1.75.
+                        y: crate::workspaces::utils::snap_extent_px(
+                            0.0,
+                            decoration_height as f32 * scale_factor as f32,
+                        ),
                     },
                     None,
                 );
@@ -2094,8 +2111,21 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             .to_physical(scale_factor);
         if let Some(window_view) = self.workspaces.get_window_view(&id) {
             let current = window_view.view_base.get_state();
-            let (x, y) = (location.x as f32, location.y as f32);
-            let (w, h) = (window_geometry.size.w as f32, window_geometry.size.h as f32);
+            // Snapped for the same reason as the commit path above; the
+            // early-out below then compares snapped values, so a sub-pixel
+            // jitter that rounds to the same box costs nothing.
+            let snapped = crate::workspaces::utils::snap_position_px(location.x, location.y);
+            let (x, y) = (snapped.x, snapped.y);
+            let (w, h) = (
+                crate::workspaces::utils::snap_extent_px(
+                    location.x as f32,
+                    window_geometry.size.w as f32,
+                ),
+                crate::workspaces::utils::snap_extent_px(
+                    location.y as f32,
+                    window_geometry.size.h as f32,
+                ),
+            );
             // Skip the state churn when nothing moved — most scanout commits
             // are same-geometry buffer swaps (video, games) firing at display
             // rate.

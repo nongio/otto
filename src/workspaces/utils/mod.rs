@@ -321,6 +321,25 @@ pub fn snap_position_px(x: f64, y: f64) -> layers::types::Point {
     }
 }
 
+/// Round a physical-pixel EXTENT so that both of a box's edges land on the
+/// pixel grid.
+///
+/// [`snap_position_px`] puts an origin on the grid, but a size reaches the
+/// layer the same way a position does — a logical integer multiplied by the
+/// output scale — so the FAR edge is left fractional. The server-side
+/// titlebar is [`WindowElement::DECORATION_HEIGHT`] = 34 logical points, and
+/// 34 x 1.75 = 59.5: its bottom hairline paints across three physical rows
+/// with no fully covered one, and the client content below it starts on a
+/// half pixel, which resamples the whole surface subtree.
+///
+/// Snap the far EDGE rather than the extent on its own. Rounding an origin
+/// and an extent independently can move the far edge a whole pixel when the
+/// two round in opposite directions (origin 10.5 -> 11, extent 9.5 -> 10
+/// puts the edge at 21 instead of 20).
+pub fn snap_extent_px(origin: f32, extent: f32) -> f32 {
+    (origin + extent).round() - origin.round()
+}
+
 /// Which filter to sample a surface's texture with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SurfaceFilter {
@@ -436,18 +455,23 @@ pub fn configure_surface_layer(
     // Skip size/position override when client owns the bounds.
     // The compositor initializes from buffer on first commit (before client_owns_size is set).
     if !client_owns_size {
+        // The size is snapped for the same reason the position above is, and
+        // against the UNROUNDED origin so the surface's far edge lands on the
+        // grid too rather than inheriting the origin's rounding error.
+        let w = snap_extent_px(wvs.phy_dst_x + wvs.log_offset_x, wvs.phy_dst_w);
+        let h = snap_extent_px(wvs.phy_dst_y + wvs.log_offset_y, wvs.phy_dst_h);
         layer.set_size(
             Size {
-                width: taffy::Dimension::Length(wvs.phy_dst_w),
-                height: taffy::Dimension::Length(wvs.phy_dst_h),
+                width: taffy::Dimension::Length(w),
+                height: taffy::Dimension::Length(h),
             },
             None,
         );
 
         let anchor_point = layer.anchor_point();
         let adjusted_pos = Point {
-            x: pos_x + (wvs.phy_dst_w * anchor_point.x),
-            y: pos_y + (wvs.phy_dst_h * anchor_point.y),
+            x: pos_x + (w * anchor_point.x),
+            y: pos_y + (h * anchor_point.y),
         };
         layer.set_position(adjusted_pos, None);
     }
@@ -630,6 +654,29 @@ mod tests {
     fn a_position_on_the_grid_is_left_alone() {
         let p = snap_position_px(101.0 * 2.0, 7.0 * 2.0);
         assert_eq!((p.x, p.y), (202.0, 14.0));
+    }
+
+    /// The regression this pairs with: snapping the origin alone still leaves
+    /// the far edge fractional. A 34pt titlebar on a 1.75x output is 59.5px,
+    /// which paints its bottom hairline across three physical rows.
+    #[test]
+    fn an_extent_off_the_grid_is_snapped_onto_it() {
+        assert_eq!(snap_extent_px(0.0, 34.0 * 1.75), 60.0);
+    }
+
+    /// Snapping against the origin, not in isolation: origin 10.5 and extent
+    /// 9.5 round in opposite directions, so an independently rounded extent
+    /// would put the far edge at 21 instead of the correct 20.
+    #[test]
+    fn an_extent_is_snapped_against_its_own_origin() {
+        assert_eq!(snap_extent_px(10.5, 9.5), 9.0);
+        assert_eq!(10.5_f32.round() + snap_extent_px(10.5, 9.5), 20.0);
+    }
+
+    /// Integer scales stay a no-op here too.
+    #[test]
+    fn an_extent_on_the_grid_is_left_alone() {
+        assert_eq!(snap_extent_px(202.0, 34.0 * 2.0), 68.0);
     }
 
     /// The whole point of the cheap branches: a window whose client painted a

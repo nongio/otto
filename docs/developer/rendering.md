@@ -119,6 +119,41 @@ Clients that are not fractional-scale aware hand over an integer-scaled buffer
 (a 2x buffer on a 1.65x output, `scale = 0.825`) and take the bicubic path.
 That is a real resample and there is nothing to snap away.
 
+### Sizes, not just origins
+
+An origin on the grid is only half of a box. A size reaches a layer the same
+way a position does — a logical integer multiplied by the output scale — so
+snapping the origin alone leaves the **far** edge fractional. The server-side
+titlebar is 34 logical points (`WindowElement::DECORATION_HEIGHT`), and
+34 x 1.75 = 59.5: its bottom hairline paints across three physical rows with
+no fully covered one, and the client content that starts below it begins on a
+half pixel, which resamples the entire surface subtree under it.
+
+`workspaces::utils::snap_extent_px` snaps the far **edge** rather than the
+extent on its own:
+
+```rust
+(origin + extent).round() - origin.round()
+```
+
+Rounding an origin and an extent independently is not equivalent and is wrong
+when the two round in opposite directions — origin 10.5 -> 11 with extent
+9.5 -> 10 puts the edge at 21 instead of 20.
+
+It is applied wherever a physical box is handed to a layer:
+
+- the window box in `WindowViewBaseModel` (both `update_window_view` paths in
+  `state/mod.rs`), which the shadow and the decoration are drawn from;
+- the decoration layer in `view_window_decoration`;
+- the content layer's y offset below the titlebar, rounded from the same
+  value as the bar's height so the client still starts exactly where the bar
+  ends;
+- the surface layer's own size in `configure_surface_layer`, snapped against
+  the *unrounded* origin so it does not inherit the origin's rounding error.
+
+As with positions, an integer scale never leaves the grid and every one of
+these is a no-op there.
+
 ## Getting frames out
 
 Two independent capture paths exist, and they share one GPU blit:
