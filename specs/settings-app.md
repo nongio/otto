@@ -217,6 +217,12 @@ announcing everything that moved. An unrelated edit made to a file since the
 last read is therefore picked up by a reset, which is the same reconciliation
 the file watcher will use.
 
+The same rule runs the other way: nothing removes a key from a user's file
+either. Older builds materialised whole tables into it, and those leftovers do
+shadow the lower layers — but a copied default is indistinguishable from a
+deliberate one, so Otto names the suspect keys in a startup warning and leaves
+the file untouched rather than deleting a line somebody meant.
+
 The rule this protects: the writable configuration file is the highest-priority
 layer. A default value written into it is indistinguishable from a deliberate
 choice, and permanently shadows the same key in every lower layer.

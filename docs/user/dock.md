@@ -107,9 +107,10 @@ written back by the dock itself; everything else in `[dock]` stays exactly as
 you typed it. Older
 builds rewrote the whole table instead, leaving a copy of every value in
 `~/.config/otto/config.toml` — which then shadowed `/etc/otto/config.toml` and
-made editing the system config look like it did nothing. Otto drops those
-leftovers from the user config on the next start (values you have actually
-changed are kept, and the file is rewritten without its comments).
+made editing the system config look like it did nothing. Otto never edits that file for
+you: at startup it logs a warning naming the leftover keys, and you delete the
+lines you did not write. It cannot tell a copied `colorize_intensity = 1.0`
+from one you typed, and guessing wrong would silently turn a setting off.
 
 ### Magnification
 
