@@ -2016,6 +2016,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                             &self.foreign_toplevels,
                             &window.id(),
                         ),
+                        fixed_size: !window.is_resizable(),
                         scale: scale_factor as f32,
                     });
                 }

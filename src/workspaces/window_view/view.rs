@@ -224,6 +224,7 @@ impl WindowView {
             && current.controls_hovered == model.controls_hovered
             && current.pressed == model.pressed
             && current.sharing == model.sharing
+            && current.fixed_size == model.fixed_size
             && current.scale == model.scale
         {
             return;

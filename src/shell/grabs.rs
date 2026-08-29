@@ -196,6 +196,14 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
             let zone = self.active_zone.take();
             if let Some(zone) = zone.filter(|_| ctrl_held(data)) {
                 data.apply_tile(&self.window, zone);
+            } else {
+                // The window moved out from under any popup it has open. Its
+                // popups follow it on screen — their position is derived from
+                // the window's each frame — but the unconstrain pass is not
+                // re-run, so one that ended up over an edge stays there. Done
+                // on release rather than per motion event: this configures
+                // every popup the window owns, and a drag is many events.
+                data.reposition_popups_for_window(&self.window);
             }
         }
     }
@@ -668,6 +676,12 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
                     });
                 }
             }
+
+            // The window is a different size than when any open popup was
+            // placed, so re-run the unconstrain pass. On release, not per
+            // motion event: a resize drag is many events and this configures
+            // every popup the window owns.
+            state.reposition_popups_for_window(&self.window);
         }
     }
 

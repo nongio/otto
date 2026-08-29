@@ -98,6 +98,15 @@ impl WindowDecorationView {
         doubled
     }
 
+    /// Whether the zoom control is inert: a window pinned to one size has no
+    /// maximized form, so its dot is drawn gray (see `decoration_for`) and a
+    /// click on it must do nothing.
+    fn zoom_disabled<B: crate::state::Backend>(&self, data: &crate::Otto<B>) -> bool {
+        self.view(data)
+            .map(|view| view.decoration_state().fixed_size)
+            .unwrap_or(false)
+    }
+
     /// Toggle the window between maximized and its restored size.
     ///
     /// Deferred to an idle callback: callers run with the pointer's inner
@@ -107,6 +116,10 @@ impl WindowDecorationView {
             return;
         };
         let maximized = self.window.is_maximized();
+        // Nothing to restore to, and nothing to zoom into.
+        if !maximized && self.zoom_disabled(data) {
+            return;
+        }
         data.handle.insert_idle(move |state| {
             if maximized {
                 smithay::wayland::shell::xdg::XdgShellHandler::unmaximize_request(state, toplevel);
@@ -205,7 +218,10 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowDecorat
             ButtonState::Pressed => {
                 if let Some(control) = control {
                     data.last_titlebar_press = None;
-                    self.update_model(data, true, Some(Self::control_index(control)));
+                    // A disabled control does not light up under the press.
+                    let pressed = (control != WindowControl::Zoom || !self.zoom_disabled(data))
+                        .then(|| Self::control_index(control));
+                    self.update_model(data, true, pressed);
                 } else if self.take_double_click(data, x, y) {
                     // Two clicks on the bar zoom the window instead of moving
                     // it, so no move grab is started for this press.

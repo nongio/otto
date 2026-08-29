@@ -1,7 +1,7 @@
 # Maintainer: Riccardo Canalicchio <riccardo.canalicchio@gmail.com>
 
 pkgname=otto-git
-pkgver=1.0.0rc.2.r17.gc74b176d
+pkgver=1.0.0rc.2.r23.gd30baaee
 pkgrel=1
 pkgdesc="A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail, inspired by familiar macOS interactions."
 url="https://github.com/nongio/otto"

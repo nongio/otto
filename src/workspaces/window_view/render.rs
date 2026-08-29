@@ -29,6 +29,13 @@ pub fn decoration_for(state: &WindowDecorationModel) -> WindowDecoration {
         controls_hovered: state.controls_hovered,
         pressed: state.pressed.and_then(control_from_index),
         sharing: state.sharing,
+        // A window that cannot be resized cannot be zoomed: the dot stays
+        // gray and shows no glyph, the way macOS marks a fixed-size panel.
+        disabled: if state.fixed_size {
+            vec![otto_kit::components::titlebar::WindowControl::Zoom]
+        } else {
+            Vec::new()
+        },
         // The layer carries `BackgroundBlur` while the window is focused, so
         // the compositor already blurs what is behind it — blurring again in
         // the paint would double up. An unfocused window has no blur, so its
