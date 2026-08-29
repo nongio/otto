@@ -752,35 +752,14 @@ pub fn run_udev() {
                     state.render(node, Some(crtc));
                 }
             }
-            // Debug: `echo ActionName > /tmp/otto-action` executes a builtin
-            // shortcut action (e.g. ExposeShowAll) as if its key was pressed.
-            // Virtual-keyboard input bypasses the libinput shortcut layer, so
-            // test harnesses need this to drive compositor UI remotely.
-            if let Ok(name) = std::fs::read_to_string("/tmp/otto-action") {
-                let _ = std::fs::remove_file("/tmp/otto-action");
-                let name = name.trim();
-                let resolved = crate::config::shortcuts::parse_builtin_name(name)
-                    .map(crate::config::shortcuts::ShortcutAction::Builtin)
-                    .and_then(|a| {
-                        Config::with(|c| crate::input::actions::resolve_shortcut_action(c, &a))
-                    });
-                match resolved {
-                    Some(action) => {
-                        info!("executing debug action: {name}");
-                        use crate::input::actions::KeyAction;
-                        match action {
-                            KeyAction::ExposeShowAll => state.handle_expose_show_all(),
-                            KeyAction::ExposeShowDesktop => state.handle_expose_show_desktop(),
-                            KeyAction::WorkspaceNum(i) => state.handle_workspace_num(i),
-                            other => state.process_common_key_action(other),
-                        }
-                        // Real key events request a redraw as a side effect;
-                        // without it the scheduled lay-rs transactions never
-                        // tick and the action stays invisible.
-                        state.backend_data.request_redraw();
-                    }
-                    None => warn!("unknown debug action: {name}"),
-                }
+            // Debug hook: `echo ActionName > $OTTO_ACTION_FILE` executes a
+            // builtin shortcut action as if its key was pressed. Shared with
+            // the winit backend; see `poll_debug_action_file`.
+            if state.poll_debug_action_file() {
+                // Real key events request a redraw as a side effect; without
+                // it the scheduled lay-rs transactions never tick and the
+                // action stays invisible.
+                state.backend_data.request_redraw();
             }
             // Tell any window that has moved where it is now. Diffed against
             // what was last sent, so a desktop at rest sends nothing.
