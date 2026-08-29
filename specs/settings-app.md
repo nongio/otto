@@ -261,6 +261,12 @@ are:
   setting requires a restart to take effect, and the app says so like any
   other; an empty list asks Otto to take the language from the environment
   instead ([localisation.md](./localisation.md)).
+
+  The accent is a `color` setting rather than an enumeration: the colour well
+  offers the palette's named accents as swatches, and picking one sends the
+  name, so the accent keeps following the light and dark schemes. A colour
+  dragged out of the picker that the palette has no name for is sent as
+  `#RRGGBB` and is taken as-is under both schemes.
 - **Displays** — see below.
 - **Dock** — size, position, autohide, magnification, minimise effect.
 - **Keyboard** — repeat delay and rate, then shortcuts.

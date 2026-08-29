@@ -93,6 +93,21 @@ impl SettingSpec {
             }
         }
 
+        // A colour's `choices` are the palette names, offered as swatches; a
+        // literal the palette has no name for is just as valid, so the check
+        // is that the value resolves at all rather than that it is listed.
+        if self.ty == SettingType::Color {
+            let text = value.as_str().unwrap_or_default();
+            if crate::theme::accent_from(text).is_none() {
+                return Err(Invalid::Range(format!(
+                    "`{}` must be a palette name ({}) or a #RGB or #RRGGBB \
+                     colour, got `{text}`",
+                    self.id,
+                    self.choices.join(", ")
+                )));
+            }
+        }
+
         if let Some(number) = value.as_number() {
             if let Some(min) = self.min {
                 if number < min {
@@ -191,11 +206,29 @@ const fn labelled_choice(
     }
 }
 
+/// A colour: one of `choices`, resolved against the current palette, or a hex
+/// literal. `choice_labels` names the swatches, as [`labelled_choice`] does.
+const fn color(
+    id: &'static str,
+    label: &'static str,
+    description: &'static str,
+    apply: Apply,
+    choices: &'static [&'static str],
+    choice_labels: &'static [&'static str],
+) -> SettingSpec {
+    SettingSpec {
+        choices,
+        choice_labels,
+        ..spec(id, SettingType::Color, label, description, apply)
+    }
+}
+
 use Apply::{Live, Restart};
 use SettingType::{Bool, Double, Int, Str, StrList};
 
-/// The accent names the compositor's palette can resolve. The theme owns the
-/// list, so a name offered here always resolves to a colour.
+/// The accent names the compositor's palette can resolve, offered as the
+/// swatches a colour well shows. The theme owns the list, so a name offered
+/// here always resolves; a hex literal outside it is accepted too.
 const ACCENT_COLORS: &[&str] = crate::theme::ACCENT_NAMES;
 /// Presentation for `ACCENT_COLORS`, in the same order.
 const ACCENT_COLOR_LABELS: &[&str] = &[
@@ -239,10 +272,11 @@ pub static SETTINGS: &[SettingSpec] = &[
         &["Light", "Dark"],
         &["settings-choice-light", "settings-choice-dark"],
     ),
-    labelled_choice(
+    color(
         "accent_color",
         "Accent colour",
-        "Named accent colour used by Otto's own interface.",
+        "Accent colour used by Otto's own interface: a palette name, which \
+         follows the light and dark schemes, or a #RRGGBB colour.",
         Live,
         ACCENT_COLORS,
         ACCENT_COLOR_LABELS,
@@ -664,6 +698,44 @@ mod tests {
                 (steps - steps.round()).abs() < 1e-9,
                 "`{}` step {step} does not divide its {min}..{max} range",
                 spec.id
+            );
+        }
+    }
+
+    fn accent() -> &'static SettingSpec {
+        lookup("accent_color").expect("the accent is in the schema")
+    }
+
+    /// The swatches the settings app offers stay settable.
+    #[test]
+    fn every_accent_name_is_accepted() {
+        for name in crate::theme::ACCENT_NAMES {
+            accent()
+                .validate(&SettingValue::Str((*name).to_string()))
+                .unwrap_or_else(|_| panic!("`{name}` is offered but refused"));
+        }
+    }
+
+    /// The point of the exercise: a colour the palette has no name for.
+    #[test]
+    fn a_hex_accent_is_accepted() {
+        for text in ["#ff00aa", "#FF00AA", "#f0a"] {
+            accent()
+                .validate(&SettingValue::Str(text.to_string()))
+                .unwrap_or_else(|_| panic!("`{text}` is a colour but was refused"));
+        }
+    }
+
+    /// Accepting hex must not turn the setting into free text: a typo still
+    /// comes back as an error rather than silently painting the fallback.
+    #[test]
+    fn nonsense_is_still_refused() {
+        for text in ["", "ff00aa", "#ff00a", "#gggggg", "chartreuse"] {
+            assert!(
+                accent()
+                    .validate(&SettingValue::Str(text.to_string()))
+                    .is_err(),
+                "`{text}` is not a colour but was accepted"
             );
         }
     }

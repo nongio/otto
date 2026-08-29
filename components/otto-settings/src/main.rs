@@ -174,9 +174,10 @@ fn color_ids() -> Vec<&'static str> {
 
 /// The presets a colour well offers.
 ///
-/// `accent_color` is an enumeration on the compositor side, so its swatches
-/// come from the served schema and picking anything else would be refused.
-/// A free-form colour setting gets a general palette instead.
+/// A setting the compositor lists choices for — `accent_color` names its
+/// palette — offers those as its swatches, so the named colours that follow
+/// the light and dark schemes are one click away. Everything else gets a
+/// general palette.
 fn swatches_for(id: &str) -> Vec<Swatch> {
     if let Some(desc) = settings_client::describe(id) {
         if !desc.choices.is_empty() {
@@ -204,17 +205,19 @@ fn swatches_for(id: &str) -> Vec<Swatch> {
     .collect()
 }
 
-/// The compositor names its accent colours rather than taking hex, so a name
-/// has to map to something drawable.
+/// A palette name the compositor serves has to map to something drawable.
 fn named_color(name: &str) -> Option<Color> {
     model::named_argb(name).map(Color::from)
 }
 
 /// Open a colour well's picker.
 ///
-/// What a change sends depends on the setting: an enumerated one (accent
-/// colour) takes the swatch's NAME, a free-form one takes hex. Sending hex to
-/// an enumerated setting would be refused with `OutOfRange`.
+/// What a change sends depends on the setting. A `color` setting takes hex,
+/// but prefers a listed name when the colour is exactly one of them, so the
+/// accent keeps following the light and dark palettes rather than freezing at
+/// whichever scheme was current when it was picked. A setting that is a plain
+/// enumeration takes the name and nothing else — hex would be refused with
+/// `OutOfRange` — so a colour it cannot name is ignored rather than sent.
 fn open_picker_for(
     pickers: &HashMap<&'static str, ColorPickerPopup>,
     open_picker: &Arc<Mutex<Option<&'static str>>>,
@@ -244,8 +247,11 @@ fn open_picker_for(
     };
 
     let id = hit.id;
-    let enumerated = settings_client::describe(id)
-        .map(|d| !d.choices.is_empty())
+    let desc = settings_client::describe(id);
+    // Whether a colour outside `choices` can be sent at all.
+    let names_only = desc
+        .as_ref()
+        .map(|d| !d.choices.is_empty() && d.kind != settings_client::Kind::Color)
         .unwrap_or(false);
 
     let changed_window = window.clone();
@@ -263,20 +269,19 @@ fn open_picker_for(
         hit.current,
         if dark { Theme::dark() } else { Theme::light() },
         move |color| {
-            let value = if enumerated {
-                let Some(name) = swatch_name_for(id, color) else {
-                    // Dragging in HSV cannot name a colour, and this setting
-                    // only accepts names — ignore rather than be refused.
-                    return;
-                };
-                settings_client::Value::Text(name)
-            } else {
-                settings_client::Value::Text(format!(
+            let named = swatch_name_for(id, color);
+            let value = match named {
+                Some(name) => settings_client::Value::Text(name),
+                // Dragging in HSV cannot name a colour. A setting that only
+                // accepts names has nothing to send; every other one takes the
+                // colour itself.
+                None if names_only => return,
+                None => settings_client::Value::Text(format!(
                     "#{:02X}{:02X}{:02X}",
                     color.r(),
                     color.g(),
                     color.b()
-                ))
+                )),
             };
             apply(id, value);
             mark_pane_dirty(&changed_dirty);

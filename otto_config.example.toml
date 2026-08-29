@@ -28,8 +28,11 @@ rounded_corners = true
 # outermost one. Also read at startup.
 window_controls_side = "left"
 
-# Accent color for workspace and window selector borders
-# Available colors: red, orange, yellow, green, mint, teal, cyan, blue, indigo, purple, pink, gray, brown
+# Accent color for workspace and window selector borders.
+# Either a palette name, which follows the light and dark color schemes:
+#   red, orange, yellow, green, mint, teal, cyan, blue, indigo, purple, pink,
+#   gray, brown
+# or a "#RGB" or "#RRGGBB" literal, which does not.
 accent_color = "blue"
 
 # Inputs

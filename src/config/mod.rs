@@ -46,6 +46,10 @@ pub struct Config {
     pub background_color: String,
     pub locales: Vec<String>,
     pub use_10bit_color: bool,
+    /// The accent colour Otto's own interface paints with: a palette name,
+    /// which follows the light and dark schemes, or a `#RGB`/`#RRGGBB`
+    /// literal, which does not. Anything else falls back to blue — see
+    /// `theme::accent_from`.
     #[serde(default = "default_accent_color")]
     pub accent_color: String,
     /// Rounded corners on the desktop's own chrome: the dock's background, the

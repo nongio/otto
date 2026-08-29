@@ -13,6 +13,11 @@ pub enum SettingType {
     Str,
     /// A string constrained to the schema's `choices`.
     Enum,
+    /// A colour: one of the schema's `choices` — palette names the compositor
+    /// resolves against the current scheme — or a `#RGB`/`#RRGGBB` literal.
+    /// `choices` are suggestions here, not the whole set, which is what
+    /// separates this from [`SettingType::Enum`].
+    Color,
     StrList,
 }
 
@@ -24,6 +29,7 @@ impl SettingType {
             SettingType::Double => "double",
             SettingType::Str => "string",
             SettingType::Enum => "enum",
+            SettingType::Color => "color",
             SettingType::StrList => "string-list",
         }
     }
@@ -32,7 +38,7 @@ impl SettingType {
     /// on the bus and in the file, it is only the schema that narrows it.
     pub fn wire_repr(self) -> SettingType {
         match self {
-            SettingType::Enum => SettingType::Str,
+            SettingType::Enum | SettingType::Color => SettingType::Str,
             other => other,
         }
     }

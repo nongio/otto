@@ -43,6 +43,7 @@ is fixed per setting and given in the schema:
 | `double` | `d` | |
 | `string` | `s` | free text (paths, command lines) |
 | `enum` | `s` | one of `choices` |
+| `color` | `s` | a palette name from `choices`, or a `#RGB`/`#RRGGBB` literal |
 | `string-list` | `as` | ordered, e.g. locales |
 
 Sending a variant whose type does not match the schema is an error; the
@@ -144,7 +145,7 @@ does not offer is edited by hand.
 | `min` | `v` | optional, numeric types only |
 | `max` | `v` | optional, numeric types only |
 | `step` | `v` | optional, numeric types only; granularity to snap to |
-| `choices` | `as` | optional, required for `enum` |
+| `choices` | `as` | optional, required for `enum`; for `color`, the palette names to offer as swatches |
 | `choice_labels` | `as` | optional; human names for `choices`, same order |
 
 Unknown keys must be ignored by clients, so the schema can grow without
@@ -242,6 +243,10 @@ Describe() → [
     label: "Position on screen", default: <"bottom">,
     choices: ["bottom", "left", "right"],
     choice_labels: ["Bottom", "Left", "Right"], apply: "live" },
+  { id: "accent_color", type: "color", section: "",
+    label: "Accent colour", default: <"blue">,
+    choices: ["blue", "purple", "pink", ...],
+    choice_labels: ["Blue", "Purple", "Pink", ...], apply: "live" },
   { id: "input.touchpad_click_method", type: "enum", section: "input",
     label: "Click method", default: <"clickfinger">,
     choices: ["clickfinger", "buttonareas"],
