@@ -1109,7 +1109,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             .workspaces
             .primary_output()
             .is_some_and(|p| p.name() == output.name());
-        if is_primary && !self.workspaces.dock.is_autohide_enabled() {
+        //  itself skips an autohidden dock.
+        if is_primary {
             self.workspaces.subtract_dock(&mut usable_zone);
         }
 

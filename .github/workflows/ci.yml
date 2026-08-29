@@ -154,7 +154,7 @@ jobs:
       # feature is what makes tests/*.rs more than an empty file.
       - name: Clippy (compositor)
         if: needs.changes.outputs.compositor == 'true'
-        run: cargo clippy -p otto --all-targets --features "default,headless" -- -D warnings
+        run: cargo clippy --locked -p otto --all-targets --features "default,headless" -- -D warnings
       - name: Clippy (components)
         # Everything with no filter of its own, sample clients included.
         # submenu-gtk is the one exception: it needs GTK development libraries
@@ -162,41 +162,49 @@ jobs:
         # release build names its packages explicitly, and `--lib --workspace`
         # skips it because it has no lib target.
         if: needs.changes.outputs.ui == 'true'
-        run: cargo clippy --workspace --exclude otto --exclude otto-rdp --exclude xdg-desktop-portal-otto --exclude submenu-gtk --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --exclude otto --exclude otto-rdp --exclude xdg-desktop-portal-otto --exclude submenu-gtk --all-targets -- -D warnings
       - name: Clippy (RDP bridge)
         if: needs.changes.outputs.rdp == 'true'
-        run: cargo clippy -p otto-rdp --all-targets -- -D warnings
+        run: cargo clippy --locked -p otto-rdp --all-targets -- -D warnings
       - name: Clippy (portal backend)
         if: needs.changes.outputs.portal == 'true'
-        run: cargo clippy -p xdg-desktop-portal-otto --all-targets -- -D warnings
+        run: cargo clippy --locked -p xdg-desktop-portal-otto --all-targets -- -D warnings
       - name: Run tests
+        timeout-minutes: 20
         # otto-rdp is bin-only, so this never covers it — see the RDP step.
         if: needs.changes.outputs.compositor == 'true' || needs.changes.outputs.ui == 'true'
-        run: cargo test --lib --workspace
+        run: cargo test --locked --lib --workspace
       - name: Run headless integration tests
+        timeout-minutes: 15
         if: needs.changes.outputs.compositor == 'true'
-        run: cargo test --features headless --test headless_basic
+        run: cargo test --locked --features headless --test headless_basic
       - name: Run shell interaction tests
+        timeout-minutes: 15
         if: needs.changes.outputs.compositor == 'true'
-        run: cargo test --features headless --test workspace_selector --test app_switcher --test tiling --test dnd_icons
+        run: cargo test --locked --features headless --test workspace_selector --test app_switcher --test tiling --test dnd_icons
       - name: Run screencast integration tests
+        timeout-minutes: 15
         if: needs.changes.outputs.compositor == 'true' || needs.changes.outputs.portal == 'true'
-        run: cargo test --features headless --test screenshare
+        run: cargo test --locked --features headless --test screenshare
       - name: Run RDP bridge integration tests
+        timeout-minutes: 15
         # The compositor half of the bridge: the protocols otto-rdp drives.
         if: needs.changes.outputs.compositor == 'true' || needs.changes.outputs.rdp == 'true'
-        run: cargo test --features headless --test rdp_bridge
+        run: cargo test --locked --features headless --test rdp_bridge
       - name: Run RDP bridge unit tests
+        timeout-minutes: 20
         # The bridge half. Expensive (GStreamer), and nothing outside
         # components/otto-rdp can affect it, so it is gated tightly.
         if: needs.changes.outputs.rdp == 'true'
-        run: cargo test -p otto-rdp
+        run: cargo test --locked -p otto-rdp
       - name: Run portal backend tests
+        timeout-minutes: 15
         if: needs.changes.outputs.portal == 'true'
-        run: cargo test -p xdg-desktop-portal-otto
+        run: cargo test --locked -p xdg-desktop-portal-otto
       - name: Run font matching tests
+        timeout-minutes: 10
         if: needs.changes.outputs.compositor == 'true'
-        run: cargo test --lib -p otto -- workspaces::utils::tests --ignored
+        run: cargo test --locked --lib -p otto -- workspaces::utils::tests --ignored
   
   # Every packaged binary is compiled exactly once here. build-deb, build-rpm
   # and build-arch consume this artifact; each used to run an identical
@@ -219,7 +227,7 @@ jobs:
       - name: System dependencies
         run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev hicolor-icon-theme fonts-dejavu-core
       - name: Build workspace binaries
-        run: cargo build --release -p otto -p otto-bar -p otto-islands -p otto-lock -p otto-greeter -p otto-rdp -p xdg-desktop-portal-otto -p otto-settings -p otto-files -p otto-launcher -p otto-quickview
+        run: cargo build --locked --release -p otto -p otto-bar -p otto-islands -p otto-lock -p otto-greeter -p otto-rdp -p xdg-desktop-portal-otto -p otto-settings -p otto-files -p otto-launcher -p otto-quickview
       - name: Upload workspace binaries
         uses: actions/upload-artifact@v4
         with:
