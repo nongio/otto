@@ -17,7 +17,9 @@ theme_scheme = "Light"  # "Light" or "Dark" - exposed via XDG Desktop Portal Set
 background_color = "#2c2ca0"  # Fallback gradient color (bottom) when background_image is unavailable
 
 # Rounded corners on Otto's own chrome: the dock's background, the top bar,
-# window decorations, and the workspace and window selectors. Read at startup
+# window decorations, and the panels the desktop draws itself — the workspace
+# and window selectors, the app switcher, and the volume and brightness OSD.
+# Read at startup
 # and handed to the components in the environment, so a change takes a restart.
 rounded_corners = true
 

@@ -49,7 +49,9 @@ pub struct Config {
     #[serde(default = "default_accent_color")]
     pub accent_color: String,
     /// Rounded corners on the desktop's own chrome: the dock's background, the
-    /// top bar, and window decorations. `false` squares all three off.
+    /// top bar, window decorations, and the panels the desktop draws itself —
+    /// the selectors, the app switcher, and the volume and brightness OSD.
+    /// `false` squares them all off.
     ///
     /// Read at startup and published to the components in the environment (see
     /// `otto_kit::corners`), so changing it takes a restart.

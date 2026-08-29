@@ -118,7 +118,10 @@ pub fn render_appswitcher_panel(
             Size::points(w, h),
             Some(layers::engine::animation::Transition::spring(0.4, 0.0)),
         ))
-        .border_corner_radius((BorderRadius::new_single(h / 8.0), None))
+        .border_corner_radius((
+            BorderRadius::new_single(otto_kit::corners::radius(h / 8.0)),
+            None,
+        ))
         .layout_style(taffy::Style {
             display: taffy::Display::Flex,
             justify_content: Some(taffy::JustifyContent::Center),

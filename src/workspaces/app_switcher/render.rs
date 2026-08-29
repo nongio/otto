@@ -82,8 +82,8 @@ pub fn draw_appswitcher_overlay(state: &AppSwitcherModel) -> ContentDrawFunction
             paint.set_anti_alias(true);
             let rrect = layers::skia::RRect::new_rect_xy(
                 layers::skia::Rect::from_xywh(selection_x, selection_y, slot_width, slot_width),
-                slot_width / 10.0,
-                slot_width / 10.0,
+                otto_kit::corners::radius(slot_width / 10.0),
+                otto_kit::corners::radius(slot_width / 10.0),
             );
             canvas.draw_rrect(rrect, &paint);
 

@@ -252,7 +252,7 @@ pub static SETTINGS: &[SettingSpec] = &[
         Bool,
         "Rounded corners",
         "Round the corners of the dock, the top bar, window decorations and \
-         the workspace and window selectors.",
+         the panels the desktop draws itself.",
         Restart,
     ),
     labelled_choice(
