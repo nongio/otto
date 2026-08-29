@@ -1172,6 +1172,23 @@ impl ContextMenu {
                     Self::render_menu_at_depth(&self.state, &style, &popup_ref, current_depth);
                 }
             }
+            keycodes::HOME | keycodes::END => {
+                let mut state_mut = self.state.borrow_mut();
+                state_mut.select_edge_at_depth(None, key == keycodes::HOME);
+                let current_depth = state_mut.depth();
+                let cleared = state_mut.clear_selections_except(current_depth);
+                drop(state_mut);
+                for d in cleared {
+                    if d < self.popups.borrow().len() {
+                        let popup_ref = self.popups.borrow()[d].clone();
+                        Self::render_menu_at_depth(&self.state, &style, &popup_ref, d);
+                    }
+                }
+                if current_depth < self.popups.borrow().len() {
+                    let popup_ref = self.popups.borrow()[current_depth].clone();
+                    Self::render_menu_at_depth(&self.state, &style, &popup_ref, current_depth);
+                }
+            }
             keycodes::ENTER => {
                 let current_depth = self.state.borrow().depth();
                 let state = self.state.borrow();

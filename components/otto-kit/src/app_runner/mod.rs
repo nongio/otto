@@ -1121,6 +1121,7 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
             return;
         }
 
+        AppContext::note_input_serial(serial);
         let ctx = AppContext::new(&self.context_data);
         self.app
             .on_keyboard_event(&ctx, event.raw_code, wl_keyboard::KeyState::Pressed, serial);

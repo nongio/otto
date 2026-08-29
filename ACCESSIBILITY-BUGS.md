@@ -63,13 +63,38 @@ dismiss.
 A screen reader is told the current value, which is not nothing, but the
 control cannot be changed without a pointer.
 
-- [ ] `DropdownMenu`: arrows move the highlight, Enter picks, Escape closes,
-      Home/End go to the ends
+- [x] `DropdownMenu::handle_key`: arrows move the highlight, Enter picks,
+      Escape closes, Home/End go to the ends. `ContextMenu` already had the
+      rest of the table; Home and End were what it lacked
+- [x] otto-settings: `activate_focused` opens the menu for a `Select` row at
+      the rect `select_hit` anchors it to, and `on_key_event` hands every key
+      to an open menu before the pane sees it
+- [x] The menu opens with the highlight on the current value, so the first
+      arrow moves from there rather than from the top of a scrolled list
+- [x] The focus returns to the row: it never left, the ring is the
+      application's own and the compositor gives the keyboard back when the
+      pop-up surface goes
 - [ ] Describe the open menu — the items as a list box, the highlighted one
-      as the focus — so it is not a hole in the tree while it is up
-- [ ] otto-settings: `activate_focused` opens the menu for a `Select` row,
-      anchored the way `select_hit` anchors it, using the key event's serial
-- [ ] Return the focus to the row when the menu closes, whichever way it did
+      as the focus — so it is not a hole in the tree while it is up.
+      `DropdownMenu::options` and `highlighted` are there for it; what is
+      left is `describe_row` reporting `expanded` and nesting the rows
+
+## Bug: the focus ring is not drawn on a row the compositor serves nothing for
+
+Fixed. The keyboard reached every row in the Displays pane, and the
+accessible tree described them, but `render_pane` still drew the ring inside
+`if let Some(id) = row.id` — the same identifier gate, left behind in the
+drawing code. So Tab stopped on Attivo, on the primary switch and on both
+position fields while nothing was painted, and it looked exactly as though it
+had skipped them.
+
+Reported from use, not from a probe: an AT-SPI sweep sees the focus land
+correctly and says nothing is wrong.
+
+- [x] Ring keyed on `Row::handle()`, the same key the focus ring and the
+      accessible tree use
+- [x] A row of push buttons draws the ring around the button the keyboard is
+      on rather than around the whole row
 
 ## Bug: the Displays arrangement canvas is not described
 

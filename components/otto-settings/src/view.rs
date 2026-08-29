@@ -161,6 +161,21 @@ pub fn pane_focus_id(id: &str) -> FocusId {
     FocusId::new(format!("row-{id}"))
 }
 
+/// A pop-up row's field, in the same rect [`Settings::select_hit`] tests and
+/// the menu is anchored to, given the row's rect in window coordinates.
+///
+/// `None` for any other kind of row. Shared with the hit test so a menu opened
+/// from the keyboard drops out of the same button a click would have opened.
+pub fn row_select_rect(row: &Row, rect: Rect) -> Option<Rect> {
+    if !matches!(row.control, Control::Select(_)) {
+        return None;
+    }
+    Some(select_rect(
+        rect.right - 14.0,
+        Settings::control_band(row, rect).center_y(),
+    ))
+}
+
 /// One push button's identity for the keyboard and for assistive
 /// technologies.
 ///
@@ -169,6 +184,14 @@ pub fn pane_focus_id(id: &str) -> FocusId {
 /// being a single stop that acts on the first.
 pub fn button_focus_id(row: &str, button: &str) -> FocusId {
     FocusId::new(format!("row-{row}-button-{button}"))
+}
+
+/// A button row's button labels, in order. Empty for any other row.
+fn row_buttons(row: &Row) -> &'static [&'static str] {
+    match &row.control {
+        Control::Button(labels) => labels,
+        _ => &[],
+    }
 }
 
 /// A button row's buttons, in the rects the pane draws and hit-tests them at,
@@ -1477,9 +1500,25 @@ impl Settings {
                 // Around the whole row rather than the control at its edge: the
                 // row is what Tab moves between, and a ring around a switch
                 // alone reads as though only the switch were selected.
-                if let Some(id) = row.id {
-                    if focused == Some(pane_focus_id(id)) {
-                        otto_kit::focus::draw_focus_ring(canvas, rect.with_inset((3.0, 1.0)), 8.0);
+                //
+                // Keyed on the row's handle, not on its identifier: a row the
+                // compositor serves nothing for is a keyboard stop like any
+                // other, and drawing only the served ones is what made Tab
+                // look as though it skipped half the Displays pane when it was
+                // in fact stopping there invisibly.
+                if focused == Some(pane_focus_id(row.handle())) {
+                    otto_kit::focus::draw_focus_ring(canvas, rect.with_inset((3.0, 1.0)), 8.0);
+                }
+                // A row of push buttons is a stop per button, so the ring goes
+                // around the button the keyboard is on rather than around the
+                // whole row.
+                for (button, bounds) in row_buttons(row).iter().zip(row_button_rects(row, *rect)) {
+                    if focused == Some(button_focus_id(row.handle(), button)) {
+                        otto_kit::focus::draw_focus_ring(
+                            canvas,
+                            bounds.with_outset((3.0, 3.0)),
+                            7.0,
+                        );
                     }
                 }
                 self.render_row(canvas, row, x0, x1, rect.top, rect.height());
@@ -1617,7 +1656,7 @@ impl Settings {
     /// from the row's own centre: a file row carrying a preview is twice as
     /// tall as the line its field is on, and centring in *that* would leave
     /// the field floating in the middle of the picture.
-    fn control_band(row: &Row, rect: Rect) -> Rect {
+    pub(crate) fn control_band(row: &Row, rect: Rect) -> Rect {
         Rect::from_ltrb(
             rect.left,
             rect.top,

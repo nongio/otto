@@ -145,6 +145,9 @@ thread_local! {
     /// Where the compositor is drawing each window, keyed by `wl_surface`, in
     /// physical pixels. See [`AppContext::desktop_frame`].
     static DESKTOP_FRAMES: RefCell<HashMap<ObjectId, (f32, f32, f32, f32)>> = RefCell::new(HashMap::new());
+    /// The serial of the most recent input event. See
+    /// [`AppContext::last_input_serial`].
+    static LAST_INPUT_SERIAL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     #[allow(clippy::type_complexity)]
     static POPUP_CONFIGURE_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnOnce(u32)>>> = RefCell::new(HashMap::new());
     static POPUP_DONE_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnOnce()>>> = RefCell::new(HashMap::new());
@@ -1099,6 +1102,24 @@ impl<'a> AppContext<'a> {
     /// [`crate::accessibility`].
     pub fn desktop_frame(surface: &ObjectId) -> Option<(f32, f32, f32, f32)> {
         DESKTOP_FRAMES.with(|frames| frames.borrow().get(surface).copied())
+    }
+
+    /// Remember the serial of an input event, for a request that needs one
+    /// later.
+    pub(crate) fn note_input_serial(serial: u32) {
+        LAST_INPUT_SERIAL.with(|last| last.set(serial));
+    }
+
+    /// The serial of the most recent input event, or 0 if there has not been
+    /// one.
+    ///
+    /// Opening a pop-up needs a serial the compositor recognises, and the
+    /// press that asked for it is usually right there. This is for the cases
+    /// where it is not: an assistive technology asking for a control to be
+    /// activated sends no input event of its own, and a request carrying no
+    /// serial at all would simply be refused.
+    pub fn last_input_serial() -> u32 {
+        LAST_INPUT_SERIAL.with(|last| last.get())
     }
 
     /// Record the output geometry the compositor reported for a style surface.

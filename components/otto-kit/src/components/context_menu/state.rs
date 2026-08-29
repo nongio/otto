@@ -126,6 +126,18 @@ impl ContextMenuState {
         self.selected_index = Self::find_next_selectable(&self.items, self.selected_index, false);
     }
 
+    /// Put the selection on the first selectable item at `depth`, or the last.
+    ///
+    /// What Home and End do. Searching from past the end rather than jumping to
+    /// index 0 or `len - 1` means a list that opens or closes with a separator
+    /// lands on a row rather than on the rule above it.
+    pub fn select_edge_at_depth(&mut self, depth: Option<usize>, first: bool) {
+        let target_depth = depth.unwrap_or(self.depth);
+        let items = self.items_at_depth(target_depth);
+        let edge = Self::find_next_selectable(items, None, first);
+        self.select_at_depth(target_depth, edge);
+    }
+
     /// Find the next selectable (non-separator) item
     fn find_next_selectable(
         items: &[MenuItem],

@@ -454,6 +454,11 @@ fn open_menu(
     window: &Window,
     select: view::SelectHit,
     serial: u32,
+    // Opened from the keyboard, so the highlight starts on the value the
+    // button is showing rather than nowhere: the first arrow press then moves
+    // from there. A pointer-opened menu highlights nothing until the pointer
+    // is over a row, which is what a highlight means to someone using one.
+    from_keyboard: bool,
 ) {
     let Some(menu) = dropdowns.get(select.id) else {
         return;
@@ -540,6 +545,10 @@ fn open_menu(
     let dismissed_window = window.clone();
 
     *open_dropdown.lock().unwrap() = Some(id);
+
+    if from_keyboard {
+        menu.highlight(selected);
+    }
 
     menu.open(
         &parent,
@@ -700,6 +709,9 @@ struct Focused {
     control: model::Control,
     /// The push button the keyboard is on, for a row with several.
     button: Option<&'static str>,
+    /// The pop-up field's rect, for a row that has one: where its menu is
+    /// anchored, in window coordinates.
+    select_rect: Option<Rect>,
 }
 
 impl Focused {
@@ -1155,6 +1167,7 @@ impl SettingsApp {
                     label: row.label,
                     control: row.control.clone(),
                     button: stop.button,
+                    select_rect: view::row_select_rect(row, rect),
                 })
             })
     }
@@ -1204,7 +1217,7 @@ impl SettingsApp {
                 }
                 apply(id, settings_client::number_for(id, moved));
             }
-            model::Control::Button(ref labels) if step == 0.0 => {
+            model::Control::Button(labels) if step == 0.0 => {
                 // The keyboard is on one particular button, so that is the one
                 // that is pressed. `Pressed` is keyed the way a click keys it —
                 // by the row's handle — so the button draws itself pressed
@@ -1231,6 +1244,35 @@ impl SettingsApp {
                     f32::MAX,
                     widgets::TEXT_W,
                     current_color_scheme() == ColorScheme::Dark,
+                );
+            }
+            // A pop-up opens rather than cycling: every value in it is a
+            // separate answer that commits the moment it is picked — a display
+            // profile written, a setting sent — so arrowing from one end of
+            // the list to the other would commit each value on the way past.
+            // The list opens instead, and nothing is chosen until Enter.
+            model::Control::Select(ref current) if step == 0.0 => {
+                let (Some(id), Some(rect)) = (focused.id, focused.select_rect) else {
+                    return false;
+                };
+                let Some(window) = self.window.as_ref() else {
+                    return false;
+                };
+                open_menu(
+                    &self.dropdowns,
+                    &self.open_dropdown,
+                    &self.pane_dirty,
+                    window,
+                    view::SelectHit {
+                        id,
+                        rect,
+                        current: current.clone(),
+                    },
+                    // The press that asked for the menu, or — for an assistive
+                    // technology, which sends no input event of its own — the
+                    // last one there was.
+                    AppContext::last_input_serial(),
+                    true,
                 );
             }
             model::Control::File(_) if step == 0.0 => {
@@ -1600,6 +1642,7 @@ impl App for SettingsApp {
                                     &redraw,
                                     select,
                                     event_serial(&event.kind),
+                                    false,
                                 ),
                                 ShortcutHit::Keys { index, offset_x } => {
                                     // A second press in the field already open
@@ -1661,6 +1704,7 @@ impl App for SettingsApp {
                                 &redraw,
                                 select,
                                 event_serial(&event.kind),
+                                false,
                             );
                             mark_pane_dirty(&pane_dirty);
                         } else if let Some(id) = settings.file_hit(x, y, offset) {
@@ -1964,6 +2008,30 @@ impl App for SettingsApp {
         use smithay_client_toolkit::seat::keyboard::Keysym;
 
         if state != wl_keyboard::KeyState::Pressed {
+            return;
+        }
+
+        // A pop-up is up: the keyboard is on the menu's own surface, and the
+        // menu owns every key until it closes. Without this the arrows would
+        // walk the pane behind it and Escape would never reach it.
+        let open = *self.open_dropdown.lock().unwrap();
+        if let Some(id) = open {
+            let closed = match self.dropdowns.get(id) {
+                Some(menu) => {
+                    // The raw keycode, which is what the menu's own key table
+                    // is written against.
+                    menu.handle_key(event.raw_code, state);
+                    !menu.is_open()
+                }
+                None => true,
+            };
+            if closed {
+                *self.open_dropdown.lock().unwrap() = None;
+            }
+            mark_pane_dirty(&self.pane_dirty);
+            if let Some(window) = self.window.as_ref() {
+                window.request_frame();
+            }
             return;
         }
 
