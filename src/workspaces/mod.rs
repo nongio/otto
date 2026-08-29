@@ -2797,8 +2797,11 @@ impl Workspaces {
         let window_geometry = space.element_geometry(&window)?;
         let pos_x = window_geometry.loc.x;
         let pos_y = window_geometry.loc.y;
-        let layer_pos_x = pos_x as f32 * scale;
-        let layer_pos_y = pos_y as f32 * scale;
+        let layer_pos = crate::workspaces::utils::snap_position_px(
+            pos_x as f64 * scale as f64,
+            pos_y as f64 * scale as f64,
+        );
+        let (layer_pos_x, layer_pos_y) = (layer_pos.x, layer_pos.y);
 
         Some(UnminimizeContext {
             wid: wid.clone(),

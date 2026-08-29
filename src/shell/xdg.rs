@@ -993,10 +993,7 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                     }
 
                     view.window_layer.set_position(
-                        layers::types::Point {
-                            x: position.x as f32,
-                            y: position.y as f32,
-                        },
+                        crate::workspaces::utils::snap_position_px(position.x, position.y),
                         Some(transition),
                     );
                     // Same as the fullscreen-enter path: the reparent back into

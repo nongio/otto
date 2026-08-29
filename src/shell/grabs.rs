@@ -128,10 +128,7 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
             let local = new_location - output.current_location().to_f64();
             let location = local.to_physical(scale);
             view.window_layer.set_position(
-                layers::types::Point {
-                    x: location.x as f32,
-                    y: location.y as f32,
-                },
+                crate::workspaces::utils::snap_position_px(location.x, location.y),
                 None,
             );
         }

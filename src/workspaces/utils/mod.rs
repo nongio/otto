@@ -300,6 +300,88 @@ pub fn surface_is_fully_opaque(states: &smithay::wayland::compositor::SurfaceDat
         .unwrap_or(false)
 }
 
+/// Round a physical-pixel position onto the whole-pixel grid.
+///
+/// A window's position is chosen in logical integers and multiplied by the
+/// output scale, so on a fractional scale it lands mid-pixel (logical 101 x
+/// 1.5 = 151.5). A container layer left there offsets its whole subtree by
+/// half a pixel, and every texture under it is resampled when that subtree is
+/// composited — including a client buffer that matches the output exactly and
+/// was point-sampled 1:1 by the draw closure, because the closure records into
+/// a picture whose transform is applied later. Half a pixel of placement
+/// accuracy does not pay for that.
+///
+/// Snap the ENDPOINTS of a move, not the frames of one: lay-rs interpolates
+/// between two snapped positions, and rounding every interpolated frame would
+/// quantise the animation.
+pub fn snap_position_px(x: f64, y: f64) -> layers::types::Point {
+    layers::types::Point {
+        x: x.round() as f32,
+        y: y.round() as f32,
+    }
+}
+
+/// Which filter to sample a surface's texture with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SurfaceFilter {
+    Nearest,
+    Linear,
+    Cubic,
+}
+
+impl SurfaceFilter {
+    fn sampling_options(self) -> layers::skia::SamplingOptions {
+        match self {
+            // `default()` is nearest + no mipmaps.
+            Self::Nearest => layers::skia::SamplingOptions::default(),
+            Self::Linear => layers::skia::SamplingOptions::new(
+                layers::skia::FilterMode::Linear,
+                layers::skia::MipmapMode::None,
+            ),
+            Self::Cubic => {
+                layers::skia::SamplingOptions::from(layers::skia::CubicResampler::catmull_rom())
+            }
+        }
+    }
+}
+
+/// Pick the cheapest filter the mapping allows.
+///
+/// Bicubic is ~12-16× the fragment-shader cost of nearest, and the dominant
+/// desktop case — a static window whose buffer matches the output — maps every
+/// output pixel to one source pixel and gets identical results from any filter.
+///
+/// `scale` and `translation` describe the texture's mapping onto the LAYER.
+/// That only tells us what reaches the framebuffer if the layer itself starts
+/// on a whole physical pixel, which is what `pixel_grid_aligned` asserts:
+/// without it, a 1:1 texture on a fractionally positioned layer would be point
+/// sampled half a pixel off and come out with doubled and dropped pixel rows.
+/// Both cheap branches therefore require it.
+fn surface_filter(
+    is_normal_transform: bool,
+    scale: (f32, f32),
+    translation: (f32, f32),
+    pixel_grid_aligned: bool,
+) -> SurfaceFilter {
+    let (scale_x, scale_y) = scale;
+    let (tx, ty) = translation;
+
+    if !is_normal_transform || !pixel_grid_aligned {
+        return SurfaceFilter::Cubic;
+    }
+
+    let is_identity_scale = (scale_x - 1.0).abs() < 1e-4 && (scale_y - 1.0).abs() < 1e-4;
+    let is_pixel_aligned = (tx - tx.round()).abs() < 1e-4 && (ty - ty.round()).abs() < 1e-4;
+
+    if is_identity_scale && is_pixel_aligned {
+        SurfaceFilter::Nearest
+    } else if (scale_x - 1.0).abs() < 0.05 && (scale_y - 1.0).abs() < 0.05 {
+        SurfaceFilter::Linear
+    } else {
+        SurfaceFilter::Cubic
+    }
+}
+
 pub fn configure_surface_layer(
     layer: &Layer,
     wvs: &WindowViewSurface,
@@ -334,8 +416,17 @@ pub fn configure_surface_layer(
     }
 
     // Position calculation: phy_dst is the buffer viewport offset, log_offset is from tree traversal
-    let pos_x = wvs.phy_dst_x + wvs.log_offset_x;
-    let pos_y = wvs.phy_dst_y + wvs.log_offset_y;
+    //
+    // Rounded to whole physical pixels. Both terms come from logical values
+    // multiplied by the output scale, so on a fractional scale they land
+    // mid-pixel (logical 101 x 1.65 = 166.65) — and a client that went to the
+    // trouble of painting an exactly 1:1 buffer for this output then has that
+    // buffer resampled across the pixel grid for the sake of two thirds of a
+    // pixel of placement accuracy. Snapping costs at most half a pixel of
+    // position and buys back the identity mapping, which is both the crisp
+    // result and the cheap one (see the sampling gate in the draw closure).
+    let pos_x = (wvs.phy_dst_x + wvs.log_offset_x).round();
+    let pos_y = (wvs.phy_dst_y + wvs.log_offset_y).round();
 
     layer.set_layout_style(taffy::Style {
         position: taffy::Position::Absolute,
@@ -369,6 +460,20 @@ pub fn configure_surface_layer(
     // damage rect is the source of truth for partial repaint.
     layer.set_picture_cached(true);
     layer.set_content_opaque(true);
+
+    // Does this surface sit on the physical pixel grid?
+    //
+    // The sampling gate in the draw closure reasons in LAYER space, but what
+    // it is really choosing is how the texture lands on the FRAMEBUFFER, and
+    // the two only agree when the layer's origin is a whole physical pixel:
+    // a texture that maps 1:1 onto its layer still lands half a pixel off on
+    // screen if the layer does, and point-sampling that is what doubles and
+    // drops rows of source pixels. The rounding above buys the guarantee for
+    // every surface we position; `client_owns_size` surfaces take their
+    // position from the client, so we cannot make the claim for them.
+    let pixel_grid_aligned = !client_owns_size
+        && (pos_x - pos_x.round()).abs() < 1e-3
+        && (pos_y - pos_y.round()).abs() < 1e-3;
 
     let draw_wvs = wvs.clone();
     let draw_shared_gravity = shared_gravity.clone();
@@ -476,34 +581,20 @@ pub fn configure_surface_layer(
             Transform::Flipped270 => {}
         }
 
-        // Pick the cheapest filter the matrix allows. Bicubic is ~12-16× the
-        // fragment-shader cost of nearest; the dominant desktop case (static
-        // window at native scale) maps every output pixel to one source pixel
-        // and gets identical results from any filter.
-        let sampling = if !adaptive_sampling_enabled() {
-            layers::skia::SamplingOptions::from(layers::skia::CubicResampler::catmull_rom())
+        let sampling = if adaptive_sampling_enabled() {
+            surface_filter(
+                matches!(draw_wvs.transform, Transform::Normal),
+                (scale_x, scale_y),
+                (
+                    -draw_wvs.phy_src_x + tx / scale_x,
+                    -draw_wvs.phy_src_y + ty / scale_y,
+                ),
+                pixel_grid_aligned,
+            )
         } else {
-            let is_normal_transform = matches!(draw_wvs.transform, Transform::Normal);
-            let is_identity_scale = (scale_x - 1.0).abs() < 1e-4 && (scale_y - 1.0).abs() < 1e-4;
-            let tx_total = -draw_wvs.phy_src_x + tx / scale_x;
-            let ty_total = -draw_wvs.phy_src_y + ty / scale_y;
-            let is_pixel_aligned = (tx_total - tx_total.round()).abs() < 1e-4
-                && (ty_total - ty_total.round()).abs() < 1e-4;
-
-            if is_normal_transform && is_identity_scale && is_pixel_aligned {
-                layers::skia::SamplingOptions::default()
-            } else if is_normal_transform
-                && (scale_x - 1.0).abs() < 0.05
-                && (scale_y - 1.0).abs() < 0.05
-            {
-                layers::skia::SamplingOptions::new(
-                    layers::skia::FilterMode::Linear,
-                    layers::skia::MipmapMode::None,
-                )
-            } else {
-                layers::skia::SamplingOptions::from(layers::skia::CubicResampler::catmull_rom())
-            }
-        };
+            SurfaceFilter::Cubic
+        }
+        .sampling_options();
 
         let mut paint =
             layers::skia::Paint::new(layers::skia::Color4f::new(1.0, 1.0, 1.0, 1.0), None);
@@ -522,6 +613,85 @@ pub fn configure_surface_layer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The initial placement of a window is chosen in logical integers, so on
+    /// a fractional scale it lands mid-pixel and drags its whole subtree off
+    /// the grid with it.
+    #[test]
+    fn a_position_off_the_grid_is_snapped_onto_it() {
+        // logical (101, 7) on a 1.5x output = (151.5, 10.5)
+        let p = snap_position_px(101.0 * 1.5, 7.0 * 1.5);
+        assert_eq!((p.x, p.y), (152.0, 11.0));
+    }
+
+    /// An integer scale never leaves the grid, so snapping is a no-op there —
+    /// the fix costs nothing on the common case.
+    #[test]
+    fn a_position_on_the_grid_is_left_alone() {
+        let p = snap_position_px(101.0 * 2.0, 7.0 * 2.0);
+        assert_eq!((p.x, p.y), (202.0, 14.0));
+    }
+
+    /// The whole point of the cheap branches: a window whose client painted a
+    /// buffer at exactly the output scale is copied, not resampled.
+    #[test]
+    fn an_exact_buffer_on_the_pixel_grid_is_point_sampled() {
+        assert_eq!(
+            surface_filter(true, (1.0, 1.0), (0.0, 0.0), true),
+            SurfaceFilter::Nearest
+        );
+    }
+
+    /// ...and the regression that put shimmer on every window of a
+    /// fractionally scaled output: the same exact buffer, on a layer that
+    /// starts mid-pixel, is NOT a 1:1 copy however identity the layer-space
+    /// numbers look. Point sampling it doubles and drops rows of pixels.
+    #[test]
+    fn an_exact_buffer_off_the_pixel_grid_is_not_point_sampled() {
+        assert_eq!(
+            surface_filter(true, (1.0, 1.0), (0.0, 0.0), false),
+            SurfaceFilter::Cubic
+        );
+    }
+
+    #[test]
+    fn a_shifted_buffer_is_not_point_sampled() {
+        assert_eq!(
+            surface_filter(true, (1.0, 1.0), (0.5, 0.0), true),
+            SurfaceFilter::Linear
+        );
+    }
+
+    #[test]
+    fn a_nearly_unscaled_buffer_is_filtered_linearly() {
+        assert_eq!(
+            surface_filter(true, (1.02, 1.02), (0.0, 0.0), true),
+            SurfaceFilter::Linear
+        );
+        // ...but only on the grid.
+        assert_eq!(
+            surface_filter(true, (1.02, 1.02), (0.0, 0.0), false),
+            SurfaceFilter::Cubic
+        );
+    }
+
+    /// A 2x buffer on a 1.65x output, the other half of the fractional-scale
+    /// story: a real resample, which has always wanted the bicubic.
+    #[test]
+    fn a_rescaled_buffer_is_filtered_bicubically() {
+        assert_eq!(
+            surface_filter(true, (0.825, 0.825), (0.0, 0.0), true),
+            SurfaceFilter::Cubic
+        );
+    }
+
+    #[test]
+    fn a_flipped_buffer_is_filtered_bicubically() {
+        assert_eq!(
+            surface_filter(false, (1.0, 1.0), (0.0, 0.0), true),
+            SurfaceFilter::Cubic
+        );
+    }
 
     /// Not an assertion: writes the three balloon shapes to /tmp so they can be
     /// eyeballed. Run with `cargo test --lib dump_balloons -- --ignored`.

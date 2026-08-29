@@ -284,25 +284,16 @@ impl WorkspaceView {
         let scale = Config::with(|c| c.screen_scale);
         let location = location.to_f64().to_physical(scale);
 
-        window_element.base_layer().set_position(
-            layers::types::Point {
-                x: location.x as f32,
-                y: location.y as f32,
-            },
-            transition,
-        );
+        let position = crate::workspaces::utils::snap_position_px(location.x, location.y);
+        window_element
+            .base_layer()
+            .set_position(position, transition);
 
         if let Some(l) = self
             .window_selector_view
             .layer_for_window(&window_element.id())
         {
-            l.set_position(
-                layers::types::Point {
-                    x: location.x as f32,
-                    y: location.y as f32,
-                },
-                None,
-            );
+            l.set_position(position, None);
         }
     }
 
