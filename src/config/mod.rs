@@ -740,8 +740,12 @@ pub struct DockConfig {
     /// Screen edge the dock lives on: `"bottom"` (default), `"left"` or `"right"`.
     #[serde(default)]
     pub position: DockPosition,
+    /// How much the icon under the pointer grows on hover.
     #[serde(default = "default_genie_scale")]
     pub genie_scale: f64,
+    /// How sharply that magnification falls off with distance from the pointer:
+    /// it is the `k` of `e^(-k·x²)`, so a *larger* value keeps the bump tighter
+    /// around the pointer and a smaller one spreads it over more neighbours.
     #[serde(default = "default_genie_span")]
     pub genie_span: f64,
     #[serde(default)]

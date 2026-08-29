@@ -275,8 +275,8 @@ pub static SETTINGS: &[SettingSpec] = &[
     color(
         "accent_color",
         "Accent colour",
-        "Accent colour used by Otto's own interface: a palette name, which \
-         follows the light and dark schemes, or a #RRGGBB colour.",
+        "A palette name, which follows the light and dark schemes, or a \
+         #RRGGBB colour.",
         Live,
         ACCENT_COLORS,
         ACCENT_COLOR_LABELS,
@@ -285,8 +285,8 @@ pub static SETTINGS: &[SettingSpec] = &[
         "rounded_corners",
         Bool,
         "Rounded corners",
-        "Round the corners of the dock, the top bar, window decorations and \
-         the panels the desktop draws itself.",
+        "The dock, the top bar, window decorations and the desktop's own \
+         panels.",
         Restart,
     ),
     labelled_choice(
@@ -415,8 +415,8 @@ pub static SETTINGS: &[SettingSpec] = &[
     ranged(
         "dock.genie_span",
         Double,
-        "Magnification spread",
-        "How many neighbouring icons the magnification reaches.",
+        "Magnification falloff",
+        "How sharply the magnification falls off with distance: higher keeps the bump tight around the pointer.",
         Live,
         0.0,
         100.0,

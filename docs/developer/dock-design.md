@@ -135,8 +135,8 @@ size = 1.0              # multiplier, 0.5 – 2.0
 position = "bottom"     # "bottom", "left", "right"
 autohide = false
 magnification = true
-genie_scale = 0.5       # minimize animation
-genie_span = 10.0
+genie_scale = 0.5       # magnification amount
+genie_span = 10.0       # magnification falloff (larger = tighter)
 colorize_icons = false  # tint icons to colorize_color
 
 bookmarks = [

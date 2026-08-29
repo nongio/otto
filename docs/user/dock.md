@@ -81,7 +81,7 @@ position = "bottom"    # "bottom", "left" or "right"
 magnification = true   # macOS-style icon magnification on hover
 autohide = false       # hide when the pointer leaves
 genie_scale = 0.5      # how much icons magnify under the pointer
-genie_span = 10.0      # and how far the magnification reaches
+genie_span = 10.0      # falloff: larger = tighter around the pointer
 ```
 
 ### Position
@@ -115,8 +115,10 @@ from one you typed, and guessing wrong would silently turn a setting off.
 ### Magnification
 
 Icons grow as the pointer approaches, with a Gaussian falloff — the icon under
-the pointer is largest and neighbours taper off. `genie_scale` and `genie_span`
-control the intensity and reach of the curve, and both apply live.
+the pointer is largest and neighbours taper off. `genie_scale` is how much the icon
+under the pointer grows; `genie_span` is how sharply the curve falls off, so a
+*larger* value keeps the bump tighter around the pointer and a smaller one
+spreads it over more neighbours. Both apply live.
 
 Set `magnification = false` for a flat dock with no hover scaling.
 

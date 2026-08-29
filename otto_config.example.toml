@@ -294,7 +294,10 @@ size = 1.0  # Dock size multiplier (0.5 - 2.0, default: 1.0)
 # Side docks stack their icons vertically and reserve width instead of height.
 # Also changeable at runtime from the dock handle's right-click menu.
 position = "bottom"
+# How much the icon under the pointer grows.
 genie_scale = 0.5
+# How sharply the magnification falls off with distance from the pointer:
+# a larger value keeps the bump tighter, a smaller one spreads it wider.
 genie_span = 10.0
 # Optional icon colorization
 # When enabled, dock app icons are tinted to this color (hex RGB).
