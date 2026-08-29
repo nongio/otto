@@ -2,7 +2,7 @@
 
 **Status:** draft — compositor side of the settings interface implemented
 **Wire contract:** [docs/developer/settings-dbus-api.md](../docs/developer/settings-dbus-api.md)
-**Related specs:** [multi-output.md](./multi-output.md), [lock-screen.md](./lock-screen.md), [login-mode.md](./login-mode.md), [lid-power.md](./lid-power.md), [topbar.md](./topbar.md)
+**Related specs:** [multi-output.md](./multi-output.md), [lock-screen.md](./lock-screen.md), [login-mode.md](./login-mode.md), [lid-power.md](./lid-power.md), [topbar.md](./topbar.md), [localisation.md](./localisation.md)
 
 ## Summary
 
@@ -86,6 +86,10 @@ method names, types and error names are fixed by the wire contract):
   default value, allowed range or enumeration, the section it belongs to, a
   human-readable label and description, and whether changing it takes effect
   immediately or requires a restart.
+  The label, the description and any enumeration labels are served in the
+  user's language; a setting the catalogue has no entry for is served with the
+  English written beside it in the schema (see
+  [localisation.md](./localisation.md)).
 - **Get all** — returns the current effective value of every setting.
 - **Set** — sets one setting to one value. Fails with a distinguishable error
   for: unknown identifier, wrong type, value out of range, and apply failure.
@@ -200,7 +204,11 @@ The window presents a list of panes and the selected pane's contents. The panes
 are:
 
 - **General** — appearance (light/dark), accent colour, font family, background
-  colour and image, cursor theme and size, icon theme, locales.
+  colour and image, cursor theme and size, icon theme, and the preferred
+  languages, which are what every part of Otto localises itself against. That
+  setting requires a restart to take effect, and the app says so like any
+  other; an empty list asks Otto to take the language from the environment
+  instead ([localisation.md](./localisation.md)).
 - **Displays** — see below.
 - **Dock** — size, position, autohide, magnification, minimise effect.
 - **Keyboard** — repeat delay and rate, then shortcuts.

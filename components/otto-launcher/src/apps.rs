@@ -97,7 +97,7 @@ impl Apps {
 
 impl Source for Apps {
     fn label(&self) -> &'static str {
-        "App"
+        otto_kit::t!("launcher-badge-app")
     }
 
     fn items(&mut self) -> Vec<Item> {
@@ -305,27 +305,12 @@ fn binary_name(exec: &str) -> Option<String> {
     Some(name.to_string())
 }
 
+/// The locales desktop entries are read in.
+///
+/// Delegated to otto-kit so the launcher agrees with the dock and the app
+/// switcher: it follows Otto's `locales` setting, not the session's `LANG`.
 fn locales() -> Vec<String> {
-    let mut locales = Vec::new();
-    for var in ["LC_MESSAGES", "LC_ALL", "LANG"] {
-        let Ok(value) = std::env::var(var) else {
-            continue;
-        };
-        if value.is_empty() || value == "C" || value == "POSIX" {
-            continue;
-        }
-        let base = value.split('.').next().unwrap_or(&value).to_string();
-        let language = base.split('_').next().unwrap_or(&base).to_string();
-        for candidate in [base, language] {
-            if !locales.contains(&candidate) {
-                locales.push(candidate);
-            }
-        }
-    }
-    if locales.is_empty() {
-        locales.push("en".to_string());
-    }
-    locales
+    otto_kit::desktop_entry::entry_locales()
 }
 
 #[cfg(test)]

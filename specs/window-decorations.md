@@ -74,6 +74,12 @@ appears, and discarded if the surface dies first.
   maximizing and tiling all account for its height. A resize configures the
   client with the size *under* the bar, so a window does not gain the bar's
   height every time it is dragged.
+- The bar is 34 logical points tall, and on a fractional scale that is not a
+  whole number of physical pixels (34 x 1.75 = 59.5). The painted bar and the
+  offset the client's content starts at are both rounded onto the pixel grid,
+  and rounded from the same value, so the bar's bottom edge is a crisp hairline
+  and the client's surfaces still begin exactly where it ends. See
+  [rendering.md](../docs/developer/rendering.md#sizes-not-just-origins).
 
 **Resize borders.** A server-decorated client has no frame of its own to grab,
 and never asks the compositor to resize it — so Otto offers the border itself:
@@ -98,6 +104,34 @@ the geometry it has to restore to with the maximized one, and unmaximizing
 would then appear to do nothing. A window that asked to be maximized before it
 ever had a size of its own restores to a default rect (two thirds of the
 usable zone, centred) rather than to an empty one.
+
+**Popups across a geometry change.** A popup is placed once, against the
+parent window as it stood when the popup mapped. Moving or resizing the window
+afterwards moves that parent out from under it, and the popup — which keeps its
+offset inside the parent — would ride off the screen edge. Every change to a
+window's geometry re-runs the unconstrain pass over its popups and configures
+the clients with the corrected geometry, so an open menu stays on the output its
+window landed on: maximizing and unmaximizing, tiling and untiling, going
+fullscreen and back, dragging a tiled window loose, and the interactive move and
+resize grabs.
+
+The two grabs do it when the button is released, not on every motion event: the
+pass configures every popup the window owns, and a drag is many events. Popups
+follow their window on screen throughout regardless, since their position is
+derived from the window's each frame — what the pass corrects is a popup that
+has ended up over an edge.
+
+A client whose positioner is not reactive cannot be reconfigured and keeps the
+placement it committed; repositioning it is its own to request.
+
+**Fixed-size windows.** A client that pins its minimum and maximum size to the
+same non-zero value — Files' Get Info panel, say — is asking for one size and
+no other, so it has no maximized and no tiled form: a maximize or tile request
+is ignored, and the window keeps the size it asked for. Its zoom control is
+drawn gray, reveals no glyph on hover and does not light up under a press, the
+way a control the window does not support is drawn anywhere else. Honouring the
+request instead would configure the client to a size it will not draw, leaving
+its fixed layout stranded in the corner of an empty surface.
 
 **Client-drawn title bars.** A client that decorates itself owns these
 gestures too, so otto-kit offers them from `Window`: a press on the title bar's

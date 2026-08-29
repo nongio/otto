@@ -60,7 +60,7 @@ fn merge_with_current(discovered: &[String], current: &str) -> Vec<Choice> {
         // An empty effective value means "auto-detect", which is a real
         // state worth its own row rather than a blank one.
         out.push(Choice {
-            label: "Automatic".to_string(),
+            label: otto_kit::t_owned!("settings-choice-automatic"),
             value: String::new(),
         });
     } else if !discovered.iter().any(|d| d == current) {

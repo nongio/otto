@@ -10,6 +10,7 @@ pub mod components;
 pub mod desktop_entry;
 pub mod dnd;
 pub mod filetype;
+pub mod i18n;
 pub mod icon_theme;
 pub mod icons;
 pub mod input;

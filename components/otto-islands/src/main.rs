@@ -1360,6 +1360,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
+    // Before any surface is drawn: every label below is looked up once and
+    // the catalogue is chosen once, for the life of the process.
+    otto_kit::i18n::init_from_desktop();
+
     let state: SharedState = Arc::new(Mutex::new(IslandState::new()));
 
     // Spawn org.otto.Island1 + org.otto.Dialog1 D-Bus services

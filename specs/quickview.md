@@ -1,7 +1,7 @@
 # Quick View
 
 **Status:** draft — nothing implemented
-**Related specs:** [file-browser.md](./file-browser.md) — in particular its *Shared foundations*, which defines the thumbnail cache and file-type detection this spec consumes — [file-picker.md](./file-picker.md), [launcher.md](./launcher.md), [portal-access-dialog.md](./portal-access-dialog.md), [settings-app.md](./settings-app.md), [context-menus.md](./context-menus.md)
+**Related specs:** [file-browser.md](./file-browser.md) — in particular its *Shared foundations*, which defines the thumbnail cache and file-type detection this spec consumes — [file-picker.md](./file-picker.md), [launcher.md](./launcher.md), [portal-access-dialog.md](./portal-access-dialog.md), [settings-app.md](./settings-app.md), [context-menus.md](./context-menus.md), [localisation.md](./localisation.md)
 
 ## Summary
 
@@ -472,7 +472,10 @@ each file to be previewed, the application:
 3. Spawns `otto-quickview --decode-worker`, passing exactly three descriptors:
    the file (read-only), the memfd (write), the status pipe (write). No other
    descriptor, no Wayland socket, no D-Bus socket, no environment beyond a
-   minimal set.
+   minimal set — `PATH`, `RUST_LOG`, and `LANGUAGE`. The locale is in that set
+   because the worker writes the strings a person reads (why a preview is
+   unavailable, a card's facts) and holds no bus connection to ask the
+   compositor which locale is in use; a locale tag is not a capability.
 
 The worker, before touching a byte of the file: drops to `chdir("/")`, sets
 `PR_SET_NO_NEW_PRIVS`, unshares the network namespace (and a user namespace

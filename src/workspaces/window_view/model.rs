@@ -77,6 +77,9 @@ pub struct WindowDecorationModel {
     pub pressed: Option<u8>,
     /// The window is being screencast — the titlebar shows a sharing badge.
     pub sharing: bool,
+    /// The window is pinned to one size (min == max), so it has no maximized
+    /// form: its zoom control is drawn gray and does nothing.
+    pub fixed_size: bool,
     pub scale: f32,
 }
 
@@ -91,6 +94,7 @@ impl Hash for WindowDecorationModel {
         self.controls_hovered.hash(state);
         self.pressed.hash(state);
         self.sharing.hash(state);
+        self.fixed_size.hash(state);
         self.scale.to_bits().hash(state);
     }
 }

@@ -422,11 +422,17 @@ impl WorkspaceView {
     }
 
     /// What the workspace is called in the UI: the user's name, else the
-    /// fullscreen app name, else `Workspace <position + 1>`.
+    /// fullscreen app name, else a numbered default.
+    ///
+    /// Only the fallback is translated. The other two are a name someone
+    /// chose and a name an application gave itself, and neither is ours to
+    /// restate in another language.
     pub fn display_name(&self, position: usize) -> String {
         self.get_custom_name()
             .or_else(|| self.get_name())
-            .unwrap_or_else(|| format!("Workspace {}", position + 1))
+            .unwrap_or_else(|| {
+                otto_kit::t_owned!("workspace-numbered", number = (position + 1) as f64)
+            })
     }
 
     /// Returns true if no pre-expose stacking order has been saved yet.

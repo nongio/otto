@@ -101,6 +101,17 @@ impl SettingsInterface {
         Config::with(|config| config.audio.sound_theme.clone().unwrap_or_default())
     }
 
+    /// The user's preferred locales, most preferred first.
+    ///
+    /// Otto's own components take their language from here rather than from
+    /// `LANG`, so that changing "Preferred languages" in settings moves the
+    /// whole desktop and not just the compositor. There is no portal key for
+    /// language — sandboxed third-party apps still read the environment, which
+    /// is the standard mechanism and is unaffected by this.
+    async fn get_locales(&self) -> Vec<String> {
+        Config::with(|config| config.locales.clone())
+    }
+
     /// The schema: one dictionary per setting. Clients ignore keys they do not
     /// know, so the schema can grow without breaking them.
     async fn describe(&self) -> Vec<HashMap<String, OwnedValue>> {

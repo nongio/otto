@@ -94,7 +94,7 @@ impl Windows {
 
 impl Source for Windows {
     fn label(&self) -> &'static str {
-        "Window"
+        otto_kit::t!("launcher-badge-window")
     }
 
     fn items(&mut self) -> Vec<Item> {

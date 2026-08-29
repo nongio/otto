@@ -22,6 +22,7 @@ pub mod headless;
 pub mod input;
 pub mod input_handler;
 pub mod interactive_view;
+pub mod locale_env;
 pub mod lock;
 pub mod login;
 pub mod otto_dock;
@@ -53,4 +54,12 @@ mod workspaces;
 
 mod config;
 mod theme;
+
+/// The user's preferred locales, most preferred first.
+///
+/// Exposed so `main` can load the string catalogues before any chrome is
+/// built, without opening up the whole config module.
+pub fn configured_locales() -> Vec<String> {
+    config::Config::with(|c| c.locales.clone())
+}
 mod utils;

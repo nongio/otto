@@ -39,22 +39,60 @@
 
 use crate::model::{self, group, Control, Pane, Row};
 
-/// Labels of the rows this pane routes back to itself. They are the only
-/// handle an unbound row has: `Row::id` is `None`, so there is no identifier
-/// to key on, and the label is what the hit tests in `view.rs` report.
-const ACTIVE: &str = "Active";
-const PRIMARY: &str = "Use as primary";
-const X_POSITION: &str = "X position";
-const Y_POSITION: &str = "Y position";
-const WIDTH: &str = "Width";
-const HEIGHT: &str = "Height";
-const REFRESH: &str = "Refresh rate";
-const VIRTUAL: &str = "Virtual displays";
-const SCALE: &str = "Display scale";
+// Labels of the rows this pane routes back to itself. They are the only
+// handle an unbound row has: `Row::id` is `None`, so there is no identifier
+// to key on, and the label is what the hit tests in `view.rs` report.
+//
+// Now that the labels are translated they are no longer constants, but the
+// routing still holds: `t!` hands out one interned `&'static str` per
+// message, so a row built with `active()` and a comparison against `active()`
+// are the same string whatever the language. It stays a weaker handle than a
+// real identifier would be — two rows whose translations collided would
+// become indistinguishable — which is worth fixing the day a pane needs it.
 
-/// The push buttons on the [`VIRTUAL`] row.
-const ADD: &str = "Add";
-const REMOVE: &str = "Remove";
+fn active() -> &'static str {
+    otto_kit::t!("settings-display-active")
+}
+fn primary() -> &'static str {
+    otto_kit::t!("settings-display-primary")
+}
+fn x_position() -> &'static str {
+    otto_kit::t!("settings-display-x-position")
+}
+fn y_position() -> &'static str {
+    otto_kit::t!("settings-display-y-position")
+}
+fn width() -> &'static str {
+    otto_kit::t!("settings-display-width")
+}
+fn height() -> &'static str {
+    otto_kit::t!("settings-display-height")
+}
+fn refresh() -> &'static str {
+    otto_kit::t!("settings-display-refresh")
+}
+fn virtual_displays() -> &'static str {
+    otto_kit::t!("settings-virtual-displays")
+}
+fn scale() -> &'static str {
+    otto_kit::t!("settings-display-scale")
+}
+
+/// The push buttons on the virtual-displays row.
+fn add() -> &'static str {
+    otto_kit::t!("common-add")
+}
+fn remove() -> &'static str {
+    otto_kit::t!("common-remove")
+}
+
+/// The two of them as the `'static` slice a button row wants. Resolved once:
+/// the labels cannot change without a restart, and a fresh array each call
+/// would not outlive the row it is handed to.
+fn virtual_buttons() -> &'static [&'static str] {
+    static BUTTONS: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    BUTTONS.get_or_init(|| vec![add(), remove()])
+}
 
 /// Pop-up identifiers for the two rows filled from the display probe.
 ///
@@ -159,18 +197,18 @@ pub fn build() -> Pane {
         // has announced no output at all — a headless session with no virtual
         // output — and a pane that says so beats one that panics.
         return Pane {
-            name: "Displays",
+            name: otto_kit::t!("settings-pane-displays"),
             icon: "monitor",
             groups: vec![model::untitled(vec![Row::new(
-                "No displays",
+                otto_kit::t!("settings-display-none"),
                 Control::Value(String::new()),
             )
-            .detail("The compositor is not driving any output")])],
+            .detail(otto_kit::t!("settings-display-none-detail"))])],
         };
     };
     let count = model::virtual_output_count();
     Pane {
-        name: "Displays",
+        name: otto_kit::t!("settings-pane-displays"),
         icon: "monitor",
         // The arrangement canvas is drawn by the pane itself, not as a row.
         // Below it sit the settings for whichever display is selected there.
@@ -180,23 +218,23 @@ pub fn build() -> Pane {
                 mode_rows(selected)
                     .into_iter()
                     .chain([
-                        Row::new(ACTIVE, Control::Toggle(selected.enabled))
-                            .detail("An inactive display keeps its place in the arrangement"),
-                        Row::new(PRIMARY, Control::Toggle(selected.primary))
-                            .detail("The dock and the bar live on the primary display"),
+                        Row::new(active(), Control::Toggle(selected.enabled))
+                            .detail(otto_kit::t!("settings-display-active-detail")),
+                        Row::new(primary(), Control::Toggle(selected.primary))
+                            .detail(otto_kit::t!("settings-display-primary-detail")),
                         // Positions are logical pixels, which is the space the
                         // arrangement canvas lays out in — see the coordinate
                         // conventions in the repository's CLAUDE.md.
-                        Row::new(X_POSITION, Control::Text(position_text(selected.x)))
-                            .detail("Top-left corner in the desktop's coordinate space"),
-                        Row::new(Y_POSITION, Control::Text(position_text(selected.y))),
+                        Row::new(x_position(), Control::Text(position_text(selected.x)))
+                            .detail(otto_kit::t!("settings-display-x-position-detail")),
+                        Row::new(y_position(), Control::Text(position_text(selected.y))),
                     ])
                     .collect(),
             ),
             group(
-                SCALE,
+                scale(),
                 vec![Row::new(
-                    SCALE,
+                    scale(),
                     // Placeholders: the schema owns the range and the step
                     // (0.5 to 4.0 by quarters), and `Row::id` takes them from
                     // it. The readout's `%` is this pane's choice and is what
@@ -209,16 +247,17 @@ pub fn build() -> Pane {
                     },
                 )
                 .id("screen_scale")
-                .detail("Applies at the next login. The desktop does not reflow live")],
+                .detail(otto_kit::t!("settings-display-scale-detail"))],
             ),
             group(
-                VIRTUAL,
+                virtual_displays(),
                 vec![
-                    Row::new(VIRTUAL, Control::Button(&[ADD, REMOVE])).detail(format!(
-                        "{count} headless {}, streamed over PipeWire. Remove takes away the \
-                     selected one",
-                        if count == 1 { "output" } else { "outputs" },
-                    )),
+                    Row::new(virtual_displays(), Control::Button(virtual_buttons())).detail(
+                        otto_kit::t_owned!(
+                            "settings-virtual-displays-detail",
+                            count = count as f64
+                        ),
+                    ),
                 ],
             ),
         ],
@@ -236,32 +275,32 @@ fn mode_rows(selected: &model::Output) -> Vec<Row> {
     if selected.is_virtual() {
         return vec![
             Row::new(
-                WIDTH,
+                width(),
                 Control::Text(mode.map(|m| m.width.to_string()).unwrap_or_default()),
             )
-            .detail("Pixels. A headless output can be any size"),
+            .detail(otto_kit::t!("settings-display-width-detail")),
             Row::new(
-                HEIGHT,
+                height(),
                 Control::Text(mode.map(|m| m.height.to_string()).unwrap_or_default()),
             ),
             Row::new(
-                REFRESH,
+                refresh(),
                 Control::Text(
                     mode.map(|m| format!("{:.0}", m.refresh_mhz as f32 / 1000.0))
                         .unwrap_or_default(),
                 ),
             )
-            .detail("Hertz — how often the stream is fed a frame"),
+            .detail(otto_kit::t!("settings-display-refresh-detail")),
         ];
     }
     vec![
         Row::new(
-            "Resolution",
+            otto_kit::t!("settings-display-resolution"),
             Control::Select(mode.map(|m| m.resolution()).unwrap_or_default()),
         )
         .id(RESOLUTION_ID),
         Row::new(
-            REFRESH,
+            refresh(),
             Control::Select(mode.map(|m| m.refresh()).unwrap_or_default()),
         )
         .id(REFRESH_ID),
@@ -285,12 +324,14 @@ pub fn commit_text(label: &str, text: &str) {
     let Ok(value) = text.trim().parse::<f32>() else {
         return;
     };
+    // Guards rather than patterns: the labels are looked up at runtime now, so
+    // they are values, not constants a `match` arm can name.
     match label {
-        X_POSITION => model::set_selected_position(Some(value), None),
-        Y_POSITION => model::set_selected_position(None, Some(value)),
-        WIDTH => model::set_selected_size(Some(value as i32), None),
-        HEIGHT => model::set_selected_size(None, Some(value as i32)),
-        REFRESH => model::set_selected_refresh_hz(value),
+        l if l == x_position() => model::set_selected_position(Some(value), None),
+        l if l == y_position() => model::set_selected_position(None, Some(value)),
+        l if l == width() => model::set_selected_size(Some(value as i32), None),
+        l if l == height() => model::set_selected_size(None, Some(value as i32)),
+        l if l == refresh() => model::set_selected_refresh_hz(value),
         _ => return,
     }
     save_selected();
@@ -299,11 +340,11 @@ pub fn commit_text(label: &str, text: &str) {
 /// A press on one of this pane's unbound switches.
 pub fn toggle(label: &str) {
     match label {
-        ACTIVE => model::toggle_selected_enabled(),
+        l if l == active() => model::toggle_selected_enabled(),
         // Primary is a choice among the displays rather than a per-display
         // flag, so the switch only ever turns *on*: taking it off would leave
         // the desktop with nowhere to put the dock.
-        PRIMARY => {
+        l if l == primary() => {
             model::make_selected_primary();
             save_all();
             return;
@@ -315,12 +356,12 @@ pub fn toggle(label: &str) {
 
 /// A press on one of this pane's push buttons.
 pub fn press(row: &str, button: &str) {
-    if row != VIRTUAL {
+    if row != virtual_displays() {
         return;
     }
     match button {
-        ADD => model::add_virtual_output(),
-        REMOVE if !model::remove_selected_virtual_output() => {
+        b if b == add() => model::add_virtual_output(),
+        b if b == remove() && !model::remove_selected_virtual_output() => {
             eprintln!("displays: only a virtual display can be removed");
         }
         _ => {}

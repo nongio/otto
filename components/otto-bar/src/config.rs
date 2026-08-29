@@ -40,8 +40,15 @@ pub const BAR_CORNER_RADIUS: f32 = 8.0;
 
 use std::sync::LazyLock;
 
-/// Default clock format: "March 23, Thursday 21:16"
-const DEFAULT_CLOCK_FORMAT: &str = "%B %-d, %A %H:%M";
+/// Default clock format.
+///
+/// Taken from the locale rather than hardcoded: the ordering of day and month
+/// and the choice of a 12- or 24-hour clock are conventions, not preferences,
+/// and they differ between en-GB and en-US before any other language is
+/// involved. An explicit `clock_format` in the config file still wins.
+fn default_clock_format() -> String {
+    otto_kit::t!("bar-clock-format").to_string()
+}
 
 /// User-configurable topbar settings.
 #[derive(Debug, Clone)]
@@ -53,7 +60,7 @@ pub struct TopbarConfig {
 impl Default for TopbarConfig {
     fn default() -> Self {
         Self {
-            clock_format: DEFAULT_CLOCK_FORMAT.to_string(),
+            clock_format: default_clock_format(),
         }
     }
 }

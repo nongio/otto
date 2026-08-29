@@ -479,12 +479,12 @@ pub fn describe() -> Vec<std::collections::HashMap<String, zbus::zvariant::Owned
             put(
                 &mut entry,
                 "label",
-                SettingValue::Str(spec.label.to_string()),
+                SettingValue::Str(schema_text(spec.id, "label", spec.label)),
             );
             put(
                 &mut entry,
                 "description",
-                SettingValue::Str(spec.description.to_string()),
+                SettingValue::Str(schema_text(spec.id, "description", spec.description)),
             );
             put(
                 &mut entry,
@@ -513,7 +513,7 @@ pub fn describe() -> Vec<std::collections::HashMap<String, zbus::zvariant::Owned
                     &mut entry,
                     "choice_labels",
                     SettingValue::StrList(
-                        spec.choice_labels.iter().map(|c| c.to_string()).collect(),
+                        spec.choice_labels.iter().map(|c| choice_label(c)).collect(),
                     ),
                 );
             }
@@ -522,12 +522,125 @@ pub fn describe() -> Vec<std::collections::HashMap<String, zbus::zvariant::Owned
         .collect()
 }
 
+/// A schema string, translated if the catalogue has it.
+///
+/// The schema is a compile-time `static`, so its labels and descriptions
+/// cannot be catalogue lookups themselves. They are keyed off the setting's
+/// own identifier instead — `dock.autohide` becomes `schema-dock-autohide-label`
+/// — which means adding a setting needs no catalogue entry to keep working:
+/// the English written beside it in the schema is the fallback.
+fn schema_text(id: &str, part: &str, english: &str) -> String {
+    let slug: String = id
+        .chars()
+        .map(|c| if c == '.' || c == '_' { '-' } else { c })
+        .collect();
+    otto_kit::i18n::lookup_or(&format!("schema-{slug}-{part}"), english)
+}
+
+/// Resolve a choice label for display.
+///
+/// The schema is a compile-time `static`, so its labels cannot themselves be
+/// looked up — they hold catalogue keys instead, and are resolved here, on the
+/// way out to the client.
+///
+/// Labels that are not keys pass through untouched. That is the path for a
+/// choice named by something outside the catalogue — a cursor or icon theme
+/// found on disk, a sound theme, a keyboard layout — where the value the user
+/// picks is its own name and translating it would name nothing.
+fn choice_label(label: &str) -> String {
+    if label.starts_with("settings-choice-") {
+        return otto_kit::t_owned!(label);
+    }
+    label.to_string()
+}
+
 /// A bound, typed the way the setting itself is typed, so a client can compare
 /// it against the value without converting.
 fn numeric(ty: SettingType, number: f64) -> SettingValue {
     match ty {
         SettingType::Int => SettingValue::Int(number as i64),
         _ => SettingValue::Double(number),
+    }
+}
+
+#[cfg(test)]
+mod l10n_tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    /// Every `schema-*` key in the catalogue names a setting that exists.
+    ///
+    /// The keys are derived from setting identifiers rather than written by
+    /// hand, so a typo or a renamed setting leaves an entry nothing will ever
+    /// look up. Nothing breaks when that happens — the row quietly falls back
+    /// to English — which is precisely why it needs a test: the failure is
+    /// invisible in the running desktop until someone reads the pane in their
+    /// own language and finds half of it untranslated.
+    #[test]
+    fn every_schema_key_names_a_real_setting() {
+        let live: HashSet<String> = schema::SETTINGS
+            .iter()
+            .flat_map(|spec| {
+                let slug: String = spec
+                    .id
+                    .chars()
+                    .map(|c| if c == '.' || c == '_' { '-' } else { c })
+                    .collect();
+                [
+                    format!("schema-{slug}-label"),
+                    format!("schema-{slug}-description"),
+                ]
+            })
+            .collect();
+
+        let mut stale: Vec<String> = otto_kit::i18n::source_keys()
+            .into_iter()
+            .filter(|k| k.starts_with("schema-") && !live.contains(k))
+            .collect();
+        stale.sort();
+        assert!(
+            stale.is_empty(),
+            "catalogue keys naming no setting (a rename or a typo):\n{}",
+            stale.join("\n")
+        );
+    }
+
+    /// Every setting has both of its strings in the catalogue.
+    ///
+    /// Not a correctness requirement — a missing entry falls back to the
+    /// English beside it in the schema — but a new setting that never reaches
+    /// the translators is a slow leak of English back into the interface.
+    #[test]
+    fn every_setting_has_catalogue_entries() {
+        let source = otto_kit::i18n::source_keys();
+        let mut missing = Vec::new();
+        for spec in schema::SETTINGS {
+            let slug: String = spec
+                .id
+                .chars()
+                .map(|c| if c == '.' || c == '_' { '-' } else { c })
+                .collect();
+            for part in ["label", "description"] {
+                let key = format!("schema-{slug}-{part}");
+                if !source.contains(&key) {
+                    missing.push(key);
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "settings with no catalogue entry — add them to en-GB.ftl:\n{}",
+            missing.join("\n")
+        );
+    }
+
+    /// A setting the catalogue has never heard of still renders its English.
+    #[test]
+    fn an_unknown_setting_keeps_its_english() {
+        assert_eq!(
+            schema_text("not.a.real.setting", "label", "Fallback text"),
+            "Fallback text"
+        );
     }
 }
 

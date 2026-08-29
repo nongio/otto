@@ -130,9 +130,9 @@ impl Scope {
     /// says which one is up.
     fn placeholder(self) -> &'static str {
         match self {
-            Scope::Everything => "Search for apps and windows…",
-            Scope::Apps => "Search for apps…",
-            Scope::Windows => "Search for windows…",
+            Scope::Everything => otto_kit::t!("launcher-search-everything"),
+            Scope::Apps => otto_kit::t!("launcher-search-apps"),
+            Scope::Windows => otto_kit::t!("launcher-search-windows"),
         }
     }
 }
@@ -919,6 +919,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+
+    // Before the first string is looked up, and before the window is drawn: a
+    // launcher is judged on how fast it appears, and this is one round trip
+    // that has to finish first either way.
+    otto_kit::i18n::init_from_desktop();
 
     // `--apps` / `--windows` narrow what is offered; anything else on the
     // command line is the initial query, so a binding can open the launcher

@@ -631,8 +631,8 @@ impl PaneLayer {
             Status::Loading | Status::Empty | Status::Error(_) => {
                 let (text, color) = match &status {
                     Status::Error(error) => (error.clone(), theme.text_secondary),
-                    Status::Loading => ("Loading…".to_string(), theme.text_tertiary),
-                    _ => ("Empty".to_string(), theme.text_tertiary),
+                    Status::Loading => (otto_kit::t_owned!("files-loading"), theme.text_tertiary),
+                    _ => (otto_kit::t_owned!("files-empty"), theme.text_tertiary),
                 };
                 // The strip is the pane's own box in this state, so centring on
                 // it is centring on the column.

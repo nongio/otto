@@ -92,8 +92,8 @@ pub fn display_name_for_app(app_id: &str) -> String {
 // ---------------------------------------------------------------------------
 
 fn load_app_info(app_id: &str) -> Option<AppInfo> {
-    let entry = find_desktop_entry(app_id)?;
-    let locales = sys_locales();
+    let locales = entry_locales();
+    let entry = find_desktop_entry(app_id, &locales)?;
 
     let name = entry
         .name(&locales)
@@ -203,7 +203,7 @@ fn load_app_info_by_binary(binary: &str) -> Option<AppInfo> {
     by_exec.as_deref().and_then(lookup_app)
 }
 
-fn find_desktop_entry(app_id: &str) -> Option<DesktopEntry> {
+fn find_desktop_entry(app_id: &str, locales: &[String]) -> Option<DesktopEntry> {
     let normalized = app_id.strip_suffix(".desktop").unwrap_or(app_id);
 
     let entry_path = freedesktop_desktop_entry::Iter::new(
@@ -216,30 +216,39 @@ fn find_desktop_entry(app_id: &str) -> Option<DesktopEntry> {
             .unwrap_or(false)
     })?;
 
-    let locales: Vec<&str> = vec!["en"];
-    DesktopEntry::from_path(entry_path, Some(&locales)).ok()
+    // The parse keeps only the locales it is given, so this has to be the same
+    // list `name()` is later asked for: parsing against `en` alone throws
+    // `Name[it]` away and leaves every app in the dock labelled in English.
+    DesktopEntry::from_path(entry_path, Some(locales)).ok()
 }
 
-fn sys_locales() -> Vec<String> {
-    // Simple locale detection from env
-    let mut locales = Vec::new();
-    for var in ["LC_MESSAGES", "LC_ALL", "LANG"] {
-        if let Ok(val) = std::env::var(var) {
-            if !val.is_empty() && val != "C" && val != "POSIX" {
-                // Extract language code (e.g. "en_US.UTF-8" → "en_US", "en")
-                let base = val.split('.').next().unwrap_or(&val);
-                if !locales.contains(&base.to_string()) {
-                    locales.push(base.to_string());
-                }
-                let lang = base.split('_').next().unwrap_or(base);
-                if !locales.contains(&lang.to_string()) {
-                    locales.push(lang.to_string());
-                }
-            }
+/// The locale keys to read a desktop entry in, most preferred first.
+///
+/// Taken from the interface locale rather than straight from the environment,
+/// so an app's name is in the same language as the interface around it: the
+/// `locales` setting overrides `LANG`, and reading the environment here would
+/// disagree with it — a session started with `LANG=en_US` but set to Italian
+/// would show Italian menus over English app names.
+///
+/// Desktop entries key their translations POSIX-style (`Name[pt_BR]`), so the
+/// tag is offered in that form as well as bare.
+///
+/// Public because anything scanning desktop entries for itself — the launcher
+/// builds its own index rather than going through [`lookup_app`] — has to ask
+/// for the same locales, and has to hand this same list to `DesktopEntry`'s
+/// parser: the parse keeps only the locales it is given.
+pub fn entry_locales() -> Vec<String> {
+    let mut locales: Vec<String> = Vec::new();
+    let tag = crate::i18n::current_locale();
+    for candidate in [
+        crate::i18n::posix_locale(),
+        tag.replace('-', "_"),
+        tag.split('-').next().unwrap_or(&tag).to_string(),
+        "en".to_string(),
+    ] {
+        if !candidate.is_empty() && !locales.contains(&candidate) {
+            locales.push(candidate);
         }
-    }
-    if locales.is_empty() {
-        locales.push("en".to_string());
     }
     locales
 }

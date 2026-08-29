@@ -41,12 +41,12 @@ pub fn directory(file: &mut File, _request: &Request) -> PreviewPayload {
     unsafe {
         let duplicate = libc::dup(file.as_raw_fd());
         if duplicate < 0 {
-            return payload::unavailable("cannot read the folder");
+            return payload::unavailable(otto_kit::t_owned!("quickview-error-read-folder"));
         }
         let dir = libc::fdopendir(duplicate);
         if dir.is_null() {
             libc::close(duplicate);
-            return payload::unavailable("cannot read the folder");
+            return payload::unavailable(otto_kit::t_owned!("quickview-error-read-folder"));
         }
 
         loop {
@@ -99,10 +99,10 @@ pub fn directory(file: &mut File, _request: &Request) -> PreviewPayload {
     PreviewPayload::Rows {
         rows,
         truncated,
-        summary: match total {
-            0 => "Empty folder".to_string(),
-            1 => "1 item".to_string(),
-            count => format!("{count} items"),
+        summary: if total == 0 {
+            otto_kit::t_owned!("quickview-empty-folder")
+        } else {
+            otto_kit::t_owned!("quickview-item-count", count = total as f64)
         },
     }
 }
@@ -122,13 +122,10 @@ pub fn zip(file: &mut File, metadata: &Metadata, request: &Request) -> PreviewPa
         Some((rows, truncated, total)) => PreviewPayload::Rows {
             rows,
             truncated,
-            summary: format!(
-                "{} — {}",
-                match total {
-                    1 => "1 item".to_string(),
-                    count => format!("{count} items"),
-                },
-                human_size(metadata.len())
+            summary: otto_kit::t_owned!(
+                "quickview-archive-summary",
+                items = otto_kit::t_owned!("quickview-item-count", count = total as f64),
+                size = human_size(metadata.len())
             ),
         },
         // A zip we cannot walk is still a file we can describe.
@@ -319,13 +316,10 @@ pub fn tar(file: &mut File, metadata: &Metadata, request: &Request) -> PreviewPa
     PreviewPayload::Rows {
         rows,
         truncated,
-        summary: format!(
-            "{} — {}",
-            match total {
-                1 => "1 item".to_string(),
-                count => format!("{count} items"),
-            },
-            human_size(metadata.len())
+        summary: otto_kit::t_owned!(
+            "quickview-archive-summary",
+            items = otto_kit::t_owned!("quickview-item-count", count = total as f64),
+            size = human_size(metadata.len())
         ),
     }
 }

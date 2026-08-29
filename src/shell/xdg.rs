@@ -4,7 +4,8 @@ use layers::prelude::{taffy, Interpolate, Layer, Transition};
 use smithay::{
     desktop::{
         find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output,
-        PopupKeyboardGrab, PopupKind, PopupPointerGrab, Window, WindowSurface, WindowSurfaceType,
+        PopupKeyboardGrab, PopupKind, PopupManager, PopupPointerGrab, Window, WindowSurface,
+        WindowSurfaceType,
     },
     input::{pointer::Focus, Seat},
     output::Output,
@@ -838,6 +839,15 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 );
             }
         }
+        // The window's geometry just changed under any popup it has open;
+        // re-run the unconstrain pass so an open menu stays on screen.
+        if let Some(window) = self
+            .workspaces
+            .get_window_for_surface(&surface.wl_surface().id())
+            .cloned()
+        {
+            self.reposition_popups_for_window(&window);
+        }
     }
 
     fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
@@ -1021,6 +1031,15 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 }
             }
         }
+        // The window's geometry just changed under any popup it has open;
+        // re-run the unconstrain pass so an open menu stays on screen.
+        if let Some(window) = self
+            .workspaces
+            .get_window_for_surface(&surface.wl_surface().id())
+            .cloned()
+        {
+            self.reposition_popups_for_window(&window);
+        }
     }
 
     fn maximize_request(&mut self, surface: ToplevelSurface) {
@@ -1063,6 +1082,13 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             // window to the size it already has — looking like nothing
             // happened at all.
             if window.is_maximized() {
+                return;
+            }
+            // A window pinned to one size (min == max) has no maximized form:
+            // it would be configured to the screen and go on drawing its fixed
+            // layout in the corner of an empty surface. otto-files' Get Info
+            // panel is the visible case.
+            if !window.is_resizable() {
                 return;
             }
             window.set_is_maximized(true);
@@ -1163,6 +1189,8 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 true,
                 Some(transition),
             );
+
+            self.reposition_popups_for_window(&window);
         }
     }
 
@@ -1660,6 +1688,10 @@ impl<BackendData: Backend> Otto<BackendData> {
         // was just told go together.
         window.set_is_maximized(false);
 
+        // The window's geometry just changed under any popup it has open;
+        // re-run the unconstrain pass so an open menu stays on screen.
+        self.reposition_popups_for_window(window);
+
         Some(initial_window_location)
     }
 
@@ -1792,6 +1824,10 @@ impl<BackendData: Backend> Otto<BackendData> {
             #[cfg(not(feature = "xwayland"))]
             _ => {}
         }
+
+        // The window sits at its new rect now, so its menus have to be placed
+        // against it again.
+        self.reposition_popups_for_window(window);
     }
 
     /// Forget that `window` is tiled, without moving it: a window the user
@@ -1922,6 +1958,8 @@ impl<BackendData: Backend> Otto<BackendData> {
 
         self.workspaces
             .map_window(window, view.unmaximised_rect.loc, true, Some(transition));
+
+        self.reposition_popups_for_window(window);
     }
 
     /// Snap the keyboard-focused window into `zone` (keyboard-shortcut entry point).
@@ -1942,6 +1980,12 @@ impl<BackendData: Backend> Otto<BackendData> {
             return;
         };
 
+        // A window pinned to one size cannot fill half a screen any more than
+        // it can fill a whole one — see `maximize_request`.
+        if !window.is_resizable() {
+            return;
+        }
+
         // Keyed off the stored zone, never off geometry: a window the user
         // resized after tiling is floating again, and comparing rects would
         // have it untile to a stale position instead of snapping.
@@ -1955,6 +1999,42 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
 
         self.apply_tile(&window, zone);
+    }
+
+    /// Re-run the unconstrain pass for every popup of `window`, and tell the
+    /// clients about it.
+    ///
+    /// A popup's placement is resolved once, against the parent window as it
+    /// stood when the popup mapped. Move or resize that window afterwards —
+    /// tiling it to half the screen, say — and the popup keeps its offset
+    /// inside the parent and rides out past the screen edge. Recomputing the
+    /// unconstrained geometry pulls it back onto the output.
+    ///
+    /// Only reactive positioners (xdg_positioner v3+) can be reconfigured; for
+    /// the rest `send_pending_configure` errors out and the popup keeps the
+    /// placement it committed, which is what the protocol asks of us.
+    pub(crate) fn reposition_popups_for_window(&mut self, window: &WindowElement) {
+        let Some(surface) = window.wl_surface().map(|s| s.into_owned()) else {
+            return;
+        };
+        let popups: Vec<PopupSurface> = PopupManager::popups_for_surface(&surface)
+            .filter_map(|(kind, _)| match kind {
+                PopupKind::Xdg(popup) => Some(popup),
+                _ => None,
+            })
+            .collect();
+
+        for popup in popups {
+            self.unconstrain_popup(&popup);
+            if let Err(err) = popup.send_pending_configure() {
+                tracing::debug!(
+                    target: "otto::popups",
+                    "reposition {:?} declined: {:?}",
+                    popup.wl_surface().id(),
+                    err
+                );
+            }
+        }
     }
 
     pub(crate) fn unconstrain_popup(&self, popup: &PopupSurface) {

@@ -52,6 +52,19 @@ impl SettingsPortal {
         );
         namespaces.insert("org.gnome.desktop.sound".to_string(), sound);
 
+        // Language has no portal key at all: the appearance namespace does not
+        // carry one, and sandboxed apps take their locale from the environment
+        // instead. This is here for Otto's own components, which need to agree
+        // with the compositor rather than with LANG — so it goes out under
+        // Otto's namespace rather than borrowing someone else's.
+        let locales = self.read_locales().await?;
+        let mut desktop = HashMap::new();
+        desktop.insert(
+            "locales".to_string(),
+            Value::from(locales).try_into().unwrap(),
+        );
+        namespaces.insert("org.otto.desktop".to_string(), desktop);
+
         Ok(namespaces)
     }
 
@@ -66,6 +79,10 @@ impl SettingsPortal {
             ("org.freedesktop.appearance", "icon-theme") => {
                 let icon_theme = self.read_icon_theme().await?;
                 Ok(Value::from(icon_theme).try_into().unwrap())
+            }
+            ("org.otto.desktop", "locales") => {
+                let locales = self.read_locales().await?;
+                Ok(Value::from(locales).try_into().unwrap())
             }
             ("org.gnome.desktop.sound", "theme-name") => {
                 let sound_theme = self.read_sound_theme().await?;
@@ -128,6 +145,15 @@ impl SettingsPortal {
         proxy.get_sound_theme().await.map_err(|err| {
             error!(?err, "Failed to read sound theme from compositor");
             fdo::Error::Failed(format!("Failed to read sound theme: {err}"))
+        })
+    }
+
+    /// The user's preferred locales, most preferred first.
+    async fn read_locales(&self) -> fdo::Result<Vec<String>> {
+        let proxy = self.get_settings_proxy().await?;
+        proxy.get_locales().await.map_err(|err| {
+            error!(?err, "Failed to read locales from compositor");
+            fdo::Error::Failed(format!("Failed to read locales: {err}"))
         })
     }
 

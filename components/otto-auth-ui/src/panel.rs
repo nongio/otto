@@ -17,7 +17,7 @@
 //! with [`Panel::update`], and paint by asking their surface to render the
 //! layer node the panel is parented to.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use layers::prelude::*;
 use layers::types::{BlendMode, Color as LayerColor, Point as LayerPoint, Size as LayerSize};
@@ -33,6 +33,16 @@ use crate::{Appearance, User};
 /// The Touch ID mark, as a Lottie animation. Shared with the fingerprint
 /// island in otto-islands, which is where it was drawn.
 static TOUCH_ID: &[u8] = include_bytes!("../assets/touch_id.json");
+
+/// The locale chrono formats the clock's month and weekday names against.
+///
+/// Resolved once — it cannot change without a restart. Falls back to the
+/// source locale when chrono does not know the tag, so an unknown locale
+/// still produces a clock.
+static CHRONO_LOCALE: LazyLock<chrono::Locale> = LazyLock::new(|| {
+    let posix = otto_kit::i18n::posix_locale();
+    chrono::Locale::try_from(posix.as_str()).unwrap_or(chrono::Locale::en_GB)
+});
 
 /// Where in the asset's timeline the mark is finished. Well short of the end:
 /// the ridges complete before the timeline does, and the tail past this is not
@@ -107,6 +117,11 @@ const PANEL_W: f32 = 380.0;
 /// room below the field is where a status line appears, and reserving it is
 /// what keeps an error from shifting everything above it.
 const PANEL_H: f32 = 302.0;
+/// Height of the status line's box: two lines at `STATUS_LINE_H`, so a long
+/// message wraps rather than running off both edges of the card.
+const STATUS_H: f32 = 34.0;
+/// Baseline-to-baseline distance within the status box.
+const STATUS_LINE_H: f32 = 15.0;
 const PANEL_RADIUS: f32 = 28.0;
 const AVATAR: f32 = 96.0;
 const FIELD_H: f32 = 46.0;
@@ -119,7 +134,11 @@ const POWER_BUTTON: f32 = 40.0;
 /// state.
 const PASSWORD_BUTTON_H: f32 = 32.0;
 const PASSWORD_BUTTON_GAP: f32 = 18.0;
-const PASSWORD_BUTTON_LABEL: &str = "Enter Password";
+/// The button's label. A function rather than a `const`, because the
+/// catalogue is read at runtime.
+fn password_button_label() -> &'static str {
+    otto_kit::t!("auth-enter-password")
+}
 const SCREEN_MARGIN: f32 = 40.0;
 /// How far the card sits above the vertical centre. A panel centred exactly
 /// looks low, because the eye reads the clock above it as part of the group.
@@ -570,13 +589,18 @@ impl Panel {
 
         self.status
             .set_position(LayerPoint { x: 0.0, y: 266.0 }, None);
-        self.status.set_size(LayerSize::points(PANEL_W, 20.0), None);
+        // Two lines' worth. A failure reason carries an OS error appended to
+        // it, and in a language whose fixed part is longer than English's the
+        // whole thing does not fit across the card — which mattered because
+        // the error text is the only part that says what actually went wrong.
+        self.status
+            .set_size(LayerSize::points(PANEL_W, STATUS_H), None);
 
         // Under the card, so the reason for it — "place your finger" — is read
         // before the way out of it. Its position is in surface coordinates,
         // like the rest of the chrome outside the card.
         let font = self.font(13.0, FontStyle::normal());
-        let password_w = font.measure_str(PASSWORD_BUTTON_LABEL, None).0 + 36.0;
+        let password_w = font.measure_str(password_button_label(), None).0 + 36.0;
         let password_x = (width - password_w) / 2.0;
         let password_y = card_y + PANEL_H + PASSWORD_BUTTON_GAP;
         self.use_password.set_position(
@@ -589,7 +613,7 @@ impl Panel {
         self.use_password
             .set_size(LayerSize::points(password_w, PASSWORD_BUTTON_H), None);
         self.use_password.set_draw_content(draw_centered_text(
-            PASSWORD_BUTTON_LABEL.to_string(),
+            password_button_label().to_string(),
             font,
             Color::from_argb(230, 255, 255, 255),
             PASSWORD_BUTTON_H / 2.0 + 4.5,
@@ -656,7 +680,7 @@ impl Panel {
         let name = view
             .user
             .map(|user| user.display_name.clone())
-            .unwrap_or_else(|| "Sign in".to_string());
+            .unwrap_or_else(|| otto_kit::t_owned!("auth-sign-in"));
         self.name.set_draw_content(draw_centered_text(
             name,
             self.font(22.0, FontStyle::bold()),
@@ -1219,17 +1243,68 @@ fn draw_status(
     move |canvas, w, h| {
         let mut paint = Paint::new(Color4f::from(color), None);
         paint.set_anti_alias(true);
-        let text_width = font.measure_str(&text, Some(&paint)).0;
 
         let icon_room = if fingerprint { 22.0 } else { 0.0 };
-        let start = (w - text_width - icon_room) / 2.0;
+        // The icon only ever sits beside the first line, so only the first
+        // line gives up room for it.
+        let lines = wrap_status(&text, &font, &paint, w - icon_room - 8.0);
 
-        if fingerprint {
-            draw_fingerprint(canvas, Point::new(start + 7.0, 9.0), color);
+        for (index, line) in lines.iter().enumerate() {
+            let room = if index == 0 { icon_room } else { 0.0 };
+            let width = font.measure_str(line, Some(&paint)).0;
+            let start = (w - width - room) / 2.0;
+            if index == 0 && fingerprint {
+                draw_fingerprint(canvas, Point::new(start + 7.0, 9.0), color);
+            }
+            canvas.draw_str(
+                line,
+                (start + room, 14.0 + index as f32 * STATUS_LINE_H),
+                &font,
+                &paint,
+            );
         }
-        canvas.draw_str(&text, (start + icon_room, 14.0), &font, &paint);
         Rect::from_wh(w, h)
     }
+}
+
+/// Break a status message to at most two lines that fit `max_width`.
+///
+/// Greedy on whitespace, which is all this needs: these are short sentences,
+/// and the only thing that makes them long is an OS error appended to a
+/// translated prefix. A word too long to fit on its own is left overhanging
+/// rather than broken mid-word — a run-on path or URL is easier to read whole
+/// than hyphenated at an arbitrary point.
+fn wrap_status(text: &str, font: &Font, paint: &Paint, max_width: f32) -> Vec<String> {
+    if font.measure_str(text, Some(paint)).0 <= max_width {
+        return vec![text.to_string()];
+    }
+
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        let candidate = if current.is_empty() {
+            word.to_string()
+        } else {
+            format!("{current} {word}")
+        };
+        if font.measure_str(&candidate, Some(paint)).0 <= max_width || current.is_empty() {
+            current = candidate;
+        } else {
+            lines.push(std::mem::take(&mut current));
+            current = word.to_string();
+            // Two lines is the box; the rest joins the second and overhangs.
+            if lines.len() == 1 {
+                let rest: Vec<&str> = text.split_whitespace().collect();
+                let used = lines[0].split_whitespace().count();
+                lines.push(rest[used..].join(" "));
+                return lines;
+            }
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
 }
 
 /// A fingerprint mark: three nested arcs, shortening outwards so it reads as a
@@ -1274,7 +1349,8 @@ fn draw_clock(appearance: &Appearance) -> impl Fn(&Canvas, f32, f32) -> Rect + S
         let mut paint = Paint::new(Color4f::from(Color::WHITE), None);
         paint.set_anti_alias(true);
         canvas.draw_str(
-            now.format("%H:%M").to_string(),
+            now.format_localized(otto_kit::t!("auth-clock-time-format"), *CHRONO_LOCALE)
+                .to_string(),
             (0.0, 44.0),
             &time_font,
             &paint,
@@ -1282,7 +1358,8 @@ fn draw_clock(appearance: &Appearance) -> impl Fn(&Canvas, f32, f32) -> Rect + S
 
         paint.set_color(Color::from_argb(180, 255, 255, 255));
         canvas.draw_str(
-            now.format("%A %-d %B").to_string(),
+            now.format_localized(otto_kit::t!("auth-clock-date-format"), *CHRONO_LOCALE)
+                .to_string(),
             (2.0, 70.0),
             &date_font,
             &paint,
@@ -1891,5 +1968,73 @@ mod tests {
             typed > empty,
             "caret should move right as dots are added ({empty} -> {typed})"
         );
+    }
+}
+
+#[cfg(test)]
+mod status_wrap_tests {
+    use super::{wrap_status, STATUS_H, STATUS_LINE_H};
+    use skia_safe::{Font, Paint};
+
+    fn font() -> Font {
+        super::get_font_with_fallback("Inter", skia_safe::FontStyle::normal(), 13.0)
+    }
+
+    /// A message that fits stays on one line, unchanged.
+    ///
+    /// The common case by far, and the one that must look exactly as it did
+    /// before wrapping existed.
+    #[test]
+    fn a_short_message_is_one_line() {
+        let lines = wrap_status("Authenticated", &font(), &Paint::default(), 360.0);
+        assert_eq!(lines, vec!["Authenticated".to_string()]);
+    }
+
+    /// A long one breaks rather than running off the card.
+    ///
+    /// The reason this exists: `Login service unavailable: { $error }` in a
+    /// language whose fixed part is longer than English's used to draw past
+    /// both edges of the card, losing the error text — the only part that
+    /// says what actually failed.
+    #[test]
+    fn a_long_message_wraps_and_keeps_every_word() {
+        let text = "Servicio de inicio de sesión no disponible: connection refused";
+        let lines = wrap_status(text, &font(), &Paint::default(), 360.0);
+        assert!(lines.len() > 1, "expected a wrap, got {lines:?}");
+        assert_eq!(
+            lines.join(" "),
+            text,
+            "wrapping must not drop or duplicate a word"
+        );
+    }
+
+    /// Never more than the box holds.
+    #[test]
+    fn it_never_exceeds_two_lines() {
+        let text = "Authentication service failed and the reason it gave was very long indeed, \
+                    far longer than any card could hope to show across two lines of text";
+        let lines = wrap_status(text, &font(), &Paint::default(), 360.0);
+        assert!(lines.len() <= 2, "got {} lines", lines.len());
+        assert_eq!(
+            lines.join(" "),
+            text.split_whitespace().collect::<Vec<_>>().join(" ")
+        );
+    }
+
+    /// A single word wider than the box is left whole rather than broken.
+    #[test]
+    fn one_unbreakable_word_is_not_split() {
+        let path = "/very/long/path/that/exceeds/the/card/width/by/a/comfortable/margin";
+        let lines = wrap_status(path, &font(), &Paint::default(), 360.0);
+        assert_eq!(lines, vec![path.to_string()]);
+    }
+
+    /// The box is tall enough for the two lines it promises.
+    ///
+    /// Both sides are consts, so this is a compile-time check in a `const`
+    /// block rather than a runtime assertion — clippy rejects the latter.
+    #[test]
+    fn the_box_fits_the_lines_it_allows() {
+        const { assert!(STATUS_H >= 14.0 + STATUS_LINE_H) };
     }
 }

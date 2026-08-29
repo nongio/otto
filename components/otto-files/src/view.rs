@@ -1277,7 +1277,7 @@ fn draw_name_row(canvas: &Canvas, f: &Frame, footer: &FooterData<'_>, window_h: 
     paint.set_color(theme.fill_tertiary);
     canvas.draw_rrect(RRect::new_rect_xy(field, 6.0, 6.0), &paint);
 
-    Label::new("Save As:")
+    Label::new(otto_kit::t!("files-picker-save-as-field"))
         .with_style(styles::BODY)
         .with_color(theme.text_secondary)
         .centered_on(SIDEBAR_W + FOOTER_PAD, field.center_y())
@@ -1426,7 +1426,7 @@ fn draw_filter_control(canvas: &Canvas, f: &Frame, footer: &FooterData<'_>, wind
         .filters
         .get(footer.current_filter)
         .map(String::as_str)
-        .unwrap_or("All Files");
+        .unwrap_or_else(|| otto_kit::t!("files-picker-all-files"));
     Label::new(label)
         .with_style(styles::BODY)
         .with_color(theme.text_primary)
@@ -2163,7 +2163,7 @@ fn draw_sidebar(canvas: &Canvas, f: &Frame) {
             .render(canvas);
     }
 
-    Label::new("Places")
+    Label::new(otto_kit::t!("files-places"))
         .with_style(styles::SUBHEADLINE_EMPHASIZED)
         .with_color(theme.text_tertiary)
         .centered_on(20.0, 54.0)
@@ -2479,9 +2479,19 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
     if let Some(error) = pane.error {
         draw_centered(canvas, area, error, theme.text_secondary);
     } else if pane.loading {
-        draw_centered(canvas, area, "Loading…", theme.text_tertiary);
+        draw_centered(
+            canvas,
+            area,
+            otto_kit::t!("files-loading"),
+            theme.text_tertiary,
+        );
     } else if pane.entries.is_empty() {
-        draw_centered(canvas, area, "This folder is empty.", theme.text_tertiary);
+        draw_centered(
+            canvas,
+            area,
+            otto_kit::t!("files-folder-empty"),
+            theme.text_tertiary,
+        );
     } else {
         // Only the rows of cells the viewport is asking for are drawn.
         let band = pane.band(area);
@@ -2738,7 +2748,12 @@ fn draw_list(canvas: &Canvas, f: &Frame) {
         return;
     }
     if pane.loading {
-        draw_centered(canvas, viewport, "Loading…", theme.text_tertiary);
+        draw_centered(
+            canvas,
+            viewport,
+            otto_kit::t!("files-loading"),
+            theme.text_tertiary,
+        );
         canvas.restore();
         return;
     }
@@ -2746,7 +2761,7 @@ fn draw_list(canvas: &Canvas, f: &Frame) {
         draw_centered(
             canvas,
             viewport,
-            "This folder is empty.",
+            &otto_kit::t_owned!("files-folder-empty"),
             theme.text_tertiary,
         );
         canvas.restore();
@@ -3183,6 +3198,8 @@ fn perm_origin(sheet: Rect) -> (f32, f32) {
     (sheet.left + 24.0, sheet.bottom - 118.0)
 }
 
+/// Narrowest the grid is ever drawn: the English metrics, which every wider
+/// language grows from rather than being squeezed into.
 const PERM_COL_W: f32 = 62.0;
 const PERM_ROW_H: f32 = 26.0;
 const PERM_BOX: f32 = 15.0;
@@ -3191,13 +3208,86 @@ const PERM_COL_X: f32 = 96.0;
 /// Drop from the origin to the first checkbox row. The column headers live in
 /// the gap; without it they are drawn underneath the first row of boxes.
 const PERM_ROWS_TOP: f32 = 14.0;
+/// Clear space kept between a label and whatever is next to it, so a column
+/// that only just fits still reads as two things rather than one.
+const PERM_GAP: f32 = 10.0;
+
+/// The widest field name in the Get Info panel, plus its clear space.
+///
+/// Every row is measured, not just the ones a particular file has, so the
+/// values line up down the panel whether or not the file is a symlink.
+fn info_label_width() -> f32 {
+    let font = styles::BODY.font();
+    [
+        "files-info-where",
+        "files-info-kind",
+        "files-info-modified",
+        "files-info-created",
+        "files-info-accessed",
+        "files-info-owner",
+        "files-info-links-to",
+    ]
+    .iter()
+    .map(|key| font.measure_str(otto_kit::t!(key), None).0 + PERM_GAP)
+    .fold(0.0f32, f32::max)
+}
+
+/// The grid's horizontal metrics for the language it is being drawn in: the
+/// left edge of the first checkbox column, and the pitch between columns.
+///
+/// Measured rather than fixed. "Read" is half the width of the column it is
+/// centred over; "Esecuzione" and "Выполнение" are wider than it, and a label
+/// centred over a column narrower than itself reaches into its neighbours —
+/// the header row stops reading as three headings over three columns and
+/// starts reading as one run of text. The same for the row labels: "Everyone"
+/// clears the 96pt gap easily, "Proprietario" less so.
+///
+/// Both are floors, never ceilings, so English is drawn exactly as it was
+/// designed and only a language that needs more room gets it. The columns are
+/// then hung off the panel's right margin rather than off the label column, so
+/// they cannot run out of the sheet however wide the headers get — a checkbox
+/// drawn outside the panel cannot be clicked.
+fn perm_metrics(sheet: Rect) -> (f32, f32) {
+    let widest = |font: &skia_safe::Font, keys: [&str; 3]| {
+        keys.iter()
+            .map(|key| font.measure_str(otto_kit::t!(key), None).0)
+            .fold(0.0f32, f32::max)
+    };
+
+    let labels = widest(
+        &styles::BODY.font(),
+        [
+            "files-perm-owner",
+            "files-perm-group",
+            "files-perm-everyone",
+        ],
+    );
+    let headers = widest(
+        &styles::CALLOUT.font(),
+        ["files-perm-read", "files-perm-write", "files-perm-exec"],
+    );
+
+    let label_gap = (labels + PERM_GAP).max(PERM_COL_X);
+    let col_w = (headers + PERM_GAP).max(PERM_COL_W);
+
+    // The group is hung off the right margin — the same edge the octal above
+    // it ends on — rather than off the label column, so the grid lines up with
+    // the panel instead of trailing away into empty space partway across it.
+    // The left edge is the floor: a language whose row labels are wide enough
+    // to reach it pushes the columns back out to the right, which costs the
+    // symmetry but keeps the label readable.
+    let last = sheet.right - 24.0 - PERM_BOX;
+    let first = (last - 2.0 * col_w).max(sheet.left + 24.0 + label_gap);
+    (first, col_w)
+}
 
 /// The checkbox rect for `who` (0 owner, 1 group, 2 other) and `what`
 /// (0 read, 1 write, 2 execute).
 pub fn perm_box_rect(sheet: Rect, who: usize, what: usize) -> Rect {
-    let (ox, oy) = perm_origin(sheet);
+    let (_, oy) = perm_origin(sheet);
+    let (first, col_w) = perm_metrics(sheet);
     Rect::from_xywh(
-        ox + PERM_COL_X + what as f32 * PERM_COL_W,
+        first + what as f32 * col_w,
         oy + PERM_ROWS_TOP + who as f32 * PERM_ROW_H - PERM_BOX / 2.0 + 1.0,
         PERM_BOX,
         PERM_BOX,
@@ -3541,7 +3631,7 @@ pub fn draw_info(
         .render(canvas);
 
     let subtitle = if info.is_dir {
-        "Folder".to_string()
+        otto_kit::t_owned!("files-kind-folder")
     } else {
         format!("{} — {}", info.kind.label(), model::format_size(info.size))
     };
@@ -3556,7 +3646,13 @@ pub fn draw_info(
     // steps smaller than the same facts are shown at in the browser itself.
     let mut y = sheet.top + 180.0;
     let label_x = sheet.left + 24.0;
-    let value_x = sheet.left + 118.0;
+    // Where the values start is measured, not fixed. Neither column elides —
+    // the label because it is meant to be short, the value because it is
+    // ellipsized to whatever is left — so a field name wider than the gap it
+    // was given simply runs into the value beside it, which is what "Ultimo
+    // accesso" did to its date. 94pt is what English needs; a language that
+    // needs more takes it out of the value column, which has room to give.
+    let value_x = label_x + info_label_width().max(94.0);
     let value_w = sheet.right - 24.0 - value_x;
     let value_font = styles::BODY.font();
 
@@ -3586,35 +3682,40 @@ pub fn draw_info(
         .parent()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
-    row("Where", where_path, canvas, &mut y);
-    row("Kind", info.mime.clone(), canvas, &mut y);
+    row(otto_kit::t!("files-info-where"), where_path, canvas, &mut y);
     row(
-        "Modified",
+        otto_kit::t!("files-info-kind"),
+        info.mime.clone(),
+        canvas,
+        &mut y,
+    );
+    row(
+        otto_kit::t!("files-info-modified"),
         info.modified.map(model::format_time).unwrap_or_default(),
         canvas,
         &mut y,
     );
     row(
-        "Created",
+        otto_kit::t!("files-info-created"),
         info.created.map(model::format_time).unwrap_or_default(),
         canvas,
         &mut y,
     );
     row(
-        "Accessed",
+        otto_kit::t!("files-info-accessed"),
         info.accessed.map(model::format_time).unwrap_or_default(),
         canvas,
         &mut y,
     );
     row(
-        "Owner",
+        otto_kit::t!("files-info-owner"),
         format!("{} : {}", info.owner, info.group),
         canvas,
         &mut y,
     );
     if let Some(target) = &info.link_target {
         row(
-            "Links to",
+            otto_kit::t!("files-info-links-to"),
             target.to_string_lossy().into_owned(),
             canvas,
             &mut y,
@@ -3654,7 +3755,7 @@ fn draw_permissions(
         &paint,
     );
 
-    Label::new("Permissions")
+    Label::new(otto_kit::t!("files-info-permissions"))
         .with_style(styles::BODY_EMPHASIZED)
         .with_color(theme.text_secondary)
         .centered_on(ox, oy - 18.0)
@@ -3670,8 +3771,16 @@ fn draw_permissions(
         .render(canvas);
 
     // Headers sit in the gap above the first row, centred over their column.
-    for (what, header) in ["Read", "Write", "Exec"].into_iter().enumerate() {
-        let column_centre = ox + PERM_COL_X + what as f32 * PERM_COL_W + PERM_BOX / 2.0;
+    let (first, col_w) = perm_metrics(sheet);
+    for (what, header) in [
+        otto_kit::t!("files-perm-read"),
+        otto_kit::t!("files-perm-write"),
+        otto_kit::t!("files-perm-exec"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let column_centre = first + what as f32 * col_w + PERM_BOX / 2.0;
         Label::new(header)
             .with_style(styles::CALLOUT)
             .with_color(theme.text_tertiary)
@@ -3679,7 +3788,14 @@ fn draw_permissions(
             .render(canvas);
     }
 
-    for (who, label) in ["Owner", "Group", "Everyone"].into_iter().enumerate() {
+    for (who, label) in [
+        otto_kit::t!("files-perm-owner"),
+        otto_kit::t!("files-perm-group"),
+        otto_kit::t!("files-perm-everyone"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let y = oy + PERM_ROWS_TOP + who as f32 * PERM_ROW_H;
         Label::new(label)
             .with_style(styles::BODY)
@@ -3944,6 +4060,134 @@ pub(crate) fn entry_icon_rect(rect: Rect, mode: ViewMode) -> Rect {
             ICON_SIZE,
             ICON_SIZE,
         ),
+    }
+}
+
+#[cfg(test)]
+mod fit_tests {
+    //! The Get Info panel's two narrow columns, measured against every
+    //! catalogue rather than against the English the layout was drawn for.
+    //!
+    //! Both columns size themselves to the language they are drawn in, so the
+    //! question is not whether a label fits a fixed width — it is whether the
+    //! panel still has room once it has. A translation long enough to push the
+    //! last checkbox off the sheet, or to leave the values with nothing to be
+    //! drawn in, is a layout that has run out, and the only way to find that
+    //! out is to measure every locale rather than the one on this machine.
+
+    use super::*;
+
+    /// The value of every `key = value` line in a catalogue.
+    ///
+    /// Read off disk rather than through the locale chain: the chain is a
+    /// process-wide `OnceLock`, so a test that went through it could only ever
+    /// examine whichever locale won the race, and what matters here is all of
+    /// them at once.
+    fn catalogue(locale: &str) -> std::collections::HashMap<String, String> {
+        let path = format!(
+            "{}/../../resources/locales/{locale}.ftl",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| {
+                let (key, value) = line.split_once(" = ")?;
+                (!key.starts_with('#') && !key.starts_with(' '))
+                    .then(|| (key.trim().to_string(), value.trim().to_string()))
+            })
+            .collect()
+    }
+
+    const LOCALES: &[&str] = &["en-GB", "de", "es", "fr", "it", "pl", "pt-BR", "ru", "uk"];
+
+    /// The widest of `keys` in `locale`, measured in `font`.
+    fn widest(locale: &str, font: &skia_safe::Font, keys: &[&str]) -> (f32, String) {
+        let catalogue = catalogue(locale);
+        keys.iter()
+            .filter_map(|key| catalogue.get(*key))
+            .map(|text| (font.measure_str(text, None).0, text.clone()))
+            .fold((0.0, String::new()), |a, b| if b.0 > a.0 { b } else { a })
+    }
+
+    /// The row labels never grow far enough to unseat the right alignment.
+    ///
+    /// Mirrors `perm_metrics`, which cannot be called directly: it reads the
+    /// live locale chain, and this has to answer for all nine at once.
+    #[test]
+    fn the_permissions_grid_fits_the_panel() {
+        let mut over = Vec::new();
+        for locale in LOCALES {
+            let (labels, widest_label) = widest(
+                locale,
+                &styles::BODY.font(),
+                &[
+                    "files-perm-owner",
+                    "files-perm-group",
+                    "files-perm-everyone",
+                ],
+            );
+            let (headers, widest_header) = widest(
+                locale,
+                &styles::CALLOUT.font(),
+                &["files-perm-read", "files-perm-write", "files-perm-exec"],
+            );
+            let label_gap = (labels + PERM_GAP).max(PERM_COL_X);
+            let col_w = (headers + PERM_GAP).max(PERM_COL_W);
+            // The grid hangs off the right margin, so it never overflows —
+            // what overflows is the label column, which pushes the columns
+            // back out to the right and takes the alignment with them. 24pt of
+            // margin at each edge, then the labels, two column gaps, and the
+            // last checkbox.
+            let needed = 24.0 + label_gap + 2.0 * col_w + PERM_BOX + 24.0;
+            if needed > INFO_W {
+                over.push(format!(
+                    "{locale}: needs {needed:.0}pt of {INFO_W:.0}                      ({widest_label:?}, {widest_header:?})"
+                ));
+            }
+        }
+        assert!(
+            over.is_empty(),
+            "the permissions grid is wider than the panel:\n{}",
+            over.join("\n")
+        );
+    }
+
+    /// And the field names leave the values something to be drawn in.
+    ///
+    /// The values are ellipsized, so they never overflow — they just stop
+    /// saying anything useful. A path or a MIME type needs most of the panel.
+    #[test]
+    fn info_field_names_leave_room_for_their_values() {
+        const VALUE_MIN: f32 = 200.0;
+        let mut tight = Vec::new();
+        for locale in LOCALES {
+            let (labels, widest_label) = widest(
+                locale,
+                &styles::BODY.font(),
+                &[
+                    "files-info-where",
+                    "files-info-kind",
+                    "files-info-modified",
+                    "files-info-created",
+                    "files-info-accessed",
+                    "files-info-owner",
+                    "files-info-links-to",
+                ],
+            );
+            let value_x = 24.0 + (labels + PERM_GAP).max(94.0);
+            let value_w = INFO_W - 24.0 - value_x;
+            if value_w < VALUE_MIN {
+                tight.push(format!(
+                    "{locale}: {value_w:.0}pt left for values ({widest_label:?})"
+                ));
+            }
+        }
+        assert!(
+            tight.is_empty(),
+            "less than {VALUE_MIN:.0}pt left for the values:\n{}",
+            tight.join("\n")
+        );
     }
 }
 

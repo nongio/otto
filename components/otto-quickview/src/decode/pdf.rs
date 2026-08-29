@@ -128,7 +128,12 @@ pub fn render(file: &mut File, request: &Request) -> PreviewPayload {
     // so nothing can be substituted between the worker's stat and its open.
     let bytes = match super::read_capped(file, request.budget.max_read.min(512 * 1024 * 1024)) {
         Ok(bytes) => bytes,
-        Err(err) => return payload::unavailable(format!("cannot read the document: {err}")),
+        Err(err) => {
+            return payload::unavailable(otto_kit::t_owned!(
+                "quickview-error-read-document",
+                error = err.to_string()
+            ))
+        }
     };
 
     let pages = count_pages(&bytes).unwrap_or(1).max(1);
@@ -156,7 +161,7 @@ pub fn render(file: &mut File, request: &Request) -> PreviewPayload {
                 pages,
                 page,
             },
-            None => payload::unavailable("the rendered page could not be read"),
+            None => payload::unavailable(otto_kit::t_owned!("quickview-error-page-readback")),
         },
         None => no_rasteriser(file, &bytes, request, pages),
     }
@@ -287,11 +292,11 @@ fn no_rasteriser(file: &mut File, bytes: &[u8], request: &Request, pages: u32) -
 
     let mut facts = vec![
         Fact {
-            key: "Pages".into(),
+            key: otto_kit::t_owned!("quickview-fact-pages"),
             value: pages.to_string(),
         },
         Fact {
-            key: "Size".into(),
+            key: otto_kit::t_owned!("quickview-fact-size"),
             value: human_size(size),
         },
     ];
@@ -299,7 +304,7 @@ fn no_rasteriser(file: &mut File, bytes: &[u8], request: &Request, pages: u32) -
         facts.insert(
             0,
             Fact {
-                key: "Title".into(),
+                key: otto_kit::t_owned!("quickview-fact-title"),
                 value: title,
             },
         );
@@ -313,7 +318,7 @@ fn no_rasteriser(file: &mut File, bytes: &[u8], request: &Request, pages: u32) -
 
     PreviewPayload::Card {
         title: request.name.clone(),
-        subtitle: format!("Install one of: {wanted} — to see the pages"),
+        subtitle: otto_kit::t_owned!("quickview-pdf-install-rasteriser", packages = wanted),
         facts,
         hero: None,
     }

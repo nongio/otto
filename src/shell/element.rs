@@ -34,7 +34,7 @@ use smithay::{
         compositor::SurfaceData as WlSurfaceData,
         dmabuf::DmabufFeedback,
         seat::WaylandFocus,
-        shell::xdg::{ToplevelSurface, XdgToplevelSurfaceData},
+        shell::xdg::{SurfaceCachedState, ToplevelSurface, XdgToplevelSurfaceData},
     },
 };
 use wayland_server::DisplayHandle;
@@ -515,6 +515,31 @@ impl WindowElement {
                 })
             })
             .unwrap_or(false)
+    }
+
+    /// Whether the window can be resized at all.
+    ///
+    /// A client that pins its minimum and maximum size to the same non-zero
+    /// value is asking for one size and no other — a fixed-layout panel like
+    /// otto-files' Get Info. Such a window must not be maximized: it would be
+    /// configured to a size it will not draw, leaving the card stranded in the
+    /// corner of an empty surface. X11 windows are treated as resizable; their
+    /// size hints are not read here.
+    pub fn is_resizable(&self) -> bool {
+        let Some(surface) = self.wl_surface() else {
+            return true;
+        };
+        if !matches!(self.underlying_surface(), WindowSurface::Wayland(_)) {
+            return true;
+        }
+        let (min_size, max_size) = smithay::wayland::compositor::with_states(&surface, |states| {
+            let mut guard = states.cached_state.get::<SurfaceCachedState>();
+            let data = guard.current();
+            (data.min_size, data.max_size)
+        });
+        let fixed_width = max_size.w != 0 && max_size.w == min_size.w;
+        let fixed_height = max_size.h != 0 && max_size.h == min_size.h;
+        !(fixed_width && fixed_height)
     }
 
     pub fn xdg_title(&self) -> String {

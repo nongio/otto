@@ -115,11 +115,11 @@ pub fn draw_mini(canvas: &Canvas, icon: &str, _w: f32, h: f32) {
 pub fn elapsed_label(created_at: std::time::Instant) -> String {
     let elapsed = created_at.elapsed().as_secs();
     if elapsed < 60 {
-        "just now".to_string()
+        otto_kit::t_owned!("islands-elapsed-just-now")
     } else if elapsed < 3600 {
-        format!("{}m ago", elapsed / 60)
+        otto_kit::t_owned!("islands-elapsed-minutes", count = (elapsed / 60) as f64)
     } else {
-        format!("{}h ago", elapsed / 3600)
+        otto_kit::t_owned!("islands-elapsed-hours", count = (elapsed / 3600) as f64)
     }
 }
 
@@ -230,9 +230,10 @@ pub fn draw_card(canvas: &Canvas, activity: &Activity, w: f32, h: f32) {
     let mut close_paint = Paint::default();
     close_paint.set_anti_alias(true);
     close_paint.set_color(Color::from_argb(180, 255, 255, 255));
-    let (cw, _) = close_font.measure_str("Close", None);
+    let close_label = otto_kit::t!("islands-close");
+    let (cw, _) = close_font.measure_str(close_label, None);
     canvas.draw_str(
-        "Close",
+        close_label,
         (w - close_zone / 2.0 - cw / 2.0, h / 2.0 + 3.0),
         &close_font,
         &close_paint,

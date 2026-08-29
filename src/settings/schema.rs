@@ -199,8 +199,19 @@ use SettingType::{Bool, Double, Int, Str, StrList};
 const ACCENT_COLORS: &[&str] = crate::theme::ACCENT_NAMES;
 /// Presentation for `ACCENT_COLORS`, in the same order.
 const ACCENT_COLOR_LABELS: &[&str] = &[
-    "Blue", "Purple", "Pink", "Red", "Orange", "Yellow", "Green", "Mint", "Teal", "Cyan", "Indigo",
-    "Brown", "Graphite",
+    "settings-choice-accent-blue",
+    "settings-choice-accent-purple",
+    "settings-choice-accent-pink",
+    "settings-choice-accent-red",
+    "settings-choice-accent-orange",
+    "settings-choice-accent-yellow",
+    "settings-choice-accent-green",
+    "settings-choice-accent-mint",
+    "settings-choice-accent-teal",
+    "settings-choice-accent-cyan",
+    "settings-choice-accent-indigo",
+    "settings-choice-accent-brown",
+    "settings-choice-accent-graphite",
 ];
 
 /// Everything `org.otto.Settings` describes.
@@ -220,12 +231,13 @@ pub static SETTINGS: &[SettingSpec] = &[
         4.0,
         0.25,
     ),
-    choice(
+    labelled_choice(
         "theme_scheme",
-        "Appearance",
+        "Colour scheme",
         "Light or dark colour scheme.",
         Restart,
         &["Light", "Dark"],
+        &["settings-choice-light", "settings-choice-dark"],
     ),
     labelled_choice(
         "accent_color",
@@ -316,7 +328,11 @@ pub static SETTINGS: &[SettingSpec] = &[
         "Screen edge the dock lives on.",
         Live,
         &["bottom", "left", "right"],
-        &["Bottom", "Left", "Right"],
+        &[
+            "settings-choice-position-bottom",
+            "settings-choice-position-left",
+            "settings-choice-position-right",
+        ],
     ),
     spec(
         "dock.autohide",
@@ -446,7 +462,7 @@ pub static SETTINGS: &[SettingSpec] = &[
         "Whether a click means finger count or button areas.",
         Live,
         &["clickfinger", "buttonareas"],
-        &["Click with fingers", "Click in corners"],
+        &["settings-choice-clickfinger", "settings-choice-buttonareas"],
     ),
     spec(
         "input.touchpad_dwt_enabled",
@@ -502,7 +518,10 @@ pub static SETTINGS: &[SettingSpec] = &[
         "Flat is raw speed; adaptive follows libinput's curve.",
         Live,
         &["flat", "adaptive"],
-        &["Constant speed", "Speed follows movement"],
+        &[
+            "settings-choice-accel-flat",
+            "settings-choice-accel-adaptive",
+        ],
     ),
     // ---- Sound -----------------------------------------------------------
     spec(
@@ -534,9 +553,9 @@ pub static SETTINGS: &[SettingSpec] = &[
         Restart,
         &["auto", "lock", "disable_internal_screen"],
         &[
-            "Decide automatically",
-            "Lock the screen",
-            "Turn off the built-in display",
+            "settings-choice-lid-auto",
+            "settings-choice-lid-lock",
+            "settings-choice-lid-disable-internal",
         ],
     ),
     labelled_choice(
@@ -545,7 +564,12 @@ pub static SETTINGS: &[SettingSpec] = &[
         "What happens when the hardware power button is pressed.",
         Restart,
         &["ignore", "lock", "suspend", "shutdown"],
-        &["Do nothing", "Lock the screen", "Suspend", "Shut down"],
+        &[
+            "settings-choice-power-ignore",
+            "settings-choice-power-lock",
+            "settings-choice-power-suspend",
+            "settings-choice-power-shutdown",
+        ],
     ),
     // ---- Lock & Login ----------------------------------------------------
     spec(

@@ -15,7 +15,9 @@ mod greetd;
 mod session;
 
 use greetd::{AuthMessageType, Client, Request, Response};
-use otto_auth_ui::{Action, Appearance, Field, Finger, Panel, PowerAction, Status, User, View};
+use otto_auth_ui::{
+    reader, Action, Appearance, Field, Finger, Panel, PowerAction, Status, User, View,
+};
 use otto_kit::{surfaces::LayerShellSurface, App, AppContext, AppRunner};
 use session::Session;
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
@@ -183,7 +185,7 @@ impl Greeter {
                 .unwrap_or_default(),
             input_is_a_suggestion: suggested.is_some(),
             user: suggested,
-            prompt: "Username".to_string(),
+            prompt: otto_kit::t_owned!("greeter-prompt-username"),
             error: None,
             info: None,
             finger_pending: false,
@@ -247,7 +249,7 @@ impl Greeter {
         self.input_is_a_suggestion = false;
         self.username.clear();
         self.user = None;
-        self.prompt = "Username".to_string();
+        self.prompt = otto_kit::t_owned!("greeter-prompt-username");
         self.info = None;
         self.finger_pending = false;
         self.password_requested = false;
@@ -260,7 +262,10 @@ impl Greeter {
     fn send(&mut self, asked: Asked, request: Request) {
         if let Err(err) = self.client.send(request) {
             tracing::error!(error = %err, "greetd IPC failed");
-            self.reset(Some(format!("Login service unavailable: {err}")));
+            self.reset(Some(otto_kit::t_owned!(
+                "greeter-error-service-unavailable",
+                error = err.to_string()
+            )));
             return;
         }
         self.outstanding.push_back(asked);
@@ -297,7 +302,7 @@ impl Greeter {
                         tracing::info!("greetd closed the connection; session is taking over");
                     } else {
                         tracing::error!("greetd closed the connection unexpectedly");
-                        self.reset(Some("Login service went away".to_string()));
+                        self.reset(Some(otto_kit::t_owned!("greeter-error-service-gone")));
                         changed = true;
                     }
                     // Nothing will answer the rest, and a queue that never
@@ -308,7 +313,10 @@ impl Greeter {
                 Err(err) => {
                     tracing::error!(error = %err, "greetd IPC failed");
                     self.outstanding.clear();
-                    self.reset(Some(format!("Login service unavailable: {err}")));
+                    self.reset(Some(otto_kit::t_owned!(
+                        "greeter-error-service-unavailable",
+                        error = err.to_string()
+                    )));
                     return true;
                 }
             }
@@ -359,15 +367,32 @@ impl Greeter {
                 // acknowledgement — which is also what lets the PAM module
                 // carry on, so the message is on screen before that happens.
                 AuthMessageType::Info => {
-                    self.finger_pending |= mentions_fingerprint(&auth_message);
-                    self.info = Some(auth_message);
+                    // greetd relays the module's own words, which are in the
+                    // module's locale rather than the panel's — and greetd's
+                    // environment is barer than a session's, so they are
+                    // usually English. A request for a finger is said again
+                    // from the catalogues; the rest keeps its wording.
+                    match reader::finger_request(&auth_message) {
+                        Some(request) => {
+                            self.finger_pending = true;
+                            self.info = Some(reader::request_line(request, "greeter"));
+                        }
+                        None => {
+                            self.finger_pending |= reader::mentions_fingerprint(&auth_message);
+                            self.info = Some(auth_message);
+                        }
+                    }
                     self.send(
                         Asked::Auth,
                         Request::PostAuthMessageResponse { response: None },
                     );
                 }
                 AuthMessageType::Error => {
-                    self.error = Some(auth_message);
+                    self.error = Some(if reader::is_no_match(&auth_message) {
+                        reader::no_match_line("greeter")
+                    } else {
+                        auth_message
+                    });
                     self.send(
                         Asked::Auth,
                         Request::PostAuthMessageResponse { response: None },
@@ -438,7 +463,7 @@ impl Greeter {
         }
         self.password_requested = true;
         self.input.clear();
-        self.prompt = "Password".to_string();
+        self.prompt = otto_kit::t_owned!("greeter-prompt-password");
         // The hint was about the reader, which is no longer what is being
         // asked for; the error, if any, was about a finger that missed.
         self.info = None;
@@ -483,7 +508,10 @@ impl Greeter {
             Stage::Starting { since } if since.elapsed() >= SESSION_START_TIMEOUT => {
                 let session = self.selected_session().name.clone();
                 tracing::warn!(%session, "Session was started but the greeter is still running");
-                self.reset(Some(format!("{session} did not start")));
+                self.reset(Some(otto_kit::t_owned!(
+                    "greeter-error-session-did-not-start",
+                    session = session
+                )));
                 true
             }
             _ => false,
@@ -556,7 +584,7 @@ impl Greeter {
                 // before it, as though Enter had done nothing.
                 self.input.clear();
                 self.input_is_a_suggestion = false;
-                self.prompt = "Authenticating\u{2026}".to_string();
+                self.prompt = otto_kit::t_owned!("greeter-prompt-authenticating");
                 // From here greetd is holding a session that has to be
                 // cancelled before another can be created — including when the
                 // reply to this is an error.
@@ -594,9 +622,10 @@ impl Greeter {
         let status = match (&self.stage, self.error.as_deref(), self.info.as_deref()) {
             // The finger was recognised: the mark, not the wording, is what
             // says so, but the line under it should stop asking for a finger.
-            (Stage::Accepted { .. }, ..) => {
-                Some(Status::Fingerprint("Authenticated", Finger::Accepted))
-            }
+            (Stage::Accepted { .. }, ..) => Some(Status::Fingerprint(
+                otto_kit::t!("greeter-status-authenticated"),
+                Finger::Accepted,
+            )),
             // The reader is still what is being waited on, whatever it last
             // said — a missed finger is reported and then asked for again, and
             // taking the mark away for that would say the reader was done.
@@ -604,15 +633,15 @@ impl Greeter {
                 self.error
                     .as_deref()
                     .or(self.info.as_deref())
-                    .unwrap_or("Place your finger on the reader"),
+                    .unwrap_or_else(|| otto_kit::t!("greeter-status-place-finger")),
                 Finger::Awaited,
             )),
             // Waiting on a reader that is holding up a password nobody can
             // send yet. Saying so is the difference between a slow login and a
             // broken one.
-            _ if self.submit_when_asked => {
-                Some(Status::Info("Waiting for the fingerprint reader\u{2026}"))
-            }
+            _ if self.submit_when_asked => Some(Status::Info(otto_kit::t!(
+                "greeter-status-waiting-for-reader"
+            ))),
             (_, Some(error), _) => Some(Status::Error(error)),
             (_, None, Some(info)) => Some(Status::Info(info)),
             (_, None, None) => None,
@@ -627,7 +656,7 @@ impl Greeter {
             // Not while accepted: the mark is inside the field, and a busy
             // panel fades the field away with it.
             busy: matches!(self.stage, Stage::Starting { .. })
-                .then_some("Starting session\u{2026}"),
+                .then_some(otto_kit::t!("greeter-status-starting-session")),
             // Offering to power off mid-handoff would race greetd's exec.
             power: matches!(self.stage, Stage::Username | Stage::Prompt { .. }),
             // Only while a finger is what is being asked for: everywhere else
@@ -726,33 +755,38 @@ impl Greeter {
     /// Whether an unprivileged greeter may do this is polkit's call, not the
     /// greeter's; if it refuses, say so on the panel rather than failing mute.
     fn power(&mut self, action: PowerAction) {
-        let verb = match action {
-            PowerAction::Suspend => "suspend",
-            PowerAction::Restart => "reboot",
-            PowerAction::Shutdown => "poweroff",
+        // The verb is systemctl's, not the user's: it goes on the command
+        // line, and the panel gets a message keyed by the action instead.
+        let (verb, denied, failed) = match action {
+            PowerAction::Suspend => (
+                "suspend",
+                "greeter-power-suspend-denied",
+                "greeter-power-suspend-failed",
+            ),
+            PowerAction::Restart => (
+                "reboot",
+                "greeter-power-restart-denied",
+                "greeter-power-restart-failed",
+            ),
+            PowerAction::Shutdown => (
+                "poweroff",
+                "greeter-power-shutdown-denied",
+                "greeter-power-shutdown-failed",
+            ),
         };
 
         match std::process::Command::new("systemctl").arg(verb).status() {
             Ok(status) if status.success() => {}
             Ok(status) => {
                 tracing::warn!(verb, ?status, "systemctl refused");
-                self.error = Some(format!("Not permitted to {verb}"));
+                self.error = Some(otto_kit::t_owned!(denied));
             }
             Err(err) => {
                 tracing::warn!(verb, %err, "could not run systemctl");
-                self.error = Some(format!("Could not {verb}"));
+                self.error = Some(otto_kit::t_owned!(failed));
             }
         }
     }
-}
-
-/// Whether a PAM message is about a fingerprint reader. The wording comes from
-/// `pam_fprintd` and varies with locale and reader, so this matches loosely.
-fn mentions_fingerprint(message: &str) -> bool {
-    let message = message.to_lowercase();
-    ["finger", "fprint", "biometric"]
-        .iter()
-        .any(|needle| message.contains(needle))
 }
 
 impl App for Greeter {
@@ -984,6 +1018,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+
+    // Before the first string is looked up and before anything is drawn: the
+    // catalogue is fixed by the first lookup, and the greeter draws at once.
+    otto_kit::i18n::init_from_desktop();
 
     let client = Client::connect()?;
     AppRunner::new(Greeter::new(client)).run()?;
@@ -1227,7 +1265,7 @@ mod tests {
             },
         );
         assert!(greeter.accepts_input(), "there is a question to answer now");
-        assert_eq!(greeter.prompt, "Password");
+        assert_eq!(greeter.prompt, otto_kit::t!("greeter-prompt-password"));
     }
 
     /// Escape cancels the conversation, and greetd acknowledges a cancellation
@@ -1328,7 +1366,7 @@ mod tests {
         greeter.conversation = true;
         greeter.finger_pending = true;
         greeter.info = Some("Place your finger on the reader".to_string());
-        greeter.prompt = "Authenticating\u{2026}".to_string();
+        greeter.prompt = otto_kit::t_owned!("greeter-prompt-authenticating");
         // The acknowledgement of the info message; `pam_fprintd` will not
         // answer it until a finger arrives or it gives up.
         greeter.outstanding.push_back(Asked::Auth);
@@ -1443,12 +1481,45 @@ mod tests {
         assert!(
             matches!(
                 greeter.view().status,
-                Some(Status::Fingerprint(
-                    "Failed to match fingerprint",
-                    Finger::Awaited
-                ))
+                Some(Status::Fingerprint(text, Finger::Awaited))
+                    if text == reader::no_match_line("greeter"),
             ),
             "the miss should be reported without retiring the mark"
+        );
+    }
+
+    /// greetd relays the module's request for a finger word for word, hardware
+    /// name and all, in whatever language the module was running in.
+    #[test]
+    fn a_named_finger_is_asked_for_in_the_panel_s_words() {
+        let mut greeter = greeter();
+        greeter.conversation = true;
+        greeter.handle(
+            Asked::Auth,
+            Response::AuthMessage {
+                auth_message_type: AuthMessageType::Info,
+                auth_message: "Place your right index finger on Elan Fingerprint Sensor"
+                    .to_string(),
+            },
+        );
+
+        assert!(
+            greeter.awaiting_finger(),
+            "a request for a finger puts the mark up"
+        );
+        assert_eq!(
+            greeter.info.as_deref(),
+            Some(
+                reader::request_line(
+                    reader::FingerRequest {
+                        swipe: false,
+                        finger: Some(reader::FingerName::RightIndex),
+                    },
+                    "greeter",
+                )
+                .as_str()
+            ),
+            "the reader's own wording must not reach the card"
         );
     }
 

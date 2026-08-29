@@ -21,7 +21,7 @@ xkbcommon = "0.6.0"
 thiserror = "1"
 anyhow = "1"
 usvg = "0.37.0"
-rand = "0.8"
+rand = "0.10"
 tokio = { version = "1", features = ["full"] }
 fps_ticker = { version = "1.0.0", optional = true }
 xdgkit = "3.2.5"
@@ -241,6 +241,16 @@ assets = [
     ["resources/otto.desktop", "usr/share/wayland-sessions/", "644"],
     ["resources/otto-files.desktop", "usr/share/applications/", "644"],
     ["resources/otto-settings.desktop", "usr/share/applications/", "644"],
+    # otto-files app icon (hicolor theme)
+    ["components/otto-files/resources/icons/hicolor/16x16/apps/otto-files.png", "usr/share/icons/hicolor/16x16/apps/otto-files.png", "644"],
+    ["components/otto-files/resources/icons/hicolor/24x24/apps/otto-files.png", "usr/share/icons/hicolor/24x24/apps/otto-files.png", "644"],
+    ["components/otto-files/resources/icons/hicolor/32x32/apps/otto-files.png", "usr/share/icons/hicolor/32x32/apps/otto-files.png", "644"],
+    ["components/otto-files/resources/icons/hicolor/48x48/apps/otto-files.png", "usr/share/icons/hicolor/48x48/apps/otto-files.png", "644"],
+    ["components/otto-files/resources/icons/hicolor/64x64/apps/otto-files.png", "usr/share/icons/hicolor/64x64/apps/otto-files.png", "644"],
+    ["components/otto-files/resources/icons/hicolor/128x128/apps/otto-files.png", "usr/share/icons/hicolor/128x128/apps/otto-files.png", "644"],
+    ["components/otto-files/resources/icons/hicolor/256x256/apps/otto-files.png", "usr/share/icons/hicolor/256x256/apps/otto-files.png", "644"],
+    ["components/otto-files/resources/icons/hicolor/512x512/apps/otto-files.png", "usr/share/icons/hicolor/512x512/apps/otto-files.png", "644"],
+    ["components/otto-files/resources/icons/hicolor/scalable/apps/otto-files.svg", "usr/share/icons/hicolor/scalable/apps/otto-files.svg", "644"],
     ["components/xdg-desktop-portal-otto/otto.portal", "usr/share/xdg-desktop-portal/portals/", "644"],
     ["components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service", "usr/share/dbus-1/services/", "644"],
     # The D-Bus service file above names this unit in SystemdService=.
@@ -265,6 +275,16 @@ assets = [
     { source = "target/release/otto-quickview", dest = "/usr/bin/otto-quickview", mode = "755" },
     { source = "resources/otto-files.desktop", dest = "/usr/share/applications/otto-files.desktop", mode = "644" },
     { source = "resources/otto-settings.desktop", dest = "/usr/share/applications/otto-settings.desktop", mode = "644" },
+    # otto-files app icon (hicolor theme)
+    { source = "components/otto-files/resources/icons/hicolor/16x16/apps/otto-files.png", dest = "/usr/share/icons/hicolor/16x16/apps/otto-files.png", mode = "644" },
+    { source = "components/otto-files/resources/icons/hicolor/24x24/apps/otto-files.png", dest = "/usr/share/icons/hicolor/24x24/apps/otto-files.png", mode = "644" },
+    { source = "components/otto-files/resources/icons/hicolor/32x32/apps/otto-files.png", dest = "/usr/share/icons/hicolor/32x32/apps/otto-files.png", mode = "644" },
+    { source = "components/otto-files/resources/icons/hicolor/48x48/apps/otto-files.png", dest = "/usr/share/icons/hicolor/48x48/apps/otto-files.png", mode = "644" },
+    { source = "components/otto-files/resources/icons/hicolor/64x64/apps/otto-files.png", dest = "/usr/share/icons/hicolor/64x64/apps/otto-files.png", mode = "644" },
+    { source = "components/otto-files/resources/icons/hicolor/128x128/apps/otto-files.png", dest = "/usr/share/icons/hicolor/128x128/apps/otto-files.png", mode = "644" },
+    { source = "components/otto-files/resources/icons/hicolor/256x256/apps/otto-files.png", dest = "/usr/share/icons/hicolor/256x256/apps/otto-files.png", mode = "644" },
+    { source = "components/otto-files/resources/icons/hicolor/512x512/apps/otto-files.png", dest = "/usr/share/icons/hicolor/512x512/apps/otto-files.png", mode = "644" },
+    { source = "components/otto-files/resources/icons/hicolor/scalable/apps/otto-files.svg", dest = "/usr/share/icons/hicolor/scalable/apps/otto-files.svg", mode = "644" },
     { source = "target/release/otto-islands", dest = "/usr/bin/otto-islands", mode = "755" },
     { source = "target/release/otto-lock", dest = "/usr/bin/otto-lock", mode = "755" },
     { source = "target/release/otto-greeter", dest = "/usr/bin/otto-greeter", mode = "755" },
@@ -345,6 +365,16 @@ files = [
     ["resources/otto.desktop", "/usr/share/wayland-sessions/otto.desktop", "644"],
     ["resources/otto-files.desktop", "/usr/share/applications/otto-files.desktop", "644"],
     ["resources/otto-settings.desktop", "/usr/share/applications/otto-settings.desktop", "644"],
+    # otto-files app icon (hicolor theme)
+    ["components/otto-files/resources/icons/hicolor/16x16/apps/otto-files.png", "/usr/share/icons/hicolor/16x16/apps/otto-files.png", "644"],
+    ["components/otto-files/resources/icons/hicolor/24x24/apps/otto-files.png", "/usr/share/icons/hicolor/24x24/apps/otto-files.png", "644"],
+    ["components/otto-files/resources/icons/hicolor/32x32/apps/otto-files.png", "/usr/share/icons/hicolor/32x32/apps/otto-files.png", "644"],
+    ["components/otto-files/resources/icons/hicolor/48x48/apps/otto-files.png", "/usr/share/icons/hicolor/48x48/apps/otto-files.png", "644"],
+    ["components/otto-files/resources/icons/hicolor/64x64/apps/otto-files.png", "/usr/share/icons/hicolor/64x64/apps/otto-files.png", "644"],
+    ["components/otto-files/resources/icons/hicolor/128x128/apps/otto-files.png", "/usr/share/icons/hicolor/128x128/apps/otto-files.png", "644"],
+    ["components/otto-files/resources/icons/hicolor/256x256/apps/otto-files.png", "/usr/share/icons/hicolor/256x256/apps/otto-files.png", "644"],
+    ["components/otto-files/resources/icons/hicolor/512x512/apps/otto-files.png", "/usr/share/icons/hicolor/512x512/apps/otto-files.png", "644"],
+    ["components/otto-files/resources/icons/hicolor/scalable/apps/otto-files.svg", "/usr/share/icons/hicolor/scalable/apps/otto-files.svg", "644"],
     ["components/xdg-desktop-portal-otto/otto.portal", "/usr/share/xdg-desktop-portal/portals/otto.portal", "644"],
     ["components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service", "/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.service", "644"],
     ["components/xdg-desktop-portal-otto/portals.conf.example", "/usr/share/doc/otto/portals.conf.example", "644"],

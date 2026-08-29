@@ -10,7 +10,9 @@ description = "The authentication panel Otto shows when it needs a password — 
 [dependencies]
 laye-rs.workspace = true
 otto-kit = { path = "../otto-kit" }
-chrono = "0.4"
+# `unstable-locales` is what makes `format_localized` translate %A and %B;
+# without it chrono emits English names whatever the locale says.
+chrono = { version = "0.4", features = ["unstable-locales"] }
 taffy = "0.5"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

@@ -27,12 +27,17 @@ const MAX_TEXT_BYTES: u64 = 8 * 1024 * 1024;
 pub fn read(file: &mut File, request: &Request, mime: &str) -> PreviewPayload {
     let bytes = match read_capped(file, MAX_TEXT_BYTES) {
         Ok(bytes) => bytes,
-        Err(err) => return payload::unavailable(format!("cannot read the file: {err}")),
+        Err(err) => {
+            return payload::unavailable(otto_kit::t_owned!(
+                "quickview-error-read-file",
+                error = err.to_string()
+            ))
+        }
     };
     let read_everything = (bytes.len() as u64) < MAX_TEXT_BYTES;
 
     let Some(text) = decode_text(&bytes) else {
-        return payload::unavailable("this file is not text in any encoding we read");
+        return payload::unavailable(otto_kit::t_owned!("quickview-error-not-text"));
     };
 
     let mut lines: Vec<String> = Vec::new();

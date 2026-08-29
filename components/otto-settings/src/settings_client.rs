@@ -475,6 +475,31 @@ pub fn number_for(id: &str, value: f32) -> Value {
     }
 }
 
+/// The value a text field should send for `id`.
+///
+/// The mirror of `number_for`, and of the display side in `model.rs`, which
+/// already renders a list setting into one comma-separated field. Committing
+/// always sent a plain string, so a list setting — `locales` is the only one
+/// today — was refused by the compositor on its type and the edit silently did
+/// nothing.
+///
+/// Splitting on commas is the inverse of the `", "` join used to display it.
+/// Empty items are dropped rather than sent, so a trailing comma mid-typing
+/// does not become an empty locale.
+pub fn text_for(id: &str, value: &str) -> Value {
+    match describe(id).map(|d| d.kind) {
+        Some(Kind::List) => Value::List(
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(str::to_string)
+                .collect(),
+        ),
+        _ => Value::Text(value.to_string()),
+    }
+}
+
 /// Outcome of a `Set`, as the app needs to present it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SetOutcome {
@@ -590,5 +615,81 @@ pub fn reset(id: &str) -> SetOutcome {
             SetOutcome::Applied
         }
         Err(err) => SetOutcome::Failed(err.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod commit_type_tests {
+    use super::*;
+
+    /// Put one description in the store, the way `connect` would.
+    ///
+    /// `text_for` asks the store what kind a setting is, so these tests need
+    /// the schema the compositor would have served. Seeding it directly keeps
+    /// them from needing a live compositor.
+    fn seed(id: &str, kind: Kind) {
+        let mut store = store().write().unwrap();
+        store.schema.insert(
+            id.to_string(),
+            Desc {
+                id: id.to_string(),
+                kind,
+                label: String::new(),
+                description: String::new(),
+                apply: Apply::Restart,
+                min: None,
+                max: None,
+                step: None,
+                default: None,
+                choices: Vec::new(),
+                choice_labels: Vec::new(),
+            },
+        );
+    }
+
+    /// A list setting sends a list, not a string.
+    ///
+    /// `locales` is declared `StrList`, so committing the field as a plain
+    /// string is refused by the compositor on its type — and refused
+    /// silently, from the user's side: the field keeps showing what was typed
+    /// while nothing was saved. Worth a test precisely because the failure
+    /// looks like success.
+    #[test]
+    fn a_list_setting_splits_on_commas() {
+        seed("locales", Kind::List);
+        assert_eq!(
+            text_for("locales", "it_IT, it, en"),
+            Value::List(vec!["it_IT".into(), "it".into(), "en".into()])
+        );
+    }
+
+    /// Splitting is the exact inverse of how the value is displayed.
+    #[test]
+    fn splitting_inverts_the_display_join() {
+        seed("locales", Kind::List);
+        let items = vec!["it_IT".to_string(), "en".to_string()];
+        assert_eq!(text_for("locales", &items.join(", ")), Value::List(items));
+    }
+
+    /// A comma left mid-typing does not become an empty locale.
+    #[test]
+    fn empty_items_are_dropped() {
+        seed("locales", Kind::List);
+        assert_eq!(
+            text_for("locales", "it, , en,"),
+            Value::List(vec!["it".into(), "en".into()])
+        );
+    }
+
+    /// Everything that is not a list still sends a plain string. An unknown
+    /// id — the Displays pane's unbound fields — falls here too.
+    #[test]
+    fn other_settings_still_send_text() {
+        seed("font_family", Kind::Text);
+        assert_eq!(
+            text_for("font_family", "Inter"),
+            Value::Text("Inter".into())
+        );
+        assert_eq!(text_for("not.a.setting", "x"), Value::Text("x".into()));
     }
 }

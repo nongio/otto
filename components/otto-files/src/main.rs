@@ -18,6 +18,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // start; never returns at all when this process is a worker.
     otto_quickview::run_worker_if_requested();
 
+    // Before the first string is read, and before the Wayland connection: the
+    // sidebar and the column headings are built during startup. Asks the
+    // compositor rather than reading LANG, so "Preferred languages" moves the
+    // file browser too.
+    otto_kit::i18n::init_from_desktop();
+
     tokio::runtime::Runtime::new()?.block_on(run())
 }
 

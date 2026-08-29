@@ -72,12 +72,20 @@ const SNIFF_BYTES: usize = 4096;
 /// instead say *why* on the wire: "unavailable, and here is the reason" is a
 /// preview, and a dead worker is not.
 pub fn run_worker(request: Request) -> i32 {
+    // From the environment, not from the portal: the worker holds no bus
+    // connection by design. The parent forwards its own locale in `LANGUAGE`
+    // (see `spawn::decode`), so the two agree.
+    otto_kit::i18n::init_from_env();
+
     // SAFETY: the worker's own `main` runs before any thread is started, and
     // the parent applied the same limits pre-exec. Applying them again covers
     // what could not survive `execve`.
     if let Err(err) = unsafe { sandbox::apply(request.budget) } {
         // Refuse to decode rather than decode uncontained.
-        let fallback = payload::unavailable(format!("could not sandbox the previewer: {err}"));
+        let fallback = payload::unavailable(otto_kit::t_owned!(
+            "quickview-error-sandbox",
+            error = err.to_string()
+        ));
         let _ = payload::write_to(&fallback, &mut std::io::stdout());
         return 0;
     }
@@ -97,7 +105,12 @@ pub fn run_worker(request: Request) -> i32 {
 fn decode(file: &mut File, request: &Request) -> PreviewPayload {
     let metadata = match file.metadata() {
         Ok(metadata) => metadata,
-        Err(err) => return payload::unavailable(format!("cannot stat the file: {err}")),
+        Err(err) => {
+            return payload::unavailable(otto_kit::t_owned!(
+                "quickview-error-stat-file",
+                error = err.to_string()
+            ))
+        }
     };
 
     if metadata.is_dir() {
@@ -106,7 +119,7 @@ fn decode(file: &mut File, request: &Request) -> PreviewPayload {
     if metadata.len() == 0 {
         return PreviewPayload::Card {
             title: request.name.clone(),
-            subtitle: "Empty file".into(),
+            subtitle: otto_kit::t_owned!("quickview-empty-file"),
             facts: vec![],
             hero: None,
         };
@@ -114,10 +127,13 @@ fn decode(file: &mut File, request: &Request) -> PreviewPayload {
 
     let mut head = vec![0u8; SNIFF_BYTES.min(metadata.len() as usize)];
     if let Err(err) = file.read_exact(&mut head) {
-        return payload::unavailable(format!("cannot read the file: {err}"));
+        return payload::unavailable(otto_kit::t_owned!(
+            "quickview-error-read-file",
+            error = err.to_string()
+        ));
     }
     if file.seek(SeekFrom::Start(0)).is_err() {
-        return payload::unavailable("the file is not seekable");
+        return payload::unavailable(otto_kit::t_owned!("quickview-error-not-seekable"));
     }
 
     // Content decides which decoder runs; the name may only pick a *subtype* of
@@ -219,17 +235,24 @@ pub(crate) fn read_capped(file: &mut File, cap: u64) -> std::io::Result<Vec<u8>>
 
 /// Human-readable byte count, for the facts on a card.
 pub(crate) fn human_size(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["bytes", "KB", "MB", "GB", "TB"];
+    // Below a kilobyte the count is exact and needs a plural rule; above it
+    // the unit is a symbol and only the number varies.
     if bytes < 1024 {
-        return format!("{bytes} bytes");
+        return otto_kit::t_owned!("quickview-size-bytes", count = bytes as f64);
     }
-    let mut value = bytes as f64;
+    const UNITS: [&str; 4] = [
+        "quickview-size-kb",
+        "quickview-size-mb",
+        "quickview-size-gb",
+        "quickview-size-tb",
+    ];
+    let mut value = bytes as f64 / 1024.0;
     let mut unit = 0;
     while value >= 1024.0 && unit + 1 < UNITS.len() {
         value /= 1024.0;
         unit += 1;
     }
-    format!("{value:.1} {}", UNITS[unit])
+    otto_kit::t_owned!(UNITS[unit], value = format!("{value:.1}"))
 }
 
 #[cfg(test)]
@@ -238,6 +261,9 @@ mod tests {
 
     #[test]
     fn human_size_reads_naturally() {
+        // Against the source catalogue: the test asserts the shape of the
+        // string, and the shape is what a translator preserves.
+        otto_kit::i18n::init(&["en-GB".to_string()]);
         assert_eq!(human_size(0), "0 bytes");
         assert_eq!(human_size(999), "999 bytes");
         assert_eq!(human_size(1024), "1.0 KB");

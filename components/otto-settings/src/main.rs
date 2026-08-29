@@ -641,7 +641,8 @@ fn open_file_picker(id: &'static str) {
                 ("All Files", &["*"]),
             ];
 
-            match file_picker::open_file("Choose a Background Image", filters) {
+            match file_picker::open_file(otto_kit::t!("settings-choose-background-image"), filters)
+            {
                 file_picker::Outcome::Chosen(paths) => {
                     if let Some(path) = paths.first() {
                         apply(
@@ -671,7 +672,7 @@ fn open_file_picker(id: &'static str) {
 /// title, and "Settings" alone says nothing about where in the app you were.
 fn window_title(selected: usize) -> String {
     match model::panes().get(selected) {
-        Some(pane) => format!("Otto Settings - {}", pane.name),
+        Some(pane) => otto_kit::t_owned!("settings-window-title", pane = pane.name),
         None => "Otto Settings".to_string(),
     }
 }
@@ -707,10 +708,7 @@ fn commit_edit(editing: &Arc<Mutex<Option<Editing>>>) -> bool {
         return false;
     };
     match edit.target {
-        EditTarget::Setting(id) => apply(
-            id,
-            settings_client::Value::Text(edit.input.value().to_string()),
-        ),
+        EditTarget::Setting(id) => apply(id, settings_client::text_for(id, edit.input.value())),
         // Trimmed because the compositor's trigger parser splits on `+` and
         // trims each part, so surrounding space is noise either way — better
         // not to store it than to store something that only parses by luck.
@@ -1627,6 +1625,13 @@ impl App for SettingsApp {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Before anything reads a string, the preview path included: every row
+    // label and group heading is looked up as its pane is constructed, and a
+    // preview rendered in English would not be a preview of this desktop.
+    // Asks the compositor rather than reading LANG, so this app agrees with
+    // the setting it is itself showing.
+    otto_kit::i18n::init_from_desktop();
+
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("--png") {
         preview::render_to_png(args.get(1), args.get(2));

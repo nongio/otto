@@ -29,6 +29,13 @@ pub fn decoration_for(state: &WindowDecorationModel) -> WindowDecoration {
         controls_hovered: state.controls_hovered,
         pressed: state.pressed.and_then(control_from_index),
         sharing: state.sharing,
+        // A window that cannot be resized cannot be zoomed: the dot stays
+        // gray and shows no glyph, the way macOS marks a fixed-size panel.
+        disabled: if state.fixed_size {
+            vec![otto_kit::components::titlebar::WindowControl::Zoom]
+        } else {
+            Vec::new()
+        },
         // The layer carries `BackgroundBlur` while the window is focused, so
         // the compositor already blurs what is behind it — blurring again in
         // the paint would double up. An unfocused window has no blur, so its
@@ -51,8 +58,13 @@ pub fn view_window_decoration(
     _view: &View<WindowDecorationModel>,
 ) -> LayerTree {
     let scale = state.scale.max(1.0);
-    let width_px = state.width * scale;
-    let height_px = state.height * scale;
+    // The bar sits at the window layer's origin, so its own origin is already
+    // on the grid and only the far edge needs snapping. Unsnapped, a 34pt bar
+    // at scale 1.75 is 59.5px and its bottom hairline smears over three rows.
+    // `update_window_view` rounds the content layer's y offset the same way,
+    // so the client still starts exactly where the bar ends.
+    let width_px = crate::workspaces::utils::snap_extent_px(0.0, state.width * scale);
+    let height_px = crate::workspaces::utils::snap_extent_px(0.0, state.height * scale);
     let deco = decoration_for(state);
 
     let draw = move |canvas: &layers::skia::Canvas, _w: f32, _h: f32| {

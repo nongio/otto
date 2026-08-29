@@ -2,7 +2,8 @@
 
 **Status:** draft
 **Related specs:** [login-mode](./login-mode.md), [multi-output](./multi-output.md),
-[lid-power](./lid-power.md)
+[lid-power](./lid-power.md),
+[localisation](./localisation.md)
 
 ## Summary
 
@@ -174,6 +175,18 @@ user. Any other `ext-session-lock-v1` client works too.
   run as the session user. Prompts, info and error messages map onto the panel
   exactly as greetd's `auth_message`s do in the greeter, so a fingerprint reader
   configured through `pam_fprintd` works with no locker-specific code.
+  PAM's text is shown as it arrives, in whatever language the stack produced
+  it; the panel's own strings and its clock format come from Otto's catalogues
+  ([localisation](./localisation.md)).
+- Two things `pam_fprintd` says are exceptions, because it says them in its own
+  process locale — which on a lock screen need not be the panel's — and because
+  what they mean is a choice from a fixed table rather than free text: its
+  request for a finger, and its report of a finger it did not recognise. The
+  locker reads the finger out of the request and says both again from Otto's
+  catalogues, dropping the reader's model name. Anything else the module
+  volunteers is guidance, and keeps the module's own words. The greeter does
+  the same ([login mode](./login-mode.md)); the parsing and the ten finger
+  names are shared, in `components/otto-auth-ui`.
 - The service file is `components/otto-lock/otto-lock.pam`, installed as
   `/etc/pam.d/otto-lock`. Without it PAM falls through to `other`, which denies
   everything, so a missing file would lock the user out of their own session;
