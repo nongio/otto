@@ -2030,8 +2030,11 @@ mod status_wrap_tests {
     }
 
     /// The box is tall enough for the two lines it promises.
+    ///
+    /// Both sides are consts, so this is a compile-time check in a `const`
+    /// block rather than a runtime assertion — clippy rejects the latter.
     #[test]
     fn the_box_fits_the_lines_it_allows() {
-        assert!(STATUS_H >= 14.0 + STATUS_LINE_H);
+        const { assert!(STATUS_H >= 14.0 + STATUS_LINE_H) };
     }
 }
