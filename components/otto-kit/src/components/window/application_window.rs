@@ -77,7 +77,7 @@ impl ApplicationWindow {
             // layer.set_background_color(0.6, 0.6, 0.6, 0.0);
             // layer.set_blend_mode(BlendMode::BackgroundBlur);
             layer.set_border(2.0, 1.0, 1.0, 1.0, 0.6);
-            layer.set_corner_radius(36.0);
+            layer.set_corner_radius(crate::corners::radius(36.0) as f64);
             layer.set_masks_to_bounds(otto_surface_style_v1::ClipMode::Enabled);
         }
 

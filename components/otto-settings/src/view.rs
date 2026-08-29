@@ -25,6 +25,11 @@ pub const WINDOW_H: f32 = 640.0;
 pub const MIN_W: f32 = 560.0;
 pub const MIN_H: f32 = 360.0;
 pub const CORNER: f32 = 12.0;
+
+/// [`CORNER`], or square on a desktop configured without rounded corners.
+pub fn corner() -> f32 {
+    otto_kit::corners::radius(CORNER)
+}
 pub const TITLEBAR_H: f32 = 38.0;
 pub const SIDEBAR_W: f32 = 214.0;
 const CONTENT_PAD: f32 = 26.0;
@@ -820,7 +825,8 @@ impl Settings {
 
     /// The window's rounded outline, which everything is clipped to.
     fn frame(&self) -> RRect {
-        RRect::new_rect_xy(Rect::from_wh(self.width, self.height), CORNER, CORNER)
+        let corner = corner();
+        RRect::new_rect_xy(Rect::from_wh(self.width, self.height), corner, corner)
     }
 
     /// The two backdrops: the opaque content area and the sidebar's material.
@@ -1339,7 +1345,7 @@ impl Settings {
             .at(0.0, 0.0)
             .with_width(self.width)
             .with_height(TITLEBAR_H)
-            .with_corner_radius(CORNER)
+            .with_corner_radius(corner())
             .with_padding(TITLEBAR_PAD)
             .with_background(Color::TRANSPARENT)
             .with_leading(
@@ -2072,7 +2078,7 @@ impl Settings {
 /// Rounded window with a drop shadow, drawn on a desktop backdrop.
 pub fn render_on_desktop(canvas: &Canvas, settings: &Settings, x: f32, y: f32) {
     let frame = Rect::from_xywh(x, y, settings.width, settings.height);
-    let rrect = RRect::new_rect_xy(frame, CORNER, CORNER);
+    let rrect = RRect::new_rect_xy(frame, corner(), corner());
 
     let mut shadow = Paint::default();
     shadow.set_anti_alias(true);

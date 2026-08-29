@@ -284,9 +284,10 @@ impl Titlebar {
         self
     }
 
-    /// Round the top corners to match the window frame
+    /// Round the top corners to match the window frame — or leave them square,
+    /// on a desktop configured without rounded corners.
     pub fn with_corner_radius(mut self, radius: f32) -> Self {
-        self.corner_radius = radius;
+        self.corner_radius = crate::corners::radius(radius);
         self
     }
 

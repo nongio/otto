@@ -248,6 +248,26 @@ pub static SETTINGS: &[SettingSpec] = &[
         ACCENT_COLOR_LABELS,
     ),
     spec(
+        "rounded_corners",
+        Bool,
+        "Rounded corners",
+        "Round the corners of the dock, the top bar, window decorations and \
+         the workspace and window selectors.",
+        Restart,
+    ),
+    labelled_choice(
+        "window_controls_side",
+        "Window controls",
+        "Which end of a window's titlebar the close, minimize and zoom \
+         controls sit at.",
+        Restart,
+        &["left", "right"],
+        &[
+            "settings-choice-controls-left",
+            "settings-choice-controls-right",
+        ],
+    ),
+    spec(
         "font_family",
         Str,
         "Interface font",

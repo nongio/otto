@@ -254,7 +254,8 @@ caused it.
 The window presents a list of panes and the selected pane's contents. The panes
 are:
 
-- **General** — appearance (light/dark), accent colour, font family, background
+- **General** — appearance (light/dark), accent colour, rounded corners, which
+  end of a title bar the window controls sit at, font family, background
   colour and image, cursor theme and size, icon theme, and the preferred
   languages, which are what every part of Otto localises itself against. That
   setting requires a restart to take effect, and the app says so like any

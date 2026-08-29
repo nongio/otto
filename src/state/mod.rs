@@ -669,6 +669,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 // itself runs in the configured one.
                 let mut assignments = vec![format!("WAYLAND_DISPLAY={socket_name}")];
                 assignments.extend(crate::locale_env::published().iter().cloned());
+                assignments.push(crate::export_rounded_corners());
+                assignments.push(crate::export_window_controls_side());
                 let args: Vec<&str> = assignments.iter().map(String::as_str).collect();
 
                 let mut systemctl = vec!["--user", "set-environment"];
@@ -2024,7 +2026,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                         corner_radius: if window.is_maximized() || fullscreen {
                             0.0
                         } else {
-                            12.0
+                            otto_kit::corners::radius(12.0)
                         },
                         controls_hovered: window_view.decoration_state().controls_hovered,
                         pressed: window_view.decoration_state().pressed,

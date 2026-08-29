@@ -23,6 +23,18 @@ pub fn build() -> Pane {
                         Control::Color(0xFF0A84FF),
                     )
                     .id("accent_color"),
+                    Row::new(
+                        otto_kit::t!("settings-rounded-corners"),
+                        Control::Toggle(true),
+                    )
+                    .detail(otto_kit::t!("settings-rounded-corners-detail"))
+                    .id("rounded_corners"),
+                    Row::new(
+                        otto_kit::t!("settings-window-controls"),
+                        Control::Select("left".into()),
+                    )
+                    .detail(otto_kit::t!("settings-rounded-corners-detail"))
+                    .id("window_controls_side"),
                     Row::new(otto_kit::t!("settings-font"), Control::Text("Inter".into()))
                         .id("font_family"),
                     // Applies to GTK clients rather than to Otto's own

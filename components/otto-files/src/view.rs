@@ -21,6 +21,11 @@ pub const MIN_W: f32 = 640.0;
 pub const MIN_H: f32 = 400.0;
 pub const CORNER: f32 = 12.0;
 
+/// [`CORNER`], or square on a desktop configured without rounded corners.
+pub fn corner() -> f32 {
+    otto_kit::corners::radius(CORNER)
+}
+
 /// Full-height sidebar, like Finder's — the header sits beside it, not above.
 pub const SIDEBAR_W: f32 = 232.0;
 /// The preview pane's width — a Miller column of its own, sitting right

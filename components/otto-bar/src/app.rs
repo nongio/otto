@@ -140,7 +140,7 @@ impl TopBarApp {
         style.set_background_color(c.r as f64, c.g as f64, c.b as f64, c.a as f64);
         style.set_blend_mode(BlendMode::BackgroundBlur);
         style.set_masks_to_bounds(ClipMode::Enabled);
-        style.set_corner_radius(BAR_CORNER_RADIUS as f64);
+        style.set_corner_radius(otto_kit::corners::radius(BAR_CORNER_RADIUS) as f64);
         style.set_shadow(0.25, 8.0, 0.0, 3.0, 0.0, 0.0, 0.0);
         style.set_contents_gravity(gravity);
     }

@@ -566,7 +566,9 @@ fn apply_card_material(card: &SubsurfaceSurface) {
         return;
     };
     style.set_blend_mode(BlendMode::BackgroundBlur);
-    style.set_corner_radius(RADIUS as f64 * AppContext::fractional_scale());
+    style.set_corner_radius(
+        otto_kit::corners::radius(RADIUS) as f64 * AppContext::fractional_scale(),
+    );
     style.set_masks_to_bounds(ClipMode::Enabled);
     style.set_shadow(0.32, 32.0, 0.0, 12.0, 0.0, 0.0, 0.0);
     // The buffer is the card at its tallest; a shorter card shows the top of

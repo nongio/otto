@@ -516,7 +516,9 @@ impl WindowSelectorView {
         );
         // Matches the preview's own rounded frame (12pt, see the decoration
         // model), so no corner of the patch peeks out from behind it.
-        let radius = 12.0 * Config::with(|config| config.screen_scale) as f32 * scale.x;
+        let radius = otto_kit::corners::radius(
+            12.0 * Config::with(|config| config.screen_scale) as f32 * scale.x,
+        );
         drop(drag_state);
         *self.drag_backdrop_rect.write().unwrap() = Some((rect, radius));
         self.drag_backdrop_layer.redraw();
@@ -790,8 +792,8 @@ pub fn view_window_selector(
                     window_selection.h,
                 )
                 .with_outset((draw_scale * 8.0, draw_scale * 8.0)),
-                16.0 * draw_scale,
-                16.0 * draw_scale,
+                otto_kit::corners::radius(16.0 * draw_scale),
+                otto_kit::corners::radius(16.0 * draw_scale),
             );
 
             canvas.draw_rrect(rrect, &paint);

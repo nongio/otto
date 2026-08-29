@@ -18,7 +18,7 @@ pub use application_window::{ApplicationWindow, WindowLayout};
 
 /// Default layer augmentation - applies rounded corners
 fn default_layer_augmentation(layer: &otto_surface_style_v1::OttoSurfaceStyleV1) {
-    layer.set_corner_radius(16.0);
+    layer.set_corner_radius(crate::corners::radius(16.0) as f64);
     layer.set_masks_to_bounds(otto_surface_style_v1::ClipMode::Enabled);
 }
 

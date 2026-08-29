@@ -139,10 +139,17 @@ impl PopupOverlayView {
 
         let anchor_point = popup.layer.anchor_point();
         let size = popup.layer.render_size();
-        let adjusted_position = Point {
-            x: position.x + (size.x * anchor_point.x),
-            y: position.y + (size.y * anchor_point.y),
-        };
+        // Snapped for the same reason a window container is: the popup's
+        // position is a logical integer multiplied by the output scale (and
+        // then offset by the anchor over a fractional `render_size`), so on a
+        // fractional scale it lands mid-pixel and offsets the whole popup
+        // subtree — every surface under it is resampled, including a client
+        // buffer that matches the output exactly. A tooltip is a single
+        // surface of text, so the blur is obvious. See `snap_position_px`.
+        let adjusted_position = crate::workspaces::utils::snap_position_px(
+            (position.x + (size.x * anchor_point.x)) as f64,
+            (position.y + (size.y * anchor_point.y)) as f64,
+        );
         // Only write when it actually moved: lay-rs applies `set_position`
         // without comparing the value, so an unconditional write marks the
         // node NEEDS_LAYOUT and turns every parent-window commit into popup

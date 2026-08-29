@@ -665,7 +665,7 @@ impl DockView {
         });
 
         self.bar_layer
-            .set_border_corner_radius(bar_thickness / 3.5, None);
+            .set_border_corner_radius(otto_kit::corners::radius(bar_thickness / 3.5), None);
 
         let handle_long = 25.0 * draw_scale;
         self.resize_handle.set_size(

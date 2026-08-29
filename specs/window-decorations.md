@@ -58,6 +58,16 @@ appears, and discarded if the surface dies first.
 
 - It carries a title bar strip above the client surface, showing the window
   title and the close, minimize and maximize controls.
+- The controls sit at the leading end of the bar by default. The
+  `window_controls_side` setting moves them to the trailing end, and the three
+  swap order when it does, so close stays the outermost one. The screencast
+  badge always takes the other end. The setting is read at startup and
+  published to the components in the environment, so it applies to a
+  client-drawn otto-kit title bar as well as to a server-drawn one, and
+  changing it takes a restart.
+- The window frame's corners are rounded unless `rounded_corners` is off, in
+  which case the bar and the frame square off — as they already do while the
+  window is maximized or fullscreen.
 - The strip is hit-tested ahead of the client's own surfaces. A press on the
   bar away from the controls starts a window move; a press on a control acts on
   release, as a button does.

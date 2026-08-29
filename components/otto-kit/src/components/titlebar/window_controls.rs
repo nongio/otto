@@ -30,6 +30,10 @@ pub struct WindowControls {
     pub disabled: Vec<WindowControl>,
     /// Dark titlebars need a slightly lighter gray to read against
     pub dark: bool,
+    /// Draw the dots in the opposite order — zoom, minimize, close — which is
+    /// what a group sitting at the trailing edge wants, so close stays the
+    /// outermost dot whichever end the group is at.
+    pub reversed: bool,
 }
 
 impl Default for WindowControls {
@@ -43,13 +47,14 @@ impl WindowControls {
         Self {
             x: 0.0,
             y: 0.0,
-            size: 12.0,
+            size: 13.0,
             spacing: 8.0,
             active: true,
             hovered: false,
             pressed: None,
             disabled: Vec::new(),
             dark: false,
+            reversed: false,
         }
     }
 
@@ -94,6 +99,21 @@ impl WindowControls {
         self
     }
 
+    /// Draw the dots outermost-close-first, for a group at the trailing edge.
+    pub fn with_reversed(mut self, reversed: bool) -> Self {
+        self.reversed = reversed;
+        self
+    }
+
+    /// The dots left to right.
+    fn order(&self) -> [WindowControl; 3] {
+        let mut order = Self::ORDER;
+        if self.reversed {
+            order.reverse();
+        }
+        order
+    }
+
     /// Total width of the group
     pub fn width(&self) -> f32 {
         self.size * 3.0 + self.spacing * 2.0
@@ -110,7 +130,7 @@ impl WindowControls {
         if py < self.y || py > self.y + self.size {
             return None;
         }
-        for (i, control) in Self::ORDER.iter().enumerate() {
+        for (i, control) in self.order().iter().enumerate() {
             let cx = self.x + (self.size + self.spacing) * i as f32;
             if px >= cx && px <= cx + self.size {
                 return Some(*control);
@@ -206,7 +226,7 @@ fn shade(color: Color, amount: f32) -> (u8, u8, u8) {
 impl Renderable for WindowControls {
     fn render(&self, canvas: &Canvas) {
         let radius = self.size / 2.0;
-        for (i, control) in Self::ORDER.iter().enumerate() {
+        for (i, control) in self.order().iter().enumerate() {
             let cx = self.x + (self.size + self.spacing) * i as f32 + radius;
             let cy = self.y + radius;
             let base = self.dot_color(*control);

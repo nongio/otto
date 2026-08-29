@@ -103,6 +103,12 @@ async fn main() {
     // without this an Italian desktop launches English apps.
     otto::locale_env::export();
 
+    // Corner rounding travels the same way, and for the same reason: the top
+    // bar and every otto-kit window draw their own corners, in their own
+    // processes, and none of them reads Otto's configuration.
+    otto::export_rounded_corners();
+    otto::export_window_controls_side();
+
     #[cfg(feature = "profile-with-tracy")]
     profiling::tracy_client::Client::start();
 

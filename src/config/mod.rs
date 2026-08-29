@@ -48,6 +48,21 @@ pub struct Config {
     pub use_10bit_color: bool,
     #[serde(default = "default_accent_color")]
     pub accent_color: String,
+    /// Rounded corners on the desktop's own chrome: the dock's background, the
+    /// top bar, and window decorations. `false` squares all three off.
+    ///
+    /// Read at startup and published to the components in the environment (see
+    /// `otto_kit::corners`), so changing it takes a restart.
+    #[serde(default = "default_rounded_corners")]
+    pub rounded_corners: bool,
+    /// Which end of a window's titlebar the close, minimize and zoom controls
+    /// sit at: `"left"` or `"right"`. On the right the three swap order, so
+    /// close stays the outermost one.
+    ///
+    /// Published to the components the same way `rounded_corners` is (see
+    /// `otto_kit::controls_side`), so changing it takes a restart.
+    #[serde(default = "default_window_controls_side")]
+    pub window_controls_side: String,
     #[serde(default = "shortcuts::default_shortcut_map")]
     pub keyboard_shortcuts: ShortcutMap,
     #[serde(default)]
@@ -117,6 +132,8 @@ impl Default for Config {
             locales: vec!["en".to_string()],
             use_10bit_color: false,
             accent_color: default_accent_color(),
+            rounded_corners: default_rounded_corners(),
+            window_controls_side: default_window_controls_side(),
             keyboard_shortcuts: shortcuts::default_shortcut_map(),
             shortcut_bindings: Vec::new(),
             virtual_outputs: Vec::new(),
@@ -940,6 +957,14 @@ fn default_dock_colorize_intensity() -> f64 {
 
 fn default_accent_color() -> String {
     "blue".to_string()
+}
+
+fn default_rounded_corners() -> bool {
+    true
+}
+
+fn default_window_controls_side() -> String {
+    "left".to_string()
 }
 
 /// Power management configuration

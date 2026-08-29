@@ -854,7 +854,9 @@ fn render_workspace_selector_view(
                             .picture_cached(true)
                             .image_cache(true)
                             .color_filter(color_filter.clone())
-                            .border_corner_radius(BorderRadius::new_single(20.0 / scale))
+                            .border_corner_radius(BorderRadius::new_single(
+                                otto_kit::corners::radius(20.0 / scale),
+                            ))
                             .clip_children(true)
                             .clip_content(true)
                             .pointer_events(false)
@@ -884,7 +886,9 @@ fn render_workspace_selector_view(
                             .picture_cached(true)
                             .image_cache(true)
                             .color_filter(color_filter)
-                            .border_corner_radius(BorderRadius::new_single(20.0 / scale))
+                            .border_corner_radius(BorderRadius::new_single(
+                                otto_kit::corners::radius(20.0 / scale),
+                            ))
                             .clip_children(true)
                             .clip_content(true)
                             .pointer_events(true)
@@ -940,7 +944,9 @@ fn render_workspace_selector_view(
                             ))
                             .border_width((border_width, None))
                             .border_color(border_color)
-                            .border_corner_radius(BorderRadius::new_single(20.0))
+                            .border_corner_radius(BorderRadius::new_single(
+                                otto_kit::corners::radius(20.0),
+                            ))
                             .pointer_events(false)
                             .build()
                             .unwrap(),

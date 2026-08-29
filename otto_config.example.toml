@@ -16,6 +16,16 @@ theme_scheme = "Light"  # "Light" or "Dark" - exposed via XDG Desktop Portal Set
 # background_image = "/usr/share/otto/background.jpg"
 background_color = "#2c2ca0"  # Fallback gradient color (bottom) when background_image is unavailable
 
+# Rounded corners on Otto's own chrome: the dock's background, the top bar,
+# window decorations, and the workspace and window selectors. Read at startup
+# and handed to the components in the environment, so a change takes a restart.
+rounded_corners = true
+
+# Which end of a window's titlebar the close, minimize and zoom controls sit
+# at: "left" or "right". On the right the three swap order, so close stays the
+# outermost one. Also read at startup.
+window_controls_side = "left"
+
 # Accent color for workspace and window selector borders
 # Available colors: red, orange, yellow, green, mint, teal, cyan, blue, indigo, purple, pink, gray, brown
 accent_color = "blue"
