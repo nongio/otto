@@ -16,6 +16,7 @@ mod model;
 mod panes;
 mod preview;
 mod settings_client;
+mod theme_preview;
 mod view;
 mod widgets;
 

@@ -175,6 +175,34 @@ Cancelling changes nothing. A request that fails is reported, and the setting
 keeps the value it had; the app never writes an empty path because a dialog
 went wrong.
 
+### Showing what a value looks like
+
+Some settings are chosen by eye, and their value — a path, a theme name — is
+the one thing about them that shows nothing. Those rows carry a preview under
+their control, inside the row rather than beside it, so the row's own height
+accounts for it and nothing else has to move out of the way.
+
+Three rows have one:
+
+- **Background image** shows the chosen file as a thumbnail, in the image's own
+  aspect. A row with nothing chosen has no preview and reserves no space for
+  one.
+- **Cursor theme** and **icon theme** show a few sample images from the selected
+  theme — the pointer, the text cursor, the hand, help and busy; a folder, home,
+  a document, a terminal, a browser — on a light card. The card is light rather
+  than the pane's own colour because both kinds of theme are drawn to sit on a
+  desktop, and a dark card would hide exactly the dark themes being compared.
+  Its size is fixed at a set number of slots, so walking the pop-up never
+  resizes the pane under the pointer, and a slot the theme has nothing for is
+  left empty rather than filled from another theme.
+
+An unset theme previews the desktop's own — what an application actually gets
+when the setting says "no preference" — not a guess at a popular theme.
+
+Every preview is resolved once per value and kept: decoding five icons, or a
+wallpaper, on every frame is not affordable, and a miss is cached too so a
+theme with no folder icon is not re-searched sixty times a second.
+
 ### Persistence
 
 Persisting a setting writes only that setting's key. Every other key in its

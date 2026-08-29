@@ -12,6 +12,7 @@ otto-kit = { path = "../otto-kit" }
 smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
 zbus = "4"
 serde = { version = "1", features = ["derive"] }
+xcursor = "0.3.3"
 
 [dependencies.skia-safe]
 version = "=0.93"

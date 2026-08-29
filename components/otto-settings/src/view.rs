@@ -49,6 +49,17 @@ const PREVIEW_H: f32 = 108.0;
 const PREVIEW_W: f32 = 192.0;
 const PREVIEW_GAP: f32 = 10.0;
 
+/// A theme row's preview: a light card with one slot per sample image. The
+/// card is a fixed size whatever the theme carries, so choosing a different
+/// theme never moves the rows under the pointer.
+const SWATCH_ICON: f32 = 36.0;
+const SWATCH_GAP: f32 = 16.0;
+const SWATCH_PAD: f32 = 16.0;
+const SWATCH_H: f32 = SWATCH_ICON + SWATCH_PAD * 2.0;
+const SWATCH_W: f32 = SWATCH_PAD * 2.0
+    + SWATCH_ICON * crate::theme_preview::SLOTS as f32
+    + SWATCH_GAP * (crate::theme_preview::SLOTS as f32 - 1.0);
+
 /// The scrollable pane viewport: everything right of the sidebar, below the
 /// titlebar, in window-local coordinates. Where the pane's subsurfaces are
 /// placed, and what the popup anchors are measured against.
@@ -534,6 +545,25 @@ fn decode_preview(path: &str) -> Option<skia_safe::Image> {
         .canvas()
         .draw_image_rect(&full, None, Rect::from_iwh(w, h), &Paint::default());
     Some(surface.image_snapshot())
+}
+
+/// Which theme a row previews, where it previews one at all.
+///
+/// Keyed by the setting identifier rather than the label: these two rows are
+/// bound, and a label is translated.
+fn theme_swatch_kind(row: &Row) -> Option<ThemeSwatch> {
+    match row.id? {
+        "icon_theme" => Some(ThemeSwatch::Icons),
+        "cursor_theme" => Some(ThemeSwatch::Cursors),
+        _ => None,
+    }
+}
+
+/// The two kinds of theme a row can show samples of.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ThemeSwatch {
+    Icons,
+    Cursors,
 }
 
 /// Does `rect` fall inside the band of content being asked for?
@@ -1519,6 +1549,67 @@ impl Settings {
         canvas.draw_rrect(rrect, &border);
     }
 
+    /// A card of sample images from `theme`: a few icons, or a few pointers.
+    ///
+    /// The ground is deliberately light rather than the pane's own: icon and
+    /// cursor themes are drawn to sit on a desktop, and a dark card would hide
+    /// exactly the dark themes somebody is trying to compare.
+    fn render_theme_swatch(
+        &self,
+        canvas: &Canvas,
+        kind: ThemeSwatch,
+        theme: &str,
+        cx: f32,
+        y: f32,
+    ) {
+        // Sourced at twice the drawn size, the way every icon in this toolkit
+        // is: a 36pt slot filled by a 36px raster is soft on a 2x output, and
+        // an icon that only exists at 24px would otherwise be drawn smaller
+        // than the one beside it.
+        let px = (SWATCH_ICON * 2.0) as i32;
+        let images = match kind {
+            ThemeSwatch::Icons => crate::theme_preview::icon_theme_images(theme, px),
+            ThemeSwatch::Cursors => crate::theme_preview::cursor_theme_images(theme, px),
+        };
+
+        let card = Rect::from_xywh(cx - SWATCH_W / 2.0, y, SWATCH_W, SWATCH_H);
+        let rrect = RRect::new_rect_xy(card, 10.0, 10.0);
+
+        let mut fill = Paint::default();
+        fill.set_anti_alias(true);
+        fill.set_color(Color::WHITE);
+        canvas.draw_rrect(rrect, &fill);
+
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        for (slot, image) in images.iter().enumerate() {
+            let Some(image) = image else { continue };
+            let left = card.left + SWATCH_PAD + slot as f32 * (SWATCH_ICON + SWATCH_GAP);
+            let box_rect = Rect::from_xywh(left, card.top + SWATCH_PAD, SWATCH_ICON, SWATCH_ICON);
+            let (iw, ih) = (image.width() as f32, image.height() as f32);
+            // Fitted to the slot in its own aspect, so a wide cursor and a
+            // square icon both sit inside the same box.
+            let scale = (SWATCH_ICON / iw).min(SWATCH_ICON / ih);
+            let (w, h) = (iw * scale, ih * scale);
+            let dst = Rect::from_xywh(
+                box_rect.center_x() - w / 2.0,
+                box_rect.center_y() - h / 2.0,
+                w,
+                h,
+            );
+            canvas.draw_image_rect(image, None, dst, &paint);
+        }
+
+        // The same hairline the wallpaper thumbnail carries, for the same
+        // reason: a white card on a white group needs an edge.
+        let mut border = Paint::default();
+        border.set_anti_alias(true);
+        border.set_style(skia_safe::PaintStyle::Stroke);
+        border.set_stroke_width(1.0);
+        border.set_color(self.theme.fill_secondary);
+        canvas.draw_rrect(rrect, &border);
+    }
+
     /// The band a row's own controls sit in — the whole row, less anything
     /// that hangs below them.
     ///
@@ -1543,12 +1634,15 @@ impl Settings {
         }
     }
 
-    /// What a row's preview adds under its controls, gaps included. Only a
-    /// file row with something chosen has one — an empty setting has nothing
-    /// to show and should not reserve a hole for it.
+    /// What a row's preview adds under its controls, gaps included. A file row
+    /// with something chosen has one — an empty setting has nothing to show
+    /// and should not reserve a hole for it — and so do the two theme rows,
+    /// which always do: their card is the same size whether or not the theme
+    /// answers, so the pane does not resize as the pop-up is walked.
     fn preview_height(row: &Row) -> f32 {
         match &row.control {
             Control::File(path) if !path.is_empty() => PREVIEW_H + PREVIEW_GAP * 2.0,
+            Control::Select(_) if theme_swatch_kind(row).is_some() => SWATCH_H + PREVIEW_GAP * 2.0,
             _ => 0.0,
         }
     }
@@ -1731,6 +1825,18 @@ impl Settings {
                     y + Self::control_height(row) + PREVIEW_GAP,
                 );
             }
+        }
+
+        // A theme is chosen by eye too, and its name is the one thing about it
+        // that shows nothing.
+        if let (Some(kind), Control::Select(theme)) = (theme_swatch_kind(row), &row.control) {
+            self.render_theme_swatch(
+                canvas,
+                kind,
+                theme,
+                (x0 + x1) / 2.0,
+                y + Self::control_height(row) + PREVIEW_GAP,
+            );
         }
 
         // The pill trails the text it belongs to — the detail line if there is
