@@ -392,10 +392,26 @@ impl Locker {
                 }
             }
             Message::Info(text) => {
-                self.session.finger_pending |= pam::mentions_fingerprint(&text);
-                self.session.info = Some(text);
+                // A request for a finger is said again in the panel's language;
+                // anything else the module volunteers keeps its own words.
+                match pam::finger_request(&text) {
+                    Some(request) => {
+                        self.session.finger_pending = true;
+                        self.session.info = Some(finger_request_line(request));
+                    }
+                    None => {
+                        self.session.finger_pending |= pam::mentions_fingerprint(&text);
+                        self.session.info = Some(text);
+                    }
+                }
             }
-            Message::Error(text) => self.session.error = Some(text),
+            Message::Error(text) => {
+                self.session.error = Some(if pam::is_no_match(&text) {
+                    otto_kit::t_owned!("lock-status-no-match")
+                } else {
+                    text
+                });
+            }
         }
     }
 
@@ -647,6 +663,42 @@ impl Locker {
             let base = screen.surface.base_surface();
             screen.surface.draw(|canvas| base.render_layer_node(canvas));
         }
+    }
+}
+
+/// The reader's request for a finger, in the panel's language.
+///
+/// `pam_fprintd` phrases this itself, but in its own process locale and with
+/// the hardware's name in it. What it means is a choice from a fixed table, so
+/// the catalogue says it instead — see [`pam::finger_request`].
+fn finger_request_line(request: pam::FingerRequest) -> String {
+    use pam::FingerName::*;
+
+    let Some(finger) = request.finger else {
+        return if request.swipe {
+            otto_kit::t_owned!("lock-status-swipe-finger")
+        } else {
+            otto_kit::t_owned!("lock-status-place-finger")
+        };
+    };
+
+    let finger = otto_kit::t!(match finger {
+        LeftThumb => "auth-finger-left-thumb",
+        LeftIndex => "auth-finger-left-index",
+        LeftMiddle => "auth-finger-left-middle",
+        LeftRing => "auth-finger-left-ring",
+        LeftLittle => "auth-finger-left-little",
+        RightThumb => "auth-finger-right-thumb",
+        RightIndex => "auth-finger-right-index",
+        RightMiddle => "auth-finger-right-middle",
+        RightRing => "auth-finger-right-ring",
+        RightLittle => "auth-finger-right-little",
+    });
+
+    if request.swipe {
+        otto_kit::t_owned!("lock-status-swipe-named-finger", finger = finger)
+    } else {
+        otto_kit::t_owned!("lock-status-place-named-finger", finger = finger)
     }
 }
 
@@ -968,11 +1020,32 @@ mod tests {
         assert!(locker.session.view().offer_password);
         assert!(matches!(
             locker.session.view().status,
-            Some(Status::Fingerprint(
-                "Failed to match fingerprint",
-                Finger::Awaited
-            ))
+            Some(Status::Fingerprint(text, Finger::Awaited))
+                if text == otto_kit::t!("lock-status-no-match"),
         ));
+    }
+
+    /// The module asks for a named finger in its own language and with the
+    /// hardware's name in it. Neither belongs on the card.
+    #[test]
+    fn a_named_finger_is_asked_for_in_the_panel_s_words() {
+        let mut locker = Locker::new();
+        locker.said(Message::Info(
+            "Place your right index finger on Elan Fingerprint Sensor".to_string(),
+        ));
+
+        assert!(
+            locker.session.awaiting_finger(),
+            "a request for a finger puts the mark up"
+        );
+        assert_eq!(
+            locker.session.info.as_deref(),
+            Some(otto_kit::t!(
+                "lock-status-place-named-finger",
+                finger = otto_kit::t!("auth-finger-right-index")
+            )),
+            "the reader's own wording must not reach the card"
+        );
     }
 
     /// PAM is serialised: the password prompt does not exist until the reader

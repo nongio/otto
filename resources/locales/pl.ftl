@@ -758,9 +758,38 @@ lock-prompt-password = Hasło
 lock-status-authenticated = Uwierzytelniono
 
 # Status line under the fingerprint mark while the reader is waiting for a
-# finger. Shown only when the fingerprint module gave no message of its own.
-# One line, clipped at roughly 40 characters.
+# finger, when the module did not say which finger it wants. One line, clipped
+# at roughly 40 characters.
 lock-status-place-finger = Połóż palec na czytniku
+
+# As above, for a swipe reader rather than one you rest a finger on.
+lock-status-swipe-finger = Przesuń palec po czytniku
+
+# As the two above, but the reader named the finger it has enrolled.
+# { $finger } is one of the auth-finger-* names below, in the middle of the
+# sentence — reorder the line freely, but keep it to the same one clipped line.
+lock-status-place-named-finger = Połóż { $finger } na czytniku
+lock-status-swipe-named-finger = Przesuń { $finger } po czytniku
+
+# The ten fingers a fingerprint reader can ask for by name, as they appear
+# inside the two lines above and nowhere else. Lower case, no article: the
+# sentence supplies it. If the local grammar needs an article or a possessive
+# glued to the name, move it out of the sentence and into these instead.
+auth-finger-left-thumb = lewy kciuk
+auth-finger-left-index = lewy palec wskazujący
+auth-finger-left-middle = lewy palec środkowy
+auth-finger-left-ring = lewy palec serdeczny
+auth-finger-left-little = lewy mały palec
+auth-finger-right-thumb = prawy kciuk
+auth-finger-right-index = prawy palec wskazujący
+auth-finger-right-middle = prawy palec środkowy
+auth-finger-right-ring = prawy palec serdeczny
+auth-finger-right-little = prawy mały palec
+
+# Status line under the fingerprint mark when the reader looked at a finger and
+# did not recognise it. The reader asks again straight afterwards, so this is a
+# statement, not an instruction. One line.
+lock-status-no-match = Nie rozpoznano odcisku palca
 
 # Status line under the field when a password has been typed and submitted but
 # the fingerprint reader still holds the conversation, so nothing can be sent

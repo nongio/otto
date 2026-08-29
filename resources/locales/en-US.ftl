@@ -11,6 +11,7 @@
 settings-accent-colour = Accent color
 settings-colour-scheme = Color scheme
 settings-background-colour = Background color
+lock-status-no-match = Fingerprint not recognized
 
 
 ## Formats

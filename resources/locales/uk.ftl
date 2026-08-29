@@ -752,9 +752,38 @@ lock-prompt-password = Пароль
 lock-status-authenticated = Автентифікацію пройдено
 
 # Status line under the fingerprint mark while the reader is waiting for a
-# finger. Shown only when the fingerprint module gave no message of its own.
-# One line, clipped at roughly 40 characters.
+# finger, when the module did not say which finger it wants. One line, clipped
+# at roughly 40 characters.
 lock-status-place-finger = Прикладіть палець до сканера
+
+# As above, for a swipe reader rather than one you rest a finger on.
+lock-status-swipe-finger = Проведіть пальцем по сканеру
+
+# As the two above, but the reader named the finger it has enrolled.
+# { $finger } is one of the auth-finger-* names below, in the middle of the
+# sentence — reorder the line freely, but keep it to the same one clipped line.
+lock-status-place-named-finger = Торкніться сканера { $finger }
+lock-status-swipe-named-finger = Проведіть по сканеру { $finger }
+
+# The ten fingers a fingerprint reader can ask for by name, as they appear
+# inside the two lines above and nowhere else. Lower case, no article: the
+# sentence supplies it. If the local grammar needs an article or a possessive
+# glued to the name, move it out of the sentence and into these instead.
+auth-finger-left-thumb = лівим великим пальцем
+auth-finger-left-index = лівим вказівним пальцем
+auth-finger-left-middle = лівим середнім пальцем
+auth-finger-left-ring = лівим безіменним пальцем
+auth-finger-left-little = лівим мізинцем
+auth-finger-right-thumb = правим великим пальцем
+auth-finger-right-index = правим вказівним пальцем
+auth-finger-right-middle = правим середнім пальцем
+auth-finger-right-ring = правим безіменним пальцем
+auth-finger-right-little = правим мізинцем
+
+# Status line under the fingerprint mark when the reader looked at a finger and
+# did not recognise it. The reader asks again straight afterwards, so this is a
+# statement, not an instruction. One line.
+lock-status-no-match = Відбиток не розпізнано
 
 # Status line under the field when a password has been typed and submitted but
 # the fingerprint reader still holds the conversation, so nothing can be sent
