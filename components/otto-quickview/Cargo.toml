@@ -18,6 +18,7 @@ name = "otto-quickview"
 path = "src/main.rs"
 
 [dependencies]
+laye-rs.workspace = true
 otto-kit = { path = "../otto-kit" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -26,10 +27,6 @@ smithay-client-toolkit = { version = "0.19", default-features = false, features 
 libc = "0.2"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 
-[dependencies.laye-rs]
-git = "https://github.com/nongio/layers"
-tag = "v1.14.0"
-features = ["export-taffy"]
 
 [dependencies.skia-safe]
 version = "=0.93"
