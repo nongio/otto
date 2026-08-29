@@ -93,6 +93,7 @@ settings-icon-theme = Motyw ikon
 
 settings-group-window-switcher = Przełącznik okien
 settings-follow-cursor = Pokazuj na ekranie ze wskaźnikiem
+settings-switcher-colorize-icons = Zabarwiaj ikony jak w Docku
 
 settings-group-language = Język
 settings-preferred-languages = Preferowane języki
@@ -603,6 +604,8 @@ schema-login-greeter-args-description = Parametry przekazywane ekranowi logowani
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = Przełącznik podąża za wskaźnikiem
 schema-appswitcher-follow-cursor-description = Pokazuj przełącznik aplikacji na ekranie, na którym znajduje się wskaźnik.
+schema-appswitcher-colorize-icons-label = Zabarwiaj ikony przełącznika
+schema-appswitcher-colorize-icons-description = Zastosuj zabarwienie ikon Docka także w przełączniku aplikacji. Nic nie robi, dopóki zabarwienie Docka jest wyłączone.
 
 
 ## Late additions

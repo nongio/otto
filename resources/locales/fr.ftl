@@ -94,6 +94,7 @@ settings-icon-theme = Thème d’icônes
 
 settings-group-window-switcher = Alternateur de fenêtres
 settings-follow-cursor = Afficher sur l’écran du pointeur
+settings-switcher-colorize-icons = Teinter les icônes comme le Dock
 
 settings-group-language = Langue
 settings-preferred-languages = Langues préférées
@@ -594,6 +595,8 @@ schema-login-greeter-args-description = Arguments transmis à l’écran de conn
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = L’alternateur suit le pointeur
 schema-appswitcher-follow-cursor-description = Afficher l’alternateur d’applications sur la sortie où se trouve le pointeur.
+schema-appswitcher-colorize-icons-label = Teinter les icônes de l’alternateur
+schema-appswitcher-colorize-icons-description = Appliquer la teinte des icônes du Dock à l’alternateur d’applications. Sans effet tant que la teinte du Dock est désactivée.
 
 ## Late additions
 

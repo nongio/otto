@@ -93,6 +93,7 @@ settings-icon-theme = Тема значков
 
 settings-group-window-switcher = Переключатель окон
 settings-follow-cursor = Показывать на дисплее с указателем
+settings-switcher-colorize-icons = Тонировать значки как в Dock
 
 settings-group-language = Язык
 settings-preferred-languages = Предпочитаемые языки
@@ -596,6 +597,8 @@ schema-login-greeter-args-description = Аргументы, передаваем
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = Переключатель следует за указателем
 schema-appswitcher-follow-cursor-description = Показывать переключатель окон на выводе, где находится указатель.
+schema-appswitcher-colorize-icons-label = Тонировать значки переключателя
+schema-appswitcher-colorize-icons-description = Применять тонирование значков Dock и к переключателю окон. Ничего не делает, пока тонирование Dock выключено.
 
 
 ## Late additions

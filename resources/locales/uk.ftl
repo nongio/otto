@@ -94,6 +94,7 @@ settings-icon-theme = Тема піктограм
 
 settings-group-window-switcher = Перемикач вікон
 settings-follow-cursor = Показувати на дисплеї з вказівником
+settings-switcher-colorize-icons = Тонувати піктограми як у Dock
 
 settings-group-language = Мова
 settings-preferred-languages = Бажані мови
@@ -597,6 +598,8 @@ schema-login-greeter-args-description = Аргументи, які переда�
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = Перемикач слідує за вказівником
 schema-appswitcher-follow-cursor-description = Показувати перемикач вікон на виході, де перебуває вказівник.
+schema-appswitcher-colorize-icons-label = Тонувати піктограми перемикача
+schema-appswitcher-colorize-icons-description = Застосовувати тонування піктограм Dock і до перемикача вікон. Нічого не робить, доки тонування Dock вимкнено.
 
 
 ## Late additions

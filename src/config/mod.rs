@@ -763,17 +763,31 @@ pub struct AppSwitcherConfig {
     /// When false it always appears on the primary output.
     #[serde(default = "default_appswitcher_follow_cursor")]
     pub follow_cursor: bool,
+    /// Whether the switcher joins in the dock's icon tint (default: true).
+    ///
+    /// Only whether it participates — the colour and strength stay in
+    /// `[dock] colorize_color` / `colorize_intensity`, because one desktop has
+    /// one icon tint and a second colour here would only let the two drift
+    /// apart. With `[dock] colorize_icons = false` there is no tint anywhere,
+    /// so this setting has nothing to opt out of.
+    #[serde(default = "default_appswitcher_colorize_icons")]
+    pub colorize_icons: bool,
 }
 
 impl Default for AppSwitcherConfig {
     fn default() -> Self {
         Self {
             follow_cursor: default_appswitcher_follow_cursor(),
+            colorize_icons: default_appswitcher_colorize_icons(),
         }
     }
 }
 
 fn default_appswitcher_follow_cursor() -> bool {
+    true
+}
+
+fn default_appswitcher_colorize_icons() -> bool {
     true
 }
 

@@ -5,7 +5,8 @@ use layers::{
     types::{BlendMode, BorderRadius, PaintColor, Size},
 };
 
-use crate::workspaces::dock::BASE_ICON_SIZE;
+use crate::config::Config;
+use crate::workspaces::dock::{icon_color_filter, BASE_ICON_SIZE};
 
 use super::{
     model::AppSwitcherModel,
@@ -19,6 +20,22 @@ use super::{
 pub fn render_appswitcher(state: &AppSwitcherModel, view: &View<AppSwitcherModel>) -> LayerTree {
     let (w, h, available_icon_size, icon_padding, gap, _, _) = layout_metrics(state);
     let slot_size = available_icon_size + icon_padding * 2.0;
+    // The switcher mirrors the same untinted icon sources the dock does, so it
+    // has to re-apply the dock's tint to keep a themed desktop consistent —
+    // unless the user opted the switcher out. The colour and strength still
+    // come from `[dock]`; this only decides whether the tint reaches here.
+    let icon_filter = if Config::with(|c| c.appswitcher.colorize_icons) {
+        icon_color_filter()
+    } else {
+        None
+    };
+    // lay-rs reads a layer's `color_filter` only where it composites an
+    // offscreen surface — see `drawing/scene.rs`, the image-cached branch — so
+    // an uncached mirror silently drops the tint. The dock's mirror caches for
+    // its own reasons and gets the tint for free; this one has to ask, and only
+    // while there is a filter to apply, so an untinted switcher keeps painting
+    // straight through as it always has.
+    let cached = icon_filter.is_some();
 
     let apps_children: Vec<LayerTree> = state
         .apps
@@ -62,7 +79,9 @@ pub fn render_appswitcher(state: &AppSwitcherModel, view: &View<AppSwitcherModel
                 .anchor_point(layers::prelude::Point { x: 0.5, y: 0.5 })
                 .scale(layers::prelude::Point::new(scale, scale))
                 .replicate_node(Some(node_ref))
-                .picture_cached(false)
+                .color_filter(icon_filter.clone())
+                .picture_cached(cached)
+                .image_cache(cached)
                 .on_pointer_in(move |_: &Layer, _x, _y| {
                     view_ref.update_state(&AppSwitcherModel {
                         current_app: index,

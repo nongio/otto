@@ -324,6 +324,11 @@ bookmarks = [
 # Show the app switcher (cmd-tab panel) on the output the pointer is on
 # (default: true). When false it always appears on the primary output.
 follow_cursor = true
+# Let the dock's icon tint reach the switcher too (default: true), so a themed
+# desktop looks the same wherever an icon shows up. The colour and strength
+# stay in [dock] above — there is only one icon tint — and with
+# dock.colorize_icons = false there is no tint to opt out of.
+colorize_icons = true
 
 [workspaces]
 # Custom workspace names, written by the workspace selector when you rename a

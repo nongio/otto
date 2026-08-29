@@ -94,6 +94,7 @@ settings-icon-theme = Tema delle icone
 
 settings-group-window-switcher = Cambio finestra
 settings-follow-cursor = Mostra sul monitor del puntatore
+settings-switcher-colorize-icons = Colora le icone come il Dock
 
 settings-group-language = Lingua
 settings-preferred-languages = Lingue preferite
@@ -593,6 +594,8 @@ schema-login-greeter-args-description = Argomenti passati alla schermata di acce
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = Il selettore segue il puntatore
 schema-appswitcher-follow-cursor-description = Mostra il cambio finestra sul monitor in cui si trova il puntatore.
+schema-appswitcher-colorize-icons-label = Colora le icone del selettore
+schema-appswitcher-colorize-icons-description = Applica anche al cambio finestra la tinta delle icone del Dock. Non fa nulla finché la tinta del Dock è disattivata.
 
 ## Late additions
 

@@ -133,10 +133,25 @@ colorize_color = "#ffffff"
 colorize_intensity = 1.0
 ```
 
-Tints every dock icon toward a single colour — a monochrome dock. `intensity`
-blends between the original icon (`0.0`) and the flat tint (`1.0`). All three
-keys apply live, so dragging the tint strength in Settings repaints the dock as
-you drag.
+Tints every app icon toward a single colour — a monochrome dock. `intensity`
+blends between the original icon (`0.0`) and the flat tint (`1.0`). The tint
+follows the icons wherever they appear, so the app switcher matches the dock.
+All three keys apply live, so dragging the tint strength in Settings repaints
+the icons as you drag.
+
+If you want the tint on the dock but not on the cmd-tab panel, opt the switcher
+out:
+
+```toml
+[appswitcher]
+colorize_icons = false
+```
+
+That is only a yes-or-no for the switcher: the colour and strength stay in
+`[dock]`, since one desktop has one icon tint. With `dock.colorize_icons =
+false` there is no tint anywhere, so the key does nothing. The dock's drag
+ghost is part of the dock and follows the dock's setting. This key applies live
+too.
 
 ## Badges and progress
 

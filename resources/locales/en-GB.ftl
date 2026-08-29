@@ -94,6 +94,7 @@ settings-icon-theme = Icon theme
 
 settings-group-window-switcher = Window switcher
 settings-follow-cursor = Show on the pointer's display
+settings-switcher-colorize-icons = Tint icons like the dock
 
 settings-group-language = Language
 settings-preferred-languages = Preferred languages
@@ -591,6 +592,8 @@ schema-login-greeter-args-description = Arguments passed to the greeter.
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = Switcher follows the pointer
 schema-appswitcher-follow-cursor-description = Show the app switcher on the output the pointer is on.
+schema-appswitcher-colorize-icons-label = Tint switcher icons
+schema-appswitcher-colorize-icons-description = Let the dock's icon tint reach the app switcher. Does nothing while the dock's tint is off.
 
 
 ## Late additions

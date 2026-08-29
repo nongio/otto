@@ -23,7 +23,7 @@ use crate::{
     config::{Config, DockBookmark, DockPosition},
     shell::WindowElement,
     theme::theme_colors,
-    utils::{parse_hex_color, Observer},
+    utils::Observer,
     workspaces::{
         app_icons_manager::AppIconsManager, apps_info::ApplicationsInfo, utils::ContextMenuView,
         Application, WorkspacesModel,
@@ -32,7 +32,7 @@ use crate::{
 
 use super::{
     model::DockModel,
-    render::{setup_app_icon, setup_label, setup_miniwindow_icon},
+    render::{icon_color_filter, setup_app_icon, setup_label, setup_miniwindow_icon},
 };
 
 pub const BASE_ICON_SIZE: f32 = 300.0;
@@ -580,41 +580,7 @@ impl DockView {
     fn render_elements_layers(&self, available_icon_width: f32) {
         let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
         let dock_size_multiplier = Config::with(|c| c.dock.size.clamp(0.5, 2.0)) as f32;
-        let icon_color_filter = {
-            let dock_config = Config::with(|c| c.dock.clone());
-            if dock_config.colorize_icons {
-                let color = parse_hex_color(&dock_config.colorize_color);
-                let intensity = dock_config.colorize_intensity.clamp(0.0, 1.0) as f32;
-                let (r, g, b) = (color.r, color.g, color.b);
-                let (lr, lg, lb) = (0.2126_f32, 0.7152_f32, 0.0722_f32);
-                let inv = 1.0 - intensity;
-                let matrix = skia::ColorMatrix::new(
-                    inv + intensity * lr * r,
-                    intensity * lg * r,
-                    intensity * lb * r,
-                    0.0,
-                    0.0,
-                    intensity * lr * g,
-                    inv + intensity * lg * g,
-                    intensity * lb * g,
-                    0.0,
-                    0.0,
-                    intensity * lr * b,
-                    intensity * lg * b,
-                    inv + intensity * lb * b,
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                    1.0,
-                    0.0,
-                );
-                Some(skia::color_filters::matrix(&matrix, None))
-            } else {
-                None
-            }
-        };
+        let icon_color_filter = icon_color_filter();
         let state = self.get_state();
         let display_apps = self.display_entries(&state);
         let app_height = available_icon_width * (1.0 + 20.0 / 95.0);
@@ -2463,6 +2429,9 @@ impl DockView {
             .build()
             .unwrap();
         ghost.build_layer_tree(&ghost_tree);
+        // The ghost stands in for the icon that was just lifted out of the
+        // strip, so it carries the same tint the strip does.
+        ghost.set_color_filter(icon_color_filter());
         let _ = self.drag_overlay.add_sublayer(&ghost);
 
         // The ghost takes the pointer with it from the first frame, and keeps

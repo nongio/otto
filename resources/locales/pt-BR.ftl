@@ -94,6 +94,7 @@ settings-icon-theme = Tema de ícones
 
 settings-group-window-switcher = Alternador de janelas
 settings-follow-cursor = Mostrar no monitor do ponteiro
+settings-switcher-colorize-icons = Colorir ícones como no Dock
 
 settings-group-language = Idioma
 settings-preferred-languages = Idiomas preferidos
@@ -594,6 +595,8 @@ schema-login-greeter-args-description = Argumentos passados à tela de login.
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = O alternador segue o ponteiro
 schema-appswitcher-follow-cursor-description = Mostrar o alternador de aplicativos na saída em que o ponteiro está.
+schema-appswitcher-colorize-icons-label = Colorir ícones do alternador
+schema-appswitcher-colorize-icons-description = Aplicar a cor dos ícones do Dock também ao alternador de aplicativos. Não faz nada enquanto a cor do Dock está desligada.
 
 
 ## Late additions

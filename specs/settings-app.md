@@ -144,7 +144,8 @@ profiles — have no identifier and are not settable through this interface.
 Whether a setting applies live is a property of the compositor, not of the
 setting: today all of `dock.*` (size, position, autohide, magnification,
 magnification amount and spread, icon tint, tint colour and tint strength),
-`accent_color`, `background_image` and `background_color`, and the
+`appswitcher.colorize_icons`, `accent_color`, `background_image` and
+`background_color`, and the
 touchpad/pointer half of `input.*` (tap, tap-drag,
 drag lock, click method, disable-while-typing, natural scroll, left-handed,
 middle-click emulation, scroll speed, pointer acceleration speed and profile)

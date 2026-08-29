@@ -672,6 +672,13 @@ pub static SETTINGS: &[SettingSpec] = &[
         "Show the app switcher on the output the pointer is on.",
         Restart,
     ),
+    spec(
+        "appswitcher.colorize_icons",
+        Bool,
+        "Tint switcher icons",
+        "Let the dock's icon tint reach the app switcher. Does nothing while the dock's tint is off.",
+        Live,
+    ),
 ];
 
 #[cfg(test)]

@@ -94,6 +94,7 @@ settings-icon-theme = Symboldesign
 
 settings-group-window-switcher = Fensterumschalter
 settings-follow-cursor = Auf dem Bildschirm des Zeigers anzeigen
+settings-switcher-colorize-icons = Symbole wie im Dock einfärben
 
 settings-group-language = Sprache
 settings-preferred-languages = Bevorzugte Sprachen
@@ -590,6 +591,8 @@ schema-login-greeter-args-description = An den Anmeldebildschirm übergebene Arg
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = Umschalter folgt dem Zeiger
 schema-appswitcher-follow-cursor-description = Fensterumschalter auf dem Bildschirm anzeigen, auf dem sich der Zeiger befindet.
+schema-appswitcher-colorize-icons-label = Symbole im Umschalter einfärben
+schema-appswitcher-colorize-icons-description = Die Symbolfärbung des Docks auch im Fensterumschalter anwenden. Ohne Wirkung, solange die Dock-Färbung aus ist.
 
 ## Late additions
 

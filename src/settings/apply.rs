@@ -1,8 +1,9 @@
 //! Reconciling the running compositor with a changed configuration.
 //!
-//! `dock.*` and `input.*` are reconciled today, and the schema says so: a
-//! setting marked `live` here must genuinely take effect, and everything else
-//! is marked `restart` rather than being quietly accepted and ignored.
+//! `dock.*`, `input.*` and the switcher's tint opt-out are reconciled today,
+//! and the schema says so: a setting marked `live` here must genuinely take
+//! effect, and everything else is marked `restart` rather than being quietly
+//! accepted and ignored.
 
 use crate::state::{Backend, Otto};
 
@@ -23,6 +24,7 @@ pub fn is_applied_live(id: &str) -> bool {
             | "dock.colorize_icons"
             | "dock.colorize_color"
             | "dock.colorize_intensity"
+            | "appswitcher.colorize_icons"
             | "accent_color"
             | "background_image"
             | "background_color"
@@ -60,13 +62,24 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
         // magnification at the pointer's current position, which is where the
         // genie values are read. So every dock setting that only changes how
         // the strip is drawn lands with the same call.
-        "dock.size"
-        | "dock.genie_scale"
-        | "dock.genie_span"
-        | "dock.colorize_icons"
-        | "dock.colorize_color"
-        | "dock.colorize_intensity" => {
+        "dock.size" | "dock.genie_scale" | "dock.genie_span" => {
             state.workspaces.dock.render_dock();
+            Ok(())
+        }
+        // The tint belongs to the icons rather than to the dock: the app
+        // switcher mirrors the same sources and applies the same filter, so
+        // both have to be redrawn. Neither reads the tint from view state, so
+        // the switcher needs a forced render rather than a state update.
+        "dock.colorize_icons" | "dock.colorize_color" | "dock.colorize_intensity" => {
+            state.workspaces.dock.render_dock();
+            state.workspaces.app_switcher.rerender();
+            Ok(())
+        }
+        // Whether the switcher joins in that tint. The dock is unaffected —
+        // its own icons, and its drag ghost, follow `dock.colorize_icons` —
+        // so only the switcher has to be redrawn.
+        "appswitcher.colorize_icons" => {
+            state.workspaces.app_switcher.rerender();
             Ok(())
         }
         "dock.position" => {

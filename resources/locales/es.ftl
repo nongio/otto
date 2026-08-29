@@ -94,6 +94,7 @@ settings-icon-theme = Tema de iconos
 
 settings-group-window-switcher = Selector de ventanas
 settings-follow-cursor = Mostrar en la pantalla del puntero
+settings-switcher-colorize-icons = Teñir los iconos como el Dock
 
 settings-group-language = Idioma
 settings-preferred-languages = Idiomas preferidos
@@ -593,6 +594,8 @@ schema-login-greeter-args-description = Argumentos que se pasan a la pantalla de
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = El selector sigue al puntero
 schema-appswitcher-follow-cursor-description = Muestra el selector de aplicaciones en la pantalla donde está el puntero.
+schema-appswitcher-colorize-icons-label = Teñir los iconos del selector
+schema-appswitcher-colorize-icons-description = Aplica también al selector de aplicaciones el tinte de iconos del Dock. No hace nada mientras el tinte del Dock está desactivado.
 
 ## Late additions
 
