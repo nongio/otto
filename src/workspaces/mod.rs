@@ -2837,7 +2837,12 @@ impl Workspaces {
     /// Shrink `zone` so it stops at the dock, whichever screen edge the dock is
     /// docked to. A no-op when the dock has no geometry yet.
     pub fn subtract_dock(&self, zone: &mut Rectangle<i32, smithay::utils::Logical>) {
-        subtract_dock_rect(self.dock.position(), self.get_dock_geometry(), zone);
+        subtract_dock_rect(
+            self.dock.position(),
+            self.get_dock_geometry(),
+            self.dock.is_autohide_enabled(),
+            zone,
+        );
     }
 
     /// Determine the initial placement of a new window within the workspace.
@@ -6515,8 +6520,17 @@ const MAX_DOCK_ZONE_FRACTION: f32 = 0.5;
 pub(crate) fn subtract_dock_rect(
     position: crate::config::DockPosition,
     dock_geom: Rectangle<i32, smithay::utils::Logical>,
+    autohide: bool,
     zone: &mut Rectangle<i32, smithay::utils::Logical>,
 ) {
+    // An autohidden dock reserves nothing — that is what autohide means. It
+    // also cannot be measured reliably: `get_dock_geometry` reads the bar's
+    // live bounds, which mid-slide are wherever the animation has got to. A
+    // window is placed once and never re-placed, so one mapped while the dock
+    // was still on its way out would keep a dock-sized gap beside it for good.
+    if autohide {
+        return;
+    }
     if dock_geom.size.w <= 0 || dock_geom.size.h <= 0 || zone.size.w <= 0 || zone.size.h <= 0 {
         return;
     }
@@ -6579,21 +6593,42 @@ mod dock_zone_tests {
         Rectangle::new((1820, 0).into(), (100, 1080).into())
     }
 
+    /// Autohide means the dock is not there: it must not reserve a strip that
+    /// initial window placement would then leave empty for the window's whole
+    /// life. Regression — placement kept a dock-sized gap beside every window
+    /// on a config with `autohide = true`.
+    #[test]
+    fn an_autohidden_dock_reserves_nothing() {
+        for (position, geom) in [
+            (DockPosition::Bottom, bottom_dock()),
+            (DockPosition::Left, left_dock()),
+            (DockPosition::Right, right_dock()),
+        ] {
+            let mut zone = screen();
+            subtract_dock_rect(position, geom, true, &mut zone);
+            assert_eq!(
+                zone,
+                screen(),
+                "{position:?} dock reserved space while autohidden"
+            );
+        }
+    }
+
     #[test]
     fn bottom_dock_takes_only_its_own_height() {
         let mut zone = screen();
-        subtract_dock_rect(DockPosition::Bottom, bottom_dock(), &mut zone);
+        subtract_dock_rect(DockPosition::Bottom, bottom_dock(), false, &mut zone);
         assert_eq!(zone, Rectangle::new((0, 0).into(), (1920, 980).into()));
     }
 
     #[test]
     fn side_docks_take_only_their_own_width() {
         let mut zone = screen();
-        subtract_dock_rect(DockPosition::Left, left_dock(), &mut zone);
+        subtract_dock_rect(DockPosition::Left, left_dock(), false, &mut zone);
         assert_eq!(zone, Rectangle::new((100, 0).into(), (1820, 1080).into()));
 
         let mut zone = screen();
-        subtract_dock_rect(DockPosition::Right, right_dock(), &mut zone);
+        subtract_dock_rect(DockPosition::Right, right_dock(), false, &mut zone);
         assert_eq!(zone, Rectangle::new((0, 0).into(), (1820, 1080).into()));
     }
 
@@ -6607,7 +6642,7 @@ mod dock_zone_tests {
     fn stale_dock_rect_from_the_previous_edge_never_collapses_the_zone() {
         // Bottom -> Left, still holding the bottom band's rect.
         let mut zone = screen();
-        subtract_dock_rect(DockPosition::Left, bottom_dock(), &mut zone);
+        subtract_dock_rect(DockPosition::Left, bottom_dock(), false, &mut zone);
         assert_eq!(
             zone,
             screen(),
@@ -6616,7 +6651,7 @@ mod dock_zone_tests {
 
         // Bottom -> Right.
         let mut zone = screen();
-        subtract_dock_rect(DockPosition::Right, bottom_dock(), &mut zone);
+        subtract_dock_rect(DockPosition::Right, bottom_dock(), false, &mut zone);
         assert_eq!(
             zone,
             screen(),
@@ -6625,7 +6660,7 @@ mod dock_zone_tests {
 
         // Left -> Bottom, still holding the left band's rect.
         let mut zone = screen();
-        subtract_dock_rect(DockPosition::Bottom, left_dock(), &mut zone);
+        subtract_dock_rect(DockPosition::Bottom, left_dock(), false, &mut zone);
         assert_eq!(
             zone,
             screen(),
@@ -6634,7 +6669,7 @@ mod dock_zone_tests {
 
         // Right -> Bottom.
         let mut zone = screen();
-        subtract_dock_rect(DockPosition::Bottom, right_dock(), &mut zone);
+        subtract_dock_rect(DockPosition::Bottom, right_dock(), false, &mut zone);
         assert_eq!(
             zone,
             screen(),
@@ -6648,7 +6683,7 @@ mod dock_zone_tests {
         // dock band is on the primary.
         let mut zone = Rectangle::new((1920, 0).into(), (1920, 1080).into());
         let before = zone;
-        subtract_dock_rect(DockPosition::Left, left_dock(), &mut zone);
+        subtract_dock_rect(DockPosition::Left, left_dock(), false, &mut zone);
         assert_eq!(zone, before);
     }
 
@@ -6658,6 +6693,7 @@ mod dock_zone_tests {
         subtract_dock_rect(
             DockPosition::Bottom,
             Rectangle::new((0, 0).into(), (0, 0).into()),
+            false,
             &mut zone,
         );
         assert_eq!(zone, screen());
