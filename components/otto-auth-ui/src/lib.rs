@@ -18,6 +18,7 @@
 
 mod appearance;
 mod panel;
+pub mod reader;
 mod user;
 
 pub use appearance::Appearance;

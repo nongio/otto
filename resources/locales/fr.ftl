@@ -700,9 +700,25 @@ greeter-error-session-did-not-start = { $session } n’a pas démarré
 greeter-status-authenticated = Authentifié
 
 # Status line under the fingerprint mark while the reader is waiting for a
-# finger. Shown only when the fingerprint module gave no message of its own.
-# One line, clipped at roughly 40 characters.
+# finger, when the module did not say which finger it wants. One line, clipped
+# at roughly 40 characters.
 greeter-status-place-finger = Poser le doigt sur le lecteur
+
+# As above, for a swipe reader rather than one you rest a finger on.
+greeter-status-swipe-finger = Faire glisser le doigt sur le lecteur
+
+# As the two above, but the reader named the finger it has enrolled.
+# { $finger } is one of the auth-finger-* names, in the middle of the sentence
+# — reorder the line freely, but keep it to the same one clipped line. The
+# lock screen says the same thing in lock-status-*-named-finger; the two are
+# separate keys because the two screens are separate places.
+greeter-status-place-named-finger = Poser { $finger } sur le lecteur
+greeter-status-swipe-named-finger = Faire glisser { $finger } sur le lecteur
+
+# Status line under the fingerprint mark when the reader looked at a finger and
+# did not recognise it. The reader asks again straight afterwards, so this is a
+# statement, not an instruction. One line.
+greeter-status-no-match = Empreinte non reconnue
 
 # Status line under the field when a password has been typed and submitted but
 # the fingerprint reader still holds the conversation, so nothing can be sent

@@ -15,7 +15,9 @@ mod greetd;
 mod session;
 
 use greetd::{AuthMessageType, Client, Request, Response};
-use otto_auth_ui::{Action, Appearance, Field, Finger, Panel, PowerAction, Status, User, View};
+use otto_auth_ui::{
+    reader, Action, Appearance, Field, Finger, Panel, PowerAction, Status, User, View,
+};
 use otto_kit::{surfaces::LayerShellSurface, App, AppContext, AppRunner};
 use session::Session;
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
@@ -365,15 +367,32 @@ impl Greeter {
                 // acknowledgement — which is also what lets the PAM module
                 // carry on, so the message is on screen before that happens.
                 AuthMessageType::Info => {
-                    self.finger_pending |= mentions_fingerprint(&auth_message);
-                    self.info = Some(auth_message);
+                    // greetd relays the module's own words, which are in the
+                    // module's locale rather than the panel's — and greetd's
+                    // environment is barer than a session's, so they are
+                    // usually English. A request for a finger is said again
+                    // from the catalogues; the rest keeps its wording.
+                    match reader::finger_request(&auth_message) {
+                        Some(request) => {
+                            self.finger_pending = true;
+                            self.info = Some(reader::request_line(request, "greeter"));
+                        }
+                        None => {
+                            self.finger_pending |= reader::mentions_fingerprint(&auth_message);
+                            self.info = Some(auth_message);
+                        }
+                    }
                     self.send(
                         Asked::Auth,
                         Request::PostAuthMessageResponse { response: None },
                     );
                 }
                 AuthMessageType::Error => {
-                    self.error = Some(auth_message);
+                    self.error = Some(if reader::is_no_match(&auth_message) {
+                        reader::no_match_line("greeter")
+                    } else {
+                        auth_message
+                    });
                     self.send(
                         Asked::Auth,
                         Request::PostAuthMessageResponse { response: None },
@@ -768,15 +787,6 @@ impl Greeter {
             }
         }
     }
-}
-
-/// Whether a PAM message is about a fingerprint reader. The wording comes from
-/// `pam_fprintd` and varies with locale and reader, so this matches loosely.
-fn mentions_fingerprint(message: &str) -> bool {
-    let message = message.to_lowercase();
-    ["finger", "fprint", "biometric"]
-        .iter()
-        .any(|needle| message.contains(needle))
 }
 
 impl App for Greeter {
@@ -1471,12 +1481,45 @@ mod tests {
         assert!(
             matches!(
                 greeter.view().status,
-                Some(Status::Fingerprint(
-                    "Failed to match fingerprint",
-                    Finger::Awaited
-                ))
+                Some(Status::Fingerprint(text, Finger::Awaited))
+                    if text == reader::no_match_line("greeter"),
             ),
             "the miss should be reported without retiring the mark"
+        );
+    }
+
+    /// greetd relays the module's request for a finger word for word, hardware
+    /// name and all, in whatever language the module was running in.
+    #[test]
+    fn a_named_finger_is_asked_for_in_the_panel_s_words() {
+        let mut greeter = greeter();
+        greeter.conversation = true;
+        greeter.handle(
+            Asked::Auth,
+            Response::AuthMessage {
+                auth_message_type: AuthMessageType::Info,
+                auth_message: "Place your right index finger on Elan Fingerprint Sensor"
+                    .to_string(),
+            },
+        );
+
+        assert!(
+            greeter.awaiting_finger(),
+            "a request for a finger puts the mark up"
+        );
+        assert_eq!(
+            greeter.info.as_deref(),
+            Some(
+                reader::request_line(
+                    reader::FingerRequest {
+                        swipe: false,
+                        finger: Some(reader::FingerName::RightIndex),
+                    },
+                    "greeter",
+                )
+                .as_str()
+            ),
+            "the reader's own wording must not reach the card"
         );
     }
 

@@ -206,6 +206,16 @@ prefix followed by a JSON payload, in both directions.
   catalogues. The greeter runs before any user session exists, so the settings
   portal is usually absent and it takes its language from its own environment
   ([localisation](./localisation.md)).
+- Two things `pam_fprintd` says are exceptions, for the reason the greeter is
+  most exposed to: greetd relays the module's words unchanged, and greetd's
+  environment is barer than a session's, so they arrive in English however the
+  card is set. Its request for a finger and its report of a finger it did not
+  recognise are choices from a fixed table rather than free text, so the
+  greeter reads the finger out of the request and says both from Otto's
+  catalogues, dropping the reader's model name. Anything else the module
+  volunteers is guidance, and keeps its own words. The lock screen does the
+  same ([lock screen](./lock-screen.md)); the parsing and the ten finger names
+  are shared, in `components/otto-auth-ui`.
 - greetd replies with `auth_message`, `success`, or `error`:
   - `auth_message` of type `secret` — prompt, input masked.
   - `auth_message` of type `visible` — prompt, input echoed.

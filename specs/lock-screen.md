@@ -184,7 +184,9 @@ user. Any other `ext-session-lock-v1` client works too.
   request for a finger, and its report of a finger it did not recognise. The
   locker reads the finger out of the request and says both again from Otto's
   catalogues, dropping the reader's model name. Anything else the module
-  volunteers is guidance, and keeps the module's own words.
+  volunteers is guidance, and keeps the module's own words. The greeter does
+  the same ([login mode](./login-mode.md)); the parsing and the ten finger
+  names are shared, in `components/otto-auth-ui`.
 - The service file is `components/otto-lock/otto-lock.pam`, installed as
   `/etc/pam.d/otto-lock`. Without it PAM falls through to `other`, which denies
   everything, so a missing file would lock the user out of their own session;
