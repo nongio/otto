@@ -339,6 +339,11 @@ struct Browser {
     /// those reads finish, so it is re-derived — and scrolled into view —
     /// once they do.
     pending_restore: bool,
+    /// A row to land the selection on once the reload that removed the old one
+    /// has landed: which pane, and the name to look for. Set by a delete —
+    /// the successor is chosen from the listing that is still on screen, and
+    /// acted on against the one that replaces it.
+    pending_pick: Option<(usize, Option<String>)>,
     /// Locations left behind by Back, most recent last. Forward pops them back.
     back: Vec<Location>,
     /// Locations left behind by Forward, most recent last. Back pops them back.
@@ -524,6 +529,7 @@ impl Browser {
             rename: None,
             typeahead: None,
             pending_restore: false,
+            pending_pick: None,
             back: Vec::new(),
             forward: Vec::new(),
             nav_pressed: None,
@@ -1041,6 +1047,16 @@ impl Browser {
     /// If it is a directory, push a column for it; if not, truncate the stack
     /// so nothing stale hangs to the right.
     fn select(&mut self, depth: usize, index: usize) {
+        self.select_at(depth, index, true);
+    }
+
+    /// [`Self::select`], with the Back entry optional.
+    ///
+    /// A delete that moves the selection to the next row lands here without
+    /// one: the user did not navigate anywhere, and a Back step that returned
+    /// to a listing holding a file that no longer exists would be a step into
+    /// nothing.
+    fn select_at(&mut self, depth: usize, index: usize, history: bool) {
         if depth >= self.columns.len() {
             return;
         }
@@ -1052,7 +1068,7 @@ impl Browser {
         // A directory descent is a real navigation, worth a Back entry;
         // recorded here, before the stack changes underneath it.
         let descending = entry.is_dir && self.mode == ViewMode::Columns;
-        if descending {
+        if descending && history {
             self.record_location();
         }
 
@@ -2880,7 +2896,14 @@ impl Browser {
     }
 
     /// Move the current selection to Trash.
+    ///
+    /// The selection does not go with it: it moves to the row that takes the
+    /// deleted one's place, so a run of deletes is one key held down rather
+    /// than a delete-then-reach-for-the-mouse each time. Which row that is has
+    /// to be decided *here*, against the listing still on screen — once the
+    /// re-read lands there is nothing left to measure the gap from.
     fn move_selected_to_trash(&mut self) {
+        let depth = self.active.min(self.columns.len().saturating_sub(1));
         let paths: Vec<PathBuf> = self
             .selected_entries()
             .into_iter()
@@ -2889,12 +2912,88 @@ impl Browser {
         if paths.is_empty() {
             return;
         }
+        let successor = self.successor_after_delete(depth);
         let result = model::move_to_trash(&paths);
         let summary = result.summary();
         self.status = (!summary.is_empty()).then_some(summary);
         Self::play_op_sound(&result);
         self.record_undo(otto_kit::t!("files-undo-delete"), result.changes);
+
+        // By name, before the re-read: the selection is held by name, so this
+        // is already the right answer for `resync_cursors` when the listing
+        // lands. `settle_pick` then does the rest — the child column a newly
+        // selected directory wants, or the walk out of a folder left empty.
+        let column = &mut self.columns[depth];
+        column.selection.clear();
+        column.cursor = None;
+        column.anchor = None;
+        if let Some(name) = successor.clone() {
+            column.selection.insert(name);
+        }
+        self.pending_pick = Some((depth, successor));
         self.reload_all();
+        self.dirty = true;
+    }
+
+    /// Which entry should hold the selection once everything selected in pane
+    /// `depth` is gone: the first survivor below the deleted block, and
+    /// failing that the nearest one above it. `None` when the pane is being
+    /// emptied outright.
+    fn successor_after_delete(&self, depth: usize) -> Option<String> {
+        let doomed = &self.columns[depth].selection;
+        let entries = self.visible(depth);
+        let last = entries.iter().rposition(|e| doomed.contains(&e.name))?;
+        entries
+            .iter()
+            .skip(last + 1)
+            .find(|e| !doomed.contains(&e.name))
+            .or_else(|| {
+                entries[..last]
+                    .iter()
+                    .rev()
+                    .find(|e| !doomed.contains(&e.name))
+            })
+            .map(|e| e.name.clone())
+    }
+
+    /// Land the selection a delete set aside, once the re-read has arrived.
+    ///
+    /// Doing it through `select_at` rather than by hand is what keeps Miller
+    /// view consistent: a directory taking the selection gets its child column
+    /// the same way a click on it would. A pane left with nothing in it hands
+    /// the keyboard back to its parent, where the folder itself is selected —
+    /// there is nowhere else in an empty directory to stand.
+    fn settle_pick(&mut self) {
+        if self.pending_pick.is_none() || self.loading() {
+            return;
+        }
+        let Some((depth, name)) = self.pending_pick.take() else {
+            return;
+        };
+        if depth >= self.columns.len() {
+            return;
+        }
+        let index = name
+            .as_deref()
+            .and_then(|name| self.visible(depth).iter().position(|e| e.name == name));
+        if let Some(index) = index {
+            self.select_at(depth, index, false);
+            self.reveal_cursor();
+            self.dirty = true;
+            return;
+        }
+        if !self.visible(depth).is_empty() || depth == 0 {
+            return;
+        }
+        // Empty, and there is a parent to go back to. Miller keeps the empty
+        // pane on screen — it is the folder the parent has selected, and the
+        // stack shows what is selected; the other two views show one directory
+        // at a time, so the emptied one is dropped instead.
+        if self.mode != ViewMode::Columns {
+            self.columns.truncate(depth);
+        }
+        self.active = depth - 1;
+        self.reveal_pane(self.active);
         self.dirty = true;
     }
 
@@ -3604,6 +3703,9 @@ impl App for FilesApp {
             browser.sync_scroll_metrics();
             // Needs those metrics, so it runs here rather than beside the poll.
             browser.settle_restore();
+            // Same reason, and after it: a Back step and a delete never land
+            // in the same frame, and both want the metrics that just landed.
+            browser.settle_pick();
             perf::mark(perf::Stage::Prep, t_prep);
             let t_frame = perf::now();
             let frame = browser.frame(&theme, &title);
@@ -6943,5 +7045,144 @@ mod watch_tests {
         let moved = settle(&mut browser, |b| b.current_path() != child);
         assert!(moved, "the window stayed on a directory that is gone");
         assert_eq!(browser.current_path(), dir.0);
+    }
+}
+
+/// Where the selection goes when what held it is deleted.
+#[cfg(test)]
+mod delete_tests {
+    use super::*;
+
+    /// A directory of real files, swept up on drop — `move_to_trash` works on
+    /// the filesystem, so these cannot be faked.
+    struct Tmp(PathBuf);
+
+    impl Tmp {
+        fn holding(names: &[&str]) -> Self {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+            let path = std::env::temp_dir().join(format!(
+                "otto-files-delete-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).expect("temp dir");
+            for name in names {
+                std::fs::write(path.join(name), b"x").expect("temp file");
+            }
+            Self(path)
+        }
+    }
+
+    impl Drop for Tmp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Drive the browser until every pane has finished reading, then land
+    /// whatever the last operation set aside — the two steps the frame loop
+    /// takes between one input and the next.
+    fn settle(browser: &mut Browser) {
+        for _ in 0..1000 {
+            browser.poll();
+            if !browser.loading() {
+                browser.settle_pick();
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        panic!("the listing never landed");
+    }
+
+    fn browser_over(names: &[&str]) -> (Browser, Tmp) {
+        // Keeps the deletes out of the developer's own Trash.
+        let _ = model::test_data_home();
+        let dir = Tmp::holding(names);
+        let mut browser = Browser::new(dir.0.clone());
+        browser.mode = ViewMode::List;
+        settle(&mut browser);
+        (browser, dir)
+    }
+
+    fn selected(browser: &Browser) -> Vec<String> {
+        browser.columns[browser.active]
+            .selection
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    fn row_of(browser: &Browser, name: &str) -> usize {
+        browser
+            .visible(browser.active)
+            .iter()
+            .position(|entry| entry.name == name)
+            .unwrap_or_else(|| panic!("{name} is not in the listing"))
+    }
+
+    #[test]
+    fn the_next_row_takes_the_selection() {
+        let (mut browser, _dir) = browser_over(&["a.txt", "b.txt", "c.txt"]);
+        browser.select(0, row_of(&browser, "b.txt"));
+
+        browser.move_selected_to_trash();
+        settle(&mut browser);
+
+        assert_eq!(selected(&browser), vec!["c.txt".to_string()]);
+        assert_eq!(browser.columns[0].cursor, Some(row_of(&browser, "c.txt")));
+    }
+
+    /// Nothing below the deleted row, so the selection steps back up rather
+    /// than being left nowhere.
+    #[test]
+    fn deleting_the_last_row_falls_back_to_the_one_above() {
+        let (mut browser, _dir) = browser_over(&["a.txt", "b.txt", "c.txt"]);
+        browser.select(0, row_of(&browser, "c.txt"));
+
+        browser.move_selected_to_trash();
+        settle(&mut browser);
+
+        assert_eq!(selected(&browser), vec!["b.txt".to_string()]);
+    }
+
+    /// A multi-selection skips its whole run: the survivor below the *last*
+    /// deleted row is the one that takes over.
+    #[test]
+    fn a_run_of_rows_hands_over_to_the_first_survivor() {
+        let (mut browser, _dir) = browser_over(&["a.txt", "b.txt", "c.txt", "d.txt"]);
+        browser.select(0, row_of(&browser, "b.txt"));
+        browser.extend_select(0, row_of(&browser, "c.txt"));
+
+        browser.move_selected_to_trash();
+        settle(&mut browser);
+
+        assert_eq!(selected(&browser), vec!["d.txt".to_string()]);
+    }
+
+    /// The last file in a folder: there is no row left to stand on, so the
+    /// keyboard goes back to the pane holding the folder itself.
+    #[test]
+    fn emptying_a_folder_hands_the_keyboard_to_its_parent() {
+        let _ = model::test_data_home();
+        let dir = Tmp::holding(&[]);
+        std::fs::create_dir_all(dir.0.join("sub")).expect("subdir");
+        std::fs::write(dir.0.join("sub/only.txt"), b"x").expect("file");
+
+        let mut browser = Browser::new(dir.0.clone());
+        browser.mode = ViewMode::Columns;
+        settle(&mut browser);
+        browser.select(0, row_of(&browser, "sub"));
+        settle(&mut browser);
+        assert_eq!(browser.columns.len(), 2, "the child column is up");
+        browser.active = 1;
+        browser.select(1, 0);
+
+        browser.move_selected_to_trash();
+        settle(&mut browser);
+
+        assert_eq!(browser.active, 0, "the parent has the keyboard");
+        assert_eq!(selected(&browser), vec!["sub".to_string()]);
     }
 }

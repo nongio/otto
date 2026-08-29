@@ -413,6 +413,14 @@ progress, and can cancel it.
   filesystems in the name of trashing it.
 - **Delete permanently** — always confirmed, always says it cannot be undone,
   and is not undoable.
+- **The selection survives a delete.** It moves to the entry that takes the
+  deleted one's place: the first survivor below the deleted run, and failing
+  that the nearest one above it, so holding Delete clears a run of files
+  without reaching for the mouse between each. Which entry that is is decided
+  against the listing on screen, before the re-read replaces it. A pane left
+  with nothing in it hands the keyboard back to its parent, where the folder
+  itself is selected; in column view the empty pane stays on screen, since it
+  is what the parent's selection points at.
 - **Undo** — a stack, within the session, 32 operations deep. A move is undone
   by moving back; a trash by restoring from trash; a copy by taking away what
   was created; a rename by renaming back; a new folder by removing it if still
