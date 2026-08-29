@@ -33,7 +33,23 @@ D-Bus client that reads a described schema, sets values, and observes changes.
   the arrows move between panes and the selection follows immediately, Home and
   End go to the ends. Tab again moves on to the pane's own controls, each its
   own stop, where Space activates a switch or a button and the arrows move a
-  slider. A shortcut line is the one control not reachable yet.
+  slider.
+- Every row a pane shows is described and, unless it is a row that only
+  displays a value, stopped on — whether or not it changes a compositor
+  setting. A row that is only part of the pane's own state (a display's
+  active or primary switch, its position fields, the buttons that add or
+  remove a virtual display) is reached and operated exactly like a row bound
+  to a setting.
+- A row of push buttons is one stop and one described control *per button*,
+  each at the rectangle its button is drawn at, so pointing at a described
+  button lands on that button.
+- Activating a toggle from the keyboard does what clicking it does, including
+  for a toggle the compositor has no setting for. Activating a text row starts
+  an in-place edit with the caret at the end of the current text.
+- A shortcut line is three controls on one line rather than one, so it is
+  neither described nor stopped on yet: announcing it as a single thing would
+  misdescribe what is there. A pop-up can be focused but not opened from the
+  keyboard, because its menu has no keyboard navigation.
 
 ## Non-Goals
 
@@ -306,6 +322,13 @@ timeout above has to exist before the live path does.*
 An output that disconnects while the pane is open disappears from the canvas;
 the configuration recorded for it is retained so reconnecting restores it.
 
+The arrangement canvas itself is drawn by the pane rather than as a row, so it
+is neither a keyboard stop nor described to assistive technologies: dragging an
+output's rectangle is the one thing in the pane that needs a pointer. Every
+other control the pane shows — including a display's active and primary
+switches, its position fields and the virtual-display buttons — is reachable
+from the keyboard.
+
 Per-output settings are stored against a stable identity for that display, so
 they follow the display rather than the connector it happens to occupy.
 
@@ -383,6 +406,14 @@ user-facing setting means also placing it in a pane.
 **Display mode changes are confirmed, position changes are not.** A bad mode
 can leave a display showing nothing, and the user cannot then click to undo it.
 A bad position is always recoverable.
+
+**Keyboard reach follows the rows, not the settings.** Deriving the focus ring
+and the described tree from a row's compositor setting made every row without
+one invisible: in Displays, Tab jumped from the refresh-rate pop-up straight to
+the scale slider, past the active and primary switches, the position fields and
+the virtual-display buttons. A row is now identified by whatever names it — its
+setting where it has one, its label otherwise — so what the pane draws and what
+the keyboard and a screen reader can reach are the same list.
 
 **Wallpaper is excluded.** It needs file browsing, thumbnails, per-output
 assignment and scaling modes — a different application with a different shape.

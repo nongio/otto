@@ -681,8 +681,67 @@ fn open_file_picker(id: &'static str) {
 /// range its value means anything against. The label is the row's own, with the
 /// detail line as the description — which is where the schema's help text ends
 /// up, so a screen reader reads what the pane shows in small print.
-fn describe_row(tree: &mut A11yTree, id: &'static str, row: &model::Row, bounds: Rect) {
-    let focus = view::pane_focus_id(id);
+/// One place the keyboard can stop inside the pane.
+struct Stop {
+    focus: FocusId,
+    /// Where the stop is drawn, in window coordinates: what the focus ring is
+    /// painted around and what a screen reader is told to point at.
+    bounds: Rect,
+    /// The push button this stop is, for a row that carries several.
+    button: Option<&'static str>,
+}
+
+/// The row the keyboard is on, and which of its stops.
+struct Focused {
+    /// The setting a change should reach, where the row is bound to one.
+    id: Option<&'static str>,
+    label: &'static str,
+    control: model::Control,
+    /// The push button the keyboard is on, for a row with several.
+    button: Option<&'static str>,
+}
+
+impl Focused {
+    /// What the row is keyed by everywhere it is not a served setting.
+    fn handle(&self) -> &'static str {
+        self.id.unwrap_or(self.label)
+    }
+}
+
+/// Every stop a row carries.
+///
+/// One for an ordinary control; one per button for a button row, because a row
+/// holding an Add beside a Remove is two things to do and reaching only the
+/// first leaves the second to the pointer; none at all for a row with nothing
+/// to operate.
+///
+/// Declaring the focus ring, finding what the keyboard is on, scrolling to it
+/// and describing it to a screen reader all walk this list, so a stop cannot
+/// exist for one of them and not the others.
+fn row_stops(row: &model::Row, rect: Rect) -> Vec<Stop> {
+    if !row.focusable() {
+        return Vec::new();
+    }
+    match &row.control {
+        model::Control::Button(labels) => labels
+            .iter()
+            .zip(view::row_button_rects(row, rect))
+            .map(|(button, bounds)| Stop {
+                focus: view::button_focus_id(row.handle(), button),
+                bounds,
+                button: Some(button),
+            })
+            .collect(),
+        _ => vec![Stop {
+            focus: view::pane_focus_id(row.handle()),
+            bounds: rect,
+            button: None,
+        }],
+    }
+}
+
+fn describe_row(tree: &mut A11yTree, row: &model::Row, bounds: Rect) {
+    let focus = view::pane_focus_id(row.handle());
     let label = row.label;
     let detail = row.detail.clone();
 
@@ -742,14 +801,22 @@ fn describe_row(tree: &mut A11yTree, id: &'static str, row: &model::Row, bounds:
             });
         }
         model::Control::Button(labels) => {
-            tree.control(focus, bounds, Role::Button, true, |node| {
-                node.set_label(match labels.first() {
-                    Some(button) => format!("{label}: {button}"),
-                    None => label.to_owned(),
-                });
-                node.add_action(Action::Click);
-                describe(node);
-            });
+            // One node per button, exactly as the keyboard has one stop per
+            // button. Named "<row>: <button>" so "Add" is heard as the Add of
+            // this row rather than as a loose word.
+            for (button, rect) in labels.iter().zip(view::row_button_rects(row, bounds)) {
+                tree.control(
+                    view::button_focus_id(row.handle(), button),
+                    rect,
+                    Role::Button,
+                    true,
+                    |node| {
+                        node.set_label(format!("{label}: {button}"));
+                        node.add_action(Action::Click);
+                        describe(node);
+                    },
+                );
+            }
         }
         model::Control::Value(value) => {
             tree.control(focus, bounds, Role::Label, false, |node| {
@@ -964,7 +1031,8 @@ impl SettingsApp {
         let rows: Vec<(FocusId, Rect)> = settings
             .pane_rows(offset)
             .into_iter()
-            .filter_map(|(row, rect)| Some((view::pane_focus_id(row.id?), rect)))
+            .flat_map(|(row, rect)| row_stops(row, rect))
+            .map(|stop| (stop.focus, stop.bounds))
             .collect();
 
         // The sidebar is one stop, not eight: a list is entered with Tab and
@@ -1037,11 +1105,11 @@ impl SettingsApp {
 
         let mut scroll = self.scroll.lock().unwrap();
         let offset = scroll.state.offset();
-        let Some((_, bounds)) = settings
-            .pane_rows(offset)
-            .into_iter()
-            .find(|(row, _)| row.id.is_some_and(|id| view::pane_focus_id(id) == focused))
-        else {
+        let Some((_, bounds)) = settings.pane_rows(offset).into_iter().find(|(row, rect)| {
+            row_stops(row, *rect)
+                .iter()
+                .any(|stop| stop.focus == focused)
+        }) else {
             return;
         };
 
@@ -1062,7 +1130,7 @@ impl SettingsApp {
     }
 
     /// The pane control the keyboard is on, if it is on one.
-    fn focused_row(&self) -> Option<(&'static str, model::Control)> {
+    fn focused_row(&self) -> Option<Focused> {
         let surface = self.window.as_ref().and_then(Window::surface_id)?;
         let focused = AppContext::focused_control(&surface)?;
 
@@ -1074,10 +1142,20 @@ impl SettingsApp {
             &self.pressed,
         );
         let offset = self.scroll.lock().unwrap().state.offset();
-        settings.pane_rows(offset).into_iter().find_map(|(row, _)| {
-            let id = row.id?;
-            (view::pane_focus_id(id) == focused).then(|| (id, row.control.clone()))
-        })
+        settings
+            .pane_rows(offset)
+            .into_iter()
+            .find_map(|(row, rect)| {
+                let stop = row_stops(row, rect)
+                    .into_iter()
+                    .find(|stop| stop.focus == focused)?;
+                Some(Focused {
+                    id: row.id,
+                    label: row.label,
+                    control: row.control.clone(),
+                    button: stop.button,
+                })
+            })
     }
 
     /// Acts on the focused control the way a click on it would.
@@ -1085,27 +1163,37 @@ impl SettingsApp {
     /// `step` is how far a value control should move: zero for "activate it",
     /// which is all a switch or a button understands.
     fn activate_focused(&self, step: f32) -> bool {
-        let Some((id, control)) = self.focused_row() else {
+        let Some(focused) = self.focused_row() else {
             return false;
         };
 
-        match control {
-            model::Control::Toggle(on) if step == 0.0 => {
-                // The knob slides rather than jumping, exactly as it does for a
-                // click — the keyboard is not a second way for a switch to
-                // behave.
-                let mut flips = self.toggle_flips.lock().unwrap();
-                let current = flips
-                    .get(id)
-                    .map(|flip| flip.fraction())
-                    .unwrap_or_else(|| toggle::knob_fraction_for(on));
-                flips.insert(id, toggle::Flip::start(current, !on));
-                drop(flips);
-                apply(id, settings_client::Value::Bool(!on));
-            }
+        match focused.control {
+            model::Control::Toggle(on) if step == 0.0 => match focused.id {
+                Some(id) => {
+                    // The knob slides rather than jumping, exactly as it does
+                    // for a click — the keyboard is not a second way for a
+                    // switch to behave.
+                    let mut flips = self.toggle_flips.lock().unwrap();
+                    let current = flips
+                        .get(id)
+                        .map(|flip| flip.fraction())
+                        .unwrap_or_else(|| toggle::knob_fraction_for(on));
+                    flips.insert(id, toggle::Flip::start(current, !on));
+                    drop(flips);
+                    apply(id, settings_client::Value::Bool(!on));
+                }
+                // A switch the compositor does not serve — the Displays
+                // pane's. It has no identifier to `apply` and no flip
+                // animation either, since the view keys those by identifier:
+                // the same path a click on it takes.
+                None => panes::displays::toggle(focused.label),
+            },
             model::Control::Slider {
                 value, min, max, ..
             } if step != 0.0 => {
+                let Some(id) = focused.id else {
+                    return false;
+                };
                 // A twentieth of the range per press: fine enough to land on a
                 // value, coarse enough to cross the track without holding the
                 // key down.
@@ -1115,18 +1203,41 @@ impl SettingsApp {
                 }
                 apply(id, settings_client::number_for(id, moved));
             }
-            model::Control::Button(labels) if step == 0.0 => {
-                // The first button is the row's own action; a row with several
-                // needs the pointer until each one is reachable in its turn.
-                let Some(label) = labels.first() else {
+            model::Control::Button(ref labels) if step == 0.0 => {
+                // The keyboard is on one particular button, so that is the one
+                // that is pressed. `Pressed` is keyed the way a click keys it —
+                // by the row's handle — so the button draws itself pressed
+                // whichever way it was reached.
+                let Some(button) = focused.button.or_else(|| labels.first().copied()) else {
                     return false;
                 };
                 activate(view::Pressed::Button {
-                    row: id,
-                    button: label,
+                    row: focused.handle(),
+                    button,
                 });
             }
-            model::Control::File(_) if step == 0.0 => open_file_picker(id),
+            // A text field takes the keyboard rather than doing something: the
+            // press opens an editing session on it, and the next keys are
+            // typed into it. Bound or not — an unbound field commits back to
+            // the pane that owns it, exactly as a click on it would.
+            model::Control::Text(ref current) if step == 0.0 => {
+                start_edit(
+                    &self.editing,
+                    EditTarget::for_row(focused.id, focused.label),
+                    current.clone(),
+                    // Caret at the end: nothing was pointed at, and the end is
+                    // where typing continues from.
+                    f32::MAX,
+                    widgets::TEXT_W,
+                    current_color_scheme() == ColorScheme::Dark,
+                );
+            }
+            model::Control::File(_) if step == 0.0 => {
+                let Some(id) = focused.id else {
+                    return false;
+                };
+                open_file_picker(id)
+            }
             _ => return false,
         }
 
@@ -1958,12 +2069,13 @@ impl App for SettingsApp {
         }
     }
 
-    /// What a screen reader reads: the window, its sidebar, and which pane is
-    /// showing.
+    /// What a screen reader reads: the window, its sidebar, the pane that is
+    /// showing and every control in it.
     ///
-    /// The pane's own controls are not described yet — the sidebar is what can
-    /// be reached from the keyboard, and describing a control that cannot be
-    /// operated would be worse than saying nothing about it.
+    /// Built from the same rows the pane is drawn from, at the scroll position
+    /// it is drawn at, so what is announced and what is painted cannot drift
+    /// apart. A control that is described is a control the keyboard can reach:
+    /// both walk [`row_stops`].
     fn accessibility(&mut self, _ctx: &AppContext, _surface: &ObjectId) -> Option<A11yTree> {
         let selected = *self.selected.lock().unwrap();
         let panes = model::panes();
@@ -2010,8 +2122,7 @@ impl App for SettingsApp {
                 .unwrap_or(otto_kit::t!("a11y-settings")),
             |tree| {
                 for (row, bounds) in rows {
-                    let Some(id) = row.id else { continue };
-                    describe_row(tree, id, row, bounds);
+                    describe_row(tree, row, bounds);
                 }
             },
         );
@@ -2056,11 +2167,15 @@ impl App for SettingsApp {
             &self.pressed,
         );
         let offset = self.scroll.lock().unwrap().state.offset();
-        let target = settings.pane_rows(offset).into_iter().find_map(|(row, _)| {
-            let id = row.id?;
-            let focus = view::pane_focus_id(id);
-            (a11y_node(focus) == request.target_node).then_some(focus)
-        });
+        let target = settings
+            .pane_rows(offset)
+            .into_iter()
+            .find_map(|(row, rect)| {
+                row_stops(row, rect)
+                    .into_iter()
+                    .map(|stop| stop.focus)
+                    .find(|focus| a11y_node(*focus) == request.target_node)
+            });
         let Some(focus) = target else { return };
 
         AppContext::focus_control(&surface, Some(focus));
@@ -2167,4 +2282,72 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .run()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod focus_tests {
+    use super::*;
+    use model::{Control, Row};
+
+    fn rect() -> Rect {
+        Rect::from_xywh(0.0, 0.0, 600.0, 44.0)
+    }
+
+    /// The Displays pane is almost entirely unbound on purpose, and the focus
+    /// ring used to be derived from `Row::id`: everything but the scale slider
+    /// and the two mode pop-ups was unreachable from the keyboard and absent
+    /// from the accessible tree. Active, "use as primary" and the position
+    /// fields are exactly those rows.
+    #[test]
+    fn a_row_the_compositor_does_not_serve_is_still_a_keyboard_stop() {
+        let row = Row::new("Active", Control::Toggle(true));
+        assert!(row.id.is_none(), "the row under test has to be unbound");
+
+        let stops = row_stops(&row, rect());
+        assert_eq!(stops.len(), 1);
+        assert_eq!(stops[0].focus, view::pane_focus_id("Active"));
+    }
+
+    /// An unbound row is keyed by its label, which is what the pane routes it
+    /// by everywhere else; a bound one by its identifier.
+    #[test]
+    fn a_rows_handle_is_its_identifier_or_else_its_label() {
+        let unbound = Row::new("X position", Control::Text("0".into()));
+        assert_eq!(unbound.handle(), "X position");
+
+        let mut bound = Row::new("Scale", Control::Toggle(false));
+        bound.id = Some("screen_scale");
+        assert_eq!(bound.handle(), "screen_scale");
+    }
+
+    /// A row of buttons is several things to do. The virtual-displays row
+    /// carries an Add and a Remove, and stopping only on the row would leave
+    /// Remove to the pointer.
+    #[test]
+    fn every_button_on_a_row_is_its_own_stop() {
+        static BUTTONS: &[&str] = &["Add", "Remove"];
+        let row = Row::new("Virtual displays", Control::Button(BUTTONS));
+
+        let stops = row_stops(&row, rect());
+        assert_eq!(stops.len(), 2);
+        assert_eq!(
+            stops.iter().map(|stop| stop.button).collect::<Vec<_>>(),
+            vec![Some("Add"), Some("Remove")]
+        );
+
+        // At the rects the pane draws them at, so the ring cannot be painted
+        // anywhere but around the button itself.
+        let drawn = view::row_button_rects(&row, rect());
+        assert_eq!(
+            stops.iter().map(|stop| stop.bounds).collect::<Vec<_>>(),
+            drawn
+        );
+    }
+
+    /// A line of text with nothing to operate is read but not stopped on.
+    #[test]
+    fn a_static_value_is_not_a_stop() {
+        let row = Row::new("No display detected", Control::Value(String::new()));
+        assert!(row_stops(&row, rect()).is_empty());
+    }
 }

@@ -150,6 +150,31 @@ pub fn pane_focus_id(id: &str) -> FocusId {
     FocusId::new(format!("row-{id}"))
 }
 
+/// One push button's identity for the keyboard and for assistive
+/// technologies.
+///
+/// A row of buttons is several things to do, not one: an Add beside a Remove
+/// needs both within reach, so each button is its own stop rather than the row
+/// being a single stop that acts on the first.
+pub fn button_focus_id(row: &str, button: &str) -> FocusId {
+    FocusId::new(format!("row-{row}-button-{button}"))
+}
+
+/// A button row's buttons, in the rects the pane draws and hit-tests them at,
+/// given the row's rect in whatever space the caller holds it in.
+///
+/// Empty for any other kind of row. Shared with [`Settings::button_hit`]
+/// through [`widgets::button_rects`], so a button can never be reachable
+/// somewhere it is not drawn.
+pub fn row_button_rects(row: &Row, rect: Rect) -> Vec<Rect> {
+    match &row.control {
+        Control::Button(labels) => {
+            widgets::button_rects(rect.right - 14.0, rect.center_y(), labels)
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// The pane whose sidebar row contains `(x, y)`, if any.
 pub fn pane_at(x: f32, y: f32) -> Option<usize> {
     (0..model::panes().len()).find(|&i| sidebar_item_rect(i).contains(Point::new(x, y)))
@@ -842,22 +867,25 @@ impl Settings {
         self.pane_layout(self.width - SIDEBAR_W).height
     }
 
-    /// Every row of the selected pane, with the rect it is drawn in, in
-    /// content-local coordinates.
-    /// Every row of the current pane that is wired to a setting, with where it
-    /// is in *window* coordinates at the given scroll position.
+    /// Every row of the current pane, with where it is in *window* coordinates
+    /// at the given scroll position.
     ///
     /// The same layout the pane is drawn and hit-tested from, so what the
     /// keyboard reaches and what a screen reader is told cannot drift away
     /// from what is painted. Rows scrolled out of sight are included: the
     /// keyboard's job is to reach them, and the caller scrolls to what it
     /// focuses.
+    ///
+    /// Every row, bound to a setting or not. Filtering to bound rows here is
+    /// what once made the Displays pane unreachable: almost all of it is
+    /// unbound on purpose, and a row nobody serves is still a row the user
+    /// can see and has to be able to operate. Callers decide what stops on
+    /// what through [`Row::focusable`].
     pub fn pane_rows(&self, scroll_offset: f32) -> Vec<(&Row, Rect)> {
         let viewport = self.viewport();
         let content_width = self.width - SIDEBAR_W;
         self.row_rects(content_width)
             .into_iter()
-            .filter(|(row, _)| row.id.is_some())
             .map(|(row, rect)| {
                 (
                     row,

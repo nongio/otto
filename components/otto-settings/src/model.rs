@@ -131,6 +131,30 @@ impl Row {
         self
     }
 
+    /// What identifies this row to the keyboard and to assistive technologies.
+    ///
+    /// The setting's identifier where the row has one, and its label where it
+    /// does not. Unbound rows are not an oversight — the Displays pane's are
+    /// deliberate, see [`crate::panes::displays`] — and the rest of the app
+    /// already routes them by label, so the keyboard keys them by label too.
+    /// Labels are unique within a pane, which is as far as a focus ring or an
+    /// accessible tree ever reaches.
+    pub fn handle(&self) -> &'static str {
+        self.id.unwrap_or(self.label)
+    }
+
+    /// Whether the keyboard stops on this row.
+    ///
+    /// A row with something to operate does. A static value has nothing to
+    /// operate, and a shortcut line is three controls rather than one — a
+    /// single stop on either would misdescribe what is there.
+    pub fn focusable(&self) -> bool {
+        !matches!(
+            self.control,
+            Control::Value(_) | Control::Shortcut { .. } | Control::AddShortcut
+        )
+    }
+
     pub(crate) fn detail(mut self, detail: impl Into<Cow<'static, str>>) -> Self {
         self.detail = Some(detail.into());
         self
