@@ -297,6 +297,25 @@ impl WorkspaceView {
         }
     }
 
+    /// Put every window's layer back in `windows_list` order.
+    ///
+    /// `add_sublayer` on a layer that is already a child *moves it to the end*
+    /// — which is how [`Self::raise_window_to_front`] raises one. So anything
+    /// that reparents a window back into this container raises it as a side
+    /// effect, whatever its place in the stack was. Re-appending the whole list
+    /// in order is what actually restores the stack.
+    pub fn restack_windows(&self) {
+        let order = self.windows_list.read().unwrap().clone();
+        let bases = self.window_base_layers.read().unwrap();
+        for id in &order {
+            if let Some(base) = bases.get(id) {
+                if let Err(e) = self.windows_layer.add_sublayer(base) {
+                    tracing::warn!("restack_windows: failed to reparent window layer: {e}");
+                }
+            }
+        }
+    }
+
     /// remove the window from the windows list
     /// and remove the window layer from the window selector view
     pub fn unmap_window(&self, window_id: &ObjectId) {

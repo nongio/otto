@@ -7,6 +7,25 @@ GPU does not have to composite them.
 > per-buffer damage rules, blur-composite invalidation, promotion hysteresis —
 > is [`specs/plane-scanout.md`](../../specs/plane-scanout.md).
 
+## Reparenting a layer raises it
+
+`add_sublayer` on a layer that is already a child *moves it to the end* of its
+parent's children — which is exactly how `raise_window_to_front` raises a
+window. Anything that reparents a window layer therefore raises it as a side
+effect, whatever its place in the stack was.
+
+Promotion moves a window's subtree out of the workspace's `windows_layer` and
+into the output's promoted-plane container; demotion moves it back. That move
+back is a raise, so a window demoted after another one was mapped came back on
+top of it and stayed there — the workspace's `windows_list` is the stack, and
+`WorkspaceView::restack_windows` re-applies it after every demotion.
+
+The promoted plane also scans out *above* the windows plane, so anything left
+promoted while it is no longer the topmost window covers the window that is.
+Promotion waits for its candidate to settle (`PROMOTE_STABLE`) to avoid moving
+a live subtree between containers every frame; demotion must not wait, or a
+newly mapped window comes up behind the one it should be covering.
+
 ## What a plane is, and why you would want one
 
 A display controller can read from more than one buffer and blend the results

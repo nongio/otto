@@ -5392,7 +5392,12 @@ impl Workspaces {
                 target: "otto::planes",
                 "demote: reparent back into windows_layer failed: {e}"
             );
+            return;
         }
+        // Reparenting appends, which is a raise: without this the window comes
+        // back on top of everything mapped while it was promoted, and stays
+        // there. The workspace's own list is the stack.
+        workspace.restack_windows();
     }
 
     /// The window currently rendered into its own plane on `output_name`.
