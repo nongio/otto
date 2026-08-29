@@ -33,6 +33,7 @@ use smithay::reexports::wayland_server::{
     protocol::wl_surface::WlSurface,
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
+use smithay::utils::{Logical, Rectangle};
 use smithay::wayland::compositor::{
     get_region_attributes, with_states, Cacheable, RectangleKind, RegionAttributes,
 };
@@ -62,16 +63,71 @@ impl Cacheable for BackgroundEffectCachedState {
 impl BackgroundEffectCachedState {
     /// Whether the committed region asks for any blur at all.
     ///
-    /// The protocol clips the region to the surface, but since lay-rs frosts
-    /// the whole layer, all that matters is whether the region has area: a
-    /// client that adds a rectangle and then subtracts all of it is treated
+    /// A client that adds a rectangle and then subtracts all of it is treated
     /// as asking for blur, which is a corner no real client is in.
     pub fn wants_blur(&self) -> bool {
-        self.blur_region.as_ref().is_some_and(|region| {
-            region.rects.iter().any(|(kind, rect)| {
-                matches!(kind, RectangleKind::Add) && rect.size.w > 0 && rect.size.h > 0
+        self.blur_shape().is_some()
+    }
+
+    /// The committed region as a rounded rectangle in surface-local logical
+    /// coordinates: the bounding box of its additive rectangles, plus the
+    /// corner radius they describe.
+    ///
+    /// lay-rs frosts one rounded rect per layer, so an arbitrary region cannot
+    /// be reproduced exactly — but the regions clients actually send are
+    /// rounded rectangles, handed over as a stack of scanlines. Two things
+    /// have to come back out of that stack:
+    ///
+    /// * The **bounds**, because the region is generally smaller than the
+    ///   surface. A panel that draws its own drop shadow into a transparent
+    ///   margin asks for the body only; frosting the whole surface blurs the
+    ///   content behind the margin away and the shadow then falls on the
+    ///   blurred smear instead of on the window below.
+    /// * The **radius**, because the scanlines near the top are inset and a
+    ///   square frost would show as blurred corners outside a rounded panel.
+    ///   Each inset row is a point on the corner arc, so it pins the radius:
+    ///   with the circle centred at `(r, r)` in the bounding box,
+    ///   `(inset - r)^2 + (row - r)^2 = r^2` solves to
+    ///   `r = row + inset + sqrt(2 * row * inset)`. One row is not enough —
+    ///   the client rasterised the curve to integer rows, and near the ends of
+    ///   the arc that rounding dominates — so every inset row votes and the
+    ///   median wins. A region with no inset rows is a plain rectangle and
+    ///   yields 0, which is the right answer for it.
+    ///
+    /// Subtractive rectangles are ignored: they can only carve the region
+    /// smaller, and no client has been seen sending them here.
+    pub fn blur_shape(&self) -> Option<(Rectangle<i32, Logical>, i32)> {
+        let region = self.blur_region.as_ref()?;
+        let adds = || {
+            region.rects.iter().filter_map(|(kind, rect)| {
+                (matches!(kind, RectangleKind::Add) && rect.size.w > 0 && rect.size.h > 0)
+                    .then_some(*rect)
             })
-        })
+        };
+
+        let bounds = adds().reduce(|acc, rect| acc.merge(rect))?;
+
+        let half_height = bounds.size.h as f64 / 2.0;
+        let mut votes: Vec<f64> = adds()
+            .filter_map(|rect| {
+                let row = (rect.loc.y - bounds.loc.y) as f64;
+                let inset = (rect.loc.x - bounds.loc.x) as f64;
+                // Only the top corner, and only rows the arc actually bites
+                // into: a flush row sits past the end of the curve and would
+                // vote for its own offset rather than for the radius.
+                (inset > 0.0 && row < half_height).then(|| row + inset + (2.0 * row * inset).sqrt())
+            })
+            .collect();
+
+        let radius = if votes.is_empty() {
+            0
+        } else {
+            votes.sort_by(|a, b| a.partial_cmp(b).expect("insets are finite"));
+            votes[votes.len() / 2].round() as i32
+        }
+        .clamp(0, bounds.size.w.min(bounds.size.h) / 2);
+
+        Some((bounds, radius))
     }
 }
 
@@ -248,19 +304,19 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// the layer's blend mode too.
     pub(crate) fn apply_background_effect(&mut self, surface: &WlSurface) {
         let surface_id = surface.id();
-        let wants_blur = with_states(surface, |states| {
+        let shape = with_states(surface, |states| {
             states
                 .cached_state
                 .get::<BackgroundEffectCachedState>()
                 .current()
-                .wants_blur()
+                .blur_shape()
         });
-        let was_blurred = self
-            .background_effects
-            .get(&surface_id)
-            .copied()
-            .unwrap_or(false);
-        if wants_blur == was_blurred {
+        let applied = self.background_effects.get(&surface_id).copied();
+        // Compared as a shape, not as a flag: a client that moves or resizes
+        // the region it wants frosted (a candidate panel growing a row) keeps
+        // `wants_blur` true throughout, and bailing on that would leave the
+        // frost at the old geometry.
+        if shape == applied {
             return;
         }
 
@@ -270,15 +326,29 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             return;
         };
 
-        if wants_blur {
-            self.background_effects.insert(surface_id.clone(), true);
+        if let Some((bounds, radius)) = shape {
+            self.background_effects
+                .insert(surface_id.clone(), (bounds, radius));
             layer.set_blend_mode(layers::types::BlendMode::BackgroundBlur);
             // What the frost has to show is usually the window *below* in
             // the same plane, not just the wallpaper: read the raw backdrop
             // and blur it here, as the SSD titlebar and styled windows do.
             layer.set_blur_include_content(true);
+            // The region is in surface-local logical coordinates and the layer
+            // is in physical pixels, so it scales the same way the surface's
+            // own geometry does in `configure_surface_layer`.
+            let scale = crate::config::Config::with(|c| c.screen_scale) as f32;
+            let rect = layers::skia::Rect::from_xywh(
+                bounds.loc.x as f32 * scale,
+                bounds.loc.y as f32 * scale,
+                bounds.size.w as f32 * scale,
+                bounds.size.h as f32 * scale,
+            );
+            let r = radius as f32 * scale;
+            layer.set_blur_bounds(Some(layers::skia::RRect::new_rect_xy(rect, r, r)));
         } else {
             self.background_effects.remove(&surface_id);
+            layer.set_blur_bounds(None);
             let style_blurs = self
                 .surfaces_style
                 .get(&surface_id)
@@ -298,5 +368,120 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// Forget a destroyed surface's blur.
     pub(crate) fn forget_background_effect(&mut self, surface_id: &ObjectId) {
         self.background_effects.remove(surface_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use smithay::utils::Point;
+
+    fn region(rects: Vec<(RectangleKind, Rectangle<i32, Logical>)>) -> BackgroundEffectCachedState {
+        BackgroundEffectCachedState {
+            blur_region: Some(RegionAttributes { rects }),
+        }
+    }
+
+    fn rect(x: i32, y: i32, w: i32, h: i32) -> Rectangle<i32, Logical> {
+        Rectangle::new(Point::from((x, y)), (w, h).into())
+    }
+
+    /// A rounded rectangle reaches clients as a stack of scanlines whose top
+    /// rows are inset. The first row flush with the left edge sits at `y =
+    /// radius`, which is what `blur_shape` reads back out.
+    fn rounded_scanlines(
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        radius: i32,
+    ) -> Vec<(RectangleKind, Rectangle<i32, Logical>)> {
+        (0..h)
+            .map(|row| {
+                let from_edge = row.min(h - 1 - row);
+                let inset = if from_edge >= radius {
+                    0
+                } else {
+                    // circular corner: horizontal inset at this row
+                    let dy = (radius - from_edge) as f64;
+                    (radius as f64 - ((radius as f64).powi(2) - dy * dy).sqrt()).round() as i32
+                };
+                (
+                    RectangleKind::Add,
+                    rect(x + inset, y + row, w - 2 * inset, 1),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn no_region_is_no_blur() {
+        let state = BackgroundEffectCachedState::default();
+        assert_eq!(state.blur_shape(), None);
+        assert!(!state.wants_blur());
+    }
+
+    #[test]
+    fn empty_region_is_no_blur() {
+        let state = region(vec![]);
+        assert_eq!(state.blur_shape(), None);
+        assert!(!state.wants_blur());
+    }
+
+    #[test]
+    fn zero_area_rectangles_are_no_blur() {
+        let state = region(vec![
+            (RectangleKind::Add, rect(0, 0, 0, 40)),
+            (RectangleKind::Add, rect(0, 0, 100, 0)),
+        ]);
+        assert_eq!(state.blur_shape(), None);
+    }
+
+    #[test]
+    fn a_plain_rectangle_keeps_square_corners() {
+        let state = region(vec![(RectangleKind::Add, rect(0, 0, 200, 40))]);
+        assert_eq!(state.blur_shape(), Some((rect(0, 0, 200, 40), 0)));
+    }
+
+    /// The reported bug: a panel that draws its own drop shadow asks for the
+    /// body only, so the frost must stop short of the surface on every side.
+    #[test]
+    fn an_inset_region_keeps_its_offset() {
+        let state = region(vec![(RectangleKind::Add, rect(6, 6, 188, 28))]);
+        let (bounds, _) = state.blur_shape().unwrap();
+        assert_eq!(bounds, rect(6, 6, 188, 28));
+    }
+
+    #[test]
+    fn scanlines_recover_the_corner_radius() {
+        for radius in [4, 8, 10, 16] {
+            let state = region(rounded_scanlines(6, 6, 200, 60, radius));
+            let (bounds, r) = state.blur_shape().unwrap();
+            assert_eq!(bounds, rect(6, 6, 200, 60), "bounds for radius {radius}");
+            assert_eq!(r, radius, "radius {radius}");
+        }
+    }
+
+    /// lay-rs draws one rounded rect, so a radius past half the shorter side
+    /// would be nonsense geometry rather than a tighter curve.
+    #[test]
+    fn radius_is_clamped_to_the_shape() {
+        let state = region(vec![
+            (RectangleKind::Add, rect(0, 30, 100, 10)),
+            (RectangleKind::Add, rect(20, 0, 60, 40)),
+        ]);
+        let (bounds, r) = state.blur_shape().unwrap();
+        assert_eq!(bounds, rect(0, 0, 100, 40));
+        assert_eq!(r, 20);
+    }
+
+    #[test]
+    fn subtractive_rectangles_do_not_grow_the_bounds() {
+        let state = region(vec![
+            (RectangleKind::Add, rect(10, 10, 50, 20)),
+            (RectangleKind::Subtract, rect(0, 0, 500, 500)),
+        ]);
+        let (bounds, _) = state.blur_shape().unwrap();
+        assert_eq!(bounds, rect(10, 10, 50, 20));
     }
 }

@@ -53,13 +53,7 @@ brightness = "0.8.0"
 mpris = "2.0"
 otto-kit = { path = "components/otto-kit" }
 
-[dependencies.laye-rs]
-git = "https://github.com/nongio/layers"
-# Pinned to a release: v1.14.0 carries the mirror/opacity repaint fixes
-# (nongio/layers#22, #23) that Otto's follower layers and fading popups need.
-tag = "v1.14.0"
-# local development: path = "../layers"
-features = ["export-taffy"]
+laye-rs.workspace = true
 
 [dependencies.smithay-drm-extras]
 # fork: includes dmabuf-scanout + xwm focus (set_input_focus/set_active_window)
@@ -189,6 +183,21 @@ members = [
 # rendering calls that carry one through inherit the shape. Bundling them into
 # structs to satisfy a counter would hide the correspondence, not clarify it.
 too_many_arguments = "allow"
+
+# The rendering stack, declared once. Every member takes it with
+# `laye-rs.workspace = true`, so switching to a local checkout for development
+# is a one-line change here instead of an edit per component — and no member
+# can drift onto a different revision and pull a second copy into the link.
+#
+# Pinned to a release: v1.15.0 carries `Layer::set_blur_bounds`
+# (nongio/layers#24), which confines a client's ext-background-effect-v1 frost
+# to the region it asked for instead of its whole surface.
+# For local development point this at the checkout — one edit, whole workspace:
+#   laye-rs = { path = "../layers", features = ["export-taffy"] }
+[workspace.dependencies]
+laye-rs = { git = "https://github.com/nongio/layers", tag = "v1.15.0", features = [
+    "export-taffy",
+] }
 
 [workspace.package]
 version = "1.0.0-rc.2"

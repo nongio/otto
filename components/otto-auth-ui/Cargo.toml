@@ -8,6 +8,7 @@ repository.workspace = true
 description = "The authentication panel Otto shows when it needs a password — shared by the greeter and the lock screen"
 
 [dependencies]
+laye-rs.workspace = true
 otto-kit = { path = "../otto-kit" }
 chrono = "0.4"
 taffy = "0.5"
@@ -15,17 +16,13 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 tracing = "0.1"
 
-[dependencies.laye-rs]
-git = "https://github.com/nongio/layers"
-tag = "v1.14.0"
-features = ["export-taffy"]
 
 [dependencies.skia-safe]
 version = "=0.93"
 features = ["gl", "textlayout", "svg", "skottie"]
 
 [dev-dependencies]
-laye-rs = { git = "https://github.com/nongio/layers", tag = "v1.14.0", features = ["export-taffy"] }
+laye-rs.workspace = true
 
 # Renders every panel state to PNGs, so the layout can be iterated on without
 # taking over a screen with a fullscreen overlay.

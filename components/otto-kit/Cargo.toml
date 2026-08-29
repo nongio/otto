@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+laye-rs.workspace = true
 rustix = { version = "0.38", features = ["fs", "process"], optional = true }
 smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
 wayland-client = "0.31"
@@ -36,11 +37,6 @@ default = []
 testing = ["rustix"]
 debugger = ["laye-rs/debugger"]
 
-[dependencies.laye-rs]
-git = "https://github.com/nongio/layers"
-tag = "v1.14.0"
-# local development: path = "../../../layers"
-features = ["export-taffy"]
 
 [dependencies.skia-safe]
 version = "=0.93"

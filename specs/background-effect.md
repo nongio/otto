@@ -19,15 +19,21 @@ ask for the pixels behind its surface to be blurred, without using Otto's own
   plane.
 - Removing the region (a `NULL` region, or destroying the effect object) takes
   the blur away again on the next commit.
+- The blur covers the region the client asked for, not the whole surface: a
+  panel that paints a transparent margin around its body keeps the frost inside
+  the body.
 - Works for toplevels, popups, subsurfaces and layer-shell surfaces alike.
 - Real clients work unmodified: foot (`blur=yes`), wezterm
   (`wayland_window_background_blur`), ghostty (`background-blur`) on builds
-  that speak this protocol.
+  that speak this protocol, and fcitx5's `classicui` candidate panel
+  (`EnableBlur=True`, with `BlurMask`/`BlurMargin` in the theme).
 
 ## Non-Goals
 
-- Honouring the region's *shape*. The region is a switch: any region with area
-  blurs the whole surface, an empty one blurs nothing. See *Rationale*.
+- Honouring a region of *arbitrary* shape. The region is reduced to one rounded
+  rectangle — its bounding box plus the corner radius it describes. A region
+  that is not a rounded rectangle (an L, a pair of disjoint islands) blurs its
+  bounding box. See *Rationale*.
 - A client-chosen blur radius, tint or vibrancy. The look is compositor policy
   and matches Otto's own chrome.
 - The legacy `org_kde_kwin_blur` protocol. Clients that still use it fall back
@@ -44,9 +50,15 @@ ask for the pixels behind its surface to be blurred, without using Otto's own
   region's rectangles are copied at request time; the `wl_region` may be
   destroyed immediately afterwards.
 - When a commit carries a region containing at least one added rectangle with
-  positive area, the surface's backdrop is blurred from that frame on. Where
-  the client's buffer is translucent, the blurred backdrop shows through; where
-  it is opaque, nothing visible changes.
+  positive area, the surface's backdrop is blurred from that frame on, over the
+  bounding box of those rectangles and rounded to the radius they describe.
+  Where the client's buffer is translucent, the blurred backdrop shows through;
+  where it is opaque, nothing visible changes. Outside the region the backdrop
+  is left alone, so content behind a transparent margin stays legible through
+  whatever the client paints there.
+- A commit that moves or resizes the region re-applies the blur at the new
+  geometry, even though the surface was already blurring.
+- Subtractive rectangles are ignored; they can only shrink the region.
 - When a commit carries a `NULL` region, or an empty one, the blur is removed
   from that frame on.
 - Destroying the effect object removes the blur on the surface's next commit,
@@ -75,11 +87,21 @@ ask for the pixels behind its surface to be blurred, without using Otto's own
 
 ## Rationale
 
-- **Region as a switch.** Otto's blur is a per-layer effect over the layer's
-  (rounded) bounds; carving it to arbitrary rectangles would need a new
-  masking path in the scene engine. Every known client asks for its whole
-  surface, so the switch gives the right result today and leaves partial
-  regions as a future refinement rather than a blocker.
+- **Region as one rounded rectangle.** Otto's blur is a per-layer effect over a
+  rounded rect, so the region is reduced to one: `Layer::set_blur_bounds`
+  overrides the layer's own bounds with what the client asked for. Reducing it
+  to a *switch* instead — blur the whole surface whenever the region has area —
+  was the original design, on the assumption that clients ask for their whole
+  surface. fcitx5's candidate panel does not: it draws its own drop shadow into
+  a transparent margin and asks for the body only. Blurring the whole surface
+  then averaged the document behind the margin away to white, and the shadow
+  landed on that smear instead of on the window below.
+- **Recovering the corner radius.** Clients hand over a rounded rectangle as a
+  stack of scanlines. Each inset row is a point on the corner arc, which pins
+  the radius: `r = row + inset + sqrt(2 * row * inset)`. Single-row estimators
+  are off by a couple of pixels once the client's rasterisation rounds, so
+  every inset row votes and the median wins. Without this the frost squares off
+  the corners of a rounded panel.
 - **Same machinery as otto-surface-style.** Reusing the blend mode that
   otto-kit windows use means the plane backdrop seeding, the material-aware
   scanout rules and the decoration blur all apply for free, and a foot window
@@ -87,5 +109,6 @@ ask for the pixels behind its surface to be blurred, without using Otto's own
 
 ## Open Questions
 
-- Should partial regions be honoured once the scene engine can mask a blur to
-  a set of rectangles?
+- Should genuinely non-rectangular regions be honoured, once the scene engine
+  can mask a blur to an arbitrary path rather than one rounded rect? No client
+  has been seen asking for one.

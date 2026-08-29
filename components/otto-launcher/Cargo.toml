@@ -8,6 +8,7 @@ repository.workspace = true
 description = "A keyboard-driven launcher for Otto — type to filter apps and windows, Enter to run"
 
 [dependencies]
+laye-rs.workspace = true
 otto-kit = { path = "../otto-kit" }
 taffy = "0.5"
 tracing = "0.1"
@@ -18,10 +19,6 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 freedesktop-desktop-entry = "0.7.5"
 shell-words = "1.1"
 
-[dependencies.laye-rs]
-git = "https://github.com/nongio/layers"
-tag = "v1.14.0"
-features = ["export-taffy"]
 
 [dependencies.skia-safe]
 version = "=0.93"
