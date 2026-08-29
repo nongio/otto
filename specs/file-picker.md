@@ -537,6 +537,13 @@ scalars with ASCII case folding, without locale collation — a known limitation
 for languages where that is wrong, accepted rather than pulling in a collation
 crate.
 
+Each view has a default sort. List view leads with date modified, newest first
+— it is the view that shows the modified column, and the question it is usually
+opened to answer is "what changed last". Icon and column views sort by name,
+ascending. Switching views takes the new view's default until the user picks a
+sort of their own by clicking a column header; from then on their choice
+follows them between views.
+
 The picker does not persist sort order between requests. The browser does, per
 directory.
 

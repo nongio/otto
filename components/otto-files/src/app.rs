@@ -197,6 +197,11 @@ struct Browser {
     mode: ViewMode,
     sort: SortKey,
     ascending: bool,
+    /// Whether the user has picked a sort themselves. Until they do, switching
+    /// view takes that view's own default — list is a "what did I touch last"
+    /// view, so it opens newest-first — and once they have, their choice
+    /// follows them between views instead of being overwritten.
+    sort_pinned: bool,
     show_hidden: bool,
     /// The list view's draggable Size/Kind/Modified column widths.
     list_columns: view::ListColumnWidths,
@@ -505,6 +510,7 @@ impl Browser {
             mode: ViewMode::Columns,
             sort: SortKey::Name,
             ascending: true,
+            sort_pinned: false,
             show_hidden: false,
             list_columns: view::ListColumnWidths::default(),
             column_resize: None,
@@ -570,7 +576,7 @@ impl Browser {
         // The picker is a dialog, not a document window: one directory at a
         // time reads as a file dialog, where the Miller stack reads as the
         // browser. The user can still switch views.
-        browser.mode = ViewMode::List;
+        browser.set_mode(ViewMode::List);
         if session.request.mode.names_a_file() {
             let name = session.request.initial_name();
             let selection = picker::name_stem_range(&name);
@@ -586,6 +592,28 @@ impl Browser {
             ViewMode::List,
         ));
         browser
+    }
+
+    /// Switch view, taking the new view's default sort unless the user has
+    /// pinned one of their own by clicking a column header.
+    fn set_mode(&mut self, mode: ViewMode) {
+        self.mode = mode;
+        if !self.sort_pinned {
+            let (sort, ascending) = Self::default_sort(mode);
+            self.sort = sort;
+            self.ascending = ascending;
+        }
+        self.dirty = true;
+    }
+
+    /// The sort a view opens with. List shows the modified column, and the
+    /// answer it is usually asked for is "what changed most recently", so it
+    /// leads with newest first; the other views sort by name.
+    fn default_sort(mode: ViewMode) -> (SortKey, bool) {
+        match mode {
+            ViewMode::List => (SortKey::Modified, false),
+            ViewMode::Grid | ViewMode::Columns => (SortKey::Name, true),
+        }
     }
 
     /// How much of the window height the action row takes — zero in the
@@ -3520,7 +3548,7 @@ impl App for FilesApp {
         }
 
         if let Some(style) = window.surface_style() {
-            style.set_corner_radius(view::CORNER as f64);
+            style.set_corner_radius(view::corner() as f64);
         }
 
         // otto-kit's materials are translucent by design — they expect a
@@ -4354,16 +4382,13 @@ impl App for FilesApp {
                 // opening needs a chord of its own.
                 Keysym::o if ctrl => browser.open_cursor_entry(),
                 Keysym::_1 if ctrl => {
-                    browser.mode = ViewMode::List;
-                    browser.dirty = true;
+                    browser.set_mode(ViewMode::List);
                 }
                 Keysym::_2 if ctrl => {
-                    browser.mode = ViewMode::Grid;
-                    browser.dirty = true;
+                    browser.set_mode(ViewMode::Grid);
                 }
                 Keysym::_3 if ctrl => {
-                    browser.mode = ViewMode::Columns;
-                    browser.dirty = true;
+                    browser.set_mode(ViewMode::Columns);
                 }
                 // Anything else printable is type-ahead. It comes last so
                 // that every shortcut above keeps the key it already had.
@@ -4780,7 +4805,7 @@ impl FilesApp {
             surface.xdg_window().set_app_id("otto-files".to_string());
         }
         if let Some(style) = window.surface_style() {
-            style.set_corner_radius(14.0);
+            style.set_corner_radius(otto_kit::corners::radius(14.0) as f64);
         }
 
         let state = Arc::clone(&self.state);
@@ -5500,8 +5525,7 @@ impl FilesApp {
                             browser.nav_pressed = Some(button);
                             browser.dirty = true;
                         } else if let Some(mode) = view::switcher_at(x, y, width) {
-                            browser.mode = mode;
-                            browser.dirty = true;
+                            browser.set_mode(mode);
                         } else if let Some(index) = view::place_at(x, y, browser.places.len()) {
                             let path = browser.places[index].path.clone();
                             browser.navigate_to(&path);
@@ -5563,8 +5587,11 @@ impl FilesApp {
                                     browser.ascending = !browser.ascending;
                                 } else {
                                     browser.sort = key;
-                                    browser.ascending = true;
+                                    // A fresh key reads best in its natural
+                                    // direction: names from A, dates from now.
+                                    browser.ascending = key != SortKey::Modified;
                                 }
+                                browser.sort_pinned = true;
                                 browser.dirty = true;
                             } else {
                                 let depth = browser.columns.len() - 1;
@@ -5861,6 +5888,41 @@ fn run_app(
     };
 
     AppRunner::new(app).run()
+}
+
+#[cfg(test)]
+mod sort_default_tests {
+    use super::*;
+
+    #[test]
+    fn the_list_opens_with_the_newest_on_top() {
+        let mut browser = Browser::new(std::env::temp_dir());
+        browser.set_mode(ViewMode::List);
+        assert_eq!(browser.sort, SortKey::Modified);
+        assert!(!browser.ascending);
+    }
+
+    #[test]
+    fn the_other_views_open_sorted_by_name() {
+        for mode in [ViewMode::Grid, ViewMode::Columns] {
+            let mut browser = Browser::new(std::env::temp_dir());
+            browser.set_mode(ViewMode::List);
+            browser.set_mode(mode);
+            assert_eq!(browser.sort, SortKey::Name);
+            assert!(browser.ascending);
+        }
+    }
+
+    #[test]
+    fn a_sort_the_user_picked_survives_a_view_change() {
+        let mut browser = Browser::new(std::env::temp_dir());
+        browser.sort = SortKey::Size;
+        browser.ascending = false;
+        browser.sort_pinned = true;
+        browser.set_mode(ViewMode::List);
+        assert_eq!(browser.sort, SortKey::Size);
+        assert!(!browser.ascending);
+    }
 }
 
 #[cfg(test)]
