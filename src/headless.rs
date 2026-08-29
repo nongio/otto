@@ -107,6 +107,16 @@ pub struct HeadlessHandle {
     result_rx: Receiver<()>,
 }
 
+/// How long [`HeadlessHandle::start`] waits for the compositor to come up.
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long [`HeadlessHandle::with_state`] waits for the dispatch loop to run
+/// a closure.
+const QUERY_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How long [`HeadlessHandle::stop`] waits for the dispatch loop to wind down.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+
 impl HeadlessHandle {
     /// Start a headless compositor with the given configuration.
     ///
@@ -123,7 +133,15 @@ impl HeadlessHandle {
             run_headless_loop(config, ready_tx, query_rx, result_tx, running_clone);
         });
 
-        let socket_name = ready_rx.recv().expect("Compositor thread failed to start");
+        let socket_name = match ready_rx.recv_timeout(STARTUP_TIMEOUT) {
+            Ok(name) => name,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                panic!("Headless compositor did not become ready within {STARTUP_TIMEOUT:?}")
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                panic!("Compositor thread failed to start")
+            }
+        };
 
         Self {
             socket_name,
@@ -141,14 +159,27 @@ impl HeadlessHandle {
         F: FnOnce(&mut Otto<HeadlessData>) + Send + 'static,
     {
         self.query_tx.send(Box::new(f)).ok();
-        // Wait for the compositor loop to execute it
-        let _ = self.result_rx.recv();
+        // Wait for the compositor loop to execute it. Bounded: the loop
+        // dispatches every 16ms, so a wait this long means it has stopped
+        // turning and the test should fail loudly rather than hang.
+        if let Err(mpsc::RecvTimeoutError::Timeout) = self.result_rx.recv_timeout(QUERY_TIMEOUT) {
+            panic!("Headless compositor did not run the query within {QUERY_TIMEOUT:?}");
+        }
     }
 
     /// Stop the compositor and join the background thread.
     pub fn stop(mut self) {
         self.running.store(false, Ordering::SeqCst);
         if let Some(thread) = self.compositor_thread.take() {
+            // `join` has no deadline, so poll `is_finished` instead: a loop
+            // that will not wind down must not take the test process with it.
+            let deadline = std::time::Instant::now() + SHUTDOWN_TIMEOUT;
+            while !thread.is_finished() {
+                if std::time::Instant::now() >= deadline {
+                    panic!("Headless compositor did not stop within {SHUTDOWN_TIMEOUT:?}");
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
             let _ = thread.join();
         }
     }
@@ -229,7 +260,8 @@ impl HeadlessHandle {
             let result = f(state);
             let _ = tx.send(result);
         });
-        rx.recv().expect("Failed to receive query result")
+        rx.recv_timeout(QUERY_TIMEOUT)
+            .expect("Failed to receive query result")
     }
 
     /// Get the current workspace index.

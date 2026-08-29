@@ -16,9 +16,13 @@
 //! ```
 
 use std::{
-    os::unix::io::AsFd,
+    os::unix::io::{AsFd, AsRawFd},
     os::unix::net::UnixStream,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    time::{Duration, Instant},
 };
 
 use wayland_client::{
@@ -99,6 +103,30 @@ pub struct TestClient {
     pub state: TestClientState,
 }
 
+/// How long a blocking client call waits before giving up.
+///
+/// Nothing here should ever take seconds: the compositor under test runs in a
+/// thread of the same process and dispatches every 16ms. A wait this long means
+/// it has stopped dispatching — a bug worth a failed test, never a test run
+/// that hangs until CI times it out an hour later.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// User data for the `wl_display.sync` callback a bounded roundtrip waits on.
+struct SyncDone(Arc<AtomicBool>);
+
+impl Dispatch<wl_callback::WlCallback, SyncDone> for TestClientState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_callback::WlCallback,
+        _event: wl_callback::Event,
+        data: &SyncDone,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        data.0.store(true, Ordering::SeqCst);
+    }
+}
+
 impl TestClient {
     /// Connect to the compositor at the given socket name.
     pub fn connect(socket_name: &str) -> Result<Self, Box<dyn std::error::Error>> {
@@ -131,8 +159,52 @@ impl TestClient {
 
     /// Perform a blocking roundtrip — sends pending requests and waits for
     /// the compositor to process them and respond.
+    ///
+    /// Bounded by [`DEFAULT_TIMEOUT`]: an unresponsive compositor fails the
+    /// test rather than hanging it. Use [`TestClient::roundtrip_timeout`] to
+    /// pick a different bound.
     pub fn roundtrip(&mut self) -> Result<usize, Box<dyn std::error::Error>> {
-        Ok(self.queue.roundtrip(&mut self.state)?)
+        self.roundtrip_timeout(DEFAULT_TIMEOUT)
+    }
+
+    /// A roundtrip that gives up after `timeout` instead of blocking forever.
+    ///
+    /// `wayland_client`'s own `roundtrip` waits on the socket with no deadline,
+    /// so a compositor that stops dispatching wedges the whole test binary. This
+    /// drives the same `wl_display.sync` handshake by hand, polling the
+    /// connection fd so the wait can end.
+    pub fn roundtrip_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
+        let done = Arc::new(AtomicBool::new(false));
+        self.conn.display().sync(&self.qh, SyncDone(done.clone()));
+
+        let deadline = Instant::now() + timeout;
+        let mut dispatched = 0;
+        loop {
+            self.conn.flush()?;
+            dispatched += self.queue.dispatch_pending(&mut self.state)?;
+            if done.load(Ordering::SeqCst) {
+                return Ok(dispatched);
+            }
+
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                return Err(format!(
+                    "compositor did not answer wl_display.sync within {timeout:?}"
+                )
+                .into());
+            };
+
+            // `prepare_read` returns `None` when another event was queued
+            // between the dispatch above and now — loop round and drain it.
+            let Some(guard) = self.queue.prepare_read() else {
+                continue;
+            };
+            if poll_readable(guard.connection_fd().as_raw_fd(), remaining)? {
+                guard.read()?;
+            }
+        }
     }
 
     /// Dispatch pending events without blocking.
@@ -890,6 +962,44 @@ impl Dispatch<xdg_popup::XdgPopup, Arc<Mutex<TestPopup>>> for TestClientState {
                 data.lock().unwrap().done = true;
             }
             _ => {}
+        }
+    }
+}
+
+/// Wait for `fd` to become readable, or for `timeout` to elapse.
+///
+/// Returns whether it became readable. `EINTR` is retried against the original
+/// deadline so a signal cannot shorten the wait.
+fn poll_readable(fd: std::os::unix::io::RawFd, timeout: Duration) -> std::io::Result<bool> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let remaining = match deadline.checked_duration_since(Instant::now()) {
+            Some(remaining) => remaining,
+            None => return Ok(false),
+        };
+        let mut pollfd = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: a single valid pollfd, and libc::poll only writes revents.
+        let ret = unsafe {
+            libc::poll(
+                &mut pollfd,
+                1,
+                remaining.as_millis().min(i32::MAX as u128) as i32,
+            )
+        };
+        match ret {
+            -1 => {
+                let err = std::io::Error::last_os_error();
+                if err.kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(err);
+            }
+            0 => return Ok(false),
+            _ => return Ok(true),
         }
     }
 }

@@ -1,5 +1,9 @@
 target
 Cargo.lock
+# The workspace lock is tracked on purpose: Otto is an application, not a
+# library, and an unpinned CI resolves fresh dependencies on every run — a
+# patch release upstream then changes the build with no commit behind it.
+!/Cargo.lock
 *.bk
 *.log
 .vscode
