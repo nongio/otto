@@ -244,6 +244,13 @@ settings-readout-seconds = { $value } s
 settings-readout-per-second = { $value } / s
 
 
+## Files — windows
+
+files-window-title = Arquivos
+# The Get Info panel's own window.
+files-info-window-title = Informações
+
+
 ## Files — commands
 
 files-get-info = Obter informações
@@ -297,6 +304,18 @@ files-kind-application = Aplicativo
 
 files-loading = Carregando…
 files-empty = Vazio
+# The idle line: what the folder holds.
+files-status-no-items = Nenhum item
+files-status-items =
+    { $count ->
+        [one] { $count } item
+        [many] { $count } itens
+       *[other] { $count } itens
+    }
+# $items is an already-formatted count from files-status-items.
+files-status-items-hidden = { $items }, { $hidden } ocultos
+files-status-selected = { $count } de { $total } selecionados
+files-status-opening-preview = Abrindo a visualização…
 files-nothing-to-undo = Nada para desfazer
 # $label is a command name — Move, Copy, Delete — from the files-undo-* keys.
 files-undid = Desfeito: { $label }
@@ -314,6 +333,36 @@ files-open-failed = Não foi possível abrir o arquivo: { $error }
 files-new-window-failed = Não foi possível abrir uma nova janela: { $error }
 
 
+## Files — the listing
+
+files-folder-empty = Esta pasta está vazia.
+files-folder-denied = Sem permissão para ver o conteúdo desta pasta.
+files-folder-gone = Esta pasta não existe mais.
+files-folder-open-failed = Não foi possível abrir esta pasta: { $error }
+
+
+## Files — Get Info
+##
+## The panel behind Get Info. The left column is a set of field names; keep
+## them short, they share a narrow column with the values beside them.
+
+files-info-where = Onde
+files-info-kind = Tipo
+files-info-modified = Modificado
+files-info-created = Criado
+files-info-accessed = Último acesso
+files-info-owner = Proprietário
+files-info-links-to = Link para
+files-info-permissions = Permissões
+# Column headers over the permission checkboxes — narrower still.
+files-perm-read = Leitura
+files-perm-write = Escrita
+files-perm-exec = Execução
+# Row labels: who each set of permissions applies to.
+files-perm-owner = Proprietário
+files-perm-group = Grupo
+files-perm-everyone = Todos
+
 ## Files — the file picker
 ##
 ## Shown to other applications through the desktop portal, so these are the
@@ -323,11 +372,22 @@ files-picker-open = Abrir
 files-picker-save-as = Salvar como
 files-picker-save-files = Salvar arquivos
 files-picker-all-files = Todos os arquivos
+# The label beside the name field, so it carries its colon.
+files-picker-save-as-field = Salvar como:
 
 # Why the Save button is refusing. Each states the situation, not the mistake.
 files-save-enter-a-name = Digite um nome
 files-save-name-has-slash = Um nome não pode conter “/”
 files-save-name-reserved = Esse nome é reservado
+files-save-nowhere = Nenhum local para salvar
+files-save-permission-denied = Sem permissão para salvar aqui
+
+# Confirming an overwrite. $name is a file name, already in quotation marks;
+# $count is always two or more.
+files-replace-one = “{ $name }” já existe. Substituir?
+files-replace-one-detail = Substituí-lo sobrescreve o conteúdo atual.
+files-replace-many = { $count } destes arquivos já existem. Substituí-los?
+files-replace-many-detail = Substituí-los sobrescreve o conteúdo atual.
 
 
 ## Files — sizes
@@ -529,8 +589,6 @@ schema-appswitcher-follow-cursor-description = Mostrar o alternador de aplicativ
 
 ## Late additions
 
-# Shown in the middle of a listing with nothing in it.
-files-folder-empty = Esta pasta está vazia.
 # The auto-detect entry in a theme pop-up, offered when no theme is set.
 settings-choice-automatic = Automático
 

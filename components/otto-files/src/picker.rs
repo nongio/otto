@@ -232,7 +232,11 @@ pub fn name_stem_range(name: &str) -> std::ops::Range<usize> {
 /// so every branch of the rule below is testable without a filesystem.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SaveAction {
-    /// The name cannot be used. Accept stays disabled and this says why.
+    /// The name cannot be used. Carries the localisation key for the reason,
+    /// not the reason itself: the caller has to be able to tell *which* block
+    /// this is — an empty field is the placeholder's job to explain, not the
+    /// warning line's — and comparing against translated prose only works in
+    /// English.
     Blocked(&'static str),
     /// The name is a directory that already exists: navigate into it and
     /// clear the field, rather than refusing a name the user may still want.
@@ -254,15 +258,15 @@ pub enum SaveAction {
 pub fn save_action(name: &str, existing: Option<bool>) -> SaveAction {
     let trimmed = name.trim();
     if trimmed.is_empty() {
-        return SaveAction::Blocked(otto_kit::t!("files-save-enter-a-name"));
+        return SaveAction::Blocked("files-save-enter-a-name");
     }
     // A name is one path component. `/` would silently write somewhere the
     // user is not looking, which is worse than refusing it.
     if trimmed.contains('/') {
-        return SaveAction::Blocked(otto_kit::t!("files-save-name-has-slash"));
+        return SaveAction::Blocked("files-save-name-has-slash");
     }
     if trimmed == "." || trimmed == ".." {
-        return SaveAction::Blocked(otto_kit::t!("files-save-name-reserved"));
+        return SaveAction::Blocked("files-save-name-reserved");
     }
     match existing {
         Some(true) => SaveAction::Descend,
@@ -517,6 +521,29 @@ mod tests {
     fn an_empty_or_whitespace_name_blocks_accept() {
         assert!(matches!(save_action("", None), SaveAction::Blocked(_)));
         assert!(matches!(save_action("   ", None), SaveAction::Blocked(_)));
+    }
+
+    /// The block carries a key, not a sentence.
+    ///
+    /// The picker distinguishes the empty-name block from the others — that
+    /// one is the placeholder's job to explain, so it is not repeated as a
+    /// warning — and it does so by comparing what `Blocked` carries. Comparing
+    /// against translated prose would hold only in English, and the warning
+    /// line would reappear under every other locale.
+    #[test]
+    fn a_block_names_its_reason_by_key() {
+        assert_eq!(
+            save_action("", None),
+            SaveAction::Blocked("files-save-enter-a-name")
+        );
+        assert_eq!(
+            save_action("sub/file.txt", None),
+            SaveAction::Blocked("files-save-name-has-slash")
+        );
+        assert_eq!(
+            save_action("..", None),
+            SaveAction::Blocked("files-save-name-reserved")
+        );
     }
 
     #[test]

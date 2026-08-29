@@ -415,11 +415,9 @@ fn read_directory(path: &Path) -> Snapshot {
 /// A message worth showing a user, rather than a debug rendering.
 fn describe_error(err: &std::io::Error) -> String {
     match err.kind() {
-        std::io::ErrorKind::PermissionDenied => {
-            "You do not have permission to see this folder's contents.".to_string()
-        }
-        std::io::ErrorKind::NotFound => "This folder no longer exists.".to_string(),
-        _ => format!("This folder could not be opened: {err}"),
+        std::io::ErrorKind::PermissionDenied => otto_kit::t_owned!("files-folder-denied"),
+        std::io::ErrorKind::NotFound => otto_kit::t_owned!("files-folder-gone"),
+        _ => otto_kit::t_owned!("files-folder-open-failed", error = err.to_string()),
     }
 }
 

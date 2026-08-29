@@ -1277,7 +1277,7 @@ fn draw_name_row(canvas: &Canvas, f: &Frame, footer: &FooterData<'_>, window_h: 
     paint.set_color(theme.fill_tertiary);
     canvas.draw_rrect(RRect::new_rect_xy(field, 6.0, 6.0), &paint);
 
-    Label::new("Save As:")
+    Label::new(otto_kit::t!("files-picker-save-as-field"))
         .with_style(styles::BODY)
         .with_color(theme.text_secondary)
         .centered_on(SIDEBAR_W + FOOTER_PAD, field.center_y())
@@ -1426,7 +1426,7 @@ fn draw_filter_control(canvas: &Canvas, f: &Frame, footer: &FooterData<'_>, wind
         .filters
         .get(footer.current_filter)
         .map(String::as_str)
-        .unwrap_or("All Files");
+        .unwrap_or_else(|| otto_kit::t!("files-picker-all-files"));
     Label::new(label)
         .with_style(styles::BODY)
         .with_color(theme.text_primary)
@@ -2761,7 +2761,7 @@ fn draw_list(canvas: &Canvas, f: &Frame) {
         draw_centered(
             canvas,
             viewport,
-            "This folder is empty.",
+            &otto_kit::t_owned!("files-folder-empty"),
             theme.text_tertiary,
         );
         canvas.restore();
@@ -3556,7 +3556,7 @@ pub fn draw_info(
         .render(canvas);
 
     let subtitle = if info.is_dir {
-        "Folder".to_string()
+        otto_kit::t_owned!("files-kind-folder")
     } else {
         format!("{} — {}", info.kind.label(), model::format_size(info.size))
     };
@@ -3601,35 +3601,40 @@ pub fn draw_info(
         .parent()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
-    row("Where", where_path, canvas, &mut y);
-    row("Kind", info.mime.clone(), canvas, &mut y);
+    row(otto_kit::t!("files-info-where"), where_path, canvas, &mut y);
     row(
-        "Modified",
+        otto_kit::t!("files-info-kind"),
+        info.mime.clone(),
+        canvas,
+        &mut y,
+    );
+    row(
+        otto_kit::t!("files-info-modified"),
         info.modified.map(model::format_time).unwrap_or_default(),
         canvas,
         &mut y,
     );
     row(
-        "Created",
+        otto_kit::t!("files-info-created"),
         info.created.map(model::format_time).unwrap_or_default(),
         canvas,
         &mut y,
     );
     row(
-        "Accessed",
+        otto_kit::t!("files-info-accessed"),
         info.accessed.map(model::format_time).unwrap_or_default(),
         canvas,
         &mut y,
     );
     row(
-        "Owner",
+        otto_kit::t!("files-info-owner"),
         format!("{} : {}", info.owner, info.group),
         canvas,
         &mut y,
     );
     if let Some(target) = &info.link_target {
         row(
-            "Links to",
+            otto_kit::t!("files-info-links-to"),
             target.to_string_lossy().into_owned(),
             canvas,
             &mut y,
@@ -3669,7 +3674,7 @@ fn draw_permissions(
         &paint,
     );
 
-    Label::new("Permissions")
+    Label::new(otto_kit::t!("files-info-permissions"))
         .with_style(styles::BODY_EMPHASIZED)
         .with_color(theme.text_secondary)
         .centered_on(ox, oy - 18.0)
@@ -3685,7 +3690,14 @@ fn draw_permissions(
         .render(canvas);
 
     // Headers sit in the gap above the first row, centred over their column.
-    for (what, header) in ["Read", "Write", "Exec"].into_iter().enumerate() {
+    for (what, header) in [
+        otto_kit::t!("files-perm-read"),
+        otto_kit::t!("files-perm-write"),
+        otto_kit::t!("files-perm-exec"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let column_centre = ox + PERM_COL_X + what as f32 * PERM_COL_W + PERM_BOX / 2.0;
         Label::new(header)
             .with_style(styles::CALLOUT)
@@ -3694,7 +3706,14 @@ fn draw_permissions(
             .render(canvas);
     }
 
-    for (who, label) in ["Owner", "Group", "Everyone"].into_iter().enumerate() {
+    for (who, label) in [
+        otto_kit::t!("files-perm-owner"),
+        otto_kit::t!("files-perm-group"),
+        otto_kit::t!("files-perm-everyone"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let y = oy + PERM_ROWS_TOP + who as f32 * PERM_ROW_H;
         Label::new(label)
             .with_style(styles::BODY)

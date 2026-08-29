@@ -244,6 +244,13 @@ settings-readout-seconds = { $value } с
 settings-readout-per-second = { $value } / с
 
 
+## Files — windows
+
+files-window-title = Файлы
+# The Get Info panel's own window.
+files-info-window-title = Свойства
+
+
 ## Files — commands
 
 files-get-info = Свойства
@@ -298,6 +305,19 @@ files-kind-application = Приложение
 
 files-loading = Загрузка…
 files-empty = Пусто
+# The idle line: what the folder holds.
+files-status-no-items = Нет элементов
+files-status-items =
+    { $count ->
+        [one] { $count } элемент
+        [few] { $count } элемента
+        [many] { $count } элементов
+       *[other] { $count } элемента
+    }
+# $items is an already-formatted count from files-status-items.
+files-status-items-hidden = { $items }, скрытых: { $hidden }
+files-status-selected = Выбрано { $count } из { $total }
+files-status-opening-preview = Открытие предпросмотра…
 files-nothing-to-undo = Нечего отменять
 # $label is a command name — Move, Copy, Delete — from the files-undo-* keys.
 files-undid = Действие отменено: { $label }
@@ -315,6 +335,36 @@ files-open-failed = Не удалось открыть файл: { $error }
 files-new-window-failed = Не удалось открыть новое окно: { $error }
 
 
+## Files — the listing
+
+files-folder-empty = Эта папка пуста.
+files-folder-denied = Нет прав на просмотр содержимого этой папки.
+files-folder-gone = Этой папки больше не существует.
+files-folder-open-failed = Не удалось открыть эту папку: { $error }
+
+
+## Files — Get Info
+##
+## The panel behind Get Info. The left column is a set of field names; keep
+## them short, they share a narrow column with the values beside them.
+
+files-info-where = Расположение
+files-info-kind = Тип
+files-info-modified = Изменено
+files-info-created = Создано
+files-info-accessed = Открыто
+files-info-owner = Владелец
+files-info-links-to = Ссылается на
+files-info-permissions = Права доступа
+# Column headers over the permission checkboxes — narrower still.
+files-perm-read = Чтение
+files-perm-write = Запись
+files-perm-exec = Выполнение
+# Row labels: who each set of permissions applies to.
+files-perm-owner = Владелец
+files-perm-group = Группа
+files-perm-everyone = Все
+
 ## Files — the file picker
 ##
 ## Shown to other applications through the desktop portal, so these are the
@@ -324,11 +374,22 @@ files-picker-open = Открыть
 files-picker-save-as = Сохранить как
 files-picker-save-files = Сохранить файлы
 files-picker-all-files = Все файлы
+# The label beside the name field, so it carries its colon.
+files-picker-save-as-field = Сохранить как:
 
 # Why the Save button is refusing. Each states the situation, not the mistake.
 files-save-enter-a-name = Введите имя
 files-save-name-has-slash = Имя не может содержать «/»
 files-save-name-reserved = Это имя зарезервировано
+files-save-nowhere = Некуда сохранить
+files-save-permission-denied = Нет прав на сохранение здесь
+
+# Confirming an overwrite. $name is a file name, already in quotation marks;
+# $count is always two or more.
+files-replace-one = «{ $name }» уже существует. Заменить?
+files-replace-one-detail = Замена перезапишет текущее содержимое файла.
+files-replace-many = { $count } из этих файлов уже существуют. Заменить?
+files-replace-many-detail = Замена перезапишет текущее содержимое файлов.
 
 
 ## Files — sizes
@@ -530,8 +591,6 @@ schema-appswitcher-follow-cursor-description = Показывать перекл
 
 ## Late additions
 
-# Shown in the middle of a listing with nothing in it.
-files-folder-empty = Эта папка пуста.
 # The auto-detect entry in a theme pop-up, offered when no theme is set.
 settings-choice-automatic = Автоматически
 

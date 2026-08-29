@@ -243,6 +243,13 @@ settings-readout-seconds = { $value } s
 settings-readout-per-second = { $value } / s
 
 
+## Files — windows
+
+files-window-title = Files
+# The Get Info panel's own window.
+files-info-window-title = Info
+
+
 ## Files — commands
 
 files-get-info = Get Info
@@ -295,6 +302,17 @@ files-kind-application = Application
 
 files-loading = Loading…
 files-empty = Empty
+# The idle line: what the folder holds.
+files-status-no-items = No items
+files-status-items =
+    { $count ->
+        [one] 1 item
+       *[other] { $count } items
+    }
+# $items is an already-formatted count from files-status-items.
+files-status-items-hidden = { $items }, { $hidden } hidden
+files-status-selected = { $count } of { $total } selected
+files-status-opening-preview = Opening preview…
 files-nothing-to-undo = Nothing to undo
 # $label is a command name — Move, Copy, Delete — from the files-undo-* keys.
 files-undid = Undid { $label }
@@ -312,6 +330,37 @@ files-open-failed = Couldn’t open that file: { $error }
 files-new-window-failed = Couldn’t open a new window: { $error }
 
 
+## Files — the listing
+
+files-folder-empty = This folder is empty.
+files-folder-denied = You do not have permission to see this folder's contents.
+files-folder-gone = This folder no longer exists.
+files-folder-open-failed = This folder could not be opened: { $error }
+
+
+## Files — Get Info
+##
+## The panel behind Get Info. The left column is a set of field names; keep
+## them short, they share a narrow column with the values beside them.
+
+files-info-where = Where
+files-info-kind = Kind
+files-info-modified = Modified
+files-info-created = Created
+files-info-accessed = Accessed
+files-info-owner = Owner
+files-info-links-to = Links to
+files-info-permissions = Permissions
+# Column headers over the permission checkboxes — narrower still.
+files-perm-read = Read
+files-perm-write = Write
+files-perm-exec = Exec
+# Row labels: who each set of permissions applies to.
+files-perm-owner = Owner
+files-perm-group = Group
+files-perm-everyone = Everyone
+
+
 ## Files — the file picker
 ##
 ## Shown to other applications through the desktop portal, so these are the
@@ -321,11 +370,22 @@ files-picker-open = Open
 files-picker-save-as = Save As
 files-picker-save-files = Save Files
 files-picker-all-files = All Files
+# The label beside the name field, so it carries its colon.
+files-picker-save-as-field = Save As:
 
 # Why the Save button is refusing. Each states the situation, not the mistake.
 files-save-enter-a-name = Enter a name
 files-save-name-has-slash = A name cannot contain “/”
 files-save-name-reserved = That name is reserved
+files-save-nowhere = Nowhere to save
+files-save-permission-denied = You do not have permission to save here
+
+# Confirming an overwrite. $name is a file name, already in quotation marks;
+# $count is always two or more.
+files-replace-one = “{ $name }” already exists. Replace it?
+files-replace-one-detail = Replacing it overwrites its current contents.
+files-replace-many = { $count } of these files already exist. Replace them?
+files-replace-many-detail = Replacing them overwrites their current contents.
 
 
 ## Files — sizes
@@ -526,8 +586,6 @@ schema-appswitcher-follow-cursor-description = Show the app switcher on the outp
 
 ## Late additions
 
-# Shown in the middle of a listing with nothing in it.
-files-folder-empty = This folder is empty.
 # The auto-detect entry in a theme pop-up, offered when no theme is set.
 settings-choice-automatic = Automatic
 

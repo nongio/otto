@@ -56,7 +56,7 @@ first frame before any filesystem the user controls is necessarily mounted, and
 a catalogue on disk cannot drift out of step with the keys the code asks for.
 
 `en-GB` is the source of truth and the only catalogue guaranteed to carry every
-key — 417 of them at the time of writing. `en-US` is an overlay: it carries
+key — 448 of them at the time of writing. `en-US` is an overlay: it carries
 only the keys whose spelling or format actually differs (colour/color, the
 12-hour clock, month-before-day dates) and everything else falls through.
 
@@ -250,6 +250,14 @@ locale and resolve from the environment in the child.
    knows the conventions the catalogues follow.
 4. A new setting also needs its two `schema-*` keys, or the compositor's
    coverage test fails.
+
+A value the code has to *recognise* carries the key, not the translated text.
+`SaveAction::Blocked` names the reason a save is refused, and the picker treats
+one of those reasons differently from the rest — an empty name field is the
+placeholder's job to explain, not the warning line's. Carrying the message
+instead made that comparison hold only in English, so every other locale grew a
+warning under a field the user had not typed in yet. The lookup belongs at the
+point the string is drawn.
 
 ### Adding a locale
 

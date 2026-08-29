@@ -447,7 +447,7 @@ struct RenameSession {
 /// only place in the picker that touches the filesystem on the UI thread.
 fn probe_save_action(dir: &Path, name: &str) -> picker::SaveAction {
     if !picker::is_writable_dir(dir) {
-        return picker::SaveAction::Blocked("You do not have permission to save here");
+        return picker::SaveAction::Blocked("files-save-permission-denied");
     }
     picker::save_action(name, existing_kind(&dir.join(name.trim())))
 }
@@ -1692,7 +1692,7 @@ impl Browser {
     /// read-only folder would send the user off correcting the wrong thing.
     fn save_action(&self) -> picker::SaveAction {
         let Some(dir) = self.save_directory() else {
-            return picker::SaveAction::Blocked("Nowhere to save");
+            return picker::SaveAction::Blocked("files-save-nowhere");
         };
         let name = self
             .save_name
@@ -1735,21 +1735,24 @@ impl Browser {
         }
     }
 
-    /// The reason the accept button is disabled, shown beside the name field.
-    /// `None` while it is enabled — there is then nothing to explain.
+    /// The localisation key for why the accept button is disabled, shown
+    /// beside the name field. `None` while it is enabled — there is then
+    /// nothing to explain. The key, not the message: the caller looks it up.
     fn save_problem(&self) -> Option<&'static str> {
         match self.picker.as_ref()?.request.mode {
             picker::Mode::Save => match self.save_action() {
                 // "Enter a name" is not a complaint about an empty field the
                 // user has not filled in yet; it is the placeholder's job.
-                picker::SaveAction::Blocked("Enter a name") => None,
+                // Matched on the key rather than the message, which is
+                // whatever language the user reads in.
+                picker::SaveAction::Blocked("files-save-enter-a-name") => None,
                 picker::SaveAction::Blocked(reason) => Some(reason),
                 _ => None,
             },
             picker::Mode::SaveFiles => self
                 .save_directory()
                 .filter(|dir| !picker::is_writable_dir(dir))
-                .map(|_| "You do not have permission to save here"),
+                .map(|_| "files-save-permission-denied"),
             picker::Mode::Open => None,
         }
     }
@@ -1785,8 +1788,8 @@ impl Browser {
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
                 self.confirm = Some(ConfirmSheet {
-                    message: format!("\u{201c}{name}\u{201d} already exists. Replace it?"),
-                    detail: "Replacing it overwrites its current contents.".to_string(),
+                    message: otto_kit::t_owned!("files-replace-one", name = name.as_str()),
+                    detail: otto_kit::t_owned!("files-replace-one-detail"),
                     paths: vec![target],
                     pressed: None,
                 });
@@ -1852,16 +1855,13 @@ impl Browser {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            format!("\u{201c}{name}\u{201d} already exists. Replace it?")
+            otto_kit::t_owned!("files-replace-one", name = name.as_str())
         } else {
-            format!(
-                "{} of these files already exist. Replace them?",
-                clashes.len()
-            )
+            otto_kit::t_owned!("files-replace-many", count = clashes.len() as i64)
         };
         self.confirm = Some(ConfirmSheet {
             message,
-            detail: "Replacing them overwrites their current contents.".to_string(),
+            detail: otto_kit::t_owned!("files-replace-many-detail"),
             paths: targets,
             pressed: None,
         });
@@ -2880,7 +2880,7 @@ impl Browser {
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_default();
                 self.record_undo(
-                    "New Folder",
+                    otto_kit::t!("files-new-folder"),
                     vec![model::Change::Created { path: path.clone() }],
                 );
                 self.reload_all();
@@ -3285,18 +3285,22 @@ impl Browser {
         // A first preview pays D-Bus activation, so this can be visible for a
         // moment. Saying so beats a keystroke that appears to do nothing.
         if self.quickview_pending {
-            return "Opening preview…".to_string();
+            return otto_kit::t_owned!("files-status-opening-preview");
         }
         if let Some(status) = &self.status {
             return status.clone();
         }
         let depth = self.active.min(self.columns.len() - 1);
         if self.columns[depth].loading() {
-            return "Loading…".to_string();
+            return otto_kit::t_owned!("files-loading");
         }
         let selected = self.columns[depth].selection.len();
         if selected > 1 {
-            return format!("{selected} of {} selected", self.visible_len(depth));
+            return otto_kit::t_owned!(
+                "files-status-selected",
+                count = selected as i64,
+                total = self.visible_len(depth) as i64
+            );
         }
         let count = self.visible_len(depth);
         let hidden = self.columns[depth]
@@ -3305,15 +3309,23 @@ impl Browser {
             .iter()
             .filter(|e| e.hidden)
             .count();
-        let mut text = match count {
-            0 => "No items".to_string(),
-            1 => "1 item".to_string(),
-            n => format!("{n} items"),
+        let items = if count == 0 {
+            otto_kit::t_owned!("files-status-no-items")
+        } else {
+            otto_kit::t_owned!("files-status-items", count = count as i64)
         };
         if hidden > 0 && !self.show_hidden {
-            text.push_str(&format!(", {hidden} hidden"));
+            // Composed rather than one key per case: the hidden count is an
+            // aside on whatever the count line already says, and a translator
+            // needs to be able to move it around that line.
+            otto_kit::t_owned!(
+                "files-status-items-hidden",
+                items = items.as_str(),
+                hidden = hidden as i64
+            )
+        } else {
+            items
         }
-        text
     }
 
     /// Build the per-frame view data.
@@ -3398,7 +3410,7 @@ impl Browser {
                 accept_label: &session.accept_label,
                 accept_enabled: self.picker_accept_enabled(),
                 save_name: session.request.mode.names_a_file(),
-                save_problem: self.save_problem(),
+                save_problem: self.save_problem().map(|key| otto_kit::t!(key)),
                 filters: &session.filter_labels,
                 current_filter: session.current_filter,
                 filter_open: session.filter_open,
@@ -3469,7 +3481,11 @@ impl App for FilesApp {
         // construction, and that node is what the scene hangs off.
         AppContext::enable_layer_engine(view::WINDOW_W, view::WINDOW_H);
 
-        let mut window = Window::new("Files", view::WINDOW_W as i32, view::WINDOW_H as i32)?;
+        let mut window = Window::new(
+            otto_kit::t!("files-window-title"),
+            view::WINDOW_W as i32,
+            view::WINDOW_H as i32,
+        )?;
         window.set_min_size(view::MIN_W as u32, view::MIN_H as u32);
         // The window as a whole has no ground of its own: the sidebar, the
         // header and the content area each carry their own material, and two
@@ -4563,7 +4579,12 @@ impl FilesApp {
     }
 
     fn create_info_window(&self) -> Option<Window> {
-        let mut window = Window::new("Info", view::INFO_W as i32, view::INFO_H as i32).ok()?;
+        let mut window = Window::new(
+            otto_kit::t!("files-info-window-title"),
+            view::INFO_W as i32,
+            view::INFO_H as i32,
+        )
+        .ok()?;
         // The layout inside is fixed, so the window does not resize.
         window.set_min_size(view::INFO_W as u32, view::INFO_H as u32);
         window.set_max_size(view::INFO_W as u32, view::INFO_H as u32);
