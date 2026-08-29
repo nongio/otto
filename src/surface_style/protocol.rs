@@ -78,6 +78,11 @@ pub struct SurfaceStyle {
     /// How the buffer texture is rendered within the layer bounds
     pub contents_gravity: ContentsGravity,
 
+    /// The last `desktop_frame` sent for this style object, so the sweep in
+    /// [`crate::surface_style::desktop_frame`] can tell a window that moved
+    /// from one that is simply still there.
+    pub last_desktop_frame: Option<(f32, f32, f32, f32)>,
+
     /// Shared gravity for live reading in draw closures.
     /// Updated atomically when `set_contents_gravity` is called.
     pub shared_gravity: std::sync::Arc<std::sync::atomic::AtomicU8>,

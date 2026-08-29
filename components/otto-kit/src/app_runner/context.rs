@@ -137,6 +137,14 @@ thread_local! {
     /// The last `output_frame` a style surface was told, keyed by the style
     /// object. See [`AppContext::output_frame`].
     static OUTPUT_FRAMES: RefCell<HashMap<ObjectId, (f32, f32, f32, f32)>> = RefCell::new(HashMap::new());
+    /// Which `wl_surface` a style object augments, for the style objects on a
+    /// window's own surface. Only those: the compositor reports a desktop
+    /// position for a surface that is a window in its own right, never for a
+    /// popup or a subsurface, which move with their parent.
+    static STYLE_SURFACES: RefCell<HashMap<ObjectId, ObjectId>> = RefCell::new(HashMap::new());
+    /// Where the compositor is drawing each window, keyed by `wl_surface`, in
+    /// physical pixels. See [`AppContext::desktop_frame`].
+    static DESKTOP_FRAMES: RefCell<HashMap<ObjectId, (f32, f32, f32, f32)>> = RefCell::new(HashMap::new());
     #[allow(clippy::type_complexity)]
     static POPUP_CONFIGURE_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnOnce(u32)>>> = RefCell::new(HashMap::new());
     static POPUP_DONE_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnOnce()>>> = RefCell::new(HashMap::new());
@@ -1057,6 +1065,42 @@ impl<'a> AppContext<'a> {
         Self::request_frame(surface);
     }
 
+    /// Note that `style` augments `surface`, so a `desktop_frame` arriving on
+    /// the style object can be filed against the window it is about.
+    ///
+    /// Called where a style is created for a surface that is a window — a
+    /// toplevel or a layer surface. A popup or a subsurface never receives a
+    /// desktop position, so registering one would only be misleading.
+    pub fn note_style_surface(style: &ObjectId, surface: &ObjectId) {
+        STYLE_SURFACES.with(|styles| {
+            styles.borrow_mut().insert(style.clone(), surface.clone());
+        });
+    }
+
+    /// Record where the compositor says it is drawing a window.
+    pub(crate) fn set_desktop_frame(style: &ObjectId, frame: (f32, f32, f32, f32)) {
+        let surface = STYLE_SURFACES.with(|styles| styles.borrow().get(style).cloned());
+        let Some(surface) = surface else {
+            return;
+        };
+        DESKTOP_FRAMES.with(|frames| {
+            frames.borrow_mut().insert(surface, frame);
+        });
+    }
+
+    /// Where the compositor is drawing this window on the desktop, in physical
+    /// pixels — `None` until it has said, and on a compositor that does not
+    /// speak version 4 of the style protocol, never.
+    ///
+    /// The desktop's coordinate space, not the window's: this is the one thing
+    /// a Wayland client cannot work out for itself, and without it a window
+    /// cannot answer "what is at this point on the screen" — which is how an
+    /// assistive technology reads a desktop. See
+    /// [`crate::accessibility`].
+    pub fn desktop_frame(surface: &ObjectId) -> Option<(f32, f32, f32, f32)> {
+        DESKTOP_FRAMES.with(|frames| frames.borrow().get(surface).copied())
+    }
+
     /// Record the output geometry the compositor reported for a style surface.
     pub fn set_output_frame(style: &ObjectId, frame: (f32, f32, f32, f32)) {
         OUTPUT_FRAMES.with(|frames| {
@@ -1424,6 +1468,36 @@ impl<'a> AppContext<'a> {
         A11Y_ADAPTERS.with(|adapters| {
             if let Some(adapter) = adapters.borrow_mut().get_mut(surface_id) {
                 adapter.set_window_focused(focused);
+            }
+        });
+    }
+
+    /// Tell a surface's adapter where its window is, so what it describes can
+    /// be found by pointing at the screen.
+    ///
+    /// The compositor answers in physical pixels, like the rest of the style
+    /// protocol; an assistive technology works in logical ones, which is also
+    /// the space an application draws and describes in. Dividing here is what
+    /// keeps that conversion in one place.
+    ///
+    /// Does nothing until the compositor has said where the window is — on one
+    /// that does not speak version 4 of the style protocol, never. The tree is
+    /// still published; only its coordinates are then the window's own, which
+    /// is what every kit application did before this existed.
+    pub(crate) fn sync_accessibility_desktop_frame(surface_id: &ObjectId) {
+        let Some((x, y, width, height)) = Self::desktop_frame(surface_id) else {
+            return;
+        };
+        let scale = Self::fractional_scale().max(0.1);
+        let frame = accesskit::Rect::new(
+            f64::from(x) / scale,
+            f64::from(y) / scale,
+            f64::from(x + width) / scale,
+            f64::from(y + height) / scale,
+        );
+        A11Y_ADAPTERS.with(|adapters| {
+            if let Some(adapter) = adapters.borrow_mut().get_mut(surface_id) {
+                adapter.set_desktop_frame(frame);
             }
         });
     }

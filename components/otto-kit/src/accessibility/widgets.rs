@@ -708,7 +708,7 @@ mod preview_tests {
         // wording follows the desktop's language, and this test asserts which
         // message is chosen, not what it says.
         let shortened = crate::t_owned!("a11y-preview-shortened");
-        assert_eq!(node.description().as_deref(), Some(shortened.as_str()));
+        assert_eq!(node.description(), Some(shortened.as_str()));
 
         // The text lives in runs under the document: that is the only shape
         // AT-SPI's Text interface is offered for.
@@ -749,7 +749,7 @@ mod preview_tests {
         let node = find(&update, PREVIEW);
         assert_eq!(node.role(), Role::Image);
         let paged = crate::t_owned!("a11y-preview-page", page = 3.0, pages = 12.0);
-        assert_eq!(node.description().as_deref(), Some(paged.as_str()));
+        assert_eq!(node.description(), Some(paged.as_str()));
         // The paged wording is not the unpaged one, so a document that has
         // pages is distinguishable from one that has not.
         assert_ne!(paged, crate::t_owned!("a11y-preview"));
@@ -794,9 +794,9 @@ mod preview_tests {
             .find(|(id, _)| *id == list.children()[0])
             .unwrap()
             .1;
-        assert_eq!(first.label().as_deref(), Some("cover.png"));
+        assert_eq!(first.label(), Some("cover.png"));
         let expected = format!("{}, 2.4 MB", crate::t!("files-kind-document"));
-        assert_eq!(first.description().as_deref(), Some(expected.as_str()));
+        assert_eq!(first.description(), Some(expected.as_str()));
     }
 
     /// A preview that failed says why. Silence reads as one still loading.
@@ -814,7 +814,7 @@ mod preview_tests {
 
         let update = tree.finish();
         let node = find(&update, PREVIEW);
-        assert_eq!(node.value().as_deref(), Some("clip.mov: no decoder"));
+        assert_eq!(node.value(), Some("clip.mov: no decoder"));
     }
 
     #[test]
@@ -837,7 +837,7 @@ mod preview_tests {
 
         let update = tree.finish();
         let card = find(&update, PREVIEW);
-        assert_eq!(card.label().as_deref(), Some("Song"));
+        assert_eq!(card.label(), Some("Song"));
         assert_eq!(card.children().len(), 1);
 
         let fact = &update
@@ -846,7 +846,7 @@ mod preview_tests {
             .find(|(id, _)| *id == card.children()[0])
             .unwrap()
             .1;
-        assert_eq!(fact.label().as_deref(), Some("Duration"));
-        assert_eq!(fact.value().as_deref(), Some("3:41"));
+        assert_eq!(fact.label(), Some("Duration"));
+        assert_eq!(fact.value(), Some("3:41"));
     }
 }

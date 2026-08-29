@@ -994,6 +994,10 @@ fn pump_accessibility<A: App + 'static>(data: &mut AppData<A>) {
             &surface,
             keyboard_focus.as_ref() == Some(&surface),
         );
+        // Before the tree, not after: the bounds are what the coordinates in it
+        // are read against, and a tree published against the wrong origin is
+        // read against the wrong origin for as long as it stands.
+        AppContext::sync_accessibility_desktop_frame(&surface);
 
         if !wanted {
             continue;
@@ -1615,16 +1619,29 @@ impl<A: App + 'static> Dispatch<otto_surface_style_v1::OttoSurfaceStyleV1, ()> f
     ) {
         use wayland_client::Proxy;
 
-        let otto_surface_style_v1::Event::OutputFrame {
-            x,
-            y,
-            width,
-            height,
-        } = event;
-        AppContext::set_output_frame(
-            &proxy.id(),
-            (x as f32, y as f32, width as f32, height as f32),
-        );
+        match event {
+            otto_surface_style_v1::Event::OutputFrame {
+                x,
+                y,
+                width,
+                height,
+            } => AppContext::set_output_frame(
+                &proxy.id(),
+                (x as f32, y as f32, width as f32, height as f32),
+            ),
+            // Where this window is on the desktop. Only accessibility uses it,
+            // and only for a surface that is a window in its own right — see
+            // `AppContext::desktop_frame`.
+            otto_surface_style_v1::Event::DesktopFrame {
+                x,
+                y,
+                width,
+                height,
+            } => AppContext::set_desktop_frame(
+                &proxy.id(),
+                (x as f32, y as f32, width as f32, height as f32),
+            ),
+        }
     }
 }
 

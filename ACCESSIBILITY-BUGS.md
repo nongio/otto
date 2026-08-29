@@ -30,18 +30,23 @@ sidebar claimed desktop (0,0 214x640) — the dock's rectangle — so
 The awkward part is that a Wayland client genuinely cannot know where its
 window is, and no Otto protocol carries it. The compositor has to say.
 
-- [ ] Decide where the origin comes from: an event on
-      `otto-surface-style-v1`, or a small `otto-a11y-v1` of its own
-- [ ] Compositor: send each mapped surface its desktop origin, and again
-      whenever the window moves, the output moves, or the scale changes
-- [ ] otto-kit: hold the origin per surface and feed
-      `Adapter::set_root_window_bounds` — outer and inner bounds both
-- [ ] Check a subsurface-heavy window (otto-settings scrolls its pane in
-      subsurfaces) reports the same space as the window it belongs to
-- [ ] Regression test: a node's reported rect, offset by the window origin,
-      is where the compositor says that window is
+- [x] Decided: a `desktop_frame` event on `otto_surface_style_v1`, which is
+      already the per-surface channel the compositor answers `output_frame`
+      on. Version 4.
+- [x] Compositor: `src/surface_style/desktop_frame.rs` sweeps the style
+      surfaces once per pass of the event loop and sends the ones whose rect
+      has changed. Taken from the scene layer the surface is drawn into, so
+      it cannot disagree with what is on screen, and diffed rather than
+      hooked into the dozen places that move a window
+- [x] otto-kit: the frame is filed against the window's `wl_surface` and fed
+      to `Adapter::set_root_window_bounds` before each tree is published
+- [x] Only root surfaces are told. A popup or a subsurface moves with its
+      parent and describes itself against the parent's origin, so telling it
+      where it is would only offer a second, wrong origin to use
 - [ ] Re-run the `getAccessibleAtPoint` sweep across dock, bar and an
-      application window; every point must answer with what is drawn there
+      application window; every point must answer with what is drawn there.
+      Needs a compositor built from this branch — the fix is in the
+      compositor, so a running session from before it cannot show it
 
 ## Bug: a pop-up can be focused from the keyboard but not opened
 

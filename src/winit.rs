@@ -814,6 +814,9 @@ pub fn run_winit() {
         } else {
             state.workspaces.refresh_space();
             state.popups.cleanup();
+            // Tell any window that has moved where it is now. Diffed against
+            // what was last sent, so a desktop at rest sends nothing.
+            crate::surface_style::send_desktop_frames(&mut state);
             // Scripted-gesture driver, same hook udev installs. Costs a file
             // existence check per iteration until a script appears.
             crate::debug_gesture::tick(&mut state);

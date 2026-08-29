@@ -147,6 +147,13 @@ impl LayerShellSurface {
 
         // Create sc_layer immediately if sc_layer_shell is available
         let surface_style = surface_style.map(|shell| shell.get_surface_style(&wl_surface, qh, ()));
+        // A layer surface is a window as far as the desktop's coordinates are
+        // concerned: the bar and the islands sit somewhere on screen, and both
+        // describe themselves to assistive technologies.
+        if let Some(style) = surface_style.as_ref() {
+            use wayland_client::Proxy as _;
+            AppContext::note_style_surface(&style.id(), &wl_surface.id());
+        }
 
         // Set anchor and exclusive zone before commit (required for width/height = 0)
         if let Some(anchor) = anchor {

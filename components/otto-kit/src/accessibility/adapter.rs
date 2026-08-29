@@ -75,6 +75,9 @@ pub(crate) struct SurfaceAdapter {
     /// technology attached. Until it has, an update must carry the whole tree —
     /// which is all a kit application ever sends anyway.
     pub(crate) described: bool,
+    /// The last frame handed to the adapter, so an unmoved window does not
+    /// push the same bounds on every pass of the run loop.
+    desktop_frame: Option<accesskit::Rect>,
 }
 
 impl SurfaceAdapter {
@@ -90,6 +93,7 @@ impl SurfaceAdapter {
             adapter,
             mailbox,
             described: false,
+            desktop_frame: None,
         }
     }
 
@@ -105,5 +109,25 @@ impl SurfaceAdapter {
     /// window; without this it would have no reason to read any of them.
     pub(crate) fn set_window_focused(&mut self, focused: bool) {
         self.adapter.update_window_focus_state(focused);
+    }
+
+    /// Where the window is on the desktop, in logical pixels.
+    ///
+    /// Everything the application describes is in its own coordinates, with
+    /// the origin at the window's top-left corner. This is what turns those
+    /// into the desktop coordinates an assistive technology asks in: without
+    /// it every window claims the rectangle at the same offset from the
+    /// desktop's origin, and a screen reader pointed at a control finds
+    /// whatever is drawn in the corner of the screen instead.
+    ///
+    /// Outer and inner are the same rect. Otto's applications draw their own
+    /// decorations into their own surface, so there is no frame around the
+    /// client area to distinguish the two.
+    pub(crate) fn set_desktop_frame(&mut self, frame: accesskit::Rect) {
+        if self.desktop_frame == Some(frame) {
+            return;
+        }
+        self.desktop_frame = Some(frame);
+        self.adapter.set_root_window_bounds(frame, frame);
     }
 }

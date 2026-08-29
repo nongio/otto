@@ -621,7 +621,7 @@ mod tests {
         }
     }
 
-    fn node<'a>(update: &'a TreeUpdate, id: NodeId) -> &'a Node {
+    fn node(update: &TreeUpdate, id: NodeId) -> &Node {
         &update
             .nodes
             .iter()
@@ -643,14 +643,11 @@ mod tests {
         assert_eq!(dock.children().len(), 1);
 
         let item = node(&update, dock.children()[0]);
-        assert_eq!(item.label().as_deref(), Some("Files"));
+        assert_eq!(item.label(), Some("Files"));
         // Against the catalogue, not against English: the description follows
         // the desktop's language, and what matters here is that the running
         // dot is described at all.
-        assert_eq!(
-            item.description().as_deref(),
-            Some(otto_kit::t!("a11y-app-running"))
-        );
+        assert_eq!(item.description(), Some(otto_kit::t!("a11y-app-running")));
         assert!(item.supports_action(Action::Click));
     }
 
@@ -711,7 +708,7 @@ mod tests {
         assert_eq!(windows.children().len(), 1);
 
         let entry = node(&update, windows.children()[0]);
-        assert_eq!(entry.label().as_deref(), Some("Terminal"));
+        assert_eq!(entry.label(), Some("Terminal"));
         assert!(entry.supports_action(Action::Click));
         // The active window is what the keyboard would return to, so it is
         // what the overview reports as focused.

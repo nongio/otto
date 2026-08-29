@@ -782,6 +782,9 @@ pub fn run_udev() {
                     None => warn!("unknown debug action: {name}"),
                 }
             }
+            // Tell any window that has moved where it is now. Diffed against
+            // what was last sent, so a desktop at rest sends nothing.
+            crate::surface_style::send_desktop_frames(&mut state);
             display_handle.flush_clients().unwrap();
         }
     }
