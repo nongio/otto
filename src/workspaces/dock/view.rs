@@ -108,6 +108,8 @@ pub struct DockView {
     state: Arc<RwLock<DockModel>>,
     active: Arc<AtomicBool>,
     notify_tx: tokio::sync::mpsc::Sender<WorkspacesModel>,
+    /// Watchers of the dock's own model. See [`DockView::add_model_listener`].
+    model_observers: Arc<RwLock<Vec<std::sync::Weak<dyn Observer<DockModel>>>>>,
     latest_event: Arc<tokio::sync::RwLock<Option<WorkspacesModel>>>,
     magnification_position: Arc<RwLock<f32>>,
     pub dragging: Arc<AtomicBool>,
@@ -415,6 +417,7 @@ impl DockView {
             state: Arc::new(RwLock::new(initial_state)),
             active: Arc::new(AtomicBool::new(true)),
             notify_tx,
+            model_observers: Arc::new(RwLock::new(Vec::new())),
             latest_event: Arc::new(tokio::sync::RwLock::new(None)),
             magnification_position: Arc::new(RwLock::new(-500.0)),
             dragging: Arc::new(AtomicBool::new(false)),
@@ -479,6 +482,30 @@ impl DockView {
             *self.state.write().unwrap() = state.clone();
         }
         self.render_dock();
+        self.notify_model_observers(state);
+    }
+
+    /// Watch the dock's own model.
+    ///
+    /// The dock does not apply a workspace change when it is told about one: it
+    /// resolves the running applications on a task of its own, up to half a
+    /// second later. Anything that has to agree with what the dock *draws* —
+    /// the shell's accessible tree does — has to hear about it then rather than
+    /// when the workspace changed.
+    pub fn add_model_listener(&self, observer: Arc<dyn Observer<DockModel>>) {
+        self.model_observers
+            .write()
+            .unwrap()
+            .push(Arc::downgrade(&observer));
+    }
+
+    fn notify_model_observers(&self, state: &DockModel) {
+        let observers: Vec<_> = self.model_observers.read().unwrap().clone();
+        for observer in observers {
+            if let Some(observer) = observer.upgrade() {
+                observer.notify(state);
+            }
+        }
     }
     pub fn get_state(&self) -> DockModel {
         self.state.read().unwrap().clone()
@@ -3128,6 +3155,46 @@ mod tests {
                 fresh_box.height()
             );
         }
+    }
+
+    /// The dock resolves the running applications on a task of its own, half a
+    /// second behind the workspace change that caused them, so anything that
+    /// has to agree with what the dock draws — the shell's accessible tree —
+    /// has to hear about it when the dock applies it and not before. Without
+    /// this the tree says an application that has just started is not running,
+    /// and goes on saying so until something else changes the workspace.
+    #[test]
+    #[serial]
+    fn applying_a_model_tells_the_dock_s_own_watchers() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct Counter(Arc<AtomicUsize>);
+        impl Observer<DockModel> for Counter {
+            fn notify(&self, _event: &DockModel) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        let rt = runtime();
+        let _guard = rt.enter();
+        let (_engine, dock) = dock_at(DockPosition::Bottom);
+
+        let seen = Arc::new(AtomicUsize::new(0));
+        let observer: Arc<dyn Observer<DockModel>> = Arc::new(Counter(seen.clone()));
+        dock.add_model_listener(observer.clone());
+
+        let before = seen.load(Ordering::Relaxed);
+        let mut state = dock.get_state();
+        state.running_apps = vec![Application::test_new("calculator")];
+        dock.update_state(&state);
+        assert_eq!(seen.load(Ordering::Relaxed), before + 1);
+
+        // Weakly held: a watcher that has gone away must not keep the dock
+        // calling into it.
+        drop(observer);
+        let after = seen.load(Ordering::Relaxed);
+        dock.update_state(&state);
+        assert_eq!(seen.load(Ordering::Relaxed), after);
     }
 
     /// An icon slot is a square icon plus the sliver the running dot lives in,

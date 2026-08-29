@@ -87,7 +87,11 @@ The compositor publishes its own chrome as one accessible application, holding:
 
 - the **dock**, as a toolbar of buttons — each labelled with the application's
   desktop name, described as running or not, and clickable, where clicking
-  focuses that application exactly as a pointer click would;
+  focuses that application exactly as a pointer click would. Whether an
+  application is described as running is whatever the dock is currently
+  drawing: when an application starts or exits, the description changes at the
+  moment the dock's own row of icons does, not some fraction of a second later
+  and never permanently behind it;
 - the **app switcher**, present only while it is open, as a list whose selected
   entry is the accessible focus;
 - the **workspaces**, as a list with the current one selected, named as the UI
@@ -118,7 +122,12 @@ while an assistive technology is attached, it is asked to describe the surface
 and the description is published.
 
 - Node identity is the same identity the keyboard uses: what Tab moves between
-  and what is described are one list, not two.
+  and what is described are one list, not two. Every control a surface draws is
+  described, including one that changes nothing outside the application;
+  whether the keyboard stops on it is a separate question, and a control that
+  only displays a value is described without being stopped on.
+- A row of push buttons is one keyboard stop and one described control per
+  button, each carrying the bounds of its own button rather than of the row.
 - The focused control reported is whatever the surface's focus ring says, always.
 - Tab and Shift+Tab move the focus between the controls of the focused window,
   wrapping at both ends, skipping disabled controls, and leaving them in their
@@ -158,6 +167,13 @@ nested Otto never exposes any of it regardless.
   already has one — Otto logs it and carries on. Only accessibility is affected.
 - An assistive technology may attach and detach repeatedly; each attach must be
   answerable with a complete tree.
+- A pop-up control can be focused from the keyboard but not opened from it,
+  because a dropdown menu has no keyboard navigation of its own yet. It is
+  described, and a pointer or an assistive technology's click still opens it.
+- The state a description is built from and the state the shell draws from can
+  be resolved at different times. Where they are, the description must be
+  rebuilt when the drawing state settles, or it reports the previous state
+  indefinitely rather than briefly.
 
 ## Rationale
 
@@ -170,6 +186,12 @@ nested Otto never exposes any of it regardless.
   draws them keeps the two in step.
 - **Nothing is built unless something is listening.** The alternative is paying
   for accessibility on every frame of every session that never uses it.
+- **The dock's running state is taken from the dock, not from the window
+  state.** Which applications are running is resolved by the dock on its own
+  schedule, up to half a second after the windows change. A tree built only
+  from the window state was always one dock tick behind, and — because nothing
+  rebuilt it when that tick landed — went on calling a freshly started
+  application "not running" for as long as nothing else changed.
 - **The shell only claims focus while the switcher is open.** A dock that
   claimed to be the focused window would make a screen reader read the desktop
   instead of the user's work.

@@ -24,7 +24,7 @@ use tracing::{trace, warn};
 
 use crate::screenshare::CompositorCommand;
 use crate::utils::Observer;
-use crate::workspaces::{AppSwitcherView, Application, DockView, WorkspacesModel};
+use crate::workspaces::{AppSwitcherView, Application, DockModel, DockView, WorkspacesModel};
 
 /// The shell's window node. Everything else hangs off it.
 const ROOT: NodeId = NodeId(1);
@@ -371,6 +371,13 @@ pub struct ShellAccessibility {
     /// The window views, for their titles and where they have been laid out.
     /// A screen reader has nothing else to tell one window from another.
     window_views: Arc<std::sync::RwLock<HashMap<ObjectId, crate::workspaces::WindowView>>>,
+    /// The last model the tree was built from.
+    ///
+    /// The dock does not follow the workspace model directly — it applies it on
+    /// a timer of its own — so its running dots land after the notification
+    /// that caused them. The tree is rebuilt again when they do, and it needs
+    /// the model that was current at the time to rebuild from.
+    last_model: std::sync::RwLock<Option<WorkspacesModel>>,
 }
 
 impl ShellAccessibility {
@@ -398,6 +405,7 @@ impl ShellAccessibility {
             switcher,
             expose,
             window_views,
+            last_model: std::sync::RwLock::new(None),
         })
     }
 
@@ -577,7 +585,25 @@ impl ShellAccessibility {
 
 impl Observer<WorkspacesModel> for ShellAccessibility {
     fn notify(&self, event: &WorkspacesModel) {
+        *self.last_model.write().unwrap() = Some(event.clone());
         self.refresh(event);
+    }
+}
+
+/// The dock resolving its own state is the second half of a workspace change,
+/// and the half that carries whether an application is running.
+///
+/// It arrives up to half a second after the model that caused it, on the dock's
+/// own task, so a tree built from the model alone says "not running" about an
+/// application that has just started and goes on saying it until something else
+/// changes the workspace. Rebuilding here is what makes the dock's dots and
+/// what a screen reader says about them the same thing.
+impl Observer<DockModel> for ShellAccessibility {
+    fn notify(&self, _event: &DockModel) {
+        let model = self.last_model.read().unwrap().clone();
+        if let Some(model) = model {
+            self.refresh(&model);
+        }
     }
 }
 

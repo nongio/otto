@@ -481,6 +481,10 @@ pub fn run_udev() {
                     state.workspaces.window_views.clone(),
                 );
                 crate::utils::Observable::add_listener(&mut state.workspaces, chrome.clone());
+                // And the dock's own model, which lands later than the change
+                // that caused it: without this the tree says an application
+                // that has just started is not running, and goes on saying so.
+                state.workspaces.dock.add_model_listener(chrome.clone());
                 // Describe the desktop as it stands, rather than waiting for
                 // something to change it: an assistive technology attaching to
                 // an idle session would otherwise be told the shell is empty.

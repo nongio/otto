@@ -57,7 +57,7 @@ pub use app_icons_manager::AppIconsManager;
 pub use app_switcher::AppSwitcherView;
 pub use apps_info::ApplicationsInfo;
 pub use dnd_view::DndView;
-pub use dock::DockView;
+pub use dock::{DockModel, DockView};
 pub use osd::OsdView;
 pub use popup_overlay::PopupOverlayView;
 pub use tiling_overlay::{zone_from_pointer, TileZone, TilingOverlayView};
