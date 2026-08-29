@@ -298,6 +298,14 @@ sparse overlay, carrying only the keys that differ, the way `en-US` overlays
 - A setting the catalogue has never heard of still renders the English beside it
   in the schema.
 
+No test asserts a user-facing string as English prose. The chain a test binary
+resolves comes from the environment, so a developer whose own session is Italian
+runs the whole suite against the Italian catalogue — and a test spelling out
+"0 bytes" or "Undid Move" then fails on a change that is entirely correct. A
+test that needs the text compares against the same lookup the code performs,
+which still pins what the test is actually about: which unit a size crossed into,
+which operation the undo stack recorded, which month `civil_from_days` landed on.
+
 ## Constraints & Edge Cases
 
 - **A runtime inside a runtime.** The portal read must not build a runtime on

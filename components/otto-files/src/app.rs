@@ -6215,7 +6215,11 @@ mod dnd_tests {
 
         assert!(dir.join("a.txt").exists(), "back where it came from");
         assert!(!dir.join("sub/a.txt").exists(), "and not still there");
-        assert_eq!(browser.status.as_deref(), Some("Undid Move"));
+        // Against the catalogue, not against English: the label is what this
+        // is checking — that the move, and not something else, is what got
+        // recorded — and the wording around it is the catalogue's business.
+        let expected = otto_kit::t_owned!("files-undid", label = otto_kit::t!("files-undo-move"));
+        assert_eq!(browser.status.as_deref(), Some(expected.as_str()));
     }
 
     /// Undoing a copy takes the copy away — via the Trash, so an undo is never
@@ -6251,7 +6255,8 @@ mod dnd_tests {
         browser.undo_last();
 
         assert!(dir.join("a.txt").exists(), "restored out of the Trash");
-        assert_eq!(browser.status.as_deref(), Some("Undid Delete"));
+        let expected = otto_kit::t_owned!("files-undid", label = otto_kit::t!("files-undo-delete"));
+        assert_eq!(browser.status.as_deref(), Some(expected.as_str()));
     }
 
     /// The stack is per operation, and Ctrl+Z walks back through it.
@@ -6275,7 +6280,8 @@ mod dnd_tests {
         assert!(dir.join("a.txt").exists(), "then the one before it");
 
         browser.undo_last();
-        assert_eq!(browser.status.as_deref(), Some("Nothing to undo"));
+        let expected = otto_kit::t_owned!("files-nothing-to-undo");
+        assert_eq!(browser.status.as_deref(), Some(expected.as_str()));
     }
 
     /// Selecting and navigating are not operations. Nothing about them may end

@@ -664,13 +664,35 @@ mod tests {
         assert_ne!(natural_cmp("file007", "file7"), std::cmp::Ordering::Equal);
     }
 
+    /// Compared against the catalogue rather than against English prose.
+    ///
+    /// What this guards is the threshold each size crosses and how many
+    /// decimals survive it — 1.5 KB rather than 1.5 kB, 15 KB rather than
+    /// 15.0. The words around the number are the catalogue's business, and
+    /// spelling them out here would fail the test on a developer whose own
+    /// session is not English, which is not a bug in `format_size`.
     #[test]
     fn sizes_read_the_way_a_file_manager_writes_them() {
-        assert_eq!(format_size(0), "0 bytes");
-        assert_eq!(format_size(999), "999 bytes");
-        assert_eq!(format_size(1_500), "1.5 KB");
-        assert_eq!(format_size(15_000), "15 KB");
-        assert_eq!(format_size(2_000_000), "2.0 MB");
+        assert_eq!(
+            format_size(0),
+            otto_kit::t_owned!("files-size-bytes", count = 0.0)
+        );
+        assert_eq!(
+            format_size(999),
+            otto_kit::t_owned!("files-size-bytes", count = 999.0)
+        );
+        assert_eq!(
+            format_size(1_500),
+            otto_kit::t_owned!("files-size-kb", value = "1.5")
+        );
+        assert_eq!(
+            format_size(15_000),
+            otto_kit::t_owned!("files-size-kb", value = "15")
+        );
+        assert_eq!(
+            format_size(2_000_000),
+            otto_kit::t_owned!("files-size-mb", value = "2.0")
+        );
     }
 
     #[test]
@@ -683,9 +705,18 @@ mod tests {
         // this test fail on a correctly translated desktop. What it is
         // actually guarding is `civil_from_days`, and that shows up in the
         // parts whatever order they are printed in.
+        //
+        // The month comes from the catalogue for the same reason: its name is
+        // translated too, so "Jan" holds only in English.
         for (secs, day, month, year, time) in [
-            (0u64, "1", "Jan", "1970", "00:00"),
-            (1_700_000_000, "14", "Nov", "2023", "22:13"),
+            (0u64, "1", otto_kit::t!("files-month-jan"), "1970", "00:00"),
+            (
+                1_700_000_000,
+                "14",
+                otto_kit::t!("files-month-nov"),
+                "2023",
+                "22:13",
+            ),
         ] {
             let at = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs);
             let rendered = format_time(at);
