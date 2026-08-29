@@ -74,9 +74,9 @@ settings-pane-lock-and-login = Verrouillage et connexion
 ## Settings — General
 
 settings-group-appearance = Apparence
-settings-appearance = Apparence
+settings-colour-scheme = Schéma de couleurs
 settings-accent-colour = Couleur d’accentuation
-settings-font = Police
+settings-font = Police système
 settings-gtk-theme = Thème GTK
 
 settings-group-desktop = Bureau
@@ -417,7 +417,7 @@ settings-window-title = Réglages d’Otto — { $pane }
 # --- general ---
 schema-screen-scale-label = Échelle d’affichage
 schema-screen-scale-description = Facteur d’échelle global appliqué au bureau.
-schema-theme-scheme-label = Apparence
+schema-theme-scheme-label = Schéma de couleurs
 schema-theme-scheme-description = Jeu de couleurs clair ou sombre.
 schema-accent-color-label = Couleur d’accentuation
 schema-accent-color-description = Couleur d’accentuation nommée, utilisée par l’interface propre d’Otto.

@@ -74,9 +74,9 @@ settings-pane-lock-and-login = Bloqueio e login
 ## Settings — General
 
 settings-group-appearance = Aparência
-settings-appearance = Aparência
+settings-colour-scheme = Esquema de cores
 settings-accent-colour = Cor de destaque
-settings-font = Fonte
+settings-font = Fonte do sistema
 settings-gtk-theme = Tema do GTK
 
 settings-group-desktop = Área de trabalho
@@ -417,7 +417,7 @@ settings-window-title = Configurações do Otto — { $pane }
 # --- general ---
 schema-screen-scale-label = Escala do monitor
 schema-screen-scale-description = Fator de escala global aplicado à área de trabalho.
-schema-theme-scheme-label = Aparência
+schema-theme-scheme-label = Esquema de cores
 schema-theme-scheme-description = Esquema de cores claro ou escuro.
 schema-accent-color-label = Cor de destaque
 schema-accent-color-description = Nome da cor de destaque usada pela própria interface do Otto.

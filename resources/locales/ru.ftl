@@ -73,9 +73,9 @@ settings-pane-lock-and-login = Блокировка и вход
 ## Settings — General
 
 settings-group-appearance = Оформление
-settings-appearance = Оформление
+settings-colour-scheme = Цветовая схема
 settings-accent-colour = Цвет акцента
-settings-font = Шрифт
+settings-font = Системный шрифт
 settings-gtk-theme = Тема GTK
 
 settings-group-desktop = Рабочий стол
@@ -418,7 +418,7 @@ settings-window-title = Настройки Otto — { $pane }
 # --- general ---
 schema-screen-scale-label = Масштаб дисплея
 schema-screen-scale-description = Общий коэффициент масштабирования рабочего стола.
-schema-theme-scheme-label = Оформление
+schema-theme-scheme-label = Цветовая схема
 schema-theme-scheme-description = Светлая или тёмная цветовая схема.
 schema-accent-color-label = Цвет акцента
 schema-accent-color-description = Именованный цвет акцента, используемый собственным интерфейсом Otto.

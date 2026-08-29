@@ -14,7 +14,7 @@ pub fn build() -> Pane {
                 otto_kit::t!("settings-group-appearance"),
                 vec![
                     Row::new(
-                        otto_kit::t!("settings-group-appearance"),
+                        otto_kit::t!("settings-colour-scheme"),
                         Control::Select("Light".into()),
                     )
                     .id("theme_scheme"),

@@ -231,11 +231,12 @@ pub static SETTINGS: &[SettingSpec] = &[
         4.0,
         0.25,
     ),
-    choice(
+    labelled_choice(
         "theme_scheme",
-        "Appearance",
+        "Colour scheme",
         "Light or dark colour scheme.",
         Restart,
+        &["Light", "Dark"],
         &["settings-choice-light", "settings-choice-dark"],
     ),
     labelled_choice(
