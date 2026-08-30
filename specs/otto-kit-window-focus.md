@@ -66,6 +66,12 @@ do for itself.
 - Window controls go gray — a lighter gray on a dark titlebar than on a light
   one, so they read against either — and reveal no glyphs on hover.
 - The blurred backdrop is not requested.
+- The accent is muted: an application may draw its content with
+  `Theme::with_muted_accent`, which mixes the accent and the focused-selection
+  material most of the way towards their own gray. A background window still
+  shows what is selected in it, but only the focused window says so in the
+  user's colour. Opt-in per application, because it costs a repaint of
+  whatever the application caches.
 
 **Materials follow the blur, not the focus.** A translucent material is
 translucent *over the blur*; over the bare desktop it is the wallpaper showing
