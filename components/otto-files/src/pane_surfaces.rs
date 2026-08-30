@@ -93,6 +93,13 @@ struct PaneSurface {
     /// Identity of everything else that feeds the drawing.
     key: u64,
     hidden: bool,
+    /// Whether this surface takes pointer input when it is showing. False for
+    /// the columns, whose hit-testing belongs to the toplevel; true for Quick
+    /// View, which hangs outside the toplevel and has to answer for itself.
+    ///
+    /// Held as state rather than applied once, because it has to be *withdrawn*
+    /// while the surface is hidden — see [`PaneSurface::hide`].
+    takes_input: bool,
     /// The compositor owns this surface's position, so nothing here may set
     /// it: a parent-relative position sent after the centring would simply
     /// undo it.
@@ -426,7 +433,12 @@ impl PaneSurfaces {
                 // never reports those coordinates to this client — so the
                 // close button would be dead exactly when the panel is where
                 // it is supposed to be. `None` means "the whole surface".
-                pane.surface.wl_surface().set_input_region(None);
+                //
+                // Recorded as well as applied: the region has to come back off
+                // whenever the panel is hidden, or it goes on answering for a
+                // band of the screen nobody can see. See `PaneSurface::hide`.
+                pane.takes_input = true;
+                pane.accept_input(true);
                 pane.surface.commit();
             }
         }
@@ -642,6 +654,7 @@ impl PaneSurfaces {
             bar: f32::NAN,
             key: 0,
             hidden: false,
+            takes_input: false,
             output_centered: false,
         })
     }
@@ -680,6 +693,33 @@ impl PaneSurface {
         resized
     }
 
+    /// Say whether the surface answers for the pointer over its own area.
+    ///
+    /// `None` is "all of me"; an empty region is "none of me", which is how a
+    /// surface lets events fall through to whatever is behind it.
+    fn accept_input(&self, yes: bool) {
+        let surface = self.surface.wl_surface();
+        if yes {
+            surface.set_input_region(None);
+            return;
+        }
+        // An empty region. The compositor copies it on `set_input_region`, so
+        // it is destroyed straight away rather than accumulating one object
+        // per hide for the life of the window.
+        let region = AppContext::compositor_state()
+            .wl_compositor()
+            .create_region(AppContext::queue_handle(), ());
+        surface.set_input_region(Some(&region));
+        region.destroy();
+    }
+
+    /// Take the surface out of sight — and out of the pointer's way.
+    ///
+    /// Opacity alone is not hiding. The surface stays mapped, and a mapped
+    /// surface with an input region still answers for every pointer event over
+    /// it: Quick View's panel is centred on the *display*, so an invisible one
+    /// left holding its region swallowed the scroll wheel across a band
+    /// through the middle of the screen, for the rest of the session.
     fn hide(&mut self) -> bool {
         if self.hidden {
             return false;
@@ -687,6 +727,9 @@ impl PaneSurface {
         self.hidden = true;
         if let Some(style) = self.surface.layer() {
             style.set_opacity(0.0);
+        }
+        if self.takes_input {
+            self.accept_input(false);
         }
         self.surface.commit();
         true
@@ -699,6 +742,9 @@ impl PaneSurface {
         self.hidden = false;
         if let Some(style) = self.surface.layer() {
             style.set_opacity(1.0);
+        }
+        if self.takes_input {
+            self.accept_input(true);
         }
         self.surface.commit();
         true

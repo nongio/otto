@@ -19,7 +19,8 @@
 //! | `down [BUTTON]`    | press (`left`, `right`, `middle`; default `left`)    |
 //! | `up [BUTTON]`      | release                                              |
 //! | `click [BUTTON]`   | press and release                                    |
-//! | `scroll DY DX`     | one axis frame                                       |
+//! | `scroll DY DX`     | one wheel axis frame                                 |
+//! | `swipe DY DX N`    | a touchpad flick: `N` finger deltas, then an axis stop |
 //! | `sleep MS`         | wait                                                 |
 //!
 //! Absolute coordinates are output pixels: the pointer is bound to the first
@@ -251,6 +252,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 pointer.frame();
                 i += 3;
+            }
+            // A touchpad flick: a stream of small deltas from one continuous
+            // source, ended by the axis stop that says the fingers lifted.
+            // Shaped differently from a wheel on purpose — a client that
+            // tracks momentum, locks a gesture to one axis, or flings only on
+            // the lift behaves differently under the two, and only this one
+            // exercises that.
+            "swipe" => {
+                let a = take(3)?;
+                let (dy, dx): (f64, f64) = (a[0].parse()?, a[1].parse()?);
+                let steps: u32 = a[2].parse::<u32>()?.max(1);
+                for _ in 0..steps {
+                    pointer.axis_source(wl_pointer::AxisSource::Finger);
+                    if dy != 0.0 {
+                        pointer.axis(now(&start), wl_pointer::Axis::VerticalScroll, dy);
+                    }
+                    if dx != 0.0 {
+                        pointer.axis(now(&start), wl_pointer::Axis::HorizontalScroll, dx);
+                    }
+                    pointer.frame();
+                    queue.flush()?;
+                    std::thread::sleep(Duration::from_millis(12));
+                }
+                pointer.axis_source(wl_pointer::AxisSource::Finger);
+                if dy != 0.0 {
+                    pointer.axis_stop(now(&start), wl_pointer::Axis::VerticalScroll);
+                }
+                if dx != 0.0 {
+                    pointer.axis_stop(now(&start), wl_pointer::Axis::HorizontalScroll);
+                }
+                pointer.frame();
+                i += 4;
             }
             "sleep" => {
                 let a = take(1)?;
