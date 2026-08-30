@@ -321,6 +321,8 @@ fn no_rasteriser(file: &mut File, bytes: &[u8], request: &Request, pages: u32) -
         subtitle: otto_kit::t_owned!("quickview-pdf-install-rasteriser", packages = wanted),
         facts,
         hero: None,
+        // Stamped by `decode`, which is where the sniffed type is known.
+        icon: Vec::new(),
     }
 }
 

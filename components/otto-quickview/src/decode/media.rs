@@ -39,6 +39,8 @@ pub fn generic(metadata: &Metadata, request: &Request, mime: &str) -> PreviewPay
             },
         ],
         hero: None,
+        // Stamped by `decode`, which is where the sniffed type is known.
+        icon: Vec::new(),
     }
 }
 
@@ -83,6 +85,8 @@ pub fn audio(
         // Cover art is an embedded JPEG or PNG, which Skia decodes like any
         // other image — no audio decoder involved.
         hero: tags.cover.as_deref().and_then(decode_cover),
+        // Stamped by `decode`, which is where the sniffed type is known.
+        icon: Vec::new(),
     }
 }
 
@@ -121,6 +125,8 @@ pub fn video(
         subtitle: filetype::kind_of(mime).label().to_string(),
         facts,
         hero: None,
+        // Stamped by `decode`, which is where the sniffed type is known.
+        icon: Vec::new(),
     }
 }
 

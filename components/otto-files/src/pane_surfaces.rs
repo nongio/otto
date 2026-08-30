@@ -917,7 +917,7 @@ mod tests {
         let opened_at = std::time::Instant::now();
         let generation = 7;
 
-        let waiting = quickview::Session::waiting("notes.txt".into(), anchor, opened_at);
+        let waiting = quickview::Session::waiting("notes.txt".into(), false, anchor, opened_at);
         let landed = quickview::Session::new(
             otto_kit::preview::Preview::Text {
                 lines: vec!["hello".into()],

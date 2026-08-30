@@ -3219,10 +3219,11 @@ impl Browser {
         // rather than carrying the last file's preview while the new one is
         // read, and keeps its place and its entrance while it waits.
         match self.quickview.as_mut() {
-            Some(session) => session.awaiting(entry.name.clone(), anchor),
+            Some(session) => session.awaiting(entry.name.clone(), entry.is_dir, anchor),
             None => {
                 self.quickview = Some(quickview::Session::waiting(
                     entry.name.clone(),
+                    entry.is_dir,
                     anchor,
                     std::time::Instant::now(),
                 ));
@@ -5964,6 +5965,31 @@ impl FilesApp {
                             // under the pointer.
                             Axis::Vertical => {
                                 let depth = browser.pane_under(x, y);
+                                {
+                                    let rects: Vec<String> = (0..browser.columns.len())
+                                        .map(|d| {
+                                            let r = view::miller_pane_rect(
+                                                d,
+                                                browser.content_h(),
+                                                browser.pan.offset(),
+                                                browser.miller_w,
+                                            );
+                                            format!("{d}:[{:.0}..{:.0}]", r.left, r.right)
+                                        })
+                                        .collect();
+                                    tracing::info!(
+                                        x, y,
+                                        depth,
+                                        active = browser.active,
+                                        size = ?browser.size,
+                                        content_h = browser.content_h(),
+                                        pan = browser.pan.offset(),
+                                        miller_w = browser.miller_w,
+                                        panes = %rects.join(" "),
+                                        max = browser.columns[depth].scroll.state.max_offset(),
+                                        "SCROLLDBG"
+                                    );
+                                }
                                 (dy, &mut browser.columns[depth].scroll)
                             }
                         };

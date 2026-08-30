@@ -640,7 +640,10 @@ impl A11yTree {
                     },
                 );
             }
-            Preview::Unavailable { reason } => {
+            // The icon is the file's own, and the name it is announced under
+            // already says what the file is: reading it out would be reading
+            // the same thing twice.
+            Preview::Unavailable { reason, .. } => {
                 // Announced rather than left out: "no preview, and here is why"
                 // is information, and silence reads as a preview still loading.
                 self.status(id, bounds, format!("{name}: {reason}"));
@@ -809,6 +812,7 @@ mod preview_tests {
             "clip.mov",
             &Preview::Unavailable {
                 reason: "no decoder".into(),
+                icon: vec!["video-x-generic".into()],
             },
         );
 
@@ -832,6 +836,7 @@ mod preview_tests {
                     value: "3:41".into(),
                 }],
                 hero: None,
+                icon: vec!["audio-x-generic".into()],
             },
         );
 

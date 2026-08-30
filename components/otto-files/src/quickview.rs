@@ -139,10 +139,11 @@ impl Session {
     /// handed the file and answered reads as a keystroke that did not take.
     /// The panel goes up on the keystroke instead, and the content arrives
     /// into a card that is already there.
-    pub fn waiting(name: String, anchor: Rect, opened_at: Instant) -> Self {
+    pub fn waiting(name: String, is_dir: bool, anchor: Rect, opened_at: Instant) -> Self {
+        let preview = waiting_preview(&name, is_dir);
         Self {
             loading: true,
-            ..Self::new(waiting_preview(), name, anchor, opened_at)
+            ..Self::new(preview, name, anchor, opened_at)
         }
     }
 
@@ -153,14 +154,14 @@ impl Session {
     /// preview that does not match the selection is worse than no preview,
     /// because nothing on screen says it is the wrong file. `anchor` moves
     /// too, so an exit still flies home to the row that is selected.
-    pub fn awaiting(&mut self, name: String, anchor: Rect) {
+    pub fn awaiting(&mut self, name: String, is_dir: bool, anchor: Rect) {
         let opened_at = self.opened_at;
         let anchor = if anchor.is_empty() {
             self.anchor
         } else {
             anchor
         };
-        *self = Self::waiting(name, anchor, opened_at);
+        *self = Self::waiting(name, is_dir, anchor, opened_at);
     }
 
     /// How far into the entrance the panel is, 0 → 1.
@@ -469,14 +470,18 @@ impl Session {
     }
 }
 
-/// What a panel shows while its decode is still running.
+/// What a panel shows while its decode is still running: the file's own icon,
+/// and a line saying the preview is opening.
 ///
 /// Said the same way an undecodable file says why it cannot be shown, because
-/// it is the same thing from the panel's side: there is nothing to draw yet,
-/// and a line in the middle of the card is how this panel says so.
-fn waiting_preview() -> Preview {
+/// it is the same thing from the panel's side — there is nothing decoded to
+/// draw. The icon is the one the browser's listing was already showing for the
+/// file, so the card is about the row it grew out of rather than a blank
+/// waiting on a worker.
+fn waiting_preview(name: &str, is_dir: bool) -> Preview {
     Preview::Unavailable {
         reason: otto_kit::t_owned!("files-status-opening-preview"),
+        icon: otto_quickview::payload::icon_names_for(name, is_dir),
     }
 }
 
@@ -597,7 +602,7 @@ mod tests {
         let mut session = image_session(2000, 1500);
         session.zoom_to(4.0, (content.center_x(), content.center_y()), content);
 
-        session.awaiting("notes.txt".into(), Rect::new_empty());
+        session.awaiting("notes.txt".into(), false, Rect::new_empty());
 
         assert!(matches!(session.preview, Preview::Unavailable { .. }));
         assert_eq!(session.name, "notes.txt");
@@ -613,7 +618,7 @@ mod tests {
     fn a_waiting_panel_does_not_scroll() {
         let content = content();
         let mut session = text_session();
-        session.awaiting("big.log".into(), Rect::new_empty());
+        session.awaiting("big.log".into(), false, Rect::new_empty());
         session.scroll_by(20, content);
         assert_eq!(session.first_row, 0);
     }
@@ -623,10 +628,10 @@ mod tests {
     #[test]
     fn waiting_and_landing_are_one_entrance() {
         let opened_at = Instant::now();
-        let waiting = Session::waiting("photo.png".into(), Rect::new_empty(), opened_at);
+        let waiting = Session::waiting("photo.png".into(), false, Rect::new_empty(), opened_at);
         assert!(matches!(waiting.preview, Preview::Unavailable { .. }));
         let mut session = waiting;
-        session.awaiting("other.png".into(), Rect::new_empty());
+        session.awaiting("other.png".into(), false, Rect::new_empty());
         assert_eq!(session.opened_at, opened_at);
     }
 

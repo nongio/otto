@@ -181,9 +181,12 @@ pub enum Preview {
         subtitle: String,
         facts: Vec<Fact>,
         hero: Option<Pixels>,
+        /// Icon-theme names for the file, most specific first, drawn where the
+        /// artwork would be when there is none. Empty means "draw nothing".
+        icon: Vec<String>,
     },
-    /// Nothing could be shown, and why.
-    Unavailable { reason: String },
+    /// Nothing could be shown, and why. The file's icon still is.
+    Unavailable { reason: String, icon: Vec<String> },
 }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +222,11 @@ const NAME_GAP: f32 = 8.0;
 /// Gutter width for line numbers.
 pub const GUTTER: f32 = 46.0;
 pub const HERO: f32 = 128.0;
+/// The band under an icon that a reason is centred in.
+const REASON_BAND: f32 = 40.0;
+/// Below this an icon is not worth drawing: the theme has nothing that small
+/// that reads, and a smudge is worse than the space it took.
+const MIN_ICON: f32 = 16.0;
 /// Band heights on a metadata card. Declared rather than inlined so drawing
 /// centres text in the same box the layout advances by.
 pub const TITLE_BAND: f32 = 34.0;
@@ -479,6 +487,7 @@ pub fn draw(
             subtitle,
             facts,
             hero,
+            icon,
         } => draw_card(
             canvas,
             &geometry,
@@ -486,15 +495,26 @@ pub fn draw(
             subtitle,
             facts,
             hero.as_ref(),
+            icon,
             theme,
+            resolve_icon,
         ),
-        Preview::Unavailable { reason } => draw_unavailable(canvas, &geometry, reason, theme),
+        Preview::Unavailable { reason, icon } => {
+            draw_unavailable(canvas, &geometry, reason, icon, theme, resolve_icon)
+        }
     }
 }
 
 fn draw_pixels(canvas: &Canvas, geometry: &PreviewLayout, pixels: &Pixels, theme: &Theme) {
     let Some(image) = pixels.to_image() else {
-        return draw_unavailable(canvas, geometry, "this image could not be shown", theme);
+        return draw_unavailable(
+            canvas,
+            geometry,
+            "this image could not be shown",
+            &[],
+            theme,
+            &|_, _| None,
+        );
     };
 
     // Zoomed in, the content runs past the box it is laid out in; the clip is
@@ -671,29 +691,23 @@ fn draw_card(
     subtitle: &str,
     facts: &[Fact],
     hero: Option<&Pixels>,
+    icon: &[String],
     theme: &Theme,
+    resolve_icon: &dyn Fn(&str, i32) -> Option<Image>,
 ) {
     let inner = geometry.content;
     let mut y = inner.top;
 
     // Artwork, when there is any: cover art, an embedded thumbnail, a poster.
+    // Failing that, the file's own icon in the same slot — a card describing a
+    // file it could not draw is still a preview *of that kind of file*, and
+    // the icon says so at a glance where a table of facts does not.
+    let slot = Rect::from_xywh(inner.center_x() - HERO / 2.0, y, HERO, HERO);
     if let Some(image) = hero.and_then(|hero| hero.to_image()) {
-        let rect = fit(
-            Rect::from_xywh(inner.center_x() - HERO / 2.0, y, HERO, HERO),
-            image.width() as f32,
-            image.height() as f32,
-        );
-        let mut paint = Paint::default();
-        paint.set_anti_alias(true);
-        canvas.draw_image_rect_with_sampling_options(
-            &image,
-            None,
-            rect,
-            skia_safe::sampling_options::SamplingOptions::from(
-                skia_safe::sampling_options::CubicResampler::mitchell(),
-            ),
-            &paint,
-        );
+        let rect = fit(slot, image.width() as f32, image.height() as f32);
+        draw_scaled(canvas, &image, rect);
+        y = rect.bottom + PADDING;
+    } else if let Some(rect) = draw_icon(canvas, slot, icon, resolve_icon) {
         y = rect.bottom + PADDING;
     }
 
@@ -744,15 +758,93 @@ fn draw_card(
     }
 }
 
-fn draw_unavailable(canvas: &Canvas, geometry: &PreviewLayout, reason: &str, theme: &Theme) {
+/// Why there is no preview — under the file's icon, when the icon theme has
+/// one. A reason on its own is an apology; the icon above it is as much of the
+/// file as can honestly be shown, and is what the browser's own listing was
+/// already showing for it.
+fn draw_unavailable(
+    canvas: &Canvas,
+    geometry: &PreviewLayout,
+    reason: &str,
+    icon: &[String],
+    theme: &Theme,
+    resolve_icon: &dyn Fn(&str, i32) -> Option<Image>,
+) {
     let inner = geometry.content;
+    // The icon and the line under it are centred as one block, so the pair
+    // sits where the lone line used to rather than hanging off the top.
+    let side = icon_side(inner);
+    let block = side + REASON_BAND;
+    let top = (inner.center_y() - block / 2.0).max(inner.top);
+    let drawn = draw_icon(
+        canvas,
+        Rect::from_xywh(inner.center_x() - side / 2.0, top, side, side),
+        icon,
+        resolve_icon,
+    );
+    let baseline = match drawn {
+        Some(rect) => rect.bottom + REASON_BAND / 2.0,
+        None => inner.center_y(),
+    };
+
     Label::new(reason.to_string())
         .with_style(styles::SUBHEADLINE)
         .with_color(theme.text_secondary)
         .with_width(inner.width())
         .with_align(crate::components::label::TextAlign::Center)
-        .centered_on(inner.left, inner.center_y())
+        .centered_on(inner.left, baseline)
         .render(canvas);
+}
+
+/// How large the icon is drawn: the hero slot, or as much of the box as there
+/// is when the box is smaller than that. Never larger than the slot — an icon
+/// blown up to fill a window looks broken, and the themes stop at 512 anyway.
+fn icon_side(box_rect: Rect) -> f32 {
+    box_rect.width().min(box_rect.height()).min(HERO)
+}
+
+/// Draw the first name in the chain the icon theme actually has, centred in
+/// `slot`, and report where it landed.
+///
+/// The chain is tried here rather than by the caller because the callback
+/// resolves one name at a time — that is what keeps this module free of the
+/// icon cache — and every host would otherwise repeat the same loop.
+fn draw_icon(
+    canvas: &Canvas,
+    slot: Rect,
+    icon: &[String],
+    resolve_icon: &dyn Fn(&str, i32) -> Option<Image>,
+) -> Option<Rect> {
+    let side = icon_side(slot);
+    if side < MIN_ICON {
+        return None;
+    }
+    let image = icon
+        .iter()
+        .find_map(|name| resolve_icon(name, side as i32))?;
+    let rect = Rect::from_xywh(
+        slot.center_x() - side / 2.0,
+        slot.center_y() - side / 2.0,
+        side,
+        side,
+    );
+    draw_scaled(canvas, &image, rect);
+    Some(rect)
+}
+
+/// One image into one rect, resampled the way every picture here is.
+fn draw_scaled(canvas: &Canvas, image: &Image, rect: Rect) {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    canvas.draw_image_rect_with_sampling_options(
+        image,
+        None,
+        rect,
+        skia_safe::sampling_options::SamplingOptions::from(
+            skia_safe::sampling_options::CubicResampler::mitchell(),
+        ),
+        &paint,
+    );
 }
 
 /// A monospaced style for code. Derived from the body style so it tracks the
@@ -811,6 +903,94 @@ mod tests {
         let fitted = fit(Rect::from_xywh(0.0, 0.0, 100.0, 100.0), 400.0, 200.0);
         assert_eq!(fitted.width(), 100.0);
         assert_eq!(fitted.height(), 50.0);
+    }
+
+    /// A canvas to draw the icon tests into. Nothing asserts on the pixels —
+    /// what is being tested is which name was asked for and where it landed.
+    fn scratch() -> skia_safe::Surface {
+        skia_safe::surfaces::raster_n32_premul((400, 400)).expect("surface")
+    }
+
+    fn an_image() -> Image {
+        pixels(8, 8).to_image().expect("image")
+    }
+
+    #[test]
+    fn the_icon_chain_is_tried_most_specific_first() {
+        let asked = std::cell::RefCell::new(Vec::new());
+        let resolve = |name: &str, _size: i32| {
+            asked.borrow_mut().push(name.to_string());
+            // The theme has the generic icon but not the specific one, which
+            // is the common case and the reason there is a chain at all.
+            (name == "video-x-generic").then(an_image)
+        };
+        let chain = [
+            "video-mp4".to_string(),
+            "video-x-generic".to_string(),
+            "unknown".to_string(),
+        ];
+        let mut surface = scratch();
+        let slot = Rect::from_xywh(0.0, 0.0, 400.0, 400.0);
+        let drawn = draw_icon(surface.canvas(), slot, &chain, &resolve);
+
+        assert_eq!(*asked.borrow(), ["video-mp4", "video-x-generic"]);
+        let drawn = drawn.expect("the generic icon was drawn");
+        // Capped at the hero size and centred in the slot, not blown up to
+        // fill 400 points.
+        assert_eq!(drawn.width(), HERO);
+        assert_eq!(drawn.center_x(), slot.center_x());
+    }
+
+    #[test]
+    fn an_icon_the_theme_does_not_have_draws_nothing() {
+        let mut surface = scratch();
+        let slot = Rect::from_xywh(0.0, 0.0, 400.0, 400.0);
+        assert!(draw_icon(surface.canvas(), slot, &["nope".to_string()], &|_, _| None).is_none());
+        // And neither does an empty chain, which is what a payload carries
+        // when nothing could work out what the file was.
+        assert!(draw_icon(surface.canvas(), slot, &[], &|_, _| Some(an_image())).is_none());
+    }
+
+    #[test]
+    fn an_icon_shrinks_to_a_small_box_and_gives_up_on_a_tiny_one() {
+        let mut surface = scratch();
+        let chain = ["x".to_string()];
+        let small = Rect::from_xywh(0.0, 0.0, 40.0, 60.0);
+        let drawn = draw_icon(surface.canvas(), small, &chain, &|_, _| Some(an_image()));
+        assert_eq!(drawn.expect("drawn").width(), 40.0);
+
+        let tiny = Rect::from_xywh(0.0, 0.0, 8.0, 8.0);
+        assert!(draw_icon(surface.canvas(), tiny, &chain, &|_, _| Some(an_image())).is_none());
+    }
+
+    #[test]
+    fn a_card_with_artwork_prefers_it_to_the_icon() {
+        let asked = std::cell::RefCell::new(false);
+        let resolve = |_: &str, _: i32| {
+            *asked.borrow_mut() = true;
+            Some(an_image())
+        };
+        let preview = Preview::Card {
+            title: "Song".into(),
+            subtitle: "Artist".into(),
+            facts: Vec::new(),
+            hero: Some(pixels(16, 16)),
+            icon: vec!["audio-x-generic".into()],
+        };
+        let mut surface = scratch();
+        draw(
+            surface.canvas(),
+            Rect::from_xywh(0.0, 0.0, 400.0, 400.0),
+            &preview,
+            &Theme::light(),
+            0,
+            Zoom::FIT,
+            &resolve,
+        );
+        assert!(
+            !*asked.borrow(),
+            "cover art is the file itself; the icon is only for when there is none"
+        );
     }
 
     #[test]

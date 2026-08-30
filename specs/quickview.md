@@ -345,7 +345,8 @@ the table is arranged around not compromising them.
 | Archive — zip, uncompressed tar | Listing only: names, sizes, dates, entry count | Nothing (see below) |
 | Audio | Metadata card: title/artist/album/duration, plus embedded cover art | Tag parsing by hand; PCM decode deferred |
 | Video | Metadata card: dimensions, duration, codec, plus the container's embedded poster when present | Frame decode deferred |
-| HEIC, AVIF, camera RAW | Not previewed — shown as an unsupported card naming the type | Deferred |
+| HEIC, AVIF, camera RAW | Not previewed — shown as an unsupported card naming the type, under the file's icon | Deferred |
+| Anything with no decoder, and any decode that failed | The file's icon at hero size, with the type and size, or the reason it could not be shown | Nothing |
 | HTML, EPUB, Office documents | Never | — |
 
 Notes on the ones that look like they need a crate and do not:
@@ -459,8 +460,25 @@ type:
 - `Text` — bounded, validated UTF-8 with optional style spans.
 - `Rows` — a table (archive entries, directory listing): name, size, date, an
   icon key.
-- `Card` — key/value metadata plus an optional `Pixels` hero image.
-- `Unavailable` — a reason to display.
+- `Card` — key/value metadata, an optional `Pixels` hero image, and the file's
+  icon-theme chain. The hero is the file's own artwork — cover art, an
+  embedded thumbnail, a poster frame — and the icon is what is drawn in its
+  place when there is none.
+- `Unavailable` — a reason to display, under the same icon chain.
+
+The icon chain is a list of icon-theme names, most specific first
+(`video-mp4`, `video-x-generic`, …), and the drawing side takes the first one
+the theme has. It is stamped in **one** place per side rather than by each
+decoder: the worker fills it from the type it sniffed, and the host fills in a
+name-derived chain for the payloads no decoder produced — a worker that
+crashed, overran, or could not open the file. A decoder that read the bytes
+always wins, because the name is only ever a guess.
+
+Neither half of that is optional. A card that is only a table of facts, or a
+line of text saying why there is no preview, tells the reader nothing about
+*what the file is* — while the row they pressed space on was already showing
+exactly that. The icon is the honest floor under every content type, including
+the ones that have no decoder and never will.
 
 A new content type adds a decoder that produces one of these. It does not add a
 payload variant, an IPC message, a window mode, or a draw path. When a variant
@@ -704,8 +722,12 @@ both costs one branch at surface creation and nothing at draw time.
 **v1 ships images, PDF and text properly, and everything else honestly.** Those
 three are what people press space on; a previewer that shows a photograph but
 describes a PDF has failed at a third of its job. Everything else — audio,
-video, archives — gets a metadata card, which is better than nothing and better
-than distorting the build for a convenience feature.
+video, archives — gets a metadata card **under the file's icon**, which is
+better than nothing and better than distorting the build for a convenience
+feature. The icon is what keeps "honestly" from meaning "a paragraph of text
+where a picture should be": it is drawn at the hero size, in the slot artwork
+would have taken, so an undecodable file reads as a file of that kind rather
+than as a failure.
 
 **PDF is exec'd, not linked, and that turned out to be the better design
 anyway.** The obvious route was a PDF library in the build, which is a large C++

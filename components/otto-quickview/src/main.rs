@@ -286,6 +286,7 @@ fn print_payload(path: &std::path::Path, payload: &PreviewPayload) {
             subtitle,
             facts,
             hero,
+            icon,
         } => {
             println!("  card      {title}");
             println!("            {subtitle}");
@@ -294,10 +295,15 @@ fn print_payload(path: &std::path::Path, payload: &PreviewPayload) {
             }
             if let Some(hero) = hero {
                 println!("    (artwork  {}×{})", hero.width, hero.height);
+            } else if let Some(first) = icon.first() {
+                println!("    (icon     {first})");
             }
         }
-        PreviewPayload::Unavailable { reason } => {
+        PreviewPayload::Unavailable { reason, icon } => {
             println!("  no preview: {reason}");
+            if let Some(first) = icon.first() {
+                println!("    (icon     {first})");
+            }
         }
     }
 }

@@ -16,7 +16,7 @@ use std::io::{self, Write};
 pub use otto_kit::preview::{Fact, Pixels, Preview as PreviewPayload, Row};
 
 /// Wire magic. Bumped if the encoding below ever changes shape.
-const MAGIC: &[u8; 4] = b"OQV1";
+const MAGIC: &[u8; 4] = b"OQV2";
 
 /// Ceiling on any single length field. A corrupt worker must not be able to
 /// make the parent allocate a gigabyte because a length byte flipped.
@@ -26,6 +26,55 @@ const MAX_LEN: u32 = 512 * 1024 * 1024;
 pub fn unavailable(reason: impl Into<String>) -> PreviewPayload {
     PreviewPayload::Unavailable {
         reason: reason.into(),
+        // Filled in by [`with_icon`] on the way out, so the twenty-odd places
+        // that give up on a file do not each have to know what it looked like.
+        icon: Vec::new(),
+    }
+}
+
+/// Give a payload the file's icon, unless it already brought one.
+///
+/// Stamped in one place rather than by each decoder because it is the same
+/// answer for all of them, and because the interesting case is the payload no
+/// decoder produced: a worker that died or overran still comes back as a card
+/// with the file's icon on it rather than as a bare line of text.
+pub fn with_icon(payload: PreviewPayload, chain: Vec<String>) -> PreviewPayload {
+    match payload {
+        PreviewPayload::Card {
+            title,
+            subtitle,
+            facts,
+            hero,
+            icon,
+        } => PreviewPayload::Card {
+            title,
+            subtitle,
+            facts,
+            hero,
+            icon: if icon.is_empty() { chain } else { icon },
+        },
+        PreviewPayload::Unavailable { reason, icon } => PreviewPayload::Unavailable {
+            reason,
+            icon: if icon.is_empty() { chain } else { icon },
+        },
+        // Everything else drew the file itself, and has no room for an icon.
+        other => other,
+    }
+}
+
+/// The icon-theme chain for a file, most specific first.
+///
+/// The same rule the browser's listing uses, so the picture in the preview is
+/// the picture in the row it was opened from.
+pub fn icon_names_for(name: &str, is_dir: bool) -> Vec<String> {
+    if is_dir {
+        return vec!["folder".to_string(), "inode-directory".to_string()];
+    }
+    match otto_kit::filetype::mime_for_name(name) {
+        Some(mime) => otto_kit::filetype::icon_names(mime),
+        None => vec![otto_kit::filetype::kind_for_name(name)
+            .generic_icon()
+            .to_string()],
     }
 }
 
@@ -44,6 +93,13 @@ fn put_u64(out: &mut Vec<u8>, value: u64) {
 fn put_str(out: &mut Vec<u8>, value: &str) {
     put_u32(out, value.len() as u32);
     out.extend_from_slice(value.as_bytes());
+}
+
+fn put_strs(out: &mut Vec<u8>, values: &[String]) {
+    put_u32(out, values.len() as u32);
+    for value in values {
+        put_str(out, value);
+    }
 }
 
 fn put_pixels(out: &mut Vec<u8>, pixels: &Pixels) {
@@ -104,6 +160,7 @@ pub fn encode(payload: &PreviewPayload) -> Vec<u8> {
             subtitle,
             facts,
             hero,
+            icon,
         } => {
             out.push(4);
             put_str(&mut out, title);
@@ -120,10 +177,12 @@ pub fn encode(payload: &PreviewPayload) -> Vec<u8> {
                 }
                 None => out.push(0),
             }
+            put_strs(&mut out, icon);
         }
-        PreviewPayload::Unavailable { reason } => {
+        PreviewPayload::Unavailable { reason, icon } => {
             out.push(5);
             put_str(&mut out, reason);
+            put_strs(&mut out, icon);
         }
     }
     out
@@ -174,6 +233,17 @@ impl<'a> Cursor<'a> {
     fn string(&mut self) -> Option<String> {
         let count = self.len()?;
         String::from_utf8(self.take(count)?.to_vec()).ok()
+    }
+
+    /// A list of strings. Capped like every other count, so a flipped length
+    /// byte cannot make the parent reserve for four billion names.
+    fn strings(&mut self) -> Option<Vec<String>> {
+        let count = self.len()?;
+        let mut values = Vec::with_capacity(count.min(16));
+        for _ in 0..count {
+            values.push(self.string()?);
+        }
+        Some(values)
     }
 
     fn pixels(&mut self) -> Option<Pixels> {
@@ -266,11 +336,16 @@ pub fn decode(bytes: &[u8]) -> Option<PreviewPayload> {
                 subtitle,
                 facts,
                 hero,
+                icon: cursor.strings()?,
             })
         }
-        5 => Some(PreviewPayload::Unavailable {
-            reason: cursor.string()?,
-        }),
+        5 => {
+            let reason = cursor.string()?;
+            Some(PreviewPayload::Unavailable {
+                reason,
+                icon: cursor.strings()?,
+            })
+        }
         _ => None,
     }
 }
@@ -318,13 +393,40 @@ mod tests {
                     value: "3:21".into(),
                 }],
                 hero: Some(pixels),
+                icon: vec!["audio-mpeg".into(), "audio-x-generic".into()],
             },
             unavailable("no decoder"),
+            with_icon(unavailable("no decoder"), vec!["video-x-generic".into()]),
         ];
         for case in cases {
             let decoded = decode(&encode(&case)).expect("round trip");
             assert_eq!(format!("{case:?}"), format!("{decoded:?}"));
         }
+    }
+
+    #[test]
+    fn an_icon_is_stamped_only_when_the_decoder_had_none() {
+        let stamped = with_icon(unavailable("no decoder"), vec!["text-x-generic".into()]);
+        let PreviewPayload::Unavailable { icon, .. } = &stamped else {
+            panic!("still unavailable");
+        };
+        assert_eq!(icon, &["text-x-generic".to_string()]);
+
+        // A decoder that knew better keeps its answer: it sniffed the bytes,
+        // and the stamp is only ever a guess from the name.
+        let kept = with_icon(stamped, vec!["image-png".into()]);
+        let PreviewPayload::Unavailable { icon, .. } = &kept else {
+            panic!("still unavailable");
+        };
+        assert_eq!(icon, &["text-x-generic".to_string()]);
+    }
+
+    #[test]
+    fn a_folder_gets_the_folder_icon_whatever_it_is_called() {
+        assert_eq!(icon_names_for("Pictures.png", true)[0], "folder");
+        // A name with no known type still resolves to something generic
+        // rather than to nothing at all.
+        assert!(!icon_names_for("mystery", false).is_empty());
     }
 
     #[test]
