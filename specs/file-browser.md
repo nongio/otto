@@ -130,6 +130,13 @@ compositor's backdrop blur, the sidebar heavily tinted and the header only
 slightly, so the frost runs across the whole top of the window. The file area
 below the header is opaque: a wall of small text needs one flat ground.
 
+The **traffic lights** sit at whichever end of the window the desktop's
+`window_controls_side` setting names — see
+[window-decorations](window-decorations.md). At the leading end they sit in
+the window's top corner, over the sidebar. At the trailing end they share the
+header band with the view switcher, so they take the switcher's centre line
+and the switcher steps left to clear them.
+
 An **unfocused window steps back**: the title and subtitle drop a step down
 the text scale, the traffic lights go gray, the blur behind the window is
 dropped, and the sidebar, header and action row are filled in to full opacity

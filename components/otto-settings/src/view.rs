@@ -6,6 +6,7 @@ use otto_kit::components::text_input::TextInput;
 use otto_kit::components::titlebar::{
     Titlebar, TitlebarGroup, WindowControls, WindowControlsState,
 };
+use otto_kit::controls_side::ControlsSide;
 use otto_kit::prelude::*;
 use skia_safe::{ClipOp, Contains, PathEffect, Point, RRect};
 
@@ -366,14 +367,26 @@ fn screen_caption(output: &model::Output) -> &'static str {
 /// group — so the traffic lights end up at `(TITLEBAR_PAD, TITLEBAR_PAD)`.
 const TITLEBAR_PAD: f32 = (TITLEBAR_H - 12.0) / 2.0;
 
+/// The traffic lights as the desktop wants them: ordered close-outermost for
+/// whichever end of the bar they sit at, but still at the origin — the
+/// `Titlebar` places the group itself.
+fn window_controls() -> WindowControls {
+    WindowControls::new().with_reversed(otto_kit::controls_side::side() == ControlsSide::Right)
+}
+
 /// The traffic lights for hit-testing, in window-local coordinates.
 ///
 /// The drawn group is positioned by `Titlebar` itself and so is built at the
 /// origin; only the hit-test needs the absolute offset. Getting this wrong in
 /// the other direction — handing the *positioned* group to `Titlebar` — makes
 /// it apply the padding twice and the dots sit low.
-fn window_controls_hit() -> WindowControls {
-    WindowControls::new().at(TITLEBAR_PAD, TITLEBAR_PAD)
+fn window_controls_hit(width: f32) -> WindowControls {
+    let controls = window_controls();
+    let x = match otto_kit::controls_side::side() {
+        ControlsSide::Left => TITLEBAR_PAD,
+        ControlsSide::Right => width - TITLEBAR_PAD - controls.width(),
+    };
+    controls.at(x, TITLEBAR_PAD)
 }
 
 /// What a press in the titlebar means.
@@ -389,7 +402,7 @@ pub fn titlebar_hit(x: f32, y: f32, width: f32) -> Option<TitlebarHit> {
     if !(0.0..=TITLEBAR_H).contains(&y) || !(0.0..=width).contains(&x) {
         return None;
     }
-    match window_controls_hit().control_at(x, y) {
+    match window_controls_hit(width).control_at(x, y) {
         Some(control) => Some(TitlebarHit::Control(control)),
         None => Some(TitlebarHit::Drag),
     }
@@ -1340,21 +1353,25 @@ impl Settings {
             }),
         );
 
-        // Traffic lights sit over the sidebar; the pane name titles the bar.
-        Titlebar::new()
+        // Traffic lights sit over the sidebar — or, on a desktop that puts its
+        // controls at the trailing edge, over the far end of the pane. The
+        // pane name titles the bar either way.
+        let group = TitlebarGroup::new().add(
+            self.controls
+                .apply(window_controls().with_active(true).with_dark(self.dark)),
+        );
+        let bar = Titlebar::new()
             .at(0.0, 0.0)
             .with_width(self.width)
             .with_height(TITLEBAR_H)
             .with_corner_radius(corner())
             .with_padding(TITLEBAR_PAD)
-            .with_background(Color::TRANSPARENT)
-            .with_leading(
-                TitlebarGroup::new().add(
-                    self.controls
-                        .apply(WindowControls::new().with_active(true).with_dark(self.dark)),
-                ),
-            )
-            .render(canvas);
+            .with_background(Color::TRANSPARENT);
+        match otto_kit::controls_side::side() {
+            ControlsSide::Left => bar.with_leading(group),
+            ControlsSide::Right => bar.with_controls(group),
+        }
+        .render(canvas);
 
         // The app and the pane, the same string the toplevel carries — so the
         // bar reads the same as the window's entry in the switcher and the

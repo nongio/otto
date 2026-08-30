@@ -5575,7 +5575,7 @@ impl FilesApp {
 
                         // The traffic lights reveal their glyphs while the
                         // pointer is over the group.
-                        let control = view::control_at(x, y);
+                        let control = view::control_at(x, y, browser.size.0);
                         browser.dirty |= browser.controls.on_motion(control);
                     }
                     PointerEventKind::Release { .. } => {
@@ -5608,7 +5608,7 @@ impl FilesApp {
 
                         // A control fires on release, and only over the dot
                         // the press landed on.
-                        let control = view::control_at(x, y);
+                        let control = view::control_at(x, y, browser.size.0);
                         browser.dirty |= browser.controls.pressed().is_some();
                         match browser.controls.on_release(control) {
                             // In the picker, closing the window *is*
@@ -5713,7 +5713,8 @@ impl FilesApp {
 
                         // Arming rather than acting: the control fires on
                         // release, over the same dot.
-                        if browser.controls.on_press(view::control_at(x, y)) {
+                        let control = view::control_at(x, y, browser.size.0);
+                        if browser.controls.on_press(control) {
                             browser.dirty = true;
                             return;
                         }

@@ -7,6 +7,7 @@
 use otto_kit::components::icon::Icon;
 use otto_kit::components::scroll::{ScrollRenderer, ScrollState};
 use otto_kit::components::titlebar::{WindowControl, WindowControls, WindowControlsState};
+use otto_kit::controls_side::ControlsSide;
 use otto_kit::icons;
 use otto_kit::prelude::*;
 use skia_safe::{ClipOp, Contains, Paint, PathBuilder, Point, RRect};
@@ -361,8 +362,50 @@ pub enum NavButton {
 }
 
 /// The three view-switcher segments, in the header's top right.
+///
+/// On a desktop that puts its window controls at the trailing edge the dots
+/// land on the same band, so the switcher steps left far enough to clear them
+/// — the header has the room, and the alternative is a switcher underneath
+/// three dots.
 pub fn switcher_rect(width: f32) -> Rect {
-    Rect::from_xywh(width - CONTENT_PAD - 114.0, 24.0, 114.0, 26.0)
+    Rect::from_xywh(
+        width - CONTENT_PAD - controls_clearance() - 114.0,
+        SWITCHER_CY - SWITCHER_H / 2.0,
+        114.0,
+        SWITCHER_H,
+    )
+}
+
+/// The switcher's height and optical centre in the header. The traffic lights
+/// line up on the same centre when they share the trailing edge with it.
+const SWITCHER_H: f32 = 26.0;
+const SWITCHER_CY: f32 = 37.0;
+
+/// How much of the header's trailing edge the traffic lights claim — nothing
+/// at all when they are over at the leading edge.
+fn controls_clearance() -> f32 {
+    match otto_kit::controls_side::side() {
+        ControlsSide::Left => 0.0,
+        ControlsSide::Right => WindowControls::new().width() + CONTENT_PAD,
+    }
+}
+
+/// The traffic lights, placed and ordered for the end of the header the
+/// desktop puts them at. `width` is the window's, not the sidebar's: at the
+/// trailing edge the group sits over the file area.
+pub fn window_controls(width: f32) -> WindowControls {
+    let controls = WindowControls::new();
+    let group_w = controls.width();
+    let group_h = controls.size;
+    match otto_kit::controls_side::side() {
+        ControlsSide::Left => controls.at(CONTROLS_INSET, CONTROLS_INSET),
+        // Sharing the trailing edge with the view switcher, the dots sit on
+        // its centre line rather than at the window's own corner inset —
+        // two things side by side that don't line up read as a mistake.
+        ControlsSide::Right => controls
+            .at(width - CONTENT_PAD - group_w, SWITCHER_CY - group_h / 2.0)
+            .with_reversed(true),
+    }
 }
 
 pub const SWITCHER_MODES: [ViewMode; 3] = [ViewMode::List, ViewMode::Grid, ViewMode::Columns];
@@ -1553,28 +1596,14 @@ pub fn is_drag_area(x: f32, y: f32, width: f32) -> bool {
     if nav_group_rect().contains(Point::new(x, y)) {
         return false;
     }
-    !Rect::from_xywh(CONTROLS_INSET - 4.0, CONTROLS_INSET - 4.0, 70.0, 20.0)
+    !window_controls(width)
+        .bounds()
+        .with_outset((4.0, 4.0))
         .contains(Point::new(x, y))
 }
 
-pub fn control_at(x: f32, y: f32) -> Option<WindowControl> {
-    const STEP: f32 = 20.0;
-    const R: f32 = 6.0;
-    for (i, control) in [
-        WindowControl::Close,
-        WindowControl::Minimize,
-        WindowControl::Zoom,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let cx = CONTROLS_INSET + R + i as f32 * STEP;
-        let cy = CONTROLS_INSET + R;
-        if (x - cx).powi(2) + (y - cy).powi(2) <= (R + 3.0).powi(2) {
-            return Some(control);
-        }
-    }
-    None
+pub fn control_at(x: f32, y: f32, width: f32) -> Option<WindowControl> {
+    window_controls(width).control_at(x, y)
 }
 
 // ---------------------------------------------------------------------------
@@ -1813,6 +1842,23 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
     match f.mode {
         ViewMode::List => {
             draw_column_strip(canvas, f);
+    // The traffic lights ride over both, because with the controls at the
+    // trailing edge they sit above the header rather than above the sidebar.
+    //
+    // The picker has no traffic lights. It is a dialog, not a document
+    // window: it is dismissed with Cancel, and a close control beside it
+    // would be a second, worse way to say the same thing — one that skips
+    // the request's answer.
+    if f.action_row.is_none() {
+        f.controls
+            .apply(
+                window_controls(f.width)
+                    .with_active(f.focused)
+                    .with_dark(is_dark()),
+            )
+            .render(canvas);
+    }
+
             draw_list(canvas, f);
         }
         ViewMode::Columns => draw_miller(canvas, f),
@@ -2207,21 +2253,6 @@ fn draw_preview_icon(canvas: &Canvas, stage: Rect, icon_chain: &[String]) {
 
 fn draw_sidebar(canvas: &Canvas, f: &Frame) {
     let theme = f.theme;
-
-    // The picker has no traffic lights. It is a dialog, not a document
-    // window: it is dismissed with Cancel, and a close control beside it
-    // would be a second, worse way to say the same thing — one that skips
-    // the request's answer.
-    if f.action_row.is_none() {
-        f.controls
-            .apply(
-                WindowControls::new()
-                    .at(CONTROLS_INSET, CONTROLS_INSET)
-                    .with_active(f.focused)
-                    .with_dark(is_dark()),
-            )
-            .render(canvas);
-    }
 
     Label::new(otto_kit::t!("files-places"))
         .with_style(styles::SUBHEADLINE_EMPHASIZED)

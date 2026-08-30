@@ -317,6 +317,12 @@ status after being changed.
 Changes take effect on interaction. There is no apply or save step, and no
 confirmation dialog for ordinary settings.
 
+The window draws its own title bar: the traffic lights at whichever end the
+desktop's `window_controls_side` setting names — over the sidebar at the
+leading end, over the far end of the pane at the trailing one — and the app
+and pane name beside the sidebar's edge. See
+[window-decorations](window-decorations.md).
+
 The sidebar and the titlebar are translucent materials over the compositor's
 backdrop blur; the pane's ground is opaque. The sidebar is tinted heavily
 enough to read as frost rather than as a hole in the window, and the titlebar
