@@ -441,13 +441,7 @@ impl PaneSurfaces {
         // far its content is scrolled — and now how far its picture is zoomed
         // and dragged, which changes what is drawn without moving the card an
         // inch.
-        let key = hash_rect(panel)
-            ^ generation.rotate_left(17)
-            ^ (session.first_row as u64) << 1
-            ^ hash_zoom(session.zoom).rotate_left(33)
-            // The pan's bars fade in and out over a picture that is not
-            // moving, so their presentation is part of what the panel draws.
-            ^ hash_bars(session).rotate_left(7);
+        let key = quickview_key(panel, generation, session);
         if pane.key == key {
             return painted;
         }
@@ -735,6 +729,31 @@ fn column_key(f: &Frame, depth: usize) -> u64 {
     hasher.finish()
 }
 
+/// Everything the panel's pixels depend on, as a repaint key.
+///
+/// It all has to be in here or the repaint is skipped: the card's rect, which
+/// file it is showing, how far its content is scrolled, how far its picture is
+/// zoomed and dragged — which changes what is drawn without moving the card an
+/// inch — how its bars are presented, since they fade in and out over a
+/// picture that is not moving, and whether the content has landed at all.
+fn quickview_key(panel: Rect, generation: u64, session: &quickview::Session) -> u64 {
+    hash_rect(panel)
+        ^ generation.rotate_left(17)
+        ^ (session.first_row as u64) << 1
+        ^ hash_zoom(session.zoom).rotate_left(33)
+        ^ hash_bars(session).rotate_left(7)
+        // A decode landing does not change the generation — that was bumped
+        // when it was asked for — so without this the content arriving is
+        // invisible to the key, and the panel never repaints out of its
+        // waiting state.
+        ^ if session.loading { LOADING_KEY } else { 0 }
+}
+
+/// The content key's contribution for a panel that is still waiting for its
+/// decode. Any value with a good spread of bits does; this is the golden-ratio
+/// constant the hashers in this file use for the same purpose.
+const LOADING_KEY: u64 = 0x9E37_79B9_7F4A_7C15;
+
 /// A rect as a repaint key. Positions are the whole of what a bar draws, so
 /// its geometry is its identity.
 /// The zoom, as a repaint key contribution. Bit patterns rather than values,
@@ -881,4 +900,38 @@ fn centered_resting(pane: &PaneSurface, scale: f32) -> Option<Rect> {
         panel_width.max(1.0),
         panel_height.max(1.0),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The panel repaints only when its key changes, and the decode landing
+    /// changes nothing else: same file, same request, same rect, same zoom.
+    /// If it does not move the key, the card stays on "Opening preview…" for
+    /// as long as the user does not touch anything.
+    #[test]
+    fn a_decode_landing_moves_the_panel_key() {
+        let resting = quickview::panel_rect(1100.0, 700.0);
+        let anchor = Rect::new_empty();
+        let opened_at = std::time::Instant::now();
+        let generation = 7;
+
+        let waiting = quickview::Session::waiting("notes.txt".into(), anchor, opened_at);
+        let landed = quickview::Session::new(
+            otto_kit::preview::Preview::Text {
+                lines: vec!["hello".into()],
+                truncated: false,
+                language: String::new(),
+            },
+            "notes.txt".into(),
+            anchor,
+            opened_at,
+        );
+
+        assert_ne!(
+            quickview_key(resting, generation, &waiting),
+            quickview_key(resting, generation, &landed),
+        );
+    }
 }

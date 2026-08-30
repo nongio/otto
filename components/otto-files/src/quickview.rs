@@ -103,6 +103,15 @@ pub struct Session {
     /// When the exit started, once it has. A closing session is no longer the
     /// window's open preview — it is only still on screen, going home.
     pub closing: Option<Instant>,
+    /// Whether `preview` is the waiting line rather than a decoded file.
+    ///
+    /// The panel's surface repaints only when its content key changes, and
+    /// the key is built from the request's generation — which is bumped when
+    /// the decode is *asked for*, not when it answers. Without this the panel
+    /// draws once, while it is still waiting, and the content landing changes
+    /// nothing the key can see: the card sits on "Opening preview…" until
+    /// something else moves it.
+    pub loading: bool,
 }
 
 impl Session {
@@ -119,6 +128,7 @@ impl Session {
             anchor,
             opened_at,
             closing: None,
+            loading: false,
         }
     }
 
@@ -130,7 +140,10 @@ impl Session {
     /// The panel goes up on the keystroke instead, and the content arrives
     /// into a card that is already there.
     pub fn waiting(name: String, anchor: Rect, opened_at: Instant) -> Self {
-        Self::new(waiting_preview(), name, anchor, opened_at)
+        Self {
+            loading: true,
+            ..Self::new(waiting_preview(), name, anchor, opened_at)
+        }
     }
 
     /// Point an open panel at another file, whose decode is in flight.
