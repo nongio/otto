@@ -391,6 +391,19 @@ impl Workspaces {
             if !workspace.background_view.set_image_path(&path) {
                 failed = true;
             }
+            // The workspace selector's preview replicates `wallpaper_group`,
+            // one level above the layer the new wallpaper was just painted
+            // into. A follower is marked for repaint by a change on the node
+            // it follows, and by a descendant's damage only while it is
+            // visible — and the strip is hidden until exposé opens. So the
+            // preview would come up on the next exposé still showing the old
+            // wallpaper. Report the change on the container the preview
+            // actually follows, the same way a window commit does for the
+            // window thumbnails.
+            let size = workspace.wallpaper_group.render_size();
+            workspace
+                .wallpaper_group
+                .add_damage(layers::skia::Rect::from_wh(size.x, size.y));
         }
 
         if failed {
