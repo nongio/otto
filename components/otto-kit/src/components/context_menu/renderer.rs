@@ -37,6 +37,47 @@ impl ContextMenuRenderer {
         }
     }
 
+    /// The scroll offset that brings the row at `index` inside the box a
+    /// capped list is drawn in, given where it is scrolled now.
+    ///
+    /// Keyboard navigation needs this: the arrows move a highlight that the
+    /// pointer never has to reach, so a selection walking past the last
+    /// visible row would otherwise disappear under the menu's edge. Returns
+    /// the offset unchanged when the row is already in view, and zero when
+    /// there is nothing to scroll.
+    ///
+    /// The row is kept clear of [`ARROW_STRIP`] at either end so it does not
+    /// come to rest under a scroll arrow — at the very ends of the list the
+    /// clamp takes that margin back, which is exactly where no arrow is drawn.
+    pub fn scroll_to_reveal(
+        items: &[MenuItem],
+        style: &ContextMenuStyle,
+        index: usize,
+        scroll: f32,
+    ) -> f32 {
+        let overflow = Self::overflow(items, style);
+        if overflow <= 0.0 {
+            return 0.0;
+        }
+        let box_height = Self::content_height(items, style) - overflow;
+
+        let mut top = style.vertical_padding;
+        for item in items.iter().take(index) {
+            top += style.item_height_of(item);
+        }
+        let bottom = top + items.get(index).map_or(0.0, |i| style.item_height_of(i));
+
+        let scroll = scroll.clamp(0.0, overflow);
+        let target = if top - ARROW_STRIP < scroll {
+            top - ARROW_STRIP
+        } else if bottom + ARROW_STRIP > scroll + box_height {
+            bottom + ARROW_STRIP - box_height
+        } else {
+            scroll
+        };
+        target.clamp(0.0, overflow)
+    }
+
     /// Calculate dimensions for specific items (used for submenus)
     ///
     /// Returned dimensions are already multiplied by `style.draw_scale`.
@@ -360,6 +401,80 @@ mod tests {
 
         assert!(width >= style.min_width);
         assert!(height > 0.0);
+    }
+
+    /// Twenty rows of 20pt in a box capped at 100pt: only a few fit, so the
+    /// arrows walking the selection have to drag the list along.
+    fn scrolling_menu() -> (Vec<MenuItem>, ContextMenuStyle) {
+        use crate::components::menu_item::MenuItemKind;
+
+        let items: Vec<MenuItem> = (0..20)
+            .map(|i| {
+                MenuItem::new(MenuItemKind::Action {
+                    label: format!("Item {i}"),
+                    shortcut: None,
+                    action_id: None,
+                })
+            })
+            .collect();
+        let style = ContextMenuStyle::default()
+            .with_item_metrics(13.0, 20.0)
+            .with_max_height(100.0);
+        (items, style)
+    }
+
+    #[test]
+    fn reveal_leaves_a_visible_row_alone() {
+        let (items, style) = scrolling_menu();
+        // Row 2 sits inside the box while it is at the top.
+        assert_eq!(
+            ContextMenuRenderer::scroll_to_reveal(&items, &style, 2, 0.0),
+            0.0
+        );
+    }
+
+    #[test]
+    fn reveal_follows_the_selection_down_and_back_up() {
+        let (items, style) = scrolling_menu();
+
+        // Walking off the bottom scrolls just far enough to bring the row in.
+        let down = ContextMenuRenderer::scroll_to_reveal(&items, &style, 10, 0.0);
+        assert!(down > 0.0);
+        assert!(
+            ContextMenuRenderer::hit_test_items(&items, &style, 20.0, 50.0, down).is_some(),
+            "the box should be showing rows once scrolled"
+        );
+        // ...and the row is now inside it, so a second call is a no-op.
+        assert_eq!(
+            ContextMenuRenderer::scroll_to_reveal(&items, &style, 10, down),
+            down
+        );
+
+        // Coming back up scrolls the other way, never past the top.
+        let up = ContextMenuRenderer::scroll_to_reveal(&items, &style, 1, down);
+        assert!(up < down);
+        assert_eq!(
+            ContextMenuRenderer::scroll_to_reveal(&items, &style, 0, up),
+            0.0
+        );
+    }
+
+    #[test]
+    fn reveal_stays_within_what_there_is_to_scroll() {
+        let (items, style) = scrolling_menu();
+        let overflow = ContextMenuRenderer::overflow(&items, &style);
+
+        assert_eq!(
+            ContextMenuRenderer::scroll_to_reveal(&items, &style, 19, 0.0),
+            overflow
+        );
+
+        // A list that fits has nothing to scroll, whatever is selected.
+        let short = ContextMenuStyle::default().with_item_metrics(13.0, 20.0);
+        assert_eq!(
+            ContextMenuRenderer::scroll_to_reveal(&items, &short, 19, 0.0),
+            0.0
+        );
     }
 
     #[test]

@@ -1264,7 +1264,8 @@ impl SettingsApp {
             // separate answer that commits the moment it is picked — a display
             // profile written, a setting sent — so arrowing from one end of
             // the list to the other would commit each value on the way past.
-            // The list opens instead, and nothing is chosen until Enter.
+            // The list opens instead, and nothing is chosen until Enter or
+            // Space.
             model::Control::Select(ref current) if step == 0.0 => {
                 let (Some(id), Some(rect)) = (focused.id, focused.select_rect) else {
                     return false;

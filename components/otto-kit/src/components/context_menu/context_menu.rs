@@ -1124,6 +1124,34 @@ impl ContextMenu {
         }
     }
 
+    /// Keep the keyboard's selection inside the box a capped list is drawn
+    /// in, scrolling it into view when the arrows have walked it past an edge.
+    ///
+    /// Only the root list scrolls — see [`scroll_at_depth`] — so a selection
+    /// at any other depth is already visible by construction.
+    fn reveal_selection(
+        state: &Rc<RefCell<ContextMenuState>>,
+        style: &ContextMenuStyle,
+        depth: usize,
+    ) {
+        if depth != 0 {
+            return;
+        }
+        let mut state_mut = state.borrow_mut();
+        let Some(index) = state_mut.selected_at_depth(0) else {
+            return;
+        };
+        let scroll = state_mut.scroll();
+        let (target, overflow) = {
+            let items = state_mut.items();
+            (
+                ContextMenuRenderer::scroll_to_reveal(items, style, index, scroll),
+                ContextMenuRenderer::overflow(items, style),
+            )
+        };
+        state_mut.set_scroll(target, overflow);
+    }
+
     /// Handle keyboard input
     pub fn handle_key(&mut self, key: u32, key_state: wl_keyboard::KeyState) {
         if key_state != wl_keyboard::KeyState::Pressed {
@@ -1139,6 +1167,7 @@ impl ContextMenu {
                 // Last input wins: keyboard owns the selection, clear all others
                 let cleared = state_mut.clear_selections_except(current_depth);
                 drop(state_mut);
+                Self::reveal_selection(&self.state, &style, current_depth);
                 // Re-render cleared depths
                 for d in cleared {
                     if d < self.popups.borrow().len() {
@@ -1159,6 +1188,7 @@ impl ContextMenu {
                 // Last input wins: keyboard owns the selection, clear all others
                 let cleared = state_mut.clear_selections_except(current_depth);
                 drop(state_mut);
+                Self::reveal_selection(&self.state, &style, current_depth);
                 // Re-render cleared depths
                 for d in cleared {
                     if d < self.popups.borrow().len() {
@@ -1178,6 +1208,7 @@ impl ContextMenu {
                 let current_depth = state_mut.depth();
                 let cleared = state_mut.clear_selections_except(current_depth);
                 drop(state_mut);
+                Self::reveal_selection(&self.state, &style, current_depth);
                 for d in cleared {
                     if d < self.popups.borrow().len() {
                         let popup_ref = self.popups.borrow()[d].clone();
@@ -1189,14 +1220,23 @@ impl ContextMenu {
                     Self::render_menu_at_depth(&self.state, &style, &popup_ref, current_depth);
                 }
             }
-            keycodes::ENTER => {
+            keycodes::ENTER | keycodes::SPACE => {
                 let current_depth = self.state.borrow().depth();
                 let state = self.state.borrow();
                 let selected_idx = state.selected_at_depth(current_depth);
-                let label = state.selected_label(None);
+                // The same identity the mouse path fires with: an item's
+                // `action_id` if it has one, its label only as a fallback.
+                // A caller that keys on the id — a dropdown, whose ids are
+                // the option indices and whose labels are elided to fit the
+                // button's column — gets nothing it can match otherwise.
+                let callback_id = selected_idx.and_then(|idx| {
+                    let item = state.items_at_depth(current_depth).get(idx)?;
+                    item.action_id()
+                        .or_else(|| item.label())
+                        .map(str::to_string)
+                });
 
-                if let (Some(idx), Some(label)) = (selected_idx, label) {
-                    let label_owned = label.to_string();
+                if let (Some(idx), Some(label_owned)) = (selected_idx, callback_id) {
                     drop(state);
 
                     Self::flash_and_activate(

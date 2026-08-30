@@ -167,9 +167,11 @@ nested Otto never exposes any of it regardless.
   already has one — Otto logs it and carries on. Only accessibility is affected.
 - An assistive technology may attach and detach repeatedly; each attach must be
   answerable with a complete tree.
-- A pop-up control can be focused from the keyboard but not opened from it,
-  because a dropdown menu has no keyboard navigation of its own yet. It is
-  described, and a pointer or an assistive technology's click still opens it.
+- A pop-up control opens from the keyboard onto the value it is showing, and
+  the open menu then owns every key: the arrows walk it (scrolling a capped
+  list to keep the highlight in view), Enter or Space chooses, Escape closes
+  with nothing chosen. The open list is described as well as the button, so a
+  screen reader is not left reading a control it cannot see past.
 - The state a description is built from and the state the shell draws from can
   be resolved at different times. Where they are, the description must be
   rebuilt when the drawing state settles, or it reports the previous state

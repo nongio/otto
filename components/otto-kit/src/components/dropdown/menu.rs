@@ -180,16 +180,17 @@ impl DropdownMenu {
         self.menu.hide_animated();
     }
 
-    /// Feed a key to the open menu: the arrows move the highlight, Home and
-    /// End go to the ends, Enter chooses, Escape closes with nothing chosen.
+    /// Feed a key to the open menu: the arrows move the highlight (scrolling
+    /// the list to keep it in view), Home and End go to the ends, Enter or
+    /// Space chooses, Escape closes with nothing chosen.
     ///
     /// A pop-up button opened from the keyboard has to be usable from it, and
     /// the menu is a surface of its own — the keyboard is on it, not on the
     /// field, so the application has to hand its keys over for as long as it
     /// is up. Call it from `on_keyboard_event` (or with `KeyEvent::raw_code`)
     /// while [`is_open`](Self::is_open) holds, and check `is_open` afterwards:
-    /// Enter and Escape both close, and the field has to stop drawing itself
-    /// open.
+    /// Enter, Space and Escape all close, and the field has to stop drawing
+    /// itself open.
     ///
     /// Does nothing when the menu is closed, so a caller may pass every key
     /// through without checking first.
