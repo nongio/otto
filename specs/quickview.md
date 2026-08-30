@@ -149,6 +149,12 @@ Rules the host must honour:
 - **Tag decodes with a generation and drop stale ones.** Arrow-keying is faster
   than decoding; a result that arrives after the selection moved must be
   discarded, not painted.
+- **Never show one file's preview under another file's name.** The moment the
+  selection moves, the panel drops what it was showing — content, scroll, zoom
+  and pan — and says it is working until the new decode lands. Decoding costs a
+  process spawn, so the old content would otherwise sit there for long enough to
+  be read, with nothing on screen marking it as the wrong file. A waiting line
+  is the honest state; a stale picture is a lie the user cannot see through.
 - **Never interpret file bytes in the host.** Everything the host receives is a
   `Preview` — validated text, bounded rows, or a pixel buffer whose dimensions
   have already been checked against its length.
@@ -286,10 +292,11 @@ Two things the opening must **not** do:
   after the motion and does not restart it. An animation that waits for a
   decoder is an animation whose duration is set by the file.
 - It must not re-run on `SetIndex`. Arrow-keying through a directory swaps
-  content inside a card that is already open and already still — the card
-  cross-fades its content, and resizes if the content type changed, animated
-  from the centre so the frame does not jump to a corner. Replaying the entrance
-  per keystroke would be unusable.
+  content inside a card that is already open and already still — the card keeps
+  its place and its entrance, and only what is inside it changes. Replaying the
+  entrance per keystroke would be unusable. What changes immediately is the
+  title and the content: the name is the file now selected, and the content is
+  the waiting line until that file's decode lands.
 
 The animation is declared through the compositor's surface-style transactions —
 the same mechanism otto-launcher's card uses — so it runs compositor-side and
@@ -517,9 +524,11 @@ matching this text.
 
 ### Performance
 
-- **Window mapped within 50 ms** of the keypress, unconditionally. The first
-  frame shows the file's name, size, type icon, and a cached thumbnail if one
-  exists. It is never an empty rectangle and never a delayed one.
+- **Panel up within 50 ms** of the keypress, unconditionally — it is drawn into
+  the browser's own surface, so there is no window to map and nothing to wait
+  for. The first frame carries the file's name and says the preview is opening;
+  the decode fills the card in when it answers. It is never a delayed panel, and
+  a keystroke never appears to have done nothing.
 - **Real content within 100 ms** for anything already in the thumbnail cache,
   which is the common case when browsing a directory the browser has scrolled
   through. Cold decode fills in when it lands, replacing the placeholder without

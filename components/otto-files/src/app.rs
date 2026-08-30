@@ -3214,6 +3214,21 @@ impl Browser {
         let anchor = self.quickview_anchor();
         self.quickview_generation += 1;
         self.quickview_pending = true;
+        // The panel goes up — or over to this file — on the keystroke, not
+        // when the decode lands. An open one drops what it was showing now
+        // rather than carrying the last file's preview while the new one is
+        // read, and keeps its place and its entrance while it waits.
+        match self.quickview.as_mut() {
+            Some(session) => session.awaiting(entry.name.clone(), anchor),
+            None => {
+                self.quickview = Some(quickview::Session::waiting(
+                    entry.name.clone(),
+                    anchor,
+                    std::time::Instant::now(),
+                ));
+                self.quickview_closing = None;
+            }
+        }
         // Clear any stale message so "Opening preview…" is not fighting the
         // last operation's summary.
         self.status = None;
