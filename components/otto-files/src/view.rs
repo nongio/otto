@@ -1842,9 +1842,6 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
     draw_sidebar(canvas, f);
     draw_header(canvas, f);
 
-    match f.mode {
-        ViewMode::List => {
-            draw_column_strip(canvas, f);
     // The traffic lights ride over both, because with the controls at the
     // trailing edge they sit above the header rather than above the sidebar.
     //
@@ -1862,6 +1859,9 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
             .render(canvas);
     }
 
+    match f.mode {
+        ViewMode::List => {
+            draw_column_strip(canvas, f);
             draw_list(canvas, f);
         }
         ViewMode::Columns => draw_miller(canvas, f),
@@ -2147,19 +2147,25 @@ fn draw_preview_stage(
         // thumbnail, an mp4's poster frame. That is shown as the picture
         // it is, and a card with none falls back to the file's own icon.
         Some(otto_kit::preview::Preview::Card { hero, .. }) => match hero {
-            Some(pixels) => otto_kit::preview::draw(
-                canvas,
-                stage,
-                &otto_kit::preview::Preview::Pixels {
+            Some(pixels) => {
+                let hero = otto_kit::preview::Preview::Pixels {
                     pixels: pixels.clone(),
                     pages: 1,
                     page: 1,
-                },
-                theme,
-                first_row,
-                otto_kit::preview::Zoom::FIT,
-                &|name, size| icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE),
-            ),
+                };
+                otto_kit::preview::draw(
+                    canvas,
+                    stage,
+                    &hero,
+                    theme,
+                    first_row,
+                    otto_kit::preview::Zoom::FIT,
+                    &|name, size| {
+                        icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE)
+                    },
+                );
+                stroke_image_frame(canvas, theme, stage, &hero, first_row);
+            }
             None => draw_preview_icon(canvas, stage, icon_chain),
         },
         Some(preview) => {
@@ -2175,9 +2181,43 @@ fn draw_preview_stage(
                 otto_kit::preview::Zoom::FIT,
                 &|name, size| icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE),
             );
+            stroke_image_frame(canvas, theme, stage, preview, first_row);
         }
     }
     canvas.restore();
+}
+
+/// A hairline around the picture's own edges — the fitted rect, not the
+/// stage. An image rarely has the column's aspect ratio, so it is drawn
+/// centred in a band of empty column, and a photograph with pale corners or
+/// a screenshot on a white ground simply dissolves into that emptiness with
+/// nothing to say where the file ends. The frame is the file's outline, so
+/// it is drawn only for pictures: text and listings fill the stage they are
+/// given and have no edges of their own to trace.
+fn stroke_image_frame(
+    canvas: &Canvas,
+    theme: &Theme,
+    stage: Rect,
+    preview: &otto_kit::preview::Preview,
+    first_row: usize,
+) {
+    if !matches!(preview, otto_kit::preview::Preview::Pixels { .. }) {
+        return;
+    }
+    let content =
+        otto_kit::preview::layout(stage, preview, first_row, otto_kit::preview::Zoom::FIT).content;
+    if content.width() < 1.0 || content.height() < 1.0 {
+        return;
+    }
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_stroke_width(1.0);
+    paint.set_color(theme.fill_primary);
+    // Inset by half the stroke so the line lands *on* the picture's edge
+    // rather than straddling it, which at a fractional scale reads as two
+    // half-lit pixels instead of one crisp one.
+    canvas.draw_rect(content.with_inset((0.5, 0.5)), &paint);
 }
 
 /// Room between the preview and the name below it.

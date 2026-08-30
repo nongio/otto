@@ -251,6 +251,14 @@ artwork: cover art, an embedded thumbnail, an mp4's poster frame. That is shown
 as the picture it is, and a card with none falls back to the file's own icon,
 drawn large.
 
+**A picture is framed at its own edges.** An image rarely shares the column's
+aspect ratio, so it lands centred in a band of empty column, and one with pale
+corners — a photograph on a white ground, a screenshot of a light window —
+dissolves into that emptiness with nothing to say where the file stops. A
+hairline is drawn on the fitted rect, not on the stage, so the frame traces the
+picture's aspect ratio. Only pictures get one: text and listings fill the stage
+they are given and have no edges of their own to trace.
+
 **A decoder that gave up is not a blank panel**, and neither is one still
 running: the file's own icon is still true, and drawn large it is a preview of a
 kind rather than a placeholder apologising for itself.
@@ -341,6 +349,11 @@ the re-read of the directory; the cursor is re-derived from that selection once
 the listing lands, so a file added or removed while the user was away cannot
 leave the keyboard one row off from the highlight.
 
+The "Loading" placeholder belongs to a *first* read only. An in-place re-read —
+after a delete, a paste, or a watcher notification — leaves the listing that is
+already on screen up until the new one lands, because the alternative is the
+whole pane blinking through an empty placeholder and back for every operation.
+
 ### Selection, keyboard and type-ahead
 
 Identical to the picker, including the type-ahead-is-not-search distinction, the
@@ -349,11 +362,6 @@ anchor-based multi-select rules and rubber-band selection. See
 
 A plain click on empty space inside a pane — past the last row, between grid
 cells, on the background — selects nothing, in every view. The pane still takes
-The "Loading" placeholder belongs to a *first* read only. An in-place re-read —
-after a delete, a paste, or a watcher notification — leaves the listing that is
-already on screen up until the new one lands, because the alternative is the
-whole pane blinking through an empty placeholder and back for every operation.
-
 the keyboard, since the click was in it, and in column view the panes to its
 right close with the selection: they are there because something in that pane
 was selected, and now nothing is. Clicks on the header, the sidebar and the
