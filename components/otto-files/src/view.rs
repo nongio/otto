@@ -1409,10 +1409,13 @@ fn accent_light(theme: &Theme) -> Color {
     Color::from_argb(base.a(), lift(base.r()), lift(base.g()), lift(base.b()))
 }
 
-/// The user's accent colour, or the theme's own selection tone when the
-/// desktop has not set one.
+/// The user's accent colour.
+///
+/// Read from the theme rather than from `otto_kit::accent` directly: the theme
+/// is where a background window's muted accent lives, and a call that went
+/// around it would paint one window's chrome in the front window's colour.
 fn accent(theme: &Theme) -> Color {
-    otto_kit::accent::current_accent().unwrap_or(theme.material_selection_focused)
+    theme.accent
 }
 
 fn draw_footer_button(

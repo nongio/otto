@@ -3590,6 +3590,20 @@ impl Browser {
         }
     }
 
+    /// The palette this window draws with.
+    ///
+    /// The system theme, with the accent muted while the window is in the
+    /// background: an unfocused window's selection, drop rings and pills all
+    /// step back with the title, so the accent points at the window the user
+    /// is actually working in.
+    fn theme(&self) -> Theme {
+        let mut theme = AppContext::current_theme();
+        if !self.focused {
+            theme.with_muted_accent();
+        }
+        theme
+    }
+
     /// Build the per-frame view data.
     fn frame<'a>(&'a self, theme: &'a Theme, title: &'a str) -> view::Frame<'a> {
         let panes = (0..self.columns.len())
@@ -3829,7 +3843,7 @@ impl App for FilesApp {
             let t_prep = perf::now();
             browser.poll();
 
-            let theme = AppContext::current_theme();
+            let theme = browser.theme();
             let title = browser.title();
             // Panes measure themselves against the size this frame is drawn
             // at, so their scroll views are re-fitted before anything reads
@@ -4744,7 +4758,7 @@ impl FilesApp {
         let parent = surface.wl_surface().clone();
         let mut browser = self.state.lock().unwrap();
         browser.sync_scroll_metrics();
-        let theme = AppContext::current_theme();
+        let theme = browser.theme();
         let title = browser.title();
         let frame = browser.frame(&theme, &title);
         let quickview = browser

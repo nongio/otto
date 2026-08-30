@@ -772,6 +772,9 @@ fn column_key(f: &Frame, depth: usize) -> u64 {
     (depth == f.active).hash(&mut hasher);
     f.renaming.map(|(d, i)| (d == depth, i)).hash(&mut hasher);
     view::is_dark().hash(&mut hasher);
+    // A background window's theme mutes the accent, so the selection this
+    // column draws changes colour when the window loses focus.
+    f.focused.hash(&mut hasher);
     hasher.finish()
 }
 

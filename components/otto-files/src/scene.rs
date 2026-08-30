@@ -163,6 +163,11 @@ struct PaneKey {
     status: Status,
     size: (u32, u32),
     dark: bool,
+    /// Whether the window has focus. The rows are drawn with the frame's
+    /// theme, and a background window's theme has a muted accent — so losing
+    /// focus repaints the selection, and without this the columns would keep
+    /// the front window's colour.
+    focused: bool,
 }
 
 #[derive(PartialEq, Clone)]
@@ -610,6 +615,7 @@ impl PaneLayer {
             status: status.clone(),
             size: (full.width().to_bits(), strip_h.to_bits()),
             dark: view::is_dark(),
+            focused: f.focused,
         };
         if self.key.as_ref() == Some(&key) {
             return;

@@ -138,9 +138,15 @@ header band with the view switcher, so they take the switcher's centre line
 and the switcher steps left to clear them.
 
 An **unfocused window steps back**: the title and subtitle drop a step down
-the text scale, the traffic lights go gray, the blur behind the window is
-dropped, and the sidebar, header and action row are filled in to full opacity
-since there is no longer anything blurred for them to be translucent over.
+the text scale, the traffic lights go gray, the accent is muted almost to
+gray, the blur behind the window is dropped, and the sidebar, header and
+action row are filled in to full opacity since there is no longer anything
+blurred for them to be translucent over. Muting the accent covers everything
+drawn in it — the selected rows and grid captions, the selected place in the
+sidebar, the cursor ring, the drop outline, the rubber band and the picker's
+accept button — so only the focused window carries the user's colour, and a
+desktop of open browsers has one place for the eye to go. It stops short of a
+flat gray: a trace of the hue keeps the window looking like the same desktop.
 This is the toolkit's behaviour rather than the browser's — see
 [otto-kit-window-focus](otto-kit-window-focus.md) — and applies to the
 picker's window as well, minus the traffic lights it does not have.
