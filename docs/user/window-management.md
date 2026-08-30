@@ -62,6 +62,14 @@ maximize controls. The compositor owns that strip: it is hit-tested before the
 client's surfaces, so dragging it moves the window and the controls work even
 when the application is busy.
 
+```toml
+window_controls_side = "right"   # or "left"
+```
+
+`window_controls_side` picks which end of the title bar those controls sit at.
+It applies to Otto-drawn decorations and to Otto's own applications, and takes
+effect after a restart.
+
 Clients that explicitly ask for *client-side* are honoured. GTK and Electron
 apps request it and keep drawing their own title bars, so those look like
 whatever the toolkit does.

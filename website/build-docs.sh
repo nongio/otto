@@ -40,6 +40,7 @@ declare -A PAGE_TITLE=(
     [configuration]="Configuring Otto - Config Files and How They Merge"
     [display]="Display Setup in Otto - Scaling and Multi-Monitor"
     [theming]="Theming Otto - Dark Mode, Accent, Fonts, Wallpaper"
+    [customization]="Customizing Otto - Appearance Settings and What They Do"
     [input]="Input Settings in Otto - Keyboard, Touchpad, Pointer"
     [audio]="Audio in Otto - UI Sounds and Sound Themes"
     [power-management]="Power Management in Otto - Lid, Suspend, Clamshell"
@@ -93,6 +94,7 @@ declare -A PAGE_DESC=(
     [configuration]="Where Otto's TOML configuration files live, the order they merge in, and how per-backend overrides work."
     [display]="Set resolution, refresh rate and fractional scaling, arrange multiple monitors, and create virtual outputs in Otto."
     [theming]="Set Otto's light or dark scheme, accent color, fonts, wallpaper, cursor and icon themes, and how those reach GTK and Qt apps."
+    [customization]="What Otto's appearance settings do, shown on six configurations: accent colour, dock position and tint, corner radius, icon theme and window controls."
     [input]="Configure keyboard layout and repeat rate, touchpad tap and scroll behaviour, and pointer acceleration in Otto."
     [audio]="Enable or replace Otto's interface sound effects, and point the compositor at a different freedesktop sound theme."
     [power-management]="Control what Otto does on lid close and power button, configure idle suspend, and run reliably in clamshell mode."
@@ -131,6 +133,7 @@ declare -A PAGE_DESC=(
 # Pages with a screenshot worth using as the social-card image.
 declare -A PAGE_IMAGE=(
     [desktop-widgets]="images/desktop-widgets.jpg"
+    [customization]="images/rice-deep-field.jpg"
     [lock-screen]="images/lock-screen.jpg"
     [login-greeter]="images/login-greeter.jpg"
 )
@@ -168,6 +171,7 @@ USER_FILES=(
     "user/recommended-settings.md"
     "user/display.md"
     "user/theming.md"
+    "user/customization.md"
     "user/input.md"
     "user/audio.md"
     "user/power-management.md"

@@ -11,21 +11,24 @@ Incremental implementation plan for the Dynamic Island. Each milestone is self-c
 
 ## Milestone 1 — End-to-End Activity Lifecycle (DONE)
 
-**Goal:** D-Bus client submits an activity, the island renders it, and it auto-dismisses after timeout.
+**Goal:** D-Bus client submits an activity, the island renders it.
 
 **Delivered:**
 - Standalone `otto-islands` component with D-Bus interface (`org.otto.Island1`)
-- Two subsurfaces with surface style chrome (blur, shadow, rounded corners)
-- Spring-animated transitions between idle circles and compact pill
-- `GenericActivityRenderer` for basic data-driven activities
-- `MusicActivityRenderer` with MPRIS (playerctl) + PipeWire audio levels
-- Pointer hover (Compact → Expanded) and click (Expanded → Banner) interaction
+- Subsurfaces with surface style chrome (blur, shadow, rounded corners)
+- Spring-animated transitions between presentation modes
+- Pointer hover and click interaction
 - Wayland input region support (compositor fix: honouring `surface_under` for layer shells)
-- Right circle repositions with spring animation when left expands
+
+**Since superseded:** this milestone was built on the two-slot "O o" model with
+an `ActivityRenderer` trait, a `MusicActivityRenderer` (MPRIS + PipeWire levels)
+and a Banner mode. All of that was replaced in Milestone 2/3 by the
+per-notification island row; see [dynamic-island](dynamic-island.md#superseded-designs).
+Activity timeouts do not currently auto-dismiss.
 
 ---
 
-## Milestone 2 — Notification Integration
+## Milestone 2 — Notification Integration (DONE, differently)
 
 **Goal:** Notifications from desktop apps appear as island activities.
 
@@ -37,11 +40,14 @@ Incremental implementation plan for the Dynamic Island. Each milestone is self-c
 - Notification actions mapped to island actions (future: clickable buttons)
 - Optionally: island claims `org.freedesktop.Notifications` directly for non-portal apps
 
-**Delivers:** Desktop notifications appear in the island instead of a separate notification daemon.
+**Delivered:** otto-islands claims `org.freedesktop.Notifications` directly and
+*is* the notification daemon; the portal forwarding route was not taken. Actions
+render as inline buttons on an expanded island. See
+[notification-island](notification-island.md).
 
 ---
 
-## Milestone 3 — Multiple Activities & Dismissed Stack
+## Milestone 3 — Multiple Activities (DONE, differently)
 
 **Goal:** Multiple activities coexist, dismissed ones are recoverable.
 
@@ -52,7 +58,11 @@ Incremental implementation plan for the Dynamic Island. Each milestone is self-c
 - User can dismiss individual items or clear all
 - Same-`app_id` transient activities replace each other (notification grouping)
 
-**Delivers:** Notifications don't get lost. Badge shows unread count.
+**Delivered:** an unbounded centred row of per-notification islands, with
+same-app islands overlapping into decks. Unread counts ride on the dock icon via
+`otto_dock_v1` rather than on an island badge. Same-app notifications are *not*
+replaced — each keeps its own island. A dismissed-notification stack is still
+open (see history/DND).
 
 ---
 

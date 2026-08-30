@@ -44,7 +44,27 @@ Changing it takes effect immediately; no restart is needed. Available values:
 `red`, `orange`, `yellow`, `green`, `mint`, `teal`, `cyan`, `blue`, `indigo`,
 `purple`, `pink`, `gray`, `brown`
 
-Arbitrary hex colours are not accepted here — pick from the list.
+A named accent follows the light and dark palettes, shifting to the right shade
+for the current scheme. You can also give a hex literal for a colour the palette
+has no name for:
+
+```toml
+accent_color = "#7fd4e6"
+```
+
+`#RGB` and `#RRGGBB` are both accepted, and the `#` is required — it is what
+tells a colour from a name. A literal is used exactly as written in both
+schemes.
+
+## Rounded corners
+
+```toml
+rounded_corners = true
+```
+
+Rounds the corners of the dock, the top bar, Otto-drawn window decorations and
+the desktop's own panels. Set it to `false` for square corners throughout. It
+takes effect after a restart.
 
 ## Wallpaper
 
@@ -184,5 +204,4 @@ unreadable. Check the log — Otto reports the failure and falls back to
 
 - Per-monitor or per-workspace wallpaper
 - Automatic light/dark switching by time of day
-- Custom hex accent colours
 - Animated wallpaper without an external daemon

@@ -22,7 +22,7 @@ If you are installing Otto for the first time, start with
 | [Exposé & App Switcher](expose-and-switcher.md) | Overview of all windows, switching between apps |
 | [Dock](dock.md) | Running apps, minimized windows, bookmarks, autohide, magnification |
 | [Top Bar](topbar.md) | Clock, system tray, global application menus |
-| [Dynamic Island](dynamic-island.md) | Notifications, live activities, system HUD, permission dialogs |
+| [Dynamic Island](dynamic-island.md) | Notifications, live activities, permission dialogs |
 | [Keyboard Shortcuts](keyboard-shortcuts.md) | Binding syntax and the complete action list |
 | [Touchpad Gestures](gestures.md) | Three-finger swipes, four-finger pinch |
 
@@ -45,6 +45,7 @@ versions: useful day to day, still filling in.
 | [Recommended Settings](recommended-settings.md) | The config Otto's author runs — a Mac-like keyboard and the rest |
 | [Display](display.md) | Scaling, monitor arrangement, modes, virtual outputs, panels |
 | [Theming](theming.md) | Light/dark, accent color, fonts, wallpaper, cursors, icons |
+| [Customization](customization.md) | What the appearance settings do, shown on six configurations |
 | [Input](input.md) | Keyboard layout and repeat, touchpad, pointer acceleration |
 | [Audio](audio.md) | UI sound effects and sound themes |
 | [Power Management](power-management.md) | Lid close, power button, suspend, clamshell |

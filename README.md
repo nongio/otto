@@ -13,29 +13,25 @@ You can try it inside your current session in about a minute — [jump to Try it
 
 ## See it
 
-![The Otto desktop](./assets/press/01-desktop-hero.png)
+![The Otto desktop](./assets/press/01-desktop-hero.jpg)
 
 *Wallpaper, top bar, Dock, Files browsing poster thumbnails, the user guide in a browser window.*
 
-![Exposé](./assets/press/03-expose.png)
+![Exposé](./assets/press/03-expose.jpg)
 
 *Exposé, with the workspace strip on top — the window previews are live, not screenshots.*
 
-![Files in column view](./assets/press/04-files-column-view.png)
+![A warm Otto desktop over a rainy jazz-club street, with a now-playing panel and a gold-tinted Dock](./docs/user/images/rice-crate-digger.jpg)
 
-*`otto-files` in column view, previewing the selected image.*
+*The same compositor, configured differently — and a third-party `wlr-layer-shell` widget ([eww](https://github.com/elkowar/eww)) on the desktop layer, behind windows and above the wallpaper. See [Desktop Widgets](https://nongio.github.io/otto/desktop-widgets/).*
 
-![Settings](./assets/press/05-settings.png)
+![A near-black Otto desktop over a James Webb deep field image, the brightness indicator over otto-settings](./docs/user/images/rice-deep-field-osd.jpg)
 
-*`otto-settings` editing the running compositor's configuration over D-Bus.*
+*Otto's own surfaces follow the theme: the Dock down the right edge, the brightness indicator, and `otto-settings` editing the running compositor over D-Bus.*
 
-![Dark desktop](./assets/press/06-dark-desktop.png)
+![Otto Settings on a cold blue-grey desktop, showing the accent, corner and window-control settings](./docs/user/images/rice-section-9-settings.jpg)
 
-*A dark Dock and top bar over a monochrome wallpaper.*
-
-![Desktop widgets](./assets/press/07-desktop-widgets.jpg)
-
-*Third-party `wlr-layer-shell` widgets ([eww](https://github.com/elkowar/eww)) on the desktop layer, behind windows and above the wallpaper — see [Desktop Widgets](https://nongio.github.io/otto/desktop-widgets/).*
+*None of this is a theme engine: a look is an accent, an icon tint, which edge the Dock sits on and which side the window controls are — one config file. More of them in [Customization](https://nongio.github.io/otto/customization/).*
 
 ## Try it
 
@@ -61,7 +57,7 @@ Packages come from the [GitHub Releases](https://github.com/nongio/otto/releases
 
 ## What you get
 
-- **A Dock that is a real task manager** — pinned apps, running apps and minimized windows in one strip. Icons magnify on approach, bounce while an app is launching, auto-hide when you want the space back, and the whole thing resizes by dragging its handle.
+- **A Dock that is a real task manager** — pinned apps, running apps and minimized windows in one strip, along the bottom edge or down either side. Icons magnify on approach, bounce while an app is launching, auto-hide when you want the space back, and the whole thing resizes by dragging its handle.
 - **Workspaces that animate** — multiple workspaces per monitor, each monitor independent, drag windows between them, configurable backgrounds.
 - **Exposé and an app switcher** — `PageUp` (or a three-finger swipe up) spreads every window out with live previews; `Ctrl+Tab` walks apps, cycles windows within an app, and can close them. Both appear on the monitor under your pointer.
 - **Window management that stays out of the way** — animated fullscreen/maximize, snap to halves, minimize to the Dock, and new windows placed where they overlap the least. Otto draws the title bar for clients that want a server-side one, on both `xdg-decoration` and KDE's `org_kde_kwin_server_decoration`, so the controls keep working while an application is busy.

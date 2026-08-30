@@ -6,7 +6,7 @@ A guided walk through everything Otto puts on screen, and what each piece is for
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│ Firefox  File  Edit  View      ( O o )        🔊 🔋  Mar 23, 21:16   │  ← Top bar + Dynamic island
+│ Firefox  File  Edit  View    (notifications)  🔊 🔋  Mar 23, 21:16   │  ← Top bar + Dynamic island
 ├──────────────────────────────────────────────────────────────────────┤
 │                                                                      │
 │      ┌────────────────────┐        ┌───────────────────┐             │
@@ -24,14 +24,15 @@ A guided walk through everything Otto puts on screen, and what each piece is for
 
 ## The Dock
 
-The bar at the bottom edge. It is part of the compositor, not a separate app.
+The strip along the bottom edge — or down the left or right edge, if you move
+it there. It is part of the compositor, not a separate app.
 
-It holds three groups, left to right: **bookmarked launchers** (apps you pinned
-in the config), **running applications**, and **minimized windows**.
+It holds three groups, in order along the dock: **bookmarked launchers** (apps
+you pinned in the config), **running applications**, and **minimized windows**.
 
 - A running app carries a small dot under its icon.
 - Icons magnify as the pointer approaches, macOS-style.
-- Hovering an icon shows its name in a balloon tooltip.
+- Hovering an icon shows its name in a label beside it.
 - Clicking a running app raises and focuses it; clicking again cycles through
   that app's windows. Clicking a bookmark launches it, or focuses the existing
   instance.
@@ -43,8 +44,9 @@ in the config), **running applications**, and **minimized windows**.
 - An icon can carry a **badge**: the count of notifications that app has
   outstanding, published by the dynamic island.
 
-The dock can auto-hide, and its size and magnification are configurable — see
-[Dock](dock.md).
+The dock can auto-hide, move to either side edge, and have its size and
+magnification changed — from the config, from Settings, or by right-clicking its
+handle. See [Dock](dock.md).
 
 ## The Top Bar (`otto-bar`)
 
@@ -66,21 +68,23 @@ The bar is a normal Wayland client. Start it from `exec_once`. See
 
 ## The Dynamic Island (`otto-islands`)
 
-The floating pill at the top-center. At rest it is two circles — a large "O"
-and a small "o" — echoing the Otto logo. It grows and morphs to carry:
+Notification bubbles at the top-centre. At rest it draws nothing — the centre of
+the bar is empty and clicks pass through. It appears to show:
 
-- **Notifications**, grouped by application. Otto Islands is a full
-  `org.freedesktop.Notifications` daemon, so ordinary desktop notifications
-  land here.
-- **Live activities** — anything a program submits over D-Bus: a running build,
-  a download with a progress bar, now-playing music.
-- **System HUD** — brightness, volume and keyboard-backlight changes appear
-  here rather than as a separate overlay.
+- **Notifications.** Otto Islands is a full `org.freedesktop.Notifications`
+  daemon, so ordinary desktop notifications land here. Each one is its own
+  bubble; bubbles from the same app overlap into a deck.
+- **Live activities** — anything a program submits over D-Bus, such as a running
+  build or a backup.
 - **Permission dialogs** — the screen-sharing consent prompt and output pickers
   render as an interactive island panel.
 
-Click a mini circle to focus it into a pill; click the pill to expand the stack
-of notification cards beneath it. See [Dynamic Island](dynamic-island.md).
+Brightness and volume changes are *not* shown here; they get their own indicator
+drawn by the compositor.
+
+A new notification arrives already open so you can read it, then settles into a
+mini circle. Click a circle to grow it to a pill, click again to open it fully.
+See [Dynamic Island](dynamic-island.md).
 
 ## Windows
 
@@ -136,7 +140,8 @@ and comes back exactly as you left it. See [Lock Screen](lock-screen.md).
 
 ## What is *not* on screen
 
-Some things Otto deliberately does not have yet: a settings GUI (everything is
-TOML), a window list or workspace switcher in the top bar (that is the dock's
-and exposé's job), and per-monitor docks or top bars (both are
-primary-monitor-only for now).
+Some things Otto does not have: a window list or workspace switcher in the top
+bar (that is the dock's and exposé's job), and per-monitor docks or top bars —
+both are primary-monitor-only for now. Configuration does have a GUI:
+[`otto-settings`](settings.md) edits the running compositor over D-Bus, and the
+TOML file stays authoritative underneath it.

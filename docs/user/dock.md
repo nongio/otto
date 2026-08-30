@@ -22,7 +22,7 @@ background so a slow icon theme never stalls the compositor.
 
 | Action | Effect |
 |--------|--------|
-| Hover an icon | Balloon tooltip with the app's name; icons magnify |
+| Hover an icon | A label with the app's name; icons magnify |
 | Click a running app | Raise and focus it |
 | Click it again | Cycle to that app's next window |
 | Click a bookmark | Focus the running instance, or launch it |
