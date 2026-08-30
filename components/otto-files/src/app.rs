@@ -3184,7 +3184,7 @@ impl Browser {
             entries,
             scroll: column.scroll.offset(),
             bar: None,
-            loading: column.loading(),
+            loading: column.awaiting_first_listing(),
             error: None,
         };
         view::quickview_anchor(
@@ -3619,7 +3619,7 @@ impl Browser {
                     entries,
                     scroll: column.scroll.offset(),
                     bar: Some(&column.scroll.state),
-                    loading: column.loading(),
+                    loading: column.awaiting_first_listing(),
                     error: column.snapshot.error.as_deref(),
                 }
             })

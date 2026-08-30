@@ -224,6 +224,15 @@ impl Column {
         self.loader.loading
     }
 
+    /// A first read, with nothing to show until it lands.
+    ///
+    /// An in-place re-read is not one: the listing already on screen is still
+    /// very nearly right, so a delete or a paste keeps it up rather than
+    /// blinking the whole pane through a "Loading" placeholder and back.
+    pub fn awaiting_first_listing(&self) -> bool {
+        self.loader.loading && self.epoch == 0
+    }
+
     /// Re-read this directory, keeping everything the user positioned: the
     /// selection (held by name), the scroll offset and the scroll metrics.
     /// Only the listing is replaced.
