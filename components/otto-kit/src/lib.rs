@@ -19,6 +19,7 @@ pub mod icon_theme;
 pub mod icons;
 pub mod input;
 pub mod lottie;
+pub mod maximize_button;
 mod portal_runtime;
 pub mod preview;
 pub mod protocols;

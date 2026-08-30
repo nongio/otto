@@ -302,6 +302,14 @@ pub static SETTINGS: &[SettingSpec] = &[
         ],
     ),
     spec(
+        "show_maximize_button",
+        Bool,
+        "Maximize button",
+        "Show the zoom control in a window's titlebar. Off by default: a \
+         double click on the titlebar zooms a window either way.",
+        Restart,
+    ),
+    spec(
         "font_family",
         Str,
         "Interface font",

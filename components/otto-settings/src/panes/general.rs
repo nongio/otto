@@ -35,6 +35,12 @@ pub fn build() -> Pane {
                     )
                     .detail(otto_kit::t!("settings-rounded-corners-detail"))
                     .id("window_controls_side"),
+                    Row::new(
+                        otto_kit::t!("settings-maximize-button"),
+                        Control::Toggle(false),
+                    )
+                    .detail(otto_kit::t!("settings-maximize-button-detail"))
+                    .id("show_maximize_button"),
                     Row::new(otto_kit::t!("settings-font"), Control::Text("Inter".into()))
                         .id("font_family"),
                     // Applies to GTK clients rather than to Otto's own

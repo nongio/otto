@@ -21,10 +21,16 @@ impl crate::Otto<crate::udev::UdevData> {
         let serial = SCOUNTER.next_serial();
         let pointer = self.pointer.clone();
 
-        // 3-finger swipe: start detecting direction (but not if show desktop is active)
+        // 3-finger swipe: start detecting direction. Show desktop takes the
+        // gesture instead — swiping with the windows pushed aside brings them
+        // back, animated, rather than silently doing nothing.
         let is_show_desktop_active = self.workspaces.get_show_desktop();
-        if evt.fingers() == 3 && !self.is_pinching && !is_show_desktop_active {
-            self.gesture_swipe_begin_3finger();
+        if evt.fingers() == 3 && !self.is_pinching {
+            if is_show_desktop_active {
+                self.workspaces.expose_show_desktop(-2.0, true);
+            } else {
+                self.gesture_swipe_begin_3finger();
+            }
         }
 
         pointer.gesture_swipe_begin(

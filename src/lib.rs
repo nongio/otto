@@ -90,6 +90,12 @@ pub fn export_window_controls_side() -> String {
     otto_kit::controls_side::export(side)
 }
 
+/// Publish `show_maximize_button` the same way: the zoom dot is drawn by every
+/// process that draws a titlebar, and only the compositor reads the file.
+pub fn export_maximize_button() -> String {
+    otto_kit::maximize_button::export(config::Config::with(|c| c.show_maximize_button))
+}
+
 /// Publish `theme_scheme` the same way.
 ///
 /// otto-kit apps normally learn light-versus-dark from the freedesktop

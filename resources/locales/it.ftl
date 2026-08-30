@@ -79,6 +79,8 @@ settings-accent-colour = Accento
 settings-rounded-corners = Angoli arrotondati
 settings-rounded-corners-detail = Si applica dopo il riavvio
 settings-window-controls = Comandi della finestra
+settings-maximize-button = Pulsante Ingrandisci
+settings-maximize-button-detail = Mostra il pallino di ingrandimento; un doppio clic sulla barra del titolo ingrandisce comunque
 settings-font = Font di sistema
 settings-gtk-theme = Tema GTK
 
@@ -490,6 +492,8 @@ schema-rounded-corners-label = Angoli arrotondati
 schema-rounded-corners-description = Dock, barra superiore, decorazioni delle finestre e pannelli della scrivania.
 schema-window-controls-side-label = Comandi della finestra
 schema-window-controls-side-description = A quale estremità della barra del titolo si trovano i comandi chiudi, riduci a icona e zoom.
+schema-show-maximize-button-label = Pulsante Ingrandisci
+schema-show-maximize-button-description = Mostra il comando di ingrandimento nella barra del titolo di una finestra. Disattivato per impostazione predefinita: un doppio clic sulla barra del titolo ingrandisce comunque la finestra.
 schema-font-family-label = Carattere dell'interfaccia
 schema-font-family-description = Famiglia di caratteri usata dall'interfaccia di Otto.
 schema-background-color-label = Colore di sfondo

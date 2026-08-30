@@ -79,6 +79,8 @@ settings-accent-colour = Couleur d’accentuation
 settings-rounded-corners = Coins arrondis
 settings-rounded-corners-detail = Applicable après un redémarrage
 settings-window-controls = Boutons de fenêtre
+settings-maximize-button = Bouton d’agrandissement
+settings-maximize-button-detail = Affiche la pastille d’agrandissement ; un double-clic sur la barre de titre agrandit de toute façon
 settings-font = Police système
 settings-gtk-theme = Thème GTK
 
@@ -491,6 +493,8 @@ schema-rounded-corners-label = Coins arrondis
 schema-rounded-corners-description = Le Dock, la barre supérieure, les décorations de fenêtre et les panneaux du bureau.
 schema-window-controls-side-label = Boutons de fenêtre
 schema-window-controls-side-description = À quelle extrémité de la barre de titre se trouvent les boutons de fermeture, de réduction et d’agrandissement.
+schema-show-maximize-button-label = Bouton d’agrandissement
+schema-show-maximize-button-description = Affiche le bouton d’agrandissement dans la barre de titre d’une fenêtre. Désactivé par défaut : un double-clic sur la barre de titre agrandit la fenêtre de toute façon.
 schema-font-family-label = Police de l’interface
 schema-font-family-description = Famille de police utilisée par l’interface propre d’Otto.
 schema-background-color-label = Couleur d’arrière-plan

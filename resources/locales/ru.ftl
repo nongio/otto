@@ -78,6 +78,8 @@ settings-accent-colour = Цвет акцента
 settings-rounded-corners = Скруглённые углы
 settings-rounded-corners-detail = Применяется после перезапуска
 settings-window-controls = Кнопки окна
+settings-maximize-button = Кнопка развёртывания
+settings-maximize-button-detail = Показывает кружок масштабирования; двойной щелчок по заголовку и так развернёт окно
 settings-font = Системный шрифт
 settings-gtk-theme = Тема GTK
 
@@ -493,6 +495,8 @@ schema-rounded-corners-label = Скруглённые углы
 schema-rounded-corners-description = Dock, верхняя панель, оформление окон и панели рабочего стола.
 schema-window-controls-side-label = Кнопки окна
 schema-window-controls-side-description = У какого края заголовка окна расположены кнопки закрытия, сворачивания и масштабирования.
+schema-show-maximize-button-label = Кнопка развёртывания
+schema-show-maximize-button-description = Показывать кнопку масштабирования в заголовке окна. По умолчанию выключено: двойной щелчок по заголовку и так разворачивает окно.
 schema-font-family-label = Шрифт интерфейса
 schema-font-family-description = Семейство шрифтов, используемое собственным интерфейсом Otto.
 schema-background-color-label = Цвет фона

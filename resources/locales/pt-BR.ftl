@@ -79,6 +79,8 @@ settings-accent-colour = Cor de destaque
 settings-rounded-corners = Cantos arredondados
 settings-rounded-corners-detail = Aplicado após reiniciar
 settings-window-controls = Controles da janela
+settings-maximize-button = Botão de maximizar
+settings-maximize-button-detail = Mostra o ponto de ampliar; um clique duplo na barra de título amplia de qualquer forma
 settings-font = Fonte do sistema
 settings-gtk-theme = Tema do GTK
 
@@ -491,6 +493,8 @@ schema-rounded-corners-label = Cantos arredondados
 schema-rounded-corners-description = O Dock, a barra superior, as decorações de janela e os painéis da área de trabalho.
 schema-window-controls-side-label = Controles da janela
 schema-window-controls-side-description = Em que extremidade da barra de título ficam os controles de fechar, minimizar e ampliar.
+schema-show-maximize-button-label = Botão de maximizar
+schema-show-maximize-button-description = Mostra o controle de ampliar na barra de título de uma janela. Desativado por padrão: um clique duplo na barra de título amplia a janela de qualquer forma.
 schema-font-family-label = Fonte da interface
 schema-font-family-description = Família de fonte usada pela própria interface do Otto.
 schema-background-color-label = Cor do plano de fundo

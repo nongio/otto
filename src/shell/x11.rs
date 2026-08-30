@@ -186,44 +186,7 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
     }
 
     fn unmaximize_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        let Some(elem) = self
-            .workspaces
-            .windows_map
-            .values()
-            .find(|e| matches!(e.underlying_surface(), WindowSurface::X11(x) if x == &window))
-            .cloned()
-        else {
-            return;
-        };
-
-        window.set_maximized(false).unwrap();
-
-        // Unmaximizing is the inverse of maximizing: a window that was tiled
-        // when it got maximized lands back on its tile, not on the floating
-        // rect two steps back.
-        if let Some(zone) = self
-            .workspaces
-            .get_window_view(&elem.id())
-            .and_then(|view| view.tiled_zone)
-        {
-            self.apply_tile(&elem, zone);
-            return;
-        }
-
-        if let Some(old_geo) = window
-            .user_data()
-            .get::<OldGeometry>()
-            .and_then(|data| data.restore())
-        {
-            tracing::debug!(
-                "x11::unmaximize_request: restoring to old_geo={:?} title={:?}",
-                old_geo,
-                window.title()
-            );
-            window.configure(old_geo).unwrap();
-            self.workspaces
-                .map_window(&elem, old_geo.loc, false, Some(Transition::ease_out(0.3)));
-        }
+        self.unmaximize_request_x11(&window);
     }
 
     fn fullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
@@ -542,6 +505,28 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
 }
 
 impl<BackendData: Backend> Otto<BackendData> {
+    /// Tell an X11 client where its window ended up.
+    ///
+    /// X11 clients place their own menus and tooltips from the root
+    /// coordinates the server reports for their window, so a window Otto moved
+    /// on its own — a drag, above all — keeps opening popups at the position it
+    /// had before the move until a ConfigureNotify says otherwise. A no-op for
+    /// Wayland windows.
+    pub fn sync_x11_window_position(&mut self, elem: &crate::shell::WindowElement) {
+        let WindowSurface::X11(x11) = elem.underlying_surface() else {
+            return;
+        };
+        // Override-redirect windows own their geometry; never configure them.
+        if x11.is_override_redirect() {
+            return;
+        }
+        let Some(location) = self.workspaces.element_location(elem) else {
+            return;
+        };
+        let size = elem.geometry().size;
+        let _ = x11.configure(Rectangle::new(location, size));
+    }
+
     /// Run the X11 fullscreen transition for an already-mapped element.
     ///
     /// Split out of `XwmHandler::fullscreen_request` so `surface_associated` can
@@ -681,7 +666,14 @@ impl<BackendData: Backend> Otto<BackendData> {
             .or_else(|| outputs_for_window.first().cloned())
             .or_else(|| self.workspaces.outputs().next().cloned())
             .expect("No outputs found");
-        let geometry = self.workspaces.output_geometry(&output).unwrap();
+        // Refresh the exclusive zones before reading them, as the xdg path
+        // does: a layer surface may have changed its reservation since the
+        // last recalculation.
+        self.recalculate_exclusive_zones(&output);
+        // Usable area = output minus exclusive zones (otto-bar) minus the
+        // dock. Maximizing to the raw output rect puts the window under the
+        // bar.
+        let geometry = self.usable_zone(&output);
 
         tracing::debug!(
             "x11::maximize_request: title={:?} old_geo={:?} new_geometry={:?}",
@@ -690,12 +682,21 @@ impl<BackendData: Backend> Otto<BackendData> {
             geometry
         );
 
+        let was_maximized = window.is_maximized();
+
         window.set_maximized(true).unwrap();
+        elem.set_is_maximized(true);
         window.configure(geometry).unwrap();
         // A tiled window keeps the rect it had before it was tiled — saving
         // here would overwrite the floating rect with the tile, and untiling
         // later would restore the half-screen the window already has.
-        if !self.is_tiled(&elem) {
+        //
+        // An already-maximized window keeps it too: `remaximize_maximized_windows`
+        // re-runs this whenever the usable zone changes (the dock autohiding, a
+        // layer surface resizing), and saving there would overwrite the restore
+        // rect with the maximized one — unmaximize would then restore to the
+        // full screen, looking like it did nothing at all.
+        if !self.is_tiled(&elem) && !was_maximized {
             window.user_data().insert_if_missing(OldGeometry::default);
             window
                 .user_data()
@@ -760,6 +761,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
 
         let _ = window.set_maximized(maximize);
+        elem.set_is_maximized(maximize);
         let _ = window.configure(target);
         // `target` belongs to `output`: pin it, or center-based routing would
         // send a still-full-width window onto the neighbouring output.
@@ -784,6 +786,20 @@ impl<BackendData: Backend> Otto<BackendData> {
         };
 
         window.set_maximized(false).unwrap();
+        elem.set_is_maximized(false);
+
+        // Unmaximizing is the inverse of maximizing: a window that was tiled
+        // when it got maximized lands back on its tile, not on the floating
+        // rect two steps back.
+        if let Some(zone) = self
+            .workspaces
+            .get_window_view(&elem.id())
+            .and_then(|view| view.tiled_zone)
+        {
+            self.apply_tile(&elem, zone);
+            return;
+        }
+
         if let Some(old_geo) = window
             .user_data()
             .get::<OldGeometry>()
