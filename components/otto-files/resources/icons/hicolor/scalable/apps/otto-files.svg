@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Otto plate icon. Geometry from the brand sheet, as fractions of the
      canvas: corner radius 0.2237, dot diameter 0.175, gap between dots
-     0.138. Keep those ratios when regenerating at other sizes. -->
+     0.138. Keep those ratios when regenerating at other sizes.
+     The plate is drawn in a 1024 design space and inset to 87.5% of the
+     canvas, matching the padding icon themes leave around app icons. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <defs>
     <linearGradient id="plate" gradientUnits="userSpaceOnUse"
@@ -15,19 +17,21 @@
     </clipPath>
   </defs>
 
-  <rect x="0" y="0" width="1024" height="1024" rx="229.06" ry="229.06" fill="url(#plate)"/>
+  <g transform="translate(64 64) scale(0.875)">
+    <rect x="0" y="0" width="1024" height="1024" rx="229.06" ry="229.06" fill="url(#plate)"/>
 
-  <g clip-path="url(#plateClip)">
-    <!-- top highlight / bottom shading, matching the inset shadows -->
-    <rect x="0" y="4" width="1024" height="1024" rx="229.06" ry="229.06"
-          fill="none" stroke="#FFFFFF" stroke-opacity="0.95" stroke-width="8"/>
-    <rect x="0" y="-6" width="1024" height="1024" rx="229.06" ry="229.06"
-          fill="none" stroke="#2A2320" stroke-opacity="0.06" stroke-width="8"/>
-    <!-- hairline edge -->
-    <rect x="2" y="2" width="1020" height="1020" rx="227.06" ry="227.06"
-          fill="none" stroke="#2A2320" stroke-opacity="0.08" stroke-width="4"/>
+    <g clip-path="url(#plateClip)">
+      <!-- top highlight / bottom shading, matching the inset shadows -->
+      <rect x="0" y="4" width="1024" height="1024" rx="229.06" ry="229.06"
+            fill="none" stroke="#FFFFFF" stroke-opacity="0.95" stroke-width="8"/>
+      <rect x="0" y="-6" width="1024" height="1024" rx="229.06" ry="229.06"
+            fill="none" stroke="#2A2320" stroke-opacity="0.06" stroke-width="8"/>
+      <!-- hairline edge -->
+      <rect x="2" y="2" width="1020" height="1020" rx="227.06" ry="227.06"
+            fill="none" stroke="#2A2320" stroke-opacity="0.08" stroke-width="4"/>
+    </g>
+
+    <circle cx="351.74" cy="512" r="89.6" fill="#2A2320"/>
+    <circle cx="672.26" cy="512" r="89.6" fill="#2A2320"/>
   </g>
-
-  <circle cx="351.74" cy="512" r="89.6" fill="#2A2320"/>
-  <circle cx="672.26" cy="512" r="89.6" fill="#2A2320"/>
 </svg>
