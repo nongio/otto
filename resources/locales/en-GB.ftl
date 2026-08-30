@@ -94,7 +94,6 @@ settings-icon-theme = Icon theme
 
 settings-group-window-switcher = Window switcher
 settings-follow-cursor = Show on the pointer's display
-settings-switcher-colorize-icons = Tint icons like the dock
 
 settings-group-language = Language
 settings-preferred-languages = Preferred languages
@@ -146,6 +145,7 @@ settings-dock-magnification = Magnification
 settings-group-magnification-and-icons = Magnification & icons
 settings-dock-magnification-amount = Magnification amount
 settings-dock-tint-icons = Tint icons
+settings-switcher-colorize-icons = Tint switcher icons
 settings-dock-icon-tint = Icon tint
 settings-dock-icon-tint-strength = Icon tint strength
 

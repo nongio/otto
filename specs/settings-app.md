@@ -275,7 +275,12 @@ are:
   dragged out of the picker that the palette has no name for is sent as
   `#RRGGBB` and is taken as-is under both schemes.
 - **Displays** — see below.
-- **Dock** — size, position, autohide, magnification, minimise effect.
+- **Dock** — size, position, autohide, magnification, minimise effect, and the
+  icon tint: what is tinted — the dock's icons, and whether the app switcher
+  joins in — then the colour and strength that govern both. The switcher's
+  toggle lives here rather than with the switcher's own settings because it
+  says nothing on its own: it borrows the dock's tint, and does nothing while
+  that tint is off.
 - **Keyboard** — repeat delay and rate, then shortcuts.
 - **Trackpad & Mouse** — the pointer and touchpad settings.
 - **Sound** — enabled, theme.
@@ -293,6 +298,15 @@ identifier, and selecting a result reveals that setting in its pane.
 An editable text field takes the usual editing keys while it holds the
 keyboard: caret movement, Shift to select, Ctrl+A to select all, and Ctrl+C,
 Ctrl+X and Ctrl+V for copy, cut and paste against the system clipboard.
+
+A row's label and description are laid out against the control beside them,
+not against the window: the text is measured, given the room that is actually
+free once the control, the reset badge and the restart pill have taken theirs,
+and cropped with a trailing ellipsis when it does not fit. Which controls give
+way first is part of the layout — the file row's path field shrinks so the
+label keeps a readable minimum — and a label with no room left is drawn as
+nothing rather than as a lone ellipsis. Cropping is presentational only: search
+matches, the described tree and every hit test still see the whole string.
 
 Each setting shows whether it currently differs from its inherited value, and
 offers a per-setting reset when it does.
@@ -463,6 +477,14 @@ the scale slider, past the active and primary switches, the position fields and
 the virtual-display buttons. A row is now identified by whatever names it — its
 setting where it has one, its label otherwise — so what the pane draws and what
 the keyboard and a screen reader can reach are the same list.
+
+**A translated label is cropped, not trusted to be short.** Row labels come
+from the catalogues, and a translation is as long as its language makes it —
+Italian's "Colora le icone come il Dock" against English's "Tint icons like the
+dock". Text that overruns its column does not merely look wrong, it draws over
+the control beside it, so the layout measures the room rather than assuming the
+English fits everywhere. Translators should still keep labels short: an
+ellipsis is the floor, not the goal.
 
 **Wallpaper is excluded.** It needs file browsing, thumbnails, per-output
 assignment and scaling modes — a different application with a different shape.

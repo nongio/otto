@@ -93,7 +93,6 @@ settings-icon-theme = Motyw ikon
 
 settings-group-window-switcher = Przełącznik okien
 settings-follow-cursor = Pokazuj na ekranie ze wskaźnikiem
-settings-switcher-colorize-icons = Zabarwiaj ikony jak w Docku
 
 settings-group-language = Język
 settings-preferred-languages = Preferowane języki
@@ -147,6 +146,7 @@ settings-dock-magnification = Powiększenie
 settings-group-magnification-and-icons = Powiększenie i ikony
 settings-dock-magnification-amount = Stopień powiększenia
 settings-dock-tint-icons = Zabarwiaj ikony
+settings-switcher-colorize-icons = Zabarwiaj przełącznik
 settings-dock-icon-tint = Zabarwienie ikon
 settings-dock-icon-tint-strength = Siła zabarwienia ikon
 

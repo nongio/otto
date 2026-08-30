@@ -298,7 +298,15 @@ fn open_picker_for(
 
 /// The schema choice whose swatch is exactly `color`, for settings that take
 /// a name rather than a value.
+///
+/// Only a setting that enumerates its palette can be sent a name: everything
+/// else — the dock's icon tint, say — reads its value as a hex literal, and
+/// would parse "Blue" as a failure and paint the fallback dark.
 fn swatch_name_for(id: &str, color: Color) -> Option<String> {
+    let desc = settings_client::describe(id)?;
+    if desc.choices.is_empty() {
+        return None;
+    }
     swatches_for(id)
         .into_iter()
         .find(|s| s.color == color)

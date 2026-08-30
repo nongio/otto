@@ -1696,6 +1696,96 @@ impl Settings {
         Self::control_height(row) + Self::preview_height(row)
     }
 
+    /// The gap kept between a row's label and the control it runs into.
+    const LABEL_GAP: f32 = 16.0;
+    /// Room a label keeps in a narrow window before a control that can shrink
+    /// starts giving way instead. Enough for a word and an ellipsis.
+    const LABEL_MIN: f32 = 96.0;
+
+    /// Where a row's trailing control begins, given the row's trailing edge
+    /// and vertical centre.
+    ///
+    /// Every arm measures the control the same way [`Self::render_row`] draws
+    /// it, so the room a label is given is the room that is actually free.
+    /// Rows whose controls start at the *leading* edge — the shortcut lines —
+    /// carry no label of their own, so the trailing edge is the honest answer
+    /// for them.
+    fn control_left(row: &Row, label_x: f32, right: f32, cy: f32) -> f32 {
+        match &row.control {
+            Control::Toggle(_) => right - widgets::TOGGLE_W,
+            Control::Slider { readout, .. } => {
+                let readout_w = widgets::CONTROL_TEXT.font().measure_str(readout, None).0;
+                right - readout_w - 12.0 - widgets::SLIDER_W
+            }
+            Control::Select(_) => select_rect(right, cy).left,
+            Control::Color(argb) => well_rect(right, cy, Color::from(*argb)).left,
+            Control::Text(_) => text_rect(right, cy).left,
+            Control::Button(labels) => widgets::button_rects(right, cy, labels)
+                .first()
+                .map(|rect| rect.left)
+                .unwrap_or(right),
+            Control::File(_) => {
+                widgets::file_field_rect(right, label_x + Self::LABEL_MIN + Self::LABEL_GAP, cy)
+                    .left
+            }
+            Control::Value(value) => {
+                if value.contains('+') {
+                    right - widgets::key_combo_width(value)
+                } else {
+                    right - widgets::CONTROL_TEXT.font().measure_str(value, None).0
+                }
+            }
+            Control::Shortcut { .. } | Control::AddShortcut => right,
+        }
+    }
+
+    /// A row's text cropped to the room it has.
+    ///
+    /// [`otto_kit::typography::ellipsize`] always keeps the ellipsis, so a
+    /// room too narrow to hold even that comes back as a lone "…" wider than
+    /// the space it was given — a File row at [`MIN_W`] has no room at all.
+    /// Nothing is the honest answer there: an ellipsis on its own names no
+    /// setting, and drawing it would put the very overlap this crop exists to
+    /// prevent back under the control.
+    fn crop(text: &str, style: TextStyle, room: f32) -> String {
+        let font = style.font();
+        if font.measure_str(text, None).0 <= room {
+            return text.to_string();
+        }
+        if room < font.measure_str("\u{2026}", None).0 {
+            return String::new();
+        }
+        otto_kit::typography::ellipsize(&font, text, room)
+    }
+
+    /// How much width a row's label and detail line each have before they run
+    /// into the control beside them.
+    ///
+    /// A translated label is as long as the language makes it and the room is
+    /// fixed, so the text is cropped to what is free rather than drawn over
+    /// the control. The revert badge and the restart pill trail the text, so
+    /// their room comes out of the same budget — the pill off the detail line
+    /// when there is one, off the label when there is not.
+    fn text_room(row: &Row, label_x: f32, right: f32, cy: f32) -> (f32, f32) {
+        let room =
+            (Self::control_left(row, label_x, right, cy) - Self::LABEL_GAP - label_x).max(0.0);
+        let pill_room = widgets::restart_pill_width() + 10.0;
+        let badge_room = if row.overridden {
+            widgets::REVERT_BADGE_ROOM
+        } else {
+            0.0
+        };
+        let (label, detail) = match (row.restart_required, row.detail.is_some()) {
+            (true, true) => (room - badge_room, room - pill_room),
+            (true, false) => (
+                room - badge_room - pill_room - if row.overridden { 14.0 } else { 0.0 },
+                room,
+            ),
+            (false, _) => (room - badge_room, room),
+        };
+        (label.max(0.0), detail.max(0.0))
+    }
+
     fn render_row(&self, canvas: &Canvas, row: &Row, x0: f32, x1: f32, y: f32, h: f32) {
         // The controls sit on the row's first line, not in the middle of it:
         // a row carrying a preview is much taller than the line its field is
@@ -1705,19 +1795,23 @@ impl Settings {
         let label_x = x0 + 14.0;
         let right = x1 - 14.0;
 
+        let (label_room, detail_room) = Self::text_room(row, label_x, right, cy);
+        let label = Self::crop(row.label, styles::BODY, label_room);
+
         match row.detail.as_deref() {
             Some(detail) => {
                 widgets::text_centered_y(
                     canvas,
-                    row.label,
+                    &label,
                     label_x,
                     cy - 9.0,
                     styles::BODY,
                     self.theme.text_primary,
                 );
+                let detail = Self::crop(detail, styles::SUBHEADLINE, detail_room);
                 widgets::text_centered_y(
                     canvas,
-                    detail,
+                    &detail,
                     label_x,
                     cy + 9.0,
                     styles::SUBHEADLINE,
@@ -1726,7 +1820,7 @@ impl Settings {
             }
             None => widgets::text_centered_y(
                 canvas,
-                row.label,
+                &label,
                 label_x,
                 cy,
                 styles::BODY,
@@ -1735,7 +1829,7 @@ impl Settings {
         }
 
         if row.overridden {
-            let label_w = styles::BODY.font().measure_str(row.label, None).0;
+            let label_w = styles::BODY.font().measure_str(&label, None).0;
             let badge_y = if row.detail.is_some() { cy - 9.0 } else { cy };
             widgets::revert_badge(canvas, label_x + label_w + 12.0, badge_y, &self.theme);
         }
@@ -1836,6 +1930,7 @@ impl Settings {
             Control::File(value) => widgets::file_field(
                 canvas,
                 right,
+                label_x + Self::LABEL_MIN + Self::LABEL_GAP,
                 cy,
                 value,
                 matches!(self.pressed, Some(Pressed::Choose(id)) if Some(id) == row.id),
@@ -1887,9 +1982,13 @@ impl Settings {
         // The pill trails the text it belongs to — the detail line if there is
         // one, otherwise the label — so it can never sit on top of either.
         if row.restart_required {
-            let (text, style, pill_cy) = match row.detail.as_deref() {
+            let detail = row
+                .detail
+                .as_deref()
+                .map(|detail| Self::crop(detail, styles::SUBHEADLINE, detail_room));
+            let (text, style, pill_cy) = match detail.as_deref() {
                 Some(detail) => (detail, styles::SUBHEADLINE, cy + 9.0),
-                None => (row.label, styles::BODY, cy),
+                None => (label.as_str(), styles::BODY, cy),
             };
             let after_text = label_x + style.font().measure_str(text, None).0 + 10.0;
             // A row that also carries the override badge has to clear that too.
@@ -2151,6 +2250,63 @@ mod tests {
         let mut pixel = [0u8; 4];
         assert!(surface.read_pixels(&info, &mut pixel, 4, (x, y)));
         pixel
+    }
+
+    /// The label a row actually draws, cropped the way `render_row` crops it.
+    fn drawn_label(row: &Row, content_width: f32, cy: f32) -> String {
+        let label_x = CONTENT_PAD + 14.0;
+        let right = content_width - CONTENT_PAD - 14.0;
+        let (room, _) = Settings::text_room(row, label_x, right, cy);
+        Settings::crop(row.label, styles::BODY, room)
+    }
+
+    #[test]
+    fn a_label_too_long_for_its_row_is_cropped_rather_than_drawn_over_the_control() {
+        // A translation is as long as the language makes it. Before the crop,
+        // "Colora le icone come il Dock" ran under the switch beside it.
+        let row = Row::new(
+            "A label far longer than any row in any pane could ever hope to show",
+            Control::Toggle(true),
+        );
+        // At the window's narrowest, where the room is tightest.
+        let content_width = MIN_W - SIDEBAR_W;
+        let label = drawn_label(&row, content_width, 20.0);
+
+        assert!(label.ends_with('\u{2026}'), "{label:?} is not elided");
+        let label_x = CONTENT_PAD + 14.0;
+        let right = content_width - CONTENT_PAD - 14.0;
+        let drawn_right = label_x + styles::BODY.font().measure_str(&label, None).0;
+        assert!(
+            drawn_right <= Settings::control_left(&row, label_x, right, 20.0),
+            "the label reaches the control"
+        );
+    }
+
+    #[test]
+    fn no_row_label_reaches_the_control_beside_it() {
+        for pane in 0..model::panes().len() {
+            // At the window's narrowest: a label that clears its control here
+            // clears it at every width.
+            let settings = Settings::new(pane, false).with_size(MIN_W, MIN_H);
+            let content_width = settings.width - SIDEBAR_W;
+            for (row, rect) in settings.row_rects(content_width) {
+                let cy = rect.top + Settings::control_height(row) / 2.0;
+                let label = drawn_label(row, content_width, cy);
+                let drawn_right =
+                    CONTENT_PAD + 14.0 + styles::BODY.font().measure_str(&label, None).0;
+                let control = Settings::control_left(
+                    row,
+                    CONTENT_PAD + 14.0,
+                    content_width - CONTENT_PAD - 14.0,
+                    cy,
+                );
+                assert!(
+                    drawn_right <= control,
+                    "{:?} runs into its control ({drawn_right} > {control})",
+                    row.label
+                );
+            }
+        }
     }
 
     #[test]

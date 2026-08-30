@@ -94,7 +94,6 @@ settings-icon-theme = Tema de ícones
 
 settings-group-window-switcher = Alternador de janelas
 settings-follow-cursor = Mostrar no monitor do ponteiro
-settings-switcher-colorize-icons = Colorir ícones como no Dock
 
 settings-group-language = Idioma
 settings-preferred-languages = Idiomas preferidos
@@ -147,6 +146,7 @@ settings-dock-magnification = Ampliação
 settings-group-magnification-and-icons = Ampliação e ícones
 settings-dock-magnification-amount = Nível de ampliação
 settings-dock-tint-icons = Colorir ícones
+settings-switcher-colorize-icons = Colorir o alternador
 settings-dock-icon-tint = Cor dos ícones
 settings-dock-icon-tint-strength = Intensidade da cor dos ícones
 

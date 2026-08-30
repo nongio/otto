@@ -94,7 +94,6 @@ settings-icon-theme = Symboldesign
 
 settings-group-window-switcher = Fensterumschalter
 settings-follow-cursor = Auf dem Bildschirm des Zeigers anzeigen
-settings-switcher-colorize-icons = Symbole wie im Dock einfärben
 
 settings-group-language = Sprache
 settings-preferred-languages = Bevorzugte Sprachen
@@ -146,6 +145,7 @@ settings-dock-magnification = Vergrößerung
 settings-group-magnification-and-icons = Vergrößerung & Symbole
 settings-dock-magnification-amount = Vergrößerungsgrad
 settings-dock-tint-icons = Symbole einfärben
+settings-switcher-colorize-icons = Umschalter einfärben
 settings-dock-icon-tint = Farbton
 settings-dock-icon-tint-strength = Farbtonstärke
 

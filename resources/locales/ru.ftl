@@ -93,7 +93,6 @@ settings-icon-theme = Тема значков
 
 settings-group-window-switcher = Переключатель окон
 settings-follow-cursor = Показывать на дисплее с указателем
-settings-switcher-colorize-icons = Тонировать значки как в Dock
 
 settings-group-language = Язык
 settings-preferred-languages = Предпочитаемые языки
@@ -147,6 +146,7 @@ settings-dock-magnification = Увеличение
 settings-group-magnification-and-icons = Увеличение и значки
 settings-dock-magnification-amount = Степень увеличения
 settings-dock-tint-icons = Тонировать значки
+settings-switcher-colorize-icons = Тонировать переключатель
 settings-dock-icon-tint = Оттенок значков
 settings-dock-icon-tint-strength = Сила оттенка значков
 

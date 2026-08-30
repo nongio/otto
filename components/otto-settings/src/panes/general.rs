@@ -89,23 +89,17 @@ pub fn build() -> Pane {
                 ],
             ),
             // The app switcher has no pane of its own — the workspaces pane
-            // was dropped — so its settings live here. The tint toggle only
-            // says whether the switcher joins in the dock's tint; the colour
-            // and strength stay on the dock pane.
+            // was dropped — so its settings live here. Its tint toggle does
+            // not: it says whether the switcher joins in the *dock's* tint,
+            // and it is only legible beside the toggle it depends on, so it
+            // sits in the dock pane's tint group.
             group(
                 otto_kit::t!("settings-group-window-switcher"),
-                vec![
-                    Row::new(
-                        otto_kit::t!("settings-follow-cursor"),
-                        Control::Toggle(false),
-                    )
-                    .id("appswitcher.follow_cursor"),
-                    Row::new(
-                        otto_kit::t!("settings-switcher-colorize-icons"),
-                        Control::Toggle(true),
-                    )
-                    .id("appswitcher.colorize_icons"),
-                ],
+                vec![Row::new(
+                    otto_kit::t!("settings-follow-cursor"),
+                    Control::Toggle(false),
+                )
+                .id("appswitcher.follow_cursor")],
             ),
             group(
                 otto_kit::t!("settings-group-language"),

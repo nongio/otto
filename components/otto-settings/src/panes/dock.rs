@@ -55,6 +55,14 @@ pub fn build() -> Pane {
                         Control::Toggle(false),
                     )
                     .id("dock.colorize_icons"),
+                    // The switcher borrows the dock's tint rather than having
+                    // one of its own, so the two toggles say what is tinted
+                    // and the colour and strength below govern both.
+                    Row::new(
+                        otto_kit::t!("settings-switcher-colorize-icons"),
+                        Control::Toggle(true),
+                    )
+                    .id("appswitcher.colorize_icons"),
                     Row::new(
                         otto_kit::t!("settings-dock-icon-tint"),
                         Control::Color(0xFF3B82F6),

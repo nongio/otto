@@ -94,7 +94,6 @@ settings-icon-theme = Тема піктограм
 
 settings-group-window-switcher = Перемикач вікон
 settings-follow-cursor = Показувати на дисплеї з вказівником
-settings-switcher-colorize-icons = Тонувати піктограми як у Dock
 
 settings-group-language = Мова
 settings-preferred-languages = Бажані мови
@@ -148,6 +147,7 @@ settings-dock-magnification = Збільшення
 settings-group-magnification-and-icons = Збільшення і піктограми
 settings-dock-magnification-amount = Ступінь збільшення
 settings-dock-tint-icons = Тонувати піктограми
+settings-switcher-colorize-icons = Тонувати перемикач
 settings-dock-icon-tint = Колір тонування піктограм
 settings-dock-icon-tint-strength = Сила тонування піктограм
 
