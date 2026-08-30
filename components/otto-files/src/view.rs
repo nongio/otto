@@ -2004,76 +2004,131 @@ pub fn preview_content(
         // way the name and the facts sit on the same line whatever the file
         // is, instead of riding up and down with the size of the thing above
         // them, and the preview gets every point that is not spoken for.
-        let caption = preview_caption_rect(panel, info.len());
         draw_preview_caption(canvas, &theme, panel, &name, &info);
-
-        let stage = Rect::from_ltrb(
-            panel.left,
-            panel.top,
-            panel.right,
-            (caption.top - PREVIEW_GAP).max(panel.top),
+        let stage = preview_stage_rect(panel, info.len());
+        draw_preview_stage(
+            canvas,
+            &theme,
+            stage,
+            decoded.as_ref(),
+            &icon_chain,
+            first_row,
         );
-        // Nothing the previewer produced may leave the stage. The decoders
-        // bound what they return, and each drawing path lays itself out to
-        // fit, but the content is a *file's* — an archive with hundreds of
-        // long entry names, a text file with no line breaks — and the one
-        // place that must not depend on the file being reasonable is the one
-        // where overflow would draw over the caption below it.
-        canvas.save();
-        canvas.clip_rect(stage, None, false);
-        match &decoded {
-            // A decoder that gave up (an unreadable archive, a format with no
-            // previewer) is not a blank panel, and neither is one still
-            // running: the file's own icon is still true, and drawn large it
-            // is a preview of a kind rather than a placeholder apologising
-            // for itself.
-            Some(otto_kit::preview::Preview::Unavailable { .. }) | None => {
-                draw_preview_icon(canvas, stage, &icon_chain);
-            }
-            // A card is a description — a title, a subtitle and a table of
-            // facts — and this column already carries every one of those in
-            // the caption below. Drawn here it says the same things twice, in
-            // the space meant for the thing itself. What the card was carrying
-            // that the caption is not is its artwork: cover art, an embedded
-            // thumbnail, an mp4's poster frame. That is shown as the picture
-            // it is, and a card with none falls back to the file's own icon.
-            Some(otto_kit::preview::Preview::Card { hero, .. }) => match hero {
-                Some(pixels) => otto_kit::preview::draw(
-                    canvas,
-                    stage,
-                    &otto_kit::preview::Preview::Pixels {
-                        pixels: pixels.clone(),
-                        pages: 1,
-                        page: 1,
-                    },
-                    &theme,
-                    first_row,
-                    otto_kit::preview::Zoom::FIT,
-                    &|name, size| {
-                        icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE)
-                    },
-                ),
-                None => draw_preview_icon(canvas, stage, &icon_chain),
-            },
-            Some(preview) => {
-                otto_kit::preview::draw(
-                    canvas,
-                    stage,
-                    preview,
-                    &theme,
-                    first_row,
-                    // The docked column is a glance, not a viewer: zooming
-                    // belongs to Quick View, which is the panel the user
-                    // opened deliberately.
-                    otto_kit::preview::Zoom::FIT,
-                    &|name, size| {
-                        icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE)
-                    },
-                );
-            }
-        }
-        canvas.restore();
     }
+}
+
+/// The drag image for a file picked up by its preview: the picture the
+/// column is already showing, and nothing else.
+///
+/// A drag out of the listing carries rows because rows are what the eye was
+/// looking at. Out of the preview column, what the eye was looking at is the
+/// picture — so that is what lifts off, at the size it is on screen, and the
+/// file travels under it looking like itself rather than like a row it is
+/// nowhere near.
+pub fn preview_drag_picture(
+    data: &PreviewData<'_>,
+    theme: Theme,
+) -> impl Fn(&Canvas, f32, f32) + Send + Sync + 'static {
+    let icon_chain = data.icon_chain.clone();
+    let decoded = data.decoded.cloned();
+    let first_row = data.first_row;
+
+    move |canvas: &Canvas, width: f32, height: f32| {
+        canvas.clear(Color::TRANSPARENT);
+        let stage = Rect::from_wh(width, height);
+        draw_preview_stage(
+            canvas,
+            &theme,
+            stage,
+            decoded.as_ref(),
+            &icon_chain,
+            first_row,
+        );
+    }
+}
+
+/// The part of the preview column the previewed thing itself occupies: the
+/// panel less the caption band at its foot.
+///
+/// Public because it is a *target* as well as a layout: pressing on the
+/// picture picks the file up (see [`crate::app`]), so the hit test and the
+/// drawing have to agree on where the picture is.
+pub fn preview_stage_rect(panel: Rect, info_lines: usize) -> Rect {
+    let caption = preview_caption_rect(panel, info_lines);
+    Rect::from_ltrb(
+        panel.left,
+        panel.top,
+        panel.right,
+        (caption.top - PREVIEW_GAP).max(panel.top),
+    )
+}
+
+/// The previewed thing, drawn into `stage` — a decode when one has landed,
+/// and the file's own icon drawn large when one has not.
+fn draw_preview_stage(
+    canvas: &Canvas,
+    theme: &Theme,
+    stage: Rect,
+    decoded: Option<&otto_kit::preview::Preview>,
+    icon_chain: &[String],
+    first_row: usize,
+) {
+    // Nothing the previewer produced may leave the stage. The decoders
+    // bound what they return, and each drawing path lays itself out to
+    // fit, but the content is a *file's* — an archive with hundreds of
+    // long entry names, a text file with no line breaks — and the one
+    // place that must not depend on the file being reasonable is the one
+    // where overflow would draw over the caption below it.
+    canvas.save();
+    canvas.clip_rect(stage, None, false);
+    match decoded {
+        // A decoder that gave up (an unreadable archive, a format with no
+        // previewer) is not a blank panel, and neither is one still
+        // running: the file's own icon is still true, and drawn large it
+        // is a preview of a kind rather than a placeholder apologising
+        // for itself.
+        Some(otto_kit::preview::Preview::Unavailable { .. }) | None => {
+            draw_preview_icon(canvas, stage, icon_chain);
+        }
+        // A card is a description — a title, a subtitle and a table of
+        // facts — and this column already carries every one of those in
+        // the caption below. Drawn here it says the same things twice, in
+        // the space meant for the thing itself. What the card was carrying
+        // that the caption is not is its artwork: cover art, an embedded
+        // thumbnail, an mp4's poster frame. That is shown as the picture
+        // it is, and a card with none falls back to the file's own icon.
+        Some(otto_kit::preview::Preview::Card { hero, .. }) => match hero {
+            Some(pixels) => otto_kit::preview::draw(
+                canvas,
+                stage,
+                &otto_kit::preview::Preview::Pixels {
+                    pixels: pixels.clone(),
+                    pages: 1,
+                    page: 1,
+                },
+                theme,
+                first_row,
+                otto_kit::preview::Zoom::FIT,
+                &|name, size| icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE),
+            ),
+            None => draw_preview_icon(canvas, stage, icon_chain),
+        },
+        Some(preview) => {
+            otto_kit::preview::draw(
+                canvas,
+                stage,
+                preview,
+                theme,
+                first_row,
+                // The docked column is a glance, not a viewer: zooming
+                // belongs to Quick View, which is the panel the user
+                // opened deliberately.
+                otto_kit::preview::Zoom::FIT,
+                &|name, size| icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE),
+            );
+        }
+    }
+    canvas.restore();
 }
 
 /// Room between the preview and the name below it.

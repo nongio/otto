@@ -30,9 +30,25 @@ const BTN_RIGHT: u32 = 0x111;
 use model::{Column, Entry, Place, SortKey};
 use view::ViewMode;
 
-/// What a drag carries: the entries to draw, where the grab happened, and the
-/// bounding box they were gathered from.
-type DragItems = (Vec<view::DragItem>, (f32, f32), (f32, f32));
+/// What a drag carries: the picture to draw, the size of the surface it needs,
+/// and where inside that surface the grab happened.
+type DragItems = (DragPicture, (f32, f32), (f32, f32));
+
+/// A drawing handed over as a value: the preview's picture, built by the view
+/// and replayed onto the drag surface.
+type BoxedPainter = Box<dyn Fn(&skia_safe::Canvas, f32, f32) + Send + Sync>;
+
+/// The picture a drag lifts off the window.
+///
+/// Which one it is follows what the user was looking at when they pressed:
+/// rows out of a listing, the preview's own picture out of the preview column.
+enum DragPicture {
+    /// Entries lifted out of a listing, each drawn where it sat.
+    Entries(Vec<view::DragItem>),
+    /// The preview column's picture, lifted whole. Drawn by a closure the
+    /// view builds, because what it paints depends on which decoder answered.
+    Preview(BoxedPainter),
+}
 
 /// How soon a second press on the same column divider must land to count as
 /// a double-click rather than the start of a fresh drag.
@@ -799,6 +815,92 @@ impl Browser {
         });
         self.dirty = true;
         Some((entry.path, generation))
+    }
+
+    /// The cursor for a pointer resting at `(x, y)` with no button down.
+    ///
+    /// The order is the press handler's order, and it has to stay that way:
+    /// a cursor that promises one thing while the click does another is worse
+    /// than no cursor at all. The window's own border is resolved first —
+    /// `resize::edge_at` is the first thing a press asks — and only what falls
+    /// outside it can be a column divider.
+    ///
+    /// That distinction is not academic. The last Miller pane's right edge sits
+    /// exactly on the window's right border whenever the stack is panned fully
+    /// over, which is most of the time once a preview column is up, so the two
+    /// bands overlap on every window.
+    fn hover_shape(&self, x: f32, y: f32) -> CursorShape {
+        if let Some(edge) = resize::edge_at(Rect::from_wh(self.size.0, self.size.1), x, y) {
+            return edge.cursor();
+        }
+        let (width, height) = (self.size.0, self.content_h());
+        let over_divider = match self.mode {
+            ViewMode::List => view::column_boundary_at(x, y, width, self.list_columns).is_some(),
+            ViewMode::Columns => view::miller_boundary_at(
+                x,
+                y,
+                width,
+                height,
+                self.pan.offset(),
+                self.columns.len(),
+                self.miller_w,
+            )
+            .is_some(),
+            ViewMode::Grid => false,
+        };
+        if over_divider {
+            CursorShape::ColResize
+        } else {
+            CursorShape::Default
+        }
+    }
+
+    /// The preview column's picture, where it is on screen right now — if
+    /// there is one, and `(x, y)` is on it.
+    ///
+    /// The caption below the picture is deliberately not part of the target:
+    /// it is a label, and a label is a thing to read rather than a handle to
+    /// pick the file up by.
+    fn preview_grab_at(&self, x: f32, y: f32) -> Option<Rect> {
+        if !self.preview_visible() {
+            return None;
+        }
+        let (width, height) = (self.size.0, self.content_h());
+        let panel =
+            view::preview_pane_rect(self.columns.len(), height, self.pan.offset(), self.miller_w);
+        let lines = preview_info(&self.selected_entry()?).len();
+        let stage = view::preview_stage_rect(panel, lines);
+        // Clipped to the file area: the stack is panned, so a preview column
+        // half off the left of the window must not be grabbable under the
+        // sidebar.
+        let mut visible = stage;
+        if !visible.intersect(view::content_viewport(width, height, ViewMode::Columns)) {
+            return None;
+        }
+        visible
+            .contains(skia_safe::Point::new(x, y))
+            // The picture may start off the left edge; the drag image is the
+            // whole picture, so the anchor is measured from the *stage*.
+            .then_some(stage)
+    }
+
+    /// The drag image for a file picked up by its preview: the same picture
+    /// the column is showing.
+    fn preview_drag_picture(
+        &self,
+    ) -> Option<impl Fn(&skia_safe::Canvas, f32, f32) + Send + Sync + 'static> {
+        let entry = self.selected_entry()?;
+        let data = view::PreviewData {
+            name: entry.name.as_str(),
+            icon_chain: entry.icon_chain(),
+            decoded: self.preview.as_ref().and_then(|p| p.decoded.as_ref()),
+            first_row: 0,
+            info: preview_info(&entry),
+        };
+        Some(view::preview_drag_picture(
+            &data,
+            AppContext::current_theme(),
+        ))
     }
 
     /// Pan the stack so the preview pane — sitting right after the last real
@@ -2685,6 +2787,18 @@ impl Browser {
     /// were and gather from there. The nearest [`view::DRAG_ITEMS_MAX`] to the
     /// grab are the ones shown; the badge still counts them all.
     fn drag_items(&self, x: f32, y: f32) -> Option<DragItems> {
+        // The preview column first: it is a picture of one file, and pressing
+        // it picks that file up carrying the picture rather than a row the
+        // pointer is nowhere near.
+        if let Some(stage) = self.preview_grab_at(x, y) {
+            let picture = self.preview_drag_picture()?;
+            return Some((
+                DragPicture::Preview(Box::new(picture)),
+                (stage.width(), stage.height()),
+                (x - stage.left, y - stage.top),
+            ));
+        }
+
         let (depth, grabbed) = self.entry_at(x, y)?;
         let names: Vec<String> = self
             .selected_entries()
@@ -2744,7 +2858,11 @@ impl Browser {
         let right = right.max(x + 8.0 + view::drag_badge_width(names.len()));
         let bottom = bottom.max(y + 30.0);
 
-        Some((items, (right - left, bottom - top), (x - left, y - top)))
+        Some((
+            DragPicture::Entries(items),
+            (right - left, bottom - top),
+            (x - left, y - top),
+        ))
     }
 
     /// Where entry `index` of pane `depth` sits in the window right now.
@@ -5391,7 +5509,7 @@ impl FilesApp {
                                 let mode = browser.mode;
                                 let count = paths.len();
                                 drop(browser);
-                                if let (Some(surface), Some((items, size, anchor))) =
+                                if let (Some(surface), Some((picture, size, anchor))) =
                                     (window_for_events.wl_surface(), items)
                                 {
                                     let theme = AppContext::current_theme();
@@ -5402,10 +5520,11 @@ impl FilesApp {
                                         serial,
                                         (size.0 as i32, size.1 as i32),
                                         anchor,
-                                        move |canvas, _w, _h| {
-                                            view::draw_drag_image(
+                                        move |canvas, w, h| match picture {
+                                            DragPicture::Entries(items) => view::draw_drag_image(
                                                 canvas, &theme, mode, &items, anchor, count,
-                                            );
+                                            ),
+                                            DragPicture::Preview(draw) => draw(canvas, w, h),
                                         },
                                     );
                                 }
@@ -5413,28 +5532,7 @@ impl FilesApp {
                             }
                         }
 
-                        // Resize affordance at the window edges.
-                        let edge = resize::edge_at(Rect::from_wh(width, browser.size.1), x, y);
-                        let over_column_divider = (browser.mode == ViewMode::List
-                            && view::column_boundary_at(x, y, width, browser.list_columns)
-                                .is_some())
-                            || (browser.mode == ViewMode::Columns
-                                && view::miller_boundary_at(
-                                    x,
-                                    y,
-                                    width,
-                                    height,
-                                    browser.pan.offset(),
-                                    browser.columns.len(),
-                                    browser.miller_w,
-                                )
-                                .is_some());
-                        let shape = if over_column_divider {
-                            CursorShape::ColResize
-                        } else {
-                            edge.map_or(CursorShape::Default, |e| e.cursor())
-                        };
-                        AppContext::set_cursor_shape(shape);
+                        AppContext::set_cursor_shape(browser.hover_shape(x, y));
 
                         // A scrollbar drag follows the pointer wherever it
                         // goes, so the dragged pane is asked first and the
@@ -5583,7 +5681,14 @@ impl FilesApp {
                         continue;
                     }
                     PointerEventKind::Press { serial, .. } => {
-                        if let Some(edge) = resize::edge_at(Rect::from_wh(width, height), x, y) {
+                        // The whole window, not the file area: the border being
+                        // grabbed is the window's, and in the picker the file
+                        // area stops short of the bottom by the action row.
+                        // Measuring against `height` there would put the
+                        // "bottom edge" across the middle of that row.
+                        if let Some(edge) =
+                            resize::edge_at(Rect::from_wh(width, browser.size.1), x, y)
+                        {
                             if let Some(seat) = AppContext::seat_state().seats().next() {
                                 window_for_events.start_resize(&seat, serial, edge);
                             }
@@ -5628,11 +5733,16 @@ impl FilesApp {
                             continue;
                         }
 
-                        // A press on a row might be the start of a drag. Armed
-                        // here and decided on motion: the selection below still
-                        // happens, so a press that never travels is an ordinary
-                        // click and a second one still opens the directory.
-                        if browser.dnd_enabled() && browser.entry_at(x, y).is_some() {
+                        // A press on a row — or on the preview column's picture,
+                        // which is one file drawn large — might be the start of
+                        // a drag. Armed here and decided on motion: the
+                        // selection below still happens, so a press that never
+                        // travels is an ordinary click and a second one still
+                        // opens the directory.
+                        if browser.dnd_enabled()
+                            && (browser.entry_at(x, y).is_some()
+                                || browser.preview_grab_at(x, y).is_some())
+                        {
                             browser.drag_armed = Some((x, y, serial));
                         }
 
@@ -6414,6 +6524,130 @@ mod dnd_tests {
             browser.columns[0].selection.len(),
             3,
             "all three are still selected after the drag"
+        );
+    }
+
+    /// A Miller browser with one file selected, so the preview column is up
+    /// and the stack is panned to show it — the state the preview drag needs.
+    fn browser_with_preview() -> (Browser, TempDir) {
+        let (mut browser, dir) = browser_over(&["a.txt", "b.txt"], &[]);
+        browser.mode = ViewMode::Columns;
+        browser.select(0, row_of(&browser, "a.txt"));
+        browser.reveal_preview();
+        // The reveal is a spring; the test wants where it lands, not where it
+        // is one frame in.
+        for _ in 0..600 {
+            if !browser.pan.advance(1.0 / 60.0) {
+                break;
+            }
+        }
+        assert!(browser.preview_visible(), "the preview column is not up");
+        (browser, dir)
+    }
+
+    /// The window's own border outranks a column divider, because that is the
+    /// order a press resolves them in.
+    ///
+    /// A Miller pane's right edge lands on the window's right border whenever
+    /// the stack is panned fully over — the ordinary state once a preview
+    /// column is up — and the divider's grab band is narrower than the
+    /// window's, so it sits entirely inside it. Answering `ColResize` there
+    /// showed a cursor promising a column resize while the click underneath it
+    /// resized the window.
+    #[test]
+    fn the_window_border_outranks_a_column_divider() {
+        let (mut browser, _dir) = browser_with_preview();
+
+        // A window narrow enough that the stack overflows it, and panned so
+        // the last pane's right edge is flush with the window's own — the
+        // ordinary resting state once a preview column has been revealed.
+        let panes = browser.columns.len();
+        browser.size.0 = view::SIDEBAR_W + browser.miller_w - 50.0;
+        browser.sync_scroll_metrics();
+        browser
+            .pan
+            .state
+            .set_offset(view::SIDEBAR_W + panes as f32 * browser.miller_w - browser.size.0);
+        let (w, h) = browser.size;
+        let y = view::HEADER_H + 80.0;
+        let edge_x = w - 1.0;
+
+        assert!(
+            view::miller_boundary_at(
+                edge_x,
+                y,
+                w,
+                browser.content_h(),
+                browser.pan.offset(),
+                panes,
+                browser.miller_w,
+            )
+            .is_some(),
+            "the pane divider is not on the window border, so this proves nothing"
+        );
+        assert!(
+            resize::edge_at(Rect::from_wh(w, h), edge_x, y).is_some(),
+            "the window border is not where the test thinks it is"
+        );
+        assert_eq!(
+            browser.hover_shape(edge_x, y),
+            resize::edge_at(Rect::from_wh(w, h), edge_x, y)
+                .expect("an edge")
+                .cursor(),
+            "the cursor on the window border must be the one the press acts on"
+        );
+
+        // Panned back a little, the same divider sits clear of the border and
+        // gets its own cursor again: the border wins where they overlap, and
+        // nowhere else.
+        let flush = browser.pan.offset();
+        browser.pan.state.set_offset(flush + 40.0);
+        let inside = view::SIDEBAR_W + panes as f32 * browser.miller_w - browser.pan.offset();
+        assert_eq!(
+            browser.hover_shape(inside, y),
+            CursorShape::ColResize,
+            "a divider away from the border should still say column-resize"
+        );
+    }
+
+    /// The preview column's picture is a handle on the file it is a picture
+    /// of: pressing it arms a drag, the same way pressing the row does.
+    #[test]
+    fn the_preview_picture_can_be_picked_up() {
+        let (browser, _dir) = browser_with_preview();
+        let panel = view::preview_pane_rect(
+            browser.columns.len(),
+            browser.content_h(),
+            browser.pan.offset(),
+            browser.miller_w,
+        );
+        let stage = view::preview_stage_rect(panel, 3);
+
+        let on_picture = (stage.center_x(), stage.center_y());
+        assert!(
+            browser
+                .preview_grab_at(on_picture.0, on_picture.1)
+                .is_some(),
+            "the middle of the preview picture is not a grab"
+        );
+        assert!(
+            browser
+                .drag_items(on_picture.0, on_picture.1)
+                .is_some_and(|(picture, ..)| matches!(picture, DragPicture::Preview(_))),
+            "a drag off the preview does not carry the preview's picture"
+        );
+        assert_eq!(
+            browser.drag_paths().len(),
+            1,
+            "the preview drag carries the one file it is a picture of"
+        );
+
+        // The caption below it is a label, not a handle.
+        assert!(
+            browser
+                .preview_grab_at(stage.center_x(), stage.bottom + 20.0)
+                .is_none(),
+            "the caption under the picture should not pick the file up"
         );
     }
 

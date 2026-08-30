@@ -170,6 +170,14 @@ click or keyboard is what aligns: the stack pans the shortest distance that
 brings that column fully into view, landing on its exact edge, and drops any
 fling still in flight first so the two are never both moving it.
 
+**The window's own border outranks a column divider.** Both are grabbable
+edges and their bands overlap: the last pane's right edge sits exactly on the
+window's right border whenever the stack is panned fully over, which is the
+ordinary resting state once a preview column is up, and the divider's grab band
+is the narrower of the two. A press resolves the window border first, so the
+cursor must too — otherwise it promises a column resize while the click
+underneath it resizes the window.
+
 ### Column surfaces
 
 Painting every column into the window's one buffer makes a scroll in a single
@@ -491,6 +499,25 @@ not the row under the pointer: dragging one of several selected files takes all
 of them. The payload is the same three types a copy puts on the clipboard —
 `x-special/gnome-copied-files`, `text/uri-list`, `text/plain` — which is what
 makes the drag legible to other file managers and to text editors.
+
+**The preview column is a handle too.** In Miller view the trailing preview
+pane is a picture of one file, drawn large, and pressing it picks that file up
+exactly as pressing its row does — the same `6pt` arm, the same payload. The
+picture is what lifts off: the drag image is the preview at the size it is on
+screen, so the file travels looking like the thing the eye was actually
+resting on rather than like a row it is nowhere near. Only the picture is a
+handle; the caption of name and facts along the foot of the column is a label,
+and stays one.
+
+**Nothing expensive may happen between the press and `start_drag`.** The
+compositor honours the request only while the pointer grab that authorised it
+is still held, and it refuses a stale one *silently* — no error, no drag, and
+nothing on screen to say why. Building the drag icon's EGL and Skia surfaces
+before sending the request cost enough to lose a quick drag outright: the
+button was back up before the request arrived. So the icon surface is created
+bare, the drag is started, and only then is the previous drag's icon torn down
+and this one given something to draw with. A drag that a user makes briskly —
+which is most of them — depends on that order.
 
 **The drag image is shaped like the view it came from.** Every dragged file is
 drawn, each where it sits on screen right now and with the alignment its view
