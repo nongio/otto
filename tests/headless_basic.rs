@@ -180,16 +180,69 @@ mod headless_tests {
     #[serial]
     fn pinch_show_desktop() {
         let handle = start_compositor();
+        let mut client = connect_client(&handle);
+        let _toplevel = client.create_toplevel("show-desktop-window", 400, 300);
+        handle.wait(Duration::from_millis(200));
+        let _ = client.roundtrip();
+        handle.settle(200);
 
         assert!(!handle.is_show_desktop_active());
 
         // 4-finger pinch out (spread) to show desktop
         handle.pinch_begin();
-        handle.pinch_update(1.5); // scale > 1.0 = spread
+        for scale in [1.1f64, 1.3, 1.6, 2.0, 2.5] {
+            handle.pinch_update(scale); // scale > 1.0 = spread
+            handle.settle(5);
+        }
         handle.pinch_end();
+        handle.settle(600);
 
-        // May be transitioning
-        handle.settle(300);
+        assert!(
+            handle.is_show_desktop_active(),
+            "pinch out should activate show desktop"
+        );
+
+        // The windows are shown through their expose mirrors while the desktop
+        // is revealed, so the real workspace content must be hidden — otherwise
+        // the untouched windows keep drawing on top of the mirrors sliding away
+        // and the gesture looks like it does nothing.
+        let snapshot = handle.scene_snapshot();
+        fn find<'a>(
+            node: &'a layers::engine::scene::SceneNodeSnapshot,
+            key: &str,
+        ) -> Option<&'a layers::engine::scene::SceneNodeSnapshot> {
+            if node.key == key {
+                return Some(node);
+            }
+            node.children.iter().find_map(|child| find(child, key))
+        }
+        let workspaces = snapshot
+            .nodes
+            .iter()
+            .find_map(|node| find(node, "workspaces_headless"))
+            .expect("no workspaces layer in the scene");
+        assert!(
+            workspaces.hidden,
+            "real workspace content still visible during show desktop"
+        );
+
+        // Clicking a window dismisses show desktop, and the mirrors animate
+        // back to their places first. The real windows may only take over once
+        // that animation ends — swapping them in on the click frame makes the
+        // windows snap back with no animation at all.
+        handle.pointer_move(760.0, 400.0);
+        handle.settle(5);
+        let hidden_on_click = handle.click_and_sample_workspaces_hidden();
+        assert!(
+            hidden_on_click,
+            "real windows swapped back in on the click frame — the exit animation is skipped"
+        );
+
+        handle.settle(600);
+        assert!(
+            !handle.is_show_desktop_active(),
+            "clicking a window should dismiss show desktop"
+        );
 
         handle.stop();
     }

@@ -863,8 +863,7 @@ impl Otto<UdevData> {
         // pick a per-window frame-callback throttle. `occluded_ids` is empty
         // for v1 — we rely on the fullscreen detection inside the classifier
         // for the main "background app behind a maximized window" case.
-        let expose_active =
-            self.workspaces.is_expose_transitioning() || self.workspaces.get_show_all();
+        let expose_active = self.workspaces.mirrors_active();
         tracing::debug!(
             target: "otto::planes",
             "expose inputs: transitioning={} show_all={} gesture={} animating={}",
@@ -1139,8 +1138,7 @@ impl Otto<UdevData> {
             let transient_active = self.dnd_icon.is_some()
                 || self.workspaces.osd.is_visible()
                 || self.workspaces.tiling_overlay.is_visible()
-                || self.workspaces.is_expose_transitioning()
-                || self.workspaces.get_show_all()
+                || self.workspaces.mirrors_active()
                 || self
                     .workspaces
                     .is_animating
@@ -1936,8 +1934,7 @@ impl Otto<UdevData> {
             // Top→bottom, matching the physical push order in
             // `render_output_frame`; the windows subtree is dropped while
             // expose is up, exactly like the windows plane.
-            let expose_active =
-                self.workspaces.is_expose_transitioning() || self.workspaces.get_show_all();
+            let expose_active = self.workspaces.mirrors_active();
             let scene_stack: Vec<crate::render_elements::scene_element::SceneElement> = self
                 .workspaces
                 .output_workspaces

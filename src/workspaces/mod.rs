@@ -1141,6 +1141,18 @@ impl Workspaces {
             || (is_animating && gesture_value != 0 && gesture_value != 1000)
     }
 
+    /// True while the windows on screen are represented by their expose
+    /// mirror layers rather than the real windows plane — exposé proper, the
+    /// show-desktop gesture, or either transition. Render paths use this to
+    /// drop the windows plane; testing only `get_show_all` left show-desktop
+    /// drawing the untouched windows on top of the mirrors sliding away.
+    pub fn mirrors_active(&self) -> bool {
+        self.is_expose_transitioning()
+            || self.get_show_all()
+            || self.get_show_desktop()
+            || self.is_show_desktop_transitioning()
+    }
+
     /// Set the window selection mode
     #[allow(dead_code)]
     fn set_show_all(&self, show_all: bool) {
@@ -2319,6 +2331,13 @@ impl Workspaces {
         // Similar to expose_show_all: show_desktop_active when delta > 0
         let show_desktop_active = delta > 0.0 || transition.is_some();
 
+        // The transaction the completion hook rides on: the FIRST mirror that
+        // actually animates. Hanging it off a no-op change (setting the
+        // workspaces layer to the opacity it already has) finished on the spot,
+        // so closing show desktop restored the real windows in a single frame
+        // while the mirrors were still flying back — the exit looked instant.
+        let mut mirror_transaction: Option<layers::engine::TransactionRef> = None;
+
         // Show/hide expose_layer (master container) when showing desktop
         // This matches the pattern in expose_show_all_apply
         let expose_layer = self.expose_layer.clone();
@@ -2330,6 +2349,19 @@ impl Workspaces {
             if ows.expose_layer != expose_layer {
                 ows.expose_layer.set_hidden(!show_desktop_active);
             }
+        }
+
+        // Hide the real workspace content while the desktop is being revealed:
+        // the windows are shown through their mirror layers inside the expose
+        // layer, exactly as in expose. Without this the untouched windows keep
+        // rendering on top and the gesture looks like it does nothing.
+        let workspaces_layers: Vec<Layer> = self
+            .output_workspaces
+            .values()
+            .map(|ows| ows.workspaces_layer.clone())
+            .collect();
+        for layer in workspaces_layers.iter() {
+            layer.set_hidden(show_desktop_active);
         }
 
         // Show mirror windows layer when showing desktop, hide when not
@@ -2392,13 +2424,16 @@ impl Workspaces {
             let y = window_y.interpolate(&to_y, delta);
 
             // Animate the mirror layer, not the actual window
-            window
+            let tr = window
                 .mirror_layer()
                 .set_position(layers::types::Point { x, y }, transition.clone());
+            if mirror_transaction.is_none() {
+                mirror_transaction = Some(tr);
+            }
         }
 
         // If there's a transition, set up a callback to finalize visibility after animation
-        if let Some(trans) = transition {
+        if transition.is_some() {
             // Mark as animating when we have a transition
             tracing::debug!(target: "otto::popups", "is_animating(true) site=show-desktop");
             self.is_animating
@@ -2411,15 +2446,31 @@ impl Workspaces {
                 .clone();
             let is_animating_ref = self.is_animating.clone();
 
-            // Create a simple animation transaction to hook the on_finish callback
-            let wl = self.primary_workspaces_layer().cloned();
-            if let Some(ref wl) = wl {
-                let transaction = wl.set_opacity(1.0_f32, Some(trans));
+            // Ride the mirrors' own animation. With no window to animate there
+            // is nothing to wait for, so apply the end state right away.
+            let Some(transaction) = mirror_transaction else {
+                let is_active = show_desktop_ref.load(std::sync::atomic::Ordering::Relaxed);
+                expose_layer.set_hidden(!is_active);
+                workspace
+                    .window_selector_view
+                    .window_selector_windows_container
+                    .set_hidden(!is_active);
+                for layer in workspaces_layers.iter() {
+                    layer.set_hidden(is_active);
+                }
+                self.is_animating
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                return;
+            };
+            {
                 transaction.on_finish(
                     move |_: &Layer, _: f32| {
                         let is_active = show_desktop_ref.load(std::sync::atomic::Ordering::Relaxed);
                         expose_layer_ref.set_hidden(!is_active);
                         window_selector_layer.set_hidden(!is_active);
+                        for layer in workspaces_layers.iter() {
+                            layer.set_hidden(is_active);
+                        }
                         // Clear animating flag when animation completes
                         is_animating_ref.store(false, std::sync::atomic::Ordering::Relaxed);
                     },

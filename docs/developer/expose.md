@@ -251,6 +251,22 @@ topmost in the layer tree, rather than the one the pointer is actually over.
 | Force a relayout while open | `expose_update_if_needed` / `expose_update_if_needed_workspace` |
 | Show desktop (push windows away) | `expose_show_desktop(delta, end_gesture)` |
 
+Show desktop reuses the exposé machinery: it hides `workspaces_layer`, shows
+`expose_layer`, and animates the same mirror layers off the screen edges. The
+render paths must therefore drop the real windows plane for it too — they gate
+on `Workspaces::mirrors_active()` (exposé, its transition, show desktop, or its
+transition), not on `get_show_all()` alone. Testing only the exposé flags left
+the untouched windows compositing on top of the mirrors sliding away, so the
+gesture rendered as a no-op.
+
+Its completion hook — the one that hides the mirrors and hands the screen back
+to the real windows — rides the first mirror's own position animation. Hanging
+it off a no-op property change instead (setting a layer to the opacity it
+already has) finished on the spot, so dismissing show desktop restored the
+windows in a single frame while the mirrors were still flying back. Anything
+that dismisses it (clicking a window, `ExposeShowDesktop`, a three-finger
+swipe) goes through `expose_show_desktop(-2.0, true)` and gets that animation.
+
 ## Keyboard focus
 
 Opening exposé clears keyboard focus (`Otto::enter_expose_focus`, called

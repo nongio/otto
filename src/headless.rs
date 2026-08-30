@@ -532,6 +532,26 @@ impl HeadlessHandle {
         });
     }
 
+    /// Click, and report whether the real workspace content is still hidden
+    /// the instant the click has been handled — sampled inside the same state
+    /// callback, so no frame can run in between.
+    ///
+    /// Clicking a window dismisses show desktop, and the mirrors fly back
+    /// before the real windows take over again. Seeing `false` here means the
+    /// swap happened in the same frame as the click: the windows reappear at
+    /// their old places instantly and the exit animation is never seen.
+    pub fn click_and_sample_workspaces_hidden(&self) -> bool {
+        self.query(|state| {
+            state.synthetic_pointer_button(true);
+            state.synthetic_pointer_button(false);
+            state
+                .workspaces
+                .output_workspaces
+                .values()
+                .all(|ows| ows.workspaces_layer.hidden())
+        })
+    }
+
     /// Click, and report whether expose still counts as transitioning the
     /// instant the click has been handled — sampled inside the same state
     /// callback, so no frame can be processed in between.

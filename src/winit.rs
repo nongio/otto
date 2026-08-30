@@ -585,8 +585,7 @@ pub fn run_winit() {
                     // `render_virtual_outputs` in `udev/render.rs`. Outside
                     // exposé the tree render stands: it is the cheaper path —
                     // plane subtrees deliberately skip occlusion culling.
-                    let expose_active = state.workspaces.is_expose_transitioning()
-                        || state.workspaces.get_show_all();
+                    let expose_active = state.workspaces.mirrors_active();
                     let ows = state.workspaces.output_workspaces.get(&output.name());
                     let scene_stack: Vec<crate::render_elements::scene_element::SceneElement> =
                         match ows {
@@ -704,8 +703,7 @@ pub fn run_winit() {
                         #[allow(clippy::mutable_key_type)]
                         // ObjectId as key — see window_throttle.rs
                         {
-                            let expose_active = state.workspaces.is_expose_transitioning()
-                                || state.workspaces.get_show_all();
+                            let expose_active = state.workspaces.mirrors_active();
                             let interacting_ids = crate::state::window_throttle::interacting_ids(
                                 &state.pointer_interaction,
                             );
