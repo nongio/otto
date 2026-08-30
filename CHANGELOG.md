@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.0-rc.3] - 2026-08-30
+
+### 🚀 Features
+
+- *(shell)* Implement ext-background-effect-v1 blur (#157)
+- *(a11y)* AT-SPI support for the shell and otto-kit (#160)
+- *(l10n)* Localise the shell, and snap layer sizes to the pixel grid (#168)
+- *(decorations)* Optional maximize button (#169)
+
+### 🐛 Bug Fixes
+
+- *(otto-kit)* Titlebar material opacity and init-time theme delivery (#158)
+- *(render)* Snap surfaces to the pixel grid on fractional scales (#161)
+- *(workspaces)* An autohidden dock reserves no space (#162)
+- *(shell)* Blur only the region a client asks for (#166)
+- *(planes)* Keep a demoted window in its place in the stack (#167)
+- *(expose)* Make show desktop work, and animate its exit (#169)
+- *(x11)* Tell clients where a drag left their window (#169)
+
+### ⚙️ Miscellaneous Tasks
+
+- Run each area's checks only when it changes (#159)
+- *(deps)* Bump tar from 0.4.44 to 0.4.46 (#165)
+- *(release)* Point the binary PKGBUILD at v1.0.0-rc.3
+
 ## [1.0.0-rc.2] - 2026-08-26
 
 ### 🚀 Features
