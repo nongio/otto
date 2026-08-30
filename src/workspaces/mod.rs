@@ -229,6 +229,13 @@ pub struct Workspaces {
     /// duration of the animation — which is what `is_expose_transitioning`
     /// needs, or scanout promotion resumes while the previews are still flying.
     expose_animating: Arc<AtomicBool>,
+    /// The show-desktop counterpart of `expose_animating`: set while the
+    /// mirrors are flying out or back, cleared when they land. The gesture
+    /// accumulator commits to its final 0/1000 the moment the spring is
+    /// *scheduled*, so without this every frame of the exit animation reads as
+    /// "show desktop is over" and the render paths push the real windows plane
+    /// back at once — the windows snap home while the mirrors are still moving.
+    show_desktop_animating: Arc<AtomicBool>,
     /// Windows currently flagged for direct scanout (their `content_layer` is
     /// hidden; the client buffer is pushed as a `ScanoutCandidate` element).
     /// The render call-site diffs against this to re-import departing windows
@@ -559,6 +566,7 @@ impl Workspaces {
             show_desktop_gesture: Arc::new(AtomicI32::new(0)),
             is_animating: Arc::new(AtomicBool::new(false)),
             expose_animating: Arc::new(AtomicBool::new(false)),
+            show_desktop_animating: Arc::new(AtomicBool::new(false)),
             scanout_windows: Arc::new(RwLock::new(HashSet::new())),
             scanout_windows_per_output: Arc::new(RwLock::new(HashMap::new())),
             promoted_windows: Arc::new(RwLock::new(HashMap::new())),
@@ -1135,9 +1143,13 @@ impl Workspaces {
         let is_animating = self.is_animating.load(std::sync::atomic::Ordering::Relaxed);
 
         // We're transitioning if:
-        // 1. Gesture value is between 0 and 1000 (not fully closed or fully open), OR
-        // 2. Animation is in progress AND we're not at a stable state (0 or 1000)
-        (gesture_value > 0 && gesture_value < 1000)
+        // 1. A mirror animation is in flight (see `show_desktop_animating` —
+        //    the only clause that covers a click- or keyboard-driven exit), OR
+        // 2. Gesture value is between 0 and 1000 (not fully closed or fully open), OR
+        // 3. Animation is in progress AND we're not at a stable state (0 or 1000)
+        self.show_desktop_animating
+            .load(std::sync::atomic::Ordering::Relaxed)
+            || (gesture_value > 0 && gesture_value < 1000)
             || (is_animating && gesture_value != 0 && gesture_value != 1000)
     }
 
@@ -2438,6 +2450,8 @@ impl Workspaces {
             tracing::debug!(target: "otto::popups", "is_animating(true) site=show-desktop");
             self.is_animating
                 .store(true, std::sync::atomic::Ordering::Relaxed);
+            self.show_desktop_animating
+                .store(true, std::sync::atomic::Ordering::Relaxed);
 
             let expose_layer_ref = expose_layer.clone();
             let window_selector_layer = workspace
@@ -2445,6 +2459,7 @@ impl Workspaces {
                 .window_selector_windows_container
                 .clone();
             let is_animating_ref = self.is_animating.clone();
+            let show_desktop_animating_ref = self.show_desktop_animating.clone();
 
             // Ride the mirrors' own animation. With no window to animate there
             // is nothing to wait for, so apply the end state right away.
@@ -2460,6 +2475,8 @@ impl Workspaces {
                 }
                 self.is_animating
                     .store(false, std::sync::atomic::Ordering::Relaxed);
+                self.show_desktop_animating
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
                 return;
             };
             {
@@ -2471,8 +2488,10 @@ impl Workspaces {
                         for layer in workspaces_layers.iter() {
                             layer.set_hidden(is_active);
                         }
-                        // Clear animating flag when animation completes
+                        // Clear animating flags when animation completes
                         is_animating_ref.store(false, std::sync::atomic::Ordering::Relaxed);
+                        show_desktop_animating_ref
+                            .store(false, std::sync::atomic::Ordering::Relaxed);
                     },
                     true,
                 );

@@ -232,10 +232,14 @@ mod headless_tests {
         // windows snap back with no animation at all.
         handle.pointer_move(760.0, 400.0);
         handle.settle(5);
-        let hidden_on_click = handle.click_and_sample_workspaces_hidden();
+        let (hidden_on_click, mirrors_on_click) = handle.click_and_sample_show_desktop_exit();
         assert!(
             hidden_on_click,
-            "real windows swapped back in on the click frame — the exit animation is skipped"
+            "scene swapped the real windows back in on the click frame — the exit animation is skipped"
+        );
+        assert!(
+            mirrors_on_click,
+            "render paths drop the mirrors on the click frame — the windows plane snaps back under the flying mirrors"
         );
 
         handle.settle(600);

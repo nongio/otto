@@ -267,6 +267,14 @@ windows in a single frame while the mirrors were still flying back. Anything
 that dismisses it (clicking a window, `ExposeShowDesktop`, a three-finger
 swipe) goes through `expose_show_desktop(-2.0, true)` and gets that animation.
 
+Hiding the scene layer is not enough on its own: plane subtrees ignore ancestor
+visibility, so the render paths keep their own test. `show_desktop_animating`
+— the show-desktop twin of `expose_animating`, and for the same reason — holds
+`is_show_desktop_transitioning` (and through it `mirrors_active`) true for the
+whole flight, because the gesture accumulator commits to its final 0/1000 the
+moment the spring is *scheduled*. Without it the windows plane returns on the
+click frame and the windows snap home under the mirrors still flying back.
+
 ## Keyboard focus
 
 Opening exposé clears keyboard focus (`Otto::enter_expose_focus`, called

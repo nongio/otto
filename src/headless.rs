@@ -532,23 +532,27 @@ impl HeadlessHandle {
         });
     }
 
-    /// Click, and report whether the real workspace content is still hidden
-    /// the instant the click has been handled — sampled inside the same state
+    /// Click, and report `(workspace content hidden, mirrors_active)` the
+    /// instant the click has been handled — sampled inside the same state
     /// callback, so no frame can run in between.
     ///
     /// Clicking a window dismisses show desktop, and the mirrors fly back
-    /// before the real windows take over again. Seeing `false` here means the
-    /// swap happened in the same frame as the click: the windows reappear at
-    /// their old places instantly and the exit animation is never seen.
-    pub fn click_and_sample_workspaces_hidden(&self) -> bool {
+    /// before the real windows take over again. Both must still hold here.
+    /// `hidden` false means the scene swapped on the click frame; and since
+    /// plane subtrees ignore ancestor visibility, `mirrors_active` false means
+    /// the render paths push the real windows plane back regardless of what
+    /// the scene says. Either way the windows snap home and the exit animation
+    /// is never seen.
+    pub fn click_and_sample_show_desktop_exit(&self) -> (bool, bool) {
         self.query(|state| {
             state.synthetic_pointer_button(true);
             state.synthetic_pointer_button(false);
-            state
+            let hidden = state
                 .workspaces
                 .output_workspaces
                 .values()
-                .all(|ows| ows.workspaces_layer.hidden())
+                .all(|ows| ows.workspaces_layer.hidden());
+            (hidden, state.workspaces.mirrors_active())
         })
     }
 
