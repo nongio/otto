@@ -25,7 +25,7 @@
     THIS SOFTWARE.
   </copyright>
 
-  <interface name="otto_surface_style_manager_v1" version="3">
+  <interface name="otto_surface_style_manager_v1" version="4">
     <description summary="declarative animations and compositing for Wayland">
       Otto surface style protocol provides declarative animations and advanced
       compositing features. Clients can augment wayland surfaces with animations
@@ -81,7 +81,7 @@
   </interface>
 
 
-  <interface name="otto_surface_style_v1" version="3">
+  <interface name="otto_surface_style_v1" version="4">
     <description summary="style compositing and animation support">
       A style surface augments a wl_surface and provides additional compositing
       and animation capabilities. It can have transforms, effects, and visual
@@ -285,6 +285,43 @@
       <arg name="y" type="fixed" summary="output's top edge, in this surface's coordinates"/>
       <arg name="width" type="fixed" summary="output width in pixels"/>
       <arg name="height" type="fixed" summary="output height in pixels"/>
+    </event>
+
+    <event name="desktop_frame" since="4">
+      <description summary="where this surface is on the desktop">
+        Where the compositor is drawing this surface, in the desktop's own
+        coordinate space — the space output positions and pointer positions are
+        in, with its origin at the top-left of the desktop rather than of any
+        one output.
+
+        A client is never told where its window is, which is fine for drawing
+        and wrong for anything that has to answer "what is at this point on the
+        screen". An assistive technology reads the desktop by position: it asks
+        an application what is at a screen coordinate, and it draws the focus
+        highlight and moves the magnifier from the rects the application gives
+        back. A window that answers in its own coordinates claims the rectangle
+        at the same offset from the desktop's origin — which belongs to
+        whatever is drawn in the top-left corner of the screen, and usually not
+        to the window at all.
+
+        Sent when the surface is first drawn and whenever the rect changes: the
+        window moving, the workspace scrolling under it, the output moving, a
+        mode or a scale change. A client that only draws can ignore it.
+
+        In physical pixels, like everything else on this interface. Divide by
+        the surface's scale for the logical pixels an assistive technology
+        works in.
+
+        This is where the compositor draws the surface itself. It is not
+        affected by the window overview, which draws scaled-down copies rather
+        than moving the windows: a window in the overview keeps reporting where
+        it will be when the overview closes, and the shell describes the
+        overview itself.
+      </description>
+      <arg name="x" type="fixed" summary="left edge, in desktop coordinates"/>
+      <arg name="y" type="fixed" summary="top edge, in desktop coordinates"/>
+      <arg name="width" type="fixed" summary="width as drawn"/>
+      <arg name="height" type="fixed" summary="height as drawn"/>
     </event>
 
     <request name="set_output_relative_size" since="3">

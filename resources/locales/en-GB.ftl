@@ -76,6 +76,9 @@ settings-pane-lock-and-login = Lock & Login
 settings-group-appearance = Appearance
 settings-colour-scheme = Colour scheme
 settings-accent-colour = Accent colour
+settings-rounded-corners = Rounded corners
+settings-rounded-corners-detail = Applies after a restart
+settings-window-controls = Window controls
 settings-font = System font
 settings-gtk-theme = GTK theme
 
@@ -142,6 +145,7 @@ settings-dock-magnification = Magnification
 settings-group-magnification-and-icons = Magnification & icons
 settings-dock-magnification-amount = Magnification amount
 settings-dock-tint-icons = Tint icons
+settings-switcher-colorize-icons = Tint switcher icons
 settings-dock-icon-tint = Icon tint
 settings-dock-icon-tint-strength = Icon tint strength
 
@@ -213,6 +217,8 @@ settings-greeter-arguments = Greeter arguments
 
 settings-choice-light = Light
 settings-choice-dark = Dark
+settings-choice-controls-left = Left
+settings-choice-controls-right = Right
 settings-choice-position-bottom = Bottom
 settings-choice-position-left = Left
 settings-choice-position-right = Right
@@ -477,7 +483,11 @@ schema-screen-scale-description = Global scale factor applied to the desktop.
 schema-theme-scheme-label = Colour scheme
 schema-theme-scheme-description = Light or dark colour scheme.
 schema-accent-color-label = Accent colour
-schema-accent-color-description = Named accent colour used by Otto's own interface.
+schema-accent-color-description = A palette name, which follows the light and dark schemes, or a #RRGGBB colour.
+schema-rounded-corners-label = Rounded corners
+schema-rounded-corners-description = The dock, the top bar, window decorations and the desktop's own panels.
+schema-window-controls-side-label = Window controls
+schema-window-controls-side-description = Which end of a window's titlebar the close, minimize and zoom controls sit at.
 schema-font-family-label = Interface font
 schema-font-family-description = Font family used by Otto's own interface.
 schema-background-color-label = Background colour
@@ -582,6 +592,8 @@ schema-login-greeter-args-description = Arguments passed to the greeter.
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = Switcher follows the pointer
 schema-appswitcher-follow-cursor-description = Show the app switcher on the output the pointer is on.
+schema-appswitcher-colorize-icons-label = Tint switcher icons
+schema-appswitcher-colorize-icons-description = Let the dock's icon tint reach the app switcher. Does nothing while the dock's tint is off.
 
 
 ## Late additions
@@ -1033,3 +1045,46 @@ islands-dialog-allow = Allow
 islands-dialog-continue = Continue
 # Refuses the request.
 islands-dialog-deny = Deny
+
+
+## Accessibility
+##
+## Spoken by a screen reader, never drawn on screen, so these are the only
+## strings in the catalogue with no width limit — say the whole thing rather
+## than abbreviating. They name parts of the desktop a sighted person
+## recognises by shape: read them as answers to "what is this?".
+
+# The dock itself, as one object; the icons inside it are named
+# individually by the application they launch.
+a11y-dock = Dock
+# Said after an application's name in the dock, for the dot under the icon.
+a11y-app-running = Running
+a11y-app-not-running = Not running
+# The panel that appears while the switch-application keys are held.
+a11y-app-switcher = Application switcher
+# The list of open windows shown by the overview.
+a11y-windows = Windows
+# The strip of workspaces shown by the overview.
+a11y-workspaces = Workspaces
+# A window that reports no title of its own.
+a11y-untitled-window = Untitled window
+# The bar across the top of the screen.
+a11y-menu-bar = Menu bar
+# The right-hand end of the bar, holding the clock and the tray icons.
+a11y-status = Status
+# A tray icon whose application gave it no name of its own. $number
+# counts from 1, left to right.
+a11y-tray-item = Tray item { $number }
+# The stack of notification islands.
+a11y-notifications = Notifications
+# The sidebar of Settings, listing its panes.
+a11y-categories = Categories
+# The launcher's list of matches for what has been typed.
+a11y-results = Results
+# Names the Settings pane when no pane is selected.
+a11y-settings = Settings
+# Quick Look's contents, when it is showing something with no pages.
+a11y-preview = Preview
+a11y-preview-page = Preview, page { $page } of { $pages }
+# Said of a preview that shows only the beginning of a long file.
+a11y-preview-shortened = Preview, shortened

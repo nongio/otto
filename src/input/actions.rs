@@ -422,6 +422,22 @@ impl<BackendData: Backend> Otto<BackendData> {
                 }
             }
 
+            // The OSD actions. Nothing about them is backend-specific —
+            // volume goes through the audio manager and brightness through
+            // sysfs — but they were only ever dispatched from the keyboard
+            // handlers, so every other path (the debug action hook on both
+            // backends) fell through to the warning below and the OSD could
+            // not be raised without a real media key.
+            KeyAction::BrightnessUp => self.handle_brightness_up(),
+            KeyAction::BrightnessDown => self.handle_brightness_down(),
+            KeyAction::VolumeUp => self.handle_volume_up(),
+            KeyAction::VolumeDown => self.handle_volume_down(),
+            KeyAction::VolumeMute => self.handle_volume_mute(),
+            KeyAction::MediaPlayPause => self.handle_media_play_pause(),
+            KeyAction::MediaNext => self.handle_media_next(),
+            KeyAction::MediaPrev => self.handle_media_prev(),
+            KeyAction::MediaStop => self.handle_media_stop(),
+
             // Backend-specific actions (VT switch, screen jumps, scale…)
             // are dispatched in `process_input_event`; reaching here via a
             // non-keyboard path (debug trigger) must not crash the session.
@@ -597,6 +613,71 @@ impl<BackendData: Backend> Otto<BackendData> {
             error!("Failed to stop media playback: {}", e);
         }
     }
+
+    /// Poll the debug action file and execute whatever builtin action name it
+    /// holds, as if that action's shortcut key had been pressed.
+    ///
+    /// `echo ExposeShowAll > $OTTO_ACTION_FILE` (default `/tmp/otto-action`).
+    /// Virtual-keyboard input (`wtype`, the RDP bridge…) is forwarded straight
+    /// to the focused client and never runs the shortcut filter, so this is
+    /// the only way a harness can drive compositor UI from a script.
+    ///
+    /// Returns `true` when an action ran, so the caller can request the
+    /// redraw its backend needs — real key events do that as a side effect,
+    /// and without it the scheduled lay-rs transactions never tick and the
+    /// action stays invisible.
+    pub(crate) fn poll_debug_action_file(&mut self) -> bool {
+        let path = debug_action_file_path();
+        let Ok(name) = fs::read_to_string(&path) else {
+            return false;
+        };
+        let _ = fs::remove_file(&path);
+        let name = name.trim();
+        let resolved = crate::config::shortcuts::parse_builtin_name(name)
+            .map(ShortcutAction::Builtin)
+            .and_then(|a| Config::with(|c| resolve_shortcut_action(c, &a)));
+        match resolved {
+            Some(action) => {
+                info!("executing debug action: {name}");
+                self.process_debug_key_action(action);
+                true
+            }
+            None => {
+                warn!("unknown debug action: {name}");
+                false
+            }
+        }
+    }
+
+    /// Dispatch one action coming from the debug hook rather than from a key
+    /// press. The window-management actions live in the per-backend *keyboard*
+    /// dispatchers, not in [`Self::process_common_key_action`] — which warns
+    /// and drops anything it does not own — so they need explicit arms here.
+    /// Without them the hook logged "executing debug action" and then did
+    /// nothing for the app switcher, tiling, maximize and close.
+    fn process_debug_key_action(&mut self, action: KeyAction) {
+        match action {
+            KeyAction::ExposeShowAll => self.handle_expose_show_all(),
+            KeyAction::ExposeShowDesktop => self.handle_expose_show_desktop(),
+            KeyAction::WorkspaceNum(i) => self.handle_workspace_num(i),
+            KeyAction::ApplicationSwitchNext => self.handle_app_switcher_next(),
+            KeyAction::ApplicationSwitchPrev => self.handle_app_switcher_prev(),
+            KeyAction::ApplicationSwitchQuit => self.handle_app_switcher_quit(),
+            KeyAction::ApplicationSwitchNextWindow => self.handle_app_switcher_next_window(),
+            KeyAction::ToggleMaximize => self.handle_toggle_maximize(),
+            KeyAction::TileLeft => self.handle_tile_left(),
+            KeyAction::TileRight => self.handle_tile_right(),
+            KeyAction::CloseWindow => self.handle_close_window(),
+            other => self.process_common_key_action(other),
+        }
+    }
+}
+
+/// Where the debug action hook looks for an action name. Overridable so that
+/// two sessions on one machine (a harness on a tty and a nested winit, say)
+/// do not fight over a single well-known path.
+fn debug_action_file_path() -> String {
+    std::env::var("OTTO_ACTION_FILE").unwrap_or_else(|_| "/tmp/otto-action".to_string())
 }
 
 fn adjust_brightness(delta: i32) -> Option<u8> {

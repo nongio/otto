@@ -76,6 +76,9 @@ settings-pane-lock-and-login = Blocco e accesso
 settings-group-appearance = Aspetto
 settings-colour-scheme = Schema colori
 settings-accent-colour = Accento
+settings-rounded-corners = Angoli arrotondati
+settings-rounded-corners-detail = Si applica dopo il riavvio
+settings-window-controls = Comandi della finestra
 settings-font = Font di sistema
 settings-gtk-theme = Tema GTK
 
@@ -143,6 +146,7 @@ settings-dock-magnification = Ingrandimento
 settings-group-magnification-and-icons = Ingrandimento e icone
 settings-dock-magnification-amount = Livello di ingrandimento
 settings-dock-tint-icons = Colora le icone
+settings-switcher-colorize-icons = Colora il cambio finestra
 settings-dock-icon-tint = Tinta delle icone
 settings-dock-icon-tint-strength = Intensità della tinta
 
@@ -214,6 +218,8 @@ settings-greeter-arguments = Argomenti della schermata di accesso
 
 settings-choice-light = Chiaro
 settings-choice-dark = Scuro
+settings-choice-controls-left = A sinistra
+settings-choice-controls-right = A destra
 settings-choice-position-bottom = In basso
 settings-choice-position-left = A sinistra
 settings-choice-position-right = A destra
@@ -479,7 +485,11 @@ schema-screen-scale-description = Fattore di scala globale applicato alla scriva
 schema-theme-scheme-label = Schema colori
 schema-theme-scheme-description = Schema colori chiaro o scuro.
 schema-accent-color-label = Accento
-schema-accent-color-description = Nome del colore di accento usato dall'interfaccia di Otto.
+schema-accent-color-description = Un nome della tavolozza, che segue gli schemi chiaro e scuro, o un colore #RRGGBB.
+schema-rounded-corners-label = Angoli arrotondati
+schema-rounded-corners-description = Dock, barra superiore, decorazioni delle finestre e pannelli della scrivania.
+schema-window-controls-side-label = Comandi della finestra
+schema-window-controls-side-description = A quale estremità della barra del titolo si trovano i comandi chiudi, riduci a icona e zoom.
 schema-font-family-label = Carattere dell'interfaccia
 schema-font-family-description = Famiglia di caratteri usata dall'interfaccia di Otto.
 schema-background-color-label = Colore di sfondo
@@ -584,6 +594,8 @@ schema-login-greeter-args-description = Argomenti passati alla schermata di acce
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = Il selettore segue il puntatore
 schema-appswitcher-follow-cursor-description = Mostra il cambio finestra sul monitor in cui si trova il puntatore.
+schema-appswitcher-colorize-icons-label = Colora le icone del selettore
+schema-appswitcher-colorize-icons-description = Applica anche al cambio finestra la tinta delle icone del Dock. Non fa nulla finché la tinta del Dock è disattivata.
 
 ## Late additions
 
@@ -1033,3 +1045,29 @@ islands-dialog-allow = Consenti
 islands-dialog-continue = Continua
 # Refuses the request.
 islands-dialog-deny = Nega
+
+
+## Accessibility
+##
+## Spoken by a screen reader, never drawn on screen, so these are the only
+## strings in the catalogue with no width limit — say the whole thing rather
+## than abbreviating. They name parts of the desktop a sighted person
+## recognises by shape: read them as answers to "what is this?".
+
+a11y-dock = Dock
+a11y-app-running = In esecuzione
+a11y-app-not-running = Non in esecuzione
+a11y-app-switcher = Selettore di applicazioni
+a11y-windows = Finestre
+a11y-workspaces = Scrivanie
+a11y-untitled-window = Finestra senza titolo
+a11y-menu-bar = Barra dei menu
+a11y-status = Stato
+a11y-tray-item = Elemento { $number }
+a11y-notifications = Notifiche
+a11y-categories = Categorie
+a11y-results = Risultati
+a11y-settings = Impostazioni
+a11y-preview = Anteprima
+a11y-preview-page = Anteprima, pagina { $page } di { $pages }
+a11y-preview-shortened = Anteprima, abbreviata

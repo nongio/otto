@@ -101,39 +101,75 @@ pub fn run_worker(request: Request) -> i32 {
     0
 }
 
-/// Choose a previewer and run it.
+/// Choose a previewer and run it, and give what comes back the file's icon.
+///
+/// The icon is stamped here rather than in each decoder because this is where
+/// the *sniffed* type is known — the worker read the bytes, and the parent only
+/// ever had the name. A decoder that drew the file itself is left alone; one
+/// that could only describe it, or gave up, gets the picture the browser's own
+/// listing was showing for that file.
 fn decode(file: &mut File, request: &Request) -> PreviewPayload {
+    let (payload, mime) = previewed(file, request);
+    payload::with_icon(
+        payload,
+        match mime {
+            Some(mime) => otto_kit::filetype::icon_names(mime),
+            // Nothing was sniffed — the file could not be read that far. The
+            // parent stamps its name-derived chain over this on the way out.
+            None => Vec::new(),
+        },
+    )
+}
+
+/// The previewer's own answer, and the type it was chosen by. `None` for a
+/// file that could not be read as far as its signature.
+fn previewed(file: &mut File, request: &Request) -> (PreviewPayload, Option<&'static str>) {
     let metadata = match file.metadata() {
         Ok(metadata) => metadata,
         Err(err) => {
-            return payload::unavailable(otto_kit::t_owned!(
-                "quickview-error-stat-file",
-                error = err.to_string()
-            ))
+            return (
+                payload::unavailable(otto_kit::t_owned!(
+                    "quickview-error-stat-file",
+                    error = err.to_string()
+                )),
+                None,
+            )
         }
     };
 
     if metadata.is_dir() {
-        return listing::directory(file, request);
+        return (listing::directory(file, request), Some("inode/directory"));
     }
     if metadata.len() == 0 {
-        return PreviewPayload::Card {
-            title: request.name.clone(),
-            subtitle: otto_kit::t_owned!("quickview-empty-file"),
-            facts: vec![],
-            hero: None,
-        };
+        // Nothing to sniff, so nothing to be truthful about: the card gets the
+        // parent's name-derived icon, which is what the row shows too.
+        return (
+            PreviewPayload::Card {
+                title: request.name.clone(),
+                subtitle: otto_kit::t_owned!("quickview-empty-file"),
+                facts: vec![],
+                hero: None,
+                icon: Vec::new(),
+            },
+            None,
+        );
     }
 
     let mut head = vec![0u8; SNIFF_BYTES.min(metadata.len() as usize)];
     if let Err(err) = file.read_exact(&mut head) {
-        return payload::unavailable(otto_kit::t_owned!(
-            "quickview-error-read-file",
-            error = err.to_string()
-        ));
+        return (
+            payload::unavailable(otto_kit::t_owned!(
+                "quickview-error-read-file",
+                error = err.to_string()
+            )),
+            None,
+        );
     }
     if file.seek(SeekFrom::Start(0)).is_err() {
-        return payload::unavailable(otto_kit::t_owned!("quickview-error-not-seekable"));
+        return (
+            payload::unavailable(otto_kit::t_owned!("quickview-error-not-seekable")),
+            None,
+        );
     }
 
     // Content decides which decoder runs; the name may only pick a *subtype* of
@@ -153,10 +189,11 @@ fn decode(file: &mut File, request: &Request) -> PreviewPayload {
     // anything textual, so a `None` means "binary, no signature matched", and
     // unidentifiable content does not become identifiable through its name.
     let Some(mime) = filetype::refine_opt(filetype::sniff(&head), &request.name) else {
-        return media::generic(&metadata, request, "application/octet-stream");
+        const UNKNOWN: &str = "application/octet-stream";
+        return (media::generic(&metadata, request, UNKNOWN), Some(UNKNOWN));
     };
 
-    dispatch(mime, file, &metadata, request)
+    (dispatch(mime, file, &metadata, request), Some(mime))
 }
 
 fn dispatch(

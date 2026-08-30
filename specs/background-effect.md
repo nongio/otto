@@ -58,6 +58,11 @@ ask for the pixels behind its surface to be blurred, without using Otto's own
   whatever the client paints there.
 - A commit that moves or resizes the region re-applies the blur at the new
   geometry, even though the surface was already blurring.
+- The region is trimmed to the surface. "The whole surface" is idiomatically
+  spelled as an unbounded region — foot sends `add(0, 0, i32::MAX, i32::MAX)` —
+  and the bounds reach the renderer as a rounded rect of their own rather than
+  being clipped to the surface's layer, so an untrimmed one frosts a rectangle
+  of desktop beside the window.
 - Subtractive rectangles are ignored; they can only shrink the region.
 - When a commit carries a `NULL` region, or an empty one, the blur is removed
   from that frame on.

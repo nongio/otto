@@ -16,6 +16,7 @@ mod model;
 mod panes;
 mod preview;
 mod settings_client;
+mod theme_preview;
 mod view;
 mod widgets;
 
@@ -24,6 +25,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
+use otto_kit::accessibility::{node_id as a11y_node, A11yTree, Action, ActionRequest, Role};
+use otto_kit::clipboard;
 use otto_kit::components::color_picker::{ColorPickerPopup, Swatch};
 use otto_kit::components::dropdown::DropdownMenu;
 use otto_kit::components::scroll::ScrollSurfaces;
@@ -59,6 +62,9 @@ struct SettingsApp {
     pane_dirty: Arc<Mutex<bool>>,
     /// Identifier of the slider currently being dragged, if any.
     dragging: Arc<Mutex<Option<String>>>,
+    /// What the keyboard was on last pass, so a focus that *moved* can be
+    /// scrolled to without fighting the user's own scrolling afterwards.
+    last_focus: Option<FocusId>,
     /// Switches whose knob is mid-flip, keyed by setting id. A switch is in
     /// here only while it is moving: the value itself changed on the press,
     /// this is the travel between the two ends. See [`toggle::Flip`].
@@ -169,9 +175,10 @@ fn color_ids() -> Vec<&'static str> {
 
 /// The presets a colour well offers.
 ///
-/// `accent_color` is an enumeration on the compositor side, so its swatches
-/// come from the served schema and picking anything else would be refused.
-/// A free-form colour setting gets a general palette instead.
+/// A setting the compositor lists choices for — `accent_color` names its
+/// palette — offers those as its swatches, so the named colours that follow
+/// the light and dark schemes are one click away. Everything else gets a
+/// general palette.
 fn swatches_for(id: &str) -> Vec<Swatch> {
     if let Some(desc) = settings_client::describe(id) {
         if !desc.choices.is_empty() {
@@ -199,17 +206,19 @@ fn swatches_for(id: &str) -> Vec<Swatch> {
     .collect()
 }
 
-/// The compositor names its accent colours rather than taking hex, so a name
-/// has to map to something drawable.
+/// A palette name the compositor serves has to map to something drawable.
 fn named_color(name: &str) -> Option<Color> {
     model::named_argb(name).map(Color::from)
 }
 
 /// Open a colour well's picker.
 ///
-/// What a change sends depends on the setting: an enumerated one (accent
-/// colour) takes the swatch's NAME, a free-form one takes hex. Sending hex to
-/// an enumerated setting would be refused with `OutOfRange`.
+/// What a change sends depends on the setting. A `color` setting takes hex,
+/// but prefers a listed name when the colour is exactly one of them, so the
+/// accent keeps following the light and dark palettes rather than freezing at
+/// whichever scheme was current when it was picked. A setting that is a plain
+/// enumeration takes the name and nothing else — hex would be refused with
+/// `OutOfRange` — so a colour it cannot name is ignored rather than sent.
 fn open_picker_for(
     pickers: &HashMap<&'static str, ColorPickerPopup>,
     open_picker: &Arc<Mutex<Option<&'static str>>>,
@@ -239,8 +248,11 @@ fn open_picker_for(
     };
 
     let id = hit.id;
-    let enumerated = settings_client::describe(id)
-        .map(|d| !d.choices.is_empty())
+    let desc = settings_client::describe(id);
+    // Whether a colour outside `choices` can be sent at all.
+    let names_only = desc
+        .as_ref()
+        .map(|d| !d.choices.is_empty() && d.kind != settings_client::Kind::Color)
         .unwrap_or(false);
 
     let changed_window = window.clone();
@@ -258,20 +270,19 @@ fn open_picker_for(
         hit.current,
         if dark { Theme::dark() } else { Theme::light() },
         move |color| {
-            let value = if enumerated {
-                let Some(name) = swatch_name_for(id, color) else {
-                    // Dragging in HSV cannot name a colour, and this setting
-                    // only accepts names — ignore rather than be refused.
-                    return;
-                };
-                settings_client::Value::Text(name)
-            } else {
-                settings_client::Value::Text(format!(
+            let named = swatch_name_for(id, color);
+            let value = match named {
+                Some(name) => settings_client::Value::Text(name),
+                // Dragging in HSV cannot name a colour. A setting that only
+                // accepts names has nothing to send; every other one takes the
+                // colour itself.
+                None if names_only => return,
+                None => settings_client::Value::Text(format!(
                     "#{:02X}{:02X}{:02X}",
                     color.r(),
                     color.g(),
                     color.b()
-                ))
+                )),
             };
             apply(id, value);
             mark_pane_dirty(&changed_dirty);
@@ -287,7 +298,15 @@ fn open_picker_for(
 
 /// The schema choice whose swatch is exactly `color`, for settings that take
 /// a name rather than a value.
+///
+/// Only a setting that enumerates its palette can be sent a name: everything
+/// else — the dock's icon tint, say — reads its value as a hex literal, and
+/// would parse "Blue" as a failure and paint the fallback dark.
 fn swatch_name_for(id: &str, color: Color) -> Option<String> {
+    let desc = settings_client::describe(id)?;
+    if desc.choices.is_empty() {
+        return None;
+    }
     swatches_for(id)
         .into_iter()
         .find(|s| s.color == color)
@@ -449,6 +468,11 @@ fn open_menu(
     window: &Window,
     select: view::SelectHit,
     serial: u32,
+    // Opened from the keyboard, so the highlight starts on the value the
+    // button is showing rather than nowhere: the first arrow press then moves
+    // from there. A pointer-opened menu highlights nothing until the pointer
+    // is over a row, which is what a highlight means to someone using one.
+    from_keyboard: bool,
 ) {
     let Some(menu) = dropdowns.get(select.id) else {
         return;
@@ -535,6 +559,10 @@ fn open_menu(
     let dismissed_window = window.clone();
 
     *open_dropdown.lock().unwrap() = Some(id);
+
+    if from_keyboard {
+        menu.highlight(selected);
+    }
 
     menu.open(
         &parent,
@@ -670,6 +698,192 @@ fn open_file_picker(id: &'static str) {
 ///
 /// The dock, the app switcher and the window list all read the toplevel's
 /// title, and "Settings" alone says nothing about where in the app you were.
+/// Describes one pane row for an assistive technology, as the control it is.
+///
+/// A row is announced by the widget it holds, not as a generic item: a switch
+/// has to say it is a switch and whether it is on, a slider has to carry the
+/// range its value means anything against. The label is the row's own, with the
+/// detail line as the description — which is where the schema's help text ends
+/// up, so a screen reader reads what the pane shows in small print.
+/// One place the keyboard can stop inside the pane.
+struct Stop {
+    focus: FocusId,
+    /// Where the stop is drawn, in window coordinates: what the focus ring is
+    /// painted around and what a screen reader is told to point at.
+    bounds: Rect,
+    /// The push button this stop is, for a row that carries several.
+    button: Option<&'static str>,
+}
+
+/// The row the keyboard is on, and which of its stops.
+struct Focused {
+    /// The setting a change should reach, where the row is bound to one.
+    id: Option<&'static str>,
+    label: &'static str,
+    control: model::Control,
+    /// The push button the keyboard is on, for a row with several.
+    button: Option<&'static str>,
+    /// The pop-up field's rect, for a row that has one: where its menu is
+    /// anchored, in window coordinates.
+    select_rect: Option<Rect>,
+}
+
+impl Focused {
+    /// What the row is keyed by everywhere it is not a served setting.
+    fn handle(&self) -> &'static str {
+        self.id.unwrap_or(self.label)
+    }
+}
+
+/// Every stop a row carries.
+///
+/// One for an ordinary control; one per button for a button row, because a row
+/// holding an Add beside a Remove is two things to do and reaching only the
+/// first leaves the second to the pointer; none at all for a row with nothing
+/// to operate.
+///
+/// Declaring the focus ring, finding what the keyboard is on, scrolling to it
+/// and describing it to a screen reader all walk this list, so a stop cannot
+/// exist for one of them and not the others.
+fn row_stops(row: &model::Row, rect: Rect) -> Vec<Stop> {
+    if !row.focusable() {
+        return Vec::new();
+    }
+    match &row.control {
+        model::Control::Button(labels) => labels
+            .iter()
+            .zip(view::row_button_rects(row, rect))
+            .map(|(button, bounds)| Stop {
+                focus: view::button_focus_id(row.handle(), button),
+                bounds,
+                button: Some(button),
+            })
+            .collect(),
+        _ => vec![Stop {
+            focus: view::pane_focus_id(row.handle()),
+            bounds: rect,
+            button: None,
+        }],
+    }
+}
+
+fn describe_row(tree: &mut A11yTree, row: &model::Row, bounds: Rect) {
+    let focus = view::pane_focus_id(row.handle());
+    let label = row.label;
+    let detail = row.detail.clone();
+
+    let describe = |node: &mut otto_kit::accessibility::Node| {
+        if let Some(detail) = &detail {
+            node.set_description(detail.to_string());
+        }
+    };
+
+    match &row.control {
+        model::Control::Toggle(on) => {
+            tree.toggle(focus, bounds, label, *on, true);
+        }
+        model::Control::Slider {
+            value, min, max, ..
+        } => {
+            tree.slider(
+                focus,
+                bounds,
+                label,
+                f64::from(*value),
+                f64::from(*min)..=f64::from(*max),
+                f64::from((max - min) / 20.0),
+                true,
+            );
+        }
+        model::Control::Select(current) => {
+            tree.combo_box(focus, bounds, label, current.clone(), false, true);
+        }
+        model::Control::Text(text) => {
+            tree.control(focus, bounds, Role::TextInput, true, |node| {
+                node.set_label(label);
+                node.set_value(text.clone());
+                describe(node);
+            });
+        }
+        model::Control::File(path) => {
+            tree.control(focus, bounds, Role::Button, true, |node| {
+                node.set_label(label);
+                // The path is the row's value; an empty one is not "unnamed",
+                // it is a file nobody has chosen yet.
+                node.set_value(if path.is_empty() {
+                    otto_kit::t_owned!("settings-no-file-chosen")
+                } else {
+                    path.clone()
+                });
+                node.add_action(Action::Click);
+                describe(node);
+            });
+        }
+        model::Control::Color(rgb) => {
+            tree.control(focus, bounds, Role::ColorWell, true, |node| {
+                node.set_label(label);
+                node.set_value(format!("#{:06X}", rgb & 0x00FF_FFFF));
+                node.add_action(Action::Click);
+                describe(node);
+            });
+        }
+        model::Control::Button(labels) => {
+            // One node per button, exactly as the keyboard has one stop per
+            // button. Named "<row>: <button>" so "Add" is heard as the Add of
+            // this row rather than as a loose word.
+            for (button, rect) in labels.iter().zip(view::row_button_rects(row, bounds)) {
+                tree.control(
+                    view::button_focus_id(row.handle(), button),
+                    rect,
+                    Role::Button,
+                    true,
+                    |node| {
+                        node.set_label(format!("{label}: {button}"));
+                        node.add_action(Action::Click);
+                        describe(node);
+                    },
+                );
+            }
+        }
+        model::Control::Value(value) => {
+            tree.control(focus, bounds, Role::Label, false, |node| {
+                node.set_label(label);
+                node.set_value(value.clone());
+                describe(node);
+            });
+        }
+        // A shortcut line is three controls in a row and the add line is a
+        // button for a list this does not describe yet; announcing either as
+        // one thing would be a lie about what it is.
+        model::Control::Shortcut { .. } | model::Control::AddShortcut => {}
+    }
+}
+
+/// Selects a sidebar pane from something other than a pointer click — the
+/// keyboard, or an assistive technology. Returns whether anything changed.
+///
+/// The pointer path does the same thing inline, against the same state: a
+/// different pane means a new title and a scroll position that no longer means
+/// anything.
+fn select_pane(app: &SettingsApp, index: usize) -> bool {
+    let mut current = app.selected.lock().unwrap();
+    if *current == index {
+        return false;
+    }
+    *current = index;
+    drop(current);
+
+    if let Some(window) = app.window.as_ref() {
+        window.set_title(&window_title(index));
+    }
+    app.scroll.lock().unwrap().state.set_offset(0.0);
+    mark_pane_dirty(&app.pane_dirty);
+    if let Some(window) = app.window.as_ref() {
+        window.request_frame();
+    }
+    true
+}
+
 fn window_title(selected: usize) -> String {
     match model::panes().get(selected) {
         Some(pane) => otto_kit::t_owned!("settings-window-title", pane = pane.name),
@@ -823,6 +1037,282 @@ fn apply_material(window: &Window) {
     ));
 }
 
+impl SettingsApp {
+    /// Declares what Tab moves between, in the order it moves.
+    ///
+    /// Rebuilt every pass, from the same geometry the sidebar is drawn with, so
+    /// a row can never be reachable somewhere it is not painted.
+    fn declare_focusables(&self) {
+        let Some(surface) = self.window.as_ref().and_then(Window::surface_id) else {
+            return;
+        };
+        let panes = model::panes().len();
+        let settings = current_settings(
+            &self.selected,
+            &self.size,
+            &self.toggle_flips,
+            &self.editing,
+            &self.pressed,
+        );
+        let offset = self.scroll.lock().unwrap().state.offset();
+        let rows: Vec<(FocusId, Rect)> = settings
+            .pane_rows(offset)
+            .into_iter()
+            .flat_map(|(row, rect)| row_stops(row, rect))
+            .map(|stop| (stop.focus, stop.bounds))
+            .collect();
+
+        // The sidebar is one stop, not eight: a list is entered with Tab and
+        // walked with the arrows, which is what every toolkit does and what the
+        // list role tells a screen reader to expect. The pane's controls are
+        // separate controls, so each is its own stop.
+        let selected = *self.selected.lock().unwrap();
+        let sidebar = view::sidebar_item_rect(selected.min(panes.saturating_sub(1)));
+
+        AppContext::with_focus_ring(&surface, |ring| {
+            ring.begin();
+            ring.add(view::SIDEBAR_FOCUS, sidebar, true);
+            for (id, rect) in &rows {
+                ring.add(*id, *rect, true);
+            }
+            ring.end();
+        });
+    }
+
+    /// Moves the sidebar's selection, when the sidebar is what the keyboard is
+    /// on. Returns whether it took the key.
+    fn move_sidebar(&self, delta: isize) -> bool {
+        let surface = self.window.as_ref().and_then(Window::surface_id);
+        let focused = surface.and_then(|s| AppContext::focused_control(&s));
+        if focused != Some(view::SIDEBAR_FOCUS) {
+            return false;
+        }
+
+        let panes = model::panes().len() as isize;
+        let current = *self.selected.lock().unwrap() as isize;
+        // Stops at the ends rather than wrapping: a sidebar is a place in a
+        // list, and arrowing off the bottom onto the top loses that place.
+        let moved = (current + delta).clamp(0, panes - 1) as usize;
+        select_pane(self, moved);
+        true
+    }
+
+    /// Brings a control the keyboard has just moved to into view.
+    ///
+    /// Only on the pass the focus actually moves: scrolling to it on every pass
+    /// would drag the pane back the moment the user scrolled away from a
+    /// focused control.
+    fn scroll_focus_into_view(&mut self) {
+        let Some(surface) = self.window.as_ref().and_then(Window::surface_id) else {
+            return;
+        };
+        let focused = AppContext::focused_control(&surface);
+        if focused == self.last_focus {
+            return;
+        }
+        self.last_focus = focused;
+
+        // The ring may have moved onto — or off — a pane row, which is drawn
+        // into the scroll subsurfaces rather than the window's own buffer. The
+        // window repaints itself on the frame the run loop asked for; the band
+        // has to be invalidated by hand.
+        mark_pane_dirty(&self.pane_dirty);
+
+        let Some(focused) = focused else { return };
+
+        let settings = current_settings(
+            &self.selected,
+            &self.size,
+            &self.toggle_flips,
+            &self.editing,
+            &self.pressed,
+        );
+        let (width, height) = *self.size.lock().unwrap();
+        let viewport = view::pane_viewport(width, height);
+
+        let mut scroll = self.scroll.lock().unwrap();
+        let offset = scroll.state.offset();
+        let Some((_, bounds)) = settings.pane_rows(offset).into_iter().find(|(row, rect)| {
+            row_stops(row, *rect)
+                .iter()
+                .any(|stop| stop.focus == focused)
+        }) else {
+            return;
+        };
+
+        // A margin, so a row does not sit flush against the edge it came in
+        // from and read as though it were cut off.
+        const MARGIN: f32 = 12.0;
+        let moved = if bounds.top - MARGIN < viewport.top {
+            offset - (viewport.top - bounds.top + MARGIN)
+        } else if bounds.bottom + MARGIN > viewport.bottom {
+            offset + (bounds.bottom - viewport.bottom + MARGIN)
+        } else {
+            return;
+        };
+
+        scroll.state.set_offset(moved.max(0.0));
+        drop(scroll);
+        mark_pane_dirty(&self.pane_dirty);
+    }
+
+    /// The pane control the keyboard is on, if it is on one.
+    fn focused_row(&self) -> Option<Focused> {
+        let surface = self.window.as_ref().and_then(Window::surface_id)?;
+        let focused = AppContext::focused_control(&surface)?;
+
+        let settings = current_settings(
+            &self.selected,
+            &self.size,
+            &self.toggle_flips,
+            &self.editing,
+            &self.pressed,
+        );
+        let offset = self.scroll.lock().unwrap().state.offset();
+        settings
+            .pane_rows(offset)
+            .into_iter()
+            .find_map(|(row, rect)| {
+                let stop = row_stops(row, rect)
+                    .into_iter()
+                    .find(|stop| stop.focus == focused)?;
+                Some(Focused {
+                    id: row.id,
+                    label: row.label,
+                    control: row.control.clone(),
+                    button: stop.button,
+                    select_rect: view::row_select_rect(row, rect),
+                })
+            })
+    }
+
+    /// Acts on the focused control the way a click on it would.
+    ///
+    /// `step` is how far a value control should move: zero for "activate it",
+    /// which is all a switch or a button understands.
+    fn activate_focused(&self, step: f32) -> bool {
+        let Some(focused) = self.focused_row() else {
+            return false;
+        };
+
+        match focused.control {
+            model::Control::Toggle(on) if step == 0.0 => match focused.id {
+                Some(id) => {
+                    // The knob slides rather than jumping, exactly as it does
+                    // for a click — the keyboard is not a second way for a
+                    // switch to behave.
+                    let mut flips = self.toggle_flips.lock().unwrap();
+                    let current = flips
+                        .get(id)
+                        .map(|flip| flip.fraction())
+                        .unwrap_or_else(|| toggle::knob_fraction_for(on));
+                    flips.insert(id, toggle::Flip::start(current, !on));
+                    drop(flips);
+                    apply(id, settings_client::Value::Bool(!on));
+                }
+                // A switch the compositor does not serve — the Displays
+                // pane's. It has no identifier to `apply` and no flip
+                // animation either, since the view keys those by identifier:
+                // the same path a click on it takes.
+                None => panes::displays::toggle(focused.label),
+            },
+            model::Control::Slider {
+                value, min, max, ..
+            } if step != 0.0 => {
+                let Some(id) = focused.id else {
+                    return false;
+                };
+                // A twentieth of the range per press: fine enough to land on a
+                // value, coarse enough to cross the track without holding the
+                // key down.
+                let moved = (value + step * (max - min) / 20.0).clamp(min, max);
+                if moved == value {
+                    return false;
+                }
+                apply(id, settings_client::number_for(id, moved));
+            }
+            model::Control::Button(labels) if step == 0.0 => {
+                // The keyboard is on one particular button, so that is the one
+                // that is pressed. `Pressed` is keyed the way a click keys it —
+                // by the row's handle — so the button draws itself pressed
+                // whichever way it was reached.
+                let Some(button) = focused.button.or_else(|| labels.first().copied()) else {
+                    return false;
+                };
+                activate(view::Pressed::Button {
+                    row: focused.handle(),
+                    button,
+                });
+            }
+            // A text field takes the keyboard rather than doing something: the
+            // press opens an editing session on it, and the next keys are
+            // typed into it. Bound or not — an unbound field commits back to
+            // the pane that owns it, exactly as a click on it would.
+            model::Control::Text(ref current) if step == 0.0 => {
+                start_edit(
+                    &self.editing,
+                    EditTarget::for_row(focused.id, focused.label),
+                    current.clone(),
+                    // Caret at the end: nothing was pointed at, and the end is
+                    // where typing continues from.
+                    f32::MAX,
+                    widgets::TEXT_W,
+                    current_color_scheme() == ColorScheme::Dark,
+                );
+            }
+            // A pop-up opens rather than cycling: every value in it is a
+            // separate answer that commits the moment it is picked — a display
+            // profile written, a setting sent — so arrowing from one end of
+            // the list to the other would commit each value on the way past.
+            // The list opens instead, and nothing is chosen until Enter or
+            // Space.
+            model::Control::Select(ref current) if step == 0.0 => {
+                let (Some(id), Some(rect)) = (focused.id, focused.select_rect) else {
+                    return false;
+                };
+                let Some(window) = self.window.as_ref() else {
+                    return false;
+                };
+                open_menu(
+                    &self.dropdowns,
+                    &self.open_dropdown,
+                    &self.pane_dirty,
+                    window,
+                    view::SelectHit {
+                        id,
+                        rect,
+                        current: current.clone(),
+                    },
+                    // The press that asked for the menu, or — for an assistive
+                    // technology, which sends no input event of its own — the
+                    // last one there was.
+                    AppContext::last_input_serial(),
+                    true,
+                );
+            }
+            model::Control::File(_) if step == 0.0 => {
+                let Some(id) = focused.id else {
+                    return false;
+                };
+                open_file_picker(id)
+            }
+            _ => return false,
+        }
+
+        mark_pane_dirty(&self.pane_dirty);
+        if let Some(window) = self.window.as_ref() {
+            window.request_frame();
+        }
+        true
+    }
+
+    /// Whether the keyboard is on the sidebar.
+    fn sidebar_focused(&self) -> bool {
+        let surface = self.window.as_ref().and_then(Window::surface_id);
+        surface.and_then(|s| AppContext::focused_control(&s)) == Some(view::SIDEBAR_FOCUS)
+    }
+}
+
 impl App for SettingsApp {
     fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
         let mut window = Window::new(
@@ -847,7 +1337,7 @@ impl App for SettingsApp {
             eprintln!("settings: no surface style — sidebar cannot be a material");
         }
         if let Some(style) = window.surface_style() {
-            style.set_corner_radius(view::CORNER as f64);
+            style.set_corner_radius(view::corner() as f64);
             style.set_masks_to_bounds(otto_surface_style_v1::ClipMode::Enabled);
             // The pane scrolls in subsurfaces that sit over the window's own
             // buffer, so the window's rounded outline does not contain them:
@@ -1167,6 +1657,7 @@ impl App for SettingsApp {
                                     &redraw,
                                     select,
                                     event_serial(&event.kind),
+                                    false,
                                 ),
                                 ShortcutHit::Keys { index, offset_x } => {
                                     // A second press in the field already open
@@ -1228,6 +1719,7 @@ impl App for SettingsApp {
                                 &redraw,
                                 select,
                                 event_serial(&event.kind),
+                                false,
                             );
                             mark_pane_dirty(&pane_dirty);
                         } else if let Some(id) = settings.file_hit(x, y, offset) {
@@ -1385,6 +1877,14 @@ impl App for SettingsApp {
         });
 
         self.window = Some(window);
+
+        // Publish the window to assistive technologies. Nothing is built until
+        // one attaches — see `App::accessibility`.
+        if let Some(surface) = self.window.as_ref().and_then(Window::surface_id) {
+            AppContext::enable_accessibility(&surface);
+        }
+        self.declare_focusables();
+
         Ok(())
     }
 
@@ -1448,6 +1948,9 @@ impl App for SettingsApp {
     /// (thread-safe) store and a dirty flag, because `Window` is not `Send`
     /// and cannot be handed to it.
     fn on_update(&mut self, _ctx: &AppContext) {
+        self.declare_focusables();
+        self.scroll_focus_into_view();
+
         if settings_client::take_dirty() {
             // Values, not chrome: only the pane has to be repainted.
             mark_pane_dirty(&self.pane_dirty);
@@ -1515,14 +2018,75 @@ impl App for SettingsApp {
         _ctx: &AppContext,
         event: &KeyEvent,
         state: wl_keyboard::KeyState,
-        _serial: u32,
+        serial: u32,
     ) {
         use smithay_client_toolkit::seat::keyboard::Keysym;
 
         if state != wl_keyboard::KeyState::Pressed {
             return;
         }
+
+        // A pop-up is up: the keyboard is on the menu's own surface, and the
+        // menu owns every key until it closes. Without this the arrows would
+        // walk the pane behind it and Escape would never reach it.
+        let open = *self.open_dropdown.lock().unwrap();
+        if let Some(id) = open {
+            let closed = match self.dropdowns.get(id) {
+                Some(menu) => {
+                    // The raw keycode, which is what the menu's own key table
+                    // is written against.
+                    menu.handle_key(event.raw_code, state);
+                    !menu.is_open()
+                }
+                None => true,
+            };
+            if closed {
+                *self.open_dropdown.lock().unwrap() = None;
+            }
+            mark_pane_dirty(&self.pane_dirty);
+            if let Some(window) = self.window.as_ref() {
+                window.request_frame();
+            }
+            return;
+        }
+
+        // Nothing is being typed into: the key belongs to whatever the keyboard
+        // focus is on — a sidebar row, or a control in the pane it selected.
         if self.editing.lock().unwrap().is_none() {
+            match event.keysym {
+                // The sidebar's selection follows the arrows straight away,
+                // so moving through it shows each pane rather than needing a
+                // press to confirm. Enter has nothing left to do there.
+                Keysym::Return | Keysym::KP_Enter | Keysym::space => {
+                    if !self.sidebar_focused() {
+                        self.activate_focused(0.0);
+                    }
+                }
+                Keysym::Down => {
+                    if !self.move_sidebar(1) {
+                        self.activate_focused(-1.0);
+                    }
+                }
+                Keysym::Up => {
+                    if !self.move_sidebar(-1) {
+                        self.activate_focused(1.0);
+                    }
+                }
+                // A slider holds a range, so the arrows walk it.
+                Keysym::Left => {
+                    self.activate_focused(-1.0);
+                }
+                Keysym::Right => {
+                    self.activate_focused(1.0);
+                }
+                Keysym::Home => {
+                    self.move_sidebar(-(model::panes().len() as isize));
+                }
+                Keysym::End => {
+                    self.move_sidebar(model::panes().len() as isize);
+                }
+                _ => {}
+            }
             return;
         }
         let Mods { shift, ctrl } = *self.modifiers.lock().unwrap();
@@ -1537,6 +2101,12 @@ impl App for SettingsApp {
             Keysym::BackSpace => Some(TextInputKey::Backspace),
             Keysym::Delete => Some(TextInputKey::Delete),
             Keysym::a if ctrl => Some(TextInputKey::SelectAll),
+            // Cut, copy and paste. The field answers copy and cut with the
+            // text to offer; paste has to arrive with the text already read,
+            // since the widget owns no clipboard of its own.
+            Keysym::c if ctrl => Some(TextInputKey::Copy),
+            Keysym::x if ctrl => Some(TextInputKey::Cut),
+            Keysym::v if ctrl => clipboard::text().map(TextInputKey::Paste),
             // Whatever the keymap produced, as a whole: an input method can
             // commit more than one character at a time, and taking only the
             // first would silently drop the rest. A modifier pressed on its
@@ -1568,6 +2138,9 @@ impl App for SettingsApp {
             Some(TextInputResponse::Cancel) => {
                 cancel_edit(&self.editing);
             }
+            Some(TextInputResponse::Clipboard(text)) => {
+                clipboard::set_text(&text, serial);
+            }
             Some(TextInputResponse::Ignored) | None => return,
             Some(_) => {}
         }
@@ -1586,6 +2159,133 @@ impl App for SettingsApp {
             if let Some(window) = self.window.as_ref() {
                 window.request_frame();
             }
+        }
+    }
+
+    /// What a screen reader reads: the window, its sidebar, the pane that is
+    /// showing and every control in it.
+    ///
+    /// Built from the same rows the pane is drawn from, at the scroll position
+    /// it is drawn at, so what is announced and what is painted cannot drift
+    /// apart. A control that is described is a control the keyboard can reach:
+    /// both walk [`row_stops`].
+    fn accessibility(&mut self, _ctx: &AppContext, _surface: &ObjectId) -> Option<A11yTree> {
+        let selected = *self.selected.lock().unwrap();
+        let panes = model::panes();
+
+        let mut tree = A11yTree::new(window_title(selected));
+        tree.region(
+            FocusId::new("sidebar"),
+            Rect::from_xywh(0.0, 0.0, view::SIDEBAR_W, WINDOW_H),
+            Role::List,
+            otto_kit::t!("a11y-categories"),
+            |tree| {
+                for (index, pane) in panes.iter().enumerate() {
+                    tree.list_row(
+                        view::sidebar_focus_id(index),
+                        view::sidebar_item_rect(index),
+                        pane.name,
+                        index == selected,
+                    );
+                }
+            },
+        );
+
+        // The pane the sidebar selected, with everything in it that can be
+        // reached. Built from the same rows the pane is drawn from, at the
+        // scroll position it is drawn at.
+        let pane_settings = current_settings(
+            &self.selected,
+            &self.size,
+            &self.toggle_flips,
+            &self.editing,
+            &self.pressed,
+        );
+        let offset = self.scroll.lock().unwrap().state.offset();
+        let (width, height) = *self.size.lock().unwrap();
+        let rows = pane_settings.pane_rows(offset);
+
+        tree.region(
+            FocusId::new("pane"),
+            Rect::from_ltrb(view::SIDEBAR_W, view::TITLEBAR_H, width, height),
+            Role::Group,
+            panes
+                .get(selected)
+                .map(|pane| pane.name)
+                .unwrap_or(otto_kit::t!("a11y-settings")),
+            |tree| {
+                for (row, bounds) in rows {
+                    describe_row(tree, row, bounds);
+                }
+            },
+        );
+
+        // The sidebar is one keyboard stop but eight nodes: say which row is
+        // current, or a screen reader is told only that the window has focus.
+        if self.sidebar_focused() {
+            tree.set_focus(view::sidebar_focus_id(selected));
+        }
+
+        Some(tree)
+    }
+
+    /// A screen reader asked for a sidebar row: the same thing a click on it
+    /// does.
+    fn on_accessibility_action(
+        &mut self,
+        _ctx: &AppContext,
+        _surface: &ObjectId,
+        request: &ActionRequest,
+    ) {
+        let index = (0..model::panes().len())
+            .find(|index| a11y_node(view::sidebar_focus_id(*index)) == request.target_node);
+        if let Some(index) = index {
+            if matches!(request.action, Action::Click) {
+                select_pane(self, index);
+            }
+            return;
+        }
+
+        // A control in the pane. The focus moves to it first, so acting on it
+        // goes through exactly the path a keyboard press would — there is one
+        // way for a control to be operated, not two.
+        let Some(surface) = self.window.as_ref().and_then(Window::surface_id) else {
+            return;
+        };
+        let settings = current_settings(
+            &self.selected,
+            &self.size,
+            &self.toggle_flips,
+            &self.editing,
+            &self.pressed,
+        );
+        let offset = self.scroll.lock().unwrap().state.offset();
+        let target = settings
+            .pane_rows(offset)
+            .into_iter()
+            .find_map(|(row, rect)| {
+                row_stops(row, rect)
+                    .into_iter()
+                    .map(|stop| stop.focus)
+                    .find(|focus| a11y_node(*focus) == request.target_node)
+            });
+        let Some(focus) = target else { return };
+
+        AppContext::focus_control(&surface, Some(focus));
+
+        match request.action {
+            Action::Click | Action::Focus => {
+                if matches!(request.action, Action::Click) {
+                    self.activate_focused(0.0);
+                }
+            }
+            Action::Increment => {
+                self.activate_focused(1.0);
+            }
+            Action::Decrement => {
+                self.activate_focused(-1.0);
+            }
+            _ => {}
         }
     }
 
@@ -1660,6 +2360,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // The pane has never been painted, so the first update has to.
         pane_dirty: Arc::new(Mutex::new(true)),
         dragging: Arc::new(Mutex::new(None)),
+        last_focus: None,
         toggle_flips: Arc::new(Mutex::new(HashMap::new())),
         dropdowns: Rc::new(HashMap::new()),
         open_dropdown: Arc::new(Mutex::new(None)),
@@ -1674,4 +2375,72 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .run()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod focus_tests {
+    use super::*;
+    use model::{Control, Row};
+
+    fn rect() -> Rect {
+        Rect::from_xywh(0.0, 0.0, 600.0, 44.0)
+    }
+
+    /// The Displays pane is almost entirely unbound on purpose, and the focus
+    /// ring used to be derived from `Row::id`: everything but the scale slider
+    /// and the two mode pop-ups was unreachable from the keyboard and absent
+    /// from the accessible tree. Active, "use as primary" and the position
+    /// fields are exactly those rows.
+    #[test]
+    fn a_row_the_compositor_does_not_serve_is_still_a_keyboard_stop() {
+        let row = Row::new("Active", Control::Toggle(true));
+        assert!(row.id.is_none(), "the row under test has to be unbound");
+
+        let stops = row_stops(&row, rect());
+        assert_eq!(stops.len(), 1);
+        assert_eq!(stops[0].focus, view::pane_focus_id("Active"));
+    }
+
+    /// An unbound row is keyed by its label, which is what the pane routes it
+    /// by everywhere else; a bound one by its identifier.
+    #[test]
+    fn a_rows_handle_is_its_identifier_or_else_its_label() {
+        let unbound = Row::new("X position", Control::Text("0".into()));
+        assert_eq!(unbound.handle(), "X position");
+
+        let mut bound = Row::new("Scale", Control::Toggle(false));
+        bound.id = Some("screen_scale");
+        assert_eq!(bound.handle(), "screen_scale");
+    }
+
+    /// A row of buttons is several things to do. The virtual-displays row
+    /// carries an Add and a Remove, and stopping only on the row would leave
+    /// Remove to the pointer.
+    #[test]
+    fn every_button_on_a_row_is_its_own_stop() {
+        static BUTTONS: &[&str] = &["Add", "Remove"];
+        let row = Row::new("Virtual displays", Control::Button(BUTTONS));
+
+        let stops = row_stops(&row, rect());
+        assert_eq!(stops.len(), 2);
+        assert_eq!(
+            stops.iter().map(|stop| stop.button).collect::<Vec<_>>(),
+            vec![Some("Add"), Some("Remove")]
+        );
+
+        // At the rects the pane draws them at, so the ring cannot be painted
+        // anywhere but around the button itself.
+        let drawn = view::row_button_rects(&row, rect());
+        assert_eq!(
+            stops.iter().map(|stop| stop.bounds).collect::<Vec<_>>(),
+            drawn
+        );
+    }
+
+    /// A line of text with nothing to operate is read but not stopped on.
+    #[test]
+    fn a_static_value_is_not_a_stop() {
+        let row = Row::new("No display detected", Control::Value(String::new()));
+        assert!(row_stops(&row, rect()).is_empty());
+    }
 }

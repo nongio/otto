@@ -165,6 +165,34 @@ impl Theme {
             Color::from_argb(alpha, accent.r(), accent.g(), accent.b());
         self
     }
+
+    /// Drain most of the colour out of everything that follows the accent.
+    ///
+    /// For a window that is not the focused one. A background window still has
+    /// to show what is selected in it, but saying so in the user's accent puts
+    /// every open window in the same voice and leaves the eye nothing to pick
+    /// the front one out by. macOS answers this by turning the selection grey;
+    /// this stops just short of grey, so the window still reads as part of the
+    /// user's desktop while the focused one owns the colour.
+    pub fn with_muted_accent(&mut self) -> &mut Self {
+        self.accent = mute(self.accent);
+        self.material_selection_focused = mute(self.material_selection_focused);
+        self
+    }
+}
+
+/// How far a muted accent travels towards its own grey. Not all the way: a
+/// trace of the hue is what keeps a background window looking like the same
+/// desktop rather than like a screenshot of a different one.
+const MUTE: f32 = 0.85;
+
+/// Mix a colour towards its own luminance, keeping its alpha — the alpha is
+/// what makes a selection material a material, and greying is a hue change,
+/// not a transparency one.
+fn mute(color: Color) -> Color {
+    let luma = 0.2126 * color.r() as f32 + 0.7152 * color.g() as f32 + 0.0722 * color.b() as f32;
+    let mix = |channel: u8| (channel as f32 * (1.0 - MUTE) + luma * MUTE).clamp(0.0, 255.0) as u8;
+    Color::from_argb(color.a(), mix(color.r()), mix(color.g()), mix(color.b()))
 }
 
 impl Default for Theme {

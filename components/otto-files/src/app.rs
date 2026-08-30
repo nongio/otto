@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
+use otto_kit::accessibility::{A11yTree, Action, ActionRequest, Role};
 use otto_kit::clipboard;
 use otto_kit::components::context_menu::ContextMenu;
 use otto_kit::components::scroll::{Axis, ScrollView};
@@ -29,9 +30,25 @@ const BTN_RIGHT: u32 = 0x111;
 use model::{Column, Entry, Place, SortKey};
 use view::ViewMode;
 
-/// What a drag carries: the entries to draw, where the grab happened, and the
-/// bounding box they were gathered from.
-type DragItems = (Vec<view::DragItem>, (f32, f32), (f32, f32));
+/// What a drag carries: the picture to draw, the size of the surface it needs,
+/// and where inside that surface the grab happened.
+type DragItems = (DragPicture, (f32, f32), (f32, f32));
+
+/// A drawing handed over as a value: the preview's picture, built by the view
+/// and replayed onto the drag surface.
+type BoxedPainter = Box<dyn Fn(&skia_safe::Canvas, f32, f32) + Send + Sync>;
+
+/// The picture a drag lifts off the window.
+///
+/// Which one it is follows what the user was looking at when they pressed:
+/// rows out of a listing, the preview's own picture out of the preview column.
+enum DragPicture {
+    /// Entries lifted out of a listing, each drawn where it sat.
+    Entries(Vec<view::DragItem>),
+    /// The preview column's picture, lifted whole. Drawn by a closure the
+    /// view builds, because what it paints depends on which decoder answered.
+    Preview(BoxedPainter),
+}
 
 /// How soon a second press on the same column divider must land to count as
 /// a double-click rather than the start of a fresh drag.
@@ -196,6 +213,11 @@ struct Browser {
     mode: ViewMode,
     sort: SortKey,
     ascending: bool,
+    /// Whether the user has picked a sort themselves. Until they do, switching
+    /// view takes that view's own default — list is a "what did I touch last"
+    /// view, so it opens newest-first — and once they have, their choice
+    /// follows them between views instead of being overwritten.
+    sort_pinned: bool,
     show_hidden: bool,
     /// The list view's draggable Size/Kind/Modified column widths.
     list_columns: view::ListColumnWidths,
@@ -333,6 +355,11 @@ struct Browser {
     /// those reads finish, so it is re-derived — and scrolled into view —
     /// once they do.
     pending_restore: bool,
+    /// A row to land the selection on once the reload that removed the old one
+    /// has landed: which pane, and the name to look for. Set by a delete —
+    /// the successor is chosen from the listing that is still on screen, and
+    /// acted on against the one that replaces it.
+    pending_pick: Option<(usize, Option<String>)>,
     /// Locations left behind by Back, most recent last. Forward pops them back.
     back: Vec<Location>,
     /// Locations left behind by Forward, most recent last. Back pops them back.
@@ -504,6 +531,7 @@ impl Browser {
             mode: ViewMode::Columns,
             sort: SortKey::Name,
             ascending: true,
+            sort_pinned: false,
             show_hidden: false,
             list_columns: view::ListColumnWidths::default(),
             column_resize: None,
@@ -517,6 +545,7 @@ impl Browser {
             rename: None,
             typeahead: None,
             pending_restore: false,
+            pending_pick: None,
             back: Vec::new(),
             forward: Vec::new(),
             nav_pressed: None,
@@ -569,7 +598,7 @@ impl Browser {
         // The picker is a dialog, not a document window: one directory at a
         // time reads as a file dialog, where the Miller stack reads as the
         // browser. The user can still switch views.
-        browser.mode = ViewMode::List;
+        browser.set_mode(ViewMode::List);
         if session.request.mode.names_a_file() {
             let name = session.request.initial_name();
             let selection = picker::name_stem_range(&name);
@@ -585,6 +614,28 @@ impl Browser {
             ViewMode::List,
         ));
         browser
+    }
+
+    /// Switch view, taking the new view's default sort unless the user has
+    /// pinned one of their own by clicking a column header.
+    fn set_mode(&mut self, mode: ViewMode) {
+        self.mode = mode;
+        if !self.sort_pinned {
+            let (sort, ascending) = Self::default_sort(mode);
+            self.sort = sort;
+            self.ascending = ascending;
+        }
+        self.dirty = true;
+    }
+
+    /// The sort a view opens with. List shows the modified column, and the
+    /// answer it is usually asked for is "what changed most recently", so it
+    /// leads with newest first; the other views sort by name.
+    fn default_sort(mode: ViewMode) -> (SortKey, bool) {
+        match mode {
+            ViewMode::List => (SortKey::Modified, false),
+            ViewMode::Grid | ViewMode::Columns => (SortKey::Name, true),
+        }
     }
 
     /// How much of the window height the action row takes — zero in the
@@ -764,6 +815,92 @@ impl Browser {
         });
         self.dirty = true;
         Some((entry.path, generation))
+    }
+
+    /// The cursor for a pointer resting at `(x, y)` with no button down.
+    ///
+    /// The order is the press handler's order, and it has to stay that way:
+    /// a cursor that promises one thing while the click does another is worse
+    /// than no cursor at all. The window's own border is resolved first —
+    /// `resize::edge_at` is the first thing a press asks — and only what falls
+    /// outside it can be a column divider.
+    ///
+    /// That distinction is not academic. The last Miller pane's right edge sits
+    /// exactly on the window's right border whenever the stack is panned fully
+    /// over, which is most of the time once a preview column is up, so the two
+    /// bands overlap on every window.
+    fn hover_shape(&self, x: f32, y: f32) -> CursorShape {
+        if let Some(edge) = resize::edge_at(Rect::from_wh(self.size.0, self.size.1), x, y) {
+            return edge.cursor();
+        }
+        let (width, height) = (self.size.0, self.content_h());
+        let over_divider = match self.mode {
+            ViewMode::List => view::column_boundary_at(x, y, width, self.list_columns).is_some(),
+            ViewMode::Columns => view::miller_boundary_at(
+                x,
+                y,
+                width,
+                height,
+                self.pan.offset(),
+                self.columns.len(),
+                self.miller_w,
+            )
+            .is_some(),
+            ViewMode::Grid => false,
+        };
+        if over_divider {
+            CursorShape::ColResize
+        } else {
+            CursorShape::Default
+        }
+    }
+
+    /// The preview column's picture, where it is on screen right now — if
+    /// there is one, and `(x, y)` is on it.
+    ///
+    /// The caption below the picture is deliberately not part of the target:
+    /// it is a label, and a label is a thing to read rather than a handle to
+    /// pick the file up by.
+    fn preview_grab_at(&self, x: f32, y: f32) -> Option<Rect> {
+        if !self.preview_visible() {
+            return None;
+        }
+        let (width, height) = (self.size.0, self.content_h());
+        let panel =
+            view::preview_pane_rect(self.columns.len(), height, self.pan.offset(), self.miller_w);
+        let lines = preview_info(&self.selected_entry()?).len();
+        let stage = view::preview_stage_rect(panel, lines);
+        // Clipped to the file area: the stack is panned, so a preview column
+        // half off the left of the window must not be grabbable under the
+        // sidebar.
+        let mut visible = stage;
+        if !visible.intersect(view::content_viewport(width, height, ViewMode::Columns)) {
+            return None;
+        }
+        visible
+            .contains(skia_safe::Point::new(x, y))
+            // The picture may start off the left edge; the drag image is the
+            // whole picture, so the anchor is measured from the *stage*.
+            .then_some(stage)
+    }
+
+    /// The drag image for a file picked up by its preview: the same picture
+    /// the column is showing.
+    fn preview_drag_picture(
+        &self,
+    ) -> Option<impl Fn(&skia_safe::Canvas, f32, f32) + Send + Sync + 'static> {
+        let entry = self.selected_entry()?;
+        let data = view::PreviewData {
+            name: entry.name.as_str(),
+            icon_chain: entry.icon_chain(),
+            decoded: self.preview.as_ref().and_then(|p| p.decoded.as_ref()),
+            first_row: 0,
+            info: preview_info(&entry),
+        };
+        Some(view::preview_drag_picture(
+            &data,
+            AppContext::current_theme(),
+        ))
     }
 
     /// Pan the stack so the preview pane — sitting right after the last real
@@ -1012,6 +1149,16 @@ impl Browser {
     /// If it is a directory, push a column for it; if not, truncate the stack
     /// so nothing stale hangs to the right.
     fn select(&mut self, depth: usize, index: usize) {
+        self.select_at(depth, index, true);
+    }
+
+    /// [`Self::select`], with the Back entry optional.
+    ///
+    /// A delete that moves the selection to the next row lands here without
+    /// one: the user did not navigate anywhere, and a Back step that returned
+    /// to a listing holding a file that no longer exists would be a step into
+    /// nothing.
+    fn select_at(&mut self, depth: usize, index: usize, history: bool) {
         if depth >= self.columns.len() {
             return;
         }
@@ -1023,7 +1170,7 @@ impl Browser {
         // A directory descent is a real navigation, worth a Back entry;
         // recorded here, before the stack changes underneath it.
         let descending = entry.is_dir && self.mode == ViewMode::Columns;
-        if descending {
+        if descending && history {
             self.record_location();
         }
 
@@ -2640,6 +2787,18 @@ impl Browser {
     /// were and gather from there. The nearest [`view::DRAG_ITEMS_MAX`] to the
     /// grab are the ones shown; the badge still counts them all.
     fn drag_items(&self, x: f32, y: f32) -> Option<DragItems> {
+        // The preview column first: it is a picture of one file, and pressing
+        // it picks that file up carrying the picture rather than a row the
+        // pointer is nowhere near.
+        if let Some(stage) = self.preview_grab_at(x, y) {
+            let picture = self.preview_drag_picture()?;
+            return Some((
+                DragPicture::Preview(Box::new(picture)),
+                (stage.width(), stage.height()),
+                (x - stage.left, y - stage.top),
+            ));
+        }
+
         let (depth, grabbed) = self.entry_at(x, y)?;
         let names: Vec<String> = self
             .selected_entries()
@@ -2699,7 +2858,11 @@ impl Browser {
         let right = right.max(x + 8.0 + view::drag_badge_width(names.len()));
         let bottom = bottom.max(y + 30.0);
 
-        Some((items, (right - left, bottom - top), (x - left, y - top)))
+        Some((
+            DragPicture::Entries(items),
+            (right - left, bottom - top),
+            (x - left, y - top),
+        ))
     }
 
     /// Where entry `index` of pane `depth` sits in the window right now.
@@ -2851,7 +3014,14 @@ impl Browser {
     }
 
     /// Move the current selection to Trash.
+    ///
+    /// The selection does not go with it: it moves to the row that takes the
+    /// deleted one's place, so a run of deletes is one key held down rather
+    /// than a delete-then-reach-for-the-mouse each time. Which row that is has
+    /// to be decided *here*, against the listing still on screen — once the
+    /// re-read lands there is nothing left to measure the gap from.
     fn move_selected_to_trash(&mut self) {
+        let depth = self.active.min(self.columns.len().saturating_sub(1));
         let paths: Vec<PathBuf> = self
             .selected_entries()
             .into_iter()
@@ -2860,12 +3030,88 @@ impl Browser {
         if paths.is_empty() {
             return;
         }
+        let successor = self.successor_after_delete(depth);
         let result = model::move_to_trash(&paths);
         let summary = result.summary();
         self.status = (!summary.is_empty()).then_some(summary);
         Self::play_op_sound(&result);
         self.record_undo(otto_kit::t!("files-undo-delete"), result.changes);
+
+        // By name, before the re-read: the selection is held by name, so this
+        // is already the right answer for `resync_cursors` when the listing
+        // lands. `settle_pick` then does the rest — the child column a newly
+        // selected directory wants, or the walk out of a folder left empty.
+        let column = &mut self.columns[depth];
+        column.selection.clear();
+        column.cursor = None;
+        column.anchor = None;
+        if let Some(name) = successor.clone() {
+            column.selection.insert(name);
+        }
+        self.pending_pick = Some((depth, successor));
         self.reload_all();
+        self.dirty = true;
+    }
+
+    /// Which entry should hold the selection once everything selected in pane
+    /// `depth` is gone: the first survivor below the deleted block, and
+    /// failing that the nearest one above it. `None` when the pane is being
+    /// emptied outright.
+    fn successor_after_delete(&self, depth: usize) -> Option<String> {
+        let doomed = &self.columns[depth].selection;
+        let entries = self.visible(depth);
+        let last = entries.iter().rposition(|e| doomed.contains(&e.name))?;
+        entries
+            .iter()
+            .skip(last + 1)
+            .find(|e| !doomed.contains(&e.name))
+            .or_else(|| {
+                entries[..last]
+                    .iter()
+                    .rev()
+                    .find(|e| !doomed.contains(&e.name))
+            })
+            .map(|e| e.name.clone())
+    }
+
+    /// Land the selection a delete set aside, once the re-read has arrived.
+    ///
+    /// Doing it through `select_at` rather than by hand is what keeps Miller
+    /// view consistent: a directory taking the selection gets its child column
+    /// the same way a click on it would. A pane left with nothing in it hands
+    /// the keyboard back to its parent, where the folder itself is selected —
+    /// there is nowhere else in an empty directory to stand.
+    fn settle_pick(&mut self) {
+        if self.pending_pick.is_none() || self.loading() {
+            return;
+        }
+        let Some((depth, name)) = self.pending_pick.take() else {
+            return;
+        };
+        if depth >= self.columns.len() {
+            return;
+        }
+        let index = name
+            .as_deref()
+            .and_then(|name| self.visible(depth).iter().position(|e| e.name == name));
+        if let Some(index) = index {
+            self.select_at(depth, index, false);
+            self.reveal_cursor();
+            self.dirty = true;
+            return;
+        }
+        if !self.visible(depth).is_empty() || depth == 0 {
+            return;
+        }
+        // Empty, and there is a parent to go back to. Miller keeps the empty
+        // pane on screen — it is the folder the parent has selected, and the
+        // stack shows what is selected; the other two views show one directory
+        // at a time, so the emptied one is dropped instead.
+        if self.mode != ViewMode::Columns {
+            self.columns.truncate(depth);
+        }
+        self.active = depth - 1;
+        self.reveal_pane(self.active);
         self.dirty = true;
     }
 
@@ -2938,7 +3184,7 @@ impl Browser {
             entries,
             scroll: column.scroll.offset(),
             bar: None,
-            loading: column.loading(),
+            loading: column.awaiting_first_listing(),
             error: None,
         };
         view::quickview_anchor(
@@ -2968,6 +3214,22 @@ impl Browser {
         let anchor = self.quickview_anchor();
         self.quickview_generation += 1;
         self.quickview_pending = true;
+        // The panel goes up — or over to this file — on the keystroke, not
+        // when the decode lands. An open one drops what it was showing now
+        // rather than carrying the last file's preview while the new one is
+        // read, and keeps its place and its entrance while it waits.
+        match self.quickview.as_mut() {
+            Some(session) => session.awaiting(entry.name.clone(), entry.is_dir, anchor),
+            None => {
+                self.quickview = Some(quickview::Session::waiting(
+                    entry.name.clone(),
+                    entry.is_dir,
+                    anchor,
+                    std::time::Instant::now(),
+                ));
+                self.quickview_closing = None;
+            }
+        }
         // Clear any stale message so "Opening preview…" is not fighting the
         // last operation's summary.
         self.status = None;
@@ -3328,6 +3590,20 @@ impl Browser {
         }
     }
 
+    /// The palette this window draws with.
+    ///
+    /// The system theme, with the accent muted while the window is in the
+    /// background: an unfocused window's selection, drop rings and pills all
+    /// step back with the title, so the accent points at the window the user
+    /// is actually working in.
+    fn theme(&self) -> Theme {
+        let mut theme = AppContext::current_theme();
+        if !self.focused {
+            theme.with_muted_accent();
+        }
+        theme
+    }
+
     /// Build the per-frame view data.
     fn frame<'a>(&'a self, theme: &'a Theme, title: &'a str) -> view::Frame<'a> {
         let panes = (0..self.columns.len())
@@ -3343,7 +3619,7 @@ impl Browser {
                     entries,
                     scroll: column.scroll.offset(),
                     bar: Some(&column.scroll.state),
-                    loading: column.loading(),
+                    loading: column.awaiting_first_listing(),
                     error: column.snapshot.error.as_deref(),
                 }
             })
@@ -3430,6 +3706,22 @@ impl Browser {
 // App shell
 // ---------------------------------------------------------------------------
 
+/// The listing's identity for assistive technologies.
+const FILES_LIST: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xF11E_5000);
+/// The line shown in place of a listing that could not be read.
+const FILES_STATUS: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xF11E_5001);
+
+/// The column view's preview of the selected file.
+const PREVIEW_PANE: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xF11E_5003);
+
+/// The preview panel's, when one is open.
+const QUICKVIEW: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xF11E_5002);
+
+/// One listing row's, by its position in the visible order.
+fn row_focus(index: usize) -> otto_kit::focus::FocusId {
+    otto_kit::focus::FocusId::new(format!("entry-{index}"))
+}
+
 struct FilesApp {
     window: Option<Window>,
     state: Arc<Mutex<Browser>>,
@@ -3503,7 +3795,7 @@ impl App for FilesApp {
         }
 
         if let Some(style) = window.surface_style() {
-            style.set_corner_radius(view::CORNER as f64);
+            style.set_corner_radius(view::corner() as f64);
         }
 
         // otto-kit's materials are translucent by design — they expect a
@@ -3551,7 +3843,7 @@ impl App for FilesApp {
             let t_prep = perf::now();
             browser.poll();
 
-            let theme = AppContext::current_theme();
+            let theme = browser.theme();
             let title = browser.title();
             // Panes measure themselves against the size this frame is drawn
             // at, so their scroll views are re-fitted before anything reads
@@ -3559,6 +3851,9 @@ impl App for FilesApp {
             browser.sync_scroll_metrics();
             // Needs those metrics, so it runs here rather than beside the poll.
             browser.settle_restore();
+            // Same reason, and after it: a Back step and a delete never land
+            // in the same frame, and both want the metrics that just landed.
+            browser.settle_pick();
             perf::mark(perf::Stage::Prep, t_prep);
             let t_frame = perf::now();
             let frame = browser.frame(&theme, &title);
@@ -3669,6 +3964,12 @@ impl App for FilesApp {
         self.install_frame_loop(&window);
         AppContext::register_window(window.clone());
         self.window = Some(window);
+
+        // Visible to assistive technologies. Nothing is built until one
+        // attaches — see `App::accessibility`.
+        if let Some(surface) = self.window.as_ref().and_then(Window::surface_id) {
+            AppContext::enable_accessibility(&surface);
+        }
         Ok(())
     }
 
@@ -3680,6 +3981,165 @@ impl App for FilesApp {
     /// on another thread wakes the loop instead — see
     /// [`AppContext::request_wakeup`] — and this is where that wakeup turns
     /// into a frame.
+    /// What a screen reader reads: the listing of the column that has the
+    /// keyboard, as the list it is drawn as.
+    ///
+    /// The browser moves its own cursor with the arrows, so there is no
+    /// traversal ring here — the cursor row *is* the focus, which is what makes
+    /// each file read out as the user moves through the directory.
+    fn accessibility(
+        &mut self,
+        _ctx: &AppContext,
+        _surface: &wayland_client::backend::ObjectId,
+    ) -> Option<A11yTree> {
+        let browser = self.state.lock().ok()?;
+        let depth = browser.active.min(browser.columns.len().saturating_sub(1));
+        let column = browser.columns.get(depth)?;
+
+        let title = column
+            .path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| column.path.display().to_string());
+
+        let mut tree = A11yTree::new(title.clone());
+
+        // A directory that could not be read is what the pane shows instead of
+        // a listing, so it is what the tree says too.
+        if let Some(error) = &column.snapshot.error {
+            tree.status(
+                FILES_STATUS,
+                Rect::from_wh(browser.size.0, browser.size.1),
+                error.clone(),
+            );
+            return Some(tree);
+        }
+
+        let entries = browser.visible(depth);
+        let cursor = column.cursor;
+        let selection = &column.selection;
+
+        // Where each row is, in whichever way this view lays them out. A wrong
+        // rectangle is worse than none — mouse review would land on the file
+        // next to the one it named — so each mode uses its own geometry, the
+        // same functions that draw and hit-test it.
+        let area = Rect::from_wh(browser.size.0, browser.size.1);
+        let scroll = column.scroll.state.offset();
+        let count = entries.len();
+        let placement: Box<dyn Fn(usize) -> Rect> = match browser.mode {
+            ViewMode::List => {
+                let strip = view::RowStrip::list(browser.size.0, count, scroll);
+                Box::new(move |index| strip.rect(index))
+            }
+            ViewMode::Columns => {
+                let pane = view::miller_pane_rect(
+                    depth,
+                    browser.content_h(),
+                    browser.pan.offset(),
+                    browser.miller_w,
+                );
+                let strip = view::RowStrip::miller(pane, count, scroll);
+                Box::new(move |index| strip.rect(index))
+            }
+            ViewMode::Grid => {
+                let cells =
+                    view::content_viewport(browser.size.0, browser.content_h(), ViewMode::Grid);
+                Box::new(move |index| view::grid_cell_rect(cells, index, scroll))
+            }
+        };
+
+        tree.region(
+            FILES_LIST,
+            area,
+            Role::List,
+            otto_kit::t!("files-window-title"),
+            |tree| {
+                for (index, entry) in entries.iter().enumerate() {
+                    let bounds = placement(index);
+                    tree.control(row_focus(index), bounds, Role::ListItem, true, |node| {
+                        node.set_label(entry.name.clone());
+                        // What the Kind column says, plus the size for a file: the
+                        // two things that tell one listing row from another when
+                        // the names are similar.
+                        let mut description = entry.kind_label().to_owned();
+                        if let Some(size) = entry.size.filter(|_| !entry.is_dir) {
+                            description.push_str(", ");
+                            description.push_str(&crate::model::format_size(size));
+                        }
+                        node.set_description(description);
+                        node.set_selected(selection.contains(&entry.name));
+                        node.add_action(Action::Click);
+                    });
+                }
+            },
+        );
+
+        // The column view shows a preview of the selected file beside the
+        // listing. It is not what the keyboard is on — the listing is — but it
+        // is on screen and it is about the file being read out, so it is
+        // described where it sits.
+        if let Some(preview) = browser
+            .preview
+            .as_ref()
+            .filter(|_| browser.preview_visible())
+            .and_then(|state| state.decoded.as_ref().map(|p| (&state.path, p)))
+        {
+            let (path, decoded) = preview;
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let pane = view::preview_pane_rect(
+                browser.columns.len(),
+                browser.content_h(),
+                browser.pan.offset(),
+                browser.miller_w,
+            );
+            tree.preview(PREVIEW_PANE, pane, &name, decoded);
+        }
+
+        // An open preview *is* what the user is looking at, so it takes the
+        // focus — and the previewer describes itself, whatever it is showing.
+        // See `A11yTree::preview`.
+        if let Some(session) = browser.quickview.as_ref().filter(|s| s.closing.is_none()) {
+            let panel = browser
+                .quickview_panel
+                .unwrap_or_else(|| session.panel(area));
+            tree.preview(QUICKVIEW, panel, &session.name, &session.preview);
+            tree.set_focus(QUICKVIEW);
+        } else if let Some(cursor) = cursor.filter(|c| *c < entries.len()) {
+            tree.set_focus(row_focus(cursor));
+        }
+
+        Some(tree)
+    }
+
+    /// A screen reader picked a row: select it, exactly as a click does.
+    fn on_accessibility_action(
+        &mut self,
+        _ctx: &AppContext,
+        _surface: &wayland_client::backend::ObjectId,
+        request: &ActionRequest,
+    ) {
+        if !matches!(request.action, Action::Click) {
+            return;
+        }
+
+        let Ok(mut browser) = self.state.lock() else {
+            return;
+        };
+        let depth = browser.active.min(browser.columns.len().saturating_sub(1));
+        let count = browser.visible_len(depth);
+        let target = (0..count).find(|index| {
+            otto_kit::accessibility::node_id(row_focus(*index)) == request.target_node
+        });
+        let Some(index) = target else { return };
+
+        browser.press_entry(depth, index);
+        drop(browser);
+        self.render();
+    }
+
     fn on_update(&mut self, _ctx: &AppContext) {
         // The scene decides when the compositor's backdrop blur may be
         // switched — it owns the fade the switch has to hide under — but the
@@ -3963,6 +4423,11 @@ impl App for FilesApp {
                     Keysym::BackSpace => Some(TextInputKey::Backspace),
                     Keysym::Delete => Some(TextInputKey::Delete),
                     Keysym::a if ctrl => Some(TextInputKey::SelectAll),
+                    // Cut, copy and paste edit the *name* here, not the
+                    // selection in the listing: the field owns the keyboard.
+                    Keysym::c if ctrl => Some(TextInputKey::Copy),
+                    Keysym::x if ctrl => Some(TextInputKey::Cut),
+                    Keysym::v if ctrl => clipboard::text().map(TextInputKey::Paste),
                     _ => event
                         .utf8
                         .as_ref()
@@ -3978,6 +4443,10 @@ impl App for FilesApp {
                     match response {
                         Some(TextInputResponse::Commit) => browser.commit_rename(),
                         Some(TextInputResponse::Cancel) => browser.cancel_rename(),
+                        Some(TextInputResponse::Clipboard(text)) => {
+                            clipboard::set_text(&text, serial);
+                            browser.dirty = true;
+                        }
                         Some(_) => browser.dirty = true,
                         None => {}
                     }
@@ -4022,6 +4491,9 @@ impl App for FilesApp {
                     Keysym::BackSpace => Some(TextInputKey::Backspace),
                     Keysym::Delete => Some(TextInputKey::Delete),
                     Keysym::a if ctrl => Some(TextInputKey::SelectAll),
+                    Keysym::c if ctrl => Some(TextInputKey::Copy),
+                    Keysym::x if ctrl => Some(TextInputKey::Cut),
+                    Keysym::v if ctrl => clipboard::text().map(TextInputKey::Paste),
                     // A chord that is not the field's own is the window's:
                     // Ctrl+W and friends still reach the shortcuts below.
                     _ if ctrl => None,
@@ -4033,8 +4505,12 @@ impl App for FilesApp {
                 };
                 if let Some(key) = editing {
                     let mods = KeyMods { shift, ctrl };
-                    if let Some(input) = browser.save_name.as_mut() {
-                        input.on_key(key, mods);
+                    let response = browser
+                        .save_name
+                        .as_mut()
+                        .map(|input| input.on_key(key, mods));
+                    if let Some(TextInputResponse::Clipboard(text)) = response {
+                        clipboard::set_text(&text, serial);
                     }
                     browser.dirty = true;
                     drop(browser);
@@ -4172,16 +4648,13 @@ impl App for FilesApp {
                 // opening needs a chord of its own.
                 Keysym::o if ctrl => browser.open_cursor_entry(),
                 Keysym::_1 if ctrl => {
-                    browser.mode = ViewMode::List;
-                    browser.dirty = true;
+                    browser.set_mode(ViewMode::List);
                 }
                 Keysym::_2 if ctrl => {
-                    browser.mode = ViewMode::Grid;
-                    browser.dirty = true;
+                    browser.set_mode(ViewMode::Grid);
                 }
                 Keysym::_3 if ctrl => {
-                    browser.mode = ViewMode::Columns;
-                    browser.dirty = true;
+                    browser.set_mode(ViewMode::Columns);
                 }
                 // Anything else printable is type-ahead. It comes last so
                 // that every shortcut above keeps the key it already had.
@@ -4285,7 +4758,7 @@ impl FilesApp {
         let parent = surface.wl_surface().clone();
         let mut browser = self.state.lock().unwrap();
         browser.sync_scroll_metrics();
-        let theme = AppContext::current_theme();
+        let theme = browser.theme();
         let title = browser.title();
         let frame = browser.frame(&theme, &title);
         let quickview = browser
@@ -4598,7 +5071,7 @@ impl FilesApp {
             surface.xdg_window().set_app_id("otto-files".to_string());
         }
         if let Some(style) = window.surface_style() {
-            style.set_corner_radius(14.0);
+            style.set_corner_radius(otto_kit::corners::radius(14.0) as f64);
         }
 
         let state = Arc::clone(&self.state);
@@ -5066,7 +5539,7 @@ impl FilesApp {
                                 let mode = browser.mode;
                                 let count = paths.len();
                                 drop(browser);
-                                if let (Some(surface), Some((items, size, anchor))) =
+                                if let (Some(surface), Some((picture, size, anchor))) =
                                     (window_for_events.wl_surface(), items)
                                 {
                                     let theme = AppContext::current_theme();
@@ -5077,10 +5550,11 @@ impl FilesApp {
                                         serial,
                                         (size.0 as i32, size.1 as i32),
                                         anchor,
-                                        move |canvas, _w, _h| {
-                                            view::draw_drag_image(
+                                        move |canvas, w, h| match picture {
+                                            DragPicture::Entries(items) => view::draw_drag_image(
                                                 canvas, &theme, mode, &items, anchor, count,
-                                            );
+                                            ),
+                                            DragPicture::Preview(draw) => draw(canvas, w, h),
                                         },
                                     );
                                 }
@@ -5088,28 +5562,7 @@ impl FilesApp {
                             }
                         }
 
-                        // Resize affordance at the window edges.
-                        let edge = resize::edge_at(Rect::from_wh(width, browser.size.1), x, y);
-                        let over_column_divider = (browser.mode == ViewMode::List
-                            && view::column_boundary_at(x, y, width, browser.list_columns)
-                                .is_some())
-                            || (browser.mode == ViewMode::Columns
-                                && view::miller_boundary_at(
-                                    x,
-                                    y,
-                                    width,
-                                    height,
-                                    browser.pan.offset(),
-                                    browser.columns.len(),
-                                    browser.miller_w,
-                                )
-                                .is_some());
-                        let shape = if over_column_divider {
-                            CursorShape::ColResize
-                        } else {
-                            edge.map_or(CursorShape::Default, |e| e.cursor())
-                        };
-                        AppContext::set_cursor_shape(shape);
+                        AppContext::set_cursor_shape(browser.hover_shape(x, y));
 
                         // A scrollbar drag follows the pointer wherever it
                         // goes, so the dragged pane is asked first and the
@@ -5136,7 +5589,7 @@ impl FilesApp {
 
                         // The traffic lights reveal their glyphs while the
                         // pointer is over the group.
-                        let control = view::control_at(x, y);
+                        let control = view::control_at(x, y, browser.size.0);
                         browser.dirty |= browser.controls.on_motion(control);
                     }
                     PointerEventKind::Release { .. } => {
@@ -5169,7 +5622,7 @@ impl FilesApp {
 
                         // A control fires on release, and only over the dot
                         // the press landed on.
-                        let control = view::control_at(x, y);
+                        let control = view::control_at(x, y, browser.size.0);
                         browser.dirty |= browser.controls.pressed().is_some();
                         match browser.controls.on_release(control) {
                             // In the picker, closing the window *is*
@@ -5258,7 +5711,14 @@ impl FilesApp {
                         continue;
                     }
                     PointerEventKind::Press { serial, .. } => {
-                        if let Some(edge) = resize::edge_at(Rect::from_wh(width, height), x, y) {
+                        // The whole window, not the file area: the border being
+                        // grabbed is the window's, and in the picker the file
+                        // area stops short of the bottom by the action row.
+                        // Measuring against `height` there would put the
+                        // "bottom edge" across the middle of that row.
+                        if let Some(edge) =
+                            resize::edge_at(Rect::from_wh(width, browser.size.1), x, y)
+                        {
                             if let Some(seat) = AppContext::seat_state().seats().next() {
                                 window_for_events.start_resize(&seat, serial, edge);
                             }
@@ -5267,7 +5727,8 @@ impl FilesApp {
 
                         // Arming rather than acting: the control fires on
                         // release, over the same dot.
-                        if browser.controls.on_press(view::control_at(x, y)) {
+                        let control = view::control_at(x, y, browser.size.0);
+                        if browser.controls.on_press(control) {
                             browser.dirty = true;
                             return;
                         }
@@ -5303,11 +5764,16 @@ impl FilesApp {
                             continue;
                         }
 
-                        // A press on a row might be the start of a drag. Armed
-                        // here and decided on motion: the selection below still
-                        // happens, so a press that never travels is an ordinary
-                        // click and a second one still opens the directory.
-                        if browser.dnd_enabled() && browser.entry_at(x, y).is_some() {
+                        // A press on a row — or on the preview column's picture,
+                        // which is one file drawn large — might be the start of
+                        // a drag. Armed here and decided on motion: the
+                        // selection below still happens, so a press that never
+                        // travels is an ordinary click and a second one still
+                        // opens the directory.
+                        if browser.dnd_enabled()
+                            && (browser.entry_at(x, y).is_some()
+                                || browser.preview_grab_at(x, y).is_some())
+                        {
                             browser.drag_armed = Some((x, y, serial));
                         }
 
@@ -5318,8 +5784,7 @@ impl FilesApp {
                             browser.nav_pressed = Some(button);
                             browser.dirty = true;
                         } else if let Some(mode) = view::switcher_at(x, y, width) {
-                            browser.mode = mode;
-                            browser.dirty = true;
+                            browser.set_mode(mode);
                         } else if let Some(index) = view::place_at(x, y, browser.places.len()) {
                             let path = browser.places[index].path.clone();
                             browser.navigate_to(&path);
@@ -5381,8 +5846,11 @@ impl FilesApp {
                                     browser.ascending = !browser.ascending;
                                 } else {
                                     browser.sort = key;
-                                    browser.ascending = true;
+                                    // A fresh key reads best in its natural
+                                    // direction: names from A, dates from now.
+                                    browser.ascending = key != SortKey::Modified;
                                 }
+                                browser.sort_pinned = true;
                                 browser.dirty = true;
                             } else {
                                 let depth = browser.columns.len() - 1;
@@ -5679,6 +6147,41 @@ fn run_app(
     };
 
     AppRunner::new(app).run()
+}
+
+#[cfg(test)]
+mod sort_default_tests {
+    use super::*;
+
+    #[test]
+    fn the_list_opens_with_the_newest_on_top() {
+        let mut browser = Browser::new(std::env::temp_dir());
+        browser.set_mode(ViewMode::List);
+        assert_eq!(browser.sort, SortKey::Modified);
+        assert!(!browser.ascending);
+    }
+
+    #[test]
+    fn the_other_views_open_sorted_by_name() {
+        for mode in [ViewMode::Grid, ViewMode::Columns] {
+            let mut browser = Browser::new(std::env::temp_dir());
+            browser.set_mode(ViewMode::List);
+            browser.set_mode(mode);
+            assert_eq!(browser.sort, SortKey::Name);
+            assert!(browser.ascending);
+        }
+    }
+
+    #[test]
+    fn a_sort_the_user_picked_survives_a_view_change() {
+        let mut browser = Browser::new(std::env::temp_dir());
+        browser.sort = SortKey::Size;
+        browser.ascending = false;
+        browser.sort_pinned = true;
+        browser.set_mode(ViewMode::List);
+        assert_eq!(browser.sort, SortKey::Size);
+        assert!(!browser.ascending);
+    }
 }
 
 #[cfg(test)]
@@ -6052,6 +6555,130 @@ mod dnd_tests {
             browser.columns[0].selection.len(),
             3,
             "all three are still selected after the drag"
+        );
+    }
+
+    /// A Miller browser with one file selected, so the preview column is up
+    /// and the stack is panned to show it — the state the preview drag needs.
+    fn browser_with_preview() -> (Browser, TempDir) {
+        let (mut browser, dir) = browser_over(&["a.txt", "b.txt"], &[]);
+        browser.mode = ViewMode::Columns;
+        browser.select(0, row_of(&browser, "a.txt"));
+        browser.reveal_preview();
+        // The reveal is a spring; the test wants where it lands, not where it
+        // is one frame in.
+        for _ in 0..600 {
+            if !browser.pan.advance(1.0 / 60.0) {
+                break;
+            }
+        }
+        assert!(browser.preview_visible(), "the preview column is not up");
+        (browser, dir)
+    }
+
+    /// The window's own border outranks a column divider, because that is the
+    /// order a press resolves them in.
+    ///
+    /// A Miller pane's right edge lands on the window's right border whenever
+    /// the stack is panned fully over — the ordinary state once a preview
+    /// column is up — and the divider's grab band is narrower than the
+    /// window's, so it sits entirely inside it. Answering `ColResize` there
+    /// showed a cursor promising a column resize while the click underneath it
+    /// resized the window.
+    #[test]
+    fn the_window_border_outranks_a_column_divider() {
+        let (mut browser, _dir) = browser_with_preview();
+
+        // A window narrow enough that the stack overflows it, and panned so
+        // the last pane's right edge is flush with the window's own — the
+        // ordinary resting state once a preview column has been revealed.
+        let panes = browser.columns.len();
+        browser.size.0 = view::SIDEBAR_W + browser.miller_w - 50.0;
+        browser.sync_scroll_metrics();
+        browser
+            .pan
+            .state
+            .set_offset(view::SIDEBAR_W + panes as f32 * browser.miller_w - browser.size.0);
+        let (w, h) = browser.size;
+        let y = view::HEADER_H + 80.0;
+        let edge_x = w - 1.0;
+
+        assert!(
+            view::miller_boundary_at(
+                edge_x,
+                y,
+                w,
+                browser.content_h(),
+                browser.pan.offset(),
+                panes,
+                browser.miller_w,
+            )
+            .is_some(),
+            "the pane divider is not on the window border, so this proves nothing"
+        );
+        assert!(
+            resize::edge_at(Rect::from_wh(w, h), edge_x, y).is_some(),
+            "the window border is not where the test thinks it is"
+        );
+        assert_eq!(
+            browser.hover_shape(edge_x, y),
+            resize::edge_at(Rect::from_wh(w, h), edge_x, y)
+                .expect("an edge")
+                .cursor(),
+            "the cursor on the window border must be the one the press acts on"
+        );
+
+        // Panned back a little, the same divider sits clear of the border and
+        // gets its own cursor again: the border wins where they overlap, and
+        // nowhere else.
+        let flush = browser.pan.offset();
+        browser.pan.state.set_offset(flush + 40.0);
+        let inside = view::SIDEBAR_W + panes as f32 * browser.miller_w - browser.pan.offset();
+        assert_eq!(
+            browser.hover_shape(inside, y),
+            CursorShape::ColResize,
+            "a divider away from the border should still say column-resize"
+        );
+    }
+
+    /// The preview column's picture is a handle on the file it is a picture
+    /// of: pressing it arms a drag, the same way pressing the row does.
+    #[test]
+    fn the_preview_picture_can_be_picked_up() {
+        let (browser, _dir) = browser_with_preview();
+        let panel = view::preview_pane_rect(
+            browser.columns.len(),
+            browser.content_h(),
+            browser.pan.offset(),
+            browser.miller_w,
+        );
+        let stage = view::preview_stage_rect(panel, 3);
+
+        let on_picture = (stage.center_x(), stage.center_y());
+        assert!(
+            browser
+                .preview_grab_at(on_picture.0, on_picture.1)
+                .is_some(),
+            "the middle of the preview picture is not a grab"
+        );
+        assert!(
+            browser
+                .drag_items(on_picture.0, on_picture.1)
+                .is_some_and(|(picture, ..)| matches!(picture, DragPicture::Preview(_))),
+            "a drag off the preview does not carry the preview's picture"
+        );
+        assert_eq!(
+            browser.drag_paths().len(),
+            1,
+            "the preview drag carries the one file it is a picture of"
+        );
+
+        // The caption below it is a label, not a handle.
+        assert!(
+            browser
+                .preview_grab_at(stage.center_x(), stage.bottom + 20.0)
+                .is_none(),
+            "the caption under the picture should not pick the file up"
         );
     }
 
@@ -6683,5 +7310,144 @@ mod watch_tests {
         let moved = settle(&mut browser, |b| b.current_path() != child);
         assert!(moved, "the window stayed on a directory that is gone");
         assert_eq!(browser.current_path(), dir.0);
+    }
+}
+
+/// Where the selection goes when what held it is deleted.
+#[cfg(test)]
+mod delete_tests {
+    use super::*;
+
+    /// A directory of real files, swept up on drop — `move_to_trash` works on
+    /// the filesystem, so these cannot be faked.
+    struct Tmp(PathBuf);
+
+    impl Tmp {
+        fn holding(names: &[&str]) -> Self {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+            let path = std::env::temp_dir().join(format!(
+                "otto-files-delete-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).expect("temp dir");
+            for name in names {
+                std::fs::write(path.join(name), b"x").expect("temp file");
+            }
+            Self(path)
+        }
+    }
+
+    impl Drop for Tmp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Drive the browser until every pane has finished reading, then land
+    /// whatever the last operation set aside — the two steps the frame loop
+    /// takes between one input and the next.
+    fn settle(browser: &mut Browser) {
+        for _ in 0..1000 {
+            browser.poll();
+            if !browser.loading() {
+                browser.settle_pick();
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        panic!("the listing never landed");
+    }
+
+    fn browser_over(names: &[&str]) -> (Browser, Tmp) {
+        // Keeps the deletes out of the developer's own Trash.
+        let _ = model::test_data_home();
+        let dir = Tmp::holding(names);
+        let mut browser = Browser::new(dir.0.clone());
+        browser.mode = ViewMode::List;
+        settle(&mut browser);
+        (browser, dir)
+    }
+
+    fn selected(browser: &Browser) -> Vec<String> {
+        browser.columns[browser.active]
+            .selection
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    fn row_of(browser: &Browser, name: &str) -> usize {
+        browser
+            .visible(browser.active)
+            .iter()
+            .position(|entry| entry.name == name)
+            .unwrap_or_else(|| panic!("{name} is not in the listing"))
+    }
+
+    #[test]
+    fn the_next_row_takes_the_selection() {
+        let (mut browser, _dir) = browser_over(&["a.txt", "b.txt", "c.txt"]);
+        browser.select(0, row_of(&browser, "b.txt"));
+
+        browser.move_selected_to_trash();
+        settle(&mut browser);
+
+        assert_eq!(selected(&browser), vec!["c.txt".to_string()]);
+        assert_eq!(browser.columns[0].cursor, Some(row_of(&browser, "c.txt")));
+    }
+
+    /// Nothing below the deleted row, so the selection steps back up rather
+    /// than being left nowhere.
+    #[test]
+    fn deleting_the_last_row_falls_back_to_the_one_above() {
+        let (mut browser, _dir) = browser_over(&["a.txt", "b.txt", "c.txt"]);
+        browser.select(0, row_of(&browser, "c.txt"));
+
+        browser.move_selected_to_trash();
+        settle(&mut browser);
+
+        assert_eq!(selected(&browser), vec!["b.txt".to_string()]);
+    }
+
+    /// A multi-selection skips its whole run: the survivor below the *last*
+    /// deleted row is the one that takes over.
+    #[test]
+    fn a_run_of_rows_hands_over_to_the_first_survivor() {
+        let (mut browser, _dir) = browser_over(&["a.txt", "b.txt", "c.txt", "d.txt"]);
+        browser.select(0, row_of(&browser, "b.txt"));
+        browser.extend_select(0, row_of(&browser, "c.txt"));
+
+        browser.move_selected_to_trash();
+        settle(&mut browser);
+
+        assert_eq!(selected(&browser), vec!["d.txt".to_string()]);
+    }
+
+    /// The last file in a folder: there is no row left to stand on, so the
+    /// keyboard goes back to the pane holding the folder itself.
+    #[test]
+    fn emptying_a_folder_hands_the_keyboard_to_its_parent() {
+        let _ = model::test_data_home();
+        let dir = Tmp::holding(&[]);
+        std::fs::create_dir_all(dir.0.join("sub")).expect("subdir");
+        std::fs::write(dir.0.join("sub/only.txt"), b"x").expect("file");
+
+        let mut browser = Browser::new(dir.0.clone());
+        browser.mode = ViewMode::Columns;
+        settle(&mut browser);
+        browser.select(0, row_of(&browser, "sub"));
+        settle(&mut browser);
+        assert_eq!(browser.columns.len(), 2, "the child column is up");
+        browser.active = 1;
+        browser.select(1, 0);
+
+        browser.move_selected_to_trash();
+        settle(&mut browser);
+
+        assert_eq!(browser.active, 0, "the parent has the keyboard");
+        assert_eq!(selected(&browser), vec!["sub".to_string()]);
     }
 }

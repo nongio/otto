@@ -130,10 +130,23 @@ compositor's backdrop blur, the sidebar heavily tinted and the header only
 slightly, so the frost runs across the whole top of the window. The file area
 below the header is opaque: a wall of small text needs one flat ground.
 
+The **traffic lights** sit at whichever end of the window the desktop's
+`window_controls_side` setting names — see
+[window-decorations](window-decorations.md). At the leading end they sit in
+the window's top corner, over the sidebar. At the trailing end they share the
+header band with the view switcher, so they take the switcher's centre line
+and the switcher steps left to clear them.
+
 An **unfocused window steps back**: the title and subtitle drop a step down
-the text scale, the traffic lights go gray, the blur behind the window is
-dropped, and the sidebar, header and action row are filled in to full opacity
-since there is no longer anything blurred for them to be translucent over.
+the text scale, the traffic lights go gray, the accent is muted almost to
+gray, the blur behind the window is dropped, and the sidebar, header and
+action row are filled in to full opacity since there is no longer anything
+blurred for them to be translucent over. Muting the accent covers everything
+drawn in it — the selected rows and grid captions, the selected place in the
+sidebar, the cursor ring, the drop outline, the rubber band and the picker's
+accept button — so only the focused window carries the user's colour, and a
+desktop of open browsers has one place for the eye to go. It stops short of a
+flat gray: a trace of the hue keeps the window looking like the same desktop.
 This is the toolkit's behaviour rather than the browser's — see
 [otto-kit-window-focus](otto-kit-window-focus.md) — and applies to the
 picker's window as well, minus the traffic lights it does not have.
@@ -169,6 +182,14 @@ normal resting state and nothing snaps it straight. Moving into a column by
 click or keyboard is what aligns: the stack pans the shortest distance that
 brings that column fully into view, landing on its exact edge, and drops any
 fling still in flight first so the two are never both moving it.
+
+**The window's own border outranks a column divider.** Both are grabbable
+edges and their bands overlap: the last pane's right edge sits exactly on the
+window's right border whenever the stack is panned fully over, which is the
+ordinary resting state once a preview column is up, and the divider's grab band
+is the narrower of the two. A press resolves the window border first, so the
+cursor must too — otherwise it promises a column resize while the click
+underneath it resizes the window.
 
 ### Column surfaces
 
@@ -229,6 +250,14 @@ meant for the thing itself. What the card has that the caption does not is its
 artwork: cover art, an embedded thumbnail, an mp4's poster frame. That is shown
 as the picture it is, and a card with none falls back to the file's own icon,
 drawn large.
+
+**A picture is framed at its own edges.** An image rarely shares the column's
+aspect ratio, so it lands centred in a band of empty column, and one with pale
+corners — a photograph on a white ground, a screenshot of a light window —
+dissolves into that emptiness with nothing to say where the file stops. A
+hairline is drawn on the fitted rect, not on the stage, so the frame traces the
+picture's aspect ratio. Only pictures get one: text and listings fill the stage
+they are given and have no edges of their own to trace.
 
 **A decoder that gave up is not a blank panel**, and neither is one still
 running: the file's own icon is still true, and drawn large it is a preview of a
@@ -320,6 +349,11 @@ the re-read of the directory; the cursor is re-derived from that selection once
 the listing lands, so a file added or removed while the user was away cannot
 leave the keyboard one row off from the highlight.
 
+The "Loading" placeholder belongs to a *first* read only. An in-place re-read —
+after a delete, a paste, or a watcher notification — leaves the listing that is
+already on screen up until the new one lands, because the alternative is the
+whole pane blinking through an empty placeholder and back for every operation.
+
 ### Selection, keyboard and type-ahead
 
 Identical to the picker, including the type-ahead-is-not-search distinction, the
@@ -362,7 +396,7 @@ The browser adds:
 | Return / F2 | rename the entry at the cursor, inline, with the extension unselected — in every view mode, icon view included |
 | Delete / Ctrl+Delete / Ctrl+Backspace | move the selection to trash — the modified forms because the chord people reach for is Cmd+Delete, and on a keyboard whose big key is Backspace that arrives as Ctrl+Backspace. Plain Backspace goes up a directory instead, and always has |
 | Shift+Delete | delete the selection permanently, after confirmation — **not built**; the chord is deliberately inert rather than trashing, which is the wrong answer to a keystroke that means "and I mean it" |
-| Ctrl+C / Ctrl+X / Ctrl+V | copy / cut / paste |
+| Ctrl+C / Ctrl+X / Ctrl+V | copy / cut / paste. These are file management, so the picker does not have them — and while an inline rename holds the keyboard they act on the *name being edited* rather than on the selection, as every other key in the field does |
 | Ctrl+Z | undo the last operation |
 | Ctrl+N | new window, at the **default location** (the home directory for now, a preference later) rather than at this window's directory — a new window is a fresh start, and inheriting wherever the focused window was pointed makes it read as a copy of that window. Ctrl+double-click is the gesture for "that directory, in another window". Nothing in the picker, which answers one request in one window |
 | Ctrl+O | open the entry at the cursor — exactly what a double-click does: descend into a directory, or activate a file (in the picker, accept it). Return is not free for this, since it renames |
@@ -413,6 +447,14 @@ progress, and can cancel it.
   filesystems in the name of trashing it.
 - **Delete permanently** — always confirmed, always says it cannot be undone,
   and is not undoable.
+- **The selection survives a delete.** It moves to the entry that takes the
+  deleted one's place: the first survivor below the deleted run, and failing
+  that the nearest one above it, so holding Delete clears a run of files
+  without reaching for the mouse between each. Which entry that is is decided
+  against the listing on screen, before the re-read replaces it. A pane left
+  with nothing in it hands the keyboard back to its parent, where the folder
+  itself is selected; in column view the empty pane stays on screen, since it
+  is what the parent's selection points at.
 - **Undo** — a stack, within the session, 32 operations deep. A move is undone
   by moving back; a trash by restoring from trash; a copy by taking away what
   was created; a rename by renaming back; a new folder by removing it if still
@@ -483,6 +525,25 @@ not the row under the pointer: dragging one of several selected files takes all
 of them. The payload is the same three types a copy puts on the clipboard —
 `x-special/gnome-copied-files`, `text/uri-list`, `text/plain` — which is what
 makes the drag legible to other file managers and to text editors.
+
+**The preview column is a handle too.** In Miller view the trailing preview
+pane is a picture of one file, drawn large, and pressing it picks that file up
+exactly as pressing its row does — the same `6pt` arm, the same payload. The
+picture is what lifts off: the drag image is the preview at the size it is on
+screen, so the file travels looking like the thing the eye was actually
+resting on rather than like a row it is nowhere near. Only the picture is a
+handle; the caption of name and facts along the foot of the column is a label,
+and stays one.
+
+**Nothing expensive may happen between the press and `start_drag`.** The
+compositor honours the request only while the pointer grab that authorised it
+is still held, and it refuses a stale one *silently* — no error, no drag, and
+nothing on screen to say why. Building the drag icon's EGL and Skia surfaces
+before sending the request cost enough to lose a quick drag outright: the
+button was back up before the request arrived. So the icon surface is created
+bare, the drag is started, and only then is the previous drag's icon torn down
+and this one given something to draw with. A drag that a user makes briskly —
+which is most of them — depends on that order.
 
 **The drag image is shaped like the view it came from.** Every dragged file is
 drawn, each where it sits on screen right now and with the alignment its view

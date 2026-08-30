@@ -158,6 +158,17 @@ impl AppSwitcherView {
         tr
     }
 
+    /// Re-run the render function against the unchanged state.
+    ///
+    /// The icon tint is read inside `render_appswitcher` rather than held in
+    /// the model, so a `dock.colorize_*` change leaves the state hash alone and
+    /// `update_state` would be a no-op.
+    pub fn rerender(&self) {
+        if let Some(layer) = self.view.get_layer() {
+            self.view.render(&layer);
+        }
+    }
+
     pub fn reset(&self) {
         let mut state = self.view.get_state();
         state.current_app = 0;

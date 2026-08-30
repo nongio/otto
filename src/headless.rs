@@ -14,7 +14,10 @@ use smithay::{
     input::pointer::CursorImageStatus,
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
-        calloop::EventLoop,
+        calloop::{
+            ping::{make_ping, Ping},
+            EventLoop,
+        },
         wayland_server::{protocol::wl_surface, Display},
     },
     wayland::dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
@@ -104,6 +107,10 @@ pub struct HeadlessHandle {
     compositor_thread: Option<JoinHandle<()>>,
     running: Arc<std::sync::atomic::AtomicBool>,
     query_tx: Sender<Query>,
+    /// Wakes the dispatch loop as soon as a query is queued. Without it a
+    /// query waits out the loop's 16ms dispatch block, which makes `settle`
+    /// — one query per simulated frame — run at wall-clock speed.
+    query_ping: Ping,
     result_rx: Receiver<()>,
 }
 
@@ -129,8 +136,17 @@ impl HeadlessHandle {
         let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let running_clone = running.clone();
 
+        let (query_ping, query_ping_source) = make_ping().expect("ping");
+
         let compositor_thread = thread::spawn(move || {
-            run_headless_loop(config, ready_tx, query_rx, result_tx, running_clone);
+            run_headless_loop(
+                config,
+                ready_tx,
+                query_rx,
+                query_ping_source,
+                result_tx,
+                running_clone,
+            );
         });
 
         let socket_name = match ready_rx.recv_timeout(STARTUP_TIMEOUT) {
@@ -148,6 +164,7 @@ impl HeadlessHandle {
             compositor_thread: Some(compositor_thread),
             running,
             query_tx,
+            query_ping,
             result_rx,
         }
     }
@@ -159,9 +176,12 @@ impl HeadlessHandle {
         F: FnOnce(&mut Otto<HeadlessData>) + Send + 'static,
     {
         self.query_tx.send(Box::new(f)).ok();
-        // Wait for the compositor loop to execute it. Bounded: the loop
-        // dispatches every 16ms, so a wait this long means it has stopped
-        // turning and the test should fail loudly rather than hang.
+        // Cut the dispatch block short so the query runs now rather than up
+        // to 16ms from now.
+        self.query_ping.ping();
+        // Wait for the compositor loop to execute it. Bounded: a wait this
+        // long means the loop has stopped turning and the test should fail
+        // loudly rather than hang.
         if let Err(mpsc::RecvTimeoutError::Timeout) = self.result_rx.recv_timeout(QUERY_TIMEOUT) {
             panic!("Headless compositor did not run the query within {QUERY_TIMEOUT:?}");
         }
@@ -310,6 +330,16 @@ impl HeadlessHandle {
     pub fn set_workspace(&self, index: usize) {
         self.with_state(move |state| {
             state.workspaces.set_current_workspace_index(index, None);
+        });
+    }
+
+    /// Point the desktop background at `path`, the way the settings app does:
+    /// write the config, then apply it.
+    pub fn set_background(&self, path: &str) {
+        let path = path.to_string();
+        crate::config::Config::update(|c| c.background_image = path);
+        self.with_state(|state| {
+            let _ = state.workspaces.reload_background();
         });
     }
 
@@ -1161,6 +1191,20 @@ impl Drop for HeadlessHandle {
     fn drop(&mut self) {
         self.running.store(false, Ordering::SeqCst);
         if let Some(thread) = self.compositor_thread.take() {
+            // Bounded, exactly as `stop` is. This runs while a panic unwinds —
+            // a failed assertion, a roundtrip that timed out — so a `join`
+            // with no deadline turns a test failure into a test binary that
+            // hangs until CI's own timeout kills it, and the panic that would
+            // have named the problem is never printed.
+            let deadline = std::time::Instant::now() + SHUTDOWN_TIMEOUT;
+            while !thread.is_finished() {
+                if std::time::Instant::now() >= deadline {
+                    // Already unwinding, most likely: leak the thread rather
+                    // than panic again and abort the process.
+                    return;
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
             let _ = thread.join();
         }
     }
@@ -1170,6 +1214,7 @@ fn run_headless_loop(
     config: HeadlessConfig,
     ready_tx: Sender<String>,
     query_rx: Receiver<Query>,
+    query_ping_source: smithay::reexports::calloop::ping::PingSource,
     result_tx: Sender<()>,
     running: Arc<std::sync::atomic::AtomicBool>,
 ) {
@@ -1179,6 +1224,12 @@ fn run_headless_loop(
     let _guard = rt.enter();
 
     let mut event_loop = EventLoop::try_new().unwrap();
+    // Nothing to do on the wake itself: the queries are drained at the top of
+    // the loop. The point is only that `dispatch` returns immediately.
+    event_loop
+        .handle()
+        .insert_source(query_ping_source, |_, _, _| {})
+        .expect("the query wake-up source");
     let display = Display::new().unwrap();
     let mut display_handle = display.handle();
 

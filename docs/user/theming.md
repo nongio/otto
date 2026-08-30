@@ -54,6 +54,9 @@ background_color = "#2c2ca0"
 ```
 
 `background_image` is an absolute path to the image shown on the desktop.
+It is scaled to cover the screen, and decoded at the resolution of the largest
+monitor, so a wallpaper at least as large as your display stays sharp; a much
+larger one is resampled down once at load rather than kept at full size.
 
 `background_color` is the fallback: when the image is missing or fails to load,
 Otto draws a gradient using this as the bottom colour. It is worth setting to

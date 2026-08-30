@@ -122,7 +122,7 @@ pub fn draw_text_content(
 ) -> Option<ContentDrawFunction> {
     let text = text.into();
     let foreground_paint =
-        layers::skia::Paint::new(layers::skia::Color4f::new(0.0, 0.0, 0.0, 0.5), None);
+        layers::skia::Paint::new(crate::theme::theme_colors().text_primary.c4f(), None);
     let mut text_style = text_style.clone();
     text_style.set_foreground_paint(&foreground_paint);
     let ff = Config::with(|c| c.font_family.clone());

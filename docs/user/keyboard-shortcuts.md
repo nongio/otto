@@ -256,6 +256,16 @@ is focused. Remote-desktop clients, virtual machines and terminal multiplexers
 use this so that, for example, `Ctrl+Tab` reaches the guest instead of Otto.
 The always-on keys above are never inhibited.
 
+## Inside Otto's own applications
+
+Settings, Files and the launcher can be driven entirely from the keyboard —
+`Tab` between controls, `Space` or `Enter` to operate one, arrows for sliders
+and lists, `Esc` to close a pop-up. None of it is configurable here: these keys
+belong to the application, not to the compositor, and they are the same in
+every Otto application. The table is in
+[Accessibility](accessibility.md#using-ottos-applications-from-the-keyboard),
+which is also where to look if you use a screen reader.
+
 ## See also
 
 - [Touchpad Gestures](gestures.md) — the pointer-driven equivalents

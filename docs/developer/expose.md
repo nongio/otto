@@ -288,9 +288,10 @@ instead.
   click-to-raise, alt-tab and the switcher's ordering. Run them with
   `cargo test --features headless --test workspace_selector` (and
   `--test app_switcher`).
-- **Debug lever:** `echo ActionName > /tmp/otto-action` (polled once per frame
-  in the udev backend, `src/udev/init.rs`) runs a builtin shortcut action as if
-  its key had been pressed — useful for driving `ExposeShowAll`,
+- **Debug lever:** `echo ActionName > $OTTO_ACTION_FILE` (default
+  `/tmp/otto-action`, polled once per frame by both backends — see
+  [the debug action hook](debug-action-hook.md)) runs a builtin shortcut
+  action as if its key had been pressed — useful for driving `ExposeShowAll`,
   `ExposeShowDesktop` or workspace switches from a harness, since
   virtual-keyboard input bypasses the libinput shortcut layer entirely. It
   requests a redraw afterwards so the scheduled `lay-rs` transaction actually

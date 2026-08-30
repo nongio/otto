@@ -8,6 +8,7 @@ use crate::typography::{styles, TextStyle};
 use super::{
     SharingIndicator, Titlebar, TitlebarGroup, TitlebarMaterial, WindowControl, WindowControls,
 };
+use crate::controls_side::ControlsSide;
 
 /// Everything needed to draw one window's decoration, and nothing about who is
 /// drawing it.
@@ -66,6 +67,9 @@ pub struct WindowDecoration {
     pub tint_on_layer: bool,
     /// Type style of the title
     pub title_style: TextStyle,
+    /// Which end of the bar the traffic lights sit at. Defaults to what the
+    /// desktop is configured for, so a client that says nothing follows it.
+    pub controls_side: ControlsSide,
 }
 
 impl Default for WindowDecoration {
@@ -74,7 +78,7 @@ impl Default for WindowDecoration {
             title: String::new(),
             width: 0.0,
             titlebar_height: Self::DEFAULT_HEIGHT,
-            corner_radius: 12.0,
+            corner_radius: crate::corners::radius(12.0),
             active: true,
             dark: false,
             show_controls: true,
@@ -86,6 +90,7 @@ impl Default for WindowDecoration {
             blurred: true,
             tint_on_layer: false,
             title_style: Self::DEFAULT_TITLE_STYLE,
+            controls_side: crate::controls_side::side(),
         }
     }
 }
@@ -94,7 +99,7 @@ impl WindowDecoration {
     /// Height of the titlebar strip, in logical points
     pub const DEFAULT_HEIGHT: f32 = 34.0;
     /// Diameter of one traffic-light dot
-    pub const CONTROL_SIZE: f32 = 12.0;
+    pub const CONTROL_SIZE: f32 = 13.0;
     /// Gap between dots
     pub const CONTROL_SPACING: f32 = 8.0;
     /// Title type: 13pt semibold, one step up from the secondary-label size
@@ -124,8 +129,10 @@ impl WindowDecoration {
         self
     }
 
+    /// Round the window frame's corners to `radius` — or leave them square,
+    /// on a desktop configured without rounded corners.
     pub fn with_corner_radius(mut self, radius: f32) -> Self {
-        self.corner_radius = radius;
+        self.corner_radius = crate::corners::radius(radius);
         self
     }
 
@@ -146,6 +153,12 @@ impl WindowDecoration {
 
     pub fn with_tint_on_layer(mut self, on_layer: bool) -> Self {
         self.tint_on_layer = on_layer;
+        self
+    }
+
+    /// Put the traffic lights at one end of the bar or the other.
+    pub fn with_controls_side(mut self, side: ControlsSide) -> Self {
+        self.controls_side = side;
         self
     }
 
@@ -171,6 +184,16 @@ impl WindowDecoration {
             .with_pressed(self.pressed)
             .with_disabled(self.disabled.clone())
             .with_dark(self.dark)
+            .with_reversed(self.controls_side == ControlsSide::Right)
+    }
+
+    /// Where the control group's left edge sits, in window-local coordinates.
+    fn controls_x(&self) -> f32 {
+        let padding = self.padding();
+        match self.controls_side {
+            ControlsSide::Left => padding,
+            ControlsSide::Right => self.width - self.controls().width() - padding,
+        }
     }
 
     /// The screencast badge, sized off the bar so it stays proportionate on a
@@ -192,8 +215,9 @@ impl WindowDecoration {
         if !self.show_controls {
             return None;
         }
-        let padding = self.padding();
-        self.controls().at(padding, padding).control_at(x, y)
+        self.controls()
+            .at(self.controls_x(), self.padding())
+            .control_at(x, y)
     }
 
     /// Whether a window-local point is in the draggable part of the titlebar
@@ -281,14 +305,26 @@ impl WindowDecoration {
                     .with_color(self.title_color()),
             );
 
-        if self.show_controls {
-            titlebar = titlebar.with_leading(TitlebarGroup::new().add(self.controls()));
+        // `Titlebar` places its leading group at the left edge and its trailing
+        // one at the right, so which group the lights go in *is* the side they
+        // land on. The sharing badge always takes the other end: it never
+        // collides with them, and the group reserves its width, which keeps a
+        // long title clear of both.
+        let lights = self
+            .show_controls
+            .then(|| TitlebarGroup::new().add(self.controls()));
+        let badge = self
+            .sharing
+            .then(|| TitlebarGroup::new().add(self.sharing_indicator()));
+        let (leading, trailing) = match self.controls_side {
+            ControlsSide::Left => (lights, badge),
+            ControlsSide::Right => (badge, lights),
+        };
+        if let Some(leading) = leading {
+            titlebar = titlebar.with_leading(leading);
         }
-
-        if self.sharing {
-            // Trailing, so it never collides with the traffic lights — and the
-            // group reserves its width, which keeps a long title clear of it.
-            titlebar = titlebar.with_controls(TitlebarGroup::new().add(self.sharing_indicator()));
+        if let Some(trailing) = trailing {
+            titlebar = titlebar.with_controls(trailing);
         }
 
         titlebar.render(canvas);

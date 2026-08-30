@@ -1,9 +1,5 @@
 use super::{BackgroundView, WindowSelectorView};
-use crate::{
-    config::Config,
-    shell::WindowElement,
-    utils::{image_from_path, parse_hex_color},
-};
+use crate::{config::Config, shell::WindowElement, utils::parse_hex_color};
 use core::fmt;
 
 use layers::{
@@ -189,9 +185,6 @@ impl WorkspaceView {
         let background_view =
             BackgroundView::new(index, background_layer.clone(), background_color);
         let background_path = Config::with(|c| c.background_image.clone());
-        if let Some(background_image) = image_from_path(&background_path, (2048, 2048)) {
-            background_view.set_image(background_image);
-        }
         let background_view = Arc::new(background_view);
 
         let window_selector_view = WindowSelectorView::new(
@@ -205,9 +198,9 @@ impl WorkspaceView {
 
         let window_selector_view = Arc::new(window_selector_view);
 
-        if let Some(background_image) = image_from_path(&background_path, (2048, 2048)) {
+        if let Some(background_image) = super::background::decode_wallpaper(&background_path) {
             background_view.set_image(background_image);
-        } else {
+        } else if !background_path.is_empty() {
             tracing::warn!(
                 "Failed to load background image from path: {}",
                 background_path

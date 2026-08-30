@@ -136,6 +136,13 @@ impl ToplevelSurface {
         // Create surface style immediately if surface_style_manager is available
         let surface_style =
             surface_style_manager.map(|manager| manager.get_surface_style(&wl_surface, qh, ()));
+        // A toplevel is a window, so the compositor will tell it where it is.
+        // Filing the style against its surface is what lets that answer reach
+        // the window it is about — see `AppContext::note_style_surface`.
+        if let Some(style) = surface_style.as_ref() {
+            use wayland_client::Proxy as _;
+            AppContext::note_style_surface(&style.id(), &wl_surface.id());
+        }
 
         // Commit to trigger initial configure
         wl_surface.commit();

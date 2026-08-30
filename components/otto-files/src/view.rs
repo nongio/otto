@@ -7,6 +7,7 @@
 use otto_kit::components::icon::Icon;
 use otto_kit::components::scroll::{ScrollRenderer, ScrollState};
 use otto_kit::components::titlebar::{WindowControl, WindowControls, WindowControlsState};
+use otto_kit::controls_side::ControlsSide;
 use otto_kit::icons;
 use otto_kit::prelude::*;
 use skia_safe::{ClipOp, Contains, Paint, PathBuilder, Point, RRect};
@@ -20,6 +21,11 @@ pub const WINDOW_H: f32 = 700.0;
 pub const MIN_W: f32 = 640.0;
 pub const MIN_H: f32 = 400.0;
 pub const CORNER: f32 = 12.0;
+
+/// [`CORNER`], or square on a desktop configured without rounded corners.
+pub fn corner() -> f32 {
+    otto_kit::corners::radius(CORNER)
+}
 
 /// Full-height sidebar, like Finder's — the header sits beside it, not above.
 pub const SIDEBAR_W: f32 = 232.0;
@@ -356,8 +362,50 @@ pub enum NavButton {
 }
 
 /// The three view-switcher segments, in the header's top right.
+///
+/// On a desktop that puts its window controls at the trailing edge the dots
+/// land on the same band, so the switcher steps left far enough to clear them
+/// — the header has the room, and the alternative is a switcher underneath
+/// three dots.
 pub fn switcher_rect(width: f32) -> Rect {
-    Rect::from_xywh(width - CONTENT_PAD - 114.0, 24.0, 114.0, 26.0)
+    Rect::from_xywh(
+        width - CONTENT_PAD - controls_clearance() - 114.0,
+        SWITCHER_CY - SWITCHER_H / 2.0,
+        114.0,
+        SWITCHER_H,
+    )
+}
+
+/// The switcher's height and optical centre in the header. The traffic lights
+/// line up on the same centre when they share the trailing edge with it.
+const SWITCHER_H: f32 = 26.0;
+const SWITCHER_CY: f32 = 37.0;
+
+/// How much of the header's trailing edge the traffic lights claim — nothing
+/// at all when they are over at the leading edge.
+fn controls_clearance() -> f32 {
+    match otto_kit::controls_side::side() {
+        ControlsSide::Left => 0.0,
+        ControlsSide::Right => WindowControls::new().width() + CONTENT_PAD,
+    }
+}
+
+/// The traffic lights, placed and ordered for the end of the header the
+/// desktop puts them at. `width` is the window's, not the sidebar's: at the
+/// trailing edge the group sits over the file area.
+pub fn window_controls(width: f32) -> WindowControls {
+    let controls = WindowControls::new();
+    let group_w = controls.width();
+    let group_h = controls.size;
+    match otto_kit::controls_side::side() {
+        ControlsSide::Left => controls.at(CONTROLS_INSET, CONTROLS_INSET),
+        // Sharing the trailing edge with the view switcher, the dots sit on
+        // its centre line rather than at the window's own corner inset —
+        // two things side by side that don't line up read as a mistake.
+        ControlsSide::Right => controls
+            .at(width - CONTENT_PAD - group_w, SWITCHER_CY - group_h / 2.0)
+            .with_reversed(true),
+    }
 }
 
 pub const SWITCHER_MODES: [ViewMode; 3] = [ViewMode::List, ViewMode::Grid, ViewMode::Columns];
@@ -1361,10 +1409,13 @@ fn accent_light(theme: &Theme) -> Color {
     Color::from_argb(base.a(), lift(base.r()), lift(base.g()), lift(base.b()))
 }
 
-/// The user's accent colour, or the theme's own selection tone when the
-/// desktop has not set one.
+/// The user's accent colour.
+///
+/// Read from the theme rather than from `otto_kit::accent` directly: the theme
+/// is where a background window's muted accent lives, and a call that went
+/// around it would paint one window's chrome in the front window's colour.
 fn accent(theme: &Theme) -> Color {
-    otto_kit::accent::current_accent().unwrap_or(theme.material_selection_focused)
+    theme.accent
 }
 
 fn draw_footer_button(
@@ -1548,28 +1599,14 @@ pub fn is_drag_area(x: f32, y: f32, width: f32) -> bool {
     if nav_group_rect().contains(Point::new(x, y)) {
         return false;
     }
-    !Rect::from_xywh(CONTROLS_INSET - 4.0, CONTROLS_INSET - 4.0, 70.0, 20.0)
+    !window_controls(width)
+        .bounds()
+        .with_outset((4.0, 4.0))
         .contains(Point::new(x, y))
 }
 
-pub fn control_at(x: f32, y: f32) -> Option<WindowControl> {
-    const STEP: f32 = 20.0;
-    const R: f32 = 6.0;
-    for (i, control) in [
-        WindowControl::Close,
-        WindowControl::Minimize,
-        WindowControl::Zoom,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let cx = CONTROLS_INSET + R + i as f32 * STEP;
-        let cy = CONTROLS_INSET + R;
-        if (x - cx).powi(2) + (y - cy).powi(2) <= (R + 3.0).powi(2) {
-            return Some(control);
-        }
-    }
-    None
+pub fn control_at(x: f32, y: f32, width: f32) -> Option<WindowControl> {
+    window_controls(width).control_at(x, y)
 }
 
 // ---------------------------------------------------------------------------
@@ -1805,6 +1842,23 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
     draw_sidebar(canvas, f);
     draw_header(canvas, f);
 
+    // The traffic lights ride over both, because with the controls at the
+    // trailing edge they sit above the header rather than above the sidebar.
+    //
+    // The picker has no traffic lights. It is a dialog, not a document
+    // window: it is dismissed with Cancel, and a close control beside it
+    // would be a second, worse way to say the same thing — one that skips
+    // the request's answer.
+    if f.action_row.is_none() {
+        f.controls
+            .apply(
+                window_controls(f.width)
+                    .with_active(f.focused)
+                    .with_dark(is_dark()),
+            )
+            .render(canvas);
+    }
+
     match f.mode {
         ViewMode::List => {
             draw_column_strip(canvas, f);
@@ -1999,76 +2053,171 @@ pub fn preview_content(
         // way the name and the facts sit on the same line whatever the file
         // is, instead of riding up and down with the size of the thing above
         // them, and the preview gets every point that is not spoken for.
-        let caption = preview_caption_rect(panel, info.len());
         draw_preview_caption(canvas, &theme, panel, &name, &info);
-
-        let stage = Rect::from_ltrb(
-            panel.left,
-            panel.top,
-            panel.right,
-            (caption.top - PREVIEW_GAP).max(panel.top),
+        let stage = preview_stage_rect(panel, info.len());
+        draw_preview_stage(
+            canvas,
+            &theme,
+            stage,
+            decoded.as_ref(),
+            &icon_chain,
+            first_row,
         );
-        // Nothing the previewer produced may leave the stage. The decoders
-        // bound what they return, and each drawing path lays itself out to
-        // fit, but the content is a *file's* — an archive with hundreds of
-        // long entry names, a text file with no line breaks — and the one
-        // place that must not depend on the file being reasonable is the one
-        // where overflow would draw over the caption below it.
-        canvas.save();
-        canvas.clip_rect(stage, None, false);
-        match &decoded {
-            // A decoder that gave up (an unreadable archive, a format with no
-            // previewer) is not a blank panel, and neither is one still
-            // running: the file's own icon is still true, and drawn large it
-            // is a preview of a kind rather than a placeholder apologising
-            // for itself.
-            Some(otto_kit::preview::Preview::Unavailable { .. }) | None => {
-                draw_preview_icon(canvas, stage, &icon_chain);
-            }
-            // A card is a description — a title, a subtitle and a table of
-            // facts — and this column already carries every one of those in
-            // the caption below. Drawn here it says the same things twice, in
-            // the space meant for the thing itself. What the card was carrying
-            // that the caption is not is its artwork: cover art, an embedded
-            // thumbnail, an mp4's poster frame. That is shown as the picture
-            // it is, and a card with none falls back to the file's own icon.
-            Some(otto_kit::preview::Preview::Card { hero, .. }) => match hero {
-                Some(pixels) => otto_kit::preview::draw(
-                    canvas,
-                    stage,
-                    &otto_kit::preview::Preview::Pixels {
-                        pixels: pixels.clone(),
-                        pages: 1,
-                        page: 1,
-                    },
-                    &theme,
-                    first_row,
-                    otto_kit::preview::Zoom::FIT,
-                    &|name, size| {
-                        icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE)
-                    },
-                ),
-                None => draw_preview_icon(canvas, stage, &icon_chain),
-            },
-            Some(preview) => {
+    }
+}
+
+/// The drag image for a file picked up by its preview: the picture the
+/// column is already showing, and nothing else.
+///
+/// A drag out of the listing carries rows because rows are what the eye was
+/// looking at. Out of the preview column, what the eye was looking at is the
+/// picture — so that is what lifts off, at the size it is on screen, and the
+/// file travels under it looking like itself rather than like a row it is
+/// nowhere near.
+pub fn preview_drag_picture(
+    data: &PreviewData<'_>,
+    theme: Theme,
+) -> impl Fn(&Canvas, f32, f32) + Send + Sync + 'static {
+    let icon_chain = data.icon_chain.clone();
+    let decoded = data.decoded.cloned();
+    let first_row = data.first_row;
+
+    move |canvas: &Canvas, width: f32, height: f32| {
+        canvas.clear(Color::TRANSPARENT);
+        let stage = Rect::from_wh(width, height);
+        draw_preview_stage(
+            canvas,
+            &theme,
+            stage,
+            decoded.as_ref(),
+            &icon_chain,
+            first_row,
+        );
+    }
+}
+
+/// The part of the preview column the previewed thing itself occupies: the
+/// panel less the caption band at its foot.
+///
+/// Public because it is a *target* as well as a layout: pressing on the
+/// picture picks the file up (see [`crate::app`]), so the hit test and the
+/// drawing have to agree on where the picture is.
+pub fn preview_stage_rect(panel: Rect, info_lines: usize) -> Rect {
+    let caption = preview_caption_rect(panel, info_lines);
+    Rect::from_ltrb(
+        panel.left,
+        panel.top,
+        panel.right,
+        (caption.top - PREVIEW_GAP).max(panel.top),
+    )
+}
+
+/// The previewed thing, drawn into `stage` — a decode when one has landed,
+/// and the file's own icon drawn large when one has not.
+fn draw_preview_stage(
+    canvas: &Canvas,
+    theme: &Theme,
+    stage: Rect,
+    decoded: Option<&otto_kit::preview::Preview>,
+    icon_chain: &[String],
+    first_row: usize,
+) {
+    // Nothing the previewer produced may leave the stage. The decoders
+    // bound what they return, and each drawing path lays itself out to
+    // fit, but the content is a *file's* — an archive with hundreds of
+    // long entry names, a text file with no line breaks — and the one
+    // place that must not depend on the file being reasonable is the one
+    // where overflow would draw over the caption below it.
+    canvas.save();
+    canvas.clip_rect(stage, None, false);
+    match decoded {
+        // A decoder that gave up (an unreadable archive, a format with no
+        // previewer) is not a blank panel, and neither is one still
+        // running: the file's own icon is still true, and drawn large it
+        // is a preview of a kind rather than a placeholder apologising
+        // for itself.
+        Some(otto_kit::preview::Preview::Unavailable { .. }) | None => {
+            draw_preview_icon(canvas, stage, icon_chain);
+        }
+        // A card is a description — a title, a subtitle and a table of
+        // facts — and this column already carries every one of those in
+        // the caption below. Drawn here it says the same things twice, in
+        // the space meant for the thing itself. What the card was carrying
+        // that the caption is not is its artwork: cover art, an embedded
+        // thumbnail, an mp4's poster frame. That is shown as the picture
+        // it is, and a card with none falls back to the file's own icon.
+        Some(otto_kit::preview::Preview::Card { hero, .. }) => match hero {
+            Some(pixels) => {
+                let hero = otto_kit::preview::Preview::Pixels {
+                    pixels: pixels.clone(),
+                    pages: 1,
+                    page: 1,
+                };
                 otto_kit::preview::draw(
                     canvas,
                     stage,
-                    preview,
-                    &theme,
+                    &hero,
+                    theme,
                     first_row,
-                    // The docked column is a glance, not a viewer: zooming
-                    // belongs to Quick View, which is the panel the user
-                    // opened deliberately.
                     otto_kit::preview::Zoom::FIT,
                     &|name, size| {
                         icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE)
                     },
                 );
+                stroke_image_frame(canvas, theme, stage, &hero, first_row);
             }
+            None => draw_preview_icon(canvas, stage, icon_chain),
+        },
+        Some(preview) => {
+            otto_kit::preview::draw(
+                canvas,
+                stage,
+                preview,
+                theme,
+                first_row,
+                // The docked column is a glance, not a viewer: zooming
+                // belongs to Quick View, which is the panel the user
+                // opened deliberately.
+                otto_kit::preview::Zoom::FIT,
+                &|name, size| icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE),
+            );
+            stroke_image_frame(canvas, theme, stage, preview, first_row);
         }
-        canvas.restore();
     }
+    canvas.restore();
+}
+
+/// A hairline around the picture's own edges — the fitted rect, not the
+/// stage. An image rarely has the column's aspect ratio, so it is drawn
+/// centred in a band of empty column, and a photograph with pale corners or
+/// a screenshot on a white ground simply dissolves into that emptiness with
+/// nothing to say where the file ends. The frame is the file's outline, so
+/// it is drawn only for pictures: text and listings fill the stage they are
+/// given and have no edges of their own to trace.
+fn stroke_image_frame(
+    canvas: &Canvas,
+    theme: &Theme,
+    stage: Rect,
+    preview: &otto_kit::preview::Preview,
+    first_row: usize,
+) {
+    if !matches!(preview, otto_kit::preview::Preview::Pixels { .. }) {
+        return;
+    }
+    let content =
+        otto_kit::preview::layout(stage, preview, first_row, otto_kit::preview::Zoom::FIT).content;
+    if content.width() < 1.0 || content.height() < 1.0 {
+        return;
+    }
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_stroke_width(1.0);
+    paint.set_color(theme.fill_primary);
+    // Inset by half the stroke so the line lands *on* the picture's edge
+    // rather than straddling it, which at a fractional scale reads as two
+    // half-lit pixels instead of one crisp one.
+    canvas.draw_rect(content.with_inset((0.5, 0.5)), &paint);
 }
 
 /// Room between the preview and the name below it.
@@ -2147,21 +2296,6 @@ fn draw_preview_icon(canvas: &Canvas, stage: Rect, icon_chain: &[String]) {
 
 fn draw_sidebar(canvas: &Canvas, f: &Frame) {
     let theme = f.theme;
-
-    // The picker has no traffic lights. It is a dialog, not a document
-    // window: it is dismissed with Cancel, and a close control beside it
-    // would be a second, worse way to say the same thing — one that skips
-    // the request's answer.
-    if f.action_row.is_none() {
-        f.controls
-            .apply(
-                WindowControls::new()
-                    .at(CONTROLS_INSET, CONTROLS_INSET)
-                    .with_active(f.focused)
-                    .with_dark(is_dark()),
-            )
-            .render(canvas);
-    }
 
     Label::new(otto_kit::t!("files-places"))
         .with_style(styles::SUBHEADLINE_EMPHASIZED)

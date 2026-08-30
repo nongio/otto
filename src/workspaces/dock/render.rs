@@ -5,11 +5,59 @@ use taffy::LengthPercentageAuto;
 use crate::{
     config::{Config, DockPosition},
     theme::theme_colors,
+    utils::parse_hex_color,
     workspaces::{
         utils::{draw_balloon_rect, BalloonArrow, FONT_CACHE},
         Application,
     },
 };
+
+/// The colour filter that tints app icons, or `None` when `dock.colorize_icons`
+/// is off.
+///
+/// Every icon on screen is a mirror of the one source layer owned by
+/// `AppIconsManager`, so the tint can't live on the source: it is applied to
+/// each mirror instead, and both the dock and the app switcher take it from
+/// here so a themed desktop is tinted consistently.
+///
+/// The matrix maps the icon to its luminance re-tinted in `colorize_color`,
+/// then blends that back toward the original by `colorize_intensity`.
+pub fn icon_color_filter() -> Option<layers::skia::ColorFilter> {
+    use layers::skia;
+
+    let dock_config = Config::with(|c| c.dock.clone());
+    if !dock_config.colorize_icons {
+        return None;
+    }
+    let color = parse_hex_color(&dock_config.colorize_color);
+    let intensity = dock_config.colorize_intensity.clamp(0.0, 1.0) as f32;
+    let (r, g, b) = (color.r, color.g, color.b);
+    let (lr, lg, lb) = (0.2126_f32, 0.7152_f32, 0.0722_f32);
+    let inv = 1.0 - intensity;
+    let matrix = skia::ColorMatrix::new(
+        inv + intensity * lr * r,
+        intensity * lg * r,
+        intensity * lb * r,
+        0.0,
+        0.0,
+        intensity * lr * g,
+        inv + intensity * lg * g,
+        intensity * lb * g,
+        0.0,
+        0.0,
+        intensity * lr * b,
+        intensity * lg * b,
+        inv + intensity * lb * b,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+    );
+    Some(skia::color_filters::matrix(&matrix, None))
+}
 
 /// The badge circle's diameter for an icon `icon_width` wide.
 pub fn badge_size(icon_width: f32) -> f32 {
@@ -373,26 +421,14 @@ pub fn setup_label(new_layer: &Layer, label_text: String, position: DockPosition
 
         let text = text.clone();
 
-        // Paint for the tooltip background
-        let mut paint = layers::skia::Paint::default();
-
-        // choose colors according to theme scheme so tooltip looks correct in dark mode
-        let (bg_col, text_col) = Config::with(|c| match c.theme_scheme {
-            crate::theme::ThemeScheme::Light => (
-                layers::skia::Color4f::new(157.0 / 255.0, 157.0 / 255.0, 157.0 / 255.0, 1.0),
-                theme_colors().text_primary.c4f(),
-            ),
-            crate::theme::ThemeScheme::Dark => (
-                layers::skia::Color4f::new(157.0 / 255.0, 157.0 / 255.0, 157.0 / 255.0, 1.0),
-                theme_colors().text_primary.c4f(),
-            ),
-        });
-        paint.set_color4f(bg_col, None);
-        paint.set_anti_alias(true);
-
-        // // Paint for the text
+        // The balloon body is the layer's own background (see
+        // `background_color` below); all this draw has to add is the label.
+        // Both used to be picked here from a `theme_scheme` match whose two
+        // arms held the same hardcoded #9d9d9d — the *light* tooltip material,
+        // copied verbatim into the dark arm. It never reached the screen
+        // either, the layer background painted over it.
         let mut text_paint = layers::skia::Paint::default();
-        text_paint.set_color4f(text_col, None);
+        text_paint.set_color4f(theme_colors().text_primary.c4f(), None);
         text_paint.set_anti_alias(true);
 
         // // Draw the text inside the tooltip
@@ -443,7 +479,9 @@ pub fn setup_label(new_layer: &Layer, label_text: String, position: DockPosition
             width: taffy::Dimension::Length(label_size_width),
             height: taffy::Dimension::Length(label_size_height),
         })
-        .background_color(theme_colors().materials_ultrathick)
+        // The palette's tooltip material, so the balloon follows the scheme
+        // like the rest of the chrome instead of sitting on one fixed grey.
+        .background_color(theme_colors().materials_controls_tooltip)
         .position(match arrow {
             BalloonArrow::Bottom => Point {
                 x: -label_size_width / 2.0,
@@ -550,6 +588,25 @@ mod tests {
     use serial_test::serial;
 
     const SLOT: f32 = 100.0;
+
+    /// The tint is opt-in: with `colorize_icons` off every icon mirror — the
+    /// dock's and the app switcher's — must be handed no filter at all, not an
+    /// identity matrix that would still cost a layer pass.
+    #[test]
+    #[serial]
+    fn icon_tint_is_absent_unless_colorize_is_enabled() {
+        let _ = Config::update(|c| c.dock.colorize_icons = false);
+        assert!(icon_color_filter().is_none());
+
+        let _ = Config::update(|c| {
+            c.dock.colorize_icons = true;
+            c.dock.colorize_color = "#ff8800".to_string();
+            c.dock.colorize_intensity = 1.0;
+        });
+        assert!(icon_color_filter().is_some());
+
+        let _ = Config::update(|c| c.dock.colorize_icons = false);
+    }
 
     /// A slot layer with a label sublayer, laid out once so the render bounds
     /// are meaningful. Returns (engine, slot, label).

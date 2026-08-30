@@ -93,7 +93,21 @@ pub(crate) fn set_available(mime_types: Vec<String>) {
 // ---------------------------------------------------------------------------
 
 /// MIME types the current selection offers.
+///
+/// What *this* application offers wins. The compositor's `selection` event
+/// arrives after the claim, so between the two the recorded list still
+/// describes the previous owner — and a paste in that window would read the
+/// wrong data, or nothing at all.
 pub fn available_mime_types() -> Vec<String> {
+    let ours: Vec<String> = offered()
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(mime, _)| mime.clone())
+        .collect();
+    if !ours.is_empty() {
+        return ours;
+    }
     available().lock().unwrap().clone()
 }
 
@@ -122,6 +136,14 @@ const READ_LIMIT: usize = 8 * 1024 * 1024;
 /// Returns `None` when nothing is offered, the type is not available, or the
 /// owning client did not answer within [`READ_TIMEOUT`].
 pub fn read(mime: &str) -> Option<Vec<u8>> {
+    // Pasting what this application itself copied is answered from here, not
+    // through the compositor. The round trip would deadlock: the request to
+    // write the payload arrives as an event, and this call is blocking the
+    // thread that dispatches events — so the pipe would stay empty until the
+    // read gave up at [`READ_TIMEOUT`].
+    if let Some(bytes) = offered_bytes(mime) {
+        return Some(bytes);
+    }
     let pipe = crate::app_runner::context::AppContext::receive_selection(mime)?;
     read_bounded(pipe)
 }
@@ -167,6 +189,41 @@ pub(crate) fn read_bounded(mut pipe: std::fs::File) -> Option<Vec<u8>> {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Plain text
+// ---------------------------------------------------------------------------
+
+/// The text types a paste will accept, best first. `text/plain` without a
+/// charset and the X11 atom names are there because plenty of applications
+/// still offer only those.
+pub fn text_mime_preference() -> &'static [&'static str] {
+    &[TEXT_PLAIN, "text/plain", "UTF8_STRING", "STRING", "TEXT"]
+}
+
+/// Put `text` on the clipboard as plain text. See [`set`] for `serial`.
+pub fn set_text(text: &str, serial: u32) -> bool {
+    set(
+        vec![(TEXT_PLAIN.to_string(), text.as_bytes().to_vec())],
+        serial,
+    )
+}
+
+/// The current selection as plain text, if it offers any.
+///
+/// Invalid UTF-8 is replaced rather than rejected: a paste that arrives
+/// slightly mangled is better than a paste that silently does nothing.
+pub fn text() -> Option<String> {
+    let Some(mime) = first_available(text_mime_preference()) else {
+        tracing::debug!(
+            offers = ?available_mime_types(),
+            "nothing to paste: the selection has no text type"
+        );
+        return None;
+    };
+    let bytes = read(&mime)?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 // ---------------------------------------------------------------------------
@@ -288,6 +345,17 @@ pub fn file_mime_preference() -> &'static [&'static str] {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    /// Pasting what this application copied must not go through the
+    /// compositor: the answer would arrive as an event on the thread the read
+    /// is blocking, so the round trip can only time out.
+    #[test]
+    fn a_paste_reads_back_what_this_application_copied() {
+        *offered().lock().unwrap() = vec![(TEXT_PLAIN.to_string(), b"hello".to_vec())];
+        assert_eq!(available_mime_types(), vec![TEXT_PLAIN.to_string()]);
+        assert_eq!(text().as_deref(), Some("hello"));
+        clear_offered();
+    }
 
     #[test]
     fn uris_round_trip_including_awkward_names() {

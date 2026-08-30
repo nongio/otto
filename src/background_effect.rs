@@ -24,6 +24,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
 use smithay::reexports::wayland_protocols::ext::background_effect::v1::server::{
     ext_background_effect_manager_v1::{self, ExtBackgroundEffectManagerV1},
     ext_background_effect_surface_v1::{self, ExtBackgroundEffectSurfaceV1},
@@ -129,6 +130,33 @@ impl BackgroundEffectCachedState {
 
         Some((bounds, radius))
     }
+}
+
+/// Trim a blur shape to the surface it belongs to.
+///
+/// "The whole surface" is spelled as an unbounded region — foot sends
+/// `wl_region.add(0, 0, i32::MAX, i32::MAX)` — so the region cannot be taken at
+/// its word. Nothing outside the surface may be frosted anyway: the bounds go
+/// to lay-rs as their own rounded rect rather than being clipped to the layer,
+/// so an oversized one frosts a rectangle of desktop beside the window.
+///
+/// A surface with no size yet has no buffer, so there is nothing to trim
+/// against and nothing on screen to get wrong; the next commit brings both.
+fn clamp_to_surface(
+    shape: Option<(Rectangle<i32, Logical>, i32)>,
+    surface_size: Option<smithay::utils::Size<i32, Logical>>,
+) -> Option<(Rectangle<i32, Logical>, i32)> {
+    let (bounds, radius) = shape?;
+    let Some(size) = surface_size else {
+        return Some((bounds, radius));
+    };
+    let clamped = bounds
+        .intersection(Rectangle::from_size(size))
+        .unwrap_or_default();
+    // The radius was clamped to the region's own half-extent; the trimmed
+    // shape may be smaller.
+    let radius = radius.clamp(0, clamped.size.w.min(clamped.size.h) / 2);
+    Some((clamped, radius))
 }
 
 /// Per-surface marker: the protocol allows one effect object per surface and
@@ -304,13 +332,21 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// the layer's blend mode too.
     pub(crate) fn apply_background_effect(&mut self, surface: &WlSurface) {
         let surface_id = surface.id();
-        let shape = with_states(surface, |states| {
-            states
+        let (shape, surface_size) = with_states(surface, |states| {
+            let shape = states
                 .cached_state
                 .get::<BackgroundEffectCachedState>()
                 .current()
-                .blur_shape()
+                .blur_shape();
+            // The surface's own logical extent, from the same place
+            // `window_view_for_surface` reads it.
+            let size = states
+                .data_map
+                .get::<RendererSurfaceStateUserData>()
+                .and_then(|data| data.lock().unwrap().view().map(|view| view.dst));
+            (shape, size)
         });
+        let shape = clamp_to_surface(shape, surface_size);
         let applied = self.background_effects.get(&surface_id).copied();
         // Compared as a shape, not as a flag: a client that moves or resizes
         // the region it wants frosted (a candidate panel growing a row) keeps
@@ -473,6 +509,39 @@ mod tests {
         let (bounds, r) = state.blur_shape().unwrap();
         assert_eq!(bounds, rect(0, 0, 100, 40));
         assert_eq!(r, 20);
+    }
+
+    /// The regression the frost beside a foot window came from: foot asks for
+    /// the whole surface with an unbounded region, and lay-rs blurs whatever
+    /// rect it is given whether or not the layer is that big.
+    #[test]
+    fn an_unbounded_region_is_trimmed_to_the_surface() {
+        let state = region(vec![(RectangleKind::Add, rect(0, 0, i32::MAX, i32::MAX))]);
+        let shape = clamp_to_surface(state.blur_shape(), Some((800, 500).into()));
+        assert_eq!(shape, Some((rect(0, 0, 800, 500), 0)));
+    }
+
+    /// A panel that asks for its body only keeps asking for its body.
+    #[test]
+    fn a_region_inside_the_surface_is_left_alone() {
+        let shape = clamp_to_surface(Some((rect(6, 6, 188, 28), 8)), Some((400, 100).into()));
+        assert_eq!(shape, Some((rect(6, 6, 188, 28), 8)));
+    }
+
+    /// Trimming can leave a shape too small for the radius the region asked
+    /// for, and a radius past half the shorter side is nonsense geometry.
+    #[test]
+    fn trimming_tightens_the_radius() {
+        let shape = clamp_to_surface(Some((rect(0, 0, 200, 200), 40)), Some((200, 50).into()));
+        assert_eq!(shape, Some((rect(0, 0, 200, 50), 25)));
+    }
+
+    /// Before the first buffer there is nothing to trim against, and nothing
+    /// on screen to get wrong either.
+    #[test]
+    fn a_surface_with_no_size_yet_is_not_trimmed() {
+        let shape = clamp_to_surface(Some((rect(0, 0, 10, 10), 2)), None);
+        assert_eq!(shape, Some((rect(0, 0, 10, 10), 2)));
     }
 
     #[test]

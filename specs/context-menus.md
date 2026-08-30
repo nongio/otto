@@ -38,7 +38,9 @@ Context menus are hierarchical popup menus that display items for user selection
 7. When a menu is open and has keyboard focus, arrow keys move selection: **UP** moves to the previous selectable item (wrapping to the last), **DOWN** moves to the next (wrapping to the first).
 8. **RIGHT arrow** (or **RETURN** when hovering): If the selected item is a submenu, open the submenu and move focus to its first item. The parent menu's selection is cleared so only one item is highlighted across the entire menu tree.
 9. **LEFT arrow**: If in a submenu, close the submenu and return focus to the parent menu. The parent item that had the open submenu is re-selected.
-10. **RETURN**: Activate the selected action item. If a submenu, same as RIGHT.
+10. **RETURN** or **SPACE**: Activate the selected action item. If a submenu, same as RIGHT.
+10a. **HOME** / **END**: Move the selection to the first / last selectable item at the current depth.
+10b. Whenever the keyboard moves the selection (arrows, Home, End), a menu whose list is capped and scrolling scrolls itself so the newly selected row is inside its box, clear of the scroll arrows at either end. A selection already in view leaves the scroll offset alone.
 11. **ESCAPE**: Close the menu (or all open submenus if in a submenu, returning to the root).
 12. Typing a character may activate a menu item with a matching keyboard shortcut (if implemented).
 
@@ -93,7 +95,7 @@ Context menus are hierarchical popup menus that display items for user selection
 - **Items change while menu is open:** The current implementation does not support dynamic item updates while the menu is visible. Close and re-open to refresh the menu.
 - **Submenu of submenu:** Submenus can themselves contain submenus, with unlimited nesting depth. Selection state correctly excludes all unrelated depths.
 - **Empty menu:** A menu with no selectable items is not useful and should not be shown; the parent (e.g., a tray icon) should not display a context menu trigger if there are no items.
-- **Very long menu:** If a menu exceeds the screen height, it may be positioned above the anchor point or cropped. This is handled by the xdg_positioner; the menu does not implement scrolling.
+- **Very long menu:** A menu given a `max_height` (as a dropdown's is) is capped at it and its list scrolls inside that box, under the wheel or with the keyboard selection; scroll arrows mark which ends have more. Without a cap, an over-tall menu is positioned above the anchor point or cropped by the xdg_positioner.
 - **HiDPI / fractional scaling:** Menu dimensions are in logical pixels; the compositor handles scaling to physical pixels.
 - **RTL locales:** Submenus appear to the left instead of right. The xdg_positioner and parent logic handles this.
 - **Pointer leaves menu tree during submenu open:** The submenu remains visible until explicitly closed or the root menu loses focus.
@@ -104,13 +106,12 @@ Context menus are hierarchical popup menus that display items for user selection
 - **Popup surfaces without grab (submenus):** Submenu popups do not request a keyboard grab because the root menu already holds the grab. Requesting a grab at any depth would cause xdg_popup.grab semantics to steal focus, which closes the menu. Instead, submenus forward all input to the root menu's event handler.
 - **Only one item selected tree-wide:** This matches standard desktop menu behavior (e.g., macOS, GNOME). It avoids visual confusion from multiple highlights and makes keyboard navigation intuitive (UP/DOWN move between the current depth's items, and moving between depths clears parent selections).
 - **Submenu delay on mouse hover:** A configurable delay (not instant open) prevents submenus from opening unintentionally when the user is just moving through the menu. This is standard UX from macOS and GNOME.
-- **No scrolling:** Most menus fit on screen. If a menu is too tall, the xdg_positioner flips or adjusts position. Full scroll support is deferred as a non-goal.
+- **Scrolling only when capped:** Most menus fit on screen and are left to the xdg_positioner. A list that cannot — every installed font, every cursor theme — sets a `max_height` and scrolls inside it, rather than making the compositor slide a full-height popup around.
 - **Client-side dismissal on same-client clicks:** `xdg_popup.grab` is an owner-events grab — the compositor keeps delivering input to the grabbing client and only dismisses the popup when input goes to another client. This is what lets a menu span several of its own surfaces. The cost is that "click elsewhere in my own window closes the menu" cannot come from the compositor and has to be implemented by the menu, which is why `ContextMenu` watches every pointer batch, not only the ones landing on its own popups, and acts on what it saw through `AppContext::register_pointer_batch_end_callback` once the batch is fully spoken for. This was invisible while every menu hung off a layer-shell surface (there is nothing else of that client to click); it surfaced the first time a menu was parented to an ordinary toplevel.
 - **Keyboard focus held by root popup:** This simplifies input handling and ensures the menu behaves as a cohesive unit, even with multiple popup surfaces.
 
 ## Open Questions
 
 - Should items support mnemonics (e.g., underlined character) for keyboard activation, or only full shortcut bindings?
-- Should very long menus support scrolling if they exceed screen height, or is positioning adjustment sufficient?
 - Should the menu support custom rendering hooks (e.g., app-specific item appearance) beyond the standard item types?
 - Should menu item activation (click) be immediate or debounced to avoid accidental multiple activations in rapid clicks?

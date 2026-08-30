@@ -43,7 +43,9 @@ picker window, and the path the user chooses comes back as a `file://` URI.
   written under the field — when the directory cannot be written to. The name
   field holds the keyboard focus, so printable keys name the file rather than
   driving type-ahead; Up, Down and the page keys still move the listing, and
-  clicking a file copies its name into the field.
+  clicking a file copies its name into the field. Ctrl+C, Ctrl+X and Ctrl+V
+  work on the name text — the picker does no file management, so the chords are
+  free for the field.
 
 ### What is not
 
@@ -536,6 +538,13 @@ numerically, so `file2` precedes `file10`. Comparison is done on Unicode
 scalars with ASCII case folding, without locale collation — a known limitation
 for languages where that is wrong, accepted rather than pulling in a collation
 crate.
+
+Each view has a default sort. List view leads with date modified, newest first
+— it is the view that shows the modified column, and the question it is usually
+opened to answer is "what changed last". Icon and column views sort by name,
+ascending. Switching views takes the new view's default until the user picks a
+sort of their own by clicking a column header; from then on their choice
+follows them between views.
 
 The picker does not persist sort order between requests. The browser does, per
 directory.

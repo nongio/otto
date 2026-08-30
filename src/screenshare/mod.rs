@@ -145,6 +145,14 @@ pub enum CompositorCommand {
     DestroySession { session_id: String },
     /// Focus an application by app_id (e.g. from notification click).
     FocusApp { app_id: String },
+    /// Raise and focus one window, and leave the overview if it is up.
+    ///
+    /// What an assistive technology asks for when it clicks a window in the
+    /// all-windows overview; the pointer reaches the same place by clicking the
+    /// window's thumbnail. See [`crate::a11y::chrome`].
+    FocusWindow {
+        window_id: smithay::reexports::wayland_server::backend::ObjectId,
+    },
     /// Change one setting, on the thread that can apply it to the running
     /// system. See `docs/developer/settings-dbus-api.md`.
     SetSetting {
@@ -226,8 +234,13 @@ impl ScreenshareManager {
     ///
     /// This spawns a dedicated tokio runtime thread that runs the zbus server.
     /// Returns a manager that can be stored in the compositor state.
+    ///
+    /// `a11y` is handed to the same thread: the accessibility manager is served
+    /// from this connection rather than one of its own. `None` leaves
+    /// accessibility unexposed — see [`crate::a11y`].
     pub fn start<B: crate::state::Backend + 'static>(
         loop_handle: &smithay::reexports::calloop::LoopHandle<'static, crate::state::Otto<B>>,
+        a11y: Option<crate::a11y::A11yDbusParts>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let (cmd_sender, cmd_receiver) = channel::<CompositorCommand>();
 
@@ -251,7 +264,7 @@ impl ScreenshareManager {
                     .expect("Failed to create tokio runtime for screenshare");
 
                 rt.block_on(async move {
-                    if let Err(e) = dbus_service::run_dbus_service(cmd_sender_clone).await {
+                    if let Err(e) = dbus_service::run_dbus_service(cmd_sender_clone, a11y).await {
                         tracing::error!("Screenshare D-Bus service failed: {}", e);
                     }
                 });
@@ -720,6 +733,19 @@ pub fn handle_screenshare_command<B: crate::state::Backend + 'static>(
         CompositorCommand::FocusApp { app_id } => {
             tracing::info!("FocusApp: {}", app_id);
             state.focus_app(&app_id);
+        }
+        CompositorCommand::FocusWindow { window_id } => {
+            tracing::info!("FocusWindow: {:?}", window_id);
+            // The overview is a way of choosing a window: choosing one ends it,
+            // exactly as clicking a thumbnail does.
+            if state.workspaces.get_show_all() {
+                state.workspaces.expose_show_all(-1.0, true);
+            }
+            // The same path a click on the window takes: raise its application,
+            // switch to the workspace holding it, and give it the keyboard.
+            if let Some(wid) = state.workspaces.focus_app_with_window(&window_id) {
+                state.set_keyboard_focus_on_surface(&wid);
+            }
         }
         CompositorCommand::SetSetting {
             id,

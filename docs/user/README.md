@@ -60,6 +60,7 @@ versions: useful day to day, still filling in.
 | [Lock Screen](lock-screen.md) | Locking, idle auto-lock, fingerprint unlock, PAM setup |
 | [Login Greeter](login-greeter.md) | Using Otto as the login screen with greetd |
 | [Screen Sharing](screen-sharing.md) | Portal setup, browsers, OBS, AirPlay, screenshots |
+| [Accessibility](accessibility.md) | Screen readers and keyboard-only use: setup, what is announced, driving Otto's applications from the keyboard |
 | [Remote Desktop](remote-desktop.md) | `otto-rdp`, virtual outputs, connecting from RDP clients |
 
 ## Getting help

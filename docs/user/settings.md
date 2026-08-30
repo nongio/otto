@@ -51,6 +51,18 @@ The Keyboard pane lists the configured shortcuts and lets you add and remove
 them. It edits the same `[keyboard_shortcuts]` table the config file has, so
 anything you bind here is a normal entry you can also read and edit by hand.
 
+## From the keyboard
+
+Every row is a `Tab` stop with a ring around it, and every control can be
+operated without a pointer — `Space` or `Enter` flips a switch, presses a
+button, opens a pop-up or starts editing a field; the arrows move a slider.
+A pop-up opens on its current value rather than cycling, because each value
+commits as soon as it is chosen. See
+[Accessibility](accessibility.md#using-ottos-applications-from-the-keyboard).
+
+Two things still need the pointer: dragging screens around the arrangement
+diagram in the Displays pane, and the shortcut lines in the Keyboard pane.
+
 ## Not there yet
 
 - Not every configuration key has a control; the file remains the complete

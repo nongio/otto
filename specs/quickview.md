@@ -149,6 +149,12 @@ Rules the host must honour:
 - **Tag decodes with a generation and drop stale ones.** Arrow-keying is faster
   than decoding; a result that arrives after the selection moved must be
   discarded, not painted.
+- **Never show one file's preview under another file's name.** The moment the
+  selection moves, the panel drops what it was showing — content, scroll, zoom
+  and pan — and says it is working until the new decode lands. Decoding costs a
+  process spawn, so the old content would otherwise sit there for long enough to
+  be read, with nothing on screen marking it as the wrong file. A waiting line
+  is the honest state; a stale picture is a lie the user cannot see through.
 - **Never interpret file bytes in the host.** Everything the host receives is a
   `Preview` — validated text, bounded rows, or a pixel buffer whose dimensions
   have already been checked against its length.
@@ -286,10 +292,11 @@ Two things the opening must **not** do:
   after the motion and does not restart it. An animation that waits for a
   decoder is an animation whose duration is set by the file.
 - It must not re-run on `SetIndex`. Arrow-keying through a directory swaps
-  content inside a card that is already open and already still — the card
-  cross-fades its content, and resizes if the content type changed, animated
-  from the centre so the frame does not jump to a corner. Replaying the entrance
-  per keystroke would be unusable.
+  content inside a card that is already open and already still — the card keeps
+  its place and its entrance, and only what is inside it changes. Replaying the
+  entrance per keystroke would be unusable. What changes immediately is the
+  title and the content: the name is the file now selected, and the content is
+  the waiting line until that file's decode lands.
 
 The animation is declared through the compositor's surface-style transactions —
 the same mechanism otto-launcher's card uses — so it runs compositor-side and
@@ -338,7 +345,8 @@ the table is arranged around not compromising them.
 | Archive — zip, uncompressed tar | Listing only: names, sizes, dates, entry count | Nothing (see below) |
 | Audio | Metadata card: title/artist/album/duration, plus embedded cover art | Tag parsing by hand; PCM decode deferred |
 | Video | Metadata card: dimensions, duration, codec, plus the container's embedded poster when present | Frame decode deferred |
-| HEIC, AVIF, camera RAW | Not previewed — shown as an unsupported card naming the type | Deferred |
+| HEIC, AVIF, camera RAW | Not previewed — shown as an unsupported card naming the type, under the file's icon | Deferred |
+| Anything with no decoder, and any decode that failed | The file's icon at hero size, with the type and size, or the reason it could not be shown | Nothing |
 | HTML, EPUB, Office documents | Never | — |
 
 Notes on the ones that look like they need a crate and do not:
@@ -452,8 +460,25 @@ type:
 - `Text` — bounded, validated UTF-8 with optional style spans.
 - `Rows` — a table (archive entries, directory listing): name, size, date, an
   icon key.
-- `Card` — key/value metadata plus an optional `Pixels` hero image.
-- `Unavailable` — a reason to display.
+- `Card` — key/value metadata, an optional `Pixels` hero image, and the file's
+  icon-theme chain. The hero is the file's own artwork — cover art, an
+  embedded thumbnail, a poster frame — and the icon is what is drawn in its
+  place when there is none.
+- `Unavailable` — a reason to display, under the same icon chain.
+
+The icon chain is a list of icon-theme names, most specific first
+(`video-mp4`, `video-x-generic`, …), and the drawing side takes the first one
+the theme has. It is stamped in **one** place per side rather than by each
+decoder: the worker fills it from the type it sniffed, and the host fills in a
+name-derived chain for the payloads no decoder produced — a worker that
+crashed, overran, or could not open the file. A decoder that read the bytes
+always wins, because the name is only ever a guess.
+
+Neither half of that is optional. A card that is only a table of facts, or a
+line of text saying why there is no preview, tells the reader nothing about
+*what the file is* — while the row they pressed space on was already showing
+exactly that. The icon is the honest floor under every content type, including
+the ones that have no decoder and never will.
 
 A new content type adds a decoder that produces one of these. It does not add a
 payload variant, an IPC message, a window mode, or a draw path. When a variant
@@ -517,9 +542,11 @@ matching this text.
 
 ### Performance
 
-- **Window mapped within 50 ms** of the keypress, unconditionally. The first
-  frame shows the file's name, size, type icon, and a cached thumbnail if one
-  exists. It is never an empty rectangle and never a delayed one.
+- **Panel up within 50 ms** of the keypress, unconditionally — it is drawn into
+  the browser's own surface, so there is no window to map and nothing to wait
+  for. The first frame carries the file's name and says the preview is opening;
+  the decode fills the card in when it answers. It is never a delayed panel, and
+  a keystroke never appears to have done nothing.
 - **Real content within 100 ms** for anything already in the thumbnail cache,
   which is the common case when browsing a directory the browser has scrolled
   through. Cold decode fills in when it lands, replacing the placeholder without
@@ -695,8 +722,12 @@ both costs one branch at surface creation and nothing at draw time.
 **v1 ships images, PDF and text properly, and everything else honestly.** Those
 three are what people press space on; a previewer that shows a photograph but
 describes a PDF has failed at a third of its job. Everything else — audio,
-video, archives — gets a metadata card, which is better than nothing and better
-than distorting the build for a convenience feature.
+video, archives — gets a metadata card **under the file's icon**, which is
+better than nothing and better than distorting the build for a convenience
+feature. The icon is what keeps "honestly" from meaning "a paragraph of text
+where a picture should be": it is drawn at the hero size, in the slot artwork
+would have taken, so an undecodable file reads as a file of that kind rather
+than as a failure.
 
 **PDF is exec'd, not linked, and that turned out to be the better design
 anyway.** The obvious route was a PDF library in the build, which is a large C++

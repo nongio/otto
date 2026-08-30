@@ -1,7 +1,7 @@
 # otto-kit Window Focus
 
 **Status:** stable
-**Related specs:** [window-decorations](window-decorations.md), [file-browser](file-browser.md), [settings-app](settings-app.md)
+**Related specs:** [window-decorations](window-decorations.md), [file-browser](file-browser.md), [settings-app](settings-app.md), [accessibility](accessibility.md)
 
 ## Summary
 
@@ -22,6 +22,9 @@ nothing to composite.
   over.
 
 ## Non-Goals
+
+- Focus *inside* the window — which control the keyboard is on. That is the
+  level below this one; see [accessibility](accessibility.md).
 
 - Compositor-drawn title bars — see [window-decorations](window-decorations.md).
 - Dimming the window's *content*. A background window's file list, text or
@@ -63,6 +66,12 @@ do for itself.
 - Window controls go gray — a lighter gray on a dark titlebar than on a light
   one, so they read against either — and reveal no glyphs on hover.
 - The blurred backdrop is not requested.
+- The accent is muted: an application may draw its content with
+  `Theme::with_muted_accent`, which mixes the accent and the focused-selection
+  material most of the way towards their own gray. A background window still
+  shows what is selected in it, but only the focused window says so in the
+  user's colour. Opt-in per application, because it costs a repaint of
+  whatever the application caches.
 
 **Materials follow the blur, not the focus.** A translucent material is
 translucent *over the blur*; over the bare desktop it is the wallpaper showing

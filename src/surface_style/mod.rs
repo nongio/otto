@@ -1,3 +1,4 @@
+mod desktop_frame;
 mod handlers;
 mod protocol;
 
@@ -6,6 +7,7 @@ use smithay::reexports::wayland_server::DisplayHandle;
 
 use crate::state::Backend;
 
+pub use desktop_frame::send_desktop_frames;
 pub use handlers::create_style_manager_global;
 pub use protocol::{
     gen, ContentsGravity, OttoSurfaceStyleZOrder, StyleTransaction, SurfaceStyle,

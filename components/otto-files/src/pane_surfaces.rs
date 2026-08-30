@@ -93,6 +93,13 @@ struct PaneSurface {
     /// Identity of everything else that feeds the drawing.
     key: u64,
     hidden: bool,
+    /// Whether this surface takes pointer input when it is showing. False for
+    /// the columns, whose hit-testing belongs to the toplevel; true for Quick
+    /// View, which hangs outside the toplevel and has to answer for itself.
+    ///
+    /// Held as state rather than applied once, because it has to be *withdrawn*
+    /// while the surface is hidden — see [`PaneSurface::hide`].
+    takes_input: bool,
     /// The compositor owns this surface's position, so nothing here may set
     /// it: a parent-relative position sent after the centring would simply
     /// undo it.
@@ -426,7 +433,12 @@ impl PaneSurfaces {
                 // never reports those coordinates to this client — so the
                 // close button would be dead exactly when the panel is where
                 // it is supposed to be. `None` means "the whole surface".
-                pane.surface.wl_surface().set_input_region(None);
+                //
+                // Recorded as well as applied: the region has to come back off
+                // whenever the panel is hidden, or it goes on answering for a
+                // band of the screen nobody can see. See `PaneSurface::hide`.
+                pane.takes_input = true;
+                pane.accept_input(true);
                 pane.surface.commit();
             }
         }
@@ -441,13 +453,7 @@ impl PaneSurfaces {
         // far its content is scrolled — and now how far its picture is zoomed
         // and dragged, which changes what is drawn without moving the card an
         // inch.
-        let key = hash_rect(panel)
-            ^ generation.rotate_left(17)
-            ^ (session.first_row as u64) << 1
-            ^ hash_zoom(session.zoom).rotate_left(33)
-            // The pan's bars fade in and out over a picture that is not
-            // moving, so their presentation is part of what the panel draws.
-            ^ hash_bars(session).rotate_left(7);
+        let key = quickview_key(panel, generation, session);
         if pane.key == key {
             return painted;
         }
@@ -648,6 +654,7 @@ impl PaneSurfaces {
             bar: f32::NAN,
             key: 0,
             hidden: false,
+            takes_input: false,
             output_centered: false,
         })
     }
@@ -686,6 +693,33 @@ impl PaneSurface {
         resized
     }
 
+    /// Say whether the surface answers for the pointer over its own area.
+    ///
+    /// `None` is "all of me"; an empty region is "none of me", which is how a
+    /// surface lets events fall through to whatever is behind it.
+    fn accept_input(&self, yes: bool) {
+        let surface = self.surface.wl_surface();
+        if yes {
+            surface.set_input_region(None);
+            return;
+        }
+        // An empty region. The compositor copies it on `set_input_region`, so
+        // it is destroyed straight away rather than accumulating one object
+        // per hide for the life of the window.
+        let region = AppContext::compositor_state()
+            .wl_compositor()
+            .create_region(AppContext::queue_handle(), ());
+        surface.set_input_region(Some(&region));
+        region.destroy();
+    }
+
+    /// Take the surface out of sight — and out of the pointer's way.
+    ///
+    /// Opacity alone is not hiding. The surface stays mapped, and a mapped
+    /// surface with an input region still answers for every pointer event over
+    /// it: Quick View's panel is centred on the *display*, so an invisible one
+    /// left holding its region swallowed the scroll wheel across a band
+    /// through the middle of the screen, for the rest of the session.
     fn hide(&mut self) -> bool {
         if self.hidden {
             return false;
@@ -693,6 +727,9 @@ impl PaneSurface {
         self.hidden = true;
         if let Some(style) = self.surface.layer() {
             style.set_opacity(0.0);
+        }
+        if self.takes_input {
+            self.accept_input(false);
         }
         self.surface.commit();
         true
@@ -705,6 +742,9 @@ impl PaneSurface {
         self.hidden = false;
         if let Some(style) = self.surface.layer() {
             style.set_opacity(1.0);
+        }
+        if self.takes_input {
+            self.accept_input(true);
         }
         self.surface.commit();
         true
@@ -732,8 +772,36 @@ fn column_key(f: &Frame, depth: usize) -> u64 {
     (depth == f.active).hash(&mut hasher);
     f.renaming.map(|(d, i)| (d == depth, i)).hash(&mut hasher);
     view::is_dark().hash(&mut hasher);
+    // A background window's theme mutes the accent, so the selection this
+    // column draws changes colour when the window loses focus.
+    f.focused.hash(&mut hasher);
     hasher.finish()
 }
+
+/// Everything the panel's pixels depend on, as a repaint key.
+///
+/// It all has to be in here or the repaint is skipped: the card's rect, which
+/// file it is showing, how far its content is scrolled, how far its picture is
+/// zoomed and dragged — which changes what is drawn without moving the card an
+/// inch — how its bars are presented, since they fade in and out over a
+/// picture that is not moving, and whether the content has landed at all.
+fn quickview_key(panel: Rect, generation: u64, session: &quickview::Session) -> u64 {
+    hash_rect(panel)
+        ^ generation.rotate_left(17)
+        ^ (session.first_row as u64) << 1
+        ^ hash_zoom(session.zoom).rotate_left(33)
+        ^ hash_bars(session).rotate_left(7)
+        // A decode landing does not change the generation — that was bumped
+        // when it was asked for — so without this the content arriving is
+        // invisible to the key, and the panel never repaints out of its
+        // waiting state.
+        ^ if session.loading { LOADING_KEY } else { 0 }
+}
+
+/// The content key's contribution for a panel that is still waiting for its
+/// decode. Any value with a good spread of bits does; this is the golden-ratio
+/// constant the hashers in this file use for the same purpose.
+const LOADING_KEY: u64 = 0x9E37_79B9_7F4A_7C15;
 
 /// A rect as a repaint key. Positions are the whole of what a bar draws, so
 /// its geometry is its identity.
@@ -881,4 +949,38 @@ fn centered_resting(pane: &PaneSurface, scale: f32) -> Option<Rect> {
         panel_width.max(1.0),
         panel_height.max(1.0),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The panel repaints only when its key changes, and the decode landing
+    /// changes nothing else: same file, same request, same rect, same zoom.
+    /// If it does not move the key, the card stays on "Opening preview…" for
+    /// as long as the user does not touch anything.
+    #[test]
+    fn a_decode_landing_moves_the_panel_key() {
+        let resting = quickview::panel_rect(1100.0, 700.0);
+        let anchor = Rect::new_empty();
+        let opened_at = std::time::Instant::now();
+        let generation = 7;
+
+        let waiting = quickview::Session::waiting("notes.txt".into(), false, anchor, opened_at);
+        let landed = quickview::Session::new(
+            otto_kit::preview::Preview::Text {
+                lines: vec!["hello".into()],
+                truncated: false,
+                language: String::new(),
+            },
+            "notes.txt".into(),
+            anchor,
+            opened_at,
+        );
+
+        assert_ne!(
+            quickview_key(resting, generation, &waiting),
+            quickview_key(resting, generation, &landed),
+        );
+    }
 }

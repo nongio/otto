@@ -6,6 +6,7 @@ use otto_kit::components::text_input::TextInput;
 use otto_kit::components::titlebar::{
     Titlebar, TitlebarGroup, WindowControls, WindowControlsState,
 };
+use otto_kit::controls_side::ControlsSide;
 use otto_kit::prelude::*;
 use skia_safe::{ClipOp, Contains, PathEffect, Point, RRect};
 
@@ -25,8 +26,13 @@ pub const WINDOW_H: f32 = 640.0;
 pub const MIN_W: f32 = 560.0;
 pub const MIN_H: f32 = 360.0;
 pub const CORNER: f32 = 12.0;
-const TITLEBAR_H: f32 = 38.0;
-const SIDEBAR_W: f32 = 214.0;
+
+/// [`CORNER`], or square on a desktop configured without rounded corners.
+pub fn corner() -> f32 {
+    otto_kit::corners::radius(CORNER)
+}
+pub const TITLEBAR_H: f32 = 38.0;
+pub const SIDEBAR_W: f32 = 214.0;
 const CONTENT_PAD: f32 = 26.0;
 const ROW_H: f32 = 42.0;
 const ROW_H_DETAIL: f32 = 56.0;
@@ -48,6 +54,17 @@ const ARRANGEMENT_HEIGHT: f32 = ARRANGEMENT_CANVAS_H + 30.0;
 const PREVIEW_H: f32 = 108.0;
 const PREVIEW_W: f32 = 192.0;
 const PREVIEW_GAP: f32 = 10.0;
+
+/// A theme row's preview: a light card with one slot per sample image. The
+/// card is a fixed size whatever the theme carries, so choosing a different
+/// theme never moves the rows under the pointer.
+const SWATCH_ICON: f32 = 36.0;
+const SWATCH_GAP: f32 = 16.0;
+const SWATCH_PAD: f32 = 16.0;
+const SWATCH_H: f32 = SWATCH_ICON + SWATCH_PAD * 2.0;
+const SWATCH_W: f32 = SWATCH_PAD * 2.0
+    + SWATCH_ICON * crate::theme_preview::SLOTS as f32
+    + SWATCH_GAP * (crate::theme_preview::SLOTS as f32 - 1.0);
 
 /// The scrollable pane viewport: everything right of the sidebar, below the
 /// titlebar, in window-local coordinates. Where the pane's subsurfaces are
@@ -111,9 +128,10 @@ pub fn titlebar_material(dark: bool) -> Color {
     }
 }
 
-/// Sidebar row geometry. Drawing and hit-testing both go through this so the
-/// clickable area cannot drift away from the painted one.
-fn sidebar_item_rect(index: usize) -> Rect {
+/// Sidebar row geometry. Drawing, hit-testing, the keyboard and what a screen
+/// reader is told all go through this, so none of them can drift away from the
+/// painted row.
+pub fn sidebar_item_rect(index: usize) -> Rect {
     const FIRST_ITEM_Y: f32 = TITLEBAR_H + 10.0;
     const ITEM_H: f32 = 30.0;
     const ITEM_STEP: f32 = 32.0;
@@ -123,6 +141,78 @@ fn sidebar_item_rect(index: usize) -> Rect {
         SIDEBAR_W - 16.0,
         ITEM_H,
     )
+}
+
+/// The sidebar as a whole, which is what the keyboard lands on.
+///
+/// One stop for the list, not one per row: Tab enters the sidebar and the
+/// arrows move within it, which is what the list role tells a screen reader to
+/// expect and what every other toolkit does.
+pub const SIDEBAR_FOCUS: FocusId = FocusId::from_raw(0x5EED_5EED);
+
+/// A sidebar row's identity for assistive technologies.
+///
+/// The position is the identity: the sidebar is a fixed list, so a row means
+/// the same thing across every rebuild. Not a keyboard stop of its own — see
+/// [`SIDEBAR_FOCUS`] — but a node an assistive technology can still click.
+pub fn sidebar_focus_id(index: usize) -> FocusId {
+    FocusId::new(format!("pane-{index}"))
+}
+
+/// A pane control's identity for the keyboard and for assistive technologies.
+///
+/// The setting's own id, which is unique within a pane and stable across the
+/// rebuild the view goes through every frame.
+pub fn pane_focus_id(id: &str) -> FocusId {
+    FocusId::new(format!("row-{id}"))
+}
+
+/// A pop-up row's field, in the same rect [`Settings::select_hit`] tests and
+/// the menu is anchored to, given the row's rect in window coordinates.
+///
+/// `None` for any other kind of row. Shared with the hit test so a menu opened
+/// from the keyboard drops out of the same button a click would have opened.
+pub fn row_select_rect(row: &Row, rect: Rect) -> Option<Rect> {
+    if !matches!(row.control, Control::Select(_)) {
+        return None;
+    }
+    Some(select_rect(
+        rect.right - 14.0,
+        Settings::control_band(row, rect).center_y(),
+    ))
+}
+
+/// One push button's identity for the keyboard and for assistive
+/// technologies.
+///
+/// A row of buttons is several things to do, not one: an Add beside a Remove
+/// needs both within reach, so each button is its own stop rather than the row
+/// being a single stop that acts on the first.
+pub fn button_focus_id(row: &str, button: &str) -> FocusId {
+    FocusId::new(format!("row-{row}-button-{button}"))
+}
+
+/// A button row's button labels, in order. Empty for any other row.
+fn row_buttons(row: &Row) -> &'static [&'static str] {
+    match &row.control {
+        Control::Button(labels) => labels,
+        _ => &[],
+    }
+}
+
+/// A button row's buttons, in the rects the pane draws and hit-tests them at,
+/// given the row's rect in whatever space the caller holds it in.
+///
+/// Empty for any other kind of row. Shared with [`Settings::button_hit`]
+/// through [`widgets::button_rects`], so a button can never be reachable
+/// somewhere it is not drawn.
+pub fn row_button_rects(row: &Row, rect: Rect) -> Vec<Rect> {
+    match &row.control {
+        Control::Button(labels) => {
+            widgets::button_rects(rect.right - 14.0, rect.center_y(), labels)
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// The pane whose sidebar row contains `(x, y)`, if any.
@@ -277,14 +367,26 @@ fn screen_caption(output: &model::Output) -> &'static str {
 /// group — so the traffic lights end up at `(TITLEBAR_PAD, TITLEBAR_PAD)`.
 const TITLEBAR_PAD: f32 = (TITLEBAR_H - 12.0) / 2.0;
 
+/// The traffic lights as the desktop wants them: ordered close-outermost for
+/// whichever end of the bar they sit at, but still at the origin — the
+/// `Titlebar` places the group itself.
+fn window_controls() -> WindowControls {
+    WindowControls::new().with_reversed(otto_kit::controls_side::side() == ControlsSide::Right)
+}
+
 /// The traffic lights for hit-testing, in window-local coordinates.
 ///
 /// The drawn group is positioned by `Titlebar` itself and so is built at the
 /// origin; only the hit-test needs the absolute offset. Getting this wrong in
 /// the other direction — handing the *positioned* group to `Titlebar` — makes
 /// it apply the padding twice and the dots sit low.
-fn window_controls_hit() -> WindowControls {
-    WindowControls::new().at(TITLEBAR_PAD, TITLEBAR_PAD)
+fn window_controls_hit(width: f32) -> WindowControls {
+    let controls = window_controls();
+    let x = match otto_kit::controls_side::side() {
+        ControlsSide::Left => TITLEBAR_PAD,
+        ControlsSide::Right => width - TITLEBAR_PAD - controls.width(),
+    };
+    controls.at(x, TITLEBAR_PAD)
 }
 
 /// What a press in the titlebar means.
@@ -300,7 +402,7 @@ pub fn titlebar_hit(x: f32, y: f32, width: f32) -> Option<TitlebarHit> {
     if !(0.0..=TITLEBAR_H).contains(&y) || !(0.0..=width).contains(&x) {
         return None;
     }
-    match window_controls_hit().control_at(x, y) {
+    match window_controls_hit(width).control_at(x, y) {
         Some(control) => Some(TitlebarHit::Control(control)),
         None => Some(TitlebarHit::Drag),
     }
@@ -484,6 +586,25 @@ fn decode_preview(path: &str) -> Option<skia_safe::Image> {
         .canvas()
         .draw_image_rect(&full, None, Rect::from_iwh(w, h), &Paint::default());
     Some(surface.image_snapshot())
+}
+
+/// Which theme a row previews, where it previews one at all.
+///
+/// Keyed by the setting identifier rather than the label: these two rows are
+/// bound, and a label is translated.
+fn theme_swatch_kind(row: &Row) -> Option<ThemeSwatch> {
+    match row.id? {
+        "icon_theme" => Some(ThemeSwatch::Icons),
+        "cursor_theme" => Some(ThemeSwatch::Cursors),
+        _ => None,
+    }
+}
+
+/// The two kinds of theme a row can show samples of.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ThemeSwatch {
+    Icons,
+    Cursors,
 }
 
 /// Does `rect` fall inside the band of content being asked for?
@@ -717,7 +838,8 @@ impl Settings {
 
     /// The window's rounded outline, which everything is clipped to.
     fn frame(&self) -> RRect {
-        RRect::new_rect_xy(Rect::from_wh(self.width, self.height), CORNER, CORNER)
+        let corner = corner();
+        RRect::new_rect_xy(Rect::from_wh(self.width, self.height), corner, corner)
     }
 
     /// The two backdrops: the opaque content area and the sidebar's material.
@@ -817,8 +939,34 @@ impl Settings {
         self.pane_layout(self.width - SIDEBAR_W).height
     }
 
-    /// Every row of the selected pane, with the rect it is drawn in, in
-    /// content-local coordinates.
+    /// Every row of the current pane, with where it is in *window* coordinates
+    /// at the given scroll position.
+    ///
+    /// The same layout the pane is drawn and hit-tested from, so what the
+    /// keyboard reaches and what a screen reader is told cannot drift away
+    /// from what is painted. Rows scrolled out of sight are included: the
+    /// keyboard's job is to reach them, and the caller scrolls to what it
+    /// focuses.
+    ///
+    /// Every row, bound to a setting or not. Filtering to bound rows here is
+    /// what once made the Displays pane unreachable: almost all of it is
+    /// unbound on purpose, and a row nobody serves is still a row the user
+    /// can see and has to be able to operate. Callers decide what stops on
+    /// what through [`Row::focusable`].
+    pub fn pane_rows(&self, scroll_offset: f32) -> Vec<(&Row, Rect)> {
+        let viewport = self.viewport();
+        let content_width = self.width - SIDEBAR_W;
+        self.row_rects(content_width)
+            .into_iter()
+            .map(|(row, rect)| {
+                (
+                    row,
+                    rect.with_offset((viewport.left, viewport.top - scroll_offset)),
+                )
+            })
+            .collect()
+    }
+
     fn row_rects(&self, content_width: f32) -> Vec<(&Row, Rect)> {
         self.pane_layout(content_width)
             .groups
@@ -1205,21 +1353,25 @@ impl Settings {
             }),
         );
 
-        // Traffic lights sit over the sidebar; the pane name titles the bar.
-        Titlebar::new()
+        // Traffic lights sit over the sidebar — or, on a desktop that puts its
+        // controls at the trailing edge, over the far end of the pane. The
+        // pane name titles the bar either way.
+        let group = TitlebarGroup::new().add(
+            self.controls
+                .apply(window_controls().with_active(true).with_dark(self.dark)),
+        );
+        let bar = Titlebar::new()
             .at(0.0, 0.0)
             .with_width(self.width)
             .with_height(TITLEBAR_H)
-            .with_corner_radius(CORNER)
+            .with_corner_radius(corner())
             .with_padding(TITLEBAR_PAD)
-            .with_background(Color::TRANSPARENT)
-            .with_leading(
-                TitlebarGroup::new().add(
-                    self.controls
-                        .apply(WindowControls::new().with_active(true).with_dark(self.dark)),
-                ),
-            )
-            .render(canvas);
+            .with_background(Color::TRANSPARENT);
+        match otto_kit::controls_side::side() {
+            ControlsSide::Left => bar.with_leading(group),
+            ControlsSide::Right => bar.with_controls(group),
+        }
+        .render(canvas);
 
         // The app and the pane, the same string the toplevel carries — so the
         // bar reads the same as the window's entry in the switcher and the
@@ -1252,9 +1404,16 @@ impl Settings {
         // No search field: it was drawn but never searched anything, and a
         // control that does nothing is worse than no control. The list starts
         // at the top of the sidebar instead — see `sidebar_item_rect`.
+        // Which row the keyboard is on, if this window has it at all.
+        let focused =
+            AppContext::keyboard_focus().and_then(|surface| AppContext::focused_control(&surface));
+
         for (i, pane) in self.panes.iter().enumerate() {
             let item = sidebar_item_rect(i);
             let selected = i == self.selected;
+            if selected && focused == Some(SIDEBAR_FOCUS) {
+                otto_kit::focus::draw_focus_ring(canvas, item, 7.0);
+            }
             if selected {
                 canvas.draw_rrect(
                     RRect::new_rect_xy(item, 7.0, 7.0),
@@ -1303,6 +1462,11 @@ impl Settings {
         let layout = self.pane_layout(content_width);
         let x0 = CONTENT_PAD;
         let x1 = content_width - CONTENT_PAD;
+
+        // Which row the keyboard is on, if any. Read here rather than passed
+        // in, so every path that paints the pane rings it the same way.
+        let focused =
+            AppContext::keyboard_focus().and_then(|surface| AppContext::focused_control(&surface));
 
         if let Some(area) = layout.arrangement {
             if intersects_band(area, content) {
@@ -1355,6 +1519,30 @@ impl Settings {
             for (i, (row, rect)) in group.rows.iter().enumerate() {
                 if !intersects_band(*rect, content) {
                     continue;
+                }
+                // Around the whole row rather than the control at its edge: the
+                // row is what Tab moves between, and a ring around a switch
+                // alone reads as though only the switch were selected.
+                //
+                // Keyed on the row's handle, not on its identifier: a row the
+                // compositor serves nothing for is a keyboard stop like any
+                // other, and drawing only the served ones is what made Tab
+                // look as though it skipped half the Displays pane when it was
+                // in fact stopping there invisibly.
+                if focused == Some(pane_focus_id(row.handle())) {
+                    otto_kit::focus::draw_focus_ring(canvas, rect.with_inset((3.0, 1.0)), 8.0);
+                }
+                // A row of push buttons is a stop per button, so the ring goes
+                // around the button the keyboard is on rather than around the
+                // whole row.
+                for (button, bounds) in row_buttons(row).iter().zip(row_button_rects(row, *rect)) {
+                    if focused == Some(button_focus_id(row.handle(), button)) {
+                        otto_kit::focus::draw_focus_ring(
+                            canvas,
+                            bounds.with_outset((3.0, 3.0)),
+                            7.0,
+                        );
+                    }
                 }
                 self.render_row(canvas, row, x0, x1, rect.top, rect.height());
                 if i + 1 < group.rows.len() {
@@ -1423,6 +1611,67 @@ impl Settings {
         canvas.draw_rrect(rrect, &border);
     }
 
+    /// A card of sample images from `theme`: a few icons, or a few pointers.
+    ///
+    /// The ground is deliberately light rather than the pane's own: icon and
+    /// cursor themes are drawn to sit on a desktop, and a dark card would hide
+    /// exactly the dark themes somebody is trying to compare.
+    fn render_theme_swatch(
+        &self,
+        canvas: &Canvas,
+        kind: ThemeSwatch,
+        theme: &str,
+        cx: f32,
+        y: f32,
+    ) {
+        // Sourced at twice the drawn size, the way every icon in this toolkit
+        // is: a 36pt slot filled by a 36px raster is soft on a 2x output, and
+        // an icon that only exists at 24px would otherwise be drawn smaller
+        // than the one beside it.
+        let px = (SWATCH_ICON * 2.0) as i32;
+        let images = match kind {
+            ThemeSwatch::Icons => crate::theme_preview::icon_theme_images(theme, px),
+            ThemeSwatch::Cursors => crate::theme_preview::cursor_theme_images(theme, px),
+        };
+
+        let card = Rect::from_xywh(cx - SWATCH_W / 2.0, y, SWATCH_W, SWATCH_H);
+        let rrect = RRect::new_rect_xy(card, 10.0, 10.0);
+
+        let mut fill = Paint::default();
+        fill.set_anti_alias(true);
+        fill.set_color(Color::WHITE);
+        canvas.draw_rrect(rrect, &fill);
+
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        for (slot, image) in images.iter().enumerate() {
+            let Some(image) = image else { continue };
+            let left = card.left + SWATCH_PAD + slot as f32 * (SWATCH_ICON + SWATCH_GAP);
+            let box_rect = Rect::from_xywh(left, card.top + SWATCH_PAD, SWATCH_ICON, SWATCH_ICON);
+            let (iw, ih) = (image.width() as f32, image.height() as f32);
+            // Fitted to the slot in its own aspect, so a wide cursor and a
+            // square icon both sit inside the same box.
+            let scale = (SWATCH_ICON / iw).min(SWATCH_ICON / ih);
+            let (w, h) = (iw * scale, ih * scale);
+            let dst = Rect::from_xywh(
+                box_rect.center_x() - w / 2.0,
+                box_rect.center_y() - h / 2.0,
+                w,
+                h,
+            );
+            canvas.draw_image_rect(image, None, dst, &paint);
+        }
+
+        // The same hairline the wallpaper thumbnail carries, for the same
+        // reason: a white card on a white group needs an edge.
+        let mut border = Paint::default();
+        border.set_anti_alias(true);
+        border.set_style(skia_safe::PaintStyle::Stroke);
+        border.set_stroke_width(1.0);
+        border.set_color(self.theme.fill_secondary);
+        canvas.draw_rrect(rrect, &border);
+    }
+
     /// The band a row's own controls sit in — the whole row, less anything
     /// that hangs below them.
     ///
@@ -1430,7 +1679,7 @@ impl Settings {
     /// from the row's own centre: a file row carrying a preview is twice as
     /// tall as the line its field is on, and centring in *that* would leave
     /// the field floating in the middle of the picture.
-    fn control_band(row: &Row, rect: Rect) -> Rect {
+    pub(crate) fn control_band(row: &Row, rect: Rect) -> Rect {
         Rect::from_ltrb(
             rect.left,
             rect.top,
@@ -1447,18 +1696,111 @@ impl Settings {
         }
     }
 
-    /// What a row's preview adds under its controls, gaps included. Only a
-    /// file row with something chosen has one — an empty setting has nothing
-    /// to show and should not reserve a hole for it.
+    /// What a row's preview adds under its controls, gaps included. A file row
+    /// with something chosen has one — an empty setting has nothing to show
+    /// and should not reserve a hole for it — and so do the two theme rows,
+    /// which always do: their card is the same size whether or not the theme
+    /// answers, so the pane does not resize as the pop-up is walked.
     fn preview_height(row: &Row) -> f32 {
         match &row.control {
             Control::File(path) if !path.is_empty() => PREVIEW_H + PREVIEW_GAP * 2.0,
+            Control::Select(_) if theme_swatch_kind(row).is_some() => SWATCH_H + PREVIEW_GAP * 2.0,
             _ => 0.0,
         }
     }
 
     fn row_height(row: &Row) -> f32 {
         Self::control_height(row) + Self::preview_height(row)
+    }
+
+    /// The gap kept between a row's label and the control it runs into.
+    const LABEL_GAP: f32 = 16.0;
+    /// Room a label keeps in a narrow window before a control that can shrink
+    /// starts giving way instead. Enough for a word and an ellipsis.
+    const LABEL_MIN: f32 = 96.0;
+
+    /// Where a row's trailing control begins, given the row's trailing edge
+    /// and vertical centre.
+    ///
+    /// Every arm measures the control the same way [`Self::render_row`] draws
+    /// it, so the room a label is given is the room that is actually free.
+    /// Rows whose controls start at the *leading* edge — the shortcut lines —
+    /// carry no label of their own, so the trailing edge is the honest answer
+    /// for them.
+    fn control_left(row: &Row, label_x: f32, right: f32, cy: f32) -> f32 {
+        match &row.control {
+            Control::Toggle(_) => right - widgets::TOGGLE_W,
+            Control::Slider { readout, .. } => {
+                let readout_w = widgets::CONTROL_TEXT.font().measure_str(readout, None).0;
+                right - readout_w - 12.0 - widgets::SLIDER_W
+            }
+            Control::Select(_) => select_rect(right, cy).left,
+            Control::Color(argb) => well_rect(right, cy, Color::from(*argb)).left,
+            Control::Text(_) => text_rect(right, cy).left,
+            Control::Button(labels) => widgets::button_rects(right, cy, labels)
+                .first()
+                .map(|rect| rect.left)
+                .unwrap_or(right),
+            Control::File(_) => {
+                widgets::file_field_rect(right, label_x + Self::LABEL_MIN + Self::LABEL_GAP, cy)
+                    .left
+            }
+            Control::Value(value) => {
+                if value.contains('+') {
+                    right - widgets::key_combo_width(value)
+                } else {
+                    right - widgets::CONTROL_TEXT.font().measure_str(value, None).0
+                }
+            }
+            Control::Shortcut { .. } | Control::AddShortcut => right,
+        }
+    }
+
+    /// A row's text cropped to the room it has.
+    ///
+    /// [`otto_kit::typography::ellipsize`] always keeps the ellipsis, so a
+    /// room too narrow to hold even that comes back as a lone "…" wider than
+    /// the space it was given — a File row at [`MIN_W`] has no room at all.
+    /// Nothing is the honest answer there: an ellipsis on its own names no
+    /// setting, and drawing it would put the very overlap this crop exists to
+    /// prevent back under the control.
+    fn crop(text: &str, style: TextStyle, room: f32) -> String {
+        let font = style.font();
+        if font.measure_str(text, None).0 <= room {
+            return text.to_string();
+        }
+        if room < font.measure_str("\u{2026}", None).0 {
+            return String::new();
+        }
+        otto_kit::typography::ellipsize(&font, text, room)
+    }
+
+    /// How much width a row's label and detail line each have before they run
+    /// into the control beside them.
+    ///
+    /// A translated label is as long as the language makes it and the room is
+    /// fixed, so the text is cropped to what is free rather than drawn over
+    /// the control. The revert badge and the restart pill trail the text, so
+    /// their room comes out of the same budget — the pill off the detail line
+    /// when there is one, off the label when there is not.
+    fn text_room(row: &Row, label_x: f32, right: f32, cy: f32) -> (f32, f32) {
+        let room =
+            (Self::control_left(row, label_x, right, cy) - Self::LABEL_GAP - label_x).max(0.0);
+        let pill_room = widgets::restart_pill_width() + 10.0;
+        let badge_room = if row.overridden {
+            widgets::REVERT_BADGE_ROOM
+        } else {
+            0.0
+        };
+        let (label, detail) = match (row.restart_required, row.detail.is_some()) {
+            (true, true) => (room - badge_room, room - pill_room),
+            (true, false) => (
+                room - badge_room - pill_room - if row.overridden { 14.0 } else { 0.0 },
+                room,
+            ),
+            (false, _) => (room - badge_room, room),
+        };
+        (label.max(0.0), detail.max(0.0))
     }
 
     fn render_row(&self, canvas: &Canvas, row: &Row, x0: f32, x1: f32, y: f32, h: f32) {
@@ -1470,19 +1812,23 @@ impl Settings {
         let label_x = x0 + 14.0;
         let right = x1 - 14.0;
 
+        let (label_room, detail_room) = Self::text_room(row, label_x, right, cy);
+        let label = Self::crop(row.label, styles::BODY, label_room);
+
         match row.detail.as_deref() {
             Some(detail) => {
                 widgets::text_centered_y(
                     canvas,
-                    row.label,
+                    &label,
                     label_x,
                     cy - 9.0,
                     styles::BODY,
                     self.theme.text_primary,
                 );
+                let detail = Self::crop(detail, styles::SUBHEADLINE, detail_room);
                 widgets::text_centered_y(
                     canvas,
-                    detail,
+                    &detail,
                     label_x,
                     cy + 9.0,
                     styles::SUBHEADLINE,
@@ -1491,7 +1837,7 @@ impl Settings {
             }
             None => widgets::text_centered_y(
                 canvas,
-                row.label,
+                &label,
                 label_x,
                 cy,
                 styles::BODY,
@@ -1500,7 +1846,7 @@ impl Settings {
         }
 
         if row.overridden {
-            let label_w = styles::BODY.font().measure_str(row.label, None).0;
+            let label_w = styles::BODY.font().measure_str(&label, None).0;
             let badge_y = if row.detail.is_some() { cy - 9.0 } else { cy };
             widgets::revert_badge(canvas, label_x + label_w + 12.0, badge_y, &self.theme);
         }
@@ -1601,6 +1947,7 @@ impl Settings {
             Control::File(value) => widgets::file_field(
                 canvas,
                 right,
+                label_x + Self::LABEL_MIN + Self::LABEL_GAP,
                 cy,
                 value,
                 matches!(self.pressed, Some(Pressed::Choose(id)) if Some(id) == row.id),
@@ -1637,12 +1984,28 @@ impl Settings {
             }
         }
 
+        // A theme is chosen by eye too, and its name is the one thing about it
+        // that shows nothing.
+        if let (Some(kind), Control::Select(theme)) = (theme_swatch_kind(row), &row.control) {
+            self.render_theme_swatch(
+                canvas,
+                kind,
+                theme,
+                (x0 + x1) / 2.0,
+                y + Self::control_height(row) + PREVIEW_GAP,
+            );
+        }
+
         // The pill trails the text it belongs to — the detail line if there is
         // one, otherwise the label — so it can never sit on top of either.
         if row.restart_required {
-            let (text, style, pill_cy) = match row.detail.as_deref() {
+            let detail = row
+                .detail
+                .as_deref()
+                .map(|detail| Self::crop(detail, styles::SUBHEADLINE, detail_room));
+            let (text, style, pill_cy) = match detail.as_deref() {
                 Some(detail) => (detail, styles::SUBHEADLINE, cy + 9.0),
-                None => (row.label, styles::BODY, cy),
+                None => (label.as_str(), styles::BODY, cy),
             };
             let after_text = label_x + style.font().measure_str(text, None).0 + 10.0;
             // A row that also carries the override badge has to clear that too.
@@ -1831,7 +2194,7 @@ impl Settings {
 /// Rounded window with a drop shadow, drawn on a desktop backdrop.
 pub fn render_on_desktop(canvas: &Canvas, settings: &Settings, x: f32, y: f32) {
     let frame = Rect::from_xywh(x, y, settings.width, settings.height);
-    let rrect = RRect::new_rect_xy(frame, CORNER, CORNER);
+    let rrect = RRect::new_rect_xy(frame, corner(), corner());
 
     let mut shadow = Paint::default();
     shadow.set_anti_alias(true);
@@ -1904,6 +2267,63 @@ mod tests {
         let mut pixel = [0u8; 4];
         assert!(surface.read_pixels(&info, &mut pixel, 4, (x, y)));
         pixel
+    }
+
+    /// The label a row actually draws, cropped the way `render_row` crops it.
+    fn drawn_label(row: &Row, content_width: f32, cy: f32) -> String {
+        let label_x = CONTENT_PAD + 14.0;
+        let right = content_width - CONTENT_PAD - 14.0;
+        let (room, _) = Settings::text_room(row, label_x, right, cy);
+        Settings::crop(row.label, styles::BODY, room)
+    }
+
+    #[test]
+    fn a_label_too_long_for_its_row_is_cropped_rather_than_drawn_over_the_control() {
+        // A translation is as long as the language makes it. Before the crop,
+        // "Colora le icone come il Dock" ran under the switch beside it.
+        let row = Row::new(
+            "A label far longer than any row in any pane could ever hope to show",
+            Control::Toggle(true),
+        );
+        // At the window's narrowest, where the room is tightest.
+        let content_width = MIN_W - SIDEBAR_W;
+        let label = drawn_label(&row, content_width, 20.0);
+
+        assert!(label.ends_with('\u{2026}'), "{label:?} is not elided");
+        let label_x = CONTENT_PAD + 14.0;
+        let right = content_width - CONTENT_PAD - 14.0;
+        let drawn_right = label_x + styles::BODY.font().measure_str(&label, None).0;
+        assert!(
+            drawn_right <= Settings::control_left(&row, label_x, right, 20.0),
+            "the label reaches the control"
+        );
+    }
+
+    #[test]
+    fn no_row_label_reaches_the_control_beside_it() {
+        for pane in 0..model::panes().len() {
+            // At the window's narrowest: a label that clears its control here
+            // clears it at every width.
+            let settings = Settings::new(pane, false).with_size(MIN_W, MIN_H);
+            let content_width = settings.width - SIDEBAR_W;
+            for (row, rect) in settings.row_rects(content_width) {
+                let cy = rect.top + Settings::control_height(row) / 2.0;
+                let label = drawn_label(row, content_width, cy);
+                let drawn_right =
+                    CONTENT_PAD + 14.0 + styles::BODY.font().measure_str(&label, None).0;
+                let control = Settings::control_left(
+                    row,
+                    CONTENT_PAD + 14.0,
+                    content_width - CONTENT_PAD - 14.0,
+                    cy,
+                );
+                assert!(
+                    drawn_right <= control,
+                    "{:?} runs into its control ({drawn_right} > {control})",
+                    row.label
+                );
+            }
+        }
     }
 
     #[test]

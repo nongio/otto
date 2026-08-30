@@ -13,16 +13,21 @@
 use std::os::fd::RawFd;
 use std::time::{Duration, Instant};
 
+use otto_kit::accessibility::{A11yTree, Action, ActionRequest, Role};
+use otto_kit::clipboard;
 use otto_kit::components::text_input::{
     KeyMods, TextInput, TextInputKey, TextInputResponse, CARET_BLINK_PERIOD,
 };
+use otto_kit::focus::FocusId;
 use otto_kit::protocols::otto_surface_style_v1::{BlendMode, ClipMode, ContentsGravity};
 use otto_kit::protocols::otto_timing_function_v1::Preset;
 use otto_kit::surfaces::{LayerShellSurface, SubsurfaceSurface};
-use otto_kit::{App, AppContext, AppRunner};
+use otto_kit::{App, AppContext, AppRunner, ObjectId};
+use skia_safe::Rect;
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
 use wayland_client::protocol::{wl_keyboard, wl_surface};
+use wayland_client::Proxy;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{
     Anchor, KeyboardInteractivity,
@@ -31,7 +36,9 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{
 use otto_launcher::apps::Apps;
 use otto_launcher::calc::Calculator;
 use otto_launcher::source::{rank, Item, Origin, Source};
-use otto_launcher::view::{field_style, Palette, CARD_W, FIELD_H, MAX_CARD_H, MAX_ROWS, RADIUS};
+use otto_launcher::view::{
+    field_style, Palette, CARD_W, FIELD_H, MAX_CARD_H, MAX_ROWS, RADIUS, ROW_H,
+};
 use otto_launcher::windows;
 
 /// How long the scene is kept painting after a change, so the selection's
@@ -112,6 +119,16 @@ struct Launcher {
     painted_at: Option<Instant>,
     settle_until: Option<Instant>,
     last_tick: Instant,
+}
+
+/// The query field's identity for assistive technologies.
+const FIELD: FocusId = FocusId::from_raw(0xF1E1_D000);
+/// The results list's.
+const RESULTS: FocusId = FocusId::from_raw(0xF1E1_D001);
+
+/// One result row's, by its position in the list.
+fn row_focus(index: usize) -> FocusId {
+    FocusId::new(format!("row-{index}"))
 }
 
 /// Which sources a run offers. Everything, by default; the single-kind scopes
@@ -550,7 +567,9 @@ fn apply_card_material(card: &SubsurfaceSurface) {
         return;
     };
     style.set_blend_mode(BlendMode::BackgroundBlur);
-    style.set_corner_radius(RADIUS as f64 * AppContext::fractional_scale());
+    style.set_corner_radius(
+        otto_kit::corners::radius(RADIUS) as f64 * AppContext::fractional_scale(),
+    );
     style.set_masks_to_bounds(ClipMode::Enabled);
     style.set_shadow(0.32, 32.0, 0.0, 12.0, 0.0, 0.0, 0.0);
     // The buffer is the card at its tallest; a shorter card shows the top of
@@ -596,6 +615,11 @@ impl App for Launcher {
             Some(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right),
             Some(0),
         )?;
+        // Visible to assistive technologies from the moment it exists: the
+        // launcher is modal and takes every key, so a screen reader that
+        // cannot read it cannot tell the user what has taken over the session.
+        AppContext::enable_accessibility(&surface.wl_surface().id());
+
         // Exclusive: the launcher is modal while it is up, and every keystroke
         // belongs to it — including the ones the focused window would want.
         surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
@@ -658,7 +682,7 @@ impl App for Launcher {
         _ctx: &AppContext,
         event: &KeyEvent,
         state: wl_keyboard::KeyState,
-        _serial: u32,
+        serial: u32,
     ) {
         // Shift is tracked from the key itself: the runner reports keys, not
         // modifier state, and selection with Shift+arrows needs to know.
@@ -727,6 +751,35 @@ impl App for Launcher {
                 self.input
                     .on_key(TextInputKey::SelectAll, KeyMods::default());
                 self.dirty = true;
+                return;
+            }
+            // Cut and copy hand the selection to the system clipboard; paste
+            // reads it back, since the field holds no clipboard of its own.
+            (_, Some('c')) | (_, Some('x')) => {
+                let cut = control == Some('x');
+                let key = if cut {
+                    TextInputKey::Cut
+                } else {
+                    TextInputKey::Copy
+                };
+                if let TextInputResponse::Clipboard(text) =
+                    self.input.on_key(key, KeyMods::default())
+                {
+                    clipboard::set_text(&text, serial);
+                }
+                if cut {
+                    self.refilter();
+                } else {
+                    self.dirty = true;
+                }
+                return;
+            }
+            (_, Some('v')) => {
+                if let Some(text) = clipboard::text() {
+                    self.input
+                        .on_key(TextInputKey::Paste(text), KeyMods::default());
+                    self.refilter();
+                }
                 return;
             }
             (_, Some('w')) => {
@@ -840,6 +893,99 @@ impl App for Launcher {
                 _ => {}
             }
         }
+    }
+
+    /// What a screen reader reads: the field, and the results under it.
+    ///
+    /// The launcher already moves its own selection with the arrows, so there
+    /// is no traversal ring here — the highlighted row *is* the focus, and
+    /// saying so is what makes a screen reader read each result as the user
+    /// arrows through them.
+    fn accessibility(&mut self, _ctx: &AppContext, _surface: &ObjectId) -> Option<A11yTree> {
+        let palette = self.palette.as_ref()?;
+        let (card_x, card_y) = palette.card_origin();
+        let (card_w, card_h) = palette.card_size();
+
+        let title = self.input.state.placeholder.clone();
+        let mut tree = A11yTree::new(title.clone());
+
+        let field = Rect::from_xywh(card_x, card_y, card_w, FIELD_H);
+        tree.control(FIELD, field, Role::SearchInput, true, |node| {
+            node.set_label(title.clone());
+            node.set_value(self.input.value().to_owned());
+            node.add_action(Action::SetValue);
+        });
+
+        // Only the rows on screen: the list scrolls, and a row that has been
+        // scrolled past is not something to point at.
+        let first = self.offset;
+        let last = (self.offset + MAX_ROWS).min(self.row_count());
+        let list = Rect::from_xywh(card_x, card_y + FIELD_H, card_w, card_h - FIELD_H);
+
+        let rows: Vec<(usize, String, Option<String>)> = (first..last)
+            .filter_map(|index| {
+                let item = self.row(index)?;
+                Some((index, item.title.clone(), item.subtitle.clone()))
+            })
+            .collect();
+        let selected = self.selected;
+
+        tree.region(
+            RESULTS,
+            list,
+            Role::ListBox,
+            otto_kit::t!("a11y-results"),
+            |tree| {
+                for (index, title, subtitle) in rows {
+                    let on_screen = index - first;
+                    let bounds = Rect::from_xywh(
+                        card_x,
+                        card_y + FIELD_H + on_screen as f32 * ROW_H,
+                        card_w,
+                        ROW_H,
+                    );
+                    tree.control(
+                        row_focus(index),
+                        bounds,
+                        Role::ListBoxOption,
+                        true,
+                        |node| {
+                            node.set_label(title);
+                            if let Some(subtitle) = subtitle {
+                                node.set_description(subtitle);
+                            }
+                            node.set_selected(index == selected);
+                            node.add_action(Action::Click);
+                        },
+                    );
+                }
+            },
+        );
+
+        if self.row_count() > 0 {
+            tree.set_focus(row_focus(selected));
+        }
+
+        Some(tree)
+    }
+
+    /// A screen reader picked a result: run it, exactly as Enter would.
+    fn on_accessibility_action(
+        &mut self,
+        _ctx: &AppContext,
+        _surface: &ObjectId,
+        request: &ActionRequest,
+    ) {
+        if !matches!(request.action, Action::Click) {
+            return;
+        }
+        let target = (0..self.row_count()).find(|index| {
+            otto_kit::accessibility::node_id(row_focus(*index)) == request.target_node
+        });
+        let Some(index) = target else { return };
+
+        self.selected = index;
+        self.activate();
     }
 
     fn on_update(&mut self, _ctx: &AppContext) {

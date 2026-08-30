@@ -1,6 +1,10 @@
-# Apps - Foreign Toplevel List Debug Tool
+# Apps — Foreign Toplevel List Debug Tool
 
-A simple command-line tool to test the `ext_foreign_toplevel_list_v1` protocol implementation in Otto.
+**Status: work in progress.** A command-line tool for testing Otto's
+`ext_foreign_toplevel_list_v1` implementation — it prints the window list and
+exits. It is not the application launcher its name suggests, and has no
+interface: nothing here is drawn, so there is nothing for it to expose to
+assistive technologies.
 
 ## Building
 

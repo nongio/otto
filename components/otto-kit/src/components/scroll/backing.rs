@@ -77,6 +77,8 @@ pub struct ScrollSurfaces {
     thumb_size: (f32, f32),
     /// Last values pushed to the compositor, to skip redundant requests.
     last_top: Option<f32>,
+    /// Band-local top of the input region last pushed, in points.
+    last_input_top: Option<i32>,
     last_thumb_top: Option<f32>,
     last_opacity: Option<f32>,
 }
@@ -142,6 +144,7 @@ impl ScrollSurfaces {
             background,
             thumb_size: (0.0, 0.0),
             last_top: None,
+            last_input_top: None,
             last_thumb_top: None,
             last_opacity: None,
         };
@@ -198,6 +201,7 @@ impl ScrollSurfaces {
             .set_position(viewport.left as i32, viewport.top as i32);
         self.band = Band::empty();
         self.last_top = None;
+        self.last_input_top = None;
         self.last_thumb_top = None;
         self.configure_clip();
     }
@@ -329,8 +333,44 @@ impl ScrollSurfaces {
         // The pointer is hit-tested against the subsurface position, so it has
         // to follow — rounded, which is under a point out and invisible to a
         // hit test.
-        self.band_surface.set_position(0, top.round() as i32);
+        let top = top.round() as i32;
+        self.band_surface.set_position(0, top);
+        self.clip_band_input(top);
         self.band_surface.commit();
+    }
+
+    /// Cut the band's input region down to the slice of it the viewport shows.
+    ///
+    /// The band is taller than the viewport and hangs out of the clip surface
+    /// at both ends — by up to [`MIN_OVERDRAW`](super::band) points, which on a
+    /// pane that reaches the bottom of the window is a strip of live surface
+    /// hanging below the window itself. `set_clip_children` crops what is
+    /// *drawn*; the pointer knows nothing about it, and a surface with no
+    /// input region of its own takes input over the whole buffer. So the band
+    /// carries a region covering exactly the part of it inside the clip, moved
+    /// with it: without this the window swallows clicks below its own edge, and
+    /// the content above the pane gets events meant for the chrome.
+    fn clip_band_input(&mut self, top: i32) {
+        if self.last_input_top == Some(top) {
+            return;
+        }
+        self.last_input_top = Some(top);
+
+        let compositor = crate::app_runner::AppContext::compositor_state();
+        let qh = crate::app_runner::AppContext::queue_handle();
+        let region = compositor.wl_compositor().create_region(qh, ());
+        // Band-local: the viewport's top edge sits at `-top` in the band's own
+        // coordinates. Rounded outwards so no row along either edge is dead.
+        region.add(
+            0,
+            -top,
+            self.viewport.width().ceil() as i32,
+            self.viewport.height().ceil() as i32,
+        );
+        self.band_surface
+            .wl_surface()
+            .set_input_region(Some(&region));
+        region.destroy();
     }
 
     /// The scrollbar moves and fades entirely through its style node; it is

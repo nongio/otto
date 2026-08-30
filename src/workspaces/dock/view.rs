@@ -23,7 +23,7 @@ use crate::{
     config::{Config, DockBookmark, DockPosition},
     shell::WindowElement,
     theme::theme_colors,
-    utils::{parse_hex_color, Observer},
+    utils::Observer,
     workspaces::{
         app_icons_manager::AppIconsManager, apps_info::ApplicationsInfo, utils::ContextMenuView,
         Application, WorkspacesModel,
@@ -32,7 +32,7 @@ use crate::{
 
 use super::{
     model::DockModel,
-    render::{setup_app_icon, setup_label, setup_miniwindow_icon},
+    render::{icon_color_filter, setup_app_icon, setup_label, setup_miniwindow_icon},
 };
 
 pub const BASE_ICON_SIZE: f32 = 300.0;
@@ -108,6 +108,8 @@ pub struct DockView {
     state: Arc<RwLock<DockModel>>,
     active: Arc<AtomicBool>,
     notify_tx: tokio::sync::mpsc::Sender<WorkspacesModel>,
+    /// Watchers of the dock's own model. See [`DockView::add_model_listener`].
+    model_observers: Arc<RwLock<Vec<std::sync::Weak<dyn Observer<DockModel>>>>>,
     latest_event: Arc<tokio::sync::RwLock<Option<WorkspacesModel>>>,
     magnification_position: Arc<RwLock<f32>>,
     pub dragging: Arc<AtomicBool>,
@@ -415,6 +417,7 @@ impl DockView {
             state: Arc::new(RwLock::new(initial_state)),
             active: Arc::new(AtomicBool::new(true)),
             notify_tx,
+            model_observers: Arc::new(RwLock::new(Vec::new())),
             latest_event: Arc::new(tokio::sync::RwLock::new(None)),
             magnification_position: Arc::new(RwLock::new(-500.0)),
             dragging: Arc::new(AtomicBool::new(false)),
@@ -479,6 +482,30 @@ impl DockView {
             *self.state.write().unwrap() = state.clone();
         }
         self.render_dock();
+        self.notify_model_observers(state);
+    }
+
+    /// Watch the dock's own model.
+    ///
+    /// The dock does not apply a workspace change when it is told about one: it
+    /// resolves the running applications on a task of its own, up to half a
+    /// second later. Anything that has to agree with what the dock *draws* —
+    /// the shell's accessible tree does — has to hear about it then rather than
+    /// when the workspace changed.
+    pub fn add_model_listener(&self, observer: Arc<dyn Observer<DockModel>>) {
+        self.model_observers
+            .write()
+            .unwrap()
+            .push(Arc::downgrade(&observer));
+    }
+
+    fn notify_model_observers(&self, state: &DockModel) {
+        let observers: Vec<_> = self.model_observers.read().unwrap().clone();
+        for observer in observers {
+            if let Some(observer) = observer.upgrade() {
+                observer.notify(state);
+            }
+        }
     }
     pub fn get_state(&self) -> DockModel {
         self.state.read().unwrap().clone()
@@ -553,41 +580,7 @@ impl DockView {
     fn render_elements_layers(&self, available_icon_width: f32) {
         let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
         let dock_size_multiplier = Config::with(|c| c.dock.size.clamp(0.5, 2.0)) as f32;
-        let icon_color_filter = {
-            let dock_config = Config::with(|c| c.dock.clone());
-            if dock_config.colorize_icons {
-                let color = parse_hex_color(&dock_config.colorize_color);
-                let intensity = dock_config.colorize_intensity.clamp(0.0, 1.0) as f32;
-                let (r, g, b) = (color.r, color.g, color.b);
-                let (lr, lg, lb) = (0.2126_f32, 0.7152_f32, 0.0722_f32);
-                let inv = 1.0 - intensity;
-                let matrix = skia::ColorMatrix::new(
-                    inv + intensity * lr * r,
-                    intensity * lg * r,
-                    intensity * lb * r,
-                    0.0,
-                    0.0,
-                    intensity * lr * g,
-                    inv + intensity * lg * g,
-                    intensity * lb * g,
-                    0.0,
-                    0.0,
-                    intensity * lr * b,
-                    intensity * lg * b,
-                    inv + intensity * lb * b,
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                    1.0,
-                    0.0,
-                );
-                Some(skia::color_filters::matrix(&matrix, None))
-            } else {
-                None
-            }
-        };
+        let icon_color_filter = icon_color_filter();
         let state = self.get_state();
         let display_apps = self.display_entries(&state);
         let app_height = available_icon_width * (1.0 + 20.0 / 95.0);
@@ -638,7 +631,7 @@ impl DockView {
         });
 
         self.bar_layer
-            .set_border_corner_radius(bar_thickness / 3.5, None);
+            .set_border_corner_radius(otto_kit::corners::radius(bar_thickness / 3.5), None);
 
         let handle_long = 25.0 * draw_scale;
         self.resize_handle.set_size(
@@ -1202,6 +1195,18 @@ impl DockView {
             }
         });
     }
+    /// Where an application's dock icon is on screen, in physical pixels.
+    ///
+    /// Read by the accessibility layer so an assistive technology can find the
+    /// icon spatially — mouse review reads whatever is under the pointer, and
+    /// without bounds there is nothing under it. The icon's own layer is the
+    /// authority, so magnification is accounted for by construction.
+    pub fn app_icon_bounds(&self, match_id: &str) -> Option<skia::Rect> {
+        let layers = self.app_layers.read().unwrap();
+        let bounds = layers.get(match_id)?.layer.render_bounds_transformed();
+        (!bounds.is_empty()).then_some(bounds)
+    }
+
     fn get_app_layers(&self) -> Vec<Layer> {
         let app_layers = self.app_layers.read().unwrap();
         app_layers
@@ -2424,6 +2429,9 @@ impl DockView {
             .build()
             .unwrap();
         ghost.build_layer_tree(&ghost_tree);
+        // The ghost stands in for the icon that was just lifted out of the
+        // strip, so it carries the same tint the strip does.
+        ghost.set_color_filter(icon_color_filter());
         let _ = self.drag_overlay.add_sublayer(&ghost);
 
         // The ghost takes the pointer with it from the first frame, and keeps
@@ -3118,6 +3126,46 @@ mod tests {
         }
     }
 
+    /// The dock resolves the running applications on a task of its own, half a
+    /// second behind the workspace change that caused them, so anything that
+    /// has to agree with what the dock draws — the shell's accessible tree —
+    /// has to hear about it when the dock applies it and not before. Without
+    /// this the tree says an application that has just started is not running,
+    /// and goes on saying so until something else changes the workspace.
+    #[test]
+    #[serial]
+    fn applying_a_model_tells_the_dock_s_own_watchers() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct Counter(Arc<AtomicUsize>);
+        impl Observer<DockModel> for Counter {
+            fn notify(&self, _event: &DockModel) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        let rt = runtime();
+        let _guard = rt.enter();
+        let (_engine, dock) = dock_at(DockPosition::Bottom);
+
+        let seen = Arc::new(AtomicUsize::new(0));
+        let observer: Arc<dyn Observer<DockModel>> = Arc::new(Counter(seen.clone()));
+        dock.add_model_listener(observer.clone());
+
+        let before = seen.load(Ordering::Relaxed);
+        let mut state = dock.get_state();
+        state.running_apps = vec![Application::test_new("calculator")];
+        dock.update_state(&state);
+        assert_eq!(seen.load(Ordering::Relaxed), before + 1);
+
+        // Weakly held: a watcher that has gone away must not keep the dock
+        // calling into it.
+        drop(observer);
+        let after = seen.load(Ordering::Relaxed);
+        dock.update_state(&state);
+        assert_eq!(seen.load(Ordering::Relaxed), after);
+    }
+
     /// An icon slot is a square icon plus the sliver the running dot lives in,
     /// laid along the dock: on a side dock it is wider than it is tall. This
     /// holds with magnification off too, where nothing re-sizes the slots after
@@ -3260,6 +3308,31 @@ mod tests {
                  from the dock that started at {to:?}"
             );
         }
+    }
+
+    /// The balloon body comes from the palette's tooltip material, so it
+    /// follows the scheme. Both arms of the tooltip draw used to hold the same
+    /// hardcoded grey — the light material, copied verbatim into the dark one.
+    #[test]
+    #[serial]
+    fn the_tooltip_body_follows_the_theme() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        let body_color = |scheme: crate::theme::ThemeScheme| {
+            Config::update(|c| c.theme_scheme = scheme.clone());
+            let (engine, dock) = dock_at(DockPosition::Bottom);
+            show_first_label(&dock, &engine);
+            let painted = first_entry(&dock).1.render_layer().background_color;
+            let expected = layers::prelude::PaintColor::Solid {
+                color: crate::theme::theme_colors().materials_controls_tooltip,
+            };
+            assert_eq!(painted, expected, "{scheme:?} tooltip is off the palette");
+            painted
+        };
+        let light = body_color(crate::theme::ThemeScheme::Light);
+        let dark = body_color(crate::theme::ThemeScheme::Dark);
+        Config::update(|c| c.theme_scheme = crate::theme::ThemeScheme::Light);
+        assert_ne!(light, dark, "both schemes painted the same tooltip");
     }
 
     /// The running indicator hugs the screen edge the dock sits on, whether the

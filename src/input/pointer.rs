@@ -785,6 +785,10 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
         let pointer = self.pointer.clone();
         // Cache pointer location for use in button events
         self.last_pointer_location = (pos.x, pos.y);
+        // One relaxed store, so an assistive technology can follow the pointer
+        // without anything being asked of the input path. See
+        // [`crate::a11y::pointer_locator`].
+        self.a11y.pointer.set(pos.x, pos.y);
 
         // Update focused output for workspace selector display
         {
@@ -919,6 +923,9 @@ impl crate::Otto<crate::udev::UdevData> {
 
         // Cache pointer location for use in button events
         self.last_pointer_location = (pointer_location.x, pointer_location.y);
+        self.a11y
+            .pointer
+            .set(pointer_location.x, pointer_location.y);
 
         // Track which output the pointer is on — drives the flattened model
         // (expose, workspace selector, new-window routing). Cheap: no-op
@@ -1005,6 +1012,9 @@ impl crate::Otto<crate::udev::UdevData> {
         let under = self.surface_under(pointer_location);
         // Cache pointer location for use in button events
         self.last_pointer_location = (pointer_location.x, pointer_location.y);
+        self.a11y
+            .pointer
+            .set(pointer_location.x, pointer_location.y);
 
         // Track which output the pointer is on (see on_pointer_move).
         {

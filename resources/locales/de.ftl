@@ -76,6 +76,9 @@ settings-pane-lock-and-login = Sperren & Anmelden
 settings-group-appearance = Erscheinungsbild
 settings-colour-scheme = Farbschema
 settings-accent-colour = Akzentfarbe
+settings-rounded-corners = Abgerundete Ecken
+settings-rounded-corners-detail = Gilt nach einem Neustart
+settings-window-controls = Fenstersteuerelemente
 settings-font = Systemschriftart
 settings-gtk-theme = GTK-Thema
 
@@ -142,6 +145,7 @@ settings-dock-magnification = Vergrößerung
 settings-group-magnification-and-icons = Vergrößerung & Symbole
 settings-dock-magnification-amount = Vergrößerungsgrad
 settings-dock-tint-icons = Symbole einfärben
+settings-switcher-colorize-icons = Umschalter einfärben
 settings-dock-icon-tint = Farbton
 settings-dock-icon-tint-strength = Farbtonstärke
 
@@ -213,6 +217,8 @@ settings-greeter-arguments = Argumente für den Anmeldebildschirm
 
 settings-choice-light = Hell
 settings-choice-dark = Dunkel
+settings-choice-controls-left = Links
+settings-choice-controls-right = Rechts
 settings-choice-position-bottom = Unten
 settings-choice-position-left = Links
 settings-choice-position-right = Rechts
@@ -476,7 +482,11 @@ schema-screen-scale-description = Globaler Skalierungsfaktor für den Schreibtis
 schema-theme-scheme-label = Farbschema
 schema-theme-scheme-description = Helles oder dunkles Farbschema.
 schema-accent-color-label = Akzentfarbe
-schema-accent-color-description = Benannte Akzentfarbe für Ottos eigene Oberfläche.
+schema-accent-color-description = Ein Palettenname, der dem hellen und dunklen Farbschema folgt, oder eine Farbe als #RRGGBB.
+schema-rounded-corners-label = Abgerundete Ecken
+schema-rounded-corners-description = Dock, obere Leiste, Fensterdekorationen und die Panels des Desktops.
+schema-window-controls-side-label = Fenstersteuerelemente
+schema-window-controls-side-description = An welchem Ende der Titelleiste die Knöpfe zum Schließen, Minimieren und Zoomen sitzen.
 schema-font-family-label = Oberflächenschrift
 schema-font-family-description = Schriftfamilie für Ottos eigene Oberfläche.
 schema-background-color-label = Hintergrundfarbe
@@ -581,6 +591,8 @@ schema-login-greeter-args-description = An den Anmeldebildschirm übergebene Arg
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = Umschalter folgt dem Zeiger
 schema-appswitcher-follow-cursor-description = Fensterumschalter auf dem Bildschirm anzeigen, auf dem sich der Zeiger befindet.
+schema-appswitcher-colorize-icons-label = Symbole im Umschalter einfärben
+schema-appswitcher-colorize-icons-description = Die Symbolfärbung des Docks auch im Fensterumschalter anwenden. Ohne Wirkung, solange die Dock-Färbung aus ist.
 
 ## Late additions
 
@@ -1028,3 +1040,29 @@ islands-dialog-allow = Erlauben
 islands-dialog-continue = Fortfahren
 # Refuses the request.
 islands-dialog-deny = Ablehnen
+
+
+## Accessibility
+##
+## Spoken by a screen reader, never drawn on screen, so these are the only
+## strings in the catalogue with no width limit — say the whole thing rather
+## than abbreviating. They name parts of the desktop a sighted person
+## recognises by shape: read them as answers to "what is this?".
+
+a11y-dock = Dock
+a11y-app-running = Läuft
+a11y-app-not-running = Läuft nicht
+a11y-app-switcher = Programmumschalter
+a11y-windows = Fenster
+a11y-workspaces = Schreibtische
+a11y-untitled-window = Fenster ohne Titel
+a11y-menu-bar = Menüleiste
+a11y-status = Status
+a11y-tray-item = Symbol { $number }
+a11y-notifications = Mitteilungen
+a11y-categories = Kategorien
+a11y-results = Ergebnisse
+a11y-settings = Einstellungen
+a11y-preview = Vorschau
+a11y-preview-page = Vorschau, Seite { $page } von { $pages }
+a11y-preview-shortened = Vorschau, gekürzt

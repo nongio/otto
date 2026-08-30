@@ -118,8 +118,8 @@ Minimizing sends the window into the Dock with a **genie** animation — the
 window stretches and funnels down into the dock's minimized-windows area.
 Clicking its thumbnail in the dock plays the animation in reverse.
 
-The genie effect's shape is tunable with `dock.genie_scale` and
-`dock.genie_span` — see [Dock](dock.md).
+The animation itself has no settings; `dock.genie_scale` and `dock.genie_span`
+shape the dock's *icon magnification*, not this — see [Dock](dock.md).
 
 Minimized windows are excluded from Exposé.
 

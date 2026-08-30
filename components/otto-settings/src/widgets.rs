@@ -279,20 +279,41 @@ pub fn choose_rect(right: f32, cy: f32) -> Rect {
     Rect::from_xywh(right - CHOOSE_W, cy - CONTROL_H / 2.0, CHOOSE_W, CONTROL_H)
 }
 
+/// Narrowest the path field is allowed to get before it stops giving room
+/// back to the label.
+const FILE_FIELD_MIN: f32 = 80.0;
+
+/// The path field's rect, given the row's trailing edge and `floor` — the
+/// leftmost point the row's controls may start at, which is what the label
+/// beside them needs.
+///
+/// At a comfortable width the field is [`FILE_FIELD_W`] and the floor never
+/// binds. In a narrow window the field is what gives way, down to
+/// [`FILE_FIELD_MIN`]: a path is elided gracefully, a label that has run out
+/// of room simply disappears.
+pub fn file_field_rect(right: f32, floor: f32, cy: f32) -> Rect {
+    let trailing = right - CHOOSE_W - CHOOSE_GAP;
+    let left = (trailing - FILE_FIELD_W).max(floor.min(trailing - FILE_FIELD_MIN));
+    Rect::from_ltrb(left, cy - CONTROL_H / 2.0, trailing, cy + CONTROL_H / 2.0)
+}
+
 /// A file setting: the chosen path, and the button that changes it.
 ///
 /// The path reads from the left like any other field's text. When it does not
 /// fit, the *head* is elided — the file's own name is what identifies it, and
 /// truncating that away to keep `/home/user/` would leave the one part nobody
 /// needs.
-pub fn file_field(canvas: &Canvas, right: f32, cy: f32, value: &str, pressed: bool, theme: &Theme) {
+pub fn file_field(
+    canvas: &Canvas,
+    right: f32,
+    floor: f32,
+    cy: f32,
+    value: &str,
+    pressed: bool,
+    theme: &Theme,
+) {
     let button = choose_rect(right, cy);
-    let field = Rect::from_xywh(
-        button.left - CHOOSE_GAP - FILE_FIELD_W,
-        cy - CONTROL_H / 2.0,
-        FILE_FIELD_W,
-        CONTROL_H,
-    );
+    let field = file_field_rect(right, floor, cy);
 
     let rrect = RRect::new_rect_xy(field, 6.0, 6.0);
     canvas.draw_rrect(rrect, &fill(theme.fill_quaternary));
@@ -311,7 +332,7 @@ pub fn file_field(canvas: &Canvas, right: f32, cy: f32, value: &str, pressed: bo
     // Left aligned, like every other field's text. The file's own name is what
     // identifies it, so what a too-long path loses is its leading directories:
     // the head is elided rather than the tail truncated.
-    let inner = FILE_FIELD_W - 18.0;
+    let inner = field.width() - 18.0;
     let text = elide_head(&text, style, inner);
     text_centered_y(canvas, &text, field.left + 9.0, cy, style, color);
     canvas.restore();
@@ -378,18 +399,33 @@ pub fn line_button(canvas: &Canvas, rect: Rect, plus: bool, pressed: bool, theme
     }
 }
 
-/// Key combination shown as individual keycaps.
-pub fn key_combo(canvas: &Canvas, right: f32, cy: f32, combo: &str, theme: &Theme) {
-    let keys: Vec<&str> = combo.split('+').map(|k| k.trim()).collect();
-    let style = CONTROL_TEXT;
-    let gap = 4.0;
-    let pad = 7.0;
+const KEYCAP_GAP: f32 = 4.0;
+const KEYCAP_PAD: f32 = 7.0;
 
+/// The keycaps a combination breaks into, their widths, and the width of the
+/// whole run. Drawing and measuring both come through here, so the room a
+/// label is given can never disagree with what is drawn beside it.
+fn keycaps(combo: &str) -> (Vec<&str>, Vec<f32>, f32) {
+    let keys: Vec<&str> = combo.split('+').map(|k| k.trim()).collect();
     let widths: Vec<f32> = keys
         .iter()
-        .map(|k| style.font().measure_str(k, None).0 + pad * 2.0)
+        .map(|k| CONTROL_TEXT.font().measure_str(k, None).0 + KEYCAP_PAD * 2.0)
         .collect();
-    let total: f32 = widths.iter().sum::<f32>() + gap * (keys.len() as f32 - 1.0);
+    let total: f32 = widths.iter().sum::<f32>() + KEYCAP_GAP * (keys.len() as f32 - 1.0);
+    (keys, widths, total)
+}
+
+/// How wide a key combination draws, so a label can be laid out against it.
+pub fn key_combo_width(combo: &str) -> f32 {
+    keycaps(combo).2
+}
+
+/// Key combination shown as individual keycaps.
+pub fn key_combo(canvas: &Canvas, right: f32, cy: f32, combo: &str, theme: &Theme) {
+    let style = CONTROL_TEXT;
+    let gap = KEYCAP_GAP;
+    let pad = KEYCAP_PAD;
+    let (keys, widths, total) = keycaps(combo);
 
     let mut x = right - total;
     for (key, width) in keys.iter().zip(&widths) {
@@ -401,6 +437,10 @@ pub fn key_combo(canvas: &Canvas, right: f32, cy: f32, combo: &str, theme: &Them
         x += width + gap;
     }
 }
+
+/// How much room the revert badge takes to the right of the point it is
+/// centred on, plus the gap that separates it from the text it trails.
+pub const REVERT_BADGE_ROOM: f32 = 12.0 + 14.0;
 
 /// Small circular arrow marking a row that overrides its inherited value.
 pub fn revert_badge(canvas: &Canvas, cx: f32, cy: f32, theme: &Theme) {
@@ -418,12 +458,20 @@ pub fn revert_badge(canvas: &Canvas, cx: f32, cy: f32, theme: &Theme) {
     canvas.draw_path(&head.detach(), &fill(theme.accent));
 }
 
+const RESTART_TEXT: &str = "Restart required";
+
+/// How wide the "restart required" pill draws, so a label can be laid out
+/// against it.
+pub fn restart_pill_width() -> f32 {
+    styles::CAPTION_2.font().measure_str(RESTART_TEXT, None).0 + 14.0
+}
+
 /// "Restart required" pill. Amber regardless of theme — it is a status, not
 /// a surface.
 pub fn restart_pill(canvas: &Canvas, x: f32, cy: f32) {
-    let text = "Restart required";
+    let text = RESTART_TEXT;
     let style = styles::CAPTION_2;
-    let width = style.font().measure_str(text, None).0 + 14.0;
+    let width = restart_pill_width();
     let rect = Rect::from_xywh(x, cy - 9.0, width, 18.0);
     canvas.draw_rrect(
         RRect::new_rect_xy(rect, 9.0, 9.0),

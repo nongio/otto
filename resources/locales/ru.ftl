@@ -75,6 +75,9 @@ settings-pane-lock-and-login = Блокировка и вход
 settings-group-appearance = Оформление
 settings-colour-scheme = Цветовая схема
 settings-accent-colour = Цвет акцента
+settings-rounded-corners = Скруглённые углы
+settings-rounded-corners-detail = Применяется после перезапуска
+settings-window-controls = Кнопки окна
 settings-font = Системный шрифт
 settings-gtk-theme = Тема GTK
 
@@ -143,6 +146,7 @@ settings-dock-magnification = Увеличение
 settings-group-magnification-and-icons = Увеличение и значки
 settings-dock-magnification-amount = Степень увеличения
 settings-dock-tint-icons = Тонировать значки
+settings-switcher-colorize-icons = Тонировать переключатель
 settings-dock-icon-tint = Оттенок значков
 settings-dock-icon-tint-strength = Сила оттенка значков
 
@@ -214,6 +218,8 @@ settings-greeter-arguments = Аргументы экрана приветств�
 
 settings-choice-light = Светлая
 settings-choice-dark = Тёмная
+settings-choice-controls-left = Слева
+settings-choice-controls-right = Справа
 settings-choice-position-bottom = Внизу
 settings-choice-position-left = Слева
 settings-choice-position-right = Справа
@@ -482,7 +488,11 @@ schema-screen-scale-description = Общий коэффициент масшта
 schema-theme-scheme-label = Цветовая схема
 schema-theme-scheme-description = Светлая или тёмная цветовая схема.
 schema-accent-color-label = Цвет акцента
-schema-accent-color-description = Именованный цвет акцента, используемый собственным интерфейсом Otto.
+schema-accent-color-description = Название из палитры, которое следует светлой и тёмной схемам, или цвет #RRGGBB.
+schema-rounded-corners-label = Скруглённые углы
+schema-rounded-corners-description = Dock, верхняя панель, оформление окон и панели рабочего стола.
+schema-window-controls-side-label = Кнопки окна
+schema-window-controls-side-description = У какого края заголовка окна расположены кнопки закрытия, сворачивания и масштабирования.
 schema-font-family-label = Шрифт интерфейса
 schema-font-family-description = Семейство шрифтов, используемое собственным интерфейсом Otto.
 schema-background-color-label = Цвет фона
@@ -587,6 +597,8 @@ schema-login-greeter-args-description = Аргументы, передаваем
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = Переключатель следует за указателем
 schema-appswitcher-follow-cursor-description = Показывать переключатель окон на выводе, где находится указатель.
+schema-appswitcher-colorize-icons-label = Тонировать значки переключателя
+schema-appswitcher-colorize-icons-description = Применять тонирование значков Dock и к переключателю окон. Ничего не делает, пока тонирование Dock выключено.
 
 
 ## Late additions
@@ -1048,3 +1060,29 @@ islands-dialog-allow = Разрешить
 islands-dialog-continue = Продолжить
 # Refuses the request.
 islands-dialog-deny = Запретить
+
+
+## Accessibility
+##
+## Spoken by a screen reader, never drawn on screen, so these are the only
+## strings in the catalogue with no width limit — say the whole thing rather
+## than abbreviating. They name parts of the desktop a sighted person
+## recognises by shape: read them as answers to "what is this?".
+
+a11y-dock = Док
+a11y-app-running = Запущено
+a11y-app-not-running = Не запущено
+a11y-app-switcher = Переключатель программ
+a11y-windows = Окна
+a11y-workspaces = Рабочие столы
+a11y-untitled-window = Окно без названия
+a11y-menu-bar = Строка меню
+a11y-status = Состояние
+a11y-tray-item = Элемент { $number }
+a11y-notifications = Уведомления
+a11y-categories = Категории
+a11y-results = Результаты
+a11y-settings = Настройки
+a11y-preview = Просмотр
+a11y-preview-page = Просмотр, страница { $page } из { $pages }
+a11y-preview-shortened = Просмотр, сокращённый

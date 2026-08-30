@@ -75,6 +75,9 @@ settings-pane-lock-and-login = Blokada i logowanie
 settings-group-appearance = Wygląd
 settings-colour-scheme = Schemat kolorów
 settings-accent-colour = Kolor akcentu
+settings-rounded-corners = Zaokrąglone rogi
+settings-rounded-corners-detail = Zacznie obowiązywać po ponownym uruchomieniu
+settings-window-controls = Przyciski okna
 settings-font = Czcionka systemowa
 settings-gtk-theme = Motyw GTK
 
@@ -143,6 +146,7 @@ settings-dock-magnification = Powiększenie
 settings-group-magnification-and-icons = Powiększenie i ikony
 settings-dock-magnification-amount = Stopień powiększenia
 settings-dock-tint-icons = Zabarwiaj ikony
+settings-switcher-colorize-icons = Zabarwiaj przełącznik
 settings-dock-icon-tint = Zabarwienie ikon
 settings-dock-icon-tint-strength = Siła zabarwienia ikon
 
@@ -214,6 +218,8 @@ settings-greeter-arguments = Parametry ekranu logowania
 
 settings-choice-light = Jasny
 settings-choice-dark = Ciemny
+settings-choice-controls-left = Po lewej
+settings-choice-controls-right = Po prawej
 settings-choice-position-bottom = Na dole
 settings-choice-position-left = Po lewej
 settings-choice-position-right = Po prawej
@@ -489,7 +495,11 @@ schema-screen-scale-description = Globalny współczynnik skalowania stosowany d
 schema-theme-scheme-label = Schemat kolorów
 schema-theme-scheme-description = Jasny lub ciemny schemat kolorów.
 schema-accent-color-label = Kolor akcentu
-schema-accent-color-description = Nazwany kolor akcentu używany przez własny interfejs Otto.
+schema-accent-color-description = Nazwa z palety, która podąża za jasnym i ciemnym schematem, albo kolor #RRGGBB.
+schema-rounded-corners-label = Zaokrąglone rogi
+schema-rounded-corners-description = Dock, górny pasek, dekoracje okien i panele środowiska.
+schema-window-controls-side-label = Przyciski okna
+schema-window-controls-side-description = Przy którym końcu paska tytułu znajdują się przyciski zamykania, minimalizowania i powiększania.
 schema-font-family-label = Czcionka interfejsu
 schema-font-family-description = Rodzina czcionek używana przez własny interfejs Otto.
 schema-background-color-label = Kolor tła
@@ -594,6 +604,8 @@ schema-login-greeter-args-description = Parametry przekazywane ekranowi logowani
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = Przełącznik podąża za wskaźnikiem
 schema-appswitcher-follow-cursor-description = Pokazuj przełącznik aplikacji na ekranie, na którym znajduje się wskaźnik.
+schema-appswitcher-colorize-icons-label = Zabarwiaj ikony przełącznika
+schema-appswitcher-colorize-icons-description = Zastosuj zabarwienie ikon Docka także w przełączniku aplikacji. Nic nie robi, dopóki zabarwienie Docka jest wyłączone.
 
 
 ## Late additions
@@ -1055,3 +1067,29 @@ islands-dialog-allow = Zezwól
 islands-dialog-continue = Kontynuuj
 # Refuses the request.
 islands-dialog-deny = Odmów
+
+
+## Accessibility
+##
+## Spoken by a screen reader, never drawn on screen, so these are the only
+## strings in the catalogue with no width limit — say the whole thing rather
+## than abbreviating. They name parts of the desktop a sighted person
+## recognises by shape: read them as answers to "what is this?".
+
+a11y-dock = Dok
+a11y-app-running = Uruchomiony
+a11y-app-not-running = Nieuruchomiony
+a11y-app-switcher = Przełącznik programów
+a11y-windows = Okna
+a11y-workspaces = Biurka
+a11y-untitled-window = Okno bez tytułu
+a11y-menu-bar = Pasek menu
+a11y-status = Stan
+a11y-tray-item = Element { $number }
+a11y-notifications = Powiadomienia
+a11y-categories = Kategorie
+a11y-results = Wyniki
+a11y-settings = Ustawienia
+a11y-preview = Podgląd
+a11y-preview-page = Podgląd, strona { $page } z { $pages }
+a11y-preview-shortened = Podgląd, skrócony

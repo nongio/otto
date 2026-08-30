@@ -67,7 +67,7 @@ Each is a standalone binary in `components/`:
 | `otto-auth-ui` | The password panel shared by the greeter and the lock screen |
 | `otto-rdp` | Serves a virtual output over RDP — see [rdp-virtual-output.md](rdp-virtual-output.md) |
 | `xdg-desktop-portal-otto` | Portal backend: screencast, screenshot, settings, access dialogs |
-| `apps-manager` | Application launcher/manager |
+| `apps-manager` | **WIP** — a command-line probe for `ext_foreign_toplevel_list_v1`, not an application |
 
 ## Other top-level directories
 

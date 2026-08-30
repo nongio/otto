@@ -77,7 +77,9 @@ launcher without acting.
 
 **Editing.** The field supports caret movement, selection with Shift, word-wise
 motion with Ctrl, select-all with Ctrl+A, deleting the previous word with
-Ctrl+W, and clearing the query with Ctrl+U.
+Ctrl+W, and clearing the query with Ctrl+U. Ctrl+C, Ctrl+X and Ctrl+V copy, cut
+and paste against the system clipboard; a paste keeps only what fits on one
+line, and refilters as typing does.
 
 **Pointer.** Moving the pointer over a row selects it. Releasing over a row acts
 on it. Pressing anywhere outside the card closes the launcher, as Escape does.

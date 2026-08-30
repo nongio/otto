@@ -196,6 +196,8 @@ fn too_large(intrinsic: ISize, request: &Request) -> PreviewPayload {
             },
         ],
         hero: None,
+        // Stamped by `decode`, which is where the sniffed type is known.
+        icon: Vec::new(),
     }
 }
 

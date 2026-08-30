@@ -1,10 +1,12 @@
+use otto_kit::accessibility::{A11yTree, Action, ActionRequest, Role};
 use otto_kit::{
     components::context_menu::ContextMenu,
     components::menu_item::{MenuItem as KitMenuItem, MenuItemIcon},
     protocols::otto_surface_style_v1::{BlendMode, ClipMode, ContentsGravity},
     surfaces::LayerShellSurface,
-    App, AppContext,
+    App, AppContext, ObjectId,
 };
+use skia_safe::Rect;
 use smithay_client_toolkit::{
     seat::pointer::{PointerEvent, PointerEventKind},
     shell::xdg::window::WindowConfigure,
@@ -12,6 +14,7 @@ use smithay_client_toolkit::{
 };
 use std::collections::HashMap;
 use wayland_client::protocol::{wl_keyboard, wl_surface};
+use wayland_client::Proxy;
 use wayland_protocols::xdg::shell::client::xdg_positioner;
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::Layer,
@@ -19,6 +22,32 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 };
 
 use crate::bar::{LeftPanel, RightPanel};
+
+/// The menu bar's identity for assistive technologies.
+const MENUS: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA51_0000);
+/// The clock's.
+const CLOCK: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA51_0001);
+
+/// One menu's, by its place on the bar.
+fn menu_focus(index: usize) -> otto_kit::focus::FocusId {
+    otto_kit::focus::FocusId::new(format!("menu-{index}"))
+}
+
+/// What to call a tray item that carries no tooltip: the application half of
+/// its D-Bus service name, which is usually its binary.
+fn tray_name(item: &crate::tray::TrayItem) -> String {
+    item.service
+        .rsplit('-')
+        .next_back()
+        .filter(|part| !part.is_empty())
+        .unwrap_or(&item.service)
+        .to_owned()
+}
+
+/// One tray item's.
+fn tray_focus(index: usize) -> otto_kit::focus::FocusId {
+    otto_kit::focus::FocusId::new(format!("tray-{index}"))
+}
 use crate::config::*;
 
 /// Tracks which tray icon's context menu is currently open.
@@ -111,7 +140,7 @@ impl TopBarApp {
         style.set_background_color(c.r as f64, c.g as f64, c.b as f64, c.a as f64);
         style.set_blend_mode(BlendMode::BackgroundBlur);
         style.set_masks_to_bounds(ClipMode::Enabled);
-        style.set_corner_radius(BAR_CORNER_RADIUS as f64);
+        style.set_corner_radius(otto_kit::corners::radius(BAR_CORNER_RADIUS) as f64);
         style.set_shadow(0.25, 8.0, 0.0, 3.0, 0.0, 0.0, 0.0);
         style.set_contents_gravity(gravity);
     }
@@ -386,6 +415,15 @@ impl TopBarApp {
             return;
         };
 
+        self.open_menu_at(index);
+    }
+
+    /// Open (or close) the menu at `index` on the left panel.
+    ///
+    /// Shared with the accessibility action so a screen reader's click and a
+    /// pointer's are the same thing, down to the toggle when the menu already
+    /// open is clicked again.
+    fn open_menu_at(&mut self, index: usize) {
         // Index 0 is the app name — skip it (or could open "about" in future)
         if index == 0 {
             self.close_app_menu();
@@ -462,6 +500,16 @@ impl App for TopBarApp {
 
         self.left_surface = Some(left);
         self.right_surface = Some(right);
+
+        // Both panels, separately: they are two surfaces, and the menus and
+        // the status area are two different things to read. Nothing is built
+        // until an assistive technology attaches.
+        for surface in [self.left_surface.as_ref(), self.right_surface.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            AppContext::enable_accessibility(&surface.wl_surface().id());
+        }
         self._spacer_surface = Some(spacer);
 
         crate::tray::spawn_tray_watcher();
@@ -549,6 +597,148 @@ impl App for TopBarApp {
         }
         if self.open_app_menu.is_some() {
             self.close_app_menu();
+        }
+    }
+
+    /// The bar, described. Which panel is asked for decides what is in it:
+    /// the menus on the left, the tray and the clock on the right.
+    fn accessibility(&mut self, _ctx: &AppContext, surface: &ObjectId) -> Option<A11yTree> {
+        let left = self
+            .left_surface
+            .as_ref()
+            .map(|s| s.wl_surface().id() == *surface)
+            .unwrap_or(false);
+
+        if left {
+            let height = self.left.height;
+            let active = self.left.menu_state.active_index();
+            let items: Vec<(usize, String, f32, f32)> = self
+                .left
+                .menu_item_rects()
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, (x, width))| {
+                    let label = self.left.menu_state.items().get(index)?.label.clone()?;
+                    Some((index, label, x, width))
+                })
+                .collect();
+
+            let mut tree = A11yTree::new(otto_kit::t!("a11y-menu-bar"));
+            tree.region(
+                MENUS,
+                Rect::from_xywh(0.0, 0.0, self.left.width, height),
+                Role::MenuBar,
+                otto_kit::t!("a11y-menu-bar"),
+                |tree| {
+                    for (index, label, x, width) in items {
+                        let bounds = Rect::from_xywh(x, 0.0, width, height);
+                        tree.control(menu_focus(index), bounds, Role::MenuItem, true, |node| {
+                            node.set_label(label);
+                            // The open menu is the expanded one; the rest are
+                            // menus that could be opened.
+                            node.set_expanded(active == Some(index));
+                            node.set_has_popup(otto_kit::accessibility::HasPopup::Menu);
+                            node.add_action(Action::Click);
+                        });
+                    }
+                },
+            );
+            return Some(tree);
+        }
+
+        let height = self.right.height;
+        let mut tree = A11yTree::new(otto_kit::t!("a11y-status"));
+
+        // A tray icon carries no label of its own — it is an icon. Its tooltip
+        // is what the application calls it, and failing that the service name
+        // it registered under: either beats "tray item 3", which tells a
+        // screen reader user only that something is there.
+        let tray = crate::tray::current_items();
+
+        for (index, item) in self.right.tray_menu_state.items().iter().enumerate() {
+            let Some((x, y, w, h)) = self.right.tray_item_rect(index) else {
+                continue;
+            };
+            let label = item
+                .label
+                .clone()
+                .or_else(|| tray.get(index).and_then(|t| t.tooltip.clone()))
+                .or_else(|| tray.get(index).map(tray_name))
+                .unwrap_or_else(|| {
+                    otto_kit::t_owned!("a11y-tray-item", number = index as f64 + 1.0)
+                });
+            tree.control(
+                tray_focus(index),
+                Rect::from_xywh(x, y, w, h),
+                Role::Button,
+                true,
+                |node| {
+                    node.set_label(label);
+                    node.add_action(Action::Click);
+                },
+            );
+        }
+
+        // The clock reads as what it says, and is announced when it changes:
+        // it is the one thing on the bar that moves on its own.
+        let clock = Rect::from_xywh(
+            self.right.width - self.right.clock_width(),
+            0.0,
+            self.right.clock_width(),
+            height,
+        );
+        let time = self.right.clock.text.clone();
+        tree.control(CLOCK, clock, Role::Label, false, |node| {
+            // The time goes in `value`, which is where AT-SPI looks for a
+            // label's text; the live region is what makes a change announce
+            // itself rather than waiting to be asked.
+            node.set_value(time);
+            node.set_live(otto_kit::accessibility::Live::Polite);
+        });
+
+        Some(tree)
+    }
+
+    /// A screen reader clicked the bar: open that menu, or activate that tray
+    /// item, exactly as a pointer click does.
+    fn on_accessibility_action(
+        &mut self,
+        _ctx: &AppContext,
+        surface: &ObjectId,
+        request: &ActionRequest,
+    ) {
+        if !matches!(request.action, Action::Click) {
+            return;
+        }
+        let node = request.target_node;
+
+        let left = self
+            .left_surface
+            .as_ref()
+            .map(|s| s.wl_surface().id() == *surface)
+            .unwrap_or(false);
+
+        if left {
+            let count = self.left.menu_state.items().len();
+            if let Some(index) =
+                (0..count).find(|i| otto_kit::accessibility::node_id(menu_focus(*i)) == node)
+            {
+                self.open_menu_at(index);
+            }
+            return;
+        }
+
+        let count = self.right.tray_menu_state.items().len();
+        if let Some(index) =
+            (0..count).find(|i| otto_kit::accessibility::node_id(tray_focus(*i)) == node)
+        {
+            // Where the icon is, since an SNI menu opens at the pointer.
+            let (x, y) = self
+                .right
+                .tray_item_rect(index)
+                .map(|(x, y, w, h)| (x + w / 2.0, y + h))
+                .unwrap_or((0.0, self.right.height));
+            crate::tray::activate_item(index, x as i32, y as i32);
         }
     }
 

@@ -376,7 +376,9 @@ pub fn run_winit() {
     state.start_xwayland();
 
     // Start the screenshare D-Bus service
-    match crate::screenshare::ScreenshareManager::start(&event_loop.handle()) {
+    // No accessibility manager: this Otto is a window inside another session,
+    // whose own compositor owns `org.freedesktop.a11y.Manager`.
+    match crate::screenshare::ScreenshareManager::start(&event_loop.handle(), None) {
         Ok(manager) => {
             state.screenshare_manager = Some(manager);
             info!("Screenshare D-Bus service started");
@@ -812,56 +814,17 @@ pub fn run_winit() {
         } else {
             state.workspaces.refresh_space();
             state.popups.cleanup();
+            // Tell any window that has moved where it is now. Diffed against
+            // what was last sent, so a desktop at rest sends nothing.
+            crate::surface_style::send_desktop_frames(&mut state);
             // Scripted-gesture driver, same hook udev installs. Costs a file
             // existence check per iteration until a script appears.
             crate::debug_gesture::tick(&mut state);
-            // Debug: `echo ActionName > $OTTO_ACTION_FILE` (default
-            // /tmp/otto-action) executes a builtin
-            // shortcut action as if its key was pressed. Mirrors the udev
-            // hook — virtual-keyboard input bypasses the libinput shortcut
-            // layer, so harnesses need this to drive compositor UI remotely.
-            let action_file = std::env::var("OTTO_ACTION_FILE")
-                .unwrap_or_else(|_| "/tmp/otto-action".to_string());
-            if let Ok(name) = std::fs::read_to_string(&action_file) {
-                let _ = std::fs::remove_file(&action_file);
-                let name = name.trim();
-                let resolved = crate::config::shortcuts::parse_builtin_name(name)
-                    .map(crate::config::shortcuts::ShortcutAction::Builtin)
-                    .and_then(|a| {
-                        Config::with(|c| crate::input::actions::resolve_shortcut_action(c, &a))
-                    });
-                match resolved {
-                    Some(action) => {
-                        info!("executing debug action: {name}");
-                        use crate::input::actions::KeyAction;
-                        match action {
-                            KeyAction::ExposeShowAll => state.handle_expose_show_all(),
-                            KeyAction::ExposeShowDesktop => state.handle_expose_show_desktop(),
-                            KeyAction::WorkspaceNum(i) => state.handle_workspace_num(i),
-                            // The window-management actions live in the
-                            // windowed *keyboard* dispatcher
-                            // (`process_input_event_windowed`), not in
-                            // `process_common_key_action` — which warns and
-                            // drops anything it does not own. Without these
-                            // arms the debug hook could never drive the app
-                            // switcher or the tiling actions: they logged
-                            // "executing debug action" and then did nothing.
-                            KeyAction::ApplicationSwitchNext => state.handle_app_switcher_next(),
-                            KeyAction::ApplicationSwitchPrev => state.handle_app_switcher_prev(),
-                            KeyAction::ApplicationSwitchQuit => state.handle_app_switcher_quit(),
-                            KeyAction::ApplicationSwitchNextWindow => {
-                                state.handle_app_switcher_next_window()
-                            }
-                            KeyAction::ToggleMaximize => state.handle_toggle_maximize(),
-                            KeyAction::TileLeft => state.handle_tile_left(),
-                            KeyAction::TileRight => state.handle_tile_right(),
-                            KeyAction::CloseWindow => state.handle_close_window(),
-                            other => state.process_common_key_action(other),
-                        }
-                        state.backend_data.request_redraw();
-                    }
-                    None => warn!("unknown debug action: {name}"),
-                }
+            // Debug hook: `echo ActionName > $OTTO_ACTION_FILE` executes a
+            // builtin shortcut action as if its key was pressed. Shared with
+            // the udev backend; see `poll_debug_action_file`.
+            if state.poll_debug_action_file() {
+                state.backend_data.request_redraw();
             }
             display_handle.flush_clients().unwrap();
         }

@@ -246,8 +246,17 @@ struct DragIcon {
 }
 
 impl DragIcon {
-    /// Create the surface, without committing anything to it. The buffer comes
-    /// after the drag has started — the role has to be assigned first.
+    /// Create the bare `wl_surface`, with no drawing machinery behind it yet
+    /// and nothing committed to it.
+    ///
+    /// Deliberately cheap. `start_drag` is only honoured while the pointer
+    /// grab that authorised it is still held, so everything between the press
+    /// and that request is time the drag can be lost in — and the user is
+    /// already moving. Allocating an EGL window and a Skia surface here cost
+    /// enough to lose a quick flick outright: the button came back up before
+    /// the request reached the compositor, the grab was gone, and the drag was
+    /// dropped without a word. So the surface is made now and everything
+    /// behind it in [`Self::realise`], after the drag has started.
     fn new(width: i32, height: i32) -> Option<Self> {
         let compositor = AppContext::compositor_state();
         let qh = AppContext::queue_handle();
@@ -257,16 +266,25 @@ impl DragIcon {
         let buffer_scale = 2;
         wl_surface.set_buffer_scale(buffer_scale);
 
-        let mut surface =
-            crate::surfaces::BaseWaylandSurface::new(wl_surface, width, height, buffer_scale);
-        if let Err(err) = surface.create_skia_surface() {
-            tracing::warn!(%err, "could not create the drag icon's surface");
-            return None;
-        }
         Some(Self {
-            surface,
+            surface: crate::surfaces::BaseWaylandSurface::new(
+                wl_surface,
+                width,
+                height,
+                buffer_scale,
+            ),
             size: (width as f32, height as f32),
         })
+    }
+
+    /// Build the drawing machinery behind the surface, once the drag it
+    /// belongs to is under way. Returns whether the icon can be drawn into.
+    fn realise(&mut self) -> bool {
+        if let Err(err) = self.surface.create_skia_surface() {
+            tracing::warn!(%err, "could not create the drag icon's surface");
+            return false;
+        }
+        true
     }
 
     /// Put the point `(x, y)` *inside* the icon under the cursor, instead of
@@ -323,13 +341,16 @@ where
         return false;
     }
 
-    // The previous drag's icon, now that this one is starting: see
-    // `clear_payload` for why it outlived its own drag.
-    DRAG_ICON.with(|slot| slot.borrow_mut().take());
-
+    // Nothing expensive before `start`. The request has to reach the
+    // compositor while the press that authorised it still holds the pointer,
+    // and a fast drag gives it very little time — see [`DragIcon::new`]. So
+    // the icon is created bare, the drag is started, and only then is the
+    // previous drag's icon torn down and this one given something to draw
+    // with. The old icon outlived its own drag on purpose; see
+    // `clear_payload`.
+    let mut icon = DragIcon::new(size.0, size.1);
     // No icon is not a reason to refuse the drag: the gesture works without
     // one, and the cursor still says copy or move.
-    let icon = DragIcon::new(size.0, size.1);
     let started = start(
         crate::clipboard::file_payloads(paths, false),
         actions,
@@ -341,13 +362,17 @@ where
         return false;
     }
 
-    if let Some(icon) = icon {
+    DRAG_ICON.with(|slot| slot.borrow_mut().take());
+
+    if let Some(mut icon) = icon.take() {
         // Only now: the surface has the drag-icon role, and this attaches the
         // first buffer to it.
-        icon.surface
-            .draw(|canvas| draw(canvas, size.0 as f32, size.1 as f32));
-        icon.set_anchor(anchor);
-        DRAG_ICON.with(|slot| *slot.borrow_mut() = Some(icon));
+        if icon.realise() {
+            icon.surface
+                .draw(|canvas| draw(canvas, size.0 as f32, size.1 as f32));
+            icon.set_anchor(anchor);
+            DRAG_ICON.with(|slot| *slot.borrow_mut() = Some(icon));
+        }
     }
     true
 }

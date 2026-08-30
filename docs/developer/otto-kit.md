@@ -34,7 +34,7 @@ components/otto-kit/src/
 ├── icons.rs          Icon lookup
 ├── icon_theme.rs     freedesktop icon theme resolution
 ├── accent.rs         Accent colour, from the settings portal
-├── color_scheme.rs   Light/dark, from the settings portal
+├── color_scheme.rs   Light/dark, from the settings portal or OTTO_COLOR_SCHEME
 ├── protocols/        Otto's own Wayland protocols, generated
 ├── desktop_entry.rs  .desktop parsing
 ├── filetype/         MIME lookup by glob and content
@@ -174,7 +174,10 @@ Both inputs come from the freedesktop settings portal —
 `org.freedesktop.appearance`'s `color-scheme` and `accent-color` — read once at
 startup and then watched for `SettingChanged`, each kept in an atomic. So every
 otto-kit app follows the user's light/dark and accent choice with no code, and
-switches live. Otto's own backend for that portal is
+switches live. The portal backend is optional, so light/dark has a second
+source: the compositor publishes its configured scheme as `OTTO_COLOR_SCHEME`,
+which `color_scheme.rs` falls back to when the portal has answered nothing —
+startup-only, and always outranked by the portal. Otto's own backend for that portal is
 [`xdg-desktop-portal-otto`](settings-dbus-api.md); see
 [Color Scheme](color-scheme-setting.md) for the whole path.
 
@@ -202,7 +205,11 @@ switches live. Otto's own backend for that portal is
 `filetype` resolves MIME types by glob and by content sniffing, and `preview`
 renders file thumbnails against the shared freedesktop cache — both for
 otto-files and otto-quickview. `clipboard` and `dnd` cover selections and drag
-and drop, `sound` plays feedback sounds, and `lottie` plays Lottie animations
+and drop — `clipboard::set_text` and `clipboard::text` are the plain-text pair
+a text field needs, since `TextInput` owns no clipboard itself: it answers a
+`Copy` or `Cut` key with `TextInputResponse::Clipboard(text)` for the host to
+offer, and takes a paste as `TextInputKey::Paste(text)` already read. `sound`
+plays feedback sounds, and `lottie` plays Lottie animations
 (the greeter and lock screen use it).
 
 ## Building and running

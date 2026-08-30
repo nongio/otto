@@ -76,6 +76,9 @@ settings-pane-lock-and-login = Bloqueio e login
 settings-group-appearance = Aparência
 settings-colour-scheme = Esquema de cores
 settings-accent-colour = Cor de destaque
+settings-rounded-corners = Cantos arredondados
+settings-rounded-corners-detail = Aplicado após reiniciar
+settings-window-controls = Controles da janela
 settings-font = Fonte do sistema
 settings-gtk-theme = Tema do GTK
 
@@ -143,6 +146,7 @@ settings-dock-magnification = Ampliação
 settings-group-magnification-and-icons = Ampliação e ícones
 settings-dock-magnification-amount = Nível de ampliação
 settings-dock-tint-icons = Colorir ícones
+settings-switcher-colorize-icons = Colorir o alternador
 settings-dock-icon-tint = Cor dos ícones
 settings-dock-icon-tint-strength = Intensidade da cor dos ícones
 
@@ -214,6 +218,8 @@ settings-greeter-arguments = Argumentos da tela de login
 
 settings-choice-light = Claro
 settings-choice-dark = Escuro
+settings-choice-controls-left = Esquerda
+settings-choice-controls-right = Direita
 settings-choice-position-bottom = Embaixo
 settings-choice-position-left = Esquerda
 settings-choice-position-right = Direita
@@ -480,7 +486,11 @@ schema-screen-scale-description = Fator de escala global aplicado à área de tr
 schema-theme-scheme-label = Esquema de cores
 schema-theme-scheme-description = Esquema de cores claro ou escuro.
 schema-accent-color-label = Cor de destaque
-schema-accent-color-description = Nome da cor de destaque usada pela própria interface do Otto.
+schema-accent-color-description = Um nome da paleta, que acompanha os esquemas claro e escuro, ou uma cor #RRGGBB.
+schema-rounded-corners-label = Cantos arredondados
+schema-rounded-corners-description = O Dock, a barra superior, as decorações de janela e os painéis da área de trabalho.
+schema-window-controls-side-label = Controles da janela
+schema-window-controls-side-description = Em que extremidade da barra de título ficam os controles de fechar, minimizar e ampliar.
 schema-font-family-label = Fonte da interface
 schema-font-family-description = Família de fonte usada pela própria interface do Otto.
 schema-background-color-label = Cor do plano de fundo
@@ -585,6 +595,8 @@ schema-login-greeter-args-description = Argumentos passados à tela de login.
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = O alternador segue o ponteiro
 schema-appswitcher-follow-cursor-description = Mostrar o alternador de aplicativos na saída em que o ponteiro está.
+schema-appswitcher-colorize-icons-label = Colorir ícones do alternador
+schema-appswitcher-colorize-icons-description = Aplicar a cor dos ícones do Dock também ao alternador de aplicativos. Não faz nada enquanto a cor do Dock está desligada.
 
 
 ## Late additions
@@ -1043,3 +1055,29 @@ islands-dialog-allow = Permitir
 islands-dialog-continue = Continuar
 # Refuses the request.
 islands-dialog-deny = Negar
+
+
+## Accessibility
+##
+## Spoken by a screen reader, never drawn on screen, so these are the only
+## strings in the catalogue with no width limit — say the whole thing rather
+## than abbreviating. They name parts of the desktop a sighted person
+## recognises by shape: read them as answers to "what is this?".
+
+a11y-dock = Dock
+a11y-app-running = Em execução
+a11y-app-not-running = Não está em execução
+a11y-app-switcher = Alternador de aplicativos
+a11y-windows = Janelas
+a11y-workspaces = Áreas de trabalho
+a11y-untitled-window = Janela sem título
+a11y-menu-bar = Barra de menus
+a11y-status = Estado
+a11y-tray-item = Item { $number }
+a11y-notifications = Notificações
+a11y-categories = Categorias
+a11y-results = Resultados
+a11y-settings = Ajustes
+a11y-preview = Pré-visualização
+a11y-preview-page = Pré-visualização, página { $page } de { $pages }
+a11y-preview-shortened = Pré-visualização, abreviada

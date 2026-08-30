@@ -461,8 +461,40 @@ pub fn run_udev() {
     /*
      * Start the screenshare D-Bus service
      */
-    match crate::screenshare::ScreenshareManager::start(&event_loop.handle()) {
+    // Accessibility rides on the same D-Bus thread. Only this backend offers
+    // it: a nested Otto would take the name from the session hosting it.
+    let accessible = crate::config::Config::with(|config| config.accessibility.enabled);
+    let a11y = accessible.then(|| state.a11y.take_dbus_parts()).flatten();
+
+    match crate::screenshare::ScreenshareManager::start(&event_loop.handle(), a11y) {
         Ok(manager) => {
+            // The shell's own accessible tree. Registered here rather than with
+            // the state because it needs the command channel the service just
+            // created — an assistive technology clicking a dock icon takes the
+            // same path as any other request to focus an application.
+            if accessible {
+                let chrome = crate::a11y::chrome::ShellAccessibility::new(
+                    manager.command_sender.clone(),
+                    std::sync::Arc::downgrade(&state.workspaces.dock),
+                    std::sync::Arc::downgrade(&state.workspaces.app_switcher),
+                    state.workspaces.show_all.clone(),
+                    state.workspaces.window_views.clone(),
+                );
+                crate::utils::Observable::add_listener(&mut state.workspaces, chrome.clone());
+                // And the dock's own model, which lands later than the change
+                // that caused it: without this the tree says an application
+                // that has just started is not running, and goes on saying so.
+                state.workspaces.dock.add_model_listener(chrome.clone());
+                // Describe the desktop as it stands, rather than waiting for
+                // something to change it: an assistive technology attaching to
+                // an idle session would otherwise be told the shell is empty.
+                state
+                    .workspaces
+                    .with_model(|model| crate::utils::Observer::notify(chrome.as_ref(), model));
+                state.a11y.chrome = Some(chrome);
+                tracing::info!("Shell accessibility published");
+            }
+
             state.screenshare_manager = Some(manager);
             tracing::info!("Screenshare D-Bus service started");
         }
@@ -720,36 +752,18 @@ pub fn run_udev() {
                     state.render(node, Some(crtc));
                 }
             }
-            // Debug: `echo ActionName > /tmp/otto-action` executes a builtin
-            // shortcut action (e.g. ExposeShowAll) as if its key was pressed.
-            // Virtual-keyboard input bypasses the libinput shortcut layer, so
-            // test harnesses need this to drive compositor UI remotely.
-            if let Ok(name) = std::fs::read_to_string("/tmp/otto-action") {
-                let _ = std::fs::remove_file("/tmp/otto-action");
-                let name = name.trim();
-                let resolved = crate::config::shortcuts::parse_builtin_name(name)
-                    .map(crate::config::shortcuts::ShortcutAction::Builtin)
-                    .and_then(|a| {
-                        Config::with(|c| crate::input::actions::resolve_shortcut_action(c, &a))
-                    });
-                match resolved {
-                    Some(action) => {
-                        info!("executing debug action: {name}");
-                        use crate::input::actions::KeyAction;
-                        match action {
-                            KeyAction::ExposeShowAll => state.handle_expose_show_all(),
-                            KeyAction::ExposeShowDesktop => state.handle_expose_show_desktop(),
-                            KeyAction::WorkspaceNum(i) => state.handle_workspace_num(i),
-                            other => state.process_common_key_action(other),
-                        }
-                        // Real key events request a redraw as a side effect;
-                        // without it the scheduled lay-rs transactions never
-                        // tick and the action stays invisible.
-                        state.backend_data.request_redraw();
-                    }
-                    None => warn!("unknown debug action: {name}"),
-                }
+            // Debug hook: `echo ActionName > $OTTO_ACTION_FILE` executes a
+            // builtin shortcut action as if its key was pressed. Shared with
+            // the winit backend; see `poll_debug_action_file`.
+            if state.poll_debug_action_file() {
+                // Real key events request a redraw as a side effect; without
+                // it the scheduled lay-rs transactions never tick and the
+                // action stays invisible.
+                state.backend_data.request_redraw();
             }
+            // Tell any window that has moved where it is now. Diffed against
+            // what was last sent, so a desktop at rest sends nothing.
+            crate::surface_style::send_desktop_frames(&mut state);
             display_handle.flush_clients().unwrap();
         }
     }

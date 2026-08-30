@@ -1,6 +1,108 @@
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicI32, Ordering};
 
 use layers::{prelude::*, skia};
+
+/// Fallback wallpaper decode size, used until an output has reported its mode.
+///
+/// Big enough to look right on a laptop panel, small enough that a wallpaper
+/// set before the first output exists costs nothing much.
+const WALLPAPER_FALLBACK_EDGE_PX: i32 = 2048;
+
+/// Hard ceiling on either edge of a decoded wallpaper, in physical pixels.
+///
+/// The decode size is derived from the real output below, so this only bites
+/// on exotic displays; it is here to keep the wallpaper inside the smallest
+/// `GL_MAX_TEXTURE_SIZE` worth relying on, and to keep one image from eating
+/// hundreds of megabytes.
+const WALLPAPER_MAX_EDGE_PX: i32 = 8192;
+
+/// Physical size of the largest output, which is what a wallpaper is decoded
+/// for. Global because every workspace decodes its own copy, and none of them
+/// knows about outputs.
+static WALLPAPER_TARGET_W_PX: AtomicI32 = AtomicI32::new(0);
+static WALLPAPER_TARGET_H_PX: AtomicI32 = AtomicI32::new(0);
+
+/// Tell the wallpaper decoder how big the biggest output is, in physical
+/// pixels. Returns `true` when that is *larger* than what wallpapers were last
+/// decoded for, i.e. when the current ones are now upscaled and the caller
+/// should reload them.
+pub fn set_wallpaper_target_px(width_px: f32, height_px: f32) -> bool {
+    let (w, h) = (width_px as i32, height_px as i32);
+    if w <= 0 || h <= 0 {
+        return false;
+    }
+    let grew = w > WALLPAPER_TARGET_W_PX.load(Ordering::Relaxed)
+        || h > WALLPAPER_TARGET_H_PX.load(Ordering::Relaxed);
+    WALLPAPER_TARGET_W_PX.store(w, Ordering::Relaxed);
+    WALLPAPER_TARGET_H_PX.store(h, Ordering::Relaxed);
+    grew
+}
+
+/// The output box a wallpaper has to cover, in physical pixels.
+fn wallpaper_target_px() -> (i32, i32) {
+    let w = WALLPAPER_TARGET_W_PX.load(Ordering::Relaxed);
+    let h = WALLPAPER_TARGET_H_PX.load(Ordering::Relaxed);
+    if w <= 0 || h <= 0 {
+        (WALLPAPER_FALLBACK_EDGE_PX, WALLPAPER_FALLBACK_EDGE_PX)
+    } else {
+        (w.min(WALLPAPER_MAX_EDGE_PX), h.min(WALLPAPER_MAX_EDGE_PX))
+    }
+}
+
+/// Decode the wallpaper at `path` at a size that suits the screen it will be
+/// drawn on.
+///
+/// [`view_background`] scales the image to *cover* the output, so anything
+/// smaller than the cover size is visibly upscaled — which is what a fixed
+/// 2048x2048 decode used to do to every wallpaper on a display bigger than
+/// that. The target is the largest output's physical mode instead, capped by
+/// [`WALLPAPER_MAX_EDGE_PX`].
+///
+/// A bigger image than that is resampled down to exactly the cover size, so
+/// the draw scale lands on 1.0. That costs one resample at startup — noticeable
+/// only on a very large photo — and is paid back in texture memory and in
+/// sampling quality, since the GPU would otherwise minify it without mipmaps
+/// on every frame. Images already at or below the cover size are left alone:
+/// enlarging them here would only waste memory, the draw upscales either way.
+pub fn decode_wallpaper(path: &str) -> Option<skia::Image> {
+    let (target_w, target_h) = wallpaper_target_px();
+    // SVGs are rasterized at the size passed here; raster formats ignore it and
+    // decode at their own resolution. A square keeps the framing an SVG
+    // wallpaper has always had, at the screen's resolution rather than 2048.
+    let edge = target_w.max(target_h);
+    let image = crate::utils::image_from_path(path, (edge, edge))?;
+    Some(downscale_to_cover(image, target_w, target_h))
+}
+
+/// Shrink `image` to the smallest size that still covers `target_w x target_h`,
+/// or return it untouched when it is already that small.
+fn downscale_to_cover(image: skia::Image, target_w: i32, target_h: i32) -> skia::Image {
+    let (iw, ih) = (image.width() as f32, image.height() as f32);
+    if iw <= 0.0 || ih <= 0.0 {
+        return image;
+    }
+    let cover = (target_w as f32 / iw).max(target_h as f32 / ih);
+    if cover >= 1.0 {
+        return image;
+    }
+    let (w, h) = (
+        (iw * cover).ceil().max(1.0) as i32,
+        (ih * cover).ceil().max(1.0) as i32,
+    );
+    let Some(mut surface) = skia::surfaces::raster_n32_premul((w, h)) else {
+        return image;
+    };
+    let sampling = skia::SamplingOptions::from(skia::CubicResampler::mitchell());
+    surface.canvas().draw_image_rect_with_sampling_options(
+        &image,
+        None,
+        skia::Rect::from_iwh(w, h),
+        sampling,
+        &skia::Paint::default(),
+    );
+    surface.image_snapshot()
+}
 
 #[derive(Clone, Debug)]
 pub struct BackgroundViewState {
@@ -68,7 +170,7 @@ impl BackgroundView {
             self.clear_image();
             return true;
         }
-        match crate::utils::image_from_path(path, (2048, 2048)) {
+        match decode_wallpaper(path) {
             Some(image) => {
                 self.set_image(image);
                 true
@@ -227,4 +329,58 @@ pub fn view_background(
         .pointer_events(false)
         .build()
         .unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn solid(w: i32, h: i32) -> skia::Image {
+        let mut surface = skia::surfaces::raster_n32_premul((w, h)).unwrap();
+        surface.canvas().clear(skia::Color::RED);
+        surface.image_snapshot()
+    }
+
+    /// A wallpaper larger than the screen is reduced to exactly the size that
+    /// covers it — never below, or the draw would upscale it again.
+    #[test]
+    fn an_oversized_wallpaper_is_reduced_to_the_cover_size() {
+        let scaled = downscale_to_cover(solid(7680, 4320), 2880, 1920);
+        assert!(scaled.width() >= 2880 && scaled.height() >= 1920);
+        // Cover is driven by the taller ratio here, so height lands on target.
+        assert_eq!(scaled.height(), 1920);
+    }
+
+    /// Anything already at or below the cover size is left alone: enlarging it
+    /// here would only cost memory, the draw scales it either way.
+    #[test]
+    fn a_smaller_wallpaper_is_left_alone() {
+        let image = solid(2560, 1600);
+        let kept = downscale_to_cover(image.clone(), 2880, 1920);
+        assert_eq!((kept.width(), kept.height()), (2560, 1600));
+    }
+
+    /// Without an output the decode falls back to the old fixed bound; the
+    /// first output that reports a bigger mode asks for a reload.
+    ///
+    /// The target is process-global, so this is the one test allowed to move
+    /// it — and it runs alone.
+    #[test]
+    #[serial_test::serial]
+    fn the_target_grows_with_the_biggest_output() {
+        assert_eq!(
+            wallpaper_target_px(),
+            (WALLPAPER_FALLBACK_EDGE_PX, WALLPAPER_FALLBACK_EDGE_PX)
+        );
+        assert!(set_wallpaper_target_px(2880.0, 1920.0));
+        assert_eq!(wallpaper_target_px(), (2880, 1920));
+        // A second, smaller output does not shrink what is already decoded.
+        assert!(!set_wallpaper_target_px(1920.0, 1080.0));
+        // And nothing exceeds the texture-size ceiling.
+        set_wallpaper_target_px(20000.0, 20000.0);
+        assert_eq!(
+            wallpaper_target_px(),
+            (WALLPAPER_MAX_EDGE_PX, WALLPAPER_MAX_EDGE_PX)
+        );
+    }
 }

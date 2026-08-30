@@ -82,7 +82,17 @@ use std::os::unix::fs::OpenOptionsExt;
 /// Always returns a payload: a worker that crashed, hung, or produced nonsense
 /// becomes an `Unavailable` with a reason, because "cannot preview this, here
 /// is why" is itself a preview and a blank window is not.
+///
+/// Whatever comes back carries the file's icon, so even that case shows what
+/// kind of file it was rather than a line of text alone. The worker's own
+/// answer wins where it had one — it read the bytes and this side only has the
+/// name — and this fills in for the worker that never got that far.
 pub fn decode(opened: Opened, request: &Request) -> PreviewPayload {
+    let icon = payload::icon_names_for(&request.name, opened.is_dir);
+    payload::with_icon(run(opened, request), icon)
+}
+
+fn run(opened: Opened, request: &Request) -> PreviewPayload {
     let started = Instant::now();
     let executable = match std::env::current_exe() {
         Ok(path) => path,
@@ -221,6 +231,15 @@ pub fn decode_path(path: &Path, request: &Request) -> PreviewPayload {
             }
             decode(opened, &request)
         }
-        Err(reason) => payload::unavailable(reason),
+        // The file could not even be opened, so there is no `Opened` to ask
+        // whether it was a folder; the name is all there is, and it is enough
+        // to pick an icon from.
+        Err(reason) => payload::with_icon(
+            payload::unavailable(reason),
+            payload::icon_names_for(
+                &path.file_name().unwrap_or_default().to_string_lossy(),
+                path.is_dir(),
+            ),
+        ),
     }
 }

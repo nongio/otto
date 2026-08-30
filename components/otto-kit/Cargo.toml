@@ -37,6 +37,13 @@ fluent-bundle = "0.15"
 unic-langid = { version = "0.9", features = ["macros"] }
 intl-memoizer = "0.5"
 
+# Accessibility. accesskit_unix keeps its default `async-io` executor rather
+# than the tokio one: an otto-kit application's UI thread is a hand-rolled
+# poll loop, not a tokio runtime, and the adapter has to be able to run its
+# D-Bus work without one.
+accesskit = "0.24"
+accesskit_unix = "0.22"
+
 [features]
 default = []
 testing = ["rustix"]

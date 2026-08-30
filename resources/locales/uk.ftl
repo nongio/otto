@@ -76,6 +76,9 @@ settings-pane-lock-and-login = Блокування і вхід
 settings-group-appearance = Вигляд
 settings-colour-scheme = Схема кольорів
 settings-accent-colour = Колір акценту
+settings-rounded-corners = Заокруглені кути
+settings-rounded-corners-detail = Застосовується після перезапуску
+settings-window-controls = Кнопки вікна
 settings-font = Системний шрифт
 settings-gtk-theme = Тема GTK
 
@@ -144,6 +147,7 @@ settings-dock-magnification = Збільшення
 settings-group-magnification-and-icons = Збільшення і піктограми
 settings-dock-magnification-amount = Ступінь збільшення
 settings-dock-tint-icons = Тонувати піктограми
+settings-switcher-colorize-icons = Тонувати перемикач
 settings-dock-icon-tint = Колір тонування піктограм
 settings-dock-icon-tint-strength = Сила тонування піктограм
 
@@ -215,6 +219,8 @@ settings-greeter-arguments = Аргументи вітального екран�
 
 settings-choice-light = Світла
 settings-choice-dark = Темна
+settings-choice-controls-left = Ліворуч
+settings-choice-controls-right = Праворуч
 settings-choice-position-bottom = Знизу
 settings-choice-position-left = Ліворуч
 settings-choice-position-right = Праворуч
@@ -483,7 +489,11 @@ schema-screen-scale-description = Загальний коефіцієнт мас
 schema-theme-scheme-label = Схема кольорів
 schema-theme-scheme-description = Світла або темна кольорова схема.
 schema-accent-color-label = Колір акценту
-schema-accent-color-description = Іменований колір акценту, який використовує власний інтерфейс Otto.
+schema-accent-color-description = Назва з палітри, яка відповідає світлій і темній схемам, або колір #RRGGBB.
+schema-rounded-corners-label = Заокруглені кути
+schema-rounded-corners-description = Dock, верхня панель, оформлення вікон і панелі стільниці.
+schema-window-controls-side-label = Кнопки вікна
+schema-window-controls-side-description = Біля якого краю смуги заголовка розташовані кнопки закриття, згортання та масштабування.
 schema-font-family-label = Шрифт інтерфейсу
 schema-font-family-description = Гарнітура шрифту, яку використовує власний інтерфейс Otto.
 schema-background-color-label = Колір тла
@@ -588,6 +598,8 @@ schema-login-greeter-args-description = Аргументи, які переда�
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = Перемикач слідує за вказівником
 schema-appswitcher-follow-cursor-description = Показувати перемикач вікон на виході, де перебуває вказівник.
+schema-appswitcher-colorize-icons-label = Тонувати піктограми перемикача
+schema-appswitcher-colorize-icons-description = Застосовувати тонування піктограм Dock і до перемикача вікон. Нічого не робить, доки тонування Dock вимкнено.
 
 
 ## Late additions
@@ -1049,3 +1061,29 @@ islands-dialog-allow = Дозволити
 islands-dialog-continue = Продовжити
 # Refuses the request.
 islands-dialog-deny = Відмовити
+
+
+## Accessibility
+##
+## Spoken by a screen reader, never drawn on screen, so these are the only
+## strings in the catalogue with no width limit — say the whole thing rather
+## than abbreviating. They name parts of the desktop a sighted person
+## recognises by shape: read them as answers to "what is this?".
+
+a11y-dock = Док
+a11y-app-running = Запущено
+a11y-app-not-running = Не запущено
+a11y-app-switcher = Перемикач програм
+a11y-windows = Вікна
+a11y-workspaces = Робочі простори
+a11y-untitled-window = Вікно без назви
+a11y-menu-bar = Рядок меню
+a11y-status = Стан
+a11y-tray-item = Елемент { $number }
+a11y-notifications = Сповіщення
+a11y-categories = Категорії
+a11y-results = Результати
+a11y-settings = Налаштування
+a11y-preview = Перегляд
+a11y-preview-page = Перегляд, сторінка { $page } з { $pages }
+a11y-preview-shortened = Перегляд, скорочений

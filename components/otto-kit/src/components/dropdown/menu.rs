@@ -60,6 +60,7 @@
 
 use skia_safe::Rect;
 
+use smithay_client_toolkit::reexports::client::protocol::wl_keyboard;
 use smithay_client_toolkit::shell::xdg::XdgPositioner;
 use wayland_protocols::xdg::shell::client::{xdg_positioner, xdg_surface};
 
@@ -141,6 +142,13 @@ fn elide(text: &str, width: f32) -> String {
 /// module docs above for why that matters.
 pub struct DropdownMenu {
     menu: ContextMenu,
+    /// The values the menu was last opened with, unelided.
+    ///
+    /// The rows themselves hold whatever fitted the button's column, which is
+    /// what a sighted user reads. A screen reader has no column to fit and
+    /// must be told the whole value: "Adwaita-dark" and "Adwai…" are not the
+    /// same answer.
+    options: std::cell::RefCell<Vec<String>>,
 }
 
 impl Default for DropdownMenu {
@@ -149,6 +157,7 @@ impl Default for DropdownMenu {
             menu: ContextMenu::new(Vec::new()).with_style(
                 ContextMenuStyle::default().with_item_metrics(ITEM_FONT_SIZE, ITEM_HEIGHT),
             ),
+            options: std::cell::RefCell::new(Vec::new()),
         }
     }
 }
@@ -169,6 +178,60 @@ impl DropdownMenu {
     /// before opening a sibling dropdown, or on window close).
     pub fn close(&self) {
         self.menu.hide_animated();
+    }
+
+    /// Feed a key to the open menu: the arrows move the highlight (scrolling
+    /// the list to keep it in view), Home and End go to the ends, Enter or
+    /// Space chooses, Escape closes with nothing chosen.
+    ///
+    /// A pop-up button opened from the keyboard has to be usable from it, and
+    /// the menu is a surface of its own — the keyboard is on it, not on the
+    /// field, so the application has to hand its keys over for as long as it
+    /// is up. Call it from `on_keyboard_event` (or with `KeyEvent::raw_code`)
+    /// while [`is_open`](Self::is_open) holds, and check `is_open` afterwards:
+    /// Enter, Space and Escape all close, and the field has to stop drawing
+    /// itself open.
+    ///
+    /// Does nothing when the menu is closed, so a caller may pass every key
+    /// through without checking first.
+    pub fn handle_key(&self, key: u32, state: wl_keyboard::KeyState) {
+        if !self.is_open() {
+            return;
+        }
+        // `ContextMenu` is a handle over shared state, so a clone is the same
+        // menu — which is what lets a dropdown held in an immutable map still
+        // be driven.
+        self.menu.clone().handle_key(key, state);
+    }
+
+    /// The values the open menu is listing, in order, as they were given —
+    /// not as they were elided to fit.
+    ///
+    /// Empty when the menu is closed. For describing the menu to an assistive
+    /// technology: an open pop-up is a list on screen, and a tree that omits
+    /// it leaves a screen reader reading the button underneath something it
+    /// cannot see past.
+    pub fn options(&self) -> Vec<String> {
+        if !self.is_open() {
+            return Vec::new();
+        }
+        self.options.borrow().clone()
+    }
+
+    /// Which row the highlight is on, if any.
+    pub fn highlighted(&self) -> Option<usize> {
+        self.menu.state().borrow().selected()
+    }
+
+    /// Put the highlight on one item without choosing it.
+    ///
+    /// For opening from the keyboard: the menu should come up on the value the
+    /// button is showing, so the first arrow press moves from *there* rather
+    /// than from the top of the list. A pointer-opened menu leaves it alone —
+    /// nothing is highlighted until the pointer is over something, which is
+    /// what a highlight means to someone using one.
+    pub fn highlight(&self, index: Option<usize>) {
+        self.menu.state().borrow_mut().select(index);
     }
 
     /// Open the menu, anchored to `field_rect` — the same rect passed to
@@ -201,6 +264,8 @@ impl DropdownMenu {
         if options.is_empty() {
             return;
         }
+
+        *self.options.borrow_mut() = options.to_vec();
 
         let menu = &self.menu;
 

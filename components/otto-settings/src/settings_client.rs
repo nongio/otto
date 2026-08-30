@@ -105,6 +105,10 @@ pub enum Kind {
     Double,
     #[default]
     Text,
+    /// A colour. `choices`, when present, are palette names the compositor
+    /// resolves — swatches to offer — but a `#RRGGBB` literal is accepted
+    /// too, which is what separates this from a plain enumeration.
+    Color,
     List,
 }
 
@@ -114,6 +118,7 @@ impl Kind {
             "bool" => Kind::Bool,
             "int" => Kind::Int,
             "double" => Kind::Double,
+            "color" => Kind::Color,
             "string-list" => Kind::List,
             _ => Kind::Text,
         }

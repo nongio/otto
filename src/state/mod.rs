@@ -362,6 +362,10 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// Virtual outputs defined in config, each streamed via PipeWire.
     pub virtual_outputs: Vec<crate::virtual_output::VirtualOutputState>,
 
+    /// Accessibility — the keyboard monitor assistive technologies grab keys
+    /// through, and the D-Bus half of it until the service thread takes it.
+    pub a11y: crate::a11y::A11yState,
+
     // foreign toplevel list - maps surface ObjectId to unified toplevel handles (both protocols)
     pub foreign_toplevels: HashMap<ObjectId, foreign_toplevel_shared::ForeignToplevelHandles>,
 
@@ -665,6 +669,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 // itself runs in the configured one.
                 let mut assignments = vec![format!("WAYLAND_DISPLAY={socket_name}")];
                 assignments.extend(crate::locale_env::published().iter().cloned());
+                assignments.push(crate::export_rounded_corners());
+                assignments.push(crate::export_window_controls_side());
+                assignments.push(crate::export_color_scheme());
                 let args: Vec<&str> = assignments.iter().map(String::as_str).collect();
 
                 let mut systemctl = vec!["--user", "set-environment"];
@@ -1006,6 +1013,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             screenshare_sessions: HashMap::new(),
             screenshare_manager: None,
             virtual_outputs: Vec::new(),
+
+            // accessibility
+            a11y: crate::a11y::A11yState::new(),
 
             // foreign toplevel list
             foreign_toplevels: HashMap::new(),
@@ -2017,7 +2027,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                         corner_radius: if window.is_maximized() || fullscreen {
                             0.0
                         } else {
-                            12.0
+                            otto_kit::corners::radius(12.0)
                         },
                         controls_hovered: window_view.decoration_state().controls_hovered,
                         pressed: window_view.decoration_state().pressed,

@@ -28,7 +28,8 @@ install_debian() {
         freetype-dev \
         fontconfig-dev \
         mesa-libEGL-dev \
-        mesa-libGL-dev
+        mesa-libGL-dev \
+        at-spi2-core
 }
 
 install_redhat() {
@@ -46,7 +47,8 @@ install_redhat() {
         freetype-devel \
         fontconfig-devel \
         mesa-libEGL-devel \
-        mesa-libGL-devel
+        mesa-libGL-devel \
+        at-spi2-core
 }
 
 install_arch() {
@@ -64,7 +66,8 @@ install_arch() {
         freetype \
         fontconfig \
         mesa-libEGL \
-        mesa-libGL
+        mesa-libGL \
+        at-spi2-core
 }
 
 case "$DISTRO" in
@@ -95,6 +98,7 @@ case "$DISTRO" in
             echo "- dbus"
             echo "- libdisplay-info"
             echo "- pipewire"
+            echo "- at-spi2-core (accessibility bus)"
             exit 1
         fi
         ;;

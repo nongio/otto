@@ -81,7 +81,7 @@ position = "bottom"    # "bottom", "left" or "right"
 magnification = true   # macOS-style icon magnification on hover
 autohide = false       # hide when the pointer leaves
 genie_scale = 0.5      # how much icons magnify under the pointer
-genie_span = 10.0      # and how far the magnification reaches
+genie_span = 10.0      # falloff: larger = tighter around the pointer
 ```
 
 ### Position
@@ -107,15 +107,18 @@ written back by the dock itself; everything else in `[dock]` stays exactly as
 you typed it. Older
 builds rewrote the whole table instead, leaving a copy of every value in
 `~/.config/otto/config.toml` — which then shadowed `/etc/otto/config.toml` and
-made editing the system config look like it did nothing. Otto drops those
-leftovers from the user config on the next start (values you have actually
-changed are kept, and the file is rewritten without its comments).
+made editing the system config look like it did nothing. Otto never edits that file for
+you: at startup it logs a warning naming the leftover keys, and you delete the
+lines you did not write. It cannot tell a copied `colorize_intensity = 1.0`
+from one you typed, and guessing wrong would silently turn a setting off.
 
 ### Magnification
 
 Icons grow as the pointer approaches, with a Gaussian falloff — the icon under
-the pointer is largest and neighbours taper off. `genie_scale` and `genie_span`
-control the intensity and reach of the curve, and both apply live.
+the pointer is largest and neighbours taper off. `genie_scale` is how much the icon
+under the pointer grows; `genie_span` is how sharply the curve falls off, so a
+*larger* value keeps the bump tighter around the pointer and a smaller one
+spreads it over more neighbours. Both apply live.
 
 Set `magnification = false` for a flat dock with no hover scaling.
 
@@ -133,10 +136,25 @@ colorize_color = "#ffffff"
 colorize_intensity = 1.0
 ```
 
-Tints every dock icon toward a single colour — a monochrome dock. `intensity`
-blends between the original icon (`0.0`) and the flat tint (`1.0`). All three
-keys apply live, so dragging the tint strength in Settings repaints the dock as
-you drag.
+Tints every app icon toward a single colour — a monochrome dock. `intensity`
+blends between the original icon (`0.0`) and the flat tint (`1.0`). The tint
+follows the icons wherever they appear, so the app switcher matches the dock.
+All three keys apply live, so dragging the tint strength in Settings repaints
+the icons as you drag.
+
+If you want the tint on the dock but not on the cmd-tab panel, opt the switcher
+out:
+
+```toml
+[appswitcher]
+colorize_icons = false
+```
+
+That is only a yes-or-no for the switcher: the colour and strength stay in
+`[dock]`, since one desktop has one icon tint. With `dock.colorize_icons =
+false` there is no tint anywhere, so the key does nothing. The dock's drag
+ghost is part of the dock and follows the dock's setting. This key applies live
+too.
 
 ## Badges and progress
 

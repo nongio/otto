@@ -27,6 +27,29 @@ D-Bus client that reads a described schema, sets values, and observes changes.
   rate) graphically.
 - The app is usable with keyboard alone, and every setting it presents is
   reachable by search.
+- The app describes itself to assistive technologies, and what a screen reader
+  can reach is what the keyboard can reach — see
+  [accessibility](accessibility.md). Tab enters the sidebar, which is one stop:
+  the arrows move between panes and the selection follows immediately, Home and
+  End go to the ends. Tab again moves on to the pane's own controls, each its
+  own stop, where Space activates a switch or a button and the arrows move a
+  slider.
+- Every row a pane shows is described and, unless it is a row that only
+  displays a value, stopped on — whether or not it changes a compositor
+  setting. A row that is only part of the pane's own state (a display's
+  active or primary switch, its position fields, the buttons that add or
+  remove a virtual display) is reached and operated exactly like a row bound
+  to a setting.
+- A row of push buttons is one stop and one described control *per button*,
+  each at the rectangle its button is drawn at, so pointing at a described
+  button lands on that button.
+- Activating a toggle from the keyboard does what clicking it does, including
+  for a toggle the compositor has no setting for. Activating a text row starts
+  an in-place edit with the caret at the end of the current text.
+- A shortcut line is three controls on one line rather than one, so it is
+  neither described nor stopped on yet: announcing it as a single thing would
+  misdescribe what is there. A pop-up can be focused but not opened from the
+  keyboard, because its menu has no keyboard navigation.
 
 ## Non-Goals
 
@@ -121,7 +144,8 @@ profiles — have no identifier and are not settable through this interface.
 Whether a setting applies live is a property of the compositor, not of the
 setting: today all of `dock.*` (size, position, autohide, magnification,
 magnification amount and spread, icon tint, tint colour and tint strength),
-`accent_color`, `background_image` and `background_color`, and the
+`appswitcher.colorize_icons`, `accent_color`, `background_image` and
+`background_color`, and the
 touchpad/pointer half of `input.*` (tap, tap-drag,
 drag lock, click method, disable-while-typing, natural scroll, left-handed,
 middle-click emulation, scroll speed, pointer acceleration speed and profile)
@@ -152,6 +176,34 @@ Cancelling changes nothing. A request that fails is reported, and the setting
 keeps the value it had; the app never writes an empty path because a dialog
 went wrong.
 
+### Showing what a value looks like
+
+Some settings are chosen by eye, and their value — a path, a theme name — is
+the one thing about them that shows nothing. Those rows carry a preview under
+their control, inside the row rather than beside it, so the row's own height
+accounts for it and nothing else has to move out of the way.
+
+Three rows have one:
+
+- **Background image** shows the chosen file as a thumbnail, in the image's own
+  aspect. A row with nothing chosen has no preview and reserves no space for
+  one.
+- **Cursor theme** and **icon theme** show a few sample images from the selected
+  theme — the pointer, the text cursor, the hand, help and busy; a folder, home,
+  a document, a terminal, a browser — on a light card. The card is light rather
+  than the pane's own colour because both kinds of theme are drawn to sit on a
+  desktop, and a dark card would hide exactly the dark themes being compared.
+  Its size is fixed at a set number of slots, so walking the pop-up never
+  resizes the pane under the pointer, and a slot the theme has nothing for is
+  left empty rather than filled from another theme.
+
+An unset theme previews the desktop's own — what an application actually gets
+when the setting says "no preference" — not a guess at a popular theme.
+
+Every preview is resolved once per value and kept: decoding five icons, or a
+wallpaper, on every frame is not affordable, and a miss is cached too so a
+theme with no folder icon is not re-searched sixty times a second.
+
 ### Persistence
 
 Persisting a setting writes only that setting's key. Every other key in its
@@ -164,6 +216,12 @@ removes the key and then re-reads the whole layered configuration, applying and
 announcing everything that moved. An unrelated edit made to a file since the
 last read is therefore picked up by a reset, which is the same reconciliation
 the file watcher will use.
+
+The same rule runs the other way: nothing removes a key from a user's file
+either. Older builds materialised whole tables into it, and those leftovers do
+shadow the lower layers — but a copied default is indistinguishable from a
+deliberate one, so Otto names the suspect keys in a startup warning and leaves
+the file untouched rather than deleting a line somebody meant.
 
 The rule this protects: the writable configuration file is the highest-priority
 layer. A default value written into it is indistinguishable from a deliberate
@@ -203,14 +261,26 @@ caused it.
 The window presents a list of panes and the selected pane's contents. The panes
 are:
 
-- **General** — appearance (light/dark), accent colour, font family, background
+- **General** — appearance (light/dark), accent colour, rounded corners, which
+  end of a title bar the window controls sit at, font family, background
   colour and image, cursor theme and size, icon theme, and the preferred
   languages, which are what every part of Otto localises itself against. That
   setting requires a restart to take effect, and the app says so like any
   other; an empty list asks Otto to take the language from the environment
   instead ([localisation.md](./localisation.md)).
+
+  The accent is a `color` setting rather than an enumeration: the colour well
+  offers the palette's named accents as swatches, and picking one sends the
+  name, so the accent keeps following the light and dark schemes. A colour
+  dragged out of the picker that the palette has no name for is sent as
+  `#RRGGBB` and is taken as-is under both schemes.
 - **Displays** — see below.
-- **Dock** — size, position, autohide, magnification, minimise effect.
+- **Dock** — size, position, autohide, magnification, minimise effect, and the
+  icon tint: what is tinted — the dock's icons, and whether the app switcher
+  joins in — then the colour and strength that govern both. The switcher's
+  toggle lives here rather than with the switcher's own settings because it
+  says nothing on its own: it borrows the dock's tint, and does nothing while
+  that tint is off.
 - **Keyboard** — repeat delay and rate, then shortcuts.
 - **Trackpad & Mouse** — the pointer and touchpad settings.
 - **Sound** — enabled, theme.
@@ -225,6 +295,19 @@ generically.
 A search field filters the presented settings by label, description, and
 identifier, and selecting a result reveals that setting in its pane.
 
+An editable text field takes the usual editing keys while it holds the
+keyboard: caret movement, Shift to select, Ctrl+A to select all, and Ctrl+C,
+Ctrl+X and Ctrl+V for copy, cut and paste against the system clipboard.
+
+A row's label and description are laid out against the control beside them,
+not against the window: the text is measured, given the room that is actually
+free once the control, the reset badge and the restart pill have taken theirs,
+and cropped with a trailing ellipsis when it does not fit. Which controls give
+way first is part of the layout — the file row's path field shrinks so the
+label keeps a readable minimum — and a label with no room left is drawn as
+nothing rather than as a lone ellipsis. Cropping is presentational only: search
+matches, the described tree and every hit test still see the whole string.
+
 Each setting shows whether it currently differs from its inherited value, and
 offers a per-setting reset when it does.
 
@@ -233,6 +316,12 @@ status after being changed.
 
 Changes take effect on interaction. There is no apply or save step, and no
 confirmation dialog for ordinary settings.
+
+The window draws its own title bar: the traffic lights at whichever end the
+desktop's `window_controls_side` setting names — over the sidebar at the
+leading end, over the far end of the pane at the trailing one — and the app
+and pane name beside the sidebar's edge. See
+[window-decorations](window-decorations.md).
 
 The sidebar and the titlebar are translucent materials over the compositor's
 backdrop blur; the pane's ground is opaque. The sidebar is tinted heavily
@@ -252,7 +341,10 @@ window already has changes nothing about the pane and repaints nothing, so an
 idle window draws no frames at all. Pointer events over the pane land on
 those surfaces and are translated back into the pane's coordinates before
 hit-testing; the window's resize edges along the pane's right and bottom stay
-live.
+live. The content surface is taller than the pane and hangs out of it at both
+ends, so it accepts input only over the part the pane actually shows: the
+window takes no clicks below its own bottom edge, and the chrome above the pane
+keeps its own.
 
 ### Shortcuts
 
@@ -298,6 +390,13 @@ timeout above has to exist before the live path does.*
 
 An output that disconnects while the pane is open disappears from the canvas;
 the configuration recorded for it is retained so reconnecting restores it.
+
+The arrangement canvas itself is drawn by the pane rather than as a row, so it
+is neither a keyboard stop nor described to assistive technologies: dragging an
+output's rectangle is the one thing in the pane that needs a pointer. Every
+other control the pane shows — including a display's active and primary
+switches, its position fields and the virtual-display buttons — is reachable
+from the keyboard.
 
 Per-output settings are stored against a stable identity for that display, so
 they follow the display rather than the connector it happens to occupy.
@@ -376,6 +475,22 @@ user-facing setting means also placing it in a pane.
 **Display mode changes are confirmed, position changes are not.** A bad mode
 can leave a display showing nothing, and the user cannot then click to undo it.
 A bad position is always recoverable.
+
+**Keyboard reach follows the rows, not the settings.** Deriving the focus ring
+and the described tree from a row's compositor setting made every row without
+one invisible: in Displays, Tab jumped from the refresh-rate pop-up straight to
+the scale slider, past the active and primary switches, the position fields and
+the virtual-display buttons. A row is now identified by whatever names it — its
+setting where it has one, its label otherwise — so what the pane draws and what
+the keyboard and a screen reader can reach are the same list.
+
+**A translated label is cropped, not trusted to be short.** Row labels come
+from the catalogues, and a translation is as long as its language makes it —
+Italian's "Colora le icone come il Dock" against English's "Tint icons like the
+dock". Text that overruns its column does not merely look wrong, it draws over
+the control beside it, so the layout measures the room rather than assuming the
+English fits everywhere. Translators should still keep labels short: an
+ellipsis is the floor, not the goal.
 
 **Wallpaper is excluded.** It needs file browsing, thumbnails, per-output
 assignment and scaling modes — a different application with a different shape.

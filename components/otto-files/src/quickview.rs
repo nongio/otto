@@ -103,6 +103,15 @@ pub struct Session {
     /// When the exit started, once it has. A closing session is no longer the
     /// window's open preview — it is only still on screen, going home.
     pub closing: Option<Instant>,
+    /// Whether `preview` is the waiting line rather than a decoded file.
+    ///
+    /// The panel's surface repaints only when its content key changes, and
+    /// the key is built from the request's generation — which is bumped when
+    /// the decode is *asked for*, not when it answers. Without this the panel
+    /// draws once, while it is still waiting, and the content landing changes
+    /// nothing the key can see: the card sits on "Opening preview…" until
+    /// something else moves it.
+    pub loading: bool,
 }
 
 impl Session {
@@ -119,7 +128,40 @@ impl Session {
             anchor,
             opened_at,
             closing: None,
+            loading: false,
         }
+    }
+
+    /// A session on a file whose decode has only just been asked for: the
+    /// panel, its title and a line saying it is working.
+    ///
+    /// Pressing Space and seeing nothing until a worker has been spawned,
+    /// handed the file and answered reads as a keystroke that did not take.
+    /// The panel goes up on the keystroke instead, and the content arrives
+    /// into a card that is already there.
+    pub fn waiting(name: String, is_dir: bool, anchor: Rect, opened_at: Instant) -> Self {
+        let preview = waiting_preview(&name, is_dir);
+        Self {
+            loading: true,
+            ..Self::new(preview, name, anchor, opened_at)
+        }
+    }
+
+    /// Point an open panel at another file, whose decode is in flight.
+    ///
+    /// Everything that belonged to the old file goes now rather than when the
+    /// new one lands — its content, its scroll, its zoom and its pan. A
+    /// preview that does not match the selection is worse than no preview,
+    /// because nothing on screen says it is the wrong file. `anchor` moves
+    /// too, so an exit still flies home to the row that is selected.
+    pub fn awaiting(&mut self, name: String, is_dir: bool, anchor: Rect) {
+        let opened_at = self.opened_at;
+        let anchor = if anchor.is_empty() {
+            self.anchor
+        } else {
+            anchor
+        };
+        *self = Self::waiting(name, is_dir, anchor, opened_at);
     }
 
     /// How far into the entrance the panel is, 0 → 1.
@@ -428,6 +470,21 @@ impl Session {
     }
 }
 
+/// What a panel shows while its decode is still running: the file's own icon,
+/// and a line saying the preview is opening.
+///
+/// Said the same way an undecodable file says why it cannot be shown, because
+/// it is the same thing from the panel's side — there is nothing decoded to
+/// draw. The icon is the one the browser's listing was already showing for the
+/// file, so the card is about the row it grew out of rather than a blank
+/// waiting on a worker.
+fn waiting_preview(name: &str, is_dir: bool) -> Preview {
+    Preview::Unavailable {
+        reason: otto_kit::t_owned!("files-status-opening-preview"),
+        icon: otto_quickview::payload::icon_names_for(name, is_dir),
+    }
+}
+
 /// Where the panel rests, centred in a window of `width` × `height`.
 pub fn panel_rect(width: f32, height: f32) -> Rect {
     let w = (width * PANEL_FRACTION).max(PANEL_MIN.0).min(width - 32.0);
@@ -534,6 +591,48 @@ mod tests {
     /// The content box of a panel resting in a window of a comfortable size.
     fn content() -> Rect {
         crate::view::quickview_content_rect(panel_rect(1100.0, 700.0))
+    }
+
+    /// Arrow-keying on must not leave the last file's picture on screen under
+    /// the new file's name: what the panel shows always belongs to what is
+    /// selected, even while the decode for it is still running.
+    #[test]
+    fn moving_to_another_file_drops_the_previous_preview() {
+        let content = content();
+        let mut session = image_session(2000, 1500);
+        session.zoom_to(4.0, (content.center_x(), content.center_y()), content);
+
+        session.awaiting("notes.txt".into(), false, Rect::new_empty());
+
+        assert!(matches!(session.preview, Preview::Unavailable { .. }));
+        assert_eq!(session.name, "notes.txt");
+        // And the zoom and pan of the picture that is gone go with it, so the
+        // preview that lands opens at fit like any other.
+        assert_eq!(session.zoom, Zoom::FIT);
+        assert!(!session.pannable(content));
+    }
+
+    /// The waiting panel is inert: there is nothing on it to scroll, and a
+    /// gesture over it must not move the content that is on its way.
+    #[test]
+    fn a_waiting_panel_does_not_scroll() {
+        let content = content();
+        let mut session = text_session();
+        session.awaiting("big.log".into(), false, Rect::new_empty());
+        session.scroll_by(20, content);
+        assert_eq!(session.first_row, 0);
+    }
+
+    /// A session opened before its decode keeps the panel's entrance running
+    /// rather than restarting it when the content lands.
+    #[test]
+    fn waiting_and_landing_are_one_entrance() {
+        let opened_at = Instant::now();
+        let waiting = Session::waiting("photo.png".into(), false, Rect::new_empty(), opened_at);
+        assert!(matches!(waiting.preview, Preview::Unavailable { .. }));
+        let mut session = waiting;
+        session.awaiting("other.png".into(), false, Rect::new_empty());
+        assert_eq!(session.opened_at, opened_at);
     }
 
     #[test]

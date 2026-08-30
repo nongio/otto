@@ -34,6 +34,8 @@ pub struct Config {
     #[serde(default)]
     pub power_management: PowerManagementConfig,
     #[serde(default)]
+    pub accessibility: AccessibilityConfig,
+    #[serde(default)]
     pub audio: AudioConfig,
     pub font_family: String,
     pub keyboard_repeat_delay: i32,
@@ -44,8 +46,29 @@ pub struct Config {
     pub background_color: String,
     pub locales: Vec<String>,
     pub use_10bit_color: bool,
+    /// The accent colour Otto's own interface paints with: a palette name,
+    /// which follows the light and dark schemes, or a `#RGB`/`#RRGGBB`
+    /// literal, which does not. Anything else falls back to blue — see
+    /// `theme::accent_from`.
     #[serde(default = "default_accent_color")]
     pub accent_color: String,
+    /// Rounded corners on the desktop's own chrome: the dock's background, the
+    /// top bar, window decorations, and the panels the desktop draws itself —
+    /// the selectors, the app switcher, and the volume and brightness OSD.
+    /// `false` squares them all off.
+    ///
+    /// Read at startup and published to the components in the environment (see
+    /// `otto_kit::corners`), so changing it takes a restart.
+    #[serde(default = "default_rounded_corners")]
+    pub rounded_corners: bool,
+    /// Which end of a window's titlebar the close, minimize and zoom controls
+    /// sit at: `"left"` or `"right"`. On the right the three swap order, so
+    /// close stays the outermost one.
+    ///
+    /// Published to the components the same way `rounded_corners` is (see
+    /// `otto_kit::controls_side`), so changing it takes a restart.
+    #[serde(default = "default_window_controls_side")]
+    pub window_controls_side: String,
     #[serde(default = "shortcuts::default_shortcut_map")]
     pub keyboard_shortcuts: ShortcutMap,
     #[serde(default)]
@@ -103,6 +126,7 @@ impl Default for Config {
             appswitcher: AppSwitcherConfig::default(),
             layer_shell: LayerShellConfig::default(),
             power_management: PowerManagementConfig::default(),
+            accessibility: AccessibilityConfig::default(),
             audio: AudioConfig::default(),
             font_family: "Inter".to_string(),
             keyboard_repeat_delay: 300,
@@ -114,6 +138,8 @@ impl Default for Config {
             locales: vec!["en".to_string()],
             use_10bit_color: false,
             accent_color: default_accent_color(),
+            rounded_corners: default_rounded_corners(),
+            window_controls_side: default_window_controls_side(),
             keyboard_shortcuts: shortcuts::default_shortcut_map(),
             shortcut_bindings: Vec::new(),
             virtual_outputs: Vec::new(),
@@ -214,9 +240,9 @@ impl Config {
         let mut merged =
             toml::Value::try_from(Self::default()).expect("default config is always valid toml");
 
-        // Runs before the layer is read, since it rewrites the file.
+        // Reports on the layer before it is merged; it never edits the file.
         if let Some(user_config) = get_user_config_path() {
-            prune_materialized_dock_keys_in_file(&user_config);
+            report_materialized_dock_keys_in_file(&user_config);
         }
 
         let layers = config_layers();
@@ -546,11 +572,29 @@ pub fn stored_key(path: &str) -> Option<toml::Value> {
     file::to_toml_value(file::get_key(&doc, path)?)
 }
 
-/// The `[dock]` keys the builds this migration cleans up after materialized:
-/// back then none of them were dock-owned. (`size` is written by the handle
-/// drag now, but a copy of the *default* still carries no intent, so it is
-/// still worth pruning.)
-const HAND_EDITED_DOCK_KEYS: [&str; 6] = [
+/// The `[dock]` table exactly as the affected builds serialized it: those wrote
+/// every field of the `DockConfig` of the day and nothing else, because they
+/// replaced the whole table rather than editing the keys they owned.
+///
+/// A table missing one of these — or carrying anything beyond them, `position`
+/// included, which those builds did not know about — was written by a human or
+/// by a current build, and is none of this migration's business.
+const MATERIALIZED_DOCK_TABLE_KEYS: [&str; 9] = [
+    "size",
+    "genie_scale",
+    "genie_span",
+    "colorize_icons",
+    "colorize_color",
+    "colorize_intensity",
+    "autohide",
+    "magnification",
+    "bookmarks",
+];
+
+/// The keys of that table that were never the dock's to write: a copy of one of
+/// these carries no intent of its own, it just shadows the same key in every
+/// lower-priority layer.
+const MATERIALIZED_DOCK_KEYS: [&str; 6] = [
     "size",
     "genie_scale",
     "genie_span",
@@ -559,77 +603,86 @@ const HAND_EDITED_DOCK_KEYS: [&str; 6] = [
     "colorize_intensity",
 ];
 
-/// Clean up after the builds that rewrote the whole `[dock]` table: those left
-/// a copy of every inherited value in the user config, where it shadows
-/// `/etc/otto/config.toml` for good, so editing the system config looks like it
-/// does nothing.
+/// Point out the leftovers of the builds that rewrote the whole `[dock]` table:
+/// those left a copy of every inherited value in the user config, where it
+/// shadows `/etc/otto/config.toml` for good, so editing the system config looks
+/// like it does nothing.
 ///
-/// Rewrites `path` in place if anything was pruned. Nothing else in the file is
-/// touched, but the rewrite goes through `toml` and so drops comments — a
-/// trade-off no longer made anywhere else (see [`file`]), and it happens at most
-/// once per affected install.
-fn prune_materialized_dock_keys_in_file(path: &std::path::Path) {
+/// This *reports* and never edits, which is a deliberate reversal — an earlier
+/// version of this migration deleted the keys and rewrote the file. Two reasons
+/// it cannot:
+///
+/// 1. No fingerprint can prove a human did not write the table. The shape below
+///    is exactly what `otto_config.example.toml` invites people to copy, and a
+///    hand-written `colorize_intensity = 1.0` is indistinguishable from a
+///    materialized one because it *is* the default. Deleting it un-shadows a
+///    lower layer and turns icon tinting off with nothing in the file left to
+///    explain why — silent, unattributable data loss.
+/// 2. Rewriting the file went through `toml::to_string_pretty`, which drops
+///    every comment and reorders the keys of a hand-maintained config. Even a
+///    correct prune is not worth that, and the rest of the config writer stopped
+///    making that trade long ago (see [`file`]).
+///
+/// A leftover that stays put is at worst a shadowed key the user can see, in a
+/// file they own, named by the warning below. A key deleted by mistake is gone.
+fn report_materialized_dock_keys_in_file(path: &std::path::Path) {
     let Ok(content) = std::fs::read_to_string(path) else {
         return;
     };
-    let Ok(mut doc) = content.parse::<toml::Value>() else {
+    let Ok(doc) = content.parse::<toml::Value>() else {
         return; // a parse error is reported when the file is loaded
     };
 
-    let pruned = prune_materialized_dock_keys(&mut doc);
-    if pruned.is_empty() {
+    let shadowing = materialized_dock_keys(&doc);
+    if shadowing.is_empty() {
         return;
     }
 
-    match toml::to_string_pretty(&doc) {
-        Ok(serialized) => match std::fs::write(path, serialized) {
-            Ok(()) => tracing::info!(
-                "Dropped [dock] {} from {}: written by an older build, not hand-edited",
-                pruned.join(", "),
-                path.display()
-            ),
-            Err(err) => warn!("Failed to rewrite {}: {err}", path.display()),
-        },
-        Err(err) => warn!("Failed to serialize {}: {err}", path.display()),
-    }
+    warn!(
+        "[dock] {} in {} hold the built-in defaults and look like copies an \
+         older Otto build left behind. They shadow the same keys in every \
+         lower-priority config file. If you did not set them on purpose, \
+         delete those lines.",
+        shadowing.join(", "),
+        path.display()
+    );
 }
 
-/// Remove the hand-edited-only `[dock]` keys of `doc` that carry no intent, and
-/// report which ones went.
+/// The `[dock]` keys of `doc` that an older build materialized, if the table as
+/// a whole still looks like one of those builds wrote it.
 ///
-/// Only a machine-written table is touched: an older build wrote *all* of
-/// [`HAND_EDITED_DOCK_KEYS`] at once, so anything less than the full set is
-/// somebody's hand-written config and is left alone. Within such a table, a key
-/// holding a value the user could have chosen stays; one holding the built-in
-/// default — or the zero those builds wrote when the key was absent, which no
-/// documented setting uses — can only have been copied in, so it goes and lets
-/// the lower-priority configs be seen again.
-fn prune_materialized_dock_keys(doc: &mut toml::Value) -> Vec<&'static str> {
-    let Some(dock) = doc.get_mut("dock").and_then(toml::Value::as_table_mut) else {
+/// Only an intact machine-written table qualifies: every key of
+/// [`MATERIALIZED_DOCK_TABLE_KEYS`] present and no key outside it. Within such a
+/// table the reported keys are the ones holding a value that carries no intent —
+/// the built-in default, or the zero those builds wrote when the key was absent,
+/// which no documented setting uses.
+fn materialized_dock_keys(doc: &toml::Value) -> Vec<&'static str> {
+    let Some(dock) = doc.get("dock").and_then(toml::Value::as_table) else {
         return Vec::new();
     };
-    if !HAND_EDITED_DOCK_KEYS
-        .iter()
-        .all(|key| dock.contains_key(*key))
-    {
+    let intact = dock.len() == MATERIALIZED_DOCK_TABLE_KEYS.len()
+        && MATERIALIZED_DOCK_TABLE_KEYS
+            .iter()
+            .all(|key| dock.contains_key(*key));
+    if !intact {
         return Vec::new();
     }
 
     let defaults =
         toml::Value::try_from(DockConfig::default()).expect("dock defaults are always valid toml");
 
-    let mut pruned = Vec::new();
-    for key in HAND_EDITED_DOCK_KEYS {
-        let Some(value) = dock.get(key) else { continue };
-        let is_default = defaults
-            .get(key)
-            .is_some_and(|default| same_toml_scalar(value, default));
-        if is_default || is_zeroed(value) {
-            dock.remove(key);
-            pruned.push(key);
-        }
-    }
-    pruned
+    MATERIALIZED_DOCK_KEYS
+        .into_iter()
+        .filter(|key| {
+            let Some(value) = dock.get(*key) else {
+                return false;
+            };
+            let is_default = defaults
+                .get(key)
+                .is_some_and(|default| same_toml_scalar(value, default));
+            is_default || is_zeroed(value)
+        })
+        .collect()
 }
 
 /// Whether `value` is what the old derived `DockConfig::default()` produced for a
@@ -687,8 +740,12 @@ pub struct DockConfig {
     /// Screen edge the dock lives on: `"bottom"` (default), `"left"` or `"right"`.
     #[serde(default)]
     pub position: DockPosition,
+    /// How much the icon under the pointer grows on hover.
     #[serde(default = "default_genie_scale")]
     pub genie_scale: f64,
+    /// How sharply that magnification falls off with distance from the pointer:
+    /// it is the `k` of `e^(-k·x²)`, so a *larger* value keeps the bump tighter
+    /// around the pointer and a smaller one spreads it over more neighbours.
     #[serde(default = "default_genie_span")]
     pub genie_span: f64,
     #[serde(default)]
@@ -737,17 +794,31 @@ pub struct AppSwitcherConfig {
     /// When false it always appears on the primary output.
     #[serde(default = "default_appswitcher_follow_cursor")]
     pub follow_cursor: bool,
+    /// Whether the switcher joins in the dock's icon tint (default: true).
+    ///
+    /// Only whether it participates — the colour and strength stay in
+    /// `[dock] colorize_color` / `colorize_intensity`, because one desktop has
+    /// one icon tint and a second colour here would only let the two drift
+    /// apart. With `[dock] colorize_icons = false` there is no tint anywhere,
+    /// so this setting has nothing to opt out of.
+    #[serde(default = "default_appswitcher_colorize_icons")]
+    pub colorize_icons: bool,
 }
 
 impl Default for AppSwitcherConfig {
     fn default() -> Self {
         Self {
             follow_cursor: default_appswitcher_follow_cursor(),
+            colorize_icons: default_appswitcher_colorize_icons(),
         }
     }
 }
 
 fn default_appswitcher_follow_cursor() -> bool {
+    true
+}
+
+fn default_appswitcher_colorize_icons() -> bool {
     true
 }
 
@@ -791,34 +862,70 @@ pub fn workspace_name_key(output: &str, position: usize) -> String {
 /// Persist custom workspace names into the `[workspaces]` section of the
 /// writable config file, replacing the whole `names` table (the compositor
 /// holds the authoritative set) and leaving every other section alone.
+///
+/// The edit goes through `toml_edit`, so the comments, key order and whitespace
+/// of the rest of a hand-maintained config survive it byte for byte.
 pub fn save_workspace_names(names: &BTreeMap<String, String>) {
     let path = writable_config_path();
-    let raw = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml::Value = raw
-        .parse()
-        .unwrap_or(toml::Value::Table(Default::default()));
-
-    if let Some(table) = doc.as_table_mut() {
-        let workspaces = table
-            .entry("workspaces".to_string())
-            .or_insert_with(|| toml::Value::Table(Default::default()));
-        if let Some(workspaces) = workspaces.as_table_mut() {
-            if let Ok(names) = toml::Value::try_from(names) {
-                workspaces.insert("names".to_string(), names);
-            }
+    let mut doc = match file::load_document(&path) {
+        Ok(doc) => doc,
+        Err(err) => {
+            warn!("Failed to save workspace names: {err}");
+            return;
         }
+    };
+
+    if let Err(err) = replace_workspace_names(&mut doc, names) {
+        warn!(
+            "Failed to save workspace names to {}: {err}",
+            path.display()
+        );
+        return;
     }
+    if let Err(err) = file::store_document(&path, &doc) {
+        warn!("Failed to save workspace names: {err}");
+    }
+}
 
-    match toml::to_string_pretty(&doc) {
-        Ok(serialized) => {
-            if let Err(err) = std::fs::write(&path, serialized) {
-                warn!(
-                    "Failed to save workspace names to {}: {err}",
-                    path.display()
-                );
-            }
-        }
-        Err(err) => warn!("Failed to serialize workspace names: {err}"),
+/// Put `names` in `[workspaces.names]`, replacing whatever was there.
+///
+/// Fails rather than overwrite a `workspaces` key that is not a table: the user
+/// wrote that, whatever it is.
+fn replace_workspace_names(
+    doc: &mut toml_edit::DocumentMut,
+    names: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    let workspaces = doc
+        .as_table_mut()
+        .entry("workspaces")
+        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
+        .as_table_mut()
+        .ok_or_else(|| "`workspaces` is not a table".to_string())?;
+
+    let mut table = toml_edit::Table::new();
+    for (key, value) in names {
+        table.insert(key, toml_edit::value(value.as_str()));
+    }
+    workspaces.insert("names", toml_edit::Item::Table(table));
+    Ok(())
+}
+
+/// What Otto offers assistive technologies — see `specs/accessibility.md`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AccessibilityConfig {
+    /// Own `org.freedesktop.a11y.Manager` and let assistive technologies watch
+    /// and grab keys, and read the shell's own chrome.
+    ///
+    /// Only ever honoured by a session that owns the screen: a nested Otto
+    /// (`--winit`, `--x11`) never claims the name, whatever this says, because
+    /// the name belongs to the compositor the user is actually looking at.
+    pub enabled: bool,
+}
+
+impl Default for AccessibilityConfig {
+    fn default() -> Self {
+        Self { enabled: true }
     }
 }
 
@@ -918,6 +1025,14 @@ fn default_dock_colorize_intensity() -> f64 {
 
 fn default_accent_color() -> String {
     "blue".to_string()
+}
+
+fn default_rounded_corners() -> bool {
+    true
+}
+
+fn default_window_controls_side() -> String {
+    "left".to_string()
 }
 
 /// Power management configuration
@@ -1796,6 +1911,45 @@ mod tests {
 
     #[test]
     #[serial]
+    fn test_saving_workspace_names_keeps_the_rest_of_the_file() {
+        let env = ConfigEnv::new();
+        let config_file = env.user_config(
+            "# my desktop\nscreen_scale = 2.0\n\n[dock]\n# tuned by hand\ngenie_scale = 0.3\n",
+        );
+
+        let mut names = BTreeMap::new();
+        names.insert(workspace_name_key("eDP-1", 0), "Work".to_string());
+        names.insert(workspace_name_key("eDP-1", 1), "Mail".to_string());
+        save_workspace_names(&names);
+
+        let written = fs::read_to_string(&config_file).unwrap();
+        assert!(written.contains("# my desktop"), "{written}");
+        assert!(written.contains("# tuned by hand"), "{written}");
+        assert!(written.contains("genie_scale = 0.3"), "{written}");
+
+        let config: Config = toml::from_str(&written).expect("the file stays parsable");
+        assert_eq!(
+            config.workspaces.names.get("eDP-1:0").map(String::as_str),
+            Some("Work")
+        );
+
+        // Renaming again replaces the table rather than accumulating in it.
+        let mut names = BTreeMap::new();
+        names.insert(workspace_name_key("eDP-1", 0), "Play".to_string());
+        save_workspace_names(&names);
+
+        let written = fs::read_to_string(&config_file).unwrap();
+        assert!(written.contains("# my desktop"), "{written}");
+        let config: Config = toml::from_str(&written).expect("the file stays parsable");
+        assert_eq!(config.workspaces.names.len(), 1);
+        assert_eq!(
+            config.workspaces.names.get("eDP-1:0").map(String::as_str),
+            Some("Play")
+        );
+    }
+
+    #[test]
+    #[serial]
     fn test_persist_and_forget_touch_only_one_key() {
         let env = ConfigEnv::new();
         let config_file = env.user_config(
@@ -1855,98 +2009,139 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_prune_materialized_dock_keys() {
-        // The whole table as an older build wrote it, with `size` since changed.
-        let raw = r##"
-            [dock]
-            size = 2.0
-            genie_scale = 0.5
-            genie_span = 10.0
-            colorize_icons = false
-            colorize_color = "#ffffff"
-            colorize_intensity = 1.0
-            autohide = true
-            magnification = true
-        "##;
-        let mut doc: toml::Value = raw.parse().expect("config should parse");
-        let pruned = prune_materialized_dock_keys(&mut doc);
+    /// The whole `[dock]` table exactly as an affected build serialized it.
+    fn materialized_dock_table(overrides: &[(&str, &str)]) -> String {
+        let mut keys: Vec<(&str, String)> = vec![
+            ("size", "1.0".to_string()),
+            ("genie_scale", "0.5".to_string()),
+            ("genie_span", "10.0".to_string()),
+            ("colorize_icons", "false".to_string()),
+            ("colorize_color", "\"#ffffff\"".to_string()),
+            ("colorize_intensity", "1.0".to_string()),
+            ("autohide", "false".to_string()),
+            ("magnification", "true".to_string()),
+            ("bookmarks", "[]".to_string()),
+        ];
+        for (key, value) in overrides {
+            match keys.iter_mut().find(|(name, _)| name == key) {
+                Some(entry) => entry.1 = (*value).to_string(),
+                None => keys.push((key, (*value).to_string())),
+            }
+        }
+        let body: String = keys
+            .iter()
+            .map(|(key, value)| format!("{key} = {value}\n"))
+            .collect();
+        format!("[dock]\n{body}")
+    }
 
-        assert!(!pruned.contains(&"size"));
-        assert!(pruned.contains(&"genie_scale"));
-        let dock = doc.get("dock").expect("dock table is present");
-        // The value the user picked stays, the copies of the defaults go…
-        assert_eq!(dock.get("size").and_then(toml::Value::as_float), Some(2.0));
-        assert!(dock.get("genie_scale").is_none());
-        assert!(dock.get("colorize_color").is_none());
-        // …and the dock's own keys are none of this migration's business.
+    #[test]
+    fn test_reports_the_materialized_table_old_builds_wrote() {
+        let doc: toml::Value = materialized_dock_table(&[])
+            .parse()
+            .expect("config should parse");
+        let reported = materialized_dock_keys(&doc);
+
+        // Every key those builds copied in with no intent behind it.
         assert_eq!(
-            dock.get("autohide").and_then(toml::Value::as_bool),
-            Some(true)
+            reported,
+            vec![
+                "size",
+                "genie_scale",
+                "genie_span",
+                "colorize_icons",
+                "colorize_color",
+                "colorize_intensity"
+            ]
         );
     }
 
     #[test]
-    fn test_prune_drops_the_zeroed_defaults_old_builds_wrote() {
-        // What an old build actually left behind: `size` copied from the built-in
-        // default, `colorize_*` copied from the derived `Default` that zeroed them,
-        // `genie_*` copied from a real config.
-        let raw = r#"
-            [dock]
-            size = 1.0
-            genie_scale = 0.3
-            genie_span = 23.0
-            colorize_icons = false
-            colorize_color = ""
-            colorize_intensity = 0.0
-        "#;
-        let mut doc: toml::Value = raw.parse().expect("config should parse");
-        prune_materialized_dock_keys(&mut doc);
+    fn test_reports_the_zeroed_defaults_old_builds_wrote() {
+        // What an old build left when the derived `Default` zeroed the colours,
+        // with `genie_*` copied from a real config.
+        let raw = materialized_dock_table(&[
+            ("genie_scale", "0.3"),
+            ("genie_span", "23.0"),
+            ("colorize_color", "\"\""),
+            ("colorize_intensity", "0.0"),
+        ]);
+        let doc: toml::Value = raw.parse().expect("config should parse");
+        let reported = materialized_dock_keys(&doc);
 
-        let dock = doc.get("dock").expect("dock table is present");
-        assert!(dock.get("size").is_none());
-        assert!(dock.get("colorize_color").is_none());
-        assert!(dock.get("colorize_intensity").is_none());
+        assert!(reported.contains(&"size"));
+        assert!(reported.contains(&"colorize_color"));
+        assert!(reported.contains(&"colorize_intensity"));
         // A value that is neither the default nor a zero could have been chosen.
-        assert_eq!(
-            dock.get("genie_span").and_then(toml::Value::as_float),
-            Some(23.0)
-        );
+        assert!(!reported.contains(&"genie_span"));
     }
 
     #[test]
-    fn test_prune_leaves_hand_written_dock_tables_alone() {
-        // Nobody hand-writes all six keys, so a partial table is somebody's config
-        // even when a value happens to equal the default.
+    fn test_reports_defaults_written_as_integers() {
+        let raw = materialized_dock_table(&[
+            ("size", "1"),
+            ("genie_span", "10"),
+            ("colorize_intensity", "1"),
+        ]);
+        let doc: toml::Value = raw.parse().expect("config should parse");
+
+        assert_eq!(materialized_dock_keys(&doc).len(), 6);
+    }
+
+    #[test]
+    fn test_reports_nothing_for_a_partial_dock_table() {
+        // Nothing but the intact machine-written table qualifies: a table
+        // missing a key is somebody's own config, even where a value happens to
+        // equal the default.
         let raw = format!(
             "[dock]\nsize = 1.0\ngenie_scale = {}\n",
             default_genie_scale()
         );
-        let mut doc: toml::Value = raw.parse().expect("config should parse");
+        let doc: toml::Value = raw.parse().expect("config should parse");
 
-        assert!(prune_materialized_dock_keys(&mut doc).is_empty());
-        assert_eq!(
-            doc.get("dock").and_then(|d| d.get("genie_scale")),
-            Some(&toml::Value::Float(default_genie_scale()))
-        );
+        assert!(materialized_dock_keys(&doc).is_empty());
     }
 
     #[test]
-    fn test_prune_matches_defaults_written_as_integers() {
-        let raw = r##"
-            [dock]
-            size = 1
-            genie_scale = 0.5
-            genie_span = 10
-            colorize_icons = false
-            colorize_color = "#ffffff"
-            colorize_intensity = 1
-        "##;
-        let mut doc: toml::Value = raw.parse().expect("config should parse");
+    fn test_reports_nothing_when_the_table_carries_a_newer_key() {
+        // `position` postdates the affected builds, so a table holding one was
+        // written after them — by a human, or by a build that no longer
+        // materialises anything.
+        let raw = materialized_dock_table(&[("position", "\"left\"")]);
+        let doc: toml::Value = raw.parse().expect("config should parse");
 
-        assert_eq!(prune_materialized_dock_keys(&mut doc).len(), 6);
-        let dock = doc.get("dock").expect("dock table is present");
-        assert!(dock.as_table().expect("dock is a table").is_empty());
+        assert!(materialized_dock_keys(&doc).is_empty());
+    }
+
+    #[test]
+    fn test_reporting_never_touches_the_user_config() {
+        // The regression this migration used to be: a hand-written config that
+        // pins several defaults on purpose lost them, and lost its comments with
+        // them. Detection may fire; the file must come back byte for byte.
+        let dir = std::env::temp_dir().join("otto-config-report-test");
+        std::fs::create_dir_all(&dir).expect("temp dir is creatable");
+        let path = dir.join("config.toml");
+        let raw = r##"# my carefully maintained otto config
+[dock]
+size = 1.0                 # the default size, pinned on purpose
+genie_scale = 0.5
+genie_span = 10.0
+colorize_icons = false
+colorize_color = "#ffffff" # white icons
+colorize_intensity = 1.0   # full strength
+autohide = false
+magnification = true
+bookmarks = []
+"##;
+        std::fs::write(&path, raw).expect("test config is writable");
+
+        report_materialized_dock_keys_in_file(&path);
+
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("test config is readable"),
+            raw
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

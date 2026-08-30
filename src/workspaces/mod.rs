@@ -6,7 +6,7 @@ use std::{
     },
 };
 
-use apps_info::Application;
+pub use apps_info::Application;
 use layers::{
     engine::{Engine, TransactionRef},
     prelude::{taffy, Interpolate, Layer, Spring, TimingFunction, Transition},
@@ -57,7 +57,7 @@ pub use app_icons_manager::AppIconsManager;
 pub use app_switcher::AppSwitcherView;
 pub use apps_info::ApplicationsInfo;
 pub use dnd_view::DndView;
-pub use dock::DockView;
+pub use dock::{DockModel, DockView};
 pub use osd::OsdView;
 pub use popup_overlay::PopupOverlayView;
 pub use tiling_overlay::{zone_from_pointer, TileZone, TilingOverlayView};
@@ -914,6 +914,13 @@ impl Workspaces {
             }
         }
 
+        // Wallpapers are decoded for the largest output; when a bigger one
+        // shows up (including the first one, at startup) the images loaded so
+        // far are now being upscaled, so decode them again at the new size.
+        if background::set_wallpaper_target_px(max_phys_w, max_phys_h) {
+            let _ = self.reload_background();
+        }
+
         // The scene root only needs to fit the largest output.
         if max_phys_w > 0.0 && max_phys_h > 0.0 {
             self.layers_engine.scene_set_size(max_phys_w, max_phys_h);
@@ -1248,6 +1255,7 @@ impl Workspaces {
                 ows.expose_layer.set_hidden(false);
             }
         }
+        self.refresh_expose_background_mirrors();
 
         // Each output owns its selector (already parented to its overlay
         // plane). Only visible if expose was already open.
@@ -1448,6 +1456,14 @@ impl Workspaces {
         }
     }
 
+    /// Redraw exposé's wallpaper mirrors on every workspace. See
+    /// [`WindowSelectorView::refresh_background_mirrors`].
+    pub fn refresh_expose_background_mirrors(&self) {
+        for workspace in self.with_model(|m| m.workspaces.clone()) {
+            workspace.window_selector_view.refresh_background_mirrors();
+        }
+    }
+
     /// Explicitly show or hide expose mode (keyboard toggle).
     pub fn expose_set_visible(&self, show: bool) {
         use layers::prelude::*;
@@ -1494,6 +1510,7 @@ impl Workspaces {
         // Lay out every output's current workspace (expose opens on all
         // screens together).
         if show {
+            self.refresh_expose_background_mirrors();
             let layouts: Vec<(String, usize)> = self
                 .output_workspaces
                 .iter()

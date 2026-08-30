@@ -288,7 +288,9 @@ pub fn view_osd(state: &OsdViewState, _view: &View<OsdViewState>) -> LayerTree {
             ))
             .background_color(theme_colors().materials_thin)
             .blend_mode(BlendMode::BackgroundBlur)
-            .border_corner_radius(BorderRadius::new_single(24.0 * scale_factor))
+            .border_corner_radius(BorderRadius::new_single(otto_kit::corners::radius(
+                24.0 * scale_factor,
+            )))
             .content(Some(draw_osd_content))
             .pointer_events(false)
             .build()

@@ -369,7 +369,12 @@ mod tests {
     fn merge_with_current_marks_empty_current_as_automatic() {
         let discovered = vec!["Adwaita".to_string(), "Breeze".to_string()];
         let choices = merge_with_current(&discovered, "");
-        assert_eq!(choices[0].label, "Automatic");
+        // Against the catalogue, not against English: the label follows the
+        // desktop's language, and this asserts which entry is first.
+        assert_eq!(
+            choices[0].label,
+            otto_kit::t_owned!("settings-choice-automatic")
+        );
         assert_eq!(choices[0].value, "");
         assert_eq!(choices.len(), 3);
     }
