@@ -313,6 +313,16 @@ impl HeadlessHandle {
         });
     }
 
+    /// Point the desktop background at `path`, the way the settings app does:
+    /// write the config, then apply it.
+    pub fn set_background(&self, path: &str) {
+        let path = path.to_string();
+        crate::config::Config::update(|c| c.background_image = path);
+        self.with_state(|state| {
+            let _ = state.workspaces.reload_background();
+        });
+    }
+
     /// Toggle expose mode on/off.
     pub fn toggle_expose(&self) {
         self.with_state(|state| {

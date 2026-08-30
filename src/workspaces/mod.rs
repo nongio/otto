@@ -391,19 +391,6 @@ impl Workspaces {
             if !workspace.background_view.set_image_path(&path) {
                 failed = true;
             }
-            // The workspace selector's preview replicates `wallpaper_group`,
-            // one level above the layer the new wallpaper was just painted
-            // into. A follower is marked for repaint by a change on the node
-            // it follows, and by a descendant's damage only while it is
-            // visible — and the strip is hidden until exposé opens. So the
-            // preview would come up on the next exposé still showing the old
-            // wallpaper. Report the change on the container the preview
-            // actually follows, the same way a window commit does for the
-            // window thumbnails.
-            let size = workspace.wallpaper_group.render_size();
-            workspace
-                .wallpaper_group
-                .add_damage(layers::skia::Rect::from_wh(size.x, size.y));
         }
 
         if failed {
@@ -1268,6 +1255,7 @@ impl Workspaces {
                 ows.expose_layer.set_hidden(false);
             }
         }
+        self.refresh_expose_background_mirrors();
 
         // Each output owns its selector (already parented to its overlay
         // plane). Only visible if expose was already open.
@@ -1468,6 +1456,14 @@ impl Workspaces {
         }
     }
 
+    /// Redraw exposé's wallpaper mirrors on every workspace. See
+    /// [`WindowSelectorView::refresh_background_mirrors`].
+    pub fn refresh_expose_background_mirrors(&self) {
+        for workspace in self.with_model(|m| m.workspaces.clone()) {
+            workspace.window_selector_view.refresh_background_mirrors();
+        }
+    }
+
     /// Explicitly show or hide expose mode (keyboard toggle).
     pub fn expose_set_visible(&self, show: bool) {
         use layers::prelude::*;
@@ -1514,6 +1510,7 @@ impl Workspaces {
         // Lay out every output's current workspace (expose opens on all
         // screens together).
         if show {
+            self.refresh_expose_background_mirrors();
             let layouts: Vec<(String, usize)> = self
                 .output_workspaces
                 .iter()

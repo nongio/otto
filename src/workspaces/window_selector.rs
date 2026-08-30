@@ -92,6 +92,12 @@ pub struct DragState {
 #[derive(Clone)]
 pub struct WindowSelectorView {
     pub window_selector_root: layers::prelude::Layer,
+    /// Exposé's copy of the workspace wallpaper, and of the wlr-layer-shell
+    /// `background` layer a wallpaper client paints into. Both are mirrors,
+    /// and a mirror redraws only when it is told to: see
+    /// [`Self::refresh_background_mirrors`].
+    pub window_selector_background: layers::prelude::Layer,
+    pub layer_shell_bg_expose_mirror: layers::prelude::Layer,
     /// Exposé's copy of the wlr-layer-shell `bottom` (desktop widget) layer.
     /// Exposé fades this one out; the workspace's own copy is hidden wholesale
     /// with `workspaces_layer` the moment the gesture starts.
@@ -341,6 +347,8 @@ impl WindowSelectorView {
         Self {
             view,
             window_selector_root,
+            window_selector_background,
+            layer_shell_bg_expose_mirror,
             layer_shell_bottom_expose_mirror,
             window_selector_windows_container,
             window_selector_view,
@@ -872,6 +880,33 @@ pub fn view_window_selector(
 }
 
 impl WindowSelectorView {
+    /// Redraw exposé's copies of the desktop wallpaper.
+    ///
+    /// A mirror is not a live window onto its leader. `do_repaint` records
+    /// the drawing into the layer's own `content_cache` and every later frame
+    /// replays that recording — `set_picture_cached(false)` does not opt out
+    /// of it — so a mirror shows whatever the leader looked like the last
+    /// time the mirror itself was repainted.
+    ///
+    /// Nothing repaints these two on its own when the wallpaper changes. The
+    /// leader marks its followers, but exposé is closed at that moment and
+    /// unhiding a subtree does not walk into it, so the flag never turns into
+    /// a repaint; the client-drawn wallpaper does not even reach the mirror,
+    /// since the commit damages a surface *inside* the layer this one
+    /// follows. The result is an overview that keeps showing the wallpaper
+    /// that was set when it was last open. Damaging the mirrors directly
+    /// schedules a repaint on the node itself, which is honoured whether or
+    /// not exposé is on screen.
+    pub fn refresh_background_mirrors(&self) {
+        for mirror in [
+            &self.window_selector_background,
+            &self.layer_shell_bg_expose_mirror,
+        ] {
+            let size = mirror.render_size();
+            mirror.add_damage(skia::Rect::from_wh(size.x, size.y));
+        }
+    }
+
     fn compute_layout_hash(
         windows: &[WindowSelectorWindow],
         layout_rect: &LayoutRect,
