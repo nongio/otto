@@ -69,6 +69,14 @@ pub struct Config {
     /// `otto_kit::controls_side`), so changing it takes a restart.
     #[serde(default = "default_window_controls_side")]
     pub window_controls_side: String,
+    /// Whether a window's titlebar shows the third traffic light, the zoom
+    /// (maximize) dot. Off by default: Otto zooms a window on a double click
+    /// of its titlebar, so the dot is redundant unless you want it.
+    ///
+    /// Published to the components the same way `window_controls_side` is (see
+    /// `otto_kit::maximize_button`), so changing it takes a restart.
+    #[serde(default)]
+    pub show_maximize_button: bool,
     #[serde(default = "shortcuts::default_shortcut_map")]
     pub keyboard_shortcuts: ShortcutMap,
     #[serde(default)]
@@ -140,6 +148,7 @@ impl Default for Config {
             accent_color: default_accent_color(),
             rounded_corners: default_rounded_corners(),
             window_controls_side: default_window_controls_side(),
+            show_maximize_button: false,
             keyboard_shortcuts: shortcuts::default_shortcut_map(),
             shortcut_bindings: Vec::new(),
             virtual_outputs: Vec::new(),

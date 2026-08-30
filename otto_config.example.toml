@@ -28,6 +28,11 @@ rounded_corners = true
 # outermost one. Also read at startup.
 window_controls_side = "left"
 
+# Show the third traffic light, the zoom (maximize) dot, in a window's
+# titlebar. Off by default: a double click on the titlebar zooms a window
+# either way. Also read at startup.
+show_maximize_button = false
+
 # Accent color for workspace and window selector borders.
 # Either a palette name, which follows the light and dark color schemes:
 #   red, orange, yellow, green, mint, teal, cyan, blue, indigo, purple, pink,

@@ -112,21 +112,42 @@ impl WindowDecorationView {
     /// Deferred to an idle callback: callers run with the pointer's inner
     /// lock held, and (un)maximizing moves the focus, which takes it again.
     fn toggle_maximized<B: crate::state::Backend>(&self, data: &mut crate::Otto<B>) {
-        let Some(toplevel) = self.window.toplevel().cloned() else {
-            return;
-        };
         let maximized = self.window.is_maximized();
         // Nothing to restore to, and nothing to zoom into.
         if !maximized && self.zoom_disabled(data) {
             return;
         }
-        data.handle.insert_idle(move |state| {
-            if maximized {
-                smithay::wayland::shell::xdg::XdgShellHandler::unmaximize_request(state, toplevel);
-            } else {
-                smithay::wayland::shell::xdg::XdgShellHandler::maximize_request(state, toplevel);
+        match self.window.underlying_surface() {
+            smithay::desktop::WindowSurface::Wayland(_) => {
+                let Some(toplevel) = self.window.toplevel().cloned() else {
+                    return;
+                };
+                data.handle.insert_idle(move |state| {
+                    if maximized {
+                        smithay::wayland::shell::xdg::XdgShellHandler::unmaximize_request(
+                            state, toplevel,
+                        );
+                    } else {
+                        smithay::wayland::shell::xdg::XdgShellHandler::maximize_request(
+                            state, toplevel,
+                        );
+                    }
+                });
             }
-        });
+            // X11 windows have no toplevel: they go through the X11 requests,
+            // which track the maximized state on the X11Surface itself.
+            #[cfg(feature = "xwayland")]
+            smithay::desktop::WindowSurface::X11(surface) => {
+                let surface = surface.clone();
+                data.handle.insert_idle(move |state| {
+                    if surface.is_maximized() {
+                        state.unmaximize_request_x11(&surface);
+                    } else {
+                        state.maximize_request_x11(&surface);
+                    }
+                });
+            }
+        }
     }
 
     /// Mutate the decoration model in place, repainting only on a real change.

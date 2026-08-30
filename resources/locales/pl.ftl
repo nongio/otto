@@ -78,6 +78,8 @@ settings-accent-colour = Kolor akcentu
 settings-rounded-corners = Zaokrąglone rogi
 settings-rounded-corners-detail = Zacznie obowiązywać po ponownym uruchomieniu
 settings-window-controls = Przyciski okna
+settings-maximize-button = Przycisk maksymalizacji
+settings-maximize-button-detail = Pokazuje kropkę powiększania; dwukrotne kliknięcie paska tytułu i tak maksymalizuje
 settings-font = Czcionka systemowa
 settings-gtk-theme = Motyw GTK
 
@@ -500,6 +502,8 @@ schema-rounded-corners-label = Zaokrąglone rogi
 schema-rounded-corners-description = Dock, górny pasek, dekoracje okien i panele środowiska.
 schema-window-controls-side-label = Przyciski okna
 schema-window-controls-side-description = Przy którym końcu paska tytułu znajdują się przyciski zamykania, minimalizowania i powiększania.
+schema-show-maximize-button-label = Przycisk maksymalizacji
+schema-show-maximize-button-description = Pokazuje przycisk powiększania na pasku tytułu okna. Domyślnie wyłączone: dwukrotne kliknięcie paska tytułu i tak maksymalizuje okno.
 schema-font-family-label = Czcionka interfejsu
 schema-font-family-description = Rodzina czcionek używana przez własny interfejs Otto.
 schema-background-color-label = Kolor tła

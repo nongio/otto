@@ -10,7 +10,7 @@ pub enum WindowControl {
     Zoom,
 }
 
-/// Traffic-light window controls: three round buttons that stay colored while
+/// Traffic-light window controls: round buttons that stay colored while
 /// the window is active, gray out when it is not, and reveal their glyph when
 /// the pointer is over the group.
 #[derive(Debug, Clone)]
@@ -34,6 +34,10 @@ pub struct WindowControls {
     /// what a group sitting at the trailing edge wants, so close stays the
     /// outermost dot whichever end the group is at.
     pub reversed: bool,
+    /// Whether the zoom dot is drawn at all. Off by default — a window is
+    /// zoomed by double-clicking its bar — and turned on by the desktop's
+    /// `show_maximize_button` setting; see [`crate::maximize_button`].
+    pub show_zoom: bool,
 }
 
 impl Default for WindowControls {
@@ -55,6 +59,7 @@ impl WindowControls {
             disabled: Vec::new(),
             dark: false,
             reversed: false,
+            show_zoom: crate::maximize_button::enabled(),
         }
     }
 
@@ -105,9 +110,19 @@ impl WindowControls {
         self
     }
 
+    /// Show or hide the zoom dot, overriding what the desktop is configured
+    /// for.
+    pub fn with_zoom(mut self, show_zoom: bool) -> Self {
+        self.show_zoom = show_zoom;
+        self
+    }
+
     /// The dots left to right.
-    fn order(&self) -> [WindowControl; 3] {
-        let mut order = Self::ORDER;
+    fn order(&self) -> Vec<WindowControl> {
+        let mut order: Vec<WindowControl> = Self::ORDER
+            .into_iter()
+            .filter(|control| self.show_zoom || *control != WindowControl::Zoom)
+            .collect();
         if self.reversed {
             order.reverse();
         }
@@ -116,7 +131,8 @@ impl WindowControls {
 
     /// Total width of the group
     pub fn width(&self) -> f32 {
-        self.size * 3.0 + self.spacing * 2.0
+        let dots = self.order().len() as f32;
+        (self.size * dots + self.spacing * (dots - 1.0)).max(0.0)
     }
 
     /// Bounding box of the group in the coordinate space it is rendered in
@@ -154,12 +170,12 @@ impl WindowControls {
             };
         }
         // Tinted from the user's accent so a focused window reads as focused:
-        // close takes a dark shade of it, the other two a light one.
+        // close and minimize take a dark shade of it, zoom a light one.
         let accent =
             crate::accent::current_accent().unwrap_or_else(|| Color::from_rgb(0x0A, 0x84, 0xFF));
         let base = match control {
-            WindowControl::Close => shade(accent, -0.28),
-            WindowControl::Minimize | WindowControl::Zoom => shade(accent, 0.58),
+            WindowControl::Close | WindowControl::Minimize => shade(accent, -0.28),
+            WindowControl::Zoom => shade(accent, 0.58),
         };
         if self.pressed == Some(control) {
             // ~20% darker while held
@@ -179,10 +195,13 @@ impl WindowControls {
         paint.set_style(PaintStyle::Stroke);
         paint.set_stroke_width((self.size * 0.09).max(1.0));
         paint.set_stroke_cap(skia_safe::PaintCap::Round);
-        // Close sits on a dark dot, so its glyph is light; the others stay dark
+        // Close and minimize sit on dark dots, so their glyphs are light; zoom
+        // sits on a light dot and stays dark
         paint.set_color(match control {
-            WindowControl::Close => Color::from_argb(0xD0, 0xFF, 0xFF, 0xFF),
-            _ => Color::from_argb(0xB0, 0x00, 0x00, 0x00),
+            WindowControl::Close | WindowControl::Minimize => {
+                Color::from_argb(0xD0, 0xFF, 0xFF, 0xFF)
+            }
+            WindowControl::Zoom => Color::from_argb(0xB0, 0x00, 0x00, 0x00),
         });
 
         // Glyphs are drawn inside ~44% of the dot so they never touch the rim
@@ -252,5 +271,55 @@ impl Renderable for WindowControls {
 
     fn intrinsic_size(&self) -> Option<(f32, f32)> {
         Some((self.width(), self.size))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two dots by default, three with the maximize button turned on — and the
+    /// group is narrower by exactly one dot and one gap without it.
+    #[test]
+    fn zoom_dot_is_optional() {
+        let with = WindowControls::new().with_zoom(true);
+        let without = WindowControls::new().with_zoom(false);
+
+        assert_eq!(with.order().len(), 3);
+        assert_eq!(
+            without.order(),
+            vec![WindowControl::Close, WindowControl::Minimize]
+        );
+        assert_eq!(with.width() - without.width(), with.size + with.spacing);
+    }
+
+    /// Hiding the dot also removes its click target: the point the zoom dot
+    /// used to sit at hits nothing.
+    #[test]
+    fn hidden_zoom_is_not_hit_testable() {
+        let controls = WindowControls::new().with_zoom(true);
+        let zoom_x = (controls.size + controls.spacing) * 2.0 + controls.size / 2.0;
+        let middle = controls.size / 2.0;
+        assert_eq!(
+            controls.control_at(zoom_x, middle),
+            Some(WindowControl::Zoom)
+        );
+        assert_eq!(
+            WindowControls::new()
+                .with_zoom(false)
+                .control_at(zoom_x, middle),
+            None
+        );
+    }
+
+    /// At the trailing edge close stays outermost whether or not the zoom dot
+    /// is there.
+    #[test]
+    fn reversed_keeps_close_outermost() {
+        let order = WindowControls::new()
+            .with_zoom(false)
+            .with_reversed(true)
+            .order();
+        assert_eq!(order, vec![WindowControl::Minimize, WindowControl::Close]);
     }
 }

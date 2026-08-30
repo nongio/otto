@@ -79,6 +79,8 @@ settings-accent-colour = Accent colour
 settings-rounded-corners = Rounded corners
 settings-rounded-corners-detail = Applies after a restart
 settings-window-controls = Window controls
+settings-maximize-button = Maximize button
+settings-maximize-button-detail = Show the zoom dot; a double click on the titlebar zooms either way
 settings-font = System font
 settings-gtk-theme = GTK theme
 
@@ -488,6 +490,8 @@ schema-rounded-corners-label = Rounded corners
 schema-rounded-corners-description = The dock, the top bar, window decorations and the desktop's own panels.
 schema-window-controls-side-label = Window controls
 schema-window-controls-side-description = Which end of a window's titlebar the close, minimize and zoom controls sit at.
+schema-show-maximize-button-label = Maximize button
+schema-show-maximize-button-description = Show the zoom control in a window's titlebar. Off by default: a double click on the titlebar zooms a window either way.
 schema-font-family-label = Interface font
 schema-font-family-description = Font family used by Otto's own interface.
 schema-background-color-label = Background colour

@@ -79,6 +79,8 @@ settings-accent-colour = Akzentfarbe
 settings-rounded-corners = Abgerundete Ecken
 settings-rounded-corners-detail = Gilt nach einem Neustart
 settings-window-controls = Fenstersteuerelemente
+settings-maximize-button = Maximieren-Knopf
+settings-maximize-button-detail = Zeigt den Zoom-Punkt; ein Doppelklick auf die Titelleiste maximiert ohnehin
 settings-font = Systemschriftart
 settings-gtk-theme = GTK-Thema
 
@@ -487,6 +489,8 @@ schema-rounded-corners-label = Abgerundete Ecken
 schema-rounded-corners-description = Dock, obere Leiste, Fensterdekorationen und die Panels des Desktops.
 schema-window-controls-side-label = Fenstersteuerelemente
 schema-window-controls-side-description = An welchem Ende der Titelleiste die Knöpfe zum Schließen, Minimieren und Zoomen sitzen.
+schema-show-maximize-button-label = Maximieren-Knopf
+schema-show-maximize-button-description = Zeigt das Zoom-Steuerelement in der Titelleiste eines Fensters. Standardmäßig aus: Ein Doppelklick auf die Titelleiste maximiert das Fenster ohnehin.
 schema-font-family-label = Oberflächenschrift
 schema-font-family-description = Schriftfamilie für Ottos eigene Oberfläche.
 schema-background-color-label = Hintergrundfarbe

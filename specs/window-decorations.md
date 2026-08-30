@@ -57,10 +57,16 @@ appears, and discarded if the surface dies first.
 **The title bar.** When a window is server-decorated:
 
 - It carries a title bar strip above the client surface, showing the window
-  title and the close, minimize and maximize controls.
+  title and the close and minimize controls. The third control, zoom, is drawn
+  only where `show_maximize_button` is on — it is off by default, because a
+  double click on the bar zooms the window either way. With it off the group is
+  narrower by one dot and one gap, and the point the dot used to occupy hits
+  nothing. The setting travels the same way `window_controls_side` does, so it
+  applies to a client-drawn otto-kit title bar as well, and changing it takes a
+  restart.
 - The controls sit at the leading end of the bar by default. The
-  `window_controls_side` setting moves them to the trailing end, and the three
-  swap order when it does, so close stays the outermost one. The screencast
+  `window_controls_side` setting moves them to the trailing end, and they swap
+  order when it does, so close stays the outermost one. The screencast
   badge always takes the other end. The setting is read at startup and
   published to the components in the environment, so it applies to a
   client-drawn otto-kit title bar as well as to a server-drawn one, and
