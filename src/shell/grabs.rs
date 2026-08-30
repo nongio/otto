@@ -205,6 +205,13 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
                 // every popup the window owns, and a drag is many events.
                 data.reposition_popups_for_window(&self.window);
             }
+            // An X11 client places its own menus from the root coordinates the
+            // server reports for its window, so a drag that never sends a
+            // ConfigureNotify leaves it opening them at the pre-drag position.
+            // Runs for the tiled branch too — `apply_tile` configures the
+            // window, but a tile that was refused leaves the drag position.
+            #[cfg(feature = "xwayland")]
+            data.sync_x11_window_position(&self.window);
         }
     }
 
@@ -332,6 +339,10 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchMoveSurfaceGrab
 
         handle.up(data, event, seq);
         handle.unset_grab(self, data);
+        // Tell an X11 client where the drag left its window — see
+        // `Otto::sync_x11_window_position`.
+        #[cfg(feature = "xwayland")]
+        data.sync_x11_window_position(&self.window);
     }
 
     fn motion(
