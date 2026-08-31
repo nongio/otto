@@ -334,7 +334,7 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
                             // shadow still renders in the windows plane — keep
                             // its geometry in sync (tile/resize) or it ghosts at
                             // the pre-change size while the content tiles.
-                            self.refresh_window_shadow_geometry(&window);
+                            self.refresh_window_chrome_geometry(&window);
                         } else {
                             self.update_window_view_for_commit(&window, Some(surface));
                         }

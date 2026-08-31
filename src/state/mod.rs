@@ -2014,33 +2014,15 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 let decoration_height = window.decoration_height();
                 window_view.set_decorated(window.is_decorated());
                 if window.is_decorated() {
-                    window_view.update_decoration(crate::workspaces::WindowDecorationModel {
-                        width: window_geometry.size.w as f32 / scale_factor as f32,
-                        height: decoration_height as f32,
-                        title: window.xdg_title(),
-                        active: is_focused,
-                        dark: Config::with(|c| {
-                            matches!(c.theme_scheme, crate::theme::ThemeScheme::Dark)
-                        }),
-                        // Maximized and fullscreen windows sit flush
-                        // against the screen edges, so their frame — and
-                        // with it the bar — squares off.
-                        corner_radius: if window.is_maximized() || fullscreen {
-                            0.0
-                        } else {
-                            otto_kit::corners::radius(12.0)
-                        },
-                        controls_hovered: window_view.decoration_state().controls_hovered,
-                        pressed: window_view.decoration_state().pressed,
-                        sharing: crate::screenshare::is_window_screencast(
-                            &self.screenshare_sessions,
-                            &self.workspaces,
-                            &self.foreign_toplevels,
-                            &window.id(),
-                        ),
-                        fixed_size: !window.is_resizable(),
-                        scale: scale_factor as f32,
-                    });
+                    let model = self.decoration_model_for(
+                        window,
+                        &window_view,
+                        window_geometry.size.w as f32,
+                        is_focused,
+                        fullscreen,
+                        scale_factor,
+                    );
+                    window_view.update_decoration(model);
                 }
 
                 // Directly add root surface layer to content layer without using LayerTreeBuilder
@@ -2094,16 +2076,59 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         }
     }
 
-    /// Refresh only the window's shadow geometry (position + size), without
-    /// re-importing its surface tree.
+    /// Build the titlebar model for `window` at a given decorated width.
+    ///
+    /// `width_px` is the window's width in physical pixels; the bar itself is
+    /// described in logical points. Shared by the full commit import and the
+    /// scanout refresh below, so the bar a promoted window wears is built the
+    /// same way as everyone else's.
+    fn decoration_model_for(
+        &self,
+        window: &WindowElement,
+        window_view: &crate::workspaces::WindowView,
+        width_px: f32,
+        is_focused: bool,
+        fullscreen: bool,
+        scale_factor: f64,
+    ) -> crate::workspaces::WindowDecorationModel {
+        crate::workspaces::WindowDecorationModel {
+            width: width_px / scale_factor as f32,
+            height: window.decoration_height() as f32,
+            title: window.xdg_title(),
+            active: is_focused,
+            dark: Config::with(|c| matches!(c.theme_scheme, crate::theme::ThemeScheme::Dark)),
+            // Maximized and fullscreen windows sit flush against the screen
+            // edges, so their frame — and with it the bar — squares off.
+            corner_radius: if window.is_maximized() || fullscreen {
+                0.0
+            } else {
+                otto_kit::corners::radius(12.0)
+            },
+            controls_hovered: window_view.decoration_state().controls_hovered,
+            pressed: window_view.decoration_state().pressed,
+            sharing: crate::screenshare::is_window_screencast(
+                &self.screenshare_sessions,
+                &self.workspaces,
+                &self.foreign_toplevels,
+                &window.id(),
+            ),
+            fixed_size: !window.is_resizable(),
+            scale: scale_factor as f32,
+        }
+    }
+
+    /// Refresh the chrome Otto draws around a window — its drop shadow and its
+    /// server-side titlebar — from the window's geometry, without re-importing
+    /// its surface tree.
     ///
     /// Used for scanned-out windows: their client buffer is pushed straight to
     /// a KMS plane, so the full `update_window_view` import is skipped on every
-    /// root commit (see `shell::mod` commit handler). But the drop-shadow still
-    /// renders in the windows plane from the `WindowViewBaseModel`, so a
-    /// geometry change while promoted (tile, resize) must be reflected here or
-    /// the shadow ghosts at the pre-change size while the content tiles.
-    pub fn refresh_window_shadow_geometry(&mut self, window: &WindowElement) {
+    /// root commit (see `shell::mod` commit handler). But the shadow and the
+    /// titlebar still render in the windows plane, so a geometry change while
+    /// promoted (tile, maximize, resize) must be reflected here or the shadow
+    /// ghosts at the pre-change size and the bar keeps the width it had before
+    /// — a tiled window maximized on a plane wearing a half-screen titlebar.
+    pub fn refresh_window_chrome_geometry(&mut self, window: &WindowElement) {
         let scale_factor = Config::with(|c| c.screen_scale);
         let Some(id) = window.wl_surface().map(|s| s.id()) else {
             return;
@@ -2153,6 +2178,21 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 active: current.active,
             };
             window_view.view_base.update_state(&model);
+
+            // The bar is sized from the same geometry, and it is drawn in the
+            // scene even while the client's content scans out.
+            window_view.set_decorated(window.is_decorated());
+            if window.is_decorated() {
+                let decoration = self.decoration_model_for(
+                    window,
+                    &window_view,
+                    window_geometry.size.w as f32,
+                    current.active,
+                    current.fullscreen,
+                    scale_factor,
+                );
+                window_view.update_decoration(decoration);
+            }
         }
     }
     // Commented out - update_layer_surface is no longer used
