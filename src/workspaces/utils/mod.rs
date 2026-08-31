@@ -25,6 +25,47 @@ fn adaptive_sampling_enabled() -> bool {
     })
 }
 
+/// True while window content is being drawn downscaled (minification).
+///
+/// Nothing to do with minimize — this is the sampling sense of the word: the
+/// texture is drawn smaller than 1:1.
+///
+/// Exposé scales whole window subtrees with a layer transform and leaves the
+/// surfaces themselves untouched, which is exactly what [`surface_filter`]
+/// cannot see: every surface still maps 1:1 onto its own layer, so the cheap
+/// `Nearest` branch wins and the ~0.3x downscale is point sampled — dropped
+/// rows and columns of source pixels, which is what makes the previews crawl
+/// as they animate. While this is set the draw closure records bicubic
+/// instead.
+///
+/// It has to be a flag rather than something the closure works out for itself,
+/// because the closure never sees the canvas transform: these layers are
+/// `picture_cached`, the sampling is baked into the recorded shader, and
+/// lay-rs deliberately does NOT re-record on a pure scale change. Flipping the
+/// flag is therefore only half the job — see [`redraw_subtree`].
+static CONTENT_DOWNSCALED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Set the downscaled-content flag, returning `true` if the value CHANGED.
+///
+/// On a change the caller must [`redraw_subtree`] every affected window layer:
+/// the pictures already recorded still hold the old sampling.
+pub fn set_content_downscaled(downscaled: bool) -> bool {
+    CONTENT_DOWNSCALED.swap(downscaled, std::sync::atomic::Ordering::Relaxed) != downscaled
+}
+
+fn content_downscaled() -> bool {
+    CONTENT_DOWNSCALED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Force `layer` and every descendant to re-record their picture.
+pub fn redraw_subtree(layer: &Layer) {
+    layer.redraw();
+    for child in layer.children() {
+        redraw_subtree(&child);
+    }
+}
+
 #[allow(unused)]
 pub struct FontCache {
     pub font_collection: layers::skia::textlayout::FontCollection,
@@ -605,7 +646,10 @@ pub fn configure_surface_layer(
             Transform::Flipped270 => {}
         }
 
-        let sampling = if adaptive_sampling_enabled() {
+        // `content_downscaled` short-circuits the gate for exposé: the scale
+        // lives on an ancestor layer, so nothing `surface_filter` looks at
+        // knows the texture is about to be minified onto the framebuffer.
+        let sampling = if adaptive_sampling_enabled() && !content_downscaled() {
             surface_filter(
                 matches!(draw_wvs.transform, Transform::Normal),
                 (scale_x, scale_y),
@@ -637,6 +681,19 @@ pub fn configure_surface_layer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Flipping the flag has to report the change: the pictures already
+    /// recorded still carry the old sampling, and only a change is worth the
+    /// forced re-record of every window subtree.
+    #[test]
+    fn the_downscaled_flag_reports_only_real_changes() {
+        assert!(set_content_downscaled(true), "off -> on is a change");
+        assert!(content_downscaled());
+        assert!(!set_content_downscaled(true), "on -> on is not");
+        assert!(set_content_downscaled(false), "on -> off is a change");
+        assert!(!content_downscaled());
+        assert!(!set_content_downscaled(false), "off -> off is not");
+    }
 
     /// The initial placement of a window is chosen in logical integers, so on
     /// a fractional scale it lands mid-pixel and drags its whole subtree off

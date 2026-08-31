@@ -844,6 +844,41 @@ impl HeadlessHandle {
         });
     }
 
+    /// Mark this window as direct-scanned-out, the way the DRM backend does
+    /// when it promotes a window's buffer to a KMS plane. The commit path
+    /// takes a different branch for a promoted window — no scene import — and
+    /// this is the only way a headless test can reach it.
+    pub fn set_window_scanned_out(&self, title: &str, scanned_out: bool) {
+        let title = title.to_string();
+        self.with_state(move |state| {
+            if let Some(window) = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+            {
+                window.set_scanned_out(scanned_out);
+            }
+        });
+    }
+
+    /// Width of the server-side titlebar as the scene has it, in logical
+    /// points — what the bar is actually drawn at, not what the window
+    /// geometry says it should be.
+    pub fn window_decoration_width(&self, title: &str) -> Option<f32> {
+        let title = title.to_string();
+        self.query(move |state| {
+            let window = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .cloned()?;
+            state
+                .workspaces
+                .get_window_view(&window.id())
+                .map(|view| view.decoration_state().width)
+        })
+    }
+
     /// Whether this window is currently maximized.
     pub fn window_is_maximized(&self, title: &str) -> bool {
         let title = title.to_string();
