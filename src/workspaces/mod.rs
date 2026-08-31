@@ -374,6 +374,28 @@ impl PlaneCandidates {
     }
 }
 
+/// Keep the window-content sampling in step with exposé.
+///
+/// The previews ARE the windows — the same layers, scaled by an ancestor
+/// transform — and the sampling each surface is drawn with is baked into its
+/// recorded picture, which lay-rs does not re-record on a pure scale change.
+/// So flipping the flag has to be followed by forcing those pictures to be
+/// recorded again. Cheap because the flag only changes twice per exposé.
+fn apply_preview_sampling(
+    window_views: &Arc<RwLock<HashMap<ObjectId, WindowView>>>,
+    downscaled: bool,
+) {
+    if !crate::workspaces::utils::set_content_downscaled(downscaled) {
+        return;
+    }
+    let Ok(views) = window_views.read() else {
+        return;
+    };
+    for view in views.values() {
+        crate::workspaces::utils::redraw_subtree(&view.content_layer);
+    }
+}
+
 impl Workspaces {
     /// Re-draw everything that paints with `theme::accent_color()`.
     ///
@@ -1808,6 +1830,14 @@ impl Workspaces {
         // is true AND delta has landed at 0 AND no closing animation is running.
         let show_expose = !end_gesture || delta > 0.0 || transition.is_some();
 
+        // Exposé draws the windows downscaled by scaling their layers, which the
+        // per-surface sampling gate cannot see. Tell it, so the previews are
+        // resampled rather than point sampled — see
+        // [`crate::workspaces::utils::set_content_downscaled`]. The flag is
+        // lowered again by the animation's `on_finish` below, once the windows
+        // are back at 1:1.
+        apply_preview_sampling(&self.window_views, show_expose || show_all);
+
         // Check if this is the current workspace early, so we can use it for window animations
         let current_workspace_index = self.get_current_workspace_index();
         let is_current_workspace = workspace_index == current_workspace_index;
@@ -2005,6 +2035,7 @@ impl Workspaces {
             let expose_dragged_window_ref = self.expose_dragged_window.clone();
             let popup_overlay_layer = self.popup_overlay.layer.clone();
             let model_ref = self.model.clone();
+            let window_views_ref = self.window_views.clone();
 
             // Collect secondary output expose layers to sync with primary
             let secondary_expose_layers: Vec<Layer> = self
@@ -2153,6 +2184,9 @@ impl Workspaces {
                         }
 
                         show_all_ref.store(show_all, std::sync::atomic::Ordering::Relaxed);
+                        // The windows are at their final scale now: 1:1 again
+                        // when expose closed, still downscaled when it opened.
+                        apply_preview_sampling(&window_views_ref, show_all);
                     },
                     true,
                 );
