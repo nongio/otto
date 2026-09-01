@@ -150,6 +150,11 @@ const GRID_LABEL_LINE: f32 = 16.0;
 /// Padding above and below the caption inside its selection pill. The pill is
 /// built out from the line centres, so the text sits optically centred in it.
 const GRID_LABEL_INSET: f32 = 10.0;
+/// The caption's type. One point larger than a callout, matching the name in
+/// a list row: the grid caption is the file's name, the same as that one, and
+/// a smaller one read as a footnote against it. Shared with the drag image,
+/// which is a copy of the cell and has to stay one.
+const GRID_LABEL_STYLE: TextStyle = styles::BODY_EMPHASIZED;
 /// How far the icon's selection rectangle stands off the icon itself. Small,
 /// so the highlight reads as belonging to the icon rather than to the cell.
 const GRID_ICON_INSET: f32 = 6.0;
@@ -942,7 +947,7 @@ fn draw_drag_entry(
             // The caption on its pill, the way a selected cell wears it.
             let center_y = icon_top + GRID_ICON + GRID_LABEL_GAP;
             let (first, second) = split_label(&entry.name, 13);
-            let caption = styles::CALLOUT_EMPHASIZED.font();
+            let caption = GRID_LABEL_STYLE.font();
             let text_w = caption
                 .measure_str(&first, None)
                 .0
@@ -972,7 +977,7 @@ fn draw_drag_entry(
                     continue;
                 }
                 Label::new(line)
-                    .with_style(styles::CALLOUT_EMPHASIZED)
+                    .with_style(GRID_LABEL_STYLE)
                     .with_color(Color::WHITE)
                     .centered_at(cell.center_x(), center_y + offset)
                     .render(canvas);
@@ -2732,7 +2737,7 @@ pub fn draw_grid_cell(
     };
 
     if selected && !renaming {
-        let font = styles::CALLOUT_EMPHASIZED.font();
+        let font = GRID_LABEL_STYLE.font();
         let text_w = font
             .measure_str(&first, None)
             .0
@@ -2766,7 +2771,7 @@ pub fn draw_grid_cell(
             continue;
         }
         Label::new(line)
-            .with_style(styles::CALLOUT_EMPHASIZED)
+            .with_style(GRID_LABEL_STYLE)
             .with_color(text_color)
             .centered_at(cell.center_x(), label_center_y + offset)
             .render(canvas);
