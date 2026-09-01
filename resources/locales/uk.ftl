@@ -338,6 +338,7 @@ files-undo-rename = перейменування
 files-renamed-to = Перейменовано на «{ $name }»
 files-new-folder-created = Нова папка «{ $name }»
 files-gone = «{ $name }» більше немає
+files-no-such-folder = «{ $path }» не існує
 files-rename-failed = Не вдалося перейменувати: { $error }
 files-new-folder-failed = Не вдалося створити папку: { $error }
 files-open-failed = Не вдалося відкрити файл: { $error }

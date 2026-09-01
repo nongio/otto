@@ -341,6 +341,11 @@ Every navigation that moves the window somewhere else — descending into a
 directory, going up, clicking a place — first records where it was; navigating
 anew drops any Forward history, the rule a web browser follows.
 
+From the keyboard, history and hierarchy are on the chords every file manager
+binds them to: **Alt+Left** and **Alt+Right** for back and forward, **Alt+Up**
+for the parent, **Alt+Home** for the home directory. They are the same calls
+the split button makes, so a dimmed half means the chord does nothing too.
+
 A recorded location is the **whole column stack**, not just the deepest path,
 and for each pane both its selection and its cursor. Going back therefore
 restores every pane that was open *and* the entry that was selected in each,
@@ -353,6 +358,59 @@ The "Loading" placeholder belongs to a *first* read only. An in-place re-read �
 after a delete, a paste, or a watcher notification — leaves the listing that is
 already on screen up until the new one lands, because the alternative is the
 whole pane blinking through an empty placeholder and back for every operation.
+
+### The path entry
+
+**Ctrl+L turns the title into a field.** Not a dialog and not a sheet: the
+header's title line is replaced in place by a text field holding the path of
+the folder on screen, with the whole value selected and a trailing separator
+already typed. This is the Linux convention — Nautilus and Dolphin both swap
+their breadcrumb for an editable field on the same chord — and it is what
+makes the gesture read as *editing where you are* rather than as answering a
+question about it. The subtitle stays put underneath: it says what is in the
+folder, which is still true while a new one is being typed, and dropping it
+would make the header jump.
+
+The field owns the keyboard whole, the way an inline rename does. Its own keys:
+
+| Key | Effect |
+| --- | --- |
+| Return | go where the field says |
+| Tab | complete against the directory being typed |
+| Escape, or a second Ctrl+L | put the title back, leaving the location alone — an abandoned path is not a navigation |
+| a click outside the field | the same as Escape, the way clicking away from a location bar dismisses it |
+
+What a typed path may say:
+
+- `~` is the home directory, and `~/` a path under it.
+- A path starting with `/` is taken as given.
+- Anything else is **relative to the folder on screen**, so a bare child name
+  is enough.
+
+Where Return lands:
+
+- A **directory** is opened, replacing the column stack the way clicking a
+  place does, and the field goes away with it.
+- A **file** opens the folder holding it, with the file selected. This is what
+  a path pasted out of a terminal usually means, and the alternative — an
+  error on a path that exists — would be a poor answer. The listing is read
+  off-thread, so the row is handed to the pending-selection machinery rather
+  than looked up in a snapshot that does not exist yet.
+- A path that is **not there** leaves the field up with the reason in the
+  subtitle. Retyping one character is cheaper than typing the whole path
+  again, and dismissing the field would throw the typing away to say "no".
+
+**Tab completes** as far as the directory allows: to the one match, or to the
+longest prefix every match shares — the shell's behaviour, and the reason
+completion is worth having at all. A completed directory gains its separator,
+so Tab walks down a tree without the user reaching for `/` between levels. A
+dotfile is only a candidate once the dot has been typed, or completion in a
+home directory would offer a hundred configuration folders first. The read is
+synchronous, unlike a listing's: it is one directory, on a keystroke the user
+is waiting on, and its result is thrown away.
+
+The picker does not have it. Its header is a toolbar with a location control
+rather than a title, so there is nothing to turn into a field.
 
 ### Selection, keyboard and type-ahead
 
@@ -401,6 +459,7 @@ The browser adds:
 | Ctrl+N | new window, at the **default location** (the home directory for now, a preference later) rather than at this window's directory — a new window is a fresh start, and inheriting wherever the focused window was pointed makes it read as a copy of that window. Ctrl+double-click is the gesture for "that directory, in another window". Nothing in the picker, which answers one request in one window |
 | Ctrl+O | open the entry at the cursor — exactly what a double-click does: descend into a directory, or activate a file (in the picker, accept it). Return is not free for this, since it renames |
 | Ctrl+I | show info for the selection |
+| Ctrl+L | open the **path entry** (see below) |
 | Ctrl+1 / Ctrl+2 / Ctrl+3 | list / icon / column view |
 | Escape | cancel an inline rename, else clear the search field, else clear the selection |
 
@@ -419,7 +478,11 @@ progress, and can cancel it.
   or `..`, is rejected while typing. A name that collides with an existing
   entry offers to replace it or to keep editing.
 - **New folder** — creates `untitled folder`, disambiguating with a numeric
-  suffix, and immediately enters inline rename on it.
+  suffix, and immediately enters inline rename on it, scrolling the view to it
+  first: the sort can put the new folder anywhere, and a rename field off
+  screen would take the user's next keystroke unseen. Because the listing is
+  re-read off the main thread, all of this happens when that read lands, not
+  when the directory is created.
 - **Copy and move** — the clipboard holds paths and a copy/cut intent. Paste
   into a directory starts the operation, and so does a drop on one: a drag is
   the same operation reached with the pointer, and both run through the same

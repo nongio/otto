@@ -33,10 +33,38 @@ itself are not reused elsewhere.
 
 ## Getting around
 
-- **Double-click** or `Ctrl+O` opens the entry at the cursor — descend into a
-  folder, or open a file in its default application.
-- **Backspace** goes up a directory. The arrow keys move the cursor; `Right`
-  descends.
+| Key | Where it goes |
+|-----|---------------|
+| `Backspace` or `Alt+↑` | Up one folder |
+| `Alt+←` / `Alt+→` | Back and forward, through where you have been |
+| `Alt+Home` | Your home folder |
+| `Ctrl+L` | Type a path (see below) |
+| `Ctrl+O`, or double-click | Open the entry at the cursor |
+| `←` `→` `↑` `↓` | Move the cursor; `Right` descends into a folder |
+
+Back and forward are also the two arrows in the header, and each half dims
+when there is nowhere for it to go.
+
+### Typing a path
+
+`Ctrl+L` turns the title into a text field holding the folder you are in.
+Type or paste a path and press `Return` to go there; `Escape`, or a second
+`Ctrl+L`, puts the title back and leaves you where you were.
+
+- `Tab` **completes** against the folder being typed — to the one match, or as
+  far as every match agrees — and adds the `/` for you, so you can walk down a
+  tree without reaching for it. Hidden files are only offered once you have
+  typed the leading dot.
+- `~` is your home folder, a path starting with `/` is taken as it reads, and
+  anything else is relative to the folder on screen — so a bare folder name is
+  enough.
+- A path to a **file** opens the folder holding it with the file selected,
+  which is what pasting one out of a terminal usually means.
+- A path that is not there leaves the field up, with the reason under it, so
+  you can correct it rather than type the whole thing again.
+
+### Type-ahead and the sidebar
+
 - **Type a few letters** to jump to the first entry whose name starts with
   them. This selects, it does not filter — the whole folder stays on screen.
   The typed text expires after about a second, and repeating one letter cycles

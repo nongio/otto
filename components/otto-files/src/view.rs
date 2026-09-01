@@ -83,6 +83,25 @@ pub fn location_rect(width: f32) -> Rect {
         TOOLBAR_CY + 15.0,
     )
 }
+/// The path entry's field, in place of the header title.
+///
+/// It starts where the title's text does and runs to the view switcher, so
+/// the field reads as the title line turned editable rather than as a box
+/// dropped on top of it — which is the whole point of Ctrl+L: you are
+/// editing where you are, not answering a question about it.
+pub fn path_field_rect(width: f32) -> Rect {
+    let left = TITLE_X - 8.0;
+    Rect::from_ltrb(
+        left,
+        TITLE_CY - PATH_FIELD_H / 2.0,
+        (switcher_rect(width).left - 16.0).max(left + 80.0),
+        TITLE_CY + PATH_FIELD_H / 2.0,
+    )
+}
+
+/// Tall enough for the title-sized text the field replaces.
+const PATH_FIELD_H: f32 = 32.0;
+
 /// One Miller pane's default width. Every pane shares one width — a column
 /// whose width changes as you descend is disorienting, and this is what makes
 /// the view scannable — but that shared width is user-resizable.
@@ -150,6 +169,11 @@ const GRID_LABEL_LINE: f32 = 16.0;
 /// Padding above and below the caption inside its selection pill. The pill is
 /// built out from the line centres, so the text sits optically centred in it.
 const GRID_LABEL_INSET: f32 = 10.0;
+/// The caption's type. One point larger than a callout, matching the name in
+/// a list row: the grid caption is the file's name, the same as that one, and
+/// a smaller one read as a footnote against it. Shared with the drag image,
+/// which is a copy of the cell and has to stay one.
+const GRID_LABEL_STYLE: TextStyle = styles::BODY_EMPHASIZED;
 /// How far the icon's selection rectangle stands off the icon itself. Small,
 /// so the highlight reads as belonging to the icon rather than to the cell.
 const GRID_ICON_INSET: f32 = 6.0;
@@ -942,7 +966,7 @@ fn draw_drag_entry(
             // The caption on its pill, the way a selected cell wears it.
             let center_y = icon_top + GRID_ICON + GRID_LABEL_GAP;
             let (first, second) = split_label(&entry.name, 13);
-            let caption = styles::CALLOUT_EMPHASIZED.font();
+            let caption = GRID_LABEL_STYLE.font();
             let text_w = caption
                 .measure_str(&first, None)
                 .0
@@ -972,7 +996,7 @@ fn draw_drag_entry(
                     continue;
                 }
                 Label::new(line)
-                    .with_style(styles::CALLOUT_EMPHASIZED)
+                    .with_style(GRID_LABEL_STYLE)
                     .with_color(Color::WHITE)
                     .centered_at(cell.center_x(), center_y + offset)
                     .render(canvas);
@@ -1765,6 +1789,12 @@ pub struct Frame<'a> {
     /// over one. `None` when there is no drag, or it is over nothing that
     /// takes files.
     pub drop_target: Option<DropHighlight>,
+    /// The path entry is open, so the header draws its field in place of the
+    /// title. The text is not here — the [`TextInput`] paints itself over
+    /// the rect afterwards, the way an in-place rename does.
+    ///
+    /// [`TextInput`]: otto_kit::components::text_input::TextInput
+    pub path_entry: bool,
     /// The rubber band being dragged out over the icon grid, in window
     /// coordinates. Grid view only: rows span their pane's whole width, so a
     /// band over a list or a Miller column could only ever say what dragging
@@ -2359,6 +2389,11 @@ fn draw_header(canvas: &Canvas, f: &Frame) {
         // they are and how to get elsewhere — the same things the macOS open
         // panel puts on its single toolbar row.
         draw_location_button(canvas, f);
+    } else if f.path_entry {
+        // The title line, editable. The subtitle stays put underneath: it
+        // says what is in the folder, which is still true while a new one is
+        // being typed, and losing it would make the header jump.
+        draw_path_field(canvas, f);
     } else {
         // Both drop a step down the text scale while the window is in the
         // background — the title reads as a label rather than as the thing
@@ -2393,6 +2428,20 @@ fn draw_header(canvas: &Canvas, f: &Frame) {
         Point::new(f.width, HEADER_H),
         &paint,
     );
+}
+
+/// The path entry's ground: paper with a hairline, the same box the picker's
+/// name field draws. The value, caret and selection are the input's own.
+fn draw_path_field(canvas: &Canvas, f: &Frame) {
+    let field = path_field_rect(f.width);
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(content_ground());
+    canvas.draw_rrect(RRect::new_rect_xy(field, 6.0, 6.0), &paint);
+    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_stroke_width(1.0);
+    paint.set_color(accent(f.theme));
+    canvas.draw_rrect(RRect::new_rect_xy(field, 6.0, 6.0), &paint);
 }
 
 /// The picker's location control: a folder icon and the current directory's
@@ -2732,7 +2781,7 @@ pub fn draw_grid_cell(
     };
 
     if selected && !renaming {
-        let font = styles::CALLOUT_EMPHASIZED.font();
+        let font = GRID_LABEL_STYLE.font();
         let text_w = font
             .measure_str(&first, None)
             .0
@@ -2766,7 +2815,7 @@ pub fn draw_grid_cell(
             continue;
         }
         Label::new(line)
-            .with_style(styles::CALLOUT_EMPHASIZED)
+            .with_style(GRID_LABEL_STYLE)
             .with_color(text_color)
             .centered_at(cell.center_x(), label_center_y + offset)
             .render(canvas);
@@ -3143,6 +3192,14 @@ pub fn rename_field_style(theme: Theme) -> TextInputStyle {
 /// top of each other, one of them a hair off, is exactly the sort of seam a
 /// dialog gets judged on.
 pub fn save_field_style(theme: Theme) -> TextInputStyle {
+    let mut style = TextInputStyle::with_theme(theme);
+    style.background = Color::TRANSPARENT;
+    style
+}
+
+/// The path entry's field. Like the save field, the box is drawn by the
+/// header underneath, so the input paints no ground of its own.
+pub fn path_field_style(theme: Theme) -> TextInputStyle {
     let mut style = TextInputStyle::with_theme(theme);
     style.background = Color::TRANSPARENT;
     style
@@ -4889,6 +4946,7 @@ mod geometry_tests {
             quickview_close_hovered: false,
             drop_target: None,
             marquee: None,
+            path_entry: false,
             width: 1100.0,
             height,
             theme: &theme,
