@@ -7977,11 +7977,12 @@ mod path_entry_tests {
         browser.commit_path_entry();
 
         assert_eq!(browser.columns[0].path, dir.0);
-        // The frame loop polls, then settles the pick — a test has to do
-        // both, in that order, or the listing arrives with nobody to place
-        // the selection in it.
+        // The frame loop polls, re-fits the scroll views, then settles the
+        // pick — a test has to do all three, in that order, or the listing
+        // arrives with nobody to place the selection in it.
         for _ in 0..500 {
             browser.poll();
+            browser.sync_scroll_metrics();
             browser.settle_pick();
             if browser.pending_pick.is_none() {
                 break;
@@ -8112,6 +8113,64 @@ mod path_entry_tests {
                 Some(home.join("Music"))
             );
         }
+    }
+
+    /// The row a path lands on has to be *visible*, not merely selected.
+    ///
+    /// The scroll views take their viewport and content length during
+    /// render, so anything reached from `poll` is working with metrics from
+    /// before the listing landed — a reveal against those clamps short of a
+    /// row that sorted to the bottom. The frame loop re-fits them between
+    /// the poll and the settle for exactly this reason; this pins that
+    /// order, since a Ctrl+L onto a file deep in a long directory is the
+    /// case that shows it.
+    #[test]
+    fn a_typed_file_is_scrolled_into_view() {
+        let names: Vec<String> = (0..200).map(|i| format!("aaa{i:03}.txt")).collect();
+        let mut files: Vec<&str> = names.iter().map(String::as_str).collect();
+        files.push("zzz-last.txt");
+        let (mut browser, dir) = browser_over(&files, &["sub"]);
+        browser.mode = ViewMode::List;
+        browser.size = (900.0, 400.0);
+        browser.navigate_to(&dir.0.join("sub"));
+
+        browser.open_path_entry();
+        browser
+            .path_entry
+            .as_mut()
+            .unwrap()
+            .set_value(dir.0.join("zzz-last.txt").to_string_lossy().into_owned());
+        browser.commit_path_entry();
+
+        for _ in 0..500 {
+            browser.poll();
+            browser.sync_scroll_metrics();
+            browser.settle_pick();
+            if browser.pending_pick.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+
+        let depth = browser.active;
+        let index = browser.columns[depth].cursor.expect("cursor on the file");
+        let offset = browser.columns[depth].scroll.offset();
+        assert!(offset > 0.0, "view never scrolled: offset {offset}");
+        let (top, item_h) =
+            view::item_span(browser.size.0, browser.content_h(), browser.mode, index);
+        let viewport = view::pane_viewport(
+            browser.size.0,
+            browser.content_h(),
+            browser.mode,
+            depth,
+            browser.pan.offset(),
+            browser.miller_w,
+        );
+        assert!(
+            top >= offset && top + item_h <= offset + viewport.height(),
+            "row {top}..{} outside the viewport at {offset}",
+            top + item_h
+        );
     }
 
     #[test]
