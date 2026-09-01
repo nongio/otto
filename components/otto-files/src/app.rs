@@ -345,6 +345,12 @@ struct Browser {
     nav_pressed: Option<view::NavButton>,
     /// An in-place rename in progress. List view only, for now.
     rename: Option<RenameSession>,
+    /// A folder just created, waiting to be selected and put into rename.
+    ///
+    /// The listing is read off-thread, so the new directory is not in the
+    /// column's snapshot yet when `new_folder` returns — the pane and the name
+    /// are held here until the re-read lands.
+    pending_rename: Option<(usize, String)>,
     /// The type-ahead buffer and when it was last appended to: typing
     /// printable characters walks the cursor to the entry that starts with
     /// them, without filtering the view or showing anything. Distinct from
@@ -543,6 +549,7 @@ impl Browser {
             opening: None,
             last_boundary_click: None,
             rename: None,
+            pending_rename: None,
             typeahead: None,
             pending_restore: false,
             pending_pick: None,
@@ -3130,11 +3137,10 @@ impl Browser {
                     vec![model::Change::Created { path: path.clone() }],
                 );
                 self.reload_all();
-                let depth = self.active;
-                if let Some(index) = self.visible(depth).iter().position(|e| e.name == name) {
-                    self.select(depth, index);
-                    self.start_rename();
-                }
+                // The re-read is off-thread: the folder is not in the column's
+                // listing yet, so the selection and the rename field wait for
+                // it in `poll`.
+                self.pending_rename = Some((self.active, name.clone()));
                 self.status = Some(otto_kit::t_owned!(
                     "files-new-folder-created",
                     name = name.as_str()
@@ -3470,12 +3476,36 @@ impl Browser {
         }
         if refreshed {
             self.resync_cursors();
+            if self.take_pending_rename() {
+                changed = true;
+            }
         }
         if let Some(depth) = vanished {
             self.follow_vanished(depth);
             changed = true;
         }
         changed
+    }
+
+    /// Select the folder `new_folder` just created and open its rename field,
+    /// now that the listing holding it has arrived.
+    ///
+    /// One shot: the request is dropped on the first refresh either way, so a
+    /// folder that was renamed or removed before the read came back does not
+    /// leave a rename armed for the next unrelated re-read.
+    fn take_pending_rename(&mut self) -> bool {
+        let Some((depth, name)) = self.pending_rename.take() else {
+            return false;
+        };
+        if depth >= self.columns.len() {
+            return false;
+        }
+        let Some(index) = self.visible(depth).iter().position(|e| e.name == name) else {
+            return false;
+        };
+        self.select(depth, index);
+        self.start_rename();
+        true
     }
 
     /// Put every cursor back on what is selected, after a listing was replaced
@@ -6264,6 +6294,38 @@ mod typeahead_tests {
         }
         assert!(!browser.columns[0].loading(), "listing never arrived");
         (browser, dir)
+    }
+
+    /// New Folder creates the directory, then selects it with its name ready
+    /// to be typed over. The listing it has to find the folder in is read off
+    /// the main thread, so the selection cannot happen in the same call — it
+    /// waits for the re-read, which is exactly what this pins.
+    #[test]
+    fn new_folder_lands_in_rename_mode() {
+        let (mut browser, _dir) = browser_over(&["a.txt"]);
+        browser.mode = ViewMode::List;
+        browser.new_folder();
+        assert!(
+            browser.rename.is_none(),
+            "nothing to rename before the re-read"
+        );
+
+        for _ in 0..500 {
+            if browser.poll() && browser.rename.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+
+        let session = browser.rename.as_ref().expect("rename field never opened");
+        let name = session
+            .original
+            .file_name()
+            .expect("named folder")
+            .to_string_lossy()
+            .to_string();
+        assert!(browser.columns[browser.active].selection.contains(&name));
+        assert_eq!(session.input.value(), name);
     }
 
     /// Ctrl+O is bound to the same call a double-click makes, so on a folder
