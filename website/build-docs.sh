@@ -71,7 +71,7 @@ declare -A PAGE_TITLE=(
     [dev/rdp-virtual-output]="RDP Bridge and Virtual Outputs in Otto"
     [dev/remote-desktop-indicator]="Remote Desktop Indicator in Otto"
     [dev/otto-kit-roadmap]="otto-kit Roadmap - UI Toolkit Gap Analysis"
-    [dev/sc-layer-protocol-design]="Surface Style Protocol Design (Superseded)"
+    [dev/surface-style-protocol]="Surface Style Protocol"
     [dev/screenshot-plan]="Screenshot Portal Plan (Not Implemented)"
     [dev/airplay-screenshare]="AirPlay Screencast Exploration in Otto"
 )
@@ -125,7 +125,7 @@ declare -A PAGE_DESC=(
     [dev/rdp-virtual-output]="How otto-rdp serves a virtual output over RDP: creating the output, encoding frames, and mapping input back into the session."
     [dev/remote-desktop-indicator]="The sharing indicator otto-rdp publishes while a remote client is watching the session, and how the compositor draws it."
     [dev/otto-kit-roadmap]="What Otto's UI toolkit provides today, what is still missing, and the planned direction. Partially built - read it as a plan."
-    [dev/sc-layer-protocol-design]="The original design behind otto-surface-style-v1, kept for context. Superseded by the protocol Otto actually ships."
+    [dev/surface-style-protocol]="otto-surface-style-unstable-v1: how a client styles and animates its own surface through the compositor's scene graph, and why the protocol looks the way it does."
     [dev/screenshot-plan]="A design for screenshot support through the desktop portal. Not implemented - a proposal rather than documentation."
     [dev/airplay-screenshare]="Notes from validating AirPlay as a screencast target for Otto. An exploration, not a shipped feature."
 )
@@ -138,12 +138,19 @@ declare -A PAGE_IMAGE=(
     [login-greeter]="images/login-greeter.jpg"
 )
 
+# Old URLs for pages that have since been renamed, so existing links and search
+# results keep working. Hugo serves each alias as a redirect to the new page.
+declare -A PAGE_ALIAS=(
+    [dev/surface-style-protocol]="/developer/sc-layer-protocol-design/"
+)
+
 # Emit the metadata front-matter lines for one page, given its metadata key.
 emit_meta() {
     local key="$1"
     [ -n "${PAGE_TITLE[$key]:-}" ] && echo "page_title: \"${PAGE_TITLE[$key]}\""
     [ -n "${PAGE_DESC[$key]:-}" ]  && echo "description: \"${PAGE_DESC[$key]}\""
     [ -n "${PAGE_IMAGE[$key]:-}" ] && echo "image: \"${PAGE_IMAGE[$key]}\""
+    [ -n "${PAGE_ALIAS[$key]:-}" ] && printf 'aliases:\n  - "%s"\n' "${PAGE_ALIAS[$key]}"
     return 0
 }
 
@@ -271,7 +278,7 @@ DEVELOPER_FILES=(
     "developer/remote-desktop-indicator.md"
     "developer/versioning.md"
     "developer/otto-kit-roadmap.md"
-    "developer/sc-layer-protocol-design.md"
+    "developer/surface-style-protocol.md"
     "developer/screenshot-plan.md"
     "developer/airplay-screenshare.md"
 )

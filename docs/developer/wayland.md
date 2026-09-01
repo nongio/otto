@@ -84,7 +84,7 @@ Three protocols are Otto-specific. Their XML lives in `protocols/`:
 
 | Protocol | Implementation | What it does |
 |----------|----------------|--------------|
-| `otto-surface-style-unstable-v1` | `src/surface_style/` | Lets a client style and animate its own surface through the compositor's scene graph — corner radius, shadow, opacity, transforms, batched in transactions. See [sc-layer-protocol-design.md](sc-layer-protocol-design.md) for the design history. |
+| `otto-surface-style-unstable-v1` | `src/surface_style/` | Lets a client style and animate its own surface through the compositor's scene graph — corner radius, shadow, opacity, transforms, batched in transactions. See [surface-style-protocol.md](surface-style-protocol.md). |
 | `otto-dock-v1` | `src/otto_dock/` | Lets a client contribute items to the compositor-drawn dock |
 | `wlr-gamma-control-unstable-v1` | `src/state/gamma_control.rs` | Gamma ramps, used for night shift |
 

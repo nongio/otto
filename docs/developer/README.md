@@ -33,6 +33,7 @@ and hands the whole tree to the renderer as a single render element. Most of
 | [Window Move](window-move.md) | How interactive window drags are implemented |
 | [DRM Planes](drm_plane.md) | Handing parts of the scene to display hardware instead of the GPU |
 | [Foreign Toplevel](foreign-toplevel.md) | Exposing the window list to taskbars and launchers |
+| [Surface Style Protocol](surface-style-protocol.md) | `otto-surface-style-unstable-v1`: letting a client style and animate its own surface |
 | [Screen Sharing](screenshare.md) | Portal, PipeWire, wlr-screencopy, window capture |
 | [Accessibility](accessibility.md) | Key grabs for screen readers, and the shell and kit apps on AT-SPI |
 | [Color Scheme](color-scheme-setting.md) | How apps learn whether Otto is in light or dark mode |
@@ -50,7 +51,6 @@ at the top — check that before trusting the details.
 | Page | Status |
 |------|--------|
 | [otto-kit Roadmap](otto-kit-roadmap.md) | Partially built — gap analysis for the UI toolkit |
-| [Surface Style Protocol](sc-layer-protocol-design.md) | Superseded — the original design behind `otto-surface-style-v1` |
 | [Screenshot Portal Plan](screenshot-plan.md) | Partly built — the portal exists and shells out to `grim`; Otto-drawn selection is still the plan |
 | [AirPlay Screenshare](airplay-screenshare.md) | Exploration only |
 

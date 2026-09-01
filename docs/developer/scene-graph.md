@@ -281,7 +281,7 @@ compositor stops overriding the layer's bounds from the buffer) and
 takes effect without rebuilding the closure.
 
 Design background and what was deliberately left out:
-[Surface Style Protocol](sc-layer-protocol-design.md).
+[Surface Style Protocol](surface-style-protocol.md).
 
 ## Where to look
 

@@ -193,8 +193,7 @@ startup-only, and always outranked by the portal. Otto's own backend for that po
   them animated server-side with springs. This is what makes the dynamic island
   morph rather than cross-fade: the geometry is animated by Otto, and the
   content is drawn once at the target size. See
-  [Surface Style Protocol](sc-layer-protocol-design.md) for the original
-  design.
+  [Surface Style Protocol](surface-style-protocol.md).
 - **`otto-dock-v1`** — the dock's client-side contract: publishing a dock item,
   and pushing per-app badge counts and progress. otto-islands uses the badge
   half to put unread notification counts on dock icons.

@@ -150,7 +150,7 @@ therefore moves in lockstep. That is the mechanism behind
 `otto-surface-style-unstable-v1`'s transactions: the handlers in
 `src/surface_style/handlers/` accumulate `change_*` values while a client
 transaction is open and submit them together on commit
-([Surface Style Protocol](sc-layer-protocol-design.md)).
+([Surface Style Protocol](surface-style-protocol.md)).
 
 Callbacks hang off either end: `on_start` / `on_update` / `on_finish` on a
 transaction, `on_animation_*` on an animation. Otto drives the xdg-shell

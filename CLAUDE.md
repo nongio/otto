@@ -166,6 +166,6 @@ Two tiers:
 - `docs/user/` — End-user configuration and usage guides
 - `docs/developer/` — Architecture, design docs, and implementation details
 
-Key developer docs: `rendering.md`, `render_loop.md`, `wayland.md`, `screenshare.md`, `expose.md`, `dock-design.md`, `sc-layer-protocol-design.md`.
+Key developer docs: `rendering.md`, `render_loop.md`, `wayland.md`, `screenshare.md`, `expose.md`, `dock-design.md`, `surface-style-protocol.md`.
 
 Review and documentation guidelines: `.github/instructions/review.instructions.md`, `.github/instructions/documentation.instructions.md`.

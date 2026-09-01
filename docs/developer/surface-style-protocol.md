@@ -3,14 +3,14 @@
 Why Otto lets clients describe animations declaratively instead of driving
 them frame by frame, and how that idea became a Wayland protocol.
 
-> **Status: superseded.** This document was the design exploration for a
-> client-facing animation protocol, originally sketched as `sc_layer_shell`.
-> What shipped is **`otto-surface-style-unstable-v1`**:
-> XML in [`protocols/otto-surface-style-unstable-v1.xml`](../../protocols/otto-surface-style-unstable-v1.xml),
+> **The protocol is `otto-surface-style-unstable-v1`**: XML in
+> [`protocols/otto-surface-style-unstable-v1.xml`](../../protocols/otto-surface-style-unstable-v1.xml),
 > implementation in `src/surface_style/`. The XML is the authority for the
 > current interface; this page explains *why* it looks the way it does.
-> `protocols/sc-layer-v1.xml` is the dead ancestor — only stale code comments
-> still say `sc_layer`.
+>
+> It was sketched as `sc_layer_shell` and that name is gone.
+> `protocols/sc-layer-v1.xml` is the dead ancestor, and only stale code
+> comments still say `sc_layer` — read any of them as the style protocol.
 
 ## The idea
 
@@ -26,9 +26,9 @@ the client is scheduled.
 
 The analogy is CSS transitions versus animating with `setInterval`. You are not
 describing each frame; you are describing the destination and the feel, and
-something below you handles the frames. That comparison is not accidental —
-the model is Core Animation's, and several names (`contents_gravity`,
-`anchor_point`, `masks_to_bounds`) come straight from it.
+something below you handles the frames. Several property names
+(`contents_gravity`, `anchor_point`, `masks_to_bounds`) are borrowed from
+established retained-mode layer APIs, where they mean what they usually mean.
 
 ## Design principles
 
@@ -80,6 +80,18 @@ display while remaining a subsurface of the file browser's window. Reach for
 which is the wrong half of a subsurface. Full rules, the recipe and the
 recognisable failure modes are in
 [specs/surface-output-placement.md](../../specs/surface-output-placement.md).
+
+**Version 4 added `desktop_frame`** — an event carrying where the compositor is
+actually drawing the surface, in the desktop's coordinate space rather than the
+window's. A client is otherwise never told where its window is, which is fine
+for drawing and wrong for accessibility: an assistive technology asks an
+application what is at a screen coordinate, so a window answering in its own
+coordinates claims a rectangle belonging to whatever sits in the top-left of the
+desktop. It is sent on first draw and whenever the rect changes — the window
+moving, the workspace scrolling, a mode or scale change — in physical pixels,
+and it deliberately ignores the window overview, which draws scaled-down copies
+rather than moving the windows. Implementation in
+`src/surface_style/desktop_frame.rs`.
 
 **`otto_style_transaction_v1`** — `set_duration`, `set_delay`,
 `set_timing_function`, `enable_completion_event`, `commit`, and a `completed`
@@ -164,11 +176,11 @@ Two traps, both of which look like the code being wrong rather than the build:
   `protocols/otto-surface-style-unstable-v1.xml` changes nothing until something
   forces otto-kit to rebuild. `touch components/otto-kit/src/protocols/mod.rs`
   after every XML edit.
-- **Both ends have to agree on the version.** A request added `since="3"` needs
-  the compositor to advertise 3 *and* the client to bind at least 3
-  (`globals.bind(&qh, 1..=3, ())` in otto-kit's app runner). Bind too low and
-  the compositor kills the client with "invalid version ... (2, need at least
-  3)" the moment it uses the request.
+- **Both ends have to agree on the version.** A request added `since="4"` needs
+  the compositor to advertise 4 *and* the client to bind at least 4
+  (`globals.bind(&qh, 1..=4, ())` in otto-kit's app runner). Bind too low and
+  the compositor kills the client with "invalid version ... (3, need at least
+  4)" the moment it uses the request.
 
 ## Not built
 
