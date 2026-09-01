@@ -478,7 +478,11 @@ progress, and can cancel it.
   or `..`, is rejected while typing. A name that collides with an existing
   entry offers to replace it or to keep editing.
 - **New folder** — creates `untitled folder`, disambiguating with a numeric
-  suffix, and immediately enters inline rename on it.
+  suffix, and immediately enters inline rename on it, scrolling the view to it
+  first: the sort can put the new folder anywhere, and a rename field off
+  screen would take the user's next keystroke unseen. Because the listing is
+  re-read off the main thread, all of this happens when that read lands, not
+  when the directory is created.
 - **Copy and move** — the clipboard holds paths and a copy/cut intent. Paste
   into a directory starts the operation, and so does a drop on one: a drag is
   the same operation reached with the pointer, and both run through the same

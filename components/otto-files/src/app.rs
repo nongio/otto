@@ -3654,6 +3654,18 @@ impl Browser {
             return false;
         };
         self.select(depth, index);
+        // Sorting can put "untitled folder" anywhere, including past the fold
+        // of a long directory. `resync_cursors` deliberately does not scroll —
+        // a change somebody else made must not move the view — but this one is
+        // the user's own action, and a rename field they cannot see is worse
+        // than useless: the next keystroke would go into it unseen.
+        //
+        // The metrics have to be refreshed first. They are otherwise a frame
+        // old — from before this listing landed, when the column was one row
+        // shorter — and the scroll view would clamp the reveal short of a
+        // folder that sorted to the very bottom.
+        self.sync_scroll_metrics();
+        self.reveal_cursor();
         self.start_rename();
         true
     }
@@ -6608,6 +6620,60 @@ mod typeahead_tests {
             .to_string();
         assert!(browser.columns[browser.active].selection.contains(&name));
         assert_eq!(session.input.value(), name);
+    }
+
+    /// A folder that sorts past the fold has to be scrolled to, or the rename
+    /// field opens off screen and the user types into something they cannot
+    /// see. "untitled folder" sorts last among a pile of folders named `aaa*`,
+    /// which is exactly the case that hides it.
+    #[test]
+    fn new_folder_scrolls_the_view_to_it() {
+        let dir = TempDir::holding(&[]);
+        for i in 0..200 {
+            std::fs::create_dir_all(dir.0.join(format!("aaa{i:03}"))).expect("temp subdir");
+        }
+        let mut browser = Browser::new(dir.0.clone());
+        for _ in 0..500 {
+            if browser.columns[0].poll() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        browser.mode = ViewMode::List;
+        browser.size = (900.0, 400.0);
+        assert_eq!(browser.columns[0].scroll.offset(), 0.0, "starts at the top");
+
+        browser.new_folder();
+        for _ in 0..500 {
+            if browser.poll() && browser.rename.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(browser.rename.is_some(), "rename field never opened");
+
+        let depth = browser.active;
+        let index = browser.columns[depth]
+            .cursor
+            .expect("cursor on the new folder");
+        assert!(index > 0, "the folder sorted past the top");
+        let offset = browser.columns[depth].scroll.offset();
+        assert!(offset > 0.0, "view never scrolled: offset {offset}");
+        let (top, item_h) =
+            view::item_span(browser.size.0, browser.content_h(), browser.mode, index);
+        let viewport = view::pane_viewport(
+            browser.size.0,
+            browser.content_h(),
+            browser.mode,
+            depth,
+            browser.pan.offset(),
+            browser.miller_w,
+        );
+        assert!(
+            top >= offset && top + item_h <= offset + viewport.height(),
+            "row {top}..{} outside the viewport at {offset}",
+            top + item_h
+        );
     }
 
     /// Ctrl+O is bound to the same call a double-click makes, so on a folder
