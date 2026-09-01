@@ -9,12 +9,13 @@ Otto searches for configuration files in the following order (later files overri
 1. **System config**: `/etc/otto/config.toml`
    - System-wide defaults managed by administrators
    - Lowest priority
-   - **Not created by the package.** Otto's packages install a commented
-     example at `/etc/otto/config.example.toml` and never write
-     `config.toml` itself, so nothing an administrator puts there can be
-     moved aside by an upgrade or by switching between the `otto`,
-     `otto-git` and `otto-nightly-bin` packages. Copy the example to
-     `config.toml` to start from it.
+   - **Installed by the package**, copied from `otto_config.example.toml`.
+     With no config at all Otto falls back to compiled-in defaults, which
+     means an empty dock and no bookmarks, so the packages ship a populated
+     one. It is marked as a config file, so an upgrade leaves your edits
+     alone and writes `.pacnew` (Arch) or `.rpmnew` (Fedora) beside them.
+     The Arch packages also install an untouched copy at
+     `/etc/otto/config.example.toml` to diff against.
 
 2. **User config**: `$XDG_CONFIG_HOME/otto/config.toml`
    - Per-user configuration (defaults to `~/.config/otto/config.toml`)

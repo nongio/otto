@@ -31,7 +31,7 @@ It holds three groups, in order along the dock: **bookmarked launchers** (apps
 you pinned in the config), **running applications**, and **minimized windows**.
 
 - A running app carries a small dot under its icon.
-- Icons magnify as the pointer approaches, macOS-style.
+- Icons magnify as the pointer approaches.
 - Hovering an icon shows its name in a label beside it.
 - Clicking a running app raises and focuses it; clicking again cycles through
   that app's windows. Clicking a bookmark launches it, or focuses the existing
@@ -60,8 +60,7 @@ glass blur and rounded bottom corners. Three zones:
 - **Right** — system tray icons (StatusNotifierItem) and the clock.
 
 Tray icons respond to left-click (context menu), right-click (activate, usually
-raising the app's window) and middle-click (secondary activate). Hovering shows
-a tooltip.
+raising the app's window) and middle-click (secondary activate).
 
 The bar is a normal Wayland client. Start it from `exec_once`. See
 [Top Bar](topbar.md).

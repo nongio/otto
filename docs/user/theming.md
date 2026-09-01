@@ -99,7 +99,7 @@ args = ["-i", "/path/to/wallpaper.jpg", "-m", "fill"]
 font_family = "Inter"
 ```
 
-The font used by Otto's own UI — dock tooltips, exposé window titles, the app
+The font used by Otto's own UI — dock labels, exposé window titles, the app
 switcher. Applications use their own font settings; this does not change them.
 
 Otto ships with [Inter](https://rsms.me/inter/) as its default. Any font
@@ -153,8 +153,11 @@ fallback from the entry's untranslated name". Matching follows the freedesktop
 Desktop Entry spec and falls back automatically from region to bare language, so
 listing both `zh_CN` and `zh` catches entries that localize either form.
 
-This affects names shown in the dock, app switcher and menus. It does not change
-Otto's own UI language.
+This affects names shown in the dock, app switcher and menus, and it is also
+**Otto's own UI language**: the bar, settings, Files and the other bundled apps
+read the same list and pick a translation from it. Otto ships catalogues for
+German, English (GB and US), Spanish, French, Italian, Polish, Portuguese
+(Brazil), Russian and Ukrainian; anything else falls back to English.
 
 ## A worked example
 

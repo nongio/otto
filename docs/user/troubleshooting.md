@@ -32,7 +32,7 @@ Component logs:
 
 | Component | Where |
 |-----------|-------|
-| `xdg-desktop-portal-otto` | `/tmp/portal-otto.log` |
+| `xdg-desktop-portal-otto` | `journalctl --user -u xdg-desktop-portal-otto` |
 | `otto-bar`, `otto-islands`, `otto-lock` | stderr — run them by hand to see it |
 | `otto-rdp` | stderr; `run-rdp.sh` captures it to `/tmp/otto-rdp.log` |
 

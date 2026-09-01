@@ -31,7 +31,7 @@ Arch and Fedora packages install it for you. On Debian and Ubuntu, copy it
 yourself:
 
 ```sh
-sudo cp /usr/share/doc/otto/otto-lock.pam /etc/pam.d/otto-lock
+sudo cp /usr/share/doc/otto/otto-lock.pam.example /etc/pam.d/otto-lock
 ```
 
 Then edit it: the shipped file is written for distributions with a `system-auth`
@@ -74,7 +74,7 @@ Any `ext-session-lock-v1` locker fits here — `swaylock`, `hyprlock`, `gtklock`
 ## Using it
 
 The `otto-lock` panel is a frosted card with your avatar, a password field and —
-when a fingerprint reader is configured — a Touch ID mark. It shows a clock,
+when a fingerprint reader is configured — a fingerprint mark. It shows a clock,
 which keeps time however long you are away.
 
 Type your password and press Enter, or touch the reader.

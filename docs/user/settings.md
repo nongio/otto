@@ -18,20 +18,21 @@ Launch **Settings** from the Dock or the launcher, or run `otto-settings`.
 | Pane | Covers |
 |------|--------|
 | General | Light or dark appearance, accent colour, interface font, GTK theme, desktop background colour and image, pointer and icon themes |
-| Displays | Resolution, refresh rate, scale and arrangement of connected monitors |
+| Displays | Resolution, refresh rate and arrangement of connected monitors, and the global interface scale |
 | Dock | Size, position, auto-hide, magnification, icon colorization |
 | Keyboard | Layout and options, repeat rate, and the shortcut list |
 | Trackpad & Mouse | Tap to click, drag lock, natural scrolling, click method, scroll and pointer speed |
-| Sound | Output and input devices and levels |
-| Power | Idle, sleep and lid behaviour |
-| Lock & Login | Locking, the greeter, and fingerprint unlock |
+| Sound | Interface sounds on or off, and which sound theme to use |
+| Power | What the lid switch and the power button do |
+| Lock & Login | Auto-lock timeout, and which lock screen and greeter to run |
 
 ## How it works
 
 The compositor owns the configuration file; the app is a D-Bus client. It reads
-the schema Otto publishes, sets values, and watches for changes — so a value you
-edit in the file by hand shows up in the app, and a value you change in the app
-is written back to the same file.
+the schema Otto publishes and sets values, and a value you change in the app is
+written back to the config file. There is no file watcher, though: edit the file
+by hand while the app is open and the app will not notice — reopen it to see the
+change.
 
 Most settings apply the moment you change them: the Dock's size and behaviour,
 the touchpad and pointer options, appearance and accent colour. A few — the
@@ -41,9 +42,19 @@ so next to the control rather than pretending the change took.
 ## Displays
 
 The Displays pane probes the outputs that are actually connected, so the modes
-listed are the ones your monitor reports, not a guess. Arrangement, mode and
-scale are saved per display set, so unplugging and reconnecting the same
-monitors brings your layout back.
+listed are the ones your monitor reports, not a guess.
+
+**Nothing here is persisted yet.** Resolution, refresh rate, primary display, on
+or off, and arrangement are all deliberately unbound: they are per-output
+settings, and Otto has no display-identity scheme that survives a monitor moving
+to a different port or a dock reshuffle, so inventing a wire contract keyed on
+connector name now would have to be supported forever. Your changes apply to the
+session and are gone at restart. To make them stick, write them under
+`[displays.named.<connector>]` in the config file — see
+[Display configuration](display.md).
+
+Scale is the exception: it is bound, but it is the global `screen_scale`, not a
+per-display value.
 
 ## Shortcuts
 

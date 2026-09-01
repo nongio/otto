@@ -87,7 +87,7 @@ there rather than in your own `~/.config`.
 ## Using the greeter
 
 The panel is a frosted card with an avatar, a username field, a password field
-and, where a reader is configured, a Touch ID mark. Same panel as
+and, where a reader is configured, a fingerprint mark. Same panel as
 [otto-lock](lock-screen.md), plus a session picker.
 
 ### The username is pre-filled

@@ -84,7 +84,7 @@ Nextcloud, Telegram, Slack, Steam, KeePassXC, network and volume applets.
 | Right | Activate — usually raises the app's window |
 | Middle | Secondary activate (app-defined) |
 
-Hovering shows the tooltip the app supplies. Icons are ordered by registration
+Icons are ordered by registration
 time, newest to the left.
 
 Legacy XEmbed tray icons (the old X11 system tray) are **not** supported; that
@@ -97,7 +97,7 @@ The clock is on the far right. Its format is a
 string:
 
 ```toml
-# ~/.config/otto/topbar.toml
+# ~/.config/otto/otto-bar.toml
 clock_format = "%B %-d, %A %H:%M"
 ```
 
@@ -112,12 +112,12 @@ That default renders as `March 23, Thursday 21:16`. Some other useful formats:
 
 ## Configuration
 
-`otto-bar` has its own config file, loaded from — in order, later overriding
-earlier:
+`otto-bar` has its own config file. The first one that exists and parses is
+used — there is no merging, so a system file shadows a user one:
 
-1. `/etc/otto/topbar.toml`
-2. `~/.config/otto/topbar.toml`
-3. `./otto_topbar.toml` (development override in the working directory)
+1. `/etc/otto/otto-bar.toml`
+2. `~/.config/otto/otto-bar.toml`
+3. `./otto-bar.toml` (development override in the working directory)
 
 `clock_format` is currently the only option. Bar height, colours and blur follow
 the compositor's theme.

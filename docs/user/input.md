@@ -34,7 +34,7 @@ switchers: `grp:alt_shift_toggle`, `grp:caps_toggle`, `grp:win_space_toggle`.
 | `caps:swapescape` | Swap Caps Lock and Escape |
 | `ctrl:swapcaps` | Swap Ctrl and Caps Lock |
 | `ctrl:nocaps` | Caps Lock becomes another Ctrl |
-| `altwin:ctrl_win` | Super becomes Ctrl (Mac-like) |
+| `altwin:ctrl_win` | Super becomes Ctrl |
 | `compose:ralt` | Right Alt is the Compose key, for accented characters |
 | `terminate:ctrl_alt_bksp` | Ctrl+Alt+Backspace terminates — already built in |
 
@@ -124,7 +124,7 @@ touchpad_middle_emulation_enabled = false
 | `"clickfinger"` | The number of fingers on the pad decides: 1 = left, 2 = right, 3 = middle |
 | `"buttonareas"` | Traditional: where you click decides — bottom-right corner = right click |
 
-`clickfinger` is the default and matches how macOS behaves. `buttonareas` is
+`clickfinger` is the default, and is what GNOME and KDE use too. `buttonareas` is
 what most Windows laptops do.
 
 These settings apply to **touchpads only**, not to mice. Some hardware does not

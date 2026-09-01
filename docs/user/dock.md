@@ -50,7 +50,7 @@ bookmarks = [
 | Field | Meaning |
 |-------|---------|
 | `desktop_id` | The `.desktop` file name. Required. |
-| `label` | Override the tooltip text. Optional. |
+| `label` | Override the application's display name — the hover label, the app switcher and menus all use it. Optional. |
 | `exec_args` | Extra arguments appended to the entry's `Exec` line. Optional. |
 
 Find desktop ids with `ls /usr/share/applications ~/.local/share/applications`.
@@ -78,7 +78,7 @@ same way next login.
 [dock]
 size = 1.0             # overall size multiplier, 0.5 – 2.0
 position = "bottom"    # "bottom", "left" or "right"
-magnification = true   # macOS-style icon magnification on hover
+magnification = true   # icons grow as the pointer approaches
 autohide = false       # hide when the pointer leaves
 genie_scale = 0.5      # how much icons magnify under the pointer
 genie_span = 10.0      # falloff: larger = tighter around the pointer
@@ -89,7 +89,7 @@ genie_span = 10.0      # falloff: larger = tighter around the pointer
 `position` picks the screen edge the dock is docked to: `"bottom"` (the
 default), `"left"` or `"right"`. A side dock stacks its icons vertically,
 reserves screen *width* instead of height, magnifies along the pointer's
-vertical travel, shows its tooltips beside the icons, and minimizes windows
+vertical travel, shows its labels beside the icons, and minimizes windows
 sideways into itself.
 
 You can also change it while Otto runs: right-click the dock handle (the grip
@@ -142,7 +142,7 @@ follows the icons wherever they appear, so the app switcher matches the dock.
 All three keys apply live, so dragging the tint strength in Settings repaints
 the icons as you drag.
 
-If you want the tint on the dock but not on the cmd-tab panel, opt the switcher
+If you want the tint on the dock but not on the app switcher, opt the switcher
 out:
 
 ```toml

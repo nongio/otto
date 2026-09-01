@@ -57,18 +57,21 @@ off centre is enough to tile it to that side.
 
 Otto draws window decorations itself. A client that binds `xdg-decoration`
 without stating a preference — or that unsets the one it had — is told
-*server-side*, and gets an Otto-drawn title bar with the close, minimize and
-maximize controls. The compositor owns that strip: it is hit-tested before the
-client's surfaces, so dragging it moves the window and the controls work even
-when the application is busy.
+*server-side*, and gets an Otto-drawn title bar. The compositor owns that strip:
+it is hit-tested before the client's surfaces, so dragging it moves the window
+and the controls work even when the application is busy.
+
+You get two controls by default, close and minimize. The third — the zoom dot —
+is off, because a double click on the title bar zooms a window anyway:
 
 ```toml
-window_controls_side = "right"   # or "left"
+window_controls_side = "left"    # or "right"; "left" is the default
+show_maximize_button = false     # the default; set true for the zoom dot
 ```
 
-`window_controls_side` picks which end of the title bar those controls sit at.
-It applies to Otto-drawn decorations and to Otto's own applications, and takes
-effect after a restart.
+`window_controls_side` picks which end of the title bar the controls sit at. On
+the right the three swap order, so close stays the outermost one. Both settings
+are read at startup, so changing them takes a restart.
 
 Clients that explicitly ask for *client-side* are honoured. GTK and Electron
 apps request it and keep drawing their own title bars, so those look like

@@ -15,7 +15,7 @@ compositor itself knows nothing about RDP.
 **Serve a physical screen** — mirror what is on your monitor:
 
 ```sh
-otto-rdp --connector eDP-1 --listen 0.0.0.0:3389 --tls
+otto-rdp --connector eDP-1 --listen 0.0.0.0:3389
 ```
 
 **Serve a virtual output** — a headless screen that exists only for the remote
@@ -36,17 +36,15 @@ interactive = true          # required for remote input
 `interactive = true` is what allows remote pointer and keyboard events to be
 aimed at that output. Without it the feed is view-only.
 
-Otto logs the PipeWire node id at startup:
-
-```
-Virtual output 'virtual-1' started (PipeWire node 42)
-```
-
-Then:
+Then name the output — the bridge discovers its PipeWire node itself:
 
 ```sh
-otto-rdp --node 42 --output virtual-1 --listen 0.0.0.0:3389 --tls
+otto-rdp --output virtual-1 --listen 0.0.0.0:3389
 ```
+
+To see what is available first, `otto-rdp --list` prints every output Otto
+exposes, physical and virtual, with its size and whether it is already
+streaming.
 
 ## Connecting
 
@@ -61,17 +59,19 @@ xfreerdp3 /v:192.168.1.10:3389 /gfx:AVC420 /cert:ignore
 ## Command-line reference
 
 ```
-otto-rdp (--node <id> | --connector <name>) [options]
+otto-rdp [--output <name>] [--node <id> | --connector <name>] [options]
 ```
 
 | Flag | Meaning |
 |------|---------|
-| `--node <id>` | PipeWire node id of a virtual output's stream (from Otto's log) |
+| `--list` | List every output Otto exposes, with size and stream state, then exit |
+| `--node <id>` | Skip discovery and use this PipeWire node id directly. Rarely needed — `--output` finds it. |
 | `--connector <name>` | Capture a physical output instead, e.g. `eDP-1`. Mutually exclusive with `--node`; also becomes the default `--output`. |
 | `--output <name>` | Wayland output to aim input at. Defaults to `virtual-1`, or the `--connector` value. |
-| `--listen <addr:port>` | Listen address. Default `0.0.0.0:3389`. |
+| `--port <n>` | Listen port on `0.0.0.0`. Default `3389`. |
+| `--listen <addr:port>` | Full listen address; overrides `--port`. Default `0.0.0.0:3389`. |
 | `--desktop <WxH>` | Serve this desktop size instead of the client's reported box |
-| `--tls` | Accept TLS-security connections with a self-signed certificate |
+| `--no-tls` | Use the plain-RDP security layer instead of TLS, which is on by default |
 | `--bitmap` | Force the legacy raw-bitmap path instead of hardware H.264 |
 
 ### Environment
@@ -84,15 +84,16 @@ otto-rdp (--node <id> | --connector <name>) [options]
 
 ## TLS
 
-Use `--tls` unless you have a reason not to. `mstsc` and Microsoft's mobile,
-iOS and Windows App clients **require** it — they refuse to run graphics over
-plain RDP security.
+TLS is **on by default**, with a self-signed certificate. Leave it that way
+unless you have a reason not to: `mstsc` and Microsoft's mobile, iOS and Windows
+App clients **require** it and refuse to run graphics over plain RDP security.
 
 The certificate is self-signed and persisted in `~/.local/state/otto-rdp`, so it
 stays stable between runs and your client stops warning about a changed
 certificate. Pass `/cert:ignore` to FreeRDP the first time.
 
-With `--tls` on, plain-RDP clients (`xfreerdp /sec:rdp`) can no longer connect.
+Plain-RDP clients (`xfreerdp /sec:rdp`) cannot connect while TLS is on. Pass
+`--no-tls` to serve them instead — the transport is then unencrypted.
 
 ## Video transport
 
@@ -125,7 +126,7 @@ lands where the remote user clicked even when the served output is not the first
 one.
 
 Remote input drives the compositor's UI exactly like physical input: dock hover,
-magnification and tooltips all respond.
+magnification and labels all respond.
 
 ## The `--tty-udev` caveat
 
@@ -160,13 +161,13 @@ no consumer does not block suspend. See
 ## Security
 
 The bridge has **no authentication of its own** — anyone who can reach the port
-gets your desktop. `--tls` encrypts the transport; it does not gate access.
+gets your desktop. TLS encrypts the transport; it does not gate access.
 
 Do not expose port 3389 to an untrusted network. Bind it to localhost and tunnel
 over SSH instead:
 
 ```sh
-otto-rdp --node 42 --output virtual-1 --listen 127.0.0.1:3389 --tls
+otto-rdp --output virtual-1 --listen 127.0.0.1:3389
 # from the client machine:
 ssh -L 3389:localhost:3389 you@your-host
 ```
@@ -183,7 +184,8 @@ AVC420 and the fallback did not kick in. Retry with `--bitmap`.
 **Input does nothing.** The virtual output needs `interactive = true`, and
 `--output` must name the output you are actually serving.
 
-**mstsc or the mobile app refuses to connect.** You need `--tls`.
+**mstsc or the mobile app refuses to connect.** Check you have not passed
+`--no-tls` — those clients require TLS.
 
 **The H.264 encoder fails to start.** Install `gst-plugins-bad` for VA-API and
 try `OTTO_RDP_H264_ENCODER=vah264lpenc`. Failing that, `--bitmap`.

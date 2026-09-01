@@ -5,14 +5,14 @@ else: the settings Otto's author actually runs, day to day, on a laptop. They
 are a starting point rather than a second set of defaults — copy the whole
 thing, or take the parts you like.
 
-Most of the page is about the **keyboard**, because a Mac-like layout is the
+Most of the page is about the **keyboard**, because a Super-as-primary layout is the
 one part of Otto that is genuinely fiddly to reproduce from scratch. If that is
-what you came for, skip to [A Mac-like keyboard](#a-mac-like-keyboard).
+what you came for, skip to [A Super-first keyboard](#a-super-first-keyboard).
 
 Everything here goes in `~/.config/otto/config.toml`. See
 [Configuration](configuration.md) for how that file merges with the system one.
 
-## A Mac-like keyboard
+## A Super-first keyboard
 
 The goal is the muscle memory: `Cmd+C` copies, `Cmd+W` closes the window,
 `Cmd+Space` opens the launcher, `Cmd+Shift+4` takes a screenshot — while the
@@ -205,7 +205,7 @@ autohide = false
 want.
 
 A dock on the left keeps the full width of a laptop screen for windows.
-`magnification` is the macOS-style zoom under the cursor.
+`magnification` is the zoom under the cursor.
 
 ## Where these differ from the shipped defaults
 

@@ -106,10 +106,10 @@ so what a light tint has to work with is the source icon's luminance.
 | Setting | Where | Effect |
 |---------|-------|--------|
 | `background_image`, `background_color` | [Theming](theming.md#wallpaper) | The wallpaper, and what shows if it fails to load |
-| `theme_scheme` | [Theming](theming.md#light-and-dark) | Light or dark, for Otto's chrome *and* for GTK/Qt apps through the portal |
+| `theme_scheme` | [Theming](theming.md#light-and-dark) | Light or dark, for Otto's chrome *and* for GTK/Qt apps through the portal. Needs a restart |
 | `accent_color` | [Theming](theming.md#accent-colour) | Selection, highlights and controls. A palette name or a hex literal |
-| `font_family` | [Theming](theming.md#fonts) | Otto's own interface type |
-| `icon_theme` | [Theming](theming.md#icon-theme) | The source icons, before any tint |
+| `font_family` | [Theming](theming.md#fonts) | Otto's own interface type. Needs a restart |
+| `icon_theme` | [Theming](theming.md#icon-theme) | The source icons, before any tint. Needs a restart |
 | `rounded_corners` | [Theming](theming.md#rounded-corners) | Rounded or squared window corners. Needs a restart |
 | `window_controls_side` | [Window Management](window-management.md#decorations) | Close/minimize/maximize on the left or right. Needs a restart |
 | `dock.position` | [Dock](dock.md#position) | Bottom, left or right |
@@ -117,7 +117,10 @@ so what a light tint has to work with is the source icon's luminance.
 | `dock.colorize_*` | [Dock](dock.md#icon-colorization) | Tints every dock and switcher icon to one colour |
 | `workspaces.names` | [Workspaces](workspaces.md) | What the workspace strip is labelled with |
 
-Everything except `rounded_corners` and `window_controls_side` applies live.
+The wallpaper, the accent colour and every `dock.*` setting apply live. The
+rest — colour scheme, fonts, icon and cursor themes, corners, controls side and
+the interface scale — need a restart, and the settings app says so next to the
+control.
 
 ## What Otto does not draw
 

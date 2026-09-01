@@ -102,11 +102,13 @@ compositor owns the display hardware.
 **Colours do not change.** Some drivers ignore gamma tables on some outputs.
 Try a different output, and check the tool's own output for errors.
 
-**Colours stay shifted after the tool exits.** A crashed tool leaves the gamma
-ramp where it was. Restart it and stop it cleanly, or restart the session.
+**Colours stay shifted after the tool exits.** Otto resets the ramp when a gamma
+client disconnects, so this should not happen. If it does, the shift is coming
+from somewhere else — check for a second tool still running.
 
-**Two tools are fighting.** Run only one gamma client at a time; the last one to
-set the ramp wins.
+**A second tool will not start.** Only one gamma client per output is allowed.
+Otto refuses the newcomer, so the tool that got there first keeps the ramp; stop
+it before starting another.
 
 ## Not planned
 

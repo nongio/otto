@@ -9,10 +9,11 @@ them around, and preview a file without opening it at all.
 
 ## Opening it
 
-Launch **Files** from the Dock or the launcher, or run `otto-files`. Other
-applications can open it too: "Open Containing Folder" in a browser or editor
-goes through the standard `org.freedesktop.FileManager1` interface and lands
-here.
+Launch **Files** from the Dock or the launcher, or run `otto-files`. It also
+serves the file-chooser portal, so "Open" and "Save as" in a sandboxed
+application land here. "Open Containing Folder" in a browser or editor does not
+yet — that goes through `org.freedesktop.FileManager1`, which Files does not
+implement.
 
 `Ctrl+N` opens a new window at your home directory. To open a specific folder
 in a new window, hold `Ctrl` and double-click it.
@@ -132,16 +133,17 @@ the application does that once you accept.
 
 Move to trash follows the freedesktop trash specification: the file goes to
 `~/.local/share/Trash/`, with a record of where it came from and when. Files on
-another filesystem than your home directory cannot be trashed yet — Files says
-so and offers permanent deletion instead, rather than silently copying the file
-across.
+another filesystem than your home directory are trashed by copying them into
+the trash directory and removing the original, since a rename cannot cross
+filesystems. The original is unlinked only once the copy is fully written.
 
 ## Not there yet
 
 - Tabs, split views, and persisted column widths.
 - Network and virtual filesystems — `smb://`, `sftp://`, MTP. Local paths only.
-- Mounting, unmounting and ejecting devices. Volumes that are already mounted
-  do appear.
+- Mounting, unmounting and ejecting devices. Mounted volumes do not appear in
+  the sidebar either — it lists your home directory and the XDG user folders,
+  and you reach anything else by typing the path with `Ctrl+L`.
 - Searching file contents, batch rename, archive browsing, tags and labels.
 - `Shift+Delete` (delete permanently) is deliberately inert for now.
 - Writing to the shared thumbnail cache.

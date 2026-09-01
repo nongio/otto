@@ -13,7 +13,7 @@ A three-finger swipe does one of two things, decided by direction:
 | Vertical (up / down) | Open / close [Exposé](expose-and-switcher.md) |
 
 Otto does not commit to either the moment you touch down. It accumulates the
-movement and waits until you have travelled about 20 pixels in one direction,
+movement and waits until you have travelled about 5 pixels in one direction,
 then picks whichever axis has moved further. This means a slightly diagonal
 swipe still does what you meant, and small stray movements never trigger
 anything.
@@ -105,11 +105,11 @@ move/resize requests from clients. The gestures above are touchpad-only.
 device: `libinput list-devices` should report gesture support. Gestures do not
 work on the `--winit` backend, where the host compositor consumes them.
 
-**Swipes feel over- or under-sensitive.** The 20-pixel direction threshold and
+**Swipes feel over- or under-sensitive.** The 5-pixel direction threshold and
 the momentum model are not configurable yet. `scroll_speed` and
 `pointer_accel_speed` in `[input]` affect scrolling and pointer motion, not
 gestures.
 
 **A swipe switched workspaces when I meant exposé.** Start the swipe with a
 more deliberate vertical movement — the axis with the larger accumulated delta
-at the 20-pixel mark wins.
+at the 5-pixel mark wins.

@@ -42,7 +42,7 @@ versions: useful day to day, still filling in.
 | Page | What it covers |
 |------|----------------|
 | [Configuration](configuration.md) | Where config files live and how they merge |
-| [Recommended Settings](recommended-settings.md) | The config Otto's author runs — a Mac-like keyboard and the rest |
+| [Recommended Settings](recommended-settings.md) | The config Otto's author runs — a Super-first keyboard and the rest |
 | [Display](display.md) | Scaling, monitor arrangement, modes, virtual outputs, panels |
 | [Theming](theming.md) | Light/dark, accent color, fonts, wallpaper, cursors, icons |
 | [Customization](customization.md) | What the appearance settings do, shown on six configurations |

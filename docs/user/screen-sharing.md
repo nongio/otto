@@ -228,11 +228,11 @@ Check the backend is running and reachable:
 
 ```sh
 busctl --user status org.freedesktop.impl.portal.desktop.otto
-tail -f /tmp/portal-otto.log
+journalctl --user -u xdg-desktop-portal-otto -f
 ```
 
-That log records every method call, the compositor interaction and the PipeWire
-node ids.
+The backend logs every method call, the compositor interaction and the PipeWire
+node ids. For more detail, restart it with `RUST_LOG=debug`.
 
 **The permission dialog never appears.** `otto-islands` is not running. Start
 it (`[[exec_once]]`) and try again.
