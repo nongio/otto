@@ -5328,9 +5328,12 @@ impl Workspaces {
     /// throttle classifier's Occluded bucket. Union coverage is deliberately
     /// not attempted: the single-cover case (a maximized or large window over
     /// smaller ones) is the one that matters, and containment in one window
-    /// cannot false-positive on a partially visible window.
+    /// cannot false-positive on a partially visible window. Windows in
+    /// `translucent` (blur-effect clients, see
+    /// `window_throttle::translucent_window_ids`) can be occluded but never
+    /// occlude: what is behind them shows through.
     #[allow(clippy::mutable_key_type)]
-    pub fn occluded_window_ids(&self) -> HashSet<ObjectId> {
+    pub fn occluded_window_ids(&self, translucent: &HashSet<ObjectId>) -> HashSet<ObjectId> {
         use smithay::utils::{Physical, Rectangle};
         let mut occluded = HashSet::new();
         let scale = Config::with(|c| c.screen_scale);
@@ -5362,7 +5365,9 @@ impl Workspaces {
             if above.iter().any(|a| a.contains_rect(rect)) {
                 occluded.insert(window.id());
             }
-            above.push(rect);
+            if !translucent.contains(&window.id()) {
+                above.push(rect);
+            }
         }
         occluded
     }

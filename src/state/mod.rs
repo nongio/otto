@@ -2630,10 +2630,12 @@ pub fn post_repaint<'a>(
         smithay::reexports::wayland_server::backend::ObjectId,
         window_throttle::WindowThrottleState,
     >,
+    occluded_layer_ids: &std::collections::HashSet<
+        smithay::reexports::wayland_server::backend::ObjectId,
+    >,
 ) {
     let time = time.into();
     let default_throttle = Duration::ZERO;
-    let layer_throttle = Some(Duration::ZERO);
 
     window_elements.iter().for_each(|window| {
         window.with_surfaces(|surface, states| {
@@ -2690,7 +2692,20 @@ pub fn post_repaint<'a>(
             }
         });
 
-        layer_surface.send_frame(output, time, layer_throttle, surface_primary_scanout_output);
+        // Background/bottom surfaces hidden behind a window get the same 2 Hz
+        // trickle as an occluded window (see `occluded_layer_surface_ids`);
+        // everything else paints at full rate.
+        let layer_throttle = if occluded_layer_ids.contains(&layer_surface.wl_surface().id()) {
+            window_throttle::WindowThrottleState::Occluded.throttle()
+        } else {
+            Duration::ZERO
+        };
+        layer_surface.send_frame(
+            output,
+            time,
+            Some(layer_throttle),
+            surface_primary_scanout_output,
+        );
         if let Some(dmabuf_feedback) = dmabuf_feedback {
             layer_surface.send_dmabuf_feedback(
                 output,

@@ -103,6 +103,17 @@ The hidden rate is deliberately not zero: Chromium 115+ treats a window that
 receives no callbacks at all as discardable and evicts its render process. A
 2 Hz trickle satisfies that heuristic while saving essentially all the work.
 
+A window covers what is beneath it only when it is opaque: a client that
+committed an `ext-background-effect-v1` blur region shows the content behind
+it through the frost, so it can be occluded but never occludes.
+
+`background`/`bottom` layer-shell surfaces (wallpaper, desktop widgets) follow
+the same rule (`occluded_layer_surface_ids`): one fully inside a single opaque
+window on the output's current workspace, or behind a fullscreen window, gets
+the 2 Hz trickle; every other layer surface is paced at the output refresh.
+The set is empty while exposé or show-desktop is active, since both put the
+desktop back on screen.
+
 ## Udev (DRM/GBM) backend — `src/udev/`
 
 This is the production loop, and the only one with real VBlank timing.

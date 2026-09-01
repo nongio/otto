@@ -81,7 +81,7 @@ pub struct Config {
     pub keyboard_shortcuts: ShortcutMap,
     #[serde(default)]
     pub virtual_outputs: Vec<VirtualOutputConfig>,
-    #[serde(default)]
+    #[serde(default = "default_occlusion_culling")]
     pub occlusion_culling: bool,
     #[serde(default)]
     pub login: LoginConfig,
@@ -152,7 +152,7 @@ impl Default for Config {
             keyboard_shortcuts: shortcuts::default_shortcut_map(),
             shortcut_bindings: Vec::new(),
             virtual_outputs: Vec::new(),
-            occlusion_culling: false,
+            occlusion_culling: true,
             login: LoginConfig::default(),
             lock: LockConfig::default(),
             workspaces: WorkspacesConfig::default(),
@@ -1037,6 +1037,10 @@ fn default_accent_color() -> String {
 }
 
 fn default_rounded_corners() -> bool {
+    true
+}
+
+fn default_occlusion_culling() -> bool {
     true
 }
 

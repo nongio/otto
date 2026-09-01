@@ -414,6 +414,12 @@ so seeding it alone would leave the window underneath sharp.
   never zero (Chromium's buffer-eviction heuristic blanks canvases when
   callbacks stop entirely). Union coverage is deliberately not computed;
   single-window containment cannot false-positive on partial visibility.
+  A window with a committed `ext-background-effect-v1` blur region is
+  translucent and never counts as a cover. `background`/`bottom`
+  layer-shell surfaces are classified the same way: fully inside one
+  opaque window (or behind a fullscreen one) on the output's current
+  workspace → 2 Hz, otherwise output refresh; never during exposé or
+  show-desktop.
 - Otto maintains a session-wide adaptive plane budget on top of the
   per-output decomposition decision above: it follows the kernel log for
   display-engine underrun reports and sheds plane usage globally when one
