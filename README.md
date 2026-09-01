@@ -1,8 +1,8 @@
 # Otto
 
-**A Wayland desktop that feels like someone cared.** Smooth animations, thoughtful gestures, and the kind of details you notice only when they're missing — inspired by familiar macOS interactions, built from scratch in Rust.
+**A Wayland desktop that feels like someone cared.** Smooth animations, thoughtful gestures, and the kind of details you notice only when they're missing — built from scratch in Rust on [Smithay](https://github.com/Smithay/smithay), with a Skia renderer and the [lay-rs](https://github.com/nongio/layers) scene graph.
 
-Otto is a Wayland compositor and stacking window manager built on [LayersEngine](https://github.com/nongio/layers), rendered with Skia, with parts of the desktop handed straight to hardware display planes.
+Otto is a Wayland compositor and stacking window manager. Parts of the desktop are handed straight to hardware display planes instead of being composited into one buffer.
 
 You can try it inside your current session in about a minute — [jump to Try it](#try-it).
 
@@ -69,11 +69,13 @@ Packages come from the [GitHub Releases](https://github.com/nongio/otto/releases
 - **[Virtual outputs](https://nongio.github.io/otto/display/#virtual-outputs)** — monitors with no display behind them, declared in the config and rendered like any other screen, each published as a PipeWire node. They have their own workspaces, exposé and workspace selector, and you can drag windows onto them: a remote screen for RDP, a stage to record or cast from, or simply more desk than your hardware has.
 - **X11 apps, including fullscreen games** — keyboard focus for globally-active clients, output scale via XSETTINGS, direct scanout.
 - **A file manager** — [`otto-files`](https://nongio.github.io/otto/files/): list, icon and column views, thumbnails read from the shared cache other file managers write, drag and drop in and out of other apps, background copy/move/trash with progress and 32 levels of undo, and a quick-view panel on `Space` that previews pictures, text, PDFs and media details in a sandboxed process. It is also the desktop's file picker, so Open and Save dialogs in Firefox and Chrome are this window rather than a GTK one.
-- **A settings app** — [`otto-settings`](https://nongio.github.io/otto/settings/) edits the configuration live over D-Bus, so you don't have to hand-write TOML (you still can; the compositor picks up file edits). Displays, Dock, input, sound, power, lock and login, and the shortcut list.
+- **A settings app** — [`otto-settings`](https://nongio.github.io/otto/settings/) edits the configuration live over D-Bus, so you don't have to hand-write TOML (you still can — the app writes to the same file, though it does not watch it for outside edits). Displays, Dock, input, sound, power, lock and login, and the shortcut list.
 - **A launcher** — [`otto-launcher`](https://nongio.github.io/otto/launcher/): `Ctrl+Space` to start an application, `Ctrl+Shift+P` to jump to a window, with fuzzy ranking and arithmetic in the query field. All three are first versions — they aim to be useful day to day, and each guide lists what is still missing rather than leaving you to find out.
 
 - **Rendering built for this** — a Skia pipeline with KMS multi-plane scanout (Dock, app switcher, popups and topmost windows on their own hardware planes) and cross-plane backdrop blur.
-- **Input and theming** — natural and two-finger scrolling, keyboard remapping, fully configurable shortcuts, dark/light themes, accent colors, night shift through hardware gamma tables.
+- **Input and theming** — natural and two-finger scrolling, keyboard remapping, fully configurable shortcuts, dark/light themes, accent colors, and night shift through `wlsunset` or `gammastep`, which drive the hardware gamma tables.
+- **Accessibility** — the desktop's own chrome and bundled apps expose an AT-SPI tree over D-Bus through [AccessKit](https://accesskit.dev), so a screen reader can walk the dock, the bar and the settings app, not just client windows. See [Accessibility](https://nongio.github.io/otto/accessibility/).
+- **Translated** — Otto's interface ships in German, English (GB and US), Spanish, French, Italian, Polish, Portuguese (Brazil), Russian and Ukrainian, selected with the `locales` setting.
 
 > **Note on KMS scanout:** on the tty-udev backend, Otto puts parts of the desktop on their own hardware planes instead of compositing everything into one buffer, keeping the number of overlapping planes small to limit GPU work. This has mostly been tested on Intel GPUs. Other drivers are expected to fall back to full composition when the atomic test rejects a plane configuration, but that path is untested — if you see missing, misplaced or flickering elements on AMD or NVIDIA, this is the first thing to suspect, and a report is welcome. See [docs/developer/drm_plane.md](./docs/developer/drm_plane.md).
 
@@ -160,14 +162,28 @@ Otto appears in your login manager (GDM, SDDM, LightDM, …) as "Otto" in the se
 
 ### Prerequisites
 
-Install these (package names vary by distribution):
+Install these (package names vary by distribution). The Debian/Ubuntu names are
+what CI installs, so that list is the authoritative one — see the "System
+dependencies" step in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
-- `libwayland`
-- `libxkbcommon`
-- `libudev`
-- `libinput`
-- `libgbm`
-- [`libseat`](https://git.sr.ht/~kennylevinsen/seatd)
+- Wayland and input: `libwayland`, `libxkbcommon`, `libudev`, `libinput`,
+  [`libseat`](https://git.sr.ht/~kennylevinsen/seatd)
+- Graphics: `libgbm`, `libdrm`, `libEGL`/Mesa, `libpixman`, `libdisplay-info`
+- Text: `freetype`, `fontconfig`
+- Session and IPC: `libdbus`, `libsystemd`
+- Screen sharing and remote desktop: `pipewire`, `gstreamer` and
+  `gstreamer-plugins-base` (`otto-rdp`)
+- Authentication: `libpam` (`otto-lock`, `otto-greeter`)
+
+On Debian and Ubuntu:
+
+```bash
+sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev \
+  libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev \
+  libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev \
+  libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev \
+  libgstreamer-plugins-base1.0-dev libpam0g-dev
+```
 
 Add `xwayland` if you want to run X11 applications inside Otto. Minimum supported Rust is **1.87.0** for the compositor; building the whole workspace needs **1.96.0** (`otto-rdp` pins it through GStreamer).
 
@@ -184,23 +200,29 @@ cargo run --release
 cargo run --features "dev"
 ```
 
-Otto picks the backend for your environment:
+With no argument Otto looks at `WAYLAND_DISPLAY`:
 
-- inside a Wayland session it uses `--winit` (runs as a window)
-- in a TTY it uses `--tty-udev` (bare metal display)
+- set (you are in a Wayland session) — it uses `--winit` and runs as a window
+- unset — it uses `--tty-udev` and drives the display directly
+
+That check does not know about X11, so **on an X11 session pass `--winit`
+explicitly**; otherwise Otto tries to take over the display from your running
+desktop.
 
 **Force a backend** by passing it as an argument:
 
 - `--tty-udev`: start Otto in a tty with `udev` support — the "traditional" launch of a Wayland compositor. May require root if your system has no `logind`.
 - `--winit`: start Otto as a [Winit](https://github.com/tomaka/winit) application, inside another X11 or Wayland session. Best for development.
-- `--x11`: start Otto as an X11 client. Quite basic and not really maintained.
+- `--x11`: start Otto as an X11 client. Quite basic and not really maintained,
+  and not in the default feature set — build with `--features x11` to get it.
+  For running inside an X11 session, use `--winit` instead.
 
 ## Configuration
 
 Otto reads TOML configuration files, in this order (later files override earlier ones):
 
-1. **System**: `/etc/otto/config.toml` (not shipped; copy it from
-   `/etc/otto/config.example.toml`, which the packages do install)
+1. **System**: `/etc/otto/config.toml` (installed by the packages, and marked
+   as a config file so your edits survive an upgrade)
 2. **User**: `$XDG_CONFIG_HOME/otto/config.toml` (defaults to `~/.config/otto/config.toml`)
 3. **Local override**: `./otto_config.toml` (current directory, for development)
 4. **Backend-specific**: `./otto_config.{backend}.toml` (highest priority)
