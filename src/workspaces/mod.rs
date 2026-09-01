@@ -2931,7 +2931,6 @@ impl Workspaces {
             view,
             dock: self.dock.clone(),
             layers_engine: self.layers_engine.clone(),
-            expose_layer: self.expose_layer.clone(),
             model: self.model.clone(),
             observers: self.observers.clone(),
             layer_pos: (layer_pos_x, layer_pos_y),
@@ -6423,7 +6422,6 @@ struct UnminimizeContext {
     view: WindowView,
     dock: Arc<DockView>,
     layers_engine: Arc<Engine>,
-    expose_layer: Layer,
     model: Arc<RwLock<WorkspacesModel>>,
     observers: Vec<Weak<dyn Observer<WorkspacesModel>>>,
     layer_pos: (f32, f32),
@@ -6438,7 +6436,6 @@ impl UnminimizeContext {
         let view = self.view.clone();
         let dock = self.dock.clone();
         let layers_engine = self.layers_engine.clone();
-        let expose_layer = self.expose_layer.clone();
         let model = self.model.clone();
         let observers = self.observers.clone();
         let layer_pos = self.layer_pos;
@@ -6464,7 +6461,14 @@ impl UnminimizeContext {
             }
 
             let windows_layer_ref = workspace.windows_layer.clone();
-            let expose_windows_ref = expose_layer.clone();
+            // The mirror belongs to THIS workspace's window selector, not to
+            // the output-wide expose layer: parking it there makes the window
+            // vanish from its own workspace's exposé and float on top of
+            // whichever workspace is on screen.
+            let expose_windows_ref = workspace
+                .window_selector_view
+                .window_selector_windows_container
+                .clone();
             let layer_ref = view.window_layer.clone();
             let mirror_ref = view.mirror_layer.clone();
             let target_pos = layer_pos;
