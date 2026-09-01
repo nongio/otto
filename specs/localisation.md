@@ -49,11 +49,12 @@ desktop agrees on it.
 ### Catalogues
 
 Strings live in one Fluent catalogue per locale, keyed by stable identifiers
-rather than by their English text. Ten catalogues ship: `en-GB`, a sparse
-`en-US`, and full translations for `de`, `es`, `fr`, `it`, `pl`, `pt-BR`, `ru`
-and `uk`. They are compiled into the binaries, so a component can render its
-first frame before any filesystem the user controls is necessarily mounted, and
-a catalogue on disk cannot drift out of step with the keys the code asks for.
+rather than by their English text. Eleven catalogues ship: `en-GB`, a sparse
+`en-US`, and full translations for `de`, `es`, `fr`, `it`, `pl`, `pt-BR`, `ru`,
+`uk` and `zh-CN`. They are compiled into the binaries, so a component can
+render its first frame before any filesystem the user controls is necessarily
+mounted, and a catalogue on disk cannot drift out of step with the keys the
+code asks for.
 
 `en-GB` is the source of truth and the only catalogue guaranteed to carry every
 key — 448 of them at the time of writing. `en-US` is an overlay: it carries
@@ -68,6 +69,15 @@ contribute nothing. A bare `en` resolves to `en-US`, because that is what a bare
 `en` means nearly everywhere it appears, even though Otto authors in British
 English. Candidates with no catalogue are skipped rather than treated as an
 error.
+
+Chinese is named the way Linux names it. Simplified and Traditional are a
+script distinction rather than a territorial one, and CLDR would write the
+catalogue `zh-Hans`, but every Linux desktop — and every application whose
+translation Otto sits beside — spells it `zh_CN`, so Otto does too. The
+friendliness that the script spelling would have bought is kept in the chain
+instead: every Chinese tag falls back to `zh-CN`, so `zh`, `zh_SG` and a
+`zh-Hans` typed into the setting all reach the catalogue rather than dropping
+through to English.
 
 A key no bundle in the chain carries is a bug, not a runtime failure: the key
 itself is rendered, so the gap is visible in the interface — `dock-keep-in-dock`
@@ -168,7 +178,9 @@ starts, before anything is spawned:
 - `LANGUAGE`, gettext's colon-separated priority list, always. Each configured
   tag contributes its POSIX form and its bare language (`pt_BR:pt`), and the
   list is honoured whether or not those locales were ever generated on the
-  machine.
+  machine. The POSIX form is the same conversion the clock uses, script subtags
+  included, so a user who writes the catalogue's own name in the setting gets
+  `zh_CN:zh` rather than a `zh_Hans` no application has a translation under.
 - `LANG` and `LC_MESSAGES`, only when the locale actually exists here — named
   the way `setlocale` wants it, `it_IT.UTF-8`. Naming a locale that was never
   generated is worse than saying nothing: `setlocale` fails and the application
@@ -207,6 +219,12 @@ Rendering those names in the user's language needs a locale in POSIX form
 already carries a region keeps it, and a bare language subtag is paired with
 the conventional default region for that language. A tag the date library does
 not know still produces a clock, in the source locale's names.
+
+A script subtag is not a region and cannot be rewritten as one — `zh_Hans`
+names nothing to either the C library or the date library — so a script is
+replaced by the territory conventionally used for it: `zh-Hans` is `zh_CN`,
+`zh-Hant` is `zh_TW`. Scripts that POSIX writes as a modifier rather than a
+territory (`sr-Latn`) are left alone until a catalogue needs one.
 
 ### Settings labels
 
@@ -267,7 +285,8 @@ point the string is drawn.
    translating them.
 3. Register the catalogue so it is compiled in.
 4. If the language's conventional region is not already known to the POSIX
-   mapping, add it, or the clock's weekday and month names stay in English.
+   mapping, add it, or the clock's weekday and month names stay in English. A
+   catalogue named by script rather than region needs its territory there too.
 
 A regional variant of a language that already ships can instead be added as a
 sparse overlay, carrying only the keys that differ, the way `en-US` overlays
@@ -282,8 +301,11 @@ sparse overlay, carrying only the keys that differ, the way `en-US` overlays
   be silently unreadable forever.
 - No translation drops a variable its English string uses. A count that never
   reaches the text reads as a missing number.
-- The locale chain resolves POSIX spellings, bare `en`, and the Chinese scripts
-  as described above.
+- The locale chain resolves POSIX spellings, bare `en`, and every Chinese tag
+  — bare, Singaporean, or written by script — as described above.
+- The POSIX rewrite keeps a region, drops an encoding or modifier, and turns a
+  script into its territory; and the environment the compositor exports for a
+  script-named locale is the one gettext can actually use.
 - The portal read gives the same answer whether or not a runtime is already
   running, exercised from a multi-threaded runtime, from a current-thread
   runtime, and from no runtime at all: in `portal.rs`,
@@ -375,12 +397,8 @@ which operation the undo stack recorded, which month `civil_from_days` landed on
 
 ## Open Questions
 
-- The chain resolves `zh` and `zh-CN` to `zh-Hans`, and the POSIX mapping knows
-  `ja`, but no Chinese or Japanese catalogue ships. Either the catalogues follow
-  or the mappings are speculative.
-- An empty `locales` list means "use the environment" for components reading it
-  over the portal, but the compositor resolving its own empty list goes straight
-  to `en-GB` instead. The two should agree.
+- The POSIX mapping knows `ja`, but no Japanese catalogue ships. Either one
+  follows or the mapping is speculative.
 - The settings pane labels the row *Preferred languages* while the schema calls
   the setting *Locales*. One name should win.
 - Whether the language preference should also drive `LANG` for applications the

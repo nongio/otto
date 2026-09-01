@@ -20,6 +20,10 @@
 //! a session script that set it meant to, and Otto is not the right authority
 //! to overrule it.
 
+// The tag-to-POSIX conversion is otto-kit's, so the environment Otto exports
+// and the locale its own components hand to `chrono` cannot disagree.
+use otto_kit::i18n::posix_form;
+
 /// The assignments to publish, in `KEY=value` form.
 ///
 /// `available` is the set of locales the C library has, as `locale -a` prints
@@ -93,16 +97,6 @@ fn first_generated(locales: &[String], available: &[String]) -> Option<String> {
         }
     }
     None
-}
-
-/// A BCP 47 tag as POSIX writes it: `pt-BR` is `pt_BR`, and any encoding or
-/// modifier already on the string is dropped.
-fn posix_form(locale: &str) -> String {
-    locale
-        .split(['.', '@'])
-        .next()
-        .unwrap_or(locale)
-        .replace('-', "_")
 }
 
 /// `locale -a` prints `it_IT.utf8`, `setlocale` is given `it_IT.UTF-8`, and
@@ -201,6 +195,20 @@ mod tests {
         assert!(out.contains(&"LANGUAGE=pt_BR:pt".to_string()));
     }
 
+    /// A user who copies the catalogue's own name into the setting gets the
+    /// same environment as one who wrote `zh_CN`. Without the rewrite gettext
+    /// would look for `zh_Hans`, miss, fall through to `zh`, and miss again —
+    /// applications ship `zh_CN` — leaving the desktop Chinese and every
+    /// application it starts English.
+    #[test]
+    fn a_script_subtag_is_exported_as_its_territory() {
+        let mut available = available();
+        available.push("zh_CN.utf8".into());
+        let out = assignments(&["zh-Hans".into()], &available, false);
+        assert!(out.contains(&"LANGUAGE=zh_CN:zh".to_string()));
+        assert!(out.contains(&"LANG=zh_CN.UTF-8".to_string()));
+    }
+
     /// Every configured language is offered to gettext, in order, so a second
     /// choice covers what the first has not translated.
     #[test]
@@ -215,6 +223,10 @@ mod tests {
         assert_eq!(out, ["LANGUAGE=it_IT:it"]);
     }
 
+    /// No preference is not a preference for English. A user who has never
+    /// opened the language row keeps whatever locale the session was started
+    /// with — Otto only overrides an inherited environment once the user has
+    /// actually chosen something, which is why the setting ships empty.
     #[test]
     fn no_configured_locale_publishes_nothing() {
         assert!(assignments(&[], &available(), false).is_empty());

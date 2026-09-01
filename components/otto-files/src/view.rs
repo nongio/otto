@@ -4290,7 +4290,9 @@ mod fit_tests {
             .collect()
     }
 
-    const LOCALES: &[&str] = &["en-GB", "de", "es", "fr", "it", "pl", "pt-BR", "ru", "uk"];
+    const LOCALES: &[&str] = &[
+        "en-GB", "de", "es", "fr", "it", "pl", "pt-BR", "ru", "uk", "zh-CN",
+    ];
 
     /// The widest of `keys` in `locale`, measured in `font`.
     fn widest(locale: &str, font: &skia_safe::Font, keys: &[&str]) -> (f32, String) {
