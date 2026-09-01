@@ -718,6 +718,20 @@ pub fn run_winit() {
                                     &std::collections::HashSet::new(),
                                     &interacting_ids,
                                 );
+                            let effect_surfaces: std::collections::HashSet<_> =
+                                state.background_effects.keys().cloned().collect();
+                            let translucent_ids =
+                                crate::state::window_throttle::translucent_window_ids(
+                                    &all_window_elements,
+                                    &effect_surfaces,
+                                );
+                            let occluded_layer_ids =
+                                crate::state::window_throttle::occluded_layer_surface_ids(
+                                    &state.workspaces,
+                                    &output,
+                                    expose_active,
+                                    &translucent_ids,
+                                );
                             post_repaint(
                                 &output,
                                 &render_output_result.states,
@@ -725,6 +739,7 @@ pub fn run_winit() {
                                 None,
                                 time,
                                 &window_throttle_states,
+                                &occluded_layer_ids,
                             );
                         }
 

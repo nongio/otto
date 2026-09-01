@@ -860,9 +860,7 @@ impl Otto<UdevData> {
         }
 
         // Classify every window into its visibility state so post_repaint can
-        // pick a per-window frame-callback throttle. `occluded_ids` is empty
-        // for v1 — we rely on the fullscreen detection inside the classifier
-        // for the main "background app behind a maximized window" case.
+        // pick a per-window frame-callback throttle.
         let expose_active = self.workspaces.mirrors_active();
         tracing::debug!(
             target: "otto::planes",
@@ -880,7 +878,15 @@ impl Otto<UdevData> {
         crate::render_phase_stats::log_if_due();
 
         #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
-        let occluded_ids = self.workspaces.occluded_window_ids();
+        let effect_surfaces: std::collections::HashSet<_> =
+            self.background_effects.keys().cloned().collect();
+        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
+        let translucent_ids = crate::state::window_throttle::translucent_window_ids(
+            &all_window_elements,
+            &effect_surfaces,
+        );
+        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
+        let occluded_ids = self.workspaces.occluded_window_ids(&translucent_ids);
         #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let captured_ids = crate::screenshare::screencast_window_ids(
             &self.screenshare_sessions,
@@ -898,6 +904,13 @@ impl Otto<UdevData> {
             expose_active,
             &captured_ids,
             &interacting_ids,
+        );
+        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
+        let occluded_layer_ids = crate::state::window_throttle::occluded_layer_surface_ids(
+            &self.workspaces,
+            &output,
+            expose_active,
+            &translucent_ids,
         );
 
         // ── Shadow-only / direct scanout window selection ─────────────────────
@@ -1206,6 +1219,7 @@ impl Otto<UdevData> {
             &self.clock,
             scene_has_damage,
             &window_throttle_states,
+            &occluded_layer_ids,
             &mut self.pending_screencopy_frames,
             expose_active,
             fullscreen_window.as_ref(),
@@ -2273,6 +2287,9 @@ pub(super) fn render_output_frame<'a>(
         smithay::reexports::wayland_server::backend::ObjectId,
         crate::state::window_throttle::WindowThrottleState,
     >,
+    occluded_layer_ids: &std::collections::HashSet<
+        smithay::reexports::wayland_server::backend::ObjectId,
+    >,
     pending_screencopy: &mut Vec<crate::state::screencopy::PendingScreencopy>,
     expose_active: bool,
     fullscreen_window: Option<&WindowElement>,
@@ -2938,6 +2955,7 @@ pub(super) fn render_output_frame<'a>(
             }),
         clock.now(),
         window_throttle_states,
+        occluded_layer_ids,
     );
 
     if rendered {

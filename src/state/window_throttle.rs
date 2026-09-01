@@ -22,7 +22,12 @@ use std::time::Duration;
 
 use std::time::Instant;
 
+use smithay::desktop::layer_map_for_output;
+use smithay::output::Output;
 use smithay::reexports::wayland_server::backend::ObjectId;
+use smithay::reexports::wayland_server::Resource;
+use smithay::utils::{Logical, Rectangle};
+use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
 
 use crate::shell::WindowElement;
 use crate::workspaces::Workspaces;
@@ -235,6 +240,106 @@ pub fn classify_windows(
     result
 }
 
+/// Whether a `background`/`bottom` layer-shell surface at `rect` is hidden by
+/// the windows on its output's current workspace. Same single-cover rule as
+/// `Workspaces::occluded_window_ids`: a fullscreen window covers everything
+/// beneath it, otherwise the surface must sit entirely inside one window —
+/// union coverage is not attempted, so a partially visible surface can never
+/// be misclassified. All rectangles are output-local logical.
+pub fn layer_surface_covered(
+    rect: Rectangle<i32, Logical>,
+    fullscreen: bool,
+    window_rects: &[Rectangle<i32, Logical>],
+) -> bool {
+    fullscreen || window_rects.iter().any(|w| w.contains_rect(rect))
+}
+
+/// Windows that show what is behind them and therefore never occlude: any
+/// surface in their tree committed an `ext-background-effect-v1` blur region
+/// (`Otto::background_effects`), so the wallpaper is visible through the
+/// frost and has to keep painting.
+#[allow(clippy::mutable_key_type)]
+pub fn translucent_window_ids(
+    windows: &[&WindowElement],
+    effect_surfaces: &HashSet<ObjectId>,
+) -> HashSet<ObjectId> {
+    if effect_surfaces.is_empty() {
+        return HashSet::new();
+    }
+    windows
+        .iter()
+        .filter(|w| {
+            let mut translucent = false;
+            w.with_surfaces(|surface, _| {
+                translucent |= effect_surfaces.contains(&surface.id());
+            });
+            translucent
+        })
+        .map(|w| w.id())
+        .collect()
+}
+
+/// The `background`/`bottom` layer-shell surfaces on `output` that no user can
+/// see because a window on that output's current workspace covers them. They
+/// get the Occluded frame-callback trickle in `post_repaint` — a live
+/// wallpaper or an animated desktop widget behind a maximized window would
+/// otherwise keep painting at full rate. `top`/`overlay` surfaces stack above
+/// windows and are never in this set. Windows in `translucent` (see
+/// [`translucent_window_ids`]) do not cover anything. Empty while exposé or
+/// show-desktop is active: both pull the windows away and put the desktop on
+/// screen.
+#[allow(clippy::mutable_key_type)]
+pub fn occluded_layer_surface_ids(
+    workspaces: &Workspaces,
+    output: &Output,
+    expose_active: bool,
+    translucent: &HashSet<ObjectId>,
+) -> HashSet<ObjectId> {
+    let mut occluded = HashSet::new();
+    if expose_active || workspaces.get_show_desktop() {
+        return occluded;
+    }
+    let Some(ows) = workspaces.output_workspaces.get(&output.name()) else {
+        return occluded;
+    };
+    let Some(space) = ows.spaces.get(ows.current_workspace) else {
+        return occluded;
+    };
+    let fullscreen = workspaces
+        .get_fullscreen_window_on_output(output)
+        .is_some_and(|w| !translucent.contains(&w.id()));
+    // Window locations are space-global; the layer map is output-local.
+    let origin = space
+        .output_geometry(output)
+        .map(|g| g.loc)
+        .unwrap_or_default();
+    let window_rects: Vec<Rectangle<i32, Logical>> = if fullscreen {
+        Vec::new()
+    } else {
+        space
+            .elements()
+            .filter(|w| !w.is_minimised() && !translucent.contains(&w.id()))
+            .filter_map(|w| {
+                let loc = space.element_location(w)?;
+                Some(Rectangle::new(loc - origin, w.geometry().size))
+            })
+            .collect()
+    };
+    let map = layer_map_for_output(output);
+    for layer in map
+        .layers()
+        .filter(|l| matches!(l.layer(), WlrLayer::Background | WlrLayer::Bottom))
+    {
+        let Some(geo) = map.layer_geometry(layer) else {
+            continue;
+        };
+        if layer_surface_covered(geo, fullscreen, &window_rects) {
+            occluded.insert(layer.wl_surface().id());
+        }
+    }
+    occluded
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -434,5 +539,34 @@ mod tests {
         assert!(!WindowThrottleState::Occluded.is_activated());
         assert!(!WindowThrottleState::Minimized.is_activated());
         assert!(!WindowThrottleState::HiddenWorkspace.is_activated());
+    }
+
+    fn rect(x: i32, y: i32, w: i32, h: i32) -> Rectangle<i32, Logical> {
+        Rectangle::new((x, y).into(), (w, h).into())
+    }
+
+    #[test]
+    fn layer_surface_covered_by_single_window() {
+        let wallpaper = rect(0, 0, 1920, 1080);
+        let widget = rect(1500, 100, 300, 200);
+        let maximized = rect(0, 0, 1920, 1080);
+        let small = rect(100, 100, 800, 600);
+
+        // Maximized window hides both the wallpaper and the widget.
+        assert!(layer_surface_covered(wallpaper, false, &[maximized]));
+        assert!(layer_surface_covered(widget, false, &[maximized]));
+        // A small window hides neither: the wallpaper is bigger than it, the
+        // widget is outside it.
+        assert!(!layer_surface_covered(wallpaper, false, &[small]));
+        assert!(!layer_surface_covered(widget, false, &[small]));
+        // Two windows that together cover the widget do not count — only
+        // single-window containment is trusted.
+        let left = rect(1500, 100, 150, 200);
+        let right = rect(1650, 100, 150, 200);
+        assert!(!layer_surface_covered(widget, false, &[left, right]));
+        // Fullscreen covers everything regardless of the window list.
+        assert!(layer_surface_covered(wallpaper, true, &[]));
+        // Nothing above: visible.
+        assert!(!layer_surface_covered(wallpaper, false, &[]));
     }
 }

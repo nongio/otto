@@ -487,6 +487,7 @@ pub fn run_x11() {
                             None,
                             time,
                             &window_throttle_states,
+                            &std::collections::HashSet::new(),
                         );
                     }
 
