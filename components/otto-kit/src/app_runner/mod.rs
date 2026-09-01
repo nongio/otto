@@ -1071,6 +1071,47 @@ fn move_focus_for_key(event: &KeyEvent) -> bool {
     true
 }
 
+/// Whether a key press is the close-window shortcut.
+///
+/// Cmd reaches a client as `logo`, or as `ctrl` where the session remaps the
+/// Cmd keys (`altwin:ctrl_win`, Otto's default) — a client cannot tell that
+/// apart from the real Ctrl key, and does not need to.
+fn is_close_window_key(keysym: Keysym, modifiers: Modifiers) -> bool {
+    keysym == Keysym::w && (modifiers.ctrl || modifiers.logo) && !modifiers.alt && !modifiers.shift
+}
+
+impl<A: App + 'static> AppData<A> {
+    /// Cmd+W closes the focused window, as it does across the rest of the
+    /// desktop.
+    ///
+    /// Cmd reaches a client as `logo`, or as `ctrl` when the session remaps
+    /// the Cmd keys (`altwin:ctrl_win`, Otto's default), so either counts.
+    /// Only a toplevel window takes it: a layer surface — a bar, an island —
+    /// has no close, and quitting it on Cmd+W would be a surprise.
+    ///
+    /// The close runs through the same path as a compositor close request, so
+    /// a window with its own close handler keeps it, and an application that
+    /// refuses `on_close` keeps its veto.
+    fn close_focused_window_for_key(&mut self, event: &KeyEvent) -> bool {
+        if !is_close_window_key(event.keysym, AppContext::current_modifiers()) {
+            return false;
+        }
+        let Some(surface) = AppContext::keyboard_focus() else {
+            return false;
+        };
+        if !AppContext::is_toplevel_surface(&surface) {
+            return false;
+        }
+        if AppContext::dispatch_close_request(&surface) {
+            return true;
+        }
+        if self.app.on_close() {
+            self.exit = true;
+        }
+        true
+    }
+}
+
 impl<A: App + 'static> KeyboardHandler for AppData<A> {
     fn enter(
         &mut self,
@@ -1118,6 +1159,10 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
         // application sees the key — but only in a window that declared any,
         // so an application that handles Tab itself is unaffected.
         if move_focus_for_key(&event) {
+            return;
+        }
+
+        if self.close_focused_window_for_key(&event) {
             return;
         }
 
@@ -1793,5 +1838,58 @@ impl<A: App + 'static> Dispatch<ZwpPointerGestureHoldV1, ()> for AppData<A> {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_close_window_key, Keysym, Modifiers};
+
+    #[test]
+    fn cmd_w_closes_however_cmd_reaches_the_client() {
+        // Remapped Cmd keys arrive as Control...
+        let ctrl = Modifiers {
+            ctrl: true,
+            ..Default::default()
+        };
+        assert!(is_close_window_key(Keysym::w, ctrl));
+
+        // ...and a stock layout raises logo instead.
+        let logo = Modifiers {
+            logo: true,
+            ..Default::default()
+        };
+        assert!(is_close_window_key(Keysym::w, logo));
+    }
+
+    #[test]
+    fn a_bare_w_is_text() {
+        assert!(!is_close_window_key(Keysym::w, Modifiers::default()));
+    }
+
+    #[test]
+    fn another_modifier_is_another_shortcut() {
+        let ctrl_shift = Modifiers {
+            ctrl: true,
+            shift: true,
+            ..Default::default()
+        };
+        assert!(!is_close_window_key(Keysym::w, ctrl_shift));
+
+        let ctrl_alt = Modifiers {
+            ctrl: true,
+            alt: true,
+            ..Default::default()
+        };
+        assert!(!is_close_window_key(Keysym::w, ctrl_alt));
+    }
+
+    #[test]
+    fn only_w() {
+        let ctrl = Modifiers {
+            ctrl: true,
+            ..Default::default()
+        };
+        assert!(!is_close_window_key(Keysym::q, ctrl));
     }
 }

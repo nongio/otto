@@ -1543,6 +1543,19 @@ impl<'a> AppContext<'a> {
         });
     }
 
+    /// Whether `surface_id` is one of this application's toplevel windows.
+    ///
+    /// Layer surfaces and popups are not registered here, which is what makes
+    /// this the test for "is the keyboard on something Cmd+W should close".
+    pub fn is_toplevel_surface(surface_id: &ObjectId) -> bool {
+        WINDOWS.with(|windows| {
+            windows
+                .borrow()
+                .iter()
+                .any(|window| window.surface_id().as_ref() == Some(surface_id))
+        })
+    }
+
     pub fn update_windows() {
         WINDOWS.with(|windows| {
             let mut windows = windows.borrow_mut();

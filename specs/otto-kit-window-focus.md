@@ -107,6 +107,15 @@ commit. Where it fades, the ordering above is what guarantees it instead: the
 blur only ever turns off under a material that has already finished filling
 in, and only ever turns on under one that has not yet started to thin.
 
+**Cmd+W closes the focused window.** The toolkit handles it, so every kit
+application gets it without asking. Cmd reaches a client as `logo`, or as
+`ctrl` where the session remaps the Cmd keys (`altwin:ctrl_win`, Otto's
+default), and either counts; Alt or Shift held alongside does not. The close
+takes the same path as a close request from the compositor, so a window with
+its own close handler keeps it and an application that refuses the close keeps
+its veto. Only a toplevel window takes the shortcut — a layer surface has no
+close, and quitting a bar or an island on Cmd+W would be a surprise.
+
 ## Constraints & Edge Cases
 
 - **A window's own popup must not unfocus it.** A menu or a context menu takes
