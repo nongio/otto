@@ -80,10 +80,11 @@ virtual output PipeWire node ──▶ pipewire_capture.rs (BGRx frames)
 
 - Capture + `org.otto.ScreenCast` glue: exists (`pipewire_capture.rs`,
   `screencast.rs`).
-- Encoding: new dependency surface. Otto has no gstreamer/ffmpeg today;
-  the lean option is direct `libva` bindings (or spawning `ffmpeg`), not a
-  gstreamer stack. 1080p30 BGRx → H.264 at ~10–20 Mbit is the target; AirPlay
-  receivers expect baseline/main H.264, SPS/PPS in-band.
+- Encoding: mostly solved already. `otto-rdp` depends on GStreamer and runs
+  VA-API H.264 (`components/otto-rdp/src/h264.rs`), so the encode path to reuse
+  is in the tree rather than a new dependency surface. 1080p30 BGRx → H.264 at
+  ~10–20 Mbit is the target; AirPlay receivers expect baseline/main H.264 with
+  SPS/PPS in-band, which differs from the RDP packaging.
 - Protocol: pairing/crypto is a week of work with existing crates
   (`srp`, `x25519-dalek`, `ed25519-dalek`, `chacha20poly1305`, mDNS, bplist).
   **FairPlay SAP is not** — the realistic route is linking or spawning

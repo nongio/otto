@@ -151,7 +151,7 @@ A three-finger swipe can mean either "switch workspace" or "exposé", and the
 compositor cannot know which until the finger has moved.
 
 So it commits late. Both horizontal and vertical deltas accumulate without
-activating either mode. Once accumulated movement passes **20 px** in either
+activating either mode. Once accumulated movement passes **5 px** in either
 direction, the axis with the greater magnitude wins: horizontal goes to
 `workspace_swipe_update`, vertical to `expose_update`. After that, every
 subsequent event feeds the chosen mode directly, with no re-evaluation — so a
@@ -298,11 +298,10 @@ instead.
 - Assert on semantic data (`WindowSelectorState.rects`, `expose_bin`) rather
   than pixels; fractional scaling shifts raster output.
 - The background mirror is covered by
-  `expose_subtree_paints_the_wallpaper_below_the_previews`, which asserts the
-  layer exists under `window_selector_root` *and* is ordered before the previews
-  container. A pixel assertion would not catch the regression: the background
-  plane below keeps showing the wallpaper, so only the blur inside the previews
-  changes.
+  `tests/expose_wallpaper.rs::the_expose_backdrop_shows_a_wallpaper_set_while_it_was_closed`,
+  which runs the headless compositor, swaps the wallpaper while exposé is
+  closed, then reads back pixels from the backdrop to confirm the mirror is not
+  serving a stale recording.
 - During a drag the dragged window is intentionally absent from the grid.
   Expect a gap until the drop completes or is cancelled.
 - `tests/workspace_selector.rs` covers the preview layout end to end against a

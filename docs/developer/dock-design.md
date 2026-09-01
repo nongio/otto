@@ -76,7 +76,7 @@ dock width, applies size changes, and installs pointer callbacks on the
 per-app layers. Layers for apps that went away fade and scale out before being
 removed, so the remaining icons slide rather than jump.
 
-`magnify_elements` is the macOS-style magnification: it reads the current
+`magnify_elements` is the hover magnification: it reads the current
 pointer focus position, computes a Gaussian falloff (`magnify_function`), and
 schedules the resulting size changes through `Engine::schedule_changes`.
 
@@ -112,10 +112,10 @@ underneath it.
 
 `src/workspaces/dock/render.rs` holds the Skia drawing:
 
-- `draw_app_icon` paints the cached freedesktop icon with a drop shadow, and
-  draws the running-app indicator dot only for apps that are actually running.
-  Without an icon it falls back to a stroked rounded rect.
-- Labels are balloon tooltips with blurred shadows, hidden until hover. The
+- `draw_app_icon` paints the cached freedesktop icon with a drop shadow. Without
+  an icon it falls back to a stroked rounded rect. It does **not** draw the
+  running-app indicator dot — that is a separate layer.
+- Labels are balloons with blurred shadows, hidden until hover. The
   balloon body is `theme_colors().materials_controls_tooltip` and the text
   `text_primary`, so both follow the light/dark palette.
 - The bar uses background blur and colours from `theme_colors()`, and resizes

@@ -3,24 +3,26 @@
 The D-Bus interface the compositor serves for reading and writing settings,
 and the contract a settings client can build against.
 
-> **Status**: implemented on the compositor side (`src/settings/`,
-> `src/settings_service.rs`), ahead of the app. This document is the interface
-> both sides build against, so the compositor and the settings app can be
-> written independently. Behavioural requirements live in
+> **Status**: implemented on both sides — the compositor serves it
+> (`src/settings/`, `src/settings_service.rs`) and `otto-settings` consumes it
+> (`components/otto-settings/src/settings_client.rs`). This document is the
+> interface they build against. Behavioural requirements live in
 > [specs/settings-app.md](../../specs/settings-app.md); this is the wire.
 >
-> What the compositor serves today: 47 settings, of which twenty-one are `live`
-> and the rest are `restart`. The nine `dock.*` ones — `size`, `position`,
-> `autohide`, `magnification`, `genie_scale`, `genie_span`, `colorize_icons`,
-> `colorize_color`, `colorize_intensity` — reconfigure the dock in place. The eleven
-> `input.*` touchpad/pointer ones — `tap_enabled`, `tap_drag_enabled`,
+> What the compositor serves today: 51 settings, of which 24 are `live` and 27
+> are `restart`. The nine `dock.*` ones — `size`, `position`, `autohide`,
+> `magnification`, `genie_scale`, `genie_span`, `colorize_icons`,
+> `colorize_color`, `colorize_intensity` — reconfigure the dock in place. The
+> eleven `input.*` touchpad/pointer ones — `tap_enabled`, `tap_drag_enabled`,
 > `tap_drag_lock_enabled`, `touchpad_click_method`, `touchpad_dwt_enabled`,
 > `touchpad_natural_scroll_enabled`, `touchpad_left_handed`,
 > `touchpad_middle_emulation_enabled`, `scroll_speed`, `pointer_accel_speed`,
 > `pointer_accel_profile` — reconfigure the connected libinput devices (or, for
 > `scroll_speed`, take effect on the next scroll event, since Otto reads the
-> live config per event rather than caching it). The keyboard `input.xkb_*`
-> settings still need a restart. No setting is `unsupported` yet. Values that
+> live config per event rather than caching it). The remaining four are
+> `accent_color`, `background_color`, `background_image` and
+> `appswitcher.colorize_icons`. The keyboard `input.xkb_*` settings still need a
+> restart. No setting is `unsupported` yet. Values that
 > are lists rather than scalars (dock bookmarks, shortcuts, display profiles)
 > have no identifier and are not in the schema.
 

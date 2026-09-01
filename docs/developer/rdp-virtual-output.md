@@ -149,8 +149,8 @@ the right window and reach the application.
   space back to native pixels through the picture rect; bar positions
   clamp to the picture edge. No dynamic re-negotiation after connect —
   rotating a phone mid-session keeps the originally negotiated size.
-- **Client scaling quirks** (no RDPGFX in ironrdp-server, legacy bitmap
-  updates only; the client's `desktopScaleFactor` hints are dropped).
+- **Client scaling quirks** (the client's `desktopScaleFactor` hints are
+  dropped).
   Microsoft's iOS Windows App: a served desktop that *matches* its
   requested box renders 1:1 physical in a corner (no upscaling); a
   *mismatched* one is stretched non-uniformly to fill the view. The
@@ -159,9 +159,9 @@ the right window and reach the application.
   and centered inside, so the app's stretch is uniform (desktop aspect
   == view aspect) and the picture displays full-screen and undistorted.
   Input is normalized from the client's reported box through the
-  picture rect. The proper fix is RDPGFX support upstream.
+  picture rect.
 - Keyboard injection covers ASCII only. Non-ASCII Unicode (accents, emoji,
   non-Latin scripts) is dropped with a debug log — a compose/dead-key or
   dynamic-keymap path is the follow-up.
 - Conversely, a client that only speaks plain-RDP (`xfreerdp /sec:rdp`)
-  cannot connect once `--no-tls` is passed to drop TLS for that reason.
+  can connect **only** with `--no-tls`; TLS is on by default.

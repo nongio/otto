@@ -95,10 +95,11 @@ mode_at, hex_field_at}`, `text_input::offset_at`. Static components (`Label`)
 correctly have none.
 
 **2. Interaction state — partly done.** `Slider` and `Scroll` own their pointer
-state (`on_pointer_down` / `_drag` / `_up`). `Button` still has a
-`ButtonState` the *caller* sets, and `Toggle` has only a `draw` — neither can
-highlight on hover without the app writing pointer plumbing. Hover, press and
-disabled belong to the widget.
+state (`on_pointer_down` / `_drag` / `_up`). `Toggle` now carries
+`ToggleInteraction` (`Normal`/`Hovered`/`Pressed`/`Disabled`) with `hit_test`
+and an animated `Flip`, though the caller still sets the state from its own
+pointer tracking. `Button` is in the same position with a caller-set
+`ButtonState`. Hover, press and disabled ultimately belong to the widget.
 
 **3. A scroll view — done.** `components/scroll/` clips content, holds an
 offset, draws a scrollbar, and handles `on_wheel` alongside pointer drag. Axis
@@ -114,12 +115,13 @@ while `is_animating()` — see `on_update`/`idle_timeout` in `otto-settings`.
 Continuous sources go to `on_wheel`; a notched wheel (`discrete != 0`) goes to
 `on_wheel_discrete`, which steps without flinging.
 
-**4. Focus and keyboard navigation — open.** There is still no focus ring, no
-tab order, and no shared notion of which control has keyboard focus.
-Individual components track their own (`TextInput`, `SourceList`, `MenuBar`),
-but nothing coordinates them. The settings spec commits to the app being usable
-from the keyboard alone, so this is a requirement, not polish. **This is the
-main remaining infrastructure gap.**
+**4. Focus and keyboard navigation — done.** `components/otto-kit/src/focus.rs`
+is the shared layer: `FocusId` keys a control, `FocusRing` collects the
+focusable entries a frame registered and moves focus between them
+(`FocusMove`), and `draw_focus_ring` paints the indicator. It is re-exported
+from `lib.rs` and used by `otto-settings`, `otto-launcher`, `otto-bar`,
+`otto-islands` and the accessibility tree, which reads the same registration to
+report focus over AT-SPI.
 
 **5. Popup anchoring from inside a window — done.** `components/dropdown/`
 has the path: `dropdown::menu::DropdownMenu` builds an `XdgPositioner` from a
@@ -146,7 +148,7 @@ built from them:
 | Sidebar / source list | Done — `components/source_list/`, with `item_at` |
 | Grouped list / rows | Done — `components/list/`, with `row_at` |
 | Colour well and picker | Done — `components/color_picker/` |
-| Toggle switch | Draws; no interaction state yet |
+| Toggle switch | Done — `components/toggle/`, with `hit_test` and an animated flip |
 | Search field | Open — `TextInput` plus field chrome and a clear button |
 
 **Specialised**, each driven by one settings pane:
@@ -168,9 +170,8 @@ twice.
 ## Order of work
 
 1. ~~Draw/hit-test convention, scroll view~~ — done.
-2. **Focus and keyboard navigation** — the remaining blocker. Every further
-   widget's shape depends on the answer.
-3. Interaction state for `Button` and `Toggle`.
+2. ~~Focus and keyboard navigation~~ — done, `focus.rs`.
+3. Interaction state owned by `Button` rather than set by the caller.
 4. Remaining specialised widgets, pulled in by whichever pane needs them.
 
 The display arrangement canvas — outputs as draggable rectangles with edge
