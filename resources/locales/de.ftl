@@ -332,6 +332,7 @@ files-undo-rename = Umbenennen
 files-renamed-to = In „{ $name }“ umbenannt
 files-new-folder-created = Neuer Ordner „{ $name }“
 files-gone = „{ $name }“ ist nicht mehr vorhanden
+files-no-such-folder = „{ $path }“ gibt es nicht
 files-rename-failed = Umbenennen nicht möglich: { $error }
 files-new-folder-failed = Ordner konnte nicht erstellt werden: { $error }
 files-open-failed = Datei konnte nicht geöffnet werden: { $error }

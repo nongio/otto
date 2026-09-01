@@ -991,6 +991,7 @@ mod tests {
             quickview_close_hovered: false,
             drop_target: None,
             marquee: None,
+            path_entry: false,
             thumbs: Some(&store),
         };
 

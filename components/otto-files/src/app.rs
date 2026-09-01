@@ -351,6 +351,10 @@ struct Browser {
     /// column's snapshot yet when `new_folder` returns — the pane and the name
     /// are held here until the re-read lands.
     pending_rename: Option<(usize, String)>,
+    /// The path entry, open on Ctrl+L. While it is up the header's title is
+    /// replaced by the field, and every key belongs to it — it is where you
+    /// are, made editable, rather than a dialog asking where to go.
+    path_entry: Option<TextInput>,
     /// The type-ahead buffer and when it was last appended to: typing
     /// printable characters walks the cursor to the entry that starts with
     /// them, without filtering the view or showing anything. Distinct from
@@ -550,6 +554,7 @@ impl Browser {
             last_boundary_click: None,
             rename: None,
             pending_rename: None,
+            path_entry: None,
             typeahead: None,
             pending_restore: false,
             pending_pick: None,
@@ -2254,6 +2259,151 @@ impl Browser {
         self.dirty = true;
     }
 
+    /// Open the path entry on the directory being shown, with the whole path
+    /// selected — typing replaces it, End keeps it and appends. The trailing
+    /// separator is there so the first Tab completes a child rather than
+    /// re-completing the folder the user is already in.
+    fn open_path_entry(&mut self) {
+        let mut path = self.current_directory().to_string_lossy().into_owned();
+        if !path.ends_with('/') {
+            path.push('/');
+        }
+        self.path_entry = Some(TextInput::editing(
+            path,
+            view::path_field_style(AppContext::current_theme()),
+        ));
+        self.dirty = true;
+    }
+
+    /// Put the title back. The location is unchanged — an abandoned path is
+    /// not a navigation.
+    fn cancel_path_entry(&mut self) {
+        self.path_entry = None;
+        self.dirty = true;
+    }
+
+    /// The directory the path entry resolves against, and the one Ctrl+L
+    /// starts on: the active Miller pane in column view, the single listing
+    /// everywhere else.
+    fn current_directory(&self) -> PathBuf {
+        if self.mode == ViewMode::Columns {
+            self.columns[self.active].path.clone()
+        } else {
+            self.current_path()
+        }
+    }
+
+    /// Resolve what has been typed: `~` for home, a bare name against the
+    /// directory on screen, anything else as given.
+    fn resolve_typed_path(&self, typed: &str) -> Option<PathBuf> {
+        let typed = typed.trim();
+        if typed.is_empty() {
+            return None;
+        }
+        let expanded = if typed == "~" {
+            model::home_dir()?
+        } else if let Some(rest) = typed.strip_prefix("~/") {
+            model::home_dir()?.join(rest)
+        } else if typed.starts_with('/') {
+            PathBuf::from(typed)
+        } else {
+            self.current_directory().join(typed)
+        };
+        Some(expanded)
+    }
+
+    /// Go where the field says. A directory is opened; a file opens its
+    /// parent with the file selected, which is what a path pasted out of a
+    /// terminal usually means. A path that is not there leaves the field up
+    /// with the reason under it — retyping one character is cheaper than
+    /// typing the whole thing again.
+    fn commit_path_entry(&mut self) {
+        let typed = self
+            .path_entry
+            .as_ref()
+            .map(|input| input.value().to_string())
+            .unwrap_or_default();
+        let Some(path) = self.resolve_typed_path(&typed) else {
+            self.cancel_path_entry();
+            return;
+        };
+        if path.is_dir() {
+            self.path_entry = None;
+            self.navigate_to(&path);
+            return;
+        }
+        if path.is_file() {
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+            if let Some(parent) = path.parent() {
+                self.path_entry = None;
+                self.navigate_to(parent);
+                // The parent's listing is read off-thread, so the row to land
+                // on does not exist yet — see `pending_pick`.
+                self.pending_pick = Some((0, name));
+                return;
+            }
+        }
+        self.status = Some(otto_kit::t_owned!(
+            "files-no-such-folder",
+            path = typed.trim()
+        ));
+        self.dirty = true;
+    }
+
+    /// Tab: extend what has been typed as far as the directory allows —
+    /// to the one match, or to the longest prefix every match shares. A
+    /// completed directory gains its separator, so Tab walks down a tree
+    /// without the user reaching for `/` between levels.
+    ///
+    /// The read is synchronous, unlike a listing's: it is one directory, on
+    /// a keystroke the user is waiting on, and its result is thrown away.
+    fn complete_path_entry(&mut self) {
+        let Some(input) = self.path_entry.as_ref() else {
+            return;
+        };
+        let typed = input.value().to_string();
+        let (head, prefix) = match typed.rfind('/') {
+            Some(cut) => (&typed[..=cut], &typed[cut + 1..]),
+            None => ("", typed.as_str()),
+        };
+        let Some(dir) = self.resolve_typed_path(if head.is_empty() { "." } else { head }) else {
+            return;
+        };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return;
+        };
+        // A dotfile is only a candidate once the user has typed the dot, the
+        // way a shell does it — otherwise every completion in a home
+        // directory offers a hundred configuration folders first.
+        let mut names: Vec<String> = entries
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(prefix))
+            .filter(|name| prefix.starts_with('.') || !name.starts_with('.'))
+            .collect();
+        if names.is_empty() {
+            return;
+        }
+        names.sort();
+        let completed = common_prefix(&names);
+        if completed.len() < prefix.len() {
+            return;
+        }
+        let mut value = format!("{head}{completed}");
+        if names.len() == 1 && dir.join(&completed).is_dir() && !value.ends_with('/') {
+            value.push('/');
+        }
+        if value == typed {
+            return;
+        }
+        let caret = value.chars().count();
+        if let Some(input) = self.path_entry.as_mut() {
+            input.set_value(value);
+            input.state.set_caret(caret, false);
+        }
+        self.dirty = true;
+    }
+
     /// How far one Up/Down press moves. In the grid that is a whole row of
     /// cells — the arrows walk the grid in two dimensions, so vertical motion
     /// crosses a row and Left/Right steps one cell — and one entry everywhere
@@ -3728,6 +3878,7 @@ impl Browser {
             thumbs: Some(&self.thumbs),
             drop_target: self.drop_target.as_ref().map(DropTarget::highlight),
             marquee: self.marquee_band(),
+            path_entry: self.path_entry.is_some(),
         }
     }
 }
@@ -3746,6 +3897,25 @@ const PREVIEW_PANE: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_ra
 
 /// The preview panel's, when one is open.
 const QUICKVIEW: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xF11E_5002);
+
+/// The longest prefix `names` all share, in whole characters. Empty when
+/// they diverge at the first one — which the caller reads as "nothing more
+/// to add", not as an error.
+fn common_prefix(names: &[String]) -> String {
+    let Some((first, rest)) = names.split_first() else {
+        return String::new();
+    };
+    let mut prefix = String::new();
+    for (index, ch) in first.char_indices() {
+        let candidate = &first[..index + ch.len_utf8()];
+        if rest.iter().all(|name| name.starts_with(candidate)) {
+            prefix = candidate.to_string();
+        } else {
+            break;
+        }
+    }
+    prefix
+}
 
 /// One listing row's, by its position in the visible order.
 fn row_focus(index: usize) -> otto_kit::focus::FocusId {
@@ -3944,6 +4114,18 @@ impl App for FilesApp {
                 canvas.save();
                 canvas.translate((rect.left, rect.top));
                 session.input.render_at(canvas, rect.width(), rect.height());
+                canvas.restore();
+            }
+
+            // The path entry's value, over the box the header drew for it —
+            // the same two-step as the rename and save fields.
+            if browser.path_entry.is_some() {
+                let rect = view::path_field_rect(browser.size.0);
+                let input = browser.path_entry.as_mut().unwrap();
+                input.set_size(rect.width(), rect.height());
+                canvas.save();
+                canvas.translate((rect.left, rect.top));
+                input.render_at(canvas, rect.width(), rect.height());
                 canvas.restore();
             }
 
@@ -4486,6 +4668,73 @@ impl App for FilesApp {
                 return;
             }
 
+            // The path entry owns the keyboard the same way a rename does,
+            // with two keys of its own: Tab completes against the directory
+            // being typed, and Return goes there.
+            if browser.path_entry.is_some() {
+                let key = match event.keysym {
+                    Keysym::Return | Keysym::KP_Enter => {
+                        browser.commit_path_entry();
+                        drop(browser);
+                        self.render();
+                        return;
+                    }
+                    Keysym::Escape => {
+                        browser.cancel_path_entry();
+                        drop(browser);
+                        self.render();
+                        return;
+                    }
+                    Keysym::Tab | Keysym::ISO_Left_Tab => {
+                        browser.complete_path_entry();
+                        drop(browser);
+                        self.render();
+                        return;
+                    }
+                    // A second Ctrl+L closes it, the way the chord that opens
+                    // Get Info closes it again.
+                    Keysym::l if ctrl => {
+                        browser.cancel_path_entry();
+                        drop(browser);
+                        self.render();
+                        return;
+                    }
+                    Keysym::Left => Some(TextInputKey::Left),
+                    Keysym::Right => Some(TextInputKey::Right),
+                    Keysym::Home => Some(TextInputKey::Home),
+                    Keysym::End => Some(TextInputKey::End),
+                    Keysym::BackSpace => Some(TextInputKey::Backspace),
+                    Keysym::Delete => Some(TextInputKey::Delete),
+                    Keysym::a if ctrl => Some(TextInputKey::SelectAll),
+                    Keysym::c if ctrl => Some(TextInputKey::Copy),
+                    Keysym::x if ctrl => Some(TextInputKey::Cut),
+                    Keysym::v if ctrl => clipboard::text().map(TextInputKey::Paste),
+                    _ => event
+                        .utf8
+                        .as_ref()
+                        .and_then(|s| s.chars().next())
+                        .map(TextInputKey::Char),
+                };
+                if let Some(key) = key {
+                    let mods = KeyMods { shift, ctrl };
+                    let response = browser
+                        .path_entry
+                        .as_mut()
+                        .map(|input| input.on_key(key, mods));
+                    match response {
+                        Some(TextInputResponse::Clipboard(text)) => {
+                            clipboard::set_text(&text, serial);
+                            browser.dirty = true;
+                        }
+                        Some(_) => browser.dirty = true,
+                        None => {}
+                    }
+                }
+                drop(browser);
+                self.render();
+                return;
+            }
+
             // In Save mode the name field holds the keyboard focus: what the
             // user is doing is naming a file, so printable keys are the name
             // rather than type-ahead, and Backspace edits it rather than
@@ -4554,6 +4803,17 @@ impl App for FilesApp {
             let mut typing = false;
 
             match event.keysym {
+                // History and hierarchy, on the chords every file manager
+                // binds them to. These come first: unmodified, the same keys
+                // move the cursor.
+                Keysym::Left if mods.alt => browser.go_back(),
+                Keysym::Right if mods.alt => browser.go_forward(),
+                Keysym::Up if mods.alt => browser.go_up(),
+                Keysym::Home if mods.alt => {
+                    if let Some(home) = model::home_dir() {
+                        browser.navigate_to(&home);
+                    }
+                }
                 Keysym::Down => {
                     let step = browser.row_step();
                     browser.move_cursor(step, shift)
@@ -4672,6 +4932,9 @@ impl App for FilesApp {
                     browser.dirty = true;
                 }
                 Keysym::n if ctrl => browser.open_new_window(),
+                // The location, made editable — Ctrl+L everywhere but the
+                // picker, whose header is a toolbar with no title to replace.
+                Keysym::l if ctrl && browser.picker.is_none() => browser.open_path_entry(),
                 // What a double-click does, from the keyboard: descend into a
                 // directory, or activate a file. Return is not free for this —
                 // it renames, the way it does on the desktop this follows — so
@@ -5421,6 +5684,25 @@ impl FilesApp {
                     drop(browser);
                     window_for_events.request_frame();
                     continue;
+                }
+
+                // A click in the path entry places the caret; a click
+                // anywhere else puts the title back, the way clicking away
+                // from a location bar dismisses it.
+                if browser.path_entry.is_some()
+                    && matches!(event.kind, PointerEventKind::Press { button, .. } if button != BTN_RIGHT)
+                {
+                    let field = view::path_field_rect(width);
+                    if field.contains(skia_safe::Point::new(x, y)) {
+                        if let Some(input) = browser.path_entry.as_mut() {
+                            input.on_pointer_down(x - field.left, 1, shift);
+                        }
+                        browser.dirty = true;
+                        drop(browser);
+                        window_for_events.request_frame();
+                        continue;
+                    }
+                    browser.cancel_path_entry();
                 }
 
                 // A click in the name field places the caret in it. The field
@@ -7511,5 +7793,268 @@ mod delete_tests {
 
         assert_eq!(browser.active, 0, "the parent has the keyboard");
         assert_eq!(selected(&browser), vec!["sub".to_string()]);
+    }
+}
+
+/// The path entry: Ctrl+L, tab completion, and where Return lands.
+#[cfg(test)]
+mod path_entry_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// A real directory, swept up when the test ends. The listing is read off
+    /// a worker thread and completion reads the filesystem directly, so both
+    /// need something actually on disk.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn holding(files: &[&str], dirs: &[&str]) -> Self {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+            let path = std::env::temp_dir().join(format!(
+                "otto-files-path-entry-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).expect("temp dir");
+            for name in files {
+                std::fs::write(path.join(name), b"").expect("temp file");
+            }
+            for name in dirs {
+                std::fs::create_dir_all(path.join(name)).expect("temp subdir");
+            }
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A browser over the directory, with the first listing already in.
+    fn browser_over(files: &[&str], dirs: &[&str]) -> (Browser, TempDir) {
+        let dir = TempDir::holding(files, dirs);
+        let mut browser = Browser::new(dir.0.clone());
+        for _ in 0..500 {
+            if browser.columns[0].poll() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(!browser.columns[0].loading(), "listing never arrived");
+        (browser, dir)
+    }
+
+    /// What Ctrl+L does: the field opens on where you already are, whole
+    /// value selected so typing replaces it, and with the separator already
+    /// there so the first Tab completes a child.
+    #[test]
+    fn the_field_opens_on_the_current_directory() {
+        let (mut browser, dir) = browser_over(&["a.txt"], &[]);
+        browser.open_path_entry();
+
+        let input = browser.path_entry.as_ref().expect("field never opened");
+        assert_eq!(input.value(), format!("{}/", dir.0.display()));
+        assert_eq!(input.state.selection(), 0..input.value().chars().count());
+    }
+
+    /// Escape puts the title back and leaves the location alone — an
+    /// abandoned path is not a navigation.
+    #[test]
+    fn escape_leaves_the_location_alone() {
+        let (mut browser, dir) = browser_over(&["a.txt"], &["sub"]);
+        browser.open_path_entry();
+        browser
+            .path_entry
+            .as_mut()
+            .unwrap()
+            .set_value(dir.0.join("sub").to_string_lossy().into_owned());
+        browser.cancel_path_entry();
+
+        assert!(browser.path_entry.is_none());
+        assert_eq!(browser.current_path(), dir.0);
+    }
+
+    /// A directory is opened, and the field goes away with it.
+    #[test]
+    fn a_typed_directory_is_opened() {
+        let (mut browser, dir) = browser_over(&[], &["sub"]);
+        browser.open_path_entry();
+        browser
+            .path_entry
+            .as_mut()
+            .unwrap()
+            .set_value(dir.0.join("sub").to_string_lossy().into_owned());
+        browser.commit_path_entry();
+
+        assert!(browser.path_entry.is_none(), "the field stayed up");
+        assert_eq!(browser.columns[0].path, dir.0.join("sub"));
+    }
+
+    /// A path to a *file* — what pasting one out of a terminal usually gives
+    /// you — opens the folder holding it with the file selected. The listing
+    /// arrives later, so the row is handed to `pending_pick` rather than
+    /// looked up in a snapshot that does not exist yet.
+    #[test]
+    fn a_typed_file_opens_its_parent_with_the_file_selected() {
+        let (mut browser, dir) = browser_over(&["report.txt"], &["sub"]);
+        browser.navigate_to(&dir.0.join("sub"));
+        browser.open_path_entry();
+        browser
+            .path_entry
+            .as_mut()
+            .unwrap()
+            .set_value(dir.0.join("report.txt").to_string_lossy().into_owned());
+        browser.commit_path_entry();
+
+        assert_eq!(browser.columns[0].path, dir.0);
+        // The frame loop polls, then settles the pick — a test has to do
+        // both, in that order, or the listing arrives with nobody to place
+        // the selection in it.
+        for _ in 0..500 {
+            browser.poll();
+            browser.settle_pick();
+            if browser.pending_pick.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(
+            browser.columns[0].selection.contains("report.txt"),
+            "the file the path named was never selected"
+        );
+    }
+
+    /// A path that is not there keeps the field up: retyping one character is
+    /// cheaper than typing the whole path again.
+    #[test]
+    fn a_missing_path_keeps_the_field_open() {
+        let (mut browser, dir) = browser_over(&[], &[]);
+        browser.open_path_entry();
+        browser
+            .path_entry
+            .as_mut()
+            .unwrap()
+            .set_value(dir.0.join("nowhere").to_string_lossy().into_owned());
+        browser.commit_path_entry();
+
+        assert!(browser.path_entry.is_some(), "the field was dismissed");
+        assert!(browser.status.is_some(), "nothing said why");
+        assert_eq!(browser.current_path(), dir.0);
+    }
+
+    /// Tab against one match completes it whole.
+    #[test]
+    fn tab_completes_the_only_match() {
+        let (mut browser, dir) = browser_over(&["alpha.txt", "beta.txt"], &[]);
+        browser.open_path_entry();
+        browser
+            .path_entry
+            .as_mut()
+            .unwrap()
+            .set_value(format!("{}/al", dir.0.display()));
+        browser.complete_path_entry();
+
+        let input = browser.path_entry.as_ref().unwrap();
+        assert_eq!(input.value(), format!("{}/alpha.txt", dir.0.display()));
+        assert_eq!(input.state.caret(), input.value().chars().count());
+    }
+
+    /// Tab against several stops at the prefix they share — the shell's
+    /// behaviour, and the reason completion is worth having at all.
+    #[test]
+    fn tab_stops_at_the_prefix_the_matches_share() {
+        let (mut browser, dir) = browser_over(&["report-a.txt", "report-b.txt"], &[]);
+        browser.open_path_entry();
+        browser
+            .path_entry
+            .as_mut()
+            .unwrap()
+            .set_value(format!("{}/re", dir.0.display()));
+        browser.complete_path_entry();
+
+        assert_eq!(
+            browser.path_entry.as_ref().unwrap().value(),
+            format!("{}/report-", dir.0.display())
+        );
+    }
+
+    /// A completed directory gains its separator, so Tab walks down a tree
+    /// without the user reaching for `/` between levels.
+    #[test]
+    fn a_completed_directory_gains_its_separator() {
+        let (mut browser, dir) = browser_over(&[], &["projects"]);
+        browser.open_path_entry();
+        browser
+            .path_entry
+            .as_mut()
+            .unwrap()
+            .set_value(format!("{}/pro", dir.0.display()));
+        browser.complete_path_entry();
+
+        assert_eq!(
+            browser.path_entry.as_ref().unwrap().value(),
+            format!("{}/projects/", dir.0.display())
+        );
+    }
+
+    /// A dotfile is only a candidate once the dot has been typed. Otherwise
+    /// completion in a home directory offers configuration folders first.
+    #[test]
+    fn dotfiles_complete_only_once_the_dot_is_typed() {
+        let (mut browser, dir) = browser_over(&[".hidden", "visible"], &[]);
+        browser.open_path_entry();
+
+        browser
+            .path_entry
+            .as_mut()
+            .unwrap()
+            .set_value(format!("{}/", dir.0.display()));
+        browser.complete_path_entry();
+        assert_eq!(
+            browser.path_entry.as_ref().unwrap().value(),
+            format!("{}/visible", dir.0.display()),
+            "the dotfile was offered unasked"
+        );
+
+        browser
+            .path_entry
+            .as_mut()
+            .unwrap()
+            .set_value(format!("{}/.h", dir.0.display()));
+        browser.complete_path_entry();
+        assert_eq!(
+            browser.path_entry.as_ref().unwrap().value(),
+            format!("{}/.hidden", dir.0.display())
+        );
+    }
+
+    /// A bare name resolves against the directory on screen, and `~` against
+    /// home — the two shorthands anyone typing a path expects to work.
+    #[test]
+    fn a_bare_name_resolves_against_the_open_directory() {
+        let (browser, dir) = browser_over(&[], &["sub"]);
+        assert_eq!(browser.resolve_typed_path("sub"), Some(dir.0.join("sub")));
+        assert_eq!(browser.resolve_typed_path("  "), None);
+        if let Some(home) = model::home_dir() {
+            assert_eq!(browser.resolve_typed_path("~"), Some(home.clone()));
+            assert_eq!(
+                browser.resolve_typed_path("~/Music"),
+                Some(home.join("Music"))
+            );
+        }
+    }
+
+    #[test]
+    fn the_shared_prefix_of_nothing_is_nothing() {
+        assert_eq!(common_prefix(&[]), "");
+        assert_eq!(common_prefix(&["one".into()]), "one");
+        assert_eq!(common_prefix(&["ab".into(), "ac".into()]), "a");
+        assert_eq!(common_prefix(&["ab".into(), "zz".into()]), "");
+        // Whole characters, never half of one.
+        assert_eq!(common_prefix(&["éa".into(), "éb".into()]), "é");
     }
 }

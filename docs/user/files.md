@@ -35,8 +35,18 @@ itself are not reused elsewhere.
 
 - **Double-click** or `Ctrl+O` opens the entry at the cursor — descend into a
   folder, or open a file in its default application.
-- **Backspace** goes up a directory. The arrow keys move the cursor; `Right`
-  descends.
+- **Backspace** goes up a directory, as do `Alt+Up` and the back arrow's
+  neighbour in the header. The arrow keys move the cursor; `Right` descends.
+- **`Alt+Left` and `Alt+Right`** step back and forward through where you have
+  been, the same as the arrows in the header. `Alt+Home` goes home.
+- **`Ctrl+L` types a path.** The title turns into a field holding the folder
+  you are in; type or paste a path and press `Return` to go there. `Tab`
+  completes against the folder being typed — to the one match, or as far as
+  every match agrees — and adds the `/` for you, so you can walk down a tree
+  without reaching for it. `~` means your home directory, and a bare name is
+  taken relative to the folder on screen. A path to a *file* opens the folder
+  holding it with the file selected, which is what pasting one out of a
+  terminal usually means. `Escape` puts the title back.
 - **Type a few letters** to jump to the first entry whose name starts with
   them. This selects, it does not filter — the whole folder stays on screen.
   The typed text expires after about a second, and repeating one letter cycles

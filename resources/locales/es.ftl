@@ -335,6 +335,7 @@ files-undo-rename = Cambiar nombre
 files-renamed-to = Nombre cambiado a «{ $name }»
 files-new-folder-created = Nueva carpeta «{ $name }»
 files-gone = «{ $name }» ya no está ahí
+files-no-such-folder = «{ $path }» no existe
 files-rename-failed = No se pudo cambiar el nombre: { $error }
 files-new-folder-failed = No se pudo crear la carpeta: { $error }
 files-open-failed = No se pudo abrir ese archivo: { $error }
