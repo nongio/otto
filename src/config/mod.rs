@@ -143,7 +143,7 @@ impl Default for Config {
             gtk_theme: None,
             background_image: "".to_string(),
             background_color: "#1a1a2e".to_string(),
-            locales: vec!["en".to_string()],
+            locales: Vec::new(),
             use_10bit_color: false,
             accent_color: default_accent_color(),
             rounded_corners: default_rounded_corners(),

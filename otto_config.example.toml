@@ -1,6 +1,6 @@
 # Display
 screen_scale = 1.0
-locales = ["en_US", "en"]  # Language preferences for app names/desktop entries, most specific first. Use standard locale identifiers with region codes (e.g., ["fr_FR", "fr"], ["zh_CN", "zh"]); matching falls back from region to bare language.
+locales = []  # Language preferences, most specific first. Empty — the default — follows the environment, and is also what is exported to the applications Otto starts; naming a language here overrides both. Use standard locale identifiers with region codes (e.g., ["fr_FR", "fr"], ["zh_CN", "zh"]); matching falls back from region to bare language.
 
 # Occlusion culling: skip rendering of layers fully hidden behind opaque layers.
 # Improves GPU/CPU throughput when windows overlap. On by default; disable if you see missing content.

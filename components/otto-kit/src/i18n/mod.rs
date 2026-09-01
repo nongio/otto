@@ -107,8 +107,19 @@ static INTERNED: OnceLock<RwLock<HashSet<&'static str>>> = OnceLock::new();
 /// come from `config.locales` or the `LC_*`/`LANG` environment. Unknown tags
 /// are skipped. Calling this more than once is a no-op — the first call wins,
 /// so the compositor sets the locale before any component reads a string.
+///
+/// An empty list means the user has expressed no preference, which is not the
+/// same as asking for English: the environment answers instead, so a session
+/// started under `LANG=de_DE.UTF-8` draws German chrome without anyone having
+/// had to say so twice.
 pub fn init(requested: &[String]) {
-    CHAIN.get_or_init(|| build_chain(requested));
+    CHAIN.get_or_init(|| {
+        if requested.is_empty() {
+            build_chain(&env_locales())
+        } else {
+            build_chain(requested)
+        }
+    });
 }
 
 /// Initialise from the environment, for components started outside the

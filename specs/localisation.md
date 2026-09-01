@@ -109,9 +109,13 @@ session was started with `LANG=en_GB` must get an Italian desktop — not an
 Italian compositor bolted to English components, which is what deferring to the
 environment per-process would produce.
 
-The setting's shipped default is `en`. A user on an Italian system therefore
-gets an English desktop until they change the setting; leaving the list empty
-is what asks Otto to take the language from the environment instead.
+The setting ships empty, which is not a preference for English but the absence
+of a preference: the environment answers instead, for Otto's own chrome and for
+the applications it starts alike, so a user on an Italian system gets an
+Italian desktop without having said so twice. Naming a language in the setting
+is what overrides the environment, in both directions at once. Defaulting to a
+concrete `en` would make the shipped configuration an instruction, silently
+overruling the `LANG` of every user who never opened the language row.
 
 Language is resolved once, before the first string is looked up and before
 anything is drawn. The first resolution wins for the life of the process.
