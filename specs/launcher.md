@@ -82,8 +82,15 @@ and paste against the system clipboard; a paste keeps only what fits on one
 line, and refilters as typing does.
 
 **Pointer.** Moving the pointer over a row selects it. Releasing over a row acts
-on it. Pressing anywhere outside the card closes the launcher, as Escape does.
-The row under the pointer must be the row that highlights.
+on it. The row under the pointer must be the row that highlights.
+
+The launcher takes pointer input over the card that is drawn — the query field,
+plus however many result rows are showing — and nowhere else. Its shadow is not
+part of it, and neither is the rest of the output: the pointer over the dock, a
+window, or the desktop is the pointer over those, and they hover and click as
+they would with no launcher up. A press outside the card therefore goes to what
+is under it rather than to the launcher, and the launcher closes because the
+keyboard moves on with the press. Escape closes it wherever the pointer is.
 
 **Acting.** Choosing an application starts it detached, in its own process
 group, with desktop-entry field codes stripped and `Terminal=true` entries
@@ -118,6 +125,14 @@ the list, keeping the selection on the same item where that item still exists.
   divider and highlight, and the card's frost colour — must be rebuilt when the
   answer lands, or the launcher shows dark-theme text on a dark card. Rebuilding
   the frost must not also rewind the card's entrance state.
+- **What is drawn and what takes input must be stated separately.** Neither
+  surface's geometry describes the card: the card's buffer is allocated at its
+  tallest whatever is on it, and the parent surface is anchored to all four
+  edges of the output. Both must therefore carry an input region of the card as
+  drawn, updated as the list grows and shrinks and again when it empties back
+  to the field alone. Otto treats a layer surface's own input region as the
+  clickable area of everything beneath it, so a parent that sets none makes the
+  whole output the launcher's: the dock under it stops answering the pointer.
 - **The query field must be laid out before it is drawn.** A field with no width
   scrolls its own text out of its clip, and the launcher then looks like it is
   ignoring the keyboard while the list filters correctly.
@@ -150,7 +165,9 @@ the list, keeping the selection on the same item where that item still exists.
   the rest of the desktop for free.
 - **Buffer allocated at full height, clipped shorter.** A shorter list is the
   same buffer with the compositor showing less of it, so the card can change
-  height without reallocating or re-laying-out anything.
+  height without reallocating or re-laying-out anything. Nothing about that
+  buffer says how tall the card is, though, which is why the shape is stated
+  separately as an input region — see the constraint below.
 - **No frecency, but a resting list.** Ranking that changes with history makes
   the same query mean different things on different days, and the muscle memory
   of "type three letters, press Enter" is worth more than a better first guess.
