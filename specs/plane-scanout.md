@@ -143,6 +143,14 @@ vibrancy even though the content behind it lives on other planes.
   band for `dock.position = "bottom"`, a left or right column otherwise. The
   strip is allocated against that edge, so moving the dock at runtime drops
   and re-allocates the plane.
+- The strip's thickness is at least a fixed fraction of the output (a quarter
+  of its height for a bottom dock, half its width for a side dock, each
+  capped), and grows to the dock's own reach: the configured icon size fully
+  magnified, lifted by a launch bounce, with its label balloon open past it,
+  plus bar padding. A big dock's bouncing icon must never leave the strip and
+  be cropped mid-air. The reach follows the dock configuration (size,
+  magnification) live: the plane is re-allocated in place, before the frame
+  renders, when it changes.
 - The dock and app-switcher strip planes themselves are pushed only to the
   CRTC of the output that actually hosts that chrome — always the primary
   for the dock, the switcher's current host output for the switcher; every

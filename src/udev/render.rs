@@ -821,6 +821,7 @@ impl Otto<UdevData> {
                 crtc,
                 (mode.size.w, mode.size.h),
                 self.workspaces.dock.position(),
+                self.workspaces.dock.plane_strip_thickness_px(),
             );
         }
 

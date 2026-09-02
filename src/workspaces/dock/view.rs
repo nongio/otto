@@ -32,10 +32,14 @@ use crate::{
 
 use super::{
     model::DockModel,
-    render::{icon_color_filter, setup_app_icon, setup_label, setup_miniwindow_icon},
+    render::{icon_color_filter, label_reach, setup_app_icon, setup_label, setup_miniwindow_icon},
 };
 
 pub const BASE_ICON_SIZE: f32 = 300.0;
+/// How far a launch bounce lifts an icon out of the dock, as a fraction of the icon.
+const BOUNCE_HOP: f32 = 0.7;
+/// As far as the bounce grows on a magnified icon, however large it gets.
+const BOUNCE_HOP_CEILING: f32 = 1.3;
 const ICON_SCALER_FILL: f32 = 0.9; // The percentage of the icon_scaler that the icon should fill at scale=1.0. Leaves some padding for magnification.
 
 #[derive(Debug, Clone)]
@@ -1244,6 +1248,38 @@ impl DockView {
         (icon_size.min(available_icon_size), icon_size)
     }
 
+    /// How far from its screen edge the dock can ever reach, in physical
+    /// pixels. The KMS strip that carries the dock plane is sized from this:
+    /// anything past the strip is cropped, so the envelope covers the largest
+    /// icon the dock can show, fully magnified, at the top of a launch bounce,
+    /// with its label balloon open above it.
+    pub fn plane_strip_thickness_px(&self) -> i32 {
+        let scale = Config::with(|c| c.screen_scale) as f32;
+        let position = self.position();
+        // The icon size the dock is configured for — icons only shrink from
+        // there when the dock runs out of room.
+        let (_, icon_size) = self.available_icon_size();
+        let genie_scale = if self
+            .magnification_enabled
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            Config::with(|c| c.dock.genie_scale) as f32
+        } else {
+            0.0
+        };
+        // A slot under the pointer grows to `1 + genie_scale` of its size.
+        let magnified = icon_size * (1.0 + genie_scale);
+        // A launch bounce lifts the slot by `BOUNCE_HOP` of an icon, and a
+        // magnified slot's hop grows up to `BOUNCE_HOP_CEILING` times that.
+        let bounce = icon_size * BOUNCE_HOP * BOUNCE_HOP_CEILING;
+        let label = label_reach(position, scale);
+        // Bar padding around the icons, the strip's own margin from the edge,
+        // and shadow bleed: generous, since a cropped icon costs more than a
+        // few rows of plane.
+        let chrome = Self::calculate_bar_height(0.0, scale) + 24.0 * scale;
+        (magnified + bounce + label + chrome).ceil() as i32
+    }
+
     /// How long an icon slot is along the dock when nothing is magnified — the
     /// size every magnified slot is a multiple of.
     fn base_slot_length(&self) -> f32 {
@@ -1920,7 +1956,7 @@ impl DockView {
 
         // Bounce roughly two-thirds of an icon out of the dock, away from the
         // screen edge it is docked to.
-        let distance = self.available_icon_size().0 * 0.7;
+        let distance = self.available_icon_size().0 * BOUNCE_HOP;
         let hop = match self.position() {
             DockPosition::Bottom => Point::new(0.0, -distance),
             DockPosition::Left => Point::new(distance, 0.0),
@@ -2012,8 +2048,7 @@ impl DockView {
     fn magnified_hop(layer: &Layer, hop: Point, resting_length: f32) -> Point {
         /// How much of the magnification the jump takes on.
         const DAMPING: f32 = 0.4;
-        /// As far as the jump grows, however large the icon gets.
-        const CEILING: f32 = 1.3;
+        const CEILING: f32 = BOUNCE_HOP_CEILING;
 
         if resting_length <= 0.0 {
             return hop;
@@ -4065,6 +4100,37 @@ mod tests {
         assert!(
             (jumped - expected).abs() < expected * 0.02,
             "an unmagnified icon jumped {jumped}, not the {expected} the dock asked for"
+        );
+    }
+
+    /// The plane strip the dock renders into is sized from the dock's reach,
+    /// so a big dock's launch bounce — a magnified icon, lifted, with its
+    /// label open — stays inside the strip instead of being cropped mid-air.
+    #[test]
+    #[serial]
+    fn plane_strip_covers_a_magnified_bouncing_icon() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        let (_engine, dock) = dock_at(DockPosition::Bottom);
+
+        let small = {
+            Config::update(|c| c.dock.size = 1.0);
+            dock.plane_strip_thickness_px()
+        };
+        Config::update(|c| c.dock.size = 2.0);
+        let big = dock.plane_strip_thickness_px();
+        let (_, icon) = dock.available_icon_size();
+        let genie = Config::with(|c| c.dock.genie_scale) as f32;
+
+        // Fully magnified icon at the top of its hop, plus the label above it.
+        let least = icon * (1.0 + genie) + icon * BOUNCE_HOP * BOUNCE_HOP_CEILING;
+        assert!(
+            big as f32 > least,
+            "strip of {big}px cannot hold a {least}px magnified, bouncing icon"
+        );
+        assert!(
+            big > small,
+            "the strip must grow with the dock ({small} -> {big})"
         );
     }
 
