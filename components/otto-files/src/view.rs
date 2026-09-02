@@ -1313,6 +1313,28 @@ pub const FOOTER_NAME_H: f32 = 58.0;
 const FOOTER_NAME_LABEL_W: f32 = 76.0;
 const FOOTER_NAME_FIELD_H: f32 = 30.0;
 
+/// What the name row's label keeps between itself and the field, once it is
+/// wide enough to push it.
+const FOOTER_NAME_LABEL_GAP: f32 = 10.0;
+
+/// How far the field starts from the label's own left edge.
+///
+/// `FOOTER_NAME_LABEL_W` was measured off "Save As:" and left at that, so
+/// every longer translation ran under the field — "Salva con nome:" is half as
+/// wide again. The label now buys its own room, and the constant stays as a
+/// floor: a locale short enough to fit lands the field exactly where it always
+/// did, and only a long one moves it.
+fn footer_name_label_w() -> f32 {
+    let label = otto_kit::t!("files-picker-save-as-field");
+    label_gutter(styles::BODY.font().measure_str(label, None).0)
+}
+
+/// The width [`footer_name_label_w`] settles on for a label of this width.
+/// Split out from the measuring so the rule can be tested without a font.
+fn label_gutter(label_width: f32) -> f32 {
+    (label_width + FOOTER_NAME_LABEL_GAP).max(FOOTER_NAME_LABEL_W)
+}
+
 /// The whole name band. Only ever asked for in `Save` mode; in every other
 /// mode the window has no such band and the caller does not draw one.
 pub fn footer_name_band(width: f32, window_height: f32) -> Rect {
@@ -1325,7 +1347,7 @@ pub fn footer_name_band(width: f32, window_height: f32) -> Rect {
 /// [`TextInput`]: otto_kit::components::text_input::TextInput
 pub fn footer_name_rect(width: f32, window_height: f32) -> Rect {
     let band = footer_name_band(width, window_height);
-    let left = SIDEBAR_W + FOOTER_PAD + FOOTER_NAME_LABEL_W;
+    let left = SIDEBAR_W + FOOTER_PAD + footer_name_label_w();
     Rect::from_ltrb(
         left,
         band.top + 8.0,
@@ -5018,5 +5040,20 @@ mod geometry_tests {
             MILLER_W,
         );
         assert!(anchor.is_empty(), "expected an empty rect, got {anchor:?}");
+    }
+
+    /// The English label fits the room the row was built around, so its field
+    /// must not move; a translation that does not fit takes the room it needs.
+    #[test]
+    fn the_name_field_only_moves_for_a_label_that_does_not_fit() {
+        assert_eq!(label_gutter(0.0), FOOTER_NAME_LABEL_W);
+        assert_eq!(
+            label_gutter(FOOTER_NAME_LABEL_W - 20.0),
+            FOOTER_NAME_LABEL_W
+        );
+        assert_eq!(
+            label_gutter(FOOTER_NAME_LABEL_W + 30.0),
+            FOOTER_NAME_LABEL_W + 30.0 + FOOTER_NAME_LABEL_GAP
+        );
     }
 }
