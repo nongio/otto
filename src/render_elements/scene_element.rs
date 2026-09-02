@@ -26,6 +26,10 @@ pub struct SceneElement {
     commit_counter: CommitCounter,
     engine: Arc<Engine>,
     last_update: Instant,
+    /// Whether the engine had transactions in flight when the last tick
+    /// ended. Decides whether the time since then was an animation running
+    /// slowly (count it all) or the loop sitting idle (count a frame of it).
+    animating_after_last_tick: bool,
     pub size: (f32, f32),
     damage: Rc<RefCell<DamageBag<i32, Physical>>>,
     /// When set, render from this node instead of the global scene root.
@@ -41,8 +45,8 @@ pub struct SceneElement {
     perf_stats: Rc<RefCell<ScenePerfStats>>,
 }
 
-/// Longest step the engine clock advances per tick — two frames at 60 Hz.
-/// See `SceneElement::update`.
+/// Longest step the engine clock advances on the first tick after an idle
+/// stretch — two frames at 60 Hz. See `SceneElement::update`.
 const MAX_ENGINE_STEP_SECS: f32 = 1.0 / 30.0;
 
 impl SceneElement {
@@ -52,6 +56,7 @@ impl SceneElement {
             commit_counter: CommitCounter::default(),
             engine,
             last_update: Instant::now(),
+            animating_after_last_tick: false,
             size: (0.0, 0.0),
             damage: Rc::new(RefCell::new(DamageBag::new(5))),
             output_root: None,
@@ -92,14 +97,20 @@ impl SceneElement {
         // started from idle (a key press after a quiet hold, a background
         // task) would be timestamped hundreds of milliseconds in the past and
         // the next tick would carry it straight past its end — the switcher
-        // snapped instead of fading. Idle time is not animation time: cap the
-        // step at a couple of frame periods so the first tick after a gap
-        // advances the clock like any other frame.
-        let dt = self
-            .last_update
-            .elapsed()
-            .as_secs_f32()
-            .min(MAX_ENGINE_STEP_SECS);
+        // snapped instead of fading. Idle time is not animation time: when
+        // nothing was in flight at the end of the last tick, the gap since
+        // then is idle and only a frame of it is credited to the clock.
+        //
+        // While something *is* in flight the gap is real animation time and
+        // has to be credited in full, however long the frame took — capping
+        // it there put a maximize or tile into slow motion whenever the
+        // client's repaints held the loop under 30 Hz.
+        let elapsed = self.last_update.elapsed().as_secs_f32();
+        let dt = if self.animating_after_last_tick {
+            elapsed
+        } else {
+            elapsed.min(MAX_ENGINE_STEP_SECS)
+        };
         self.last_update = Instant::now();
 
         #[cfg(feature = "perf-counters")]
@@ -110,6 +121,7 @@ impl SceneElement {
         }
 
         let updated = self.engine.update(dt);
+        self.animating_after_last_tick = self.engine.pending_transactions_count() > 0;
         if !updated {
             #[cfg(feature = "perf-counters")]
             stats.log_if_due();
