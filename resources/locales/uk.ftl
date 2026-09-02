@@ -28,6 +28,7 @@ common-copy = Копіювати
 common-paste = Вставити
 common-rename = Перейменувати
 common-delete = Видалити
+common-replace = Замінити
 common-move = Перемістити
 
 
@@ -273,6 +274,17 @@ files-move-count-to-trash =
         [many] Перемістити { $count } елементів до кошика
        *[other] Перемістити { $count } елемента до кошика
     }
+files-put-back = Повернути на місце
+files-empty-trash = Очистити кошик
+files-delete-immediately = Видалити негайно
+# $count завжди два або більше; для одного елемента використовується files-delete-immediately.
+files-delete-count-immediately =
+    { $count ->
+        [one] Видалити { $count } елемент негайно
+        [few] Видалити { $count } елементи негайно
+        [many] Видалити { $count } елементів негайно
+       *[other] Видалити { $count } елемента негайно
+    }
 
 
 ## Files — sidebar and columns
@@ -291,6 +303,9 @@ files-column-name = Назва
 files-column-size = Розмір
 files-column-kind = Тип
 files-column-date-modified = Дата зміни
+# Заголовок стовпця «Тип» у вікні кошика, де важливіше, звідки файл потрапив
+# сюди, ніж якого він типу.
+files-column-original-location = Початкове розташування
 
 
 ## Files — kinds
@@ -348,6 +363,11 @@ files-new-window-failed = Не вдалося відкрити нове вікн
 ## Files — the listing
 
 files-folder-empty = Ця папка порожня.
+files-trash-empty = Кошик порожній.
+# Відкрити файл із кошика означає запустити програму над тим, що вже викинуто;
+# натомість пропонуємо спершу повернути його на місце.
+files-trash-cant-open = Елементи в кошику не можна відкривати. Спершу поверніть їх на місце.
+files-trash-cant-rename = Елементи в кошику не можна перейменовувати.
 files-folder-denied = Немає прав на перегляд вмісту цієї папки.
 files-folder-gone = Цієї папки більше не існує.
 files-folder-open-failed = Не вдалося відкрити цю папку: { $error }
@@ -400,6 +420,17 @@ files-replace-one = «{ $name }» вже існує. Замінити?
 files-replace-one-detail = Заміна перезапише поточний вміст файла.
 files-replace-many = { $count } з цих файлів уже існують. Замінити?
 files-replace-many-detail = Заміна перезапише поточний вміст файлів.
+files-delete-forever-one = Видалити «{ $name }» назавжди?
+files-delete-forever-many = Видалити { $count } елементів назавжди?
+files-delete-forever-detail = Цю дію неможливо скасувати.
+files-empty-trash-confirm = Очистити кошик?
+files-empty-trash-detail =
+    { $count ->
+        [one] { $count } елемент буде видалено назавжди. Цю дію неможливо скасувати.
+        [few] { $count } елементи буде видалено назавжди. Цю дію неможливо скасувати.
+        [many] { $count } елементів буде видалено назавжди. Цю дію неможливо скасувати.
+       *[other] { $count } елемента буде видалено назавжди. Цю дію неможливо скасувати.
+    }
 
 
 ## Files — sizes

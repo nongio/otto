@@ -1181,6 +1181,23 @@ impl ContextMenu {
         state_mut.set_scroll(target, overflow);
     }
 
+    /// Put the highlight on one item of the root list, scroll it into view
+    /// and repaint — what the arrows do, without walking there.
+    ///
+    /// For a host that picks the row itself rather than by direction: a
+    /// pop-up button's type-ahead searches the values it was opened with,
+    /// which the rows no longer carry once they have been elided to fit the
+    /// button's column, so it has to say which row it landed on.
+    pub fn select_and_reveal(&self, index: usize) {
+        let style = self.style.borrow();
+        self.state.borrow_mut().select_at_depth(0, Some(index));
+        Self::reveal_selection(&self.state, &style, 0);
+        let popup = self.popups.borrow().first().cloned();
+        if let Some(popup) = popup {
+            Self::render_menu_at_depth(&self.state, &style, &popup, 0);
+        }
+    }
+
     /// Handle keyboard input
     /// Bring the menu back in step with a highlight that has just moved:
     /// scroll it into view, and repaint the depth it is on along with any

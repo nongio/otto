@@ -2037,14 +2037,16 @@ impl App for SettingsApp {
         if let Some(id) = open {
             let closed = match self.dropdowns.get(id) {
                 Some(menu) => {
-                    // The raw keycode, which is what the menu's own key table
-                    // is written against. The text goes over separately: a
-                    // menu long enough to need typing through — every font on
-                    // the machine — cannot work out what a keycode means
-                    // under this layout, and the keyboard already has.
-                    menu.handle_key(event.raw_code, state);
-                    if let Some(text) = event.utf8.as_deref() {
-                        menu.handle_text(text);
+                    // Navigation comes off the raw keycode, which is what the
+                    // menu's own key table is written against; the text the
+                    // key carries is type-ahead, jumping the highlight to the
+                    // value being spelled. A chord is nobody's letter, so it
+                    // never reaches the buffer.
+                    let ctrl = self.modifiers.lock().unwrap().ctrl;
+                    if ctrl {
+                        menu.handle_key(event.raw_code, state);
+                    } else {
+                        menu.handle_key_event(event, state);
                     }
                     !menu.is_open()
                 }

@@ -412,6 +412,18 @@ impl DockView {
         state: &mut crate::Otto<Backend>,
     ) {
         tracing::info!("Context menu action '{}' for app '{}'", action_id, app_id);
+        // An entry the app's own desktop file contributed: run its command.
+        if let Some(action) = action_id.strip_prefix("action:") {
+            if let Some(match_id) = self.match_id_for(app_id) {
+                if let Some(app) = self.bookmark_application(&match_id) {
+                    match app.action_command(action) {
+                        Some((cmd, args)) => state.launch_program(cmd, args),
+                        None => warn!("desktop action {action} of {app_id} has no command"),
+                    }
+                }
+            }
+            return;
+        }
         match action_id {
             "open" | "new_window" => {
                 // Focus if running, otherwise launch

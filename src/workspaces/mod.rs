@@ -37,6 +37,7 @@ mod dock;
 mod osd;
 mod popup_overlay;
 mod tiling_overlay;
+pub mod trash;
 pub mod workspace;
 
 pub mod utils;
@@ -69,6 +70,17 @@ use crate::{
     shell::WindowElement,
     utils::{natural_layout::LayoutRect, Observable, Observer},
 };
+
+/// The transition a workspace scroll animates with when the caller has no
+/// opinion of its own: a spring the user sizes through `[workspaces]` in the
+/// config (`switch_duration`, `switch_bounce`).
+fn workspace_switch_transition() -> Transition {
+    let spring = Config::with(|c| c.workspaces.switch_spring());
+    Transition {
+        delay: 0.0,
+        timing: TimingFunction::Spring(spring),
+    }
+}
 
 /// Per-output workspace set: each output has its own independent workspaces.
 pub struct OutputWorkspaces {
@@ -5786,10 +5798,9 @@ impl Workspaces {
             .output_workspaces
             .get(&name)
             .and_then(|ows| ows.workspace_views.get(i).cloned());
-        let resolved_transition = transition.clone().unwrap_or(Transition {
-            delay: 0.0,
-            timing: TimingFunction::Spring(Spring::with_duration_and_bounce(1.0, 0.1)),
-        });
+        let resolved_transition = transition
+            .clone()
+            .unwrap_or_else(workspace_switch_transition);
         // Expose hides the dock and the layer-shell chrome itself, and restores
         // them when it closes. Switching workspace underneath an open (or
         // animating) expose must not fade them back in.
@@ -5829,10 +5840,7 @@ impl Workspaces {
         // Scroll only this output's layer
         let workspace_gap_px = WORKSPACE_SPACING * scale;
         let offset = i as f32 * (workspace_width + workspace_gap_px);
-        let transition = transition.unwrap_or(Transition {
-            delay: 0.0,
-            timing: TimingFunction::Spring(Spring::with_duration_and_bounce(1.0, 0.1)),
-        });
+        let transition = transition.unwrap_or_else(workspace_switch_transition);
         self.apply_scroll_offset_filtered(offset, Some(transition), Some(&name.clone()))
     }
 
@@ -5864,10 +5872,7 @@ impl Workspaces {
         i: usize,
         transition: Option<Transition>,
     ) -> Option<TransactionRef> {
-        let transition = transition.unwrap_or(Transition {
-            delay: 0.0,
-            timing: TimingFunction::Spring(Spring::with_duration_and_bounce(1.0, 0.1)),
-        });
+        let transition = transition.unwrap_or_else(workspace_switch_transition);
         let x = 0.0_f32;
         if let Some(workspace) = self.get_workspace_at(i) {
             // Control dock visibility based on workspace fullscreen state

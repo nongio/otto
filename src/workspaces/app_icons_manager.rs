@@ -13,7 +13,7 @@ use layers::{
 
 use crate::workspaces::{
     dock::{
-        badge_size, draw_app_icon, draw_badge, draw_progress, setup_badge_layer,
+        badge_size, draw_app_icon, draw_badge, draw_icon_image, draw_progress, setup_badge_layer,
         setup_progress_layer, BASE_ICON_SIZE,
     },
     Application,
@@ -45,6 +45,11 @@ pub struct AppIconsManager {
     badges: RwLock<HashMap<String, String>>,
     /// Memoized `app_id` → canonical key resolution (see `canonical_key`).
     key_cache: RwLock<HashMap<String, String>>,
+    /// Icons that do not come from the desktop entry, per canonical key: the
+    /// Trash's full wastebasket, and whatever follows it. Kept even when no
+    /// stack exists yet — the dock can learn the trash is full before it has
+    /// drawn the icon — and re-applied when the stack appears.
+    icon_overrides: RwLock<HashMap<String, layers::skia::Image>>,
 }
 
 impl std::fmt::Debug for AppIconsManager {
@@ -70,6 +75,7 @@ impl AppIconsManager {
             entries: RwLock::new(HashMap::new()),
             badges: RwLock::new(HashMap::new()),
             key_cache: RwLock::new(HashMap::new()),
+            icon_overrides: RwLock::new(HashMap::new()),
         }
     }
 
@@ -119,7 +125,12 @@ impl AppIconsManager {
             .pointer_events(false)
             .picture_cached(false)
             .image_cache(false)
-            .content(Some(draw_app_icon(app)))
+            .content(Some(
+                match self.icon_overrides.read().unwrap().get(app_id).cloned() {
+                    Some(image) => draw_icon_image(Some(image), None),
+                    None => draw_app_icon(app),
+                },
+            ))
             .build()
             .unwrap();
         icon_layer.build_layer_tree(&icon_tree);
@@ -187,6 +198,11 @@ impl AppIconsManager {
 
     /// Redraw the icon if `app`'s icon has changed since the last call.
     pub fn update_app(&self, app_id: &str, app: &Application) {
+        // An overridden icon is not the desktop entry's, and a reload of the
+        // entry must not put the entry's icon back.
+        if self.icon_overrides.read().unwrap().contains_key(app_id) {
+            return;
+        }
         let current_icon_id = app.icon.as_ref().map(|i| i.unique_id());
         let mut entries = self.entries.write().unwrap();
         if let Some(entry) = entries.get_mut(app_id) {
@@ -283,6 +299,62 @@ impl AppIconsManager {
                         .set_opacity(0.0_f32, Some(Transition::ease_in_quad(0.15)));
                 }
             }
+        }
+    }
+
+    /// Draw `image` in place of `app_id`'s own icon, or `None` to put the
+    /// desktop entry's icon back.
+    ///
+    /// The dock and the app switcher mirror the same stack, so both follow.
+    pub fn set_icon_override(
+        &self,
+        app_id: &str,
+        image: Option<layers::skia::Image>,
+        app: Option<&Application>,
+    ) {
+        let app_id = self.canonical_key(app_id);
+        let unchanged = {
+            let overrides = self.icon_overrides.read().unwrap();
+            match (&image, overrides.get(&app_id)) {
+                (Some(new), Some(current)) => new.unique_id() == current.unique_id(),
+                (None, None) => true,
+                _ => false,
+            }
+        };
+        if unchanged {
+            return;
+        }
+
+        match image.clone() {
+            Some(image) => {
+                self.icon_overrides
+                    .write()
+                    .unwrap()
+                    .insert(app_id.clone(), image);
+            }
+            None => {
+                self.icon_overrides.write().unwrap().remove(&app_id);
+            }
+        }
+
+        let mut entries = self.entries.write().unwrap();
+        let Some(entry) = entries.get_mut(&app_id) else {
+            return;
+        };
+        match (image, app) {
+            (Some(image), _) => {
+                entry
+                    .icon_layer
+                    .set_draw_content(draw_icon_image(Some(image), None));
+                // The entry's icon is no longer the one `icon_id` names, so
+                // forget it: the next `update_app` has to redraw.
+                entry.icon_id = None;
+            }
+            (None, Some(app)) => {
+                entry.icon_layer.set_draw_content(draw_app_icon(app));
+                entry.icon_id = app.icon.as_ref().map(|i| i.unique_id());
+            }
+            (None, None) => {}
         }
     }
 

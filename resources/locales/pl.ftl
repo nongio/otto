@@ -27,6 +27,7 @@ common-copy = Kopiuj
 common-paste = Wklej
 common-rename = Zmień nazwę
 common-delete = Usuń
+common-replace = Zastąp
 common-move = Przenieś
 
 
@@ -272,6 +273,17 @@ files-move-count-to-trash =
         [many] Przenieś { $count } elementów do kosza
        *[other] Przenieś { $count } elementu do kosza
     }
+files-put-back = Przywróć
+files-empty-trash = Opróżnij kosz
+files-delete-immediately = Usuń natychmiast
+# $count to zawsze dwa lub więcej; pojedynczy element używa files-delete-immediately.
+files-delete-count-immediately =
+    { $count ->
+        [one] Usuń natychmiast { $count } element
+        [few] Usuń natychmiast { $count } elementy
+        [many] Usuń natychmiast { $count } elementów
+       *[other] Usuń natychmiast { $count } elementu
+    }
 
 
 ## Files — sidebar and columns
@@ -290,6 +302,9 @@ files-column-name = Nazwa
 files-column-size = Rozmiar
 files-column-kind = Rodzaj
 files-column-date-modified = Data modyfikacji
+# Nagłówek kolumny „Rodzaj” w oknie kosza, gdzie ważniejsze jest, skąd plik
+# pochodzi, niż jakiego jest rodzaju.
+files-column-original-location = Pierwotne położenie
 
 
 ## Files — kinds
@@ -347,6 +362,11 @@ files-new-window-failed = Nie można otworzyć nowego okna: { $error }
 ## Files — the listing
 
 files-folder-empty = Ten folder jest pusty.
+files-trash-empty = Kosz jest pusty.
+# Otwarcie pliku z kosza uruchomiłoby program na czymś, co zostało wyrzucone;
+# zamiast tego proponujemy najpierw to przywrócić.
+files-trash-cant-open = Elementów w koszu nie można otwierać. Najpierw je przywróć.
+files-trash-cant-rename = Elementów w koszu nie można zmieniać nazw.
 files-folder-denied = Brak uprawnień do wyświetlenia zawartości tego folderu.
 files-folder-gone = Ten folder już nie istnieje.
 files-folder-open-failed = Nie można otworzyć tego folderu: { $error }
@@ -405,6 +425,17 @@ files-replace-many =
        *[other] { $count } z tych plików już istnieje. Zastąpić?
     }
 files-replace-many-detail = Zastąpienie nadpisuje ich obecną zawartość.
+files-delete-forever-one = Trwale usunąć „{ $name }”?
+files-delete-forever-many = Trwale usunąć { $count } elementów?
+files-delete-forever-detail = Tego nie można cofnąć.
+files-empty-trash-confirm = Opróżnić kosz?
+files-empty-trash-detail =
+    { $count ->
+        [one] { $count } element zostanie trwale usunięty. Tego nie można cofnąć.
+        [few] { $count } elementy zostaną trwale usunięte. Tego nie można cofnąć.
+        [many] { $count } elementów zostanie trwale usuniętych. Tego nie można cofnąć.
+       *[other] { $count } elementu zostanie trwale usuniętych. Tego nie można cofnąć.
+    }
 
 
 ## Files — sizes

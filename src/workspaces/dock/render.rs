@@ -508,9 +508,29 @@ pub fn setup_label(new_layer: &Layer, label_text: String, position: DockPosition
     new_layer.build_layer_tree(&label_tree);
 }
 
+/// What an icon draw needs: the image, and the placeholder picture used when
+/// there is none.
+struct IconContent {
+    icon: Option<layers::skia::Image>,
+    picture: Option<layers::skia::Picture>,
+}
+
 /// Draw the app icon image only (no running indicator — that is a separate layer).
 pub fn draw_app_icon(application: &Application) -> ContentDrawFunction {
-    let application = application.clone();
+    draw_icon_image(application.icon.clone(), application.picture.clone())
+}
+
+/// The icon draw itself, over a bare image rather than an [`Application`].
+///
+/// Split out because an icon does not always come from the desktop entry: the
+/// Trash's swaps between an empty and a full wastebasket as its directory
+/// changes, and it is drawn — shadow, resampling and all — exactly like every
+/// other icon in the strip.
+pub fn draw_icon_image(
+    icon: Option<layers::skia::Image>,
+    picture: Option<layers::skia::Picture>,
+) -> ContentDrawFunction {
+    let application = IconContent { icon, picture };
     let draw_picture = move |canvas: &layers::skia::Canvas, w: f32, h: f32| -> layers::skia::Rect {
         // Fill the entire layer with the icon.
         let icon_size = w;

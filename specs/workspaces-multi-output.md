@@ -73,6 +73,7 @@ Otto supports multiple workspaces across multiple outputs (physical monitors and
 - When the user selects a workspace preview in the selector, only that output navigates to the selected workspace.
 - The output's workspace layer scrolls to the target workspace using the output's own physical width and scale for offset calculation.
 - Other outputs remain on their current workspace.
+- Every switch that is not a swipe (selector click, keyboard shortcut, an app switcher commit whose window lives on another workspace) animates with one spring, sized by `[workspaces] switch_duration` and `switch_bounce` in the config and defaulting to 0.6s / 0.1 bounce. A caller that passes its own transition keeps it; a swipe end has its own shorter spring, since it continues a motion already in progress.
 
 **Keyboard workspace switching:**
 

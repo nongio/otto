@@ -99,6 +99,42 @@ const MAX_GROWTH: f32 = 1.6;
 /// column, so the text it is elided to actually fits the row.
 const TEXT_INSET: f32 = 26.0;
 
+/// How long a type-ahead buffer survives without another key.
+///
+/// Long enough to spell a word at a normal pace, short enough that coming
+/// back to the menu later starts a fresh name rather than extending a stale
+/// one. Matches otto-files, so the gesture feels the same in both.
+const TYPEAHEAD_EXPIRY: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The buffer to search with after `ch` is typed, and whether this is the
+/// same single character again — which cycles through the values beginning
+/// with it rather than looking for a doubled letter almost no value has.
+///
+/// `live` is the previous buffer if it has not expired. Split out from
+/// [`DropdownMenu::handle_text`] so the rule is testable without a surface.
+fn advance(live: Option<String>, ch: char) -> (String, bool) {
+    let typed = ch.to_lowercase().to_string();
+    match live {
+        Some(buffer) if buffer == typed => (buffer, true),
+        Some(mut buffer) => {
+            buffer.push_str(&typed);
+            (buffer, false)
+        }
+        None => (typed, false),
+    }
+}
+
+/// The first of `names` at or after `from`, wrapping, that starts with
+/// `buffer`. `names` are already lowercased, as `buffer` is.
+fn search(names: &[String], buffer: &str, from: usize) -> Option<usize> {
+    if names.is_empty() {
+        return None;
+    }
+    (0..names.len())
+        .map(|step| (from + step) % names.len())
+        .find(|&index| names[index].starts_with(buffer))
+}
+
 /// The font the menu sets its rows in, for measuring.
 fn item_font() -> skia_safe::Font {
     crate::typography::TextStyle {
@@ -149,6 +185,9 @@ pub struct DropdownMenu {
     /// must be told the whole value: "Adwaita-dark" and "Adwai…" are not the
     /// same answer.
     options: std::cell::RefCell<Vec<String>>,
+    /// The type-ahead buffer and when it was last appended to. Typing keeps
+    /// extending one word; a pause of [`TYPEAHEAD_EXPIRY`] starts a new one.
+    typeahead: std::cell::RefCell<Option<(String, std::time::Instant)>>,
 }
 
 impl Default for DropdownMenu {
@@ -158,6 +197,7 @@ impl Default for DropdownMenu {
                 ContextMenuStyle::default().with_item_metrics(ITEM_FONT_SIZE, ITEM_HEIGHT),
             ),
             options: std::cell::RefCell::new(Vec::new()),
+            typeahead: std::cell::RefCell::new(None),
         }
     }
 }
@@ -177,6 +217,7 @@ impl DropdownMenu {
     /// Dismiss the menu if it is open. Safe to call unconditionally (e.g.
     /// before opening a sibling dropdown, or on window close).
     pub fn close(&self) {
+        *self.typeahead.borrow_mut() = None;
         self.menu.hide_animated();
     }
 
@@ -204,22 +245,89 @@ impl DropdownMenu {
         self.menu.clone().handle_key(key, state);
     }
 
-    /// Feed the text a key produced to the open menu, so it can be walked by
-    /// typing the start of a value's name.
+    /// Feed a whole key event to the open menu: [`handle_key`](Self::handle_key)
+    /// for the navigation keys, then type-ahead for anything printable.
     ///
-    /// The companion to [`handle_key`](Self::handle_key), which sees the
-    /// keycode and so cannot know what the key means under the user's layout.
-    /// Call it alongside, with the key event's own text, for keys that have
-    /// one; it does nothing when the menu is closed, or for a key that
-    /// produced no printable text.
-    ///
-    /// A pop-up button listing a few positions does not need this. One
-    /// listing every font on the machine is unusable without it.
-    pub fn handle_text(&self, text: &str) {
-        if !self.is_open() {
-            return;
+    /// This is the call to make from `on_key_event` — the two halves want the
+    /// same event, one for its keycode and one for its text, and no caller
+    /// needs both apart. A chord belongs to whoever binds it, so skip this
+    /// (or use `handle_key` alone) when Ctrl, Alt or Super is down.
+    pub fn handle_key_event(
+        &self,
+        event: &smithay_client_toolkit::seat::keyboard::KeyEvent,
+        state: wl_keyboard::KeyState,
+    ) {
+        self.handle_key(event.raw_code, state);
+        if state == wl_keyboard::KeyState::Pressed {
+            if let Some(text) = event.utf8.as_deref() {
+                self.handle_text(text);
+            }
         }
-        self.menu.clone().handle_text(text);
+    }
+
+    /// Move the highlight to the first value starting with what has been
+    /// typed, case-insensitively — reaching an entry in a long list of fonts
+    /// or themes without arrowing down to it.
+    ///
+    /// Nothing is filtered and nothing is drawn but the highlight moving,
+    /// which is the whole point of the gesture. Keys typed in quick
+    /// succession compose one word; the buffer expires after a second of
+    /// silence. Repeating a single character cycles through the values
+    /// beginning with it.
+    ///
+    /// `text` is a key event's `utf8`; the keys that mean something else to
+    /// the menu carry either nothing (the arrows) or a control character
+    /// (Enter, Escape) and are ignored here, so a caller may pass every key
+    /// through. Returns whether the highlight moved. Does nothing when the
+    /// menu is closed.
+    pub fn handle_text(&self, text: &str) -> bool {
+        if !self.is_open() {
+            return false;
+        }
+        let Some(ch) = text
+            .chars()
+            .next()
+            .filter(|ch| !ch.is_control() && *ch != ' ')
+        else {
+            return false;
+        };
+
+        let names: Vec<String> = self
+            .options
+            .borrow()
+            .iter()
+            .map(|option| option.to_lowercase())
+            .collect();
+        if names.is_empty() {
+            return false;
+        }
+
+        let now = std::time::Instant::now();
+        let live = self
+            .typeahead
+            .borrow_mut()
+            .take()
+            .filter(|(_, last)| now.duration_since(*last) < TYPEAHEAD_EXPIRY)
+            .map(|(buffer, _)| buffer);
+        let (buffer, cycling) = advance(live, ch);
+
+        // Cycling resumes just past the highlight and wraps; a buffer that
+        // grew answers from the top, so the same keys always land on the same
+        // value.
+        let from = match (cycling, self.highlighted()) {
+            (true, Some(index)) => index + 1,
+            _ => 0,
+        };
+        let hit = search(&names, &buffer, from);
+
+        // Kept even when nothing matched: the miss is part of the word being
+        // typed, and dropping it would make the next character search for a
+        // prefix the user never asked for.
+        *self.typeahead.borrow_mut() = Some((buffer, now));
+        if let Some(index) = hit {
+            self.menu.select_and_reveal(index);
+        }
+        hit.is_some()
     }
 
     /// The values the open menu is listing, in order, as they were given —
@@ -284,6 +392,7 @@ impl DropdownMenu {
         }
 
         *self.options.borrow_mut() = options.to_vec();
+        *self.typeahead.borrow_mut() = None;
 
         let menu = &self.menu;
 
@@ -389,10 +498,69 @@ impl DropdownMenu {
 mod tests {
     use super::*;
 
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|name| name.to_lowercase()).collect()
+    }
+
+    #[test]
+    fn a_letter_jumps_to_the_first_value_starting_with_it() {
+        let options = names(&["Adwaita", "Breeze", "Bibata", "Capitaine"]);
+        let (buffer, cycling) = advance(None, 'b');
+        assert_eq!(buffer, "b");
+        assert!(!cycling);
+        assert_eq!(search(&options, &buffer, 0), Some(1));
+    }
+
+    #[test]
+    fn more_letters_compose_one_word() {
+        let options = names(&["Adwaita", "Breeze", "Bibata", "Capitaine"]);
+        let (buffer, _) = advance(None, 'b');
+        let (buffer, cycling) = advance(Some(buffer), 'i');
+        assert_eq!(buffer, "bi");
+        assert!(!cycling);
+        // The composed word answers from the top, so the same keys always
+        // land on the same value.
+        assert_eq!(search(&options, &buffer, 0), Some(2));
+    }
+
+    #[test]
+    fn the_same_letter_again_cycles_rather_than_seeking_a_doubled_one() {
+        let options = names(&["Adwaita", "Breeze", "Bibata", "Capitaine"]);
+        let (buffer, cycling) = advance(Some("b".to_string()), 'b');
+        assert_eq!(buffer, "b");
+        assert!(cycling);
+        // Resumes past the highlight and wraps back round.
+        assert_eq!(search(&options, &buffer, 2), Some(2));
+        assert_eq!(search(&options, &buffer, 3), Some(1));
+    }
+
+    #[test]
+    fn matching_ignores_case() {
+        let options = names(&["Adwaita", "Breeze"]);
+        let (buffer, _) = advance(None, 'A');
+        assert_eq!(buffer, "a");
+        assert_eq!(search(&options, &buffer, 0), Some(0));
+    }
+
+    #[test]
+    fn a_word_no_value_starts_with_moves_nothing() {
+        let options = names(&["Adwaita", "Breeze"]);
+        assert_eq!(search(&options, "bz", 0), None);
+        assert_eq!(search(&[], "b", 0), None);
+    }
+
     #[test]
     fn a_fresh_dropdown_menu_is_closed() {
         let menu = DropdownMenu::new();
         assert!(!menu.is_open());
+    }
+
+    #[test]
+    fn a_closed_menu_swallows_typing() {
+        // No surface, so nothing to move a highlight on — and no panic from
+        // a caller that passes every key through without checking first.
+        let menu = DropdownMenu::new();
+        assert!(!menu.handle_text("b"));
     }
 
     // `close()`/`open()` beyond this aren't unit-testable in isolation: both

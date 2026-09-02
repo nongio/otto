@@ -27,8 +27,69 @@ pub fn corner() -> f32 {
     otto_kit::corners::radius(CORNER)
 }
 
-/// Full-height sidebar, like Finder's — the header sits beside it, not above.
+/// Full-height sidebar — the header sits beside it, not above.
+///
+/// Read through [`sidebar_w`] rather than directly: the Trash window has no
+/// sidebar, and every piece of geometry in this file starts from where the
+/// file area does.
 pub const SIDEBAR_W: f32 = 232.0;
+
+/// Which of the shells over this view layer the window is.
+///
+/// The browser and the picker are both [`Shell::Browser`] as far as the
+/// chrome goes — a sidebar, a nav pair and a view switcher, with the picker
+/// adding its action row underneath. The Trash window drops all three: it
+/// shows one flat listing that cannot be navigated, so arrows pointing at
+/// nowhere and a switcher between three views of one directory would be
+/// controls that do nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shell {
+    Browser,
+    Trash,
+}
+
+/// Fixed at startup — a window does not change shell — which is why it is a
+/// process-wide value rather than a parameter on all forty geometry
+/// functions below, each of which starts from where the file area does.
+static TRASH_SHELL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Choose the shell, once, before the first frame.
+pub fn set_shell(shell: Shell) {
+    TRASH_SHELL.store(shell == Shell::Trash, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn shell() -> Shell {
+    if TRASH_SHELL.load(std::sync::atomic::Ordering::Relaxed) {
+        Shell::Trash
+    } else {
+        Shell::Browser
+    }
+}
+
+/// Where the file area begins.
+pub fn sidebar_w() -> f32 {
+    match shell() {
+        Shell::Browser => SIDEBAR_W,
+        Shell::Trash => 0.0,
+    }
+}
+
+/// The Trash window has nowhere to go back to, and one view of one
+/// directory, so it carries neither the nav pair nor the switcher — the
+/// header's trailing corner holds its two actions instead.
+fn nav_hidden() -> bool {
+    shell() == Shell::Trash
+}
+
+/// What a listing with nothing in it says. An empty Trash is a state worth
+/// naming — it is the one every user wants to reach — where an empty folder
+/// is just a folder.
+fn empty_message() -> &'static str {
+    match shell() {
+        Shell::Browser => otto_kit::t!("files-folder-empty"),
+        Shell::Trash => otto_kit::t!("files-trash-empty"),
+    }
+}
 /// The preview pane's width — a Miller column of its own, sitting right
 /// after the last real one and panned into view exactly the way a freshly
 /// opened directory column is, rather than docked outside the stack.
@@ -54,6 +115,26 @@ const CONTROLS_INSET: f32 = 18.0;
 /// Optical centres of the header's two text lines, within `HEADER_H`.
 const TITLE_CY: f32 = 40.0;
 const SUBTITLE_CY: f32 = 66.0;
+
+/// Where the title line actually sits. The browser keeps it on [`TITLE_CY`],
+/// under the window controls and beside the nav pair. The Trash window has
+/// neither sidebar nor nav pair, so when the controls are at the leading edge
+/// they sit right next to the title with nothing between them — and two
+/// things side by side that don't share a centre line read as a mistake — so
+/// there the title rides the controls' row instead. With the controls over at
+/// the trailing edge nothing is beside the title, and it stays put.
+fn title_cy() -> f32 {
+    if shell() == Shell::Trash && otto_kit::controls_side::side() == ControlsSide::Left {
+        CONTROLS_INSET + WindowControls::new().size / 2.0
+    } else {
+        TITLE_CY
+    }
+}
+
+/// The subtitle keeps its distance below whatever line the title landed on.
+fn subtitle_cy() -> f32 {
+    title_cy() + (SUBTITLE_CY - TITLE_CY)
+}
 /// The back/forward pair sits to the left of the title as one split button:
 /// a single rounded capsule the width of both halves, divided by a hairline.
 const NAV_BTN_W: f32 = 30.0;
@@ -62,8 +143,39 @@ const NAV_GROUP_W: f32 = NAV_BTN_W * 2.0;
 const NAV_RADIUS: f32 = 7.0;
 const NAV_ICON_SIZE: f32 = 13.0;
 /// How far the title's own text starts right of the sidebar, once the nav
-/// pair and its trailing gap are accounted for.
-const TITLE_X: f32 = SIDEBAR_W + CONTENT_PAD + NAV_GROUP_W + 10.0;
+/// pair and its trailing gap are accounted for. The Trash window has no nav
+/// pair, so its title starts hard against the content padding instead.
+fn title_x() -> f32 {
+    if nav_hidden() {
+        // Without a sidebar there is nothing between the title and the
+        // window's own edge, so on a desktop that puts its controls there the
+        // title has to clear them itself — in the browser the sidebar does it.
+        leading_clearance().max(sidebar_w() + CONTENT_PAD)
+    } else {
+        sidebar_w() + CONTENT_PAD + NAV_GROUP_W + 10.0
+    }
+}
+
+/// The subtitle's leading edge. In the browser it sits under the nav pair
+/// rather than under the title's text, which is what makes the two lines read
+/// as one block against the sidebar; with no nav pair there is nothing to sit
+/// under, so it lines up with the title.
+fn subtitle_x() -> f32 {
+    if nav_hidden() {
+        title_x()
+    } else {
+        sidebar_w() + CONTENT_PAD
+    }
+}
+
+/// How much of the header's leading edge the traffic lights claim — nothing
+/// when the desktop puts them at the trailing edge.
+fn leading_clearance() -> f32 {
+    match otto_kit::controls_side::side() {
+        ControlsSide::Left => CONTROLS_INSET + WindowControls::new().width() + 14.0,
+        ControlsSide::Right => 0.0,
+    }
+}
 
 /// The picker toolbar's single row, optically centred in the header the way
 /// the browser's two text lines are.
@@ -74,8 +186,8 @@ const LOCATION_W: f32 = 260.0;
 
 /// The picker's location control, centred on the toolbar row.
 pub fn location_rect(width: f32) -> Rect {
-    let left = ((width - SIDEBAR_W - LOCATION_W) / 2.0 + SIDEBAR_W)
-        .max(SIDEBAR_W + CONTENT_PAD + NAV_GROUP_W + 16.0);
+    let left = ((width - sidebar_w() - LOCATION_W) / 2.0 + sidebar_w())
+        .max(sidebar_w() + CONTENT_PAD + NAV_GROUP_W + 16.0);
     Rect::from_ltrb(
         left,
         TOOLBAR_CY - 15.0,
@@ -90,12 +202,12 @@ pub fn location_rect(width: f32) -> Rect {
 /// dropped on top of it — which is the whole point of Ctrl+L: you are
 /// editing where you are, not answering a question about it.
 pub fn path_field_rect(width: f32) -> Rect {
-    let left = TITLE_X - 8.0;
+    let left = title_x() - 8.0;
     Rect::from_ltrb(
         left,
-        TITLE_CY - PATH_FIELD_H / 2.0,
+        title_cy() - PATH_FIELD_H / 2.0,
         (switcher_rect(width).left - 16.0).max(left + 80.0),
-        TITLE_CY + PATH_FIELD_H / 2.0,
+        title_cy() + PATH_FIELD_H / 2.0,
     )
 }
 
@@ -130,7 +242,12 @@ impl Default for ListColumnWidths {
     fn default() -> Self {
         Self {
             size: 90.0,
-            kind: 110.0,
+            // The Trash's third column holds a path, not a one-word kind, so
+            // it starts twice as wide. It is still draggable from there.
+            kind: match shell() {
+                Shell::Browser => 110.0,
+                Shell::Trash => 230.0,
+            },
             modified: 150.0,
         }
     }
@@ -208,7 +325,7 @@ pub fn content_viewport(width: f32, height: f32, mode: ViewMode) -> Rect {
         ViewMode::List => HEADER_H + COLUMNS_H,
         ViewMode::Columns | ViewMode::Grid => HEADER_H,
     };
-    Rect::from_ltrb(SIDEBAR_W, top, width, height)
+    Rect::from_ltrb(sidebar_w(), top, width, height)
 }
 
 // --- Icon grid geometry -----------------------------------------------------
@@ -338,7 +455,12 @@ pub fn grid_content_height(area: Rect, count: usize) -> f32 {
 pub fn place_rect(index: usize) -> Rect {
     const FIRST_Y: f32 = 78.0;
     const STEP: f32 = 30.0;
-    Rect::from_xywh(10.0, FIRST_Y + index as f32 * STEP, SIDEBAR_W - 20.0, 26.0)
+    Rect::from_xywh(
+        10.0,
+        FIRST_Y + index as f32 * STEP,
+        sidebar_w() - 20.0,
+        26.0,
+    )
 }
 
 pub fn place_at(x: f32, y: f32, count: usize) -> Option<usize> {
@@ -348,7 +470,7 @@ pub fn place_at(x: f32, y: f32, count: usize) -> Option<usize> {
 /// The split button holding both arrows, before the title.
 pub fn nav_group_rect() -> Rect {
     Rect::from_xywh(
-        SIDEBAR_W + CONTENT_PAD,
+        sidebar_w() + CONTENT_PAD,
         TITLE_CY - NAV_BTN_H / 2.0,
         NAV_GROUP_W,
         NAV_BTN_H,
@@ -432,6 +554,102 @@ pub fn window_controls(width: f32) -> WindowControls {
     }
 }
 
+/// The Trash window's two actions, in the header corner the browser gives to
+/// its view switcher.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrashAction {
+    /// Put the selection back where it came from.
+    PutBack,
+    /// Destroy everything in the trash, after asking.
+    Empty,
+}
+
+/// How the Trash header's actions are lit: each is dead when there is
+/// nothing for it to act on, which is what an empty trash looks like.
+pub struct TrashChrome {
+    pub can_put_back: bool,
+    pub can_empty: bool,
+    pub pressed: Option<TrashAction>,
+}
+
+const TRASH_BTN_W: [f32; 2] = [96.0, 112.0];
+const TRASH_BTN_GAP: f32 = 8.0;
+/// The pair sits a little further in from the window's trailing edge than the
+/// content does: a filled button reads as wider than its box, and hard against
+/// the corner it crowds the window's own rounding.
+const TRASH_BTN_INSET: f32 = 12.0;
+
+/// The row the Trash's actions sit on: the title's, so the header reads as
+/// one line of chrome — except when the controls are at the trailing edge,
+/// where the buttons share the corner with them and line up on the switcher's
+/// centre the way the switcher itself does.
+fn trash_actions_cy() -> f32 {
+    match otto_kit::controls_side::side() {
+        ControlsSide::Left => title_cy(),
+        ControlsSide::Right => SWITCHER_CY,
+    }
+}
+
+/// Both buttons, right-aligned into the header's trailing edge and clearing
+/// the traffic lights the same way the switcher does.
+pub fn trash_action_rect(width: f32, action: TrashAction) -> Rect {
+    let right = width - CONTENT_PAD - TRASH_BTN_INSET - controls_clearance();
+    let empty = Rect::from_xywh(
+        right - TRASH_BTN_W[1],
+        trash_actions_cy() - SWITCHER_H / 2.0,
+        TRASH_BTN_W[1],
+        SWITCHER_H,
+    );
+    match action {
+        TrashAction::Empty => empty,
+        TrashAction::PutBack => Rect::from_xywh(
+            empty.left - TRASH_BTN_GAP - TRASH_BTN_W[0],
+            empty.top,
+            TRASH_BTN_W[0],
+            empty.height(),
+        ),
+    }
+}
+
+/// Which action, if either, is under `(x, y)`. A disabled button is not hit:
+/// it is not something to press, and reporting it would put a pressed state
+/// on a control that cannot act.
+pub fn trash_action_at(x: f32, y: f32, width: f32, chrome: &TrashChrome) -> Option<TrashAction> {
+    let point = Point::new(x, y);
+    if chrome.can_put_back && trash_action_rect(width, TrashAction::PutBack).contains(point) {
+        return Some(TrashAction::PutBack);
+    }
+    if chrome.can_empty && trash_action_rect(width, TrashAction::Empty).contains(point) {
+        return Some(TrashAction::Empty);
+    }
+    None
+}
+
+fn draw_trash_actions(canvas: &Canvas, f: &Frame, chrome: &TrashChrome) {
+    let theme = f.theme;
+    draw_footer_button(
+        canvas,
+        trash_action_rect(f.width, TrashAction::PutBack),
+        &otto_kit::t_owned!("files-put-back"),
+        theme.fill_secondary,
+        theme.text_primary,
+        chrome.pressed == Some(TrashAction::PutBack),
+        chrome.can_put_back,
+    );
+    // Emptying is what the window is for, so it is the accent — the warning
+    // belongs on the confirmation that follows, not on a button sitting in
+    // the header of every Trash window.
+    draw_footer_button(
+        canvas,
+        trash_action_rect(f.width, TrashAction::Empty),
+        &otto_kit::t_owned!("files-empty-trash"),
+        accent(f.theme),
+        Color::WHITE,
+        chrome.pressed == Some(TrashAction::Empty),
+        chrome.can_empty,
+    );
+}
+
 pub const SWITCHER_MODES: [ViewMode; 3] = [ViewMode::List, ViewMode::Grid, ViewMode::Columns];
 
 /// Which view the switcher segment at `(x, y)` selects, if any.
@@ -445,14 +663,14 @@ pub fn switcher_at(x: f32, y: f32, width: f32) -> Option<ViewMode> {
 }
 
 pub(crate) fn column_edges(width: f32, widths: ListColumnWidths) -> (f32, f32, f32) {
-    let content_w = width - SIDEBAR_W;
+    let content_w = width - sidebar_w();
     let modified_x = width - CONTENT_PAD - widths.modified;
     let kind_x = modified_x - widths.kind;
     let size_x = kind_x - widths.size;
-    let min_name = SIDEBAR_W + CONTENT_PAD + 120.0;
+    let min_name = sidebar_w() + CONTENT_PAD + 120.0;
     if size_x < min_name {
         let spread = (content_w - 140.0).max(90.0) / 3.0;
-        let base = SIDEBAR_W + CONTENT_PAD + 120.0;
+        let base = sidebar_w() + CONTENT_PAD + 120.0;
         (base, base + spread, base + spread * 2.0)
     } else {
         (size_x, kind_x, modified_x)
@@ -468,7 +686,7 @@ pub fn column_boundary_at(
     width: f32,
     widths: ListColumnWidths,
 ) -> Option<ColumnBoundary> {
-    if !(HEADER_H..=HEADER_H + COLUMNS_H).contains(&y) || x < SIDEBAR_W {
+    if !(HEADER_H..=HEADER_H + COLUMNS_H).contains(&y) || x < sidebar_w() {
         return None;
     }
     let (size_x, kind_x, modified_x) = column_edges(width, widths);
@@ -493,7 +711,7 @@ pub fn column_boundary_at(
 /// The Name column's left edge, in list-view row coordinates — where the
 /// text starts, past the icon.
 pub(crate) fn name_text_x() -> f32 {
-    SIDEBAR_W + CONTENT_PAD + ICON_SIZE + 10.0
+    sidebar_w() + CONTENT_PAD + ICON_SIZE + 10.0
 }
 
 /// The `size` width that makes the Name column exactly wide enough for
@@ -502,7 +720,7 @@ pub(crate) fn name_text_x() -> f32 {
 pub fn fit_size_column(width: f32, widths: ListColumnWidths, longest_name: f32) -> f32 {
     let kind_x = width - CONTENT_PAD - widths.modified - widths.kind;
     let desired_size_x = name_text_x() + longest_name + 12.0;
-    let max_w = (kind_x - SIDEBAR_W - CONTENT_PAD).max(COLUMN_MIN_W);
+    let max_w = (kind_x - sidebar_w() - CONTENT_PAD).max(COLUMN_MIN_W);
     (kind_x - desired_size_x).clamp(COLUMN_MIN_W, max_w)
 }
 
@@ -584,8 +802,8 @@ impl RowStrip {
     pub fn list(width: f32, count: usize, scroll: f32) -> Self {
         Self {
             top: HEADER_H + COLUMNS_H - scroll,
-            left: SIDEBAR_W,
-            width: width - SIDEBAR_W,
+            left: sidebar_w(),
+            width: width - sidebar_w(),
             count,
         }
     }
@@ -662,7 +880,7 @@ pub fn row_at(x: f32, y: f32, width: f32, height: f32, count: usize, scroll: f32
 /// The untruncated pane rect, for laying rows out — drawing clips it, but a row
 /// must not shift because its pane is half off-screen.
 pub fn miller_pane_rect(depth: usize, height: f32, pan: f32, miller_w: f32) -> Rect {
-    let left = SIDEBAR_W + depth as f32 * miller_w - pan;
+    let left = sidebar_w() + depth as f32 * miller_w - pan;
     Rect::from_ltrb(left, HEADER_H, left + miller_w, height)
 }
 
@@ -670,7 +888,7 @@ pub fn miller_pane_rect(depth: usize, height: f32, pan: f32, miller_w: f32) -> R
 /// `miller_w`-wide slot past the last real column, but its own [`PREVIEW_W`]
 /// wide rather than sharing the columns' width.
 pub fn preview_pane_rect(columns_len: usize, height: f32, pan: f32, miller_w: f32) -> Rect {
-    let left = SIDEBAR_W + columns_len as f32 * miller_w - pan;
+    let left = sidebar_w() + columns_len as f32 * miller_w - pan;
     Rect::from_ltrb(left, HEADER_H, left + PREVIEW_W, height)
 }
 
@@ -1082,7 +1300,7 @@ pub fn miller_at(
 /// How far the stack must be panned to bring the pane spanning
 /// `[left, left + pane_w)` fully into a `width`-wide viewport.
 fn pan_for(left: f32, pane_w: f32, width: f32, current: f32) -> f32 {
-    let visible = width - SIDEBAR_W;
+    let visible = width - sidebar_w();
     let right = left + pane_w;
     if right - current > visible {
         (right - visible).max(0.0)
@@ -1126,20 +1344,20 @@ pub fn miller_boundary_at(
     pane_count: usize,
     miller_w: f32,
 ) -> Option<usize> {
-    if !(HEADER_H..=height).contains(&y) || x < SIDEBAR_W {
+    if !(HEADER_H..=height).contains(&y) || x < sidebar_w() {
         return None;
     }
     let viewport_right = width;
     (0..pane_count).find(|&depth| {
         let pane = miller_pane_rect(depth, height, pan, miller_w);
-        pane.right >= SIDEBAR_W
+        pane.right >= sidebar_w()
             && pane.right <= viewport_right
             && (x - pane.right).abs() <= COLUMN_GRAB
     })
 }
 
 pub fn column_at(x: f32, y: f32, width: f32, widths: ListColumnWidths) -> Option<SortKey> {
-    if !(HEADER_H..=HEADER_H + COLUMNS_H).contains(&y) || x < SIDEBAR_W {
+    if !(HEADER_H..=HEADER_H + COLUMNS_H).contains(&y) || x < sidebar_w() {
         return None;
     }
     let (size_x, kind_x, modified_x) = column_edges(width, widths);
@@ -1255,9 +1473,9 @@ pub fn footer_cancel_rect(width: f32, window_height: f32) -> Rect {
 pub fn footer_filter_rect(window_height: f32) -> Rect {
     let cy = window_height - FOOTER_H / 2.0;
     Rect::from_ltrb(
-        SIDEBAR_W + FOOTER_PAD,
+        sidebar_w() + FOOTER_PAD,
         cy - FOOTER_BTN_H / 2.0,
-        SIDEBAR_W + FOOTER_PAD + FOOTER_FILTER_W,
+        sidebar_w() + FOOTER_PAD + FOOTER_FILTER_W,
         cy + FOOTER_BTN_H / 2.0,
     )
 }
@@ -1347,7 +1565,7 @@ pub fn footer_name_band(width: f32, window_height: f32) -> Rect {
 /// [`TextInput`]: otto_kit::components::text_input::TextInput
 pub fn footer_name_rect(width: f32, window_height: f32) -> Rect {
     let band = footer_name_band(width, window_height);
-    let left = SIDEBAR_W + FOOTER_PAD + footer_name_label_w();
+    let left = sidebar_w() + FOOTER_PAD + footer_name_label_w();
     Rect::from_ltrb(
         left,
         band.top + 8.0,
@@ -1374,7 +1592,7 @@ fn draw_name_row(canvas: &Canvas, f: &Frame, footer: &FooterData<'_>, window_h: 
     Label::new(otto_kit::t!("files-picker-save-as-field"))
         .with_style(styles::BODY)
         .with_color(theme.text_secondary)
-        .centered_on(SIDEBAR_W + FOOTER_PAD, field.center_y())
+        .centered_on(sidebar_w() + FOOTER_PAD, field.center_y())
         .render(canvas);
 
     if let Some(problem) = footer.save_problem {
@@ -1817,6 +2035,11 @@ pub struct Frame<'a> {
     ///
     /// [`TextInput`]: otto_kit::components::text_input::TextInput
     pub path_entry: bool,
+    /// The Trash window's chrome, and the flag that this *is* the Trash
+    /// window: the header shows Put Back and Empty Trash where the browser
+    /// shows its view switcher, and the third list column reads out where
+    /// each row came from instead of what kind of file it is.
+    pub trash: Option<TrashChrome>,
     /// The rubber band being dragged out over the icon grid, in window
     /// coordinates. Grid view only: rows span their pane's whole width, so a
     /// band over a list or a Miller column could only ever say what dragging
@@ -1825,6 +2048,31 @@ pub struct Frame<'a> {
 }
 
 impl Frame<'_> {
+    /// The third list column's heading. It is the Kind column everywhere but
+    /// the Trash, where what a file *is* matters much less than where it came
+    /// from — that is the one thing a row in the trash carries that a row
+    /// anywhere else does not.
+    fn column_label(&self, key: SortKey) -> &'static str {
+        match (key, self.trash.is_some()) {
+            (SortKey::Kind, true) => otto_kit::t!("files-column-original-location"),
+            _ => key.label(),
+        }
+    }
+
+    /// That column's text for one row. An item whose sidecar was lost has no
+    /// origin to show; the cell is left empty rather than filled with a guess.
+    fn third_column(&self, entry: &Entry) -> String {
+        if self.trash.is_none() {
+            return entry.kind_label().to_string();
+        }
+        entry
+            .origin
+            .as_deref()
+            .and_then(|origin| origin.parent())
+            .map(model::abbreviate_home)
+            .unwrap_or_default()
+    }
+
     /// The thumbnail to draw for an entry, if one is ready.
     fn thumbnail(&self, entry: &Entry) -> Option<&skia_safe::Image> {
         self.thumbs?.image(&entry.path, entry.modified)
@@ -1891,7 +2139,9 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
 
-    draw_sidebar(canvas, f);
+    if sidebar_w() > 0.0 {
+        draw_sidebar(canvas, f);
+    }
     draw_header(canvas, f);
 
     // The traffic lights ride over both, because with the controls at the
@@ -1930,8 +2180,8 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
     paint.set_color(theme.fill_tertiary);
     paint.set_stroke_width(1.0);
     canvas.draw_line(
-        Point::new(SIDEBAR_W, 0.0),
-        Point::new(SIDEBAR_W, f.height + f.footer),
+        Point::new(sidebar_w(), 0.0),
+        Point::new(sidebar_w(), f.height + f.footer),
         &paint,
     );
 
@@ -1958,12 +2208,16 @@ const CONFIRM_BTN_W: f32 = 104.0;
 pub struct ConfirmData<'a> {
     pub message: &'a str,
     pub detail: &'a str,
+    /// The affirmative button's own words — Replace, Delete, Empty Trash.
+    /// The sheet asks more than one question now, and a button labelled for
+    /// the wrong one is how a user empties their trash by accident.
+    pub accept_label: &'a str,
     pub pressed: Option<ConfirmButton>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfirmButton {
-    Replace,
+    Accept,
     Cancel,
 }
 
@@ -1976,9 +2230,9 @@ pub fn confirm_card_rect(width: f32, window_height: f32) -> Rect {
     Rect::from_ltrb(left, top, left + w, top + CONFIRM_H)
 }
 
-/// Replace, hard against the card's bottom-right — the affirmative answer in
-/// the position every other accept button in the picker takes.
-pub fn confirm_replace_rect(width: f32, window_height: f32) -> Rect {
+/// The affirmative answer, hard against the card's bottom-right — the
+/// position every other accept button in the picker takes.
+pub fn confirm_accept_rect(width: f32, window_height: f32) -> Rect {
     let card = confirm_card_rect(width, window_height);
     Rect::from_ltrb(
         card.right - CONFIRM_PAD - CONFIRM_BTN_W,
@@ -1989,7 +2243,7 @@ pub fn confirm_replace_rect(width: f32, window_height: f32) -> Rect {
 }
 
 pub fn confirm_cancel_rect(width: f32, window_height: f32) -> Rect {
-    let replace = confirm_replace_rect(width, window_height);
+    let replace = confirm_accept_rect(width, window_height);
     Rect::from_ltrb(
         replace.left - 10.0 - CONFIRM_BTN_W,
         replace.top,
@@ -2006,8 +2260,8 @@ pub fn confirm_cancel_rect(width: f32, window_height: f32) -> Rect {
 /// behind it.
 pub fn confirm_at(x: f32, y: f32, width: f32, window_height: f32) -> Option<ConfirmButton> {
     let point = Point::new(x, y);
-    if confirm_replace_rect(width, window_height).contains(point) {
-        return Some(ConfirmButton::Replace);
+    if confirm_accept_rect(width, window_height).contains(point) {
+        return Some(ConfirmButton::Accept);
     }
     if confirm_cancel_rect(width, window_height).contains(point) {
         return Some(ConfirmButton::Cancel);
@@ -2052,22 +2306,22 @@ pub fn draw_confirm(
     draw_footer_button(
         canvas,
         confirm_cancel_rect(width, window_height),
-        "Cancel",
+        otto_kit::t!("common-cancel"),
         theme.fill_secondary,
         theme.text_primary,
         data.pressed == Some(ConfirmButton::Cancel),
         true,
     );
-    // Replacing a file is the destructive answer, so it is not the accent —
-    // the accent means "the safe thing you probably want", and here that is
-    // Cancel.
+    // Every question this sheet asks has a destructive answer, so it is never
+    // the accent — the accent means "the safe thing you probably want", and
+    // here that is always Cancel.
     draw_footer_button(
         canvas,
-        confirm_replace_rect(width, window_height),
-        "Replace",
+        confirm_accept_rect(width, window_height),
+        data.accept_label,
         warning_color(),
         Color::WHITE,
-        data.pressed == Some(ConfirmButton::Replace),
+        data.pressed == Some(ConfirmButton::Accept),
         true,
     );
 }
@@ -2403,7 +2657,9 @@ fn draw_header(canvas: &Canvas, f: &Frame) {
     // the window instead of stopping at the sidebar's edge — is the header
     // layer's background style. The hairline below is drawn here, because it
     // is what separates it from the opaque file area.
-    draw_nav_buttons(canvas, f);
+    if !nav_hidden() {
+        draw_nav_buttons(canvas, f);
+    }
 
     if f.action_row.is_some() {
         // The picker's header is a toolbar, not a title bar: one row, no
@@ -2427,7 +2683,7 @@ fn draw_header(canvas: &Canvas, f: &Frame) {
             } else {
                 theme.text_secondary
             })
-            .centered_on(TITLE_X, TITLE_CY)
+            .centered_on(title_x(), title_cy())
             .render(canvas);
 
         Label::new(&f.subtitle)
@@ -2437,16 +2693,19 @@ fn draw_header(canvas: &Canvas, f: &Frame) {
             } else {
                 theme.text_tertiary
             })
-            .centered_on(SIDEBAR_W + CONTENT_PAD, SUBTITLE_CY)
+            .centered_on(subtitle_x(), subtitle_cy())
             .render(canvas);
     }
 
-    draw_switcher(canvas, f);
+    match f.trash.as_ref() {
+        Some(chrome) => draw_trash_actions(canvas, f, chrome),
+        None => draw_switcher(canvas, f),
+    }
 
     paint.set_color(theme.fill_tertiary);
     paint.set_stroke_width(1.0);
     canvas.draw_line(
-        Point::new(SIDEBAR_W, HEADER_H),
+        Point::new(sidebar_w(), HEADER_H),
         Point::new(f.width, HEADER_H),
         &paint,
     );
@@ -2691,12 +2950,7 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
             theme.text_tertiary,
         );
     } else if pane.entries.is_empty() {
-        draw_centered(
-            canvas,
-            area,
-            otto_kit::t!("files-folder-empty"),
-            theme.text_tertiary,
-        );
+        draw_centered(canvas, area, empty_message(), theme.text_tertiary);
     } else {
         // Only the rows of cells the viewport is asking for are drawn.
         let band = pane.band(area);
@@ -2896,13 +3150,14 @@ fn draw_column_strip(canvas: &Canvas, f: &Frame) {
     let cy = HEADER_H + COLUMNS_H / 2.0;
 
     for (key, x) in [
-        (SortKey::Name, SIDEBAR_W + CONTENT_PAD),
+        (SortKey::Name, sidebar_w() + CONTENT_PAD),
         (SortKey::Size, size_x),
         (SortKey::Kind, kind_x),
         (SortKey::Modified, modified_x),
     ] {
         let active = f.sort == key;
-        Label::new(key.label())
+        let label = f.column_label(key);
+        Label::new(label)
             .with_style(styles::SUBHEADLINE)
             .with_color(if active {
                 theme.text_primary
@@ -2916,7 +3171,7 @@ fn draw_column_strip(canvas: &Canvas, f: &Frame) {
             let mut paint = Paint::default();
             paint.set_anti_alias(true);
             paint.set_color(theme.text_secondary);
-            let label_w = styles::SUBHEADLINE.font().measure_str(key.label(), None).0;
+            let label_w = styles::SUBHEADLINE.font().measure_str(label, None).0;
             let cx = x + label_w + 8.0;
             let dir = if f.ascending { -1.0 } else { 1.0 };
             let mut builder = PathBuilder::new();
@@ -2932,7 +3187,7 @@ fn draw_column_strip(canvas: &Canvas, f: &Frame) {
     paint.set_color(theme.fill_tertiary);
     paint.set_stroke_width(1.0);
     canvas.draw_line(
-        Point::new(SIDEBAR_W, HEADER_H + COLUMNS_H),
+        Point::new(sidebar_w(), HEADER_H + COLUMNS_H),
         Point::new(f.width, HEADER_H + COLUMNS_H),
         &paint,
     );
@@ -2963,12 +3218,7 @@ fn draw_list(canvas: &Canvas, f: &Frame) {
         return;
     }
     if pane.entries.is_empty() {
-        draw_centered(
-            canvas,
-            viewport,
-            &otto_kit::t_owned!("files-folder-empty"),
-            theme.text_tertiary,
-        );
+        draw_centered(canvas, viewport, empty_message(), theme.text_tertiary);
         canvas.restore();
         return;
     }
@@ -3031,9 +3281,18 @@ fn draw_list(canvas: &Canvas, f: &Frame) {
         } else {
             entry.size.map(model::format_size).unwrap_or_default()
         };
+        // The third column is the only one that can hold something long — a
+        // Trash row's original location is a path — so it is cut to the gap
+        // before the next column rather than drawn over it.
+        let detail_font = styles::SUBHEADLINE.font();
+        let third = ellipsize(
+            &detail_font,
+            &f.third_column(entry),
+            modified_x - kind_x - 12.0,
+        );
         for (text, x) in [
             (size_text, size_x),
-            (entry.kind_label().to_string(), kind_x),
+            (third, kind_x),
             (
                 entry.modified.map(model::format_time).unwrap_or_default(),
                 modified_x,
@@ -4737,6 +4996,7 @@ mod geometry_tests {
                 kind: Kind::Text,
                 size: Some(0),
                 modified: None,
+                origin: None,
             })
             .collect()
     }
@@ -4783,7 +5043,7 @@ mod geometry_tests {
         assert!(!anchor.is_empty());
         // Inside the window, and below the header — a real place on screen.
         assert!(anchor.top >= HEADER_H, "{anchor:?}");
-        assert!(anchor.left >= SIDEBAR_W, "{anchor:?}");
+        assert!(anchor.left >= sidebar_w(), "{anchor:?}");
         // The icon, not the row: a square the size the icon is drawn at,
         // rather than a band running the width of the file area.
         assert!((anchor.width() - ICON_SIZE).abs() < 0.5, "{anchor:?}");
@@ -4965,6 +5225,7 @@ mod geometry_tests {
 
         let theme = Theme::light();
         let frame = Frame {
+            trash: None,
             action_row: None,
             footer: 0.0,
             quickview_close_hovered: false,

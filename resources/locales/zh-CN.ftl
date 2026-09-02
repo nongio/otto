@@ -27,6 +27,7 @@ common-copy = 拷贝
 common-paste = 粘贴
 common-rename = 重命名
 common-delete = 删除
+common-replace = 替换
 common-move = 移动
 
 
@@ -266,6 +267,14 @@ files-move-count-to-trash =
     { $count ->
        *[other] 将 { $count } 个项目移到废纸篓
     }
+files-put-back = 放回原处
+files-empty-trash = 清倒废纸篓
+files-delete-immediately = 立即删除
+# $count 总是两个或更多；单个项目使用 files-delete-immediately。
+files-delete-count-immediately =
+    { $count ->
+       *[other] 立即删除 { $count } 个项目
+    }
 
 
 ## Files — sidebar and columns
@@ -284,6 +293,8 @@ files-column-name = 名称
 files-column-size = 大小
 files-column-kind = 种类
 files-column-date-modified = 修改日期
+# 废纸篓窗口中“种类”列的标题，在那里文件从哪里来比它是什么类型更重要。
+files-column-original-location = 原始位置
 
 
 ## Files — kinds
@@ -338,6 +349,11 @@ files-new-window-failed = 无法打开新窗口：{ $error }
 ## Files — the listing
 
 files-folder-empty = 此文件夹是空的。
+files-trash-empty = 废纸篓是空的。
+# 打开废纸篓里的文件，等于对已经扔掉的东西启动应用程序；这里提供的是先把它
+# 放回原处。
+files-trash-cant-open = 废纸篓中的项目无法打开。请先放回原处。
+files-trash-cant-rename = 废纸篓中的项目无法重命名。
 files-folder-denied = 没有查看此文件夹内容的权限。
 files-folder-gone = 此文件夹已不存在。
 files-folder-open-failed = 无法打开此文件夹：{ $error }
@@ -391,6 +407,14 @@ files-replace-one = “{ $name }”已存在。要替换吗？
 files-replace-one-detail = 替换会覆盖它现有的内容。
 files-replace-many = 其中 { $count } 个文件已存在。要替换吗？
 files-replace-many-detail = 替换会覆盖它们现有的内容。
+files-delete-forever-one = 要永久删除“{ $name }”吗？
+files-delete-forever-many = 要永久删除 { $count } 个项目吗？
+files-delete-forever-detail = 此操作无法撤销。
+files-empty-trash-confirm = 要清倒废纸篓吗？
+files-empty-trash-detail =
+    { $count ->
+       *[other] { $count } 个项目将被永久删除。此操作无法撤销。
+    }
 
 
 ## Files — sizes

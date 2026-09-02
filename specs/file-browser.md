@@ -13,6 +13,9 @@ filesystem — Otto's Finder. It is the second shell over the view layer defined
 in [file-picker.md](./file-picker.md): the same directory model, async I/O,
 watching, sorting, thumbnails and list/icon/column presentations, wrapped in a
 document window that can act on files instead of merely returning their names.
+It also carries the **Trash window** — a third shell over the same layer, one
+window and one desktop entry of its own, out of the same binary. See *The Trash
+window*.
 
 This spec also owns the **shared foundations** that other components depend on:
 the thumbnail cache, file-type detection, and the quick-view invocation
@@ -81,7 +84,7 @@ A client-decorated toplevel. Layout:
 - **Path bar** — clickable ancestor segments; ancestors collapse into an
   overflow control when the path is too long for the width.
 - **Sidebar** — places: the XDG user directories that exist, the user's
-  bookmarks, Trash, and currently mounted volumes. A place takes a drop, which
+  bookmarks and currently mounted volumes. A place takes a drop, which
   files into that place's directory; dragging a directory onto the sidebar to
   *bookmark* it is a separate gesture and is not yet built, so bookmarking is
   still a menu action on the selection.
@@ -285,9 +288,87 @@ Bookmarks can be reordered and removed. A bookmark whose path no longer exists
 is shown dimmed and offers removal rather than silently disappearing — a
 disconnected drive is not a deleted bookmark.
 
-Trash is a place. Selecting it lists the trash contents with their original
-locations, and offers Restore and Empty Trash. Files in Trash cannot be opened
-or renamed in place.
+Trash is **not** a place in this sidebar. It is a window of its own — see
+*The Trash window* below — so a row here pointing at it would be a shortcut to
+another application rather than a directory this window can show.
+
+### The Trash window
+
+The third shell over this view layer, beside the browser and the picker: the
+same binary, launched as `otto-files --trash`, with its own desktop entry
+(`otto-trash.desktop`) and its own `app_id`, so the dock and the applications
+list carry it as an application of its own with the wastebasket icon.
+
+**`trash:///` opens it too.** The rest of the desktop names the trash with
+that URI — it is what every other file manager is asked for, and what
+`xdg-open` hands a scheme handler — so `otto-files trash:///` (in any of the
+spellings a handler receives: `trash:`, `trash://`, `trash:///`, a path under
+it) opens the same window `--trash` does, and the desktop entry registers
+`x-scheme-handler/trash`. It is accepted as a way in, never as a location: it
+does not become a path in the location bar, and there is no navigating to it,
+for the reason below.
+
+**It is a shell, not a place.** The browser reaching
+`$XDG_DATA_HOME/Trash/files` by typing a path is still the browser, with all
+of its commands; the Trash window is chosen at startup and never changes.
+Which one a window is decides its chrome, so the choice is process-wide rather
+than threaded through the geometry — a window does not become the other one.
+
+What it drops, and why each would be a control that does nothing:
+
+- **No sidebar.** There is one directory to show and no others to go to.
+- **No back/forward.** Nowhere to go back to.
+- **No view switcher.** The list is the only view with a column wide enough
+  for an original location; a grid of icons cannot say where anything came
+  from, and there is no hierarchy for a Miller stack to descend.
+- **No New Folder, no paste, no rename, no cut or copy.** Every one of them
+  either puts an item in the can with no `.trashinfo` beside it — a row that
+  can never be put back — or rewrites the name a sidecar is keyed on.
+
+With no sidebar and no nav pair, nothing stands between the window controls
+and the title, so **the header's top row is one line**: the traffic lights,
+the title beside them and the two actions in the far corner all share a centre
+line — the item count sits under the title as it does in the browser. When the
+desktop puts its controls at the trailing edge there is nothing beside the
+title, and the header keeps the browser's geometry.
+
+What it adds:
+
+- **An Original Location column**, in the slot the browser gives to Kind, read
+  from each row's `.trashinfo` sidecar and written the way a person says it:
+  `~/Documents`, not `/home/someone/Documents`. Sidecars are read once per
+  listing, on the worker thread with the listing itself, never once per row on
+  the UI thread. A row whose sidecar is missing or carries no `Path=` shows an
+  empty cell — it is still an item in the trash, and one unreadable sidecar
+  must not cost the whole listing.
+- **Put Back**, in the header, on the selection. Each item goes to the path
+  its sidecar records and the sidecar is dropped. This is the same operation,
+  and the same code, as undoing a delete with Ctrl+Z — the two cannot drift.
+  A missing parent directory is recreated; a name that something else has
+  taken since is refused, with the item left in the trash rather than
+  overwriting what is there now.
+- **Empty Trash**, in the header, on everything. Asked about first, with the
+  count in the question. It wears the accent, not a warning colour: emptying
+  is what the window is for, and the warning belongs on the question that
+  follows rather than on a button sitting in the header of every Trash
+  window.
+- **Delete**, on the selection, meaning permanently — asked about every time,
+  because nothing can put it back. Nothing is recorded on the undo stack.
+- **A drop onto the window trashes what was dropped**, rather than moving it
+  into the directory. It is the one thing the window accepts a drop of, and it
+  is what a bin is for. Moving files in directly would leave them with no
+  sidecar.
+
+**Opening is refused for files**, with a message saying to put it back first:
+handing a thrown-away file to an application would let it be launched, and
+edited in place, inside the can. A trashed *folder* still opens — looking
+inside one is how you decide whether you want it back — and its contents are
+ordinary rows with no sidecars and no Put Back of their own.
+
+**An empty Trash says so.** It is the state every user is trying to reach, and
+"This folder is empty" is not what it means. A trash can that has never been
+used has no directory on disk at all; that is an empty Trash, not a folder
+that has gone missing, and it must not read as an error.
 
 ### Opening
 
@@ -453,7 +534,7 @@ The browser adds:
 | Space | quick view of the selection (see below) |
 | Return / F2 | rename the entry at the cursor, inline, with the extension unselected — in every view mode, icon view included |
 | Delete / Ctrl+Delete / Ctrl+Backspace | move the selection to trash — the modified forms because the chord people reach for is Cmd+Delete, and on a keyboard whose big key is Backspace that arrives as Ctrl+Backspace. Plain Backspace goes up a directory instead, and always has |
-| Shift+Delete | delete the selection permanently, after confirmation — **not built**; the chord is deliberately inert rather than trashing, which is the wrong answer to a keystroke that means "and I mean it" |
+| Shift+Delete | delete the selection permanently, after confirmation — **not built** in the browser; the chord is deliberately inert rather than trashing, which is the wrong answer to a keystroke that means "and I mean it". In the Trash window plain Delete already means this, and asks |
 | Ctrl+C / Ctrl+X / Ctrl+V | copy / cut / paste. These are file management, so the picker does not have them — and while an inline rename holds the keyboard they act on the *name being edited* rather than on the selection, as every other key in the field does |
 | Ctrl+Z | undo the last operation |
 | Ctrl+N | new window, at the **default location** (the home directory for now, a preference later) rather than at this window's directory — a new window is a fresh start, and inheriting wherever the focused window was pointed makes it read as a copy of that window. Ctrl+double-click is the gesture for "that directory, in another window". Nothing in the picker, which answers one request in one window |
@@ -509,7 +590,8 @@ progress, and can cancel it.
   offers permanent deletion instead. It never silently copies a file across
   filesystems in the name of trashing it.
 - **Delete permanently** — always confirmed, always says it cannot be undone,
-  and is not undoable.
+  and is not undoable. Reachable only from the Trash window, where Delete
+  means this because there is nowhere further to send a file.
 - **The selection survives a delete.** It moves to the entry that takes the
   deleted one's place: the first survivor below the deleted run, and failing
   that the nearest one above it, so holding Delete clears a run of files
@@ -748,6 +830,13 @@ What the browser does:
 - **The browser keeps the keyboard.** Space toggles the panel, Escape dismisses
   it before it clears the selection, and the arrow keys move the cursor and
   re-decode in place rather than dismissing.
+- **The panel follows a cursor that moves on its own**, not only one an arrow
+  key moved. Deleting the previewed file moves the selection to the row that
+  takes its place, and the panel re-decodes onto that row; deleting the last
+  file in the pane leaves nothing to stand on, and the panel is dismissed.
+  Neither can be decided when the delete is issued — the survivor is only known
+  once the re-read lands — so the delete records that the panel owes a decode
+  and the frame loop settles it.
 - **The panel owns the pointer while it is up**: a click outside dismisses, the
   wheel scrolls a listing or text preview, a pinch zooms an image and a
   two-finger scroll pans a zoomed one, and nothing reaches the file list
@@ -982,12 +1071,16 @@ which reaches into `AppContext` and is unavailable off the client runtime.
 
 ## Rationale
 
-**Two shells over one view layer, and the browser is where the shared layer
+**Three shells over one view layer, and the browser is where the shared layer
 lives.** The picker is the harder deadline (applications are broken without it)
 but the browser is the fuller consumer of the model — it needs everything the
 picker needs plus mutation. Putting the library with the browser and having the
 picker link it, rather than the reverse, means the shared code is exercised by
-the more demanding caller.
+the more demanding caller. The Trash is the third, and the cheapest: it is a
+listing of one directory, and a listing is what this layer is. Building it as
+its own binary would have forked the listing, the sorting, the selection, the
+thumbnails, the drag handling and quick view so that one window could hide a
+sidebar.
 
 **`org.freedesktop.FileManager1` rather than an Otto interface.** Firefox,
 Thunderbird, editors and chat clients already call it. Implementing the standard

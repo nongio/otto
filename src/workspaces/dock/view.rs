@@ -98,6 +98,10 @@ pub struct DockView {
     pub bar_layer: layers::prelude::Layer,
     pub resize_handle: layers::prelude::Layer,
     dock_apps_container: layers::prelude::Layer,
+    /// The places strip, between the handle and the minimized windows: the
+    /// Trash today, folders later. Its slots are app slots — a place is a
+    /// desktop entry — they just live past the divider.
+    dock_places_container: layers::prelude::Layer,
     dock_windows_container: layers::prelude::Layer,
     /// Sits above the icon strips and holds the icon being dragged, so it
     /// paints over its neighbours instead of under the ones that follow it.
@@ -186,12 +190,26 @@ impl IsAlive for DockView {
 ///         │       ├── Icon
 ///         │       └── Label
 ///         ├── dock_handle `dock_handle`
+///         ├── dock_places_container `dock_places_container`
+///         │   └── Place (the Trash)
 ///         └── dock_windows_container `dock_windows_container`
 ///             ├── miniwindow
 ///             └── miniwindow
 /// ```
 ///
 ///
+/// The place whose icon follows the wastebasket, as a `match_id` — the stem of
+/// the desktop id in `[dock] trash_desktop_id`, which is what a launcher's
+/// `match_id` resolves to.
+///
+/// It is a desktop entry like any other place: what a click opens and what the
+/// menu offers are that entry's own `Exec` and `Actions=`, and pointing the
+/// setting at another file manager's entry is all it takes to use that one.
+pub(crate) fn trash_match_id() -> String {
+    let id = Config::with(|c| c.dock.trash_desktop_id.clone());
+    id.strip_suffix(".desktop").unwrap_or(&id).to_string()
+}
+
 impl DockView {
     /// Calculate dock bar height based on icon size
     /// Bar height = app container height + top padding + bottom padding
@@ -355,6 +373,33 @@ impl DockView {
             .unwrap();
         resize_handle.build_layer_tree(&handle_tree);
 
+        let dock_places_container = layers_engine.new_layer();
+        let _ = view_layer.add_sublayer(&dock_places_container);
+
+        let places_tree = LayerTreeBuilder::default()
+            .key("dock_places_container")
+            .pointer_events(false)
+            .position(Point::new(0.0, 0.0))
+            .size(Size {
+                width: taffy::Dimension::Auto,
+                height: taffy::Dimension::Length(scaled_icon_size + dot_area_height),
+            })
+            .layout_style(taffy::Style {
+                display: taffy::Display::Flex,
+                justify_content: Some(taffy::JustifyContent::FlexEnd),
+                justify_items: Some(taffy::JustifyItems::FlexEnd),
+                align_items: Some(taffy::AlignItems::FlexEnd),
+                gap: taffy::Size::<taffy::LengthPercentage>::from_length(0.0_f32),
+                min_size: taffy::Size {
+                    width: taffy::Dimension::Length(0.0),
+                    height: taffy::Dimension::Length(0.0),
+                },
+                ..Default::default()
+            })
+            .build()
+            .unwrap();
+        dock_places_container.build_layer_tree(&places_tree);
+
         let dock_windows_container = layers_engine.new_layer();
         let _ = view_layer.add_sublayer(&dock_windows_container);
 
@@ -410,6 +455,7 @@ impl DockView {
             bar_layer,
             resize_handle,
             dock_apps_container,
+            dock_places_container,
             dock_windows_container,
             drag_overlay,
             app_layers: Arc::new(RwLock::new(HashMap::new())),
@@ -442,9 +488,83 @@ impl DockView {
         dock.render_dock();
         dock.notification_handler(notify_rx);
         dock.load_configured_bookmarks();
+        dock.load_configured_places();
+        dock.watch_the_trash();
 
         dock
     }
+
+    /// Keep the Trash's icon in step with the can: a full wastebasket while
+    /// there is anything in it, an empty one when there is not.
+    ///
+    /// The compositor watches the directory rather than waiting to be told, so
+    /// the icon is right whether or not the Trash window is open — which is
+    /// the whole reason this lives here and not in `otto-files`.
+    fn watch_the_trash(&self) {
+        let dock = self.clone();
+        crate::workspaces::trash::watch(move |has_content| {
+            dock.set_trash_full(has_content);
+        });
+    }
+
+    /// Draw the Trash's icon for a can that is full (or not).
+    fn set_trash_full(&self, full: bool) {
+        let icon_name = if full {
+            "user-trash-full"
+        } else {
+            "user-trash"
+        };
+        let image = crate::utils::find_icon_with_theme(icon_name, 512, 1)
+            .and_then(|path| otto_kit::icons::image_from_path(&path, (512, 512)));
+        // A theme without the icon we asked for leaves the desktop entry's own
+        // icon in place rather than a hole in the strip.
+        let trash = trash_match_id();
+        let place = self.bookmark_application(&trash);
+        tracing::debug!(
+            full,
+            icon_name,
+            resolved = image.is_some(),
+            "trash icon follows the can"
+        );
+        self.app_icons_manager
+            .set_icon_override(&trash, image, place.as_ref());
+    }
+
+    /// Load `[dock] places` into the places strip. Same shape as
+    /// [`Self::load_configured_bookmarks`]: a place is a desktop entry, and a
+    /// missing one is a warning rather than a hole in the strip.
+    fn load_configured_places(&self) {
+        let places = Config::with(|c| c.dock.places.clone());
+        if places.is_empty() {
+            let mut state = self.get_state();
+            state.places.clear();
+            self.update_state(&state);
+            return;
+        }
+
+        let dock = self.clone();
+        tokio::spawn(async move {
+            let mut loaded = Vec::new();
+            for place in places {
+                let id = place
+                    .desktop_id
+                    .strip_suffix(".desktop")
+                    .unwrap_or(&place.desktop_id)
+                    .to_string();
+                if let Some(mut app) = ApplicationsInfo::get_app_info_by_id(id).await {
+                    app.override_name = place.label.clone();
+                    loaded.push(app);
+                } else {
+                    tracing::warn!("dock place not found: {}", place.desktop_id);
+                }
+            }
+
+            let mut state = dock.get_state();
+            state.places = loaded;
+            dock.update_state(&state);
+        });
+    }
+
     fn load_configured_bookmarks(&self) {
         let bookmarks = Config::with(|c| c.dock.bookmarks.clone());
         if bookmarks.is_empty() {
@@ -577,6 +697,21 @@ impl DockView {
     fn display_entries(&self, state: &DockModel) -> Vec<(Application, bool)> {
         state.display_entries()
     }
+
+    /// The places strip's entries, in the order they are drawn.
+    fn display_places(&self, state: &DockModel) -> Vec<(Application, bool)> {
+        state.display_places()
+    }
+
+    /// Whether `match_id` names a place rather than an application. Places do
+    /// not reorder by dragging and are not bookmarks, so a few paths have to
+    /// tell the two apart.
+    pub(super) fn is_place(&self, match_id: &str) -> bool {
+        self.get_state()
+            .places
+            .iter()
+            .any(|place| place.match_id == match_id)
+    }
     fn render_elements_layers(&self, available_icon_width: f32) {
         let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
         let dock_size_multiplier = Config::with(|c| c.dock.size.clamp(0.5, 2.0)) as f32;
@@ -672,7 +807,14 @@ impl DockView {
         } else {
             taffy::AlignItems::FlexEnd
         };
-        for container in [&self.dock_apps_container, &self.dock_windows_container] {
+        // The strips keep a minimum length so an empty dock is still a dock
+        // with a grabbable handle — except the places strip, whose stub past
+        // the divider would read as a gap when the user has removed the Trash.
+        for (container, min_length) in [
+            (&self.dock_apps_container, 20.0 * draw_scale),
+            (&self.dock_places_container, 0.0),
+            (&self.dock_windows_container, 20.0 * draw_scale),
+        ] {
             container.set_layout_style(taffy::Style {
                 display: taffy::Display::Flex,
                 flex_direction: if vertical {
@@ -687,17 +829,31 @@ impl DockView {
                 min_size: if vertical {
                     taffy::Size {
                         width: taffy::Dimension::Length(0.0),
-                        height: taffy::Dimension::Length(20.0 * draw_scale),
+                        height: taffy::Dimension::Length(min_length),
                     }
                 } else {
                     taffy::Size {
-                        width: taffy::Dimension::Length(20.0 * draw_scale),
+                        width: taffy::Dimension::Length(min_length),
                         height: taffy::Dimension::Length(0.0),
                     }
                 },
                 ..Default::default()
             });
         }
+        self.dock_places_container.set_size(
+            if vertical {
+                Size {
+                    width: taffy::Dimension::Length(available_icon_width),
+                    height: taffy::Dimension::Auto,
+                }
+            } else {
+                Size {
+                    width: taffy::Dimension::Auto,
+                    height: taffy::Dimension::Length(available_icon_width),
+                }
+            },
+            None,
+        );
         // The minimized-window strip is sized along the long axis by its
         // content; across it, it must follow the dock like the apps strip does
         // (it kept the horizontal dock's fixed height otherwise, reserving a
@@ -721,7 +877,19 @@ impl DockView {
         // Apps that just gained their first window this render — used to stop launch bounces.
         let mut newly_running: Vec<String> = Vec::new();
         let mut apps_layers_map = self.app_layers.write().unwrap();
-        for (app, running) in display_apps.iter() {
+        // Both strips are drawn by the same loop: a place is a desktop entry
+        // like a launcher is, and the only difference is which container its
+        // slot is added to.
+        let display_places = self.display_places(&state);
+        let slots = display_apps
+            .iter()
+            .map(|entry| (&self.dock_apps_container, entry))
+            .chain(
+                display_places
+                    .iter()
+                    .map(|entry| (&self.dock_places_container, entry)),
+            );
+        for (container, (app, running)) in slots {
             let match_id = app.match_id.clone();
             let app_copy = app.clone();
             let app_name = app.clone().desktop_name().unwrap_or(app.identifier.clone());
@@ -855,7 +1023,7 @@ impl DockView {
                     });
                     dot_layer.set_hidden(!*running);
 
-                    let _ = self.dock_apps_container.add_sublayer(&new_layer);
+                    let _ = container.add_sublayer(&new_layer);
                     let _ = new_layer.add_sublayer(&icon_scaler);
                     let _ = icon_scaler.add_sublayer(&icon_mirror);
                     let _ = new_layer.add_sublayer(&label_layer);
@@ -1074,6 +1242,14 @@ impl DockView {
         let available_icon_size =
             (available_width - component_padding_h * 2.0) / (apps_len + windows_len);
         (icon_size.min(available_icon_size), icon_size)
+    }
+
+    /// How long an icon slot is along the dock when nothing is magnified — the
+    /// size every magnified slot is a multiple of.
+    fn base_slot_length(&self) -> f32 {
+        let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
+        let dock_size_multiplier = Config::with(|c| c.dock.size.clamp(0.5, 2.0)) as f32;
+        80.0 * dock_size_multiplier * draw_scale
     }
 
     /// Render dock elements (app icons and miniwindow icons) based on the current state.
@@ -1422,7 +1598,6 @@ impl DockView {
         let position = self.position();
         let vertical = position.is_vertical();
         let axis_start = |r: &skia::Rect| if vertical { r.y() } else { r.x() };
-        let axis_end = |r: &skia::Rect| if vertical { r.bottom } else { r.right };
         let axis_len = |r: &skia::Rect| if vertical { r.height() } else { r.width() };
 
         let pos = *self.magnification_position.read().unwrap();
@@ -1431,38 +1606,63 @@ impl DockView {
         let state = self.get_state();
         let display_apps = self.display_entries(&state);
 
-        let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
-        let dock_size_multiplier = Config::with(|c| c.dock.size.clamp(0.5, 2.0)) as f32;
-        let base_icon_size = 80.0;
-        let icon_size: f32 = base_icon_size * dock_size_multiplier * draw_scale;
+        let icon_size = self.base_slot_length();
 
         // Compute focus as a normalized position [0, 1] across all icon slots.
-        // The view_layer contains [apps_container | resize_handle | windows_container].
-        // We need to skip the handle gap so that icon_pos maps to actual cursor positions.
+        // The view holds three strips — [apps | handle | places | windows] —
+        // with gaps between them that hold no icons at all. The pointer's
+        // position is mapped onto the icons alone: gaps are skipped, and a
+        // pointer *inside* a gap stays at the end of the strip before it.
+        // Subtracting a gap the moment the pointer crosses the last icon of a
+        // strip would make `focus` jump backwards and then creep forward
+        // again, which reads as the icons wiggling as the pointer passes the
+        // divider.
         let apps_bounds = self.dock_apps_container.render_bounds_transformed();
+        let places_bounds = self.dock_places_container.render_bounds_transformed();
         let windows_bounds = self.dock_windows_container.render_bounds_transformed();
-        let elements_start = axis_start(&apps_bounds) - axis_start(&bounds);
-        let handle_gap = (axis_start(&windows_bounds) - axis_end(&apps_bounds)).max(0.0);
-        let elements_width = (axis_len(&apps_bounds) + axis_len(&windows_bounds)).max(1.0);
-        // Subtract the handle gap for any cursor position that is past the apps
-        // container, and clamp it to the end of that container while the pointer
-        // is *inside* the gap: subtracting the whole gap the moment the pointer
-        // crosses the last app icon would make `focus` jump backwards and then
-        // creep forward again, which reads as the icons wiggling as the pointer
-        // passes over the resize handle.
-        let apps_axis_len = axis_len(&apps_bounds);
-        let pos_from_start = pos - elements_start;
-        let pos_in_elements = if pos_from_start > apps_axis_len {
-            (pos_from_start - handle_gap).max(apps_axis_len)
-        } else {
-            pos_from_start
-        };
+        let strips: Vec<(f32, f32)> = [&apps_bounds, &places_bounds, &windows_bounds]
+            .into_iter()
+            .map(|rect| (axis_start(rect) - axis_start(&bounds), axis_len(rect)))
+            .filter(|(_, len)| *len > 0.0)
+            .collect();
+        let elements_width: f32 = strips.iter().map(|(_, len)| len).sum::<f32>().max(1.0);
+        // Before the first strip the distance is kept as it is, negative and
+        // growing: the pointer resting far off the dock — where it starts —
+        // must leave every icon alone, and clamping it to zero would magnify
+        // the first one as though the pointer were on it.
+        let first_start = strips.first().map(|(start, _)| *start).unwrap_or(0.0);
+        let mut consumed = 0.0_f32;
+        let mut pos_in_elements = pos - first_start;
+        for (index, (start, len)) in strips.iter().enumerate() {
+            if pos < *start {
+                // In a gap between two strips the pointer holds at the end of
+                // the one before it, rather than jumping the gap's width.
+                if index > 0 {
+                    pos_in_elements = consumed;
+                }
+                break;
+            }
+            if pos <= start + len {
+                pos_in_elements = consumed + (pos - start);
+                break;
+            }
+            consumed += len;
+            // Past the last strip the distance keeps growing, for the same
+            // reason it does before the first one.
+            pos_in_elements = if index + 1 == strips.len() {
+                consumed + (pos - (start + len))
+            } else {
+                consumed
+            };
+        }
         let focus = pos_in_elements / elements_width;
 
+        let display_places = self.display_places(&state);
         let apps_len = display_apps.len() as f32;
+        let places_len = display_places.len() as f32;
         let windows_len = state.minimized_windows.len() as f32;
 
-        let tot_elements = apps_len + windows_len;
+        let tot_elements = apps_len + places_len + windows_len;
 
         let animation =
             transition.map(|t| self.layers_engine.add_animation_from_transition(&t, false));
@@ -1490,6 +1690,45 @@ impl DockView {
                 .change_position(Point { x: 0.0, y: 0.0 });
 
             changes.push(position_change);
+            // The places strip holds the same slots the apps strip does and is
+            // changed in exactly the same way — but a strip whose own size has
+            // stopped changing falls back to its content, and a slot's content
+            // includes the hidden label balloon, which is half again as tall as
+            // the icon. Start it from wherever the apps strip actually is, so
+            // the two animate as one instead of the places icons dropping to
+            // the bottom of a strip the height of the whole dock.
+            //
+            // The minimized-window strip is in the same boat: its thickness
+            // settles whenever its windows stop changing size, and it then
+            // bobbed on a resize exactly as the places strip did.
+            let apps_size = self.dock_apps_container.render_size();
+            for strip in [&self.dock_places_container, &self.dock_windows_container] {
+                let current = strip.render_size();
+                strip.set_size(
+                    if vertical {
+                        Size::points(apps_size.x, current.y)
+                    } else {
+                        Size::points(current.x, apps_size.y)
+                    },
+                    None,
+                );
+            }
+            changes.push(self.dock_places_container.change_size(if vertical {
+                Size {
+                    width: taffy::Dimension::Length(container_thickness),
+                    height: taffy::Dimension::Auto,
+                }
+            } else {
+                Size {
+                    width: taffy::Dimension::Auto,
+                    height: taffy::Dimension::Length(container_thickness),
+                }
+            }));
+            changes.push(
+                self.dock_places_container
+                    .change_position(Point { x: 0.0, y: 0.0 }),
+            );
+
             // App slots reserve a dot area on the screen-edge side, minimized
             // windows do not — so shift their strip by the same amount, or the
             // two rows of icons sit a few pixels out of line.
@@ -1524,7 +1763,9 @@ impl DockView {
                 }
             }));
             let layers_map = self.app_layers.read().unwrap_or_else(|e| e.into_inner());
-            for (index, (app, _running)) in display_apps.iter().enumerate() {
+            for (index, (app, _running)) in
+                display_apps.iter().chain(display_places.iter()).enumerate()
+            {
                 if let Some(entry) = layers_map.get(&app.match_id) {
                     let layer = entry.layer.clone();
                     let icon_pos = 1.0 / tot_elements * index as f32 + 1.0 / (tot_elements * 2.0);
@@ -1576,7 +1817,7 @@ impl DockView {
         }
 
         let miniwindow_layers = self.miniwindow_layers.read().unwrap();
-        let miniwindow_start_index = display_apps.len();
+        let miniwindow_start_index = display_apps.len() + display_places.len();
 
         for (index, (win, _title)) in state.minimized_windows.iter().enumerate() {
             if let Some((layer, ..)) = miniwindow_layers.get(win) {
@@ -1599,6 +1840,15 @@ impl DockView {
         self.layers_engine.schedule_changes(&changes, animation);
         // self.layers_engine.schedule_changes(&changes, None);
         *self.last_layout_animation.write().unwrap() = animation;
+        // The divider is laid out between the strips, so taffy moves it every
+        // time the icons around it grow — but the engine only re-reads a
+        // node's layout position when that node itself has changed, and
+        // nothing about the handle does. Left alone it stood still while the
+        // strips slid past it, overlapping the places icons by a dozen pixels
+        // until some later render moved it in one jump. Nudging it here, where
+        // the icons are given their new sizes, is enough: every frame that
+        // moves the strips starts with one of these calls.
+        self.resize_handle.redraw();
         if let Some(animation) = animation {
             self.layers_engine.start_animation(animation, 0.0);
         }
@@ -1676,11 +1926,17 @@ impl DockView {
             DockPosition::Left => Point::new(distance, 0.0),
             DockPosition::Right => Point::new(-distance, 0.0),
         };
+        // What a slot measures with nothing magnified. Slots are sized by
+        // `magnify_elements_with_scale` whether magnification is on or off —
+        // off, the dock just renders them at scale zero — so this is the
+        // resting length in both cases.
+        let resting_length = self.base_slot_length();
         // Each hop lasts ~0.8s; cap the loop so a failed launch settles after ~20s.
         Self::schedule_bounce_hop(
             layer,
             flag,
             hop,
+            resting_length,
             24,
             self.bouncing.clone(),
             match_id.to_string(),
@@ -1708,6 +1964,7 @@ impl DockView {
         layer: Layer,
         flag: Arc<AtomicBool>,
         hop: Point,
+        base_length: f32,
         remaining: u32,
         bouncing: Arc<RwLock<HashMap<String, Arc<AtomicBool>>>>,
         match_id: String,
@@ -1721,6 +1978,7 @@ impl DockView {
         // The keyframes drive the position from rest (0) out to `hop` and back
         // to rest, so the icon settles exactly where it started at the end of
         // every hop.
+        let hop = Self::magnified_hop(&layer, hop, base_length);
         layer
             .set_position(hop, Some(Self::bounce_transition()))
             .on_finish(
@@ -1729,6 +1987,7 @@ impl DockView {
                         l.clone(),
                         flag.clone(),
                         hop,
+                        base_length,
                         remaining - 1,
                         bouncing.clone(),
                         match_id.clone(),
@@ -1736,6 +1995,36 @@ impl DockView {
                 },
                 true,
             );
+    }
+
+    /// `hop` scaled by how magnified the icon is as this hop starts.
+    ///
+    /// The hop is a distance in pixels, so an icon grown by the pointer used to
+    /// jump the same absolute distance a small one does — barely clearing a
+    /// dock its own growth had already made taller. Measuring the slot at the
+    /// top of every hop keeps the jump proportionate whatever the pointer is
+    /// doing.
+    ///
+    /// Only a fraction of the growth reaches the jump, and it stops climbing
+    /// well before the icon does. A dock configured with a big `genie_scale`
+    /// magnifies to nearly twice the icon, and a jump twice as tall reads as
+    /// the icon being flung out of the dock rather than hopping in it.
+    fn magnified_hop(layer: &Layer, hop: Point, resting_length: f32) -> Point {
+        /// How much of the magnification the jump takes on.
+        const DAMPING: f32 = 0.4;
+        /// As far as the jump grows, however large the icon gets.
+        const CEILING: f32 = 1.3;
+
+        if resting_length <= 0.0 {
+            return hop;
+        }
+        let size = layer.render_size();
+        // The slot grows along the dock's long axis, which is the one the hop
+        // does *not* travel along.
+        let length = if hop.x == 0.0 { size.x } else { size.y };
+        let magnification = (length / resting_length).max(1.0);
+        let scale = (1.0 + (magnification - 1.0) * DAMPING).min(CEILING);
+        Point::new(hop.x * scale, hop.y * scale)
     }
 
     /// Keyframe timing for a single launch-bounce hop. `progress` is the fraction of the
@@ -1795,15 +2084,25 @@ impl DockView {
         self.magnify_elements();
     }
     pub fn bookmark_config_for(&self, match_id: &str) -> Option<DockBookmark> {
-        Config::with(|c| c.dock.bookmarks.clone())
-            .iter()
-            .find(|b| {
-                b.desktop_id
-                    .strip_suffix(".desktop")
-                    .unwrap_or(&b.desktop_id)
-                    == match_id
-            })
-            .cloned()
+        // Places are looked up here too: clicking one launches it exactly the
+        // way clicking a bookmark does, and only the strip it is drawn in and
+        // the menu it opens tell them apart.
+        Config::with(|c| {
+            c.dock
+                .bookmarks
+                .iter()
+                .chain(c.dock.places.iter())
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .iter()
+        .find(|b| {
+            b.desktop_id
+                .strip_suffix(".desktop")
+                .unwrap_or(&b.desktop_id)
+                == match_id
+        })
+        .cloned()
     }
     /// Returns the icon_stack layer for `identifier` from AppIconsManager (always valid).
     pub fn get_icon_stack_for_app(&self, identifier: &str) -> Option<Layer> {
@@ -1811,11 +2110,11 @@ impl DockView {
     }
 
     pub fn bookmark_application(&self, match_id: &str) -> Option<Application> {
-        self.state
-            .read()
-            .unwrap()
+        let state = self.state.read().unwrap();
+        state
             .launchers
             .iter()
+            .chain(state.places.iter())
             .find(|app| app.match_id == match_id)
             .cloned()
     }
@@ -1945,6 +2244,37 @@ impl DockView {
         } else {
             items.push(MenuItem::action(otto_kit::t!("dock-open")).with_action_id("open"));
             items.push(MenuItem::separator());
+        }
+
+        // The app's own menu, straight out of its desktop entry's `Actions=`:
+        // Empty Trash for the Trash, a private window for a browser. They come
+        // first because they are what this particular icon does — the entries
+        // below are what the dock does with any icon.
+        let actions = match_id
+            .as_deref()
+            .and_then(|mid| self.bookmark_application(mid))
+            .map(|app| app.actions())
+            .unwrap_or_default();
+        if !actions.is_empty() {
+            for action in actions {
+                items.push(
+                    MenuItem::action(action.name).with_action_id(format!("action:{}", action.id)),
+                );
+            }
+            items.push(MenuItem::separator());
+        }
+
+        // A place is in the dock because it is a place; there is nothing to
+        // keep or stop keeping.
+        if match_id.as_deref().is_some_and(|mid| self.is_place(mid)) {
+            if running {
+                items.push(
+                    MenuItem::action(otto_kit::t!("dock-quit"))
+                        .with_action_id("quit")
+                        .with_shortcut("⌘Q"),
+                );
+            }
+            return items;
         }
 
         let keep_label = if bookmarked {
@@ -2295,6 +2625,11 @@ impl DockView {
     /// [`Self::DRAG_THRESHOLD_PX`] along the dock, so a plain click still
     /// launches or focuses the app.
     pub(super) fn begin_icon_drag(&self, match_id: &str, pointer: (f64, f64)) {
+        // A place is not part of the launcher order and cannot be reordered
+        // into it: dragging one would count slots against a strip it is not in.
+        if self.is_place(match_id) {
+            return;
+        }
         *self.icon_drag.write().unwrap() = Some(IconDrag {
             match_id: match_id.to_string(),
             grab_px: self.drag_axis_px(pointer),
@@ -2840,6 +3175,251 @@ mod tests {
         (engine, dock)
     }
 
+    /// A place's slot lands in the places strip, not among the applications:
+    /// past the divider is what says it is a location rather than an app.
+    #[test]
+    #[serial]
+    fn a_place_is_drawn_in_its_own_strip() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        let (engine, dock) = dock_at_with_launchers(DockPosition::Bottom, &["calculator"]);
+
+        let mut state = dock.get_state();
+        state.places = vec![Application::test_new(&trash_match_id())];
+        dock.update_state(&state);
+        settle(&engine);
+
+        let slot = {
+            let layers = dock.app_layers.read().unwrap();
+            layers
+                .get(&trash_match_id())
+                .expect("the place should have been laid out")
+                .layer
+                .clone()
+        };
+        let places = dock.dock_places_container.render_bounds_transformed();
+        let apps = dock.dock_apps_container.render_bounds_transformed();
+        let slot = slot.render_bounds_transformed();
+
+        assert!(
+            slot.left >= places.left && slot.right <= places.right,
+            "the place's slot is outside the places strip: {slot:?} vs {places:?}"
+        );
+        assert!(
+            slot.left >= apps.right,
+            "the places strip must come after the applications"
+        );
+    }
+
+    /// With the place's window open the dock shows one icon, in the places
+    /// strip — not a second one appended to the running applications.
+    #[test]
+    #[serial]
+    fn an_open_place_is_not_also_a_running_app() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        let (engine, dock) = dock_at_with_launchers(DockPosition::Bottom, &["calculator"]);
+
+        let mut state = dock.get_state();
+        state.places = vec![Application::test_new(&trash_match_id())];
+        state.running_apps = vec![Application::test_new(&trash_match_id())];
+        dock.update_state(&state);
+        settle(&engine);
+
+        let apps = dock.display_entries(&dock.get_state());
+        assert!(
+            !apps.iter().any(|(app, _)| app.match_id == trash_match_id()),
+            "the open place was appended to the applications as well"
+        );
+        let places = dock.display_places(&dock.get_state());
+        assert_eq!(places.len(), 1);
+        assert!(places[0].1, "an open place should show its running dot");
+    }
+
+    /// The places strip is exactly as thick as the apps strip, and its slots
+    /// sit on the same line: two strips of the same icons that do not line up
+    /// read as the icons jiggling as the dock re-renders.
+    #[test]
+    #[serial]
+    fn a_place_sits_on_the_same_line_as_the_applications() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        let (engine, dock) = dock_at_with_launchers(DockPosition::Bottom, &["calculator"]);
+
+        let mut state = dock.get_state();
+        state.places = vec![Application::test_new(&trash_match_id())];
+        dock.update_state(&state);
+        settle(&engine);
+
+        let apps = dock.dock_apps_container.render_bounds_transformed();
+        let places = dock.dock_places_container.render_bounds_transformed();
+        assert_eq!(
+            (places.top, places.bottom),
+            (apps.top, apps.bottom),
+            "the places strip is not on the applications' line"
+        );
+
+        // And with magnification off, where the strips are sized by the
+        // render alone: a second writer there sized the places strip without
+        // its slots' dot area, and the icon hopped every time the pointer
+        // moved over the dock.
+        let (engine, dock) = dock_at_with_magnification(DockPosition::Bottom, false);
+        let mut state = dock.get_state();
+        state.launchers = vec![Application::test_new("calculator")];
+        state.places = vec![Application::test_new(&trash_match_id())];
+        dock.update_state(&state);
+        settle(&engine);
+
+        let apps = dock.dock_apps_container.render_bounds_transformed();
+        let places = dock.dock_places_container.render_bounds_transformed();
+        let slot = |id: &str| {
+            dock.app_layers
+                .read()
+                .unwrap()
+                .get(id)
+                .expect("slot")
+                .layer
+                .render_bounds_transformed()
+        };
+        eprintln!("apps {apps:?}\nplaces {places:?}");
+        eprintln!(
+            "calc {:?}\ntrash {:?}",
+            slot("calculator"),
+            slot(&trash_match_id())
+        );
+        assert_eq!(
+            (places.top, places.bottom),
+            (apps.top, apps.bottom),
+            "unmagnified, the places strip is not on the applications' line"
+        );
+    }
+
+    /// With the pointer nowhere near the dock — where it is when the session
+    /// starts — every icon is the same size. The mapping of the pointer onto
+    /// the strips used to clamp a pointer that was still left of the dock to
+    /// the very start of the first strip, which magnified the first icon as
+    /// though the pointer were sitting on it.
+    #[test]
+    #[serial]
+    fn at_rest_no_icon_is_magnified() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        let (engine, dock) =
+            dock_at_with_launchers(DockPosition::Bottom, &["calculator", "files", "term"]);
+        let mut state = dock.get_state();
+        state.places = vec![Application::test_new(&trash_match_id())];
+        dock.update_state(&state);
+        dock.magnify_elements();
+        settle(&engine);
+
+        let height = |id: &str| {
+            dock.app_layers
+                .read()
+                .unwrap()
+                .get(id)
+                .expect("slot")
+                .layer
+                .render_bounds_transformed()
+                .height()
+        };
+        let trash = trash_match_id();
+        let sizes: Vec<f32> = ["calculator", "files", "term", trash.as_str()]
+            .iter()
+            .map(|id| height(id))
+            .collect();
+        assert!(
+            sizes.windows(2).all(|pair| pair[0] == pair[1]),
+            "an icon is magnified with the pointer off the dock: {sizes:?}"
+        );
+    }
+
+    /// While the dock is being resized the places strip stays on the
+    /// applications' line, frame by frame — not only once everything settles.
+    /// A strip whose own size has stopped changing falls back to its content,
+    /// and a slot's content includes the label balloon, which is half again as
+    /// tall as the icon: the trash icon dropped to the bottom of a strip as
+    /// tall as the whole dock and bobbed back up on every render.
+    #[test]
+    #[serial]
+    fn the_places_strip_keeps_the_line_while_the_dock_resizes() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        let (engine, dock) =
+            dock_at_with_launchers(DockPosition::Bottom, &["calculator", "files", "term"]);
+        let mut state = dock.get_state();
+        state.places = vec![Application::test_new(&trash_match_id())];
+        dock.update_state(&state);
+        settle(&engine);
+
+        let slot = |id: &str| {
+            dock.app_layers
+                .read()
+                .unwrap()
+                .get(id)
+                .expect("slot")
+                .layer
+                .render_bounds_transformed()
+        };
+
+        for step in 1..=8 {
+            Config::update(|c| c.dock.size = 1.0 + step as f64 * 0.05);
+            dock.render_dock();
+            for frame in 0..6 {
+                engine.update(0.016);
+                let app = slot("term");
+                let place = slot(&trash_match_id());
+                assert!(
+                    (place.bottom - app.bottom).abs() <= 2.0,
+                    "step {step} frame {frame}: the place is {:.1}px off the applications' line",
+                    place.bottom - app.bottom
+                );
+                // The minimized-window strip is thickened by the same pass and
+                // bobbed the same way; it is checked as a strip because its
+                // slots need real windows to exist.
+                let apps_thickness = dock.dock_apps_container.render_size().y;
+                let windows_thickness = dock.dock_windows_container.render_size().y;
+                assert!(
+                    (windows_thickness - apps_thickness).abs() <= 2.0,
+                    "step {step} frame {frame}: the minimized-window strip is {:.1}px thicker than the applications'",
+                    windows_thickness - apps_thickness
+                );
+            }
+        }
+    }
+
+    /// The wastebasket is a place like any other, named by `[dock]
+    /// trash_desktop_id`: point that at another file manager's desktop entry
+    /// and the icon that follows the can is that entry's, along with the
+    /// command a click runs and the actions in its menu.
+    #[test]
+    #[serial]
+    fn which_place_is_the_wastebasket_is_configurable() {
+        assert_eq!(trash_match_id(), "otto-trash");
+
+        Config::update(|c| c.dock.trash_desktop_id = "org.gnome.Nautilus.desktop".to_string());
+        assert_eq!(trash_match_id(), "org.gnome.Nautilus");
+
+        // Written without the suffix too, since that is how a `match_id` reads.
+        Config::update(|c| c.dock.trash_desktop_id = "thunar".to_string());
+        assert_eq!(trash_match_id(), "thunar");
+
+        Config::update(|c| c.dock.trash_desktop_id = "otto-trash.desktop".to_string());
+    }
+
+    /// An empty places strip takes no room: a stub past the divider would read
+    /// as a gap in a dock that has no places at all.
+    #[test]
+    #[serial]
+    fn an_empty_places_strip_takes_no_room() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        let (engine, dock) = dock_at_with_launchers(DockPosition::Bottom, &["calculator"]);
+        settle(&engine);
+
+        let places = dock.dock_places_container.render_bounds_transformed();
+        assert_eq!(places.width(), 0.0, "an empty places strip reserved width");
+    }
+
     fn launcher_order(dock: &DockView) -> Vec<String> {
         dock.get_state()
             .launchers
@@ -3374,6 +3954,178 @@ mod tests {
             assert!(
                 hugs,
                 "{from:?} -> {to:?}: dot {dot:?} does not hug the edge of slot {slot:?}"
+            );
+        }
+    }
+    /// An icon magnified under the pointer jumps proportionately. The hop is a
+    /// distance in pixels, fixed when the launch began: a grown icon used to
+    /// travel exactly as far as a small one, which next to a dock its own
+    /// growth had made taller read as the jump shrinking.
+    #[test]
+    #[serial]
+    fn a_magnified_icon_jumps_higher() {
+        let rt = runtime();
+        let _guard = rt.enter();
+
+        Config::update(|c| c.dock.size = 1.0);
+        // How far the first launcher's slot rises above its resting place over
+        // one hop, with the pointer where `pointer` says.
+        let amplitude = |pointer: Option<f32>| -> f32 {
+            let (engine, dock) =
+                dock_at_with_launchers(DockPosition::Bottom, &["calculator", "files", "term"]);
+            let slot = || {
+                dock.app_layers
+                    .read()
+                    .unwrap()
+                    .get("calculator")
+                    .expect("slot")
+                    .layer
+                    .render_bounds_transformed()
+            };
+            if let Some(pointer) = pointer {
+                dock.update_magnification_position(pointer);
+                dock.magnify_elements();
+                settle(&engine);
+            }
+            let rest = slot().top;
+            dock.start_bounce("calculator");
+            let mut highest = rest;
+            for _ in 0..60 {
+                engine.update(0.016);
+                highest = highest.min(slot().top);
+            }
+            rest - highest
+        };
+
+        let (_, dock) =
+            dock_at_with_launchers(DockPosition::Bottom, &["calculator", "files", "term"]);
+        let over_the_icon = {
+            let layers = dock.app_layers.read().unwrap();
+            layers
+                .get("calculator")
+                .expect("slot")
+                .layer
+                .render_bounds_transformed()
+                .center_x()
+        };
+        drop(dock);
+
+        let at_rest = amplitude(None);
+        let magnified = amplitude(Some(over_the_icon));
+        assert!(at_rest > 1.0, "the icon did not jump at all: {at_rest}");
+        assert!(
+            magnified > at_rest * 1.05,
+            "the magnified icon jumped {magnified}, no further than the {at_rest} of an icon at rest"
+        );
+        // And not a great deal further: only a fraction of the magnification
+        // reaches the jump, or the icon reads as being flung out of the dock.
+        assert!(
+            magnified < at_rest * 1.35,
+            "the magnified icon jumped {magnified}, far past the {at_rest} of an icon at rest"
+        );
+    }
+
+    /// With nothing magnified, the jump is exactly the height it always was.
+    ///
+    /// Scaling the hop by the icon's size is only ever allowed to *add* to it:
+    /// a dock with magnification switched off, or a pointer nowhere near the
+    /// one that is bouncing, jumps the plain two-thirds of an icon.
+    #[test]
+    #[serial]
+    fn without_magnification_the_jump_is_the_plain_one() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        Config::update(|c| c.dock.size = 1.0);
+        let (engine, dock) = dock_at_with_magnification(DockPosition::Bottom, false);
+        let mut state = dock.get_state();
+        state.launchers = vec![Application::test_new("calculator")];
+        dock.update_state(&state);
+        settle(&engine);
+
+        let slot = || {
+            dock.app_layers
+                .read()
+                .unwrap()
+                .get("calculator")
+                .expect("slot")
+                .layer
+                .render_bounds_transformed()
+        };
+        let rest = slot().top;
+        dock.start_bounce("calculator");
+        let mut highest = rest;
+        for _ in 0..60 {
+            engine.update(0.016);
+            highest = highest.min(slot().top);
+        }
+
+        // The distance `start_bounce` asks for: two-thirds of an icon.
+        let expected = dock.available_icon_size().0 * 0.7;
+        let jumped = rest - highest;
+        assert!(
+            (jumped - expected).abs() < expected * 0.02,
+            "an unmagnified icon jumped {jumped}, not the {expected} the dock asked for"
+        );
+    }
+
+    /// The divider stays between the strips it divides while the icons
+    /// magnify under the pointer. The engine only re-reads a node's layout
+    /// position when the node itself has changed, and nothing about the handle
+    /// does: it stood still as the strips slid past it, overlapping the places
+    /// icons by a dozen pixels before snapping back on some later render.
+    #[test]
+    #[serial]
+    fn the_divider_keeps_up_with_the_magnifying_icons() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        // The icon size decides how much rounding there is between three
+        // independently laid out rects, and it is global state another test
+        // may have left somewhere else.
+        Config::update(|c| c.dock.size = 1.0);
+        let (engine, dock) =
+            dock_at_with_launchers(DockPosition::Bottom, &["calculator", "files", "term"]);
+        let mut state = dock.get_state();
+        state.places = vec![Application::test_new(&trash_match_id())];
+        dock.update_state(&state);
+        settle(&engine);
+
+        // A pointer sweeping along the dock, a frame at a time — the handle
+        // was only ever caught out mid-sweep, which is why this cannot settle
+        // between steps.
+        for step in 0..40 {
+            dock.update_magnification_position(380.0 + step as f32 * 8.0);
+            dock.magnify_elements();
+            engine.update(0.016);
+
+            let apps = dock.dock_apps_container.render_bounds_transformed();
+            let handle = dock.resize_handle.render_bounds_transformed();
+            let places = dock.dock_places_container.render_bounds_transformed();
+            // A pixel of slack for the rounding of three independently laid
+            // out rects; the bug was worth more than ten.
+            assert!(
+                (handle.left - apps.right).abs() <= 1.0,
+                "the handle left the applications behind: apps {apps:?} handle {handle:?}"
+            );
+            assert!(
+                (places.left - handle.right).abs() <= 1.0,
+                "the handle is out of step with the places strip: handle {handle:?} places {places:?}"
+            );
+        }
+
+        // And as the icons shrink back after the pointer leaves the dock:
+        // that animation is slow and has no pointer event of its own, so it is
+        // the half the nudge at motion time cannot cover.
+        dock.demagnify_elements();
+        for _ in 0..30 {
+            engine.update(0.016);
+            let apps = dock.dock_apps_container.render_bounds_transformed();
+            let handle = dock.resize_handle.render_bounds_transformed();
+            let places = dock.dock_places_container.render_bounds_transformed();
+            assert!(
+                (handle.left - apps.right).abs() <= 1.0
+                    && (places.left - handle.right).abs() <= 1.0,
+                "the handle fell behind as the magnification settled: \
+                 apps {apps:?} handle {handle:?} places {places:?}"
             );
         }
     }

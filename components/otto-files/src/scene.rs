@@ -374,7 +374,7 @@ impl Scene {
         }
         self.layout = Some(key);
 
-        let sidebar_w = view::SIDEBAR_W;
+        let sidebar_w = view::sidebar_w();
         let header_h = view::HEADER_H;
 
         // The full *window* height, not the file area's: the sidebar is one
@@ -877,7 +877,7 @@ fn place(layer: &Layer, x: f32, y: f32, width: f32, height: f32) {
 fn place_in_content(layer: &Layer, full: Rect, window_h: f32) {
     place(
         layer,
-        full.left - view::SIDEBAR_W,
+        full.left - view::sidebar_w(),
         0.0,
         full.width(),
         (window_h - view::HEADER_H).max(0.0),
@@ -921,6 +921,7 @@ mod tests {
             kind: Kind::Image,
             size: Some(1),
             modified: Some(SystemTime::UNIX_EPOCH),
+            origin: None,
         }
     }
 
@@ -960,6 +961,7 @@ mod tests {
         };
         let theme = Theme::light();
         let frame = Frame {
+            trash: None,
             width: 1100.0,
             height: 700.0,
             theme: &theme,
