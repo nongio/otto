@@ -41,8 +41,11 @@ pub fn build() -> Pane {
                     )
                     .detail(otto_kit::t!("settings-maximize-button-detail"))
                     .id("show_maximize_button"),
-                    Row::new(otto_kit::t!("settings-font"), Control::Text("Inter".into()))
-                        .id("font_family"),
+                    Row::new(
+                        otto_kit::t!("settings-font"),
+                        Control::Select("Inter".into()),
+                    )
+                    .id("font_family"),
                     // Applies to GTK clients rather than to Otto's own
                     // interface, so it sits with the other appearance rows but
                     // is deliberately not called "Appearance".
