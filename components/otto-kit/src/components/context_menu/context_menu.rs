@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use super::{ContextMenuRenderer, ContextMenuState, ContextMenuStyle};
 use crate::app_runner::AppContext;
@@ -67,7 +68,32 @@ pub struct ContextMenu {
     /// menu. Acted on at the *next* pointer batch — see
     /// [`ContextMenu::register_pointer_handler`].
     dismiss_pending: Rc<Cell<bool>>,
+
+    /// What has been typed at the menu, and when the last character arrived.
+    /// See [`ContextMenu::handle_text`].
+    typeahead: Rc<RefCell<(String, Instant)>>,
 }
+
+/// Whether `label` starts with `query`, ignoring case.
+///
+/// Compared a character at a time rather than by lowercasing both: a font list
+/// is long, this runs on every keystroke, and the common answer is "no" at the
+/// first character.
+fn starts_with_ignoring_case(label: &str, query: &str) -> bool {
+    let mut label = label.chars().flat_map(char::to_lowercase);
+    query
+        .chars()
+        .flat_map(char::to_lowercase)
+        .all(|wanted| label.next() == Some(wanted))
+}
+
+/// How long a typed prefix stands before the next character starts a new one.
+///
+/// Long enough to type a word at an unhurried pace, short enough that coming
+/// back to a menu left open does not have you searching for `nototon` — the
+/// same span the platforms that have had type-to-select for decades settled
+/// on.
+const TYPEAHEAD_TIMEOUT: Duration = Duration::from_millis(1000);
 
 impl ContextMenu {
     // === Construction ===
@@ -92,6 +118,7 @@ impl ContextMenu {
             registered_surfaces: Rc::new(RefCell::new(HashMap::new())),
             closing: Rc::new(Cell::new(false)),
             dismiss_pending: Rc::new(Cell::new(false)),
+            typeahead: Rc::new(RefCell::new((String::new(), Instant::now()))),
         };
 
         // Register pointer handler only for root menu
@@ -116,6 +143,7 @@ impl ContextMenu {
             registered_surfaces: Rc::new(RefCell::new(HashMap::new())),
             closing: Rc::new(Cell::new(false)),
             dismiss_pending: Rc::new(Cell::new(false)),
+            typeahead: Rc::new(RefCell::new((String::new(), Instant::now()))),
         }
     }
 
@@ -164,6 +192,7 @@ impl ContextMenu {
         // arrived) must not wedge the menu permanently open.
         self.closing.set(false);
         self.dismiss_pending.set(false);
+        self.typeahead.borrow_mut().0.clear();
         self.show_menu_at_depth(0, parent, positioner, Some(serial));
     }
 
@@ -1153,6 +1182,106 @@ impl ContextMenu {
     }
 
     /// Handle keyboard input
+    /// Bring the menu back in step with a highlight that has just moved:
+    /// scroll it into view, and repaint the depth it is on along with any
+    /// whose highlight it took over. Last input wins — the keyboard owning
+    /// the selection means every other depth loses it.
+    fn selection_moved(&self, style: &ContextMenuStyle) {
+        let mut state_mut = self.state.borrow_mut();
+        let current_depth = state_mut.depth();
+        let cleared = state_mut.clear_selections_except(current_depth);
+        drop(state_mut);
+        Self::reveal_selection(&self.state, style, current_depth);
+        for d in cleared {
+            if d < self.popups.borrow().len() {
+                let popup_ref = self.popups.borrow()[d].clone();
+                Self::render_menu_at_depth(&self.state, style, &popup_ref, d);
+            }
+        }
+        if current_depth < self.popups.borrow().len() {
+            let popup_ref = self.popups.borrow()[current_depth].clone();
+            Self::render_menu_at_depth(&self.state, style, &popup_ref, current_depth);
+        }
+    }
+
+    /// Jump the highlight to the row whose label starts with what has been
+    /// typed.
+    ///
+    /// A menu of every installed font is over a thousand rows: the arrows are
+    /// not a way through it, and neither is the wheel. Characters typed
+    /// within [`TYPEAHEAD_TIMEOUT`] of each other accumulate into one prefix,
+    /// so `n`, `o`, `t` walks to the first `Not…` rather than to the first
+    /// `N`, then to the first `O`, then to the first `T`.
+    ///
+    /// A character that matches nothing after the prefix starts a fresh
+    /// search from itself rather than being swallowed — otherwise one typo
+    /// makes the menu deaf for a second, which reads as the feature being
+    /// broken.
+    ///
+    /// `text` is the key's own text, as the keyboard produced it; a key with
+    /// none (an arrow, a modifier) never reaches here.
+    pub fn handle_text(&mut self, text: &str) {
+        let typed: String = text.chars().filter(|c| !c.is_control()).collect();
+        if typed.is_empty() {
+            return;
+        }
+
+        let query = {
+            let mut typeahead = self.typeahead.borrow_mut();
+            if typeahead.1.elapsed() > TYPEAHEAD_TIMEOUT {
+                typeahead.0.clear();
+            }
+            typeahead.0.push_str(&typed);
+            typeahead.1 = Instant::now();
+            typeahead.0.clone()
+        };
+
+        let depth = self.state.borrow().depth();
+        let found = self
+            .match_prefix(depth, &query)
+            .or_else(|| {
+                // Nothing starts with the accumulated prefix. Treat what was
+                // just typed as the start of a new one.
+                (query.len() > typed.len()).then(|| {
+                    *self.typeahead.borrow_mut() = (typed.clone(), Instant::now());
+                    self.match_prefix(depth, &typed)
+                })?
+            })
+            .or_else(|| {
+                // A name remembered from the middle — "Sans" for "Noto Sans"
+                // — is a fair thing to type at a list this long, and there is
+                // nothing else for the keystroke to mean.
+                self.match_substring(depth, &query)
+            });
+
+        let Some(index) = found else {
+            return;
+        };
+
+        self.state.borrow_mut().select_at_depth(depth, Some(index));
+        let style = self.style.borrow();
+        self.selection_moved(&style);
+    }
+
+    /// The first row at `depth` whose label starts with `query`, ignoring case.
+    fn match_prefix(&self, depth: usize, query: &str) -> Option<usize> {
+        self.find_item(depth, |label| starts_with_ignoring_case(label, query))
+    }
+
+    /// The first row at `depth` whose label contains `query`, ignoring case.
+    fn match_substring(&self, depth: usize, query: &str) -> Option<usize> {
+        let query = query.to_lowercase();
+        self.find_item(depth, |label| label.to_lowercase().contains(&query))
+    }
+
+    fn find_item(&self, depth: usize, matches: impl Fn(&str) -> bool) -> Option<usize> {
+        let state = self.state.borrow();
+        state
+            .items_at_depth(depth)
+            .iter()
+            .position(|item| item.label().is_some_and(&matches))
+    }
+
     pub fn handle_key(&mut self, key: u32, key_state: wl_keyboard::KeyState) {
         if key_state != wl_keyboard::KeyState::Pressed {
             return;
@@ -1161,46 +1290,12 @@ impl ContextMenu {
 
         match key {
             keycodes::DOWN => {
-                let mut state_mut = self.state.borrow_mut();
-                state_mut.select_next_at_depth(None);
-                let current_depth = state_mut.depth();
-                // Last input wins: keyboard owns the selection, clear all others
-                let cleared = state_mut.clear_selections_except(current_depth);
-                drop(state_mut);
-                Self::reveal_selection(&self.state, &style, current_depth);
-                // Re-render cleared depths
-                for d in cleared {
-                    if d < self.popups.borrow().len() {
-                        let popup_ref = self.popups.borrow()[d].clone();
-                        Self::render_menu_at_depth(&self.state, &style, &popup_ref, d);
-                    }
-                }
-                // Render at current depth
-                if current_depth < self.popups.borrow().len() {
-                    let popup_ref = self.popups.borrow()[current_depth].clone();
-                    Self::render_menu_at_depth(&self.state, &style, &popup_ref, current_depth);
-                }
+                self.state.borrow_mut().select_next_at_depth(None);
+                self.selection_moved(&style);
             }
             keycodes::UP => {
-                let mut state_mut = self.state.borrow_mut();
-                state_mut.select_previous_at_depth(None);
-                let current_depth = state_mut.depth();
-                // Last input wins: keyboard owns the selection, clear all others
-                let cleared = state_mut.clear_selections_except(current_depth);
-                drop(state_mut);
-                Self::reveal_selection(&self.state, &style, current_depth);
-                // Re-render cleared depths
-                for d in cleared {
-                    if d < self.popups.borrow().len() {
-                        let popup_ref = self.popups.borrow()[d].clone();
-                        Self::render_menu_at_depth(&self.state, &style, &popup_ref, d);
-                    }
-                }
-                // Render at current depth
-                if current_depth < self.popups.borrow().len() {
-                    let popup_ref = self.popups.borrow()[current_depth].clone();
-                    Self::render_menu_at_depth(&self.state, &style, &popup_ref, current_depth);
-                }
+                self.state.borrow_mut().select_previous_at_depth(None);
+                self.selection_moved(&style);
             }
             keycodes::HOME | keycodes::END => {
                 let mut state_mut = self.state.borrow_mut();
@@ -1411,5 +1506,30 @@ impl ContextMenu {
             // whichever path (ESC, outside click, keyboard leave) closed us.
             self.hide();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_typed_prefix_ignores_case_and_stops_at_the_first_difference() {
+        assert!(starts_with_ignoring_case("Noto Sans CJK SC", "noto"));
+        assert!(starts_with_ignoring_case("Noto Sans", "NOTO S"));
+        assert!(starts_with_ignoring_case("Inter", ""));
+        assert!(!starts_with_ignoring_case("Inter", "not"));
+        // A query longer than the label is not a prefix of it.
+        assert!(!starts_with_ignoring_case("Inter", "Internationale"));
+    }
+
+    /// Endonyms are what the language picker lists, so the matching has to
+    /// hold up outside ASCII — where a character's lowercase form can be more
+    /// than one character.
+    #[test]
+    fn a_prefix_matches_outside_ascii() {
+        assert!(starts_with_ignoring_case("Русский", "рус"));
+        assert!(starts_with_ignoring_case("Español", "ESPAÑ"));
+        assert!(!starts_with_ignoring_case("Español", "espn"));
     }
 }

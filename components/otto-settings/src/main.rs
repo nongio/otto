@@ -2034,12 +2034,18 @@ impl App for SettingsApp {
             let closed = match self.dropdowns.get(id) {
                 Some(menu) => {
                     // The raw keycode, which is what the menu's own key table
-                    // is written against.
+                    // is written against. The text goes over separately: a
+                    // menu long enough to need typing through — every font on
+                    // the machine — cannot work out what a keycode means
+                    // under this layout, and the keyboard already has.
                     menu.handle_key(event.raw_code, state);
                     !menu.is_open()
                 }
                 None => true,
             };
+                    if let Some(text) = event.utf8.as_deref() {
+                        menu.handle_text(text);
+                    }
             if closed {
                 *self.open_dropdown.lock().unwrap() = None;
             }
