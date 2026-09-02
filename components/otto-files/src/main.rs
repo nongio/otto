@@ -88,7 +88,13 @@ mod tests {
 
     #[test]
     fn the_trash_uri_is_recognised_however_it_is_spelled() {
-        for uri in ["trash:", "trash://", "trash:///", "TRASH:///", "trash:///sub"] {
+        for uri in [
+            "trash:",
+            "trash://",
+            "trash:///",
+            "TRASH:///",
+            "trash:///sub",
+        ] {
             assert!(is_trash_uri(uri), "{uri} should open the Trash");
         }
         for other in ["file:///home", "--trash", "trash", "/home/trash"] {
