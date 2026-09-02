@@ -245,7 +245,10 @@ One window per request. Layout:
   into.
 - **File view** — the shared list / icon / column presentation.
 - **Name field** — save modes only, pre-filled from `current_name` or the base
-  name of `current_file`, with the extension unselected on focus.
+  name of `current_file`, with the extension unselected on focus. Its label
+  sits in a gutter wide enough for the label as translated, never less than the
+  width the English needs, so a longer translation moves the field rather than
+  running under it.
 - **Filter control** — a dropdown of the request's filters, plus "All Files"
   when the request supplies none. Hidden when the request supplies no filters
   and the mode is not save.

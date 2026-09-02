@@ -226,6 +226,34 @@ const fn color(
 use Apply::{Live, Restart};
 use SettingType::{Bool, Double, Int, Str, StrList};
 
+/// The languages the language picker offers, as the `locales` setting spells
+/// them. The empty string is the absence of a preference — the environment
+/// answers — and is a real choice rather than a blank row, so it leads.
+const LOCALE_CHOICES: &[&str] = &[
+    "", "en-GB", "en-US", "de", "es", "fr", "it", "pl", "pt-BR", "ru", "uk", "zh-CN",
+];
+
+/// Presentation for `LOCALE_CHOICES`, in the same order.
+///
+/// Endonyms, passed through untranslated — `choice_label` only looks up the
+/// `settings-choice-` keys, which is what the first entry is. A language list
+/// has to stay readable to someone who cannot read the interface it is drawn
+/// in, which is precisely the person about to change it.
+const LOCALE_LABELS: &[&str] = &[
+    "settings-choice-system-language",
+    "English (United Kingdom)",
+    "English (United States)",
+    "Deutsch",
+    "Español",
+    "Français",
+    "Italiano",
+    "Polski",
+    "Português (Brasil)",
+    "Русский",
+    "Українська",
+    "简体中文",
+];
+
 /// The accent names the compositor's palette can resolve, offered as the
 /// swatches a colour well shows. The theme owns the list, so a name offered
 /// here always resolves; a hex literal outside it is accepted too.
@@ -366,13 +394,18 @@ pub static SETTINGS: &[SettingSpec] = &[
         "GTK theme name handed to clients. Empty auto-detects.",
         Restart,
     ),
-    spec(
-        "locales",
-        StrList,
-        "Locales",
-        "Preferred locales, most preferred first.",
-        Restart,
-    ),
+    SettingSpec {
+        choices: LOCALE_CHOICES,
+        choice_labels: LOCALE_LABELS,
+        ..spec(
+            "locales",
+            StrList,
+            "Language",
+            "The language Otto and the applications it starts are drawn in. \
+             Empty follows the environment.",
+            Restart,
+        )
+    },
     // ---- Dock ------------------------------------------------------------
     ranged(
         "dock.size",
@@ -768,6 +801,28 @@ mod tests {
                 spec.id
             );
         }
+    }
+
+    /// The language picker offers exactly the catalogues that are compiled
+    /// in, named as they name themselves. Two lists that have to agree, in
+    /// two crates: a catalogue nobody can pick, or a language offered that
+    /// falls straight back to English, fails here rather than in front of
+    /// the user.
+    #[test]
+    fn every_catalogue_is_offered_as_a_language() {
+        let available = otto_kit::i18n::available();
+
+        assert_eq!(LOCALE_CHOICES[0], "", "the system entry leads the list");
+        assert_eq!(
+            LOCALE_CHOICES[1..].to_vec(),
+            available.iter().map(|(tag, _)| *tag).collect::<Vec<_>>(),
+            "the offered languages have drifted from the compiled-in catalogues"
+        );
+        assert_eq!(
+            LOCALE_LABELS[1..].to_vec(),
+            available.iter().map(|(_, name)| *name).collect::<Vec<_>>(),
+            "the language names have drifted from the catalogues' own"
+        );
     }
 
     #[test]

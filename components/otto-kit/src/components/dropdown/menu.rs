@@ -204,6 +204,24 @@ impl DropdownMenu {
         self.menu.clone().handle_key(key, state);
     }
 
+    /// Feed the text a key produced to the open menu, so it can be walked by
+    /// typing the start of a value's name.
+    ///
+    /// The companion to [`handle_key`](Self::handle_key), which sees the
+    /// keycode and so cannot know what the key means under the user's layout.
+    /// Call it alongside, with the key event's own text, for keys that have
+    /// one; it does nothing when the menu is closed, or for a key that
+    /// produced no printable text.
+    ///
+    /// A pop-up button listing a few positions does not need this. One
+    /// listing every font on the machine is unusable without it.
+    pub fn handle_text(&self, text: &str) {
+        if !self.is_open() {
+            return;
+        }
+        self.menu.clone().handle_text(text);
+    }
+
     /// The values the open menu is listing, in order, as they were given —
     /// not as they were elided to fit.
     ///

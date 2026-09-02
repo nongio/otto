@@ -98,7 +98,7 @@ settings-group-window-switcher = Window switcher
 settings-follow-cursor = Show on the pointer's display
 
 settings-group-language = Language
-settings-preferred-languages = Preferred languages
+settings-display-language = Display language
 
 settings-group-configuration = Configuration
 settings-configuration-file = Configuration file
@@ -605,6 +605,7 @@ schema-appswitcher-colorize-icons-description = Let the dock's icon tint reach t
 
 # The auto-detect entry in a theme pop-up, offered when no theme is set.
 settings-choice-automatic = Automatic
+settings-choice-system-language = System language
 
 
 ## Accent colour names

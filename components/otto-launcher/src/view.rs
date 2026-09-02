@@ -64,6 +64,55 @@ pub const MAX_CARD_H: f32 = FIELD_H + 1.0 + LIST_PAD * 2.0 + MAX_ROWS as f32 * R
 /// space that was already empty.
 const TOP_FRACTION: f32 = 0.16;
 
+/// How tall the card is with `rows` rows on it, in logical points.
+///
+/// Free of the [`Palette`] on purpose. This is the shape the compositor is
+/// told to hit-test the pointer against, and the launcher has to be able to
+/// work it out from a row count alone — the buffer it is drawn into says
+/// nothing about it.
+pub fn card_height(rows: usize) -> f32 {
+    if rows == 0 {
+        // No list, so no divider and no padding around it either: the card is
+        // the field.
+        return FIELD_H;
+    }
+    FIELD_H + 1.0 + LIST_PAD * 2.0 + rows as f32 * ROW_H
+}
+
+/// Where the card's top-left corner sits inside a parent surface `surface`
+/// points across and down.
+pub fn card_origin(surface: (f32, f32)) -> (f32, f32) {
+    let (width, height) = surface;
+    (
+        ((width - CARD_W) / 2.0).round(),
+        (height * TOP_FRACTION).round(),
+    )
+}
+
+/// The rectangle the launcher should take pointer input over, in the parent
+/// surface's coordinates: the card as it is drawn, and nothing else.
+///
+/// Neither surface's own geometry answers this. The card's buffer is allocated
+/// at [`MAX_CARD_H`] however few rows are on it, and the parent surface covers
+/// the whole output — so a launcher that says nothing about its input region
+/// claims the screen with one surface and eight rows it is not showing with
+/// the other. The shadow is deliberately outside the rectangle: a shadow is
+/// something to see past, not something to click.
+///
+/// Rounded outwards, because a region is in whole pixels and a card that lost
+/// its bottom row of them would have a one-pixel dead strip along the edge the
+/// pointer arrives at.
+pub fn input_rect(surface: (f32, f32), rows: usize) -> (i32, i32, i32, i32) {
+    let (x, y) = card_origin(surface);
+    let (left, top) = (x.floor(), y.floor());
+    (
+        left as i32,
+        top as i32,
+        ((x + CARD_W).ceil() - left) as i32,
+        ((y + card_height(rows)).ceil() - top) as i32,
+    )
+}
+
 /// A row as the scene needs it — what to draw, with the icon already resolved.
 struct Row {
     layer: Layer,
@@ -248,17 +297,18 @@ impl Palette {
 
     /// Where the card subsurface belongs, in the parent surface's coordinates.
     pub fn card_origin(&self) -> (f32, f32) {
-        let (width, height) = self.size;
-        (
-            ((width - CARD_W) / 2.0).round(),
-            (height * TOP_FRACTION).round(),
-        )
+        card_origin(self.size)
     }
 
     /// How much of the card is currently in use. The buffer stays
     /// [`MAX_CARD_H`] tall; this is what the compositor should show of it.
     pub fn card_size(&self) -> (f32, f32) {
-        (CARD_W, self.card_height(self.visible))
+        (CARD_W, card_height(self.visible))
+    }
+
+    /// The card as the compositor should hit-test it — see [`input_rect`].
+    pub fn input_rect(&self) -> (i32, i32, i32, i32) {
+        input_rect(self.size, self.visible)
     }
 
     /// Which visible row a point in the *card's own* coordinates is over.
@@ -388,19 +438,10 @@ impl Palette {
         self.apply_card_height(shown, Some(Transition::ease_out_quad(0.12)));
     }
 
-    fn card_height(&self, rows: usize) -> f32 {
-        if rows == 0 {
-            // No list, so no divider and no padding around it either: the card
-            // is the field.
-            return FIELD_H;
-        }
-        FIELD_H + 1.0 + LIST_PAD * 2.0 + rows as f32 * ROW_H
-    }
-
     fn apply_card_height(&self, rows: usize, transition: Option<Transition>) {
         self.divider
             .set_opacity(if rows == 0 { 0.0_f32 } else { 1.0_f32 }, None);
-        let height = self.card_height(rows);
+        let height = card_height(rows);
         self.card
             .set_size(LayerSize::points(CARD_W, height), transition);
         self.list
@@ -577,6 +618,36 @@ mod tests {
         assert_eq!(
             input.state.scroll_px, 0.0,
             "a query this short fits, so nothing should be scrolled out of view"
+        );
+    }
+
+    /// The launcher's buffer is the card at its tallest whatever is on it, so
+    /// the input region — not the buffer — is the only thing that says where
+    /// the launcher ends. A card showing nothing but the field must claim the
+    /// field and no more, or the eight rows' worth of transparent buffer under
+    /// it goes on swallowing the presses and hovers meant for the dock.
+    #[test]
+    fn the_input_rect_is_the_card_that_is_drawn() {
+        let surface = (1920.0, 1080.0);
+        let (x, y, width, field_only) = input_rect(surface, 0);
+        assert_eq!((x, y), (650, 173), "the card is centred, above centre");
+        assert_eq!(width, CARD_W as i32);
+        assert_eq!(field_only, FIELD_H as i32, "no rows, no list to point at");
+        assert!(
+            (field_only as f32) < MAX_CARD_H,
+            "the empty card must not claim the whole buffer"
+        );
+
+        // And it grows and shrinks with the list, rather than staying at
+        // whichever height it was first asked about.
+        let (_, _, _, one_row) = input_rect(surface, 1);
+        let (_, _, _, eight_rows) = input_rect(surface, MAX_ROWS);
+        assert!(one_row > field_only);
+        assert_eq!(eight_rows, MAX_CARD_H as i32);
+        assert_eq!(
+            input_rect(surface, 0).3,
+            field_only,
+            "emptying the list gives the height back"
         );
     }
 }

@@ -85,6 +85,15 @@ impl FontCache {
         size: f32,
     ) -> Option<layers::skia::Font> {
         let typeface = self.font_mgr.match_family_style(family.as_ref(), style)?;
+        // The interface font need not cover the language the desktop is drawn
+        // in — Inter has no CJK — and Skia does no per-glyph fallback of its
+        // own, so the dock and the window titles came out as empty boxes.
+        let typeface = otto_kit::typography::covering_typeface(
+            &self.font_mgr,
+            typeface,
+            family.as_ref(),
+            style,
+        );
         let mut font = layers::skia::Font::from_typeface(typeface, size);
         font.set_subpixel(true);
         font.set_edging(layers::skia::font::Edging::SubpixelAntiAlias);
@@ -176,6 +185,8 @@ impl FontCache {
             .font_mgr
             .legacy_make_typeface(None, style)
             .expect("Failed to create default typeface");
+        let typeface =
+            otto_kit::typography::covering_typeface(&self.font_mgr, typeface, "sans-serif", style);
         let mut font = layers::skia::Font::from_typeface(typeface, size);
         font.set_subpixel(true);
         font.set_edging(layers::skia::font::Edging::SubpixelAntiAlias);

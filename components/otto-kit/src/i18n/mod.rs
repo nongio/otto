@@ -27,8 +27,8 @@
 //! Locales resolve through a chain, most specific first, always ending at
 //! `en-GB`. A user asking for `en-US` gets `[en-US, en-GB]`, so `en-US.ftl`
 //! only needs the keys that actually differ — spellings and date formats —
-//! and everything else falls through. The same holds for `pt-BR` and the
-//! Chinese scripts.
+//! and everything else falls through. The same holds for `pt-BR`, and for
+//! the Chinese tags that all resolve to `zh-CN`.
 //!
 //! A key missing from every bundle in the chain is a bug, not a runtime
 //! error: the key itself is returned so the gap is visible in the interface
@@ -80,7 +80,57 @@ const CATALOGUES: &[(&str, &str)] = &[
     ),
     ("ru", include_str!("../../../../resources/locales/ru.ftl")),
     ("uk", include_str!("../../../../resources/locales/uk.ftl")),
+    (
+        "zh-CN",
+        include_str!("../../../../resources/locales/zh-CN.ftl"),
+    ),
 ];
+
+/// What each catalogue's language calls itself.
+///
+/// Endonyms, not translations: a language picker is the one list in a desktop
+/// that has to be readable by someone who cannot read the language it is
+/// currently drawn in, so every entry stays in its own language whatever the
+/// interface around it is set to. Kept beside [`CATALOGUES`] and checked
+/// against it by a test, so a catalogue can never arrive without a name.
+const ENDONYMS: &[(&str, &str)] = &[
+    ("en-GB", "English (United Kingdom)"),
+    ("en-US", "English (United States)"),
+    ("de", "Deutsch"),
+    ("es", "Español"),
+    ("fr", "Français"),
+    ("it", "Italiano"),
+    ("pl", "Polski"),
+    ("pt-BR", "Português (Brasil)"),
+    ("ru", "Русский"),
+    ("uk", "Українська"),
+    ("zh-CN", "简体中文"),
+];
+
+/// The languages Otto can draw itself in, as `(tag, endonym)`, in the order a
+/// picker should offer them.
+///
+/// The tag is what belongs in the `locales` setting; the endonym is what the
+/// user should see. This is the list a language dropdown is built from, so
+/// that adding a catalogue adds a row without anyone editing a second list.
+pub fn available() -> &'static [(&'static str, &'static str)] {
+    ENDONYMS
+}
+
+/// The catalogue a requested tag resolves to, if any.
+///
+/// Answers the question a language picker has to ask about a value it did not
+/// write: `zh_CN`, `zh_CN.UTF-8`, `zh-Hans` and `zh` are all the Simplified
+/// Chinese catalogue, and a dropdown that compared them literally would show
+/// no selection at all for a perfectly good setting.
+pub fn match_catalogue(tag: &str) -> Option<&'static str> {
+    expand(tag).into_iter().find_map(|candidate| {
+        CATALOGUES
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(&candidate))
+            .map(|(name, _)| *name)
+    })
+}
 
 /// A bundle is `FluentBundle<FluentResource, IntlLangMemoizer>` — the concrete
 /// memoizer matters only because the default alias is not `Send`.
@@ -103,8 +153,19 @@ static INTERNED: OnceLock<RwLock<HashSet<&'static str>>> = OnceLock::new();
 /// come from `config.locales` or the `LC_*`/`LANG` environment. Unknown tags
 /// are skipped. Calling this more than once is a no-op — the first call wins,
 /// so the compositor sets the locale before any component reads a string.
+///
+/// An empty list means the user has expressed no preference, which is not the
+/// same as asking for English: the environment answers instead, so a session
+/// started under `LANG=de_DE.UTF-8` draws German chrome without anyone having
+/// had to say so twice.
 pub fn init(requested: &[String]) {
-    CHAIN.get_or_init(|| build_chain(requested));
+    CHAIN.get_or_init(|| {
+        if requested.is_empty() {
+            build_chain(&env_locales())
+        } else {
+            build_chain(requested)
+        }
+    });
 }
 
 /// Initialise from the environment, for components started outside the
@@ -184,16 +245,20 @@ fn expand(tag: &str) -> Vec<String> {
 
     let mut out = vec![cleaned.clone()];
     if let Some((lang, _)) = cleaned.split_once('-') {
-        // A bare `zh` is ambiguous between the scripts, and `zh-Hans` is by
-        // far the more common on Linux. Anything else falls back to its
+        // A bare `zh` is ambiguous between the scripts. Simplified is far
+        // the more common on Linux, which names it by its territory rather
+        // than its script, so every Chinese tag — `zh-SG` and `zh-Hans`
+        // included — falls back to `zh-CN`. Anything else falls back to its
         // language subtag.
         if lang.eq_ignore_ascii_case("zh") {
-            out.push("zh-Hans".to_string());
+            if !out.iter().any(|c| c.eq_ignore_ascii_case("zh-CN")) {
+                out.push("zh-CN".to_string());
+            }
         } else if !out.iter().any(|c| c == lang) {
             out.push(lang.to_string());
         }
     } else if cleaned.eq_ignore_ascii_case("zh") {
-        out.push("zh-Hans".to_string());
+        out.push("zh-CN".to_string());
     } else if cleaned.eq_ignore_ascii_case("en") {
         // Bare `en` means American English by convention nearly everywhere it
         // appears, even though Otto authors in British English.
@@ -230,6 +295,39 @@ pub fn current_locale() -> String {
         .unwrap_or_else(|| SOURCE_LOCALE.to_string())
 }
 
+/// A BCP 47 tag written the way POSIX writes it: `pt-BR` is `pt_BR`. Any
+/// encoding or modifier already on the string is dropped.
+///
+/// The subtag after the language is usually a territory, which POSIX spells
+/// the same way, so the conversion is mostly punctuation. A script subtag is
+/// not: POSIX has no place for one, and `zh_Hans` names nothing on any
+/// machine. Those are mapped to the territory conventionally used for the
+/// script instead, which is what both the C library and `chrono` have a
+/// locale for. Only Chinese needs this today — the other scripts Otto could
+/// meet (`sr-Latn`) are POSIX modifiers rather than territories, and are left
+/// alone until there is a catalogue that wants one.
+pub fn posix_form(tag: &str) -> String {
+    let bare = tag.split(['.', '@']).next().unwrap_or(tag);
+    if let Some((lang, script)) = bare.split_once(['-', '_']) {
+        if let Some(territory) = script_territory(lang, script) {
+            return format!("{lang}_{territory}");
+        }
+    }
+    bare.replace('-', "_")
+}
+
+/// The territory that stands in for a script subtag, if this is one.
+fn script_territory(lang: &str, script: &str) -> Option<&'static str> {
+    match (
+        lang.to_ascii_lowercase().as_str(),
+        script.to_ascii_lowercase().as_str(),
+    ) {
+        ("zh", "hans") => Some("CN"),
+        ("zh", "hant") => Some("TW"),
+        _ => None,
+    }
+}
+
 /// The current locale as a POSIX name, for libraries that want one.
 ///
 /// `chrono` localises month and weekday names only against a POSIX-ish locale
@@ -237,9 +335,9 @@ pub fn current_locale() -> String {
 /// here are the conventional default for each language Otto ships; a tag that
 /// already carries its own region keeps it.
 pub fn posix_locale() -> String {
-    let tag = current_locale();
-    if let Some((lang, region)) = tag.split_once('-') {
-        return format!("{lang}_{region}");
+    let tag = posix_form(&current_locale());
+    if tag.contains('_') {
+        return tag;
     }
     let region = match tag.as_str() {
         "de" => "DE",
@@ -451,8 +549,56 @@ mod tests {
 
     #[test]
     fn bare_chinese_resolves_to_simplified() {
-        assert_eq!(expand("zh"), vec!["zh", "zh-Hans"]);
-        assert_eq!(expand("zh_CN.UTF-8"), vec!["zh-CN", "zh-Hans"]);
+        assert_eq!(expand("zh"), vec!["zh", "zh-CN"]);
+        assert_eq!(expand("zh_CN.UTF-8"), vec!["zh-CN"]);
+        // Simplified outside the mainland, and the script spelling, both land
+        // on the catalogue rather than falling through to English.
+        assert_eq!(expand("zh_SG"), vec!["zh-SG", "zh-CN"]);
+        assert_eq!(expand("zh-Hans"), vec!["zh-Hans", "zh-CN"]);
+    }
+
+    #[test]
+    fn every_catalogue_names_itself() {
+        assert_eq!(available().len(), CATALOGUES.len());
+        for (tag, endonym) in available() {
+            assert!(
+                CATALOGUES.iter().any(|(name, _)| name == tag),
+                "`{tag}` is offered but has no catalogue"
+            );
+            assert!(!endonym.is_empty(), "`{tag}` has no name of its own");
+        }
+    }
+
+    #[test]
+    fn a_setting_finds_its_catalogue_however_it_is_spelt() {
+        for tag in ["zh-CN", "zh_CN", "zh_CN.UTF-8", "zh-Hans", "zh", "zh_SG"] {
+            assert_eq!(match_catalogue(tag), Some("zh-CN"), "`{tag}`");
+        }
+        assert_eq!(match_catalogue("pt_BR"), Some("pt-BR"));
+        // A language with no catalogue is not silently promoted to one.
+        assert_eq!(match_catalogue("ja_JP"), None);
+        assert_eq!(match_catalogue(""), None);
+    }
+
+    #[test]
+    fn a_territory_survives_the_posix_rewrite() {
+        assert_eq!(posix_form("pt-BR"), "pt_BR");
+        assert_eq!(posix_form("de_DE@euro"), "de_DE");
+        assert_eq!(posix_form("it_IT.UTF-8"), "it_IT");
+        assert_eq!(posix_form("it"), "it");
+    }
+
+    /// `zh_Hans` names no locale on any machine — neither `chrono` nor the C
+    /// library has one — so the script has to become the territory it stands
+    /// for, whichever spelling the tag arrives in.
+    #[test]
+    fn a_script_becomes_the_territory_it_stands_for() {
+        assert_eq!(posix_form("zh-Hans"), "zh_CN");
+        assert_eq!(posix_form("zh_Hans"), "zh_CN");
+        assert_eq!(posix_form("zh-hans.UTF-8"), "zh_CN");
+        assert_eq!(posix_form("zh-Hant"), "zh_TW");
+        // A territory that merely looks like one is still a territory.
+        assert_eq!(posix_form("zh-CN"), "zh_CN");
     }
 
     #[test]

@@ -98,7 +98,7 @@ settings-group-window-switcher = Fensterumschalter
 settings-follow-cursor = Auf dem Bildschirm des Zeigers anzeigen
 
 settings-group-language = Sprache
-settings-preferred-languages = Bevorzugte Sprachen
+settings-display-language = Anzeigesprache
 
 settings-group-configuration = Konfiguration
 settings-configuration-file = Konfigurationsdatei
@@ -603,6 +603,7 @@ schema-appswitcher-colorize-icons-description = Die Symbolfärbung des Docks auc
 
 # The auto-detect entry in a theme pop-up, offered when no theme is set.
 settings-choice-automatic = Automatisch
+settings-choice-system-language = Systemsprache
 
 
 ## Accent colour names

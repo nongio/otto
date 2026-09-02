@@ -24,6 +24,7 @@ use otto_kit::protocols::otto_timing_function_v1::Preset;
 use otto_kit::surfaces::{LayerShellSurface, SubsurfaceSurface};
 use otto_kit::{App, AppContext, AppRunner, ObjectId};
 use skia_safe::Rect;
+use smithay_client_toolkit::compositor::Region;
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
 use wayland_client::protocol::{wl_keyboard, wl_surface};
@@ -84,6 +85,9 @@ struct Launcher {
     /// Last size handed to the card's style, so an unchanged frame does not
     /// re-send it.
     card_size: (f32, f32),
+    /// Last rectangle handed to the two surfaces' input regions, for the same
+    /// reason.
+    input_region: Option<(i32, i32, i32, i32)>,
 
     sources: Vec<Box<dyn Source>>,
     labels: Vec<&'static str>,
@@ -104,8 +108,9 @@ struct Launcher {
 
     shift: bool,
     sized: bool,
-    /// Set once the launcher has been interacted with, after which losing the
-    /// keyboard means "gone" rather than "not arrived yet".
+    /// Set once the launcher has the keyboard, or has been interacted with,
+    /// after which losing the keyboard means "gone" rather than "not arrived
+    /// yet".
     engaged: bool,
 
     /// Set once the card has something on it and the entrance has been
@@ -205,6 +210,7 @@ impl Launcher {
             card: None,
             palette: None,
             card_size: (0.0, 0.0),
+            input_region: None,
             sources,
             labels,
             items: Vec::new(),
@@ -362,6 +368,65 @@ impl Launcher {
             self.card_size = size;
             self.resize_card(size);
         }
+        self.update_input_region();
+    }
+
+    /// Tell the compositor which part of the launcher is worth pointing at.
+    ///
+    /// Both surfaces have to say the same thing, and neither says it by
+    /// itself. The card's buffer is the card at its tallest and is shown
+    /// clipped, so with no region of its own it goes on catching the pointer
+    /// over rows that are not there. And Otto takes a layer surface's own
+    /// input region as the clickable area of everything under it, so a parent
+    /// anchored to all four edges and asking for nothing claims the whole
+    /// output: while the launcher was up, the dock beneath it stopped
+    /// answering the pointer at all. Both are set to the card as drawn — the
+    /// shadow outside it included, because a shadow is something to see past
+    /// rather than something to click.
+    ///
+    /// A press outside the region now reaches whatever is under it instead of
+    /// the launcher, which is why the keyboard going elsewhere is what closes
+    /// the launcher — see [`Launcher::on_keyboard_leave`].
+    fn update_input_region(&mut self) {
+        let (Some(surface), Some(card), Some(palette)) = (
+            self.surface.as_ref(),
+            self.card.as_ref(),
+            self.palette.as_ref(),
+        ) else {
+            return;
+        };
+        // Before the first configure the card has no place to be, and a region
+        // built from a zero-sized output would be somewhere off to the left.
+        if !self.sized {
+            return;
+        }
+        let rect = palette.input_rect();
+        if self.input_region == Some(rect) {
+            return;
+        }
+        let compositor = AppContext::compositor_state();
+        let (Ok(on_parent), Ok(on_card)) = (Region::new(compositor), Region::new(compositor))
+        else {
+            tracing::warn!("no wl_region; the launcher will take input over the whole output");
+            return;
+        };
+        let (x, y, width, height) = rect;
+        on_parent.add(x, y, width, height);
+        // The same rectangle in the card's own coordinates, which start at its
+        // top-left corner.
+        on_card.add(0, 0, width, height);
+        let parent = surface.wl_surface();
+        parent.set_input_region(Some(on_parent.wl_region()));
+        card.wl_surface()
+            .set_input_region(Some(on_card.wl_region()));
+        // An input region is double-buffered state: until each surface commits
+        // it, the compositor keeps hit-testing against the one it already has.
+        // The frame this update belongs to would carry it, but only if there is
+        // one — a card whose height changed without anything else changing
+        // still has to be re-shaped.
+        parent.commit();
+        card.wl_surface().commit();
+        self.input_region = Some(rect);
     }
 
     /// Tell the compositor how much of the card's buffer is card. The frost,
@@ -660,6 +725,9 @@ impl App for Launcher {
         }
         self.sized = true;
         self.dirty = true;
+        // The card is centred on the output, so a different output size is a
+        // different rectangle to hit-test.
+        self.update_input_region();
     }
 
     /// The portal answers the colour scheme asynchronously, so the launcher is
@@ -835,6 +903,10 @@ impl App for Launcher {
         // Something else has taken the keyboard. A modal that has lost its
         // input is only in the way — but not before it has ever had it, which
         // is what `engaged` guards against at startup.
+        //
+        // This is also how a click outside the card closes the launcher now
+        // that the card is the only thing it takes input over: the press lands
+        // on the window or the dock icon under it, and the keyboard follows.
         if self.engaged {
             self.close();
         }
@@ -869,11 +941,11 @@ impl App for Launcher {
                 }
                 PointerEventKind::Press { .. } => {
                     self.engaged = true;
-                    // The card's buffer stays at its full height even when the
-                    // list is short, so the surface catches presses under a
-                    // card that is not there. Those are beside it, like a press
-                    // on the parent — and beside the card is the other way of
-                    // saying Escape.
+                    // The input region should have kept these away — it is
+                    // the card as drawn, not the card's full-height buffer —
+                    // but a region is applied a commit late, and a press that
+                    // arrives against the old one is still a press beside the
+                    // card, which is the other way of saying Escape.
                     let beside = !on_card || y > palette.card_size().1;
                     if beside {
                         self.close();
@@ -995,6 +1067,14 @@ impl App for Launcher {
                 AppContext::request_exit();
             }
             return;
+        }
+
+        // The keyboard arriving is what "arrived" means. Noticing it here
+        // rather than waiting for the first keystroke is what lets a click
+        // outside close the launcher: that click never reaches us, and the
+        // only thing it leaves behind is the keyboard moving on.
+        if !self.engaged && AppContext::keyboard_focus().is_some() {
+            self.engaged = true;
         }
 
         let mut changed = false;

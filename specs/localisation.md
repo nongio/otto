@@ -49,11 +49,12 @@ desktop agrees on it.
 ### Catalogues
 
 Strings live in one Fluent catalogue per locale, keyed by stable identifiers
-rather than by their English text. Ten catalogues ship: `en-GB`, a sparse
-`en-US`, and full translations for `de`, `es`, `fr`, `it`, `pl`, `pt-BR`, `ru`
-and `uk`. They are compiled into the binaries, so a component can render its
-first frame before any filesystem the user controls is necessarily mounted, and
-a catalogue on disk cannot drift out of step with the keys the code asks for.
+rather than by their English text. Eleven catalogues ship: `en-GB`, a sparse
+`en-US`, and full translations for `de`, `es`, `fr`, `it`, `pl`, `pt-BR`, `ru`,
+`uk` and `zh-CN`. They are compiled into the binaries, so a component can
+render its first frame before any filesystem the user controls is necessarily
+mounted, and a catalogue on disk cannot drift out of step with the keys the
+code asks for.
 
 `en-GB` is the source of truth and the only catalogue guaranteed to carry every
 key — 448 of them at the time of writing. `en-US` is an overlay: it carries
@@ -69,6 +70,15 @@ contribute nothing. A bare `en` resolves to `en-US`, because that is what a bare
 English. Candidates with no catalogue are skipped rather than treated as an
 error.
 
+Chinese is named the way Linux names it. Simplified and Traditional are a
+script distinction rather than a territorial one, and CLDR would write the
+catalogue `zh-Hans`, but every Linux desktop — and every application whose
+translation Otto sits beside — spells it `zh_CN`, so Otto does too. The
+friendliness that the script spelling would have bought is kept in the chain
+instead: every Chinese tag falls back to `zh-CN`, so `zh`, `zh_SG` and a
+`zh-Hans` typed into the setting all reach the catalogue rather than dropping
+through to English.
+
 A key no bundle in the chain carries is a bug, not a runtime failure: the key
 itself is rendered, so the gap is visible in the interface — `dock-keep-in-dock`
 where a label should be — and logged, rather than taking the desktop down.
@@ -78,7 +88,7 @@ where a label should be — and logged, rather than taking the desktop down.
 In priority order:
 
 1. **The compositor's `locales` setting**, a list of tags, most preferred first.
-   This is what the *Preferred languages* row in Settings writes.
+   This is what the *Display language* row in Settings writes.
 2. **The environment**, consulted only when the setting cannot be read or is
    empty: `LC_ALL`, `LC_MESSAGES`, `LANG`, `LANGUAGE`, in that order, with
    `LANGUAGE` read as a colon-separated priority list and the others as single
@@ -99,12 +109,65 @@ session was started with `LANG=en_GB` must get an Italian desktop — not an
 Italian compositor bolted to English components, which is what deferring to the
 environment per-process would produce.
 
-The setting's shipped default is `en`. A user on an Italian system therefore
-gets an English desktop until they change the setting; leaving the list empty
-is what asks Otto to take the language from the environment instead.
+The setting ships empty, which is not a preference for English but the absence
+of a preference: the environment answers instead, for Otto's own chrome and for
+the applications it starts alike, so a user on an Italian system gets an
+Italian desktop without having said so twice. Naming a language in the setting
+is what overrides the environment, in both directions at once. Defaulting to a
+concrete `en` would make the shipped configuration an instruction, silently
+overruling the `LANG` of every user who never opened the language row.
 
 Language is resolved once, before the first string is looked up and before
 anything is drawn. The first resolution wins for the life of the process.
+
+### Picking a language
+
+The *Display language* row is a pop-up button listing the languages Otto has a
+catalogue for, plus a *System language* entry at the top whose value is the
+empty list — the absence of a preference described above, and a real choice
+rather than a blank row.
+
+Each language is named in itself: *Deutsch*, *Русский*, *简体中文*, never
+*German*, *Russian*, *Chinese (Simplified)*. A language list is the one list in
+a desktop that has to be readable by someone who cannot read the language it is
+currently drawn in, which is exactly the person about to change it, so the names
+are endonyms and are not translated. The list is derived from the compiled-in
+catalogues and checked against them by a test in both crates that hold a copy:
+a catalogue nobody can pick, or a language offered that falls straight back to
+English, fails the build rather than the user.
+
+A dropdown offers one language where the setting holds a chain. The first entry
+is the choice, matched to a catalogue rather than compared literally — a
+configuration that says `zh_CN`, `zh_CN.UTF-8` or `zh-Hans` is showing the same
+language the menu calls `zh-CN`, and a picker that showed no selection for a
+setting that is working perfectly would be lying about it. Picking a language
+writes that one tag; the chain to `en-GB` is built at load time and needs no
+help from the setting.
+
+### Drawing a language
+
+A catalogue is not enough to see a language. Skia draws a string with exactly
+one typeface and does no per-glyph fallback of its own: a run it has no glyph
+for comes out as empty boxes rather than falling through to another face the
+way fontconfig would arrange it. Otto's interface is set in Inter, which
+carries no CJK, so shipping the Chinese catalogue drew the entire desktop —
+compositor chrome, bar, dock, every component — in boxes.
+
+So the interface font is resolved against the language: where the family the
+user asked for cannot draw the script the interface is in, the font manager is
+asked for one that can, and that is what the whole interface is set in. The
+substitution is per-interface rather than per-run — the language is fixed for
+the life of the process, and one face for the chrome reads better than two
+disagreeing about weight and metrics halfway along a label. The families this
+reaches (Source Han Sans, the Noto CJK siblings) carry Latin as well, so the
+Latin that remains inside a Chinese interface — a file name, a version number —
+stays in a face that matches the rest.
+
+It is the language that decides, not the string. Text in a script the interface
+is not in — a Chinese file name on an English desktop — is still drawn in the
+interface font and still comes out as boxes. Per-glyph fallback is what would
+fix that, and it belongs at the point text is drawn rather than at the point a
+font is chosen; see Open Questions.
 
 ### Not hot-reloadable
 
@@ -168,7 +231,9 @@ starts, before anything is spawned:
 - `LANGUAGE`, gettext's colon-separated priority list, always. Each configured
   tag contributes its POSIX form and its bare language (`pt_BR:pt`), and the
   list is honoured whether or not those locales were ever generated on the
-  machine.
+  machine. The POSIX form is the same conversion the clock uses, script subtags
+  included, so a user who writes the catalogue's own name in the setting gets
+  `zh_CN:zh` rather than a `zh_Hans` no application has a translation under.
 - `LANG` and `LC_MESSAGES`, only when the locale actually exists here — named
   the way `setlocale` wants it, `it_IT.UTF-8`. Naming a locale that was never
   generated is worse than saying nothing: `setlocale` fails and the application
@@ -207,6 +272,12 @@ Rendering those names in the user's language needs a locale in POSIX form
 already carries a region keeps it, and a bare language subtag is paired with
 the conventional default region for that language. A tag the date library does
 not know still produces a clock, in the source locale's names.
+
+A script subtag is not a region and cannot be rewritten as one — `zh_Hans`
+names nothing to either the C library or the date library — so a script is
+replaced by the territory conventionally used for it: `zh-Hans` is `zh_CN`,
+`zh-Hant` is `zh_TW`. Scripts that POSIX writes as a modifier rather than a
+territory (`sr-Latn`) are left alone until a catalogue needs one.
 
 ### Settings labels
 
@@ -265,9 +336,12 @@ point the string is drawn.
    keeping every variable each English string uses.
 2. Rewrite the three format keys to the locale's convention rather than
    translating them.
-3. Register the catalogue so it is compiled in.
+3. Register the catalogue so it is compiled in, with the language's name for
+   itself beside it, and offer the tag in the settings schema's language
+   picker. Two lists in two crates have to agree; a test in each says so.
 4. If the language's conventional region is not already known to the POSIX
-   mapping, add it, or the clock's weekday and month names stay in English.
+   mapping, add it, or the clock's weekday and month names stay in English. A
+   catalogue named by script rather than region needs its territory there too.
 
 A regional variant of a language that already ships can instead be added as a
 sparse overlay, carrying only the keys that differ, the way `en-US` overlays
@@ -282,8 +356,11 @@ sparse overlay, carrying only the keys that differ, the way `en-US` overlays
   be silently unreadable forever.
 - No translation drops a variable its English string uses. A count that never
   reaches the text reads as a missing number.
-- The locale chain resolves POSIX spellings, bare `en`, and the Chinese scripts
-  as described above.
+- The locale chain resolves POSIX spellings, bare `en`, and every Chinese tag
+  — bare, Singaporean, or written by script — as described above.
+- The POSIX rewrite keeps a region, drops an encoding or modifier, and turns a
+  script into its territory; and the environment the compositor exports for a
+  script-named locale is the one gettext can actually use.
 - The portal read gives the same answer whether or not a runtime is already
   running, exercised from a multi-threaded runtime, from a current-thread
   runtime, and from no runtime at all: in `portal.rs`,
@@ -375,16 +452,14 @@ which operation the undo stack recorded, which month `civil_from_days` landed on
 
 ## Open Questions
 
-- The chain resolves `zh` and `zh-CN` to `zh-Hans`, and the POSIX mapping knows
-  `ja`, but no Chinese or Japanese catalogue ships. Either the catalogues follow
-  or the mappings are speculative.
-- An empty `locales` list means "use the environment" for components reading it
-  over the portal, but the compositor resolving its own empty list goes straight
-  to `en-GB` instead. The two should agree.
-- The settings pane labels the row *Preferred languages* while the schema calls
-  the setting *Locales*. One name should win.
-- Whether the language preference should also drive `LANG` for applications the
-  user launches, so a translated Otto does not sit around untranslated apps.
+- The POSIX mapping knows `ja`, but no Japanese catalogue ships. Either one
+  follows or the mapping is speculative.
+- Text in a script the interface is not set in — a Chinese file name on an
+  English desktop, a Greek window title — still draws as boxes. The fix is
+  per-glyph fallback at the point text is drawn, which means every `draw_str`
+  and every width measurement in the toolkit goes through a run-splitting
+  helper rather than straight at a `Font`. Worth doing; larger than choosing a
+  face by locale, and it changes measurement everywhere.
 - Whether a region preference separate from the language is worth having — a
   user who wants an English interface with European dates has no way to say so
   short of an overlay catalogue.

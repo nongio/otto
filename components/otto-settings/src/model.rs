@@ -204,6 +204,20 @@ impl Control {
                 }
             }
             (Control::Select(_), Value::Text(text)) => Control::Select(text.clone()),
+            // A list setting drawn as a dropdown is a one-of-many choice that
+            // happens to be written as a list: the language, whose setting is
+            // a fallback chain but whose picker offers one language. The first
+            // entry is the choice, resolved to the catalogue it names — a
+            // configuration may say `zh_CN`, `zh_CN.UTF-8` or `zh-Hans` where
+            // the menu offers `zh-CN`, and comparing them literally would show
+            // no selection at all for a setting that is working perfectly.
+            (Control::Select(_), Value::List(items)) => Control::Select(
+                items
+                    .first()
+                    .and_then(|tag| otto_kit::i18n::match_catalogue(tag))
+                    .unwrap_or_default()
+                    .to_string(),
+            ),
             (Control::Text(_), Value::Text(text)) => Control::Text(text.clone()),
             // A list setting edited as text — preferred languages, xkb options
             // — reads and writes the comma-separated form.

@@ -189,7 +189,9 @@ impl ContextMenuRenderer {
         canvas.translate((0.0, -scroll));
 
         // Draw menu items with states
-        Self::draw_items_with_selection(canvas, items, selected, style, logical_w);
+        Self::draw_items_with_selection(
+            canvas, items, selected, style, logical_w, scroll, logical_h,
+        );
 
         canvas.restore();
 
@@ -269,41 +271,78 @@ impl ContextMenuRenderer {
     }
 
     /// Draw items with explicit selection (for depth-specific rendering)
+    /// Draw the rows, hover state applied, clipped to what the box can show.
+    ///
+    /// `scroll` is how far the list has slid up — the canvas is already
+    /// translated by it — and `visible_height` the box it slides inside.
+    /// Rows outside that band are not built at all: a menu listing every
+    /// installed font is well over a thousand rows while a dozen are on
+    /// screen, and each row costs a clone and a text layout whether or not
+    /// the clip goes on to throw it away. Culling here is what keeps such a
+    /// menu openable rather than a stall on every frame it is up.
     fn draw_items_with_selection(
         canvas: &Canvas,
         items: &[MenuItem],
         selected: Option<usize>,
         style: &ContextMenuStyle,
         width: f32,
+        scroll: f32,
+        visible_height: f32,
     ) {
         // Save canvas state and translate for padding
         canvas.save();
         canvas.translate((style.horizontal_padding, style.vertical_padding));
 
-        // Apply hover state to items and convert to MenuItem components
-        let menu_items_with_state: Vec<MenuItem> = items
-            .iter()
-            .enumerate()
-            .map(|(i, item_data)| {
-                let mut data = item_data.clone();
-                data.height = style.item_height_of(item_data);
-                if Some(i) == selected {
-                    data.set_visual_state(VisualState::Hovered);
-                }
-                data
-            })
-            .collect();
+        let (offset, visible) = Self::visible_items(items, selected, style, scroll, visible_height);
 
-        // Render using MenuItemGroup at origin (canvas is already translated)
+        // Render using MenuItemGroup, offset to where the first drawn row
+        // actually sits in the list rather than at the list's own origin.
         MenuItemGroup::new()
-            .at(0.0, 0.0)
+            .at(0.0, offset)
             .with_width(width - style.horizontal_padding * 2.0)
             .with_style(style.item_style())
-            .items(menu_items_with_state)
+            .items(visible)
             .render(canvas);
 
         // Restore canvas state
         canvas.restore();
+    }
+
+    /// The rows intersecting the visible band, and the y the first of them
+    /// sits at in the list's own coordinates.
+    ///
+    /// Split out from the drawing so the culling can be tested without a
+    /// canvas: the arithmetic is where an off-by-one shows up as a row that
+    /// blinks out at the edge of a scroll.
+    fn visible_items(
+        items: &[MenuItem],
+        selected: Option<usize>,
+        style: &ContextMenuStyle,
+        scroll: f32,
+        visible_height: f32,
+    ) -> (f32, Vec<MenuItem>) {
+        let top = scroll;
+        let bottom = scroll + visible_height;
+
+        let mut y = 0.0_f32;
+        let mut offset = 0.0_f32;
+        let mut visible: Vec<MenuItem> = Vec::new();
+        for (i, item_data) in items.iter().enumerate() {
+            let height = style.item_height_of(item_data);
+            if y + height >= top && y <= bottom {
+                if visible.is_empty() {
+                    offset = y;
+                }
+                let mut data = item_data.clone();
+                data.height = height;
+                if Some(i) == selected {
+                    data.set_visual_state(VisualState::Hovered);
+                }
+                visible.push(data);
+            }
+            y += height;
+        }
+        (offset, visible)
     }
 
     /// Hit test to determine which menu item is at the given position
@@ -421,6 +460,40 @@ mod tests {
             .with_item_metrics(13.0, 20.0)
             .with_max_height(100.0);
         (items, style)
+    }
+
+    #[test]
+    fn only_the_rows_in_the_box_are_built() {
+        let (items, style) = scrolling_menu();
+
+        // Twenty 20pt rows in a 100pt box: five fit, plus the ones straddling
+        // the edges. Nothing near a list's worth.
+        let (offset, visible) =
+            ContextMenuRenderer::visible_items(&items, None, &style, 0.0, 100.0);
+        assert_eq!(offset, 0.0);
+        assert!(visible.len() < items.len());
+        assert!(visible.len() >= 5, "the box should be full");
+
+        // Scrolled down, the drawn rows start further down the list and are
+        // offset to where they actually sit, so they land under the pointer
+        // where the hit test says they are. The row straddling the top edge
+        // is drawn too — half of it is on screen.
+        let (offset, scrolled) =
+            ContextMenuRenderer::visible_items(&items, None, &style, 200.0, 100.0);
+        assert_eq!(offset, 180.0);
+        assert!(scrolled.len() <= visible.len() + 1);
+        assert!(scrolled.len() >= 5);
+    }
+
+    #[test]
+    fn an_uncapped_menu_still_draws_all_of_itself() {
+        let (items, _) = scrolling_menu();
+        let style = ContextMenuStyle::default().with_item_metrics(13.0, 20.0);
+        let height = ContextMenuRenderer::content_height(&items, &style);
+        let (offset, visible) =
+            ContextMenuRenderer::visible_items(&items, None, &style, 0.0, height);
+        assert_eq!(offset, 0.0);
+        assert_eq!(visible.len(), items.len());
     }
 
     #[test]

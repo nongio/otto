@@ -98,7 +98,7 @@ settings-group-window-switcher = Alternateur de fenêtres
 settings-follow-cursor = Afficher sur l’écran du pointeur
 
 settings-group-language = Langue
-settings-preferred-languages = Langues préférées
+settings-display-language = Langue d'affichage
 
 settings-group-configuration = Configuration
 settings-configuration-file = Fichier de configuration
@@ -607,6 +607,7 @@ schema-appswitcher-colorize-icons-description = Appliquer la teinte des icônes 
 
 # The auto-detect entry in a theme pop-up, offered when no theme is set.
 settings-choice-automatic = Automatique
+settings-choice-system-language = Langue du système
 
 
 ## Accent colour names
