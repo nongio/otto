@@ -86,6 +86,52 @@ const CATALOGUES: &[(&str, &str)] = &[
     ),
 ];
 
+/// What each catalogue's language calls itself.
+///
+/// Endonyms, not translations: a language picker is the one list in a desktop
+/// that has to be readable by someone who cannot read the language it is
+/// currently drawn in, so every entry stays in its own language whatever the
+/// interface around it is set to. Kept beside [`CATALOGUES`] and checked
+/// against it by a test, so a catalogue can never arrive without a name.
+const ENDONYMS: &[(&str, &str)] = &[
+    ("en-GB", "English (United Kingdom)"),
+    ("en-US", "English (United States)"),
+    ("de", "Deutsch"),
+    ("es", "Español"),
+    ("fr", "Français"),
+    ("it", "Italiano"),
+    ("pl", "Polski"),
+    ("pt-BR", "Português (Brasil)"),
+    ("ru", "Русский"),
+    ("uk", "Українська"),
+    ("zh-CN", "简体中文"),
+];
+
+/// The languages Otto can draw itself in, as `(tag, endonym)`, in the order a
+/// picker should offer them.
+///
+/// The tag is what belongs in the `locales` setting; the endonym is what the
+/// user should see. This is the list a language dropdown is built from, so
+/// that adding a catalogue adds a row without anyone editing a second list.
+pub fn available() -> &'static [(&'static str, &'static str)] {
+    ENDONYMS
+}
+
+/// The catalogue a requested tag resolves to, if any.
+///
+/// Answers the question a language picker has to ask about a value it did not
+/// write: `zh_CN`, `zh_CN.UTF-8`, `zh-Hans` and `zh` are all the Simplified
+/// Chinese catalogue, and a dropdown that compared them literally would show
+/// no selection at all for a perfectly good setting.
+pub fn match_catalogue(tag: &str) -> Option<&'static str> {
+    expand(tag).into_iter().find_map(|candidate| {
+        CATALOGUES
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(&candidate))
+            .map(|(name, _)| *name)
+    })
+}
+
 /// A bundle is `FluentBundle<FluentResource, IntlLangMemoizer>` — the concrete
 /// memoizer matters only because the default alias is not `Send`.
 type Bundle = FluentBundle<FluentResource, intl_memoizer::concurrent::IntlLangMemoizer>;
@@ -509,6 +555,29 @@ mod tests {
         // on the catalogue rather than falling through to English.
         assert_eq!(expand("zh_SG"), vec!["zh-SG", "zh-CN"]);
         assert_eq!(expand("zh-Hans"), vec!["zh-Hans", "zh-CN"]);
+    }
+
+    #[test]
+    fn every_catalogue_names_itself() {
+        assert_eq!(available().len(), CATALOGUES.len());
+        for (tag, endonym) in available() {
+            assert!(
+                CATALOGUES.iter().any(|(name, _)| name == tag),
+                "`{tag}` is offered but has no catalogue"
+            );
+            assert!(!endonym.is_empty(), "`{tag}` has no name of its own");
+        }
+    }
+
+    #[test]
+    fn a_setting_finds_its_catalogue_however_it_is_spelt() {
+        for tag in ["zh-CN", "zh_CN", "zh_CN.UTF-8", "zh-Hans", "zh", "zh_SG"] {
+            assert_eq!(match_catalogue(tag), Some("zh-CN"), "`{tag}`");
+        }
+        assert_eq!(match_catalogue("pt_BR"), Some("pt-BR"));
+        // A language with no catalogue is not silently promoted to one.
+        assert_eq!(match_catalogue("ja_JP"), None);
+        assert_eq!(match_catalogue(""), None);
     }
 
     #[test]

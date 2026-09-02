@@ -113,8 +113,8 @@ pub fn build() -> Pane {
             group(
                 otto_kit::t!("settings-group-language"),
                 vec![Row::new(
-                    otto_kit::t!("settings-preferred-languages"),
-                    Control::Text("en".into()),
+                    otto_kit::t!("settings-display-language"),
+                    Control::Select(String::new()),
                 )
                 .id("locales")],
             ),

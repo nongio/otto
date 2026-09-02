@@ -577,7 +577,11 @@ fn open_menu(
                 } else {
                     match slot {
                         Some(line) => keyboard::set_action(line, value.clone()),
-                        None => apply(id, settings_client::Value::Text(value.clone())),
+                        // Typed the way the schema declares the setting, not
+                        // the way the menu happens to hold it: `locales` is a
+                        // list, and a plain string was refused on its type —
+                        // the language would silently never change.
+                        None => apply(id, settings_client::text_for(id, value)),
                     }
                 }
             }
@@ -2039,13 +2043,13 @@ impl App for SettingsApp {
                     // the machine — cannot work out what a keycode means
                     // under this layout, and the keyboard already has.
                     menu.handle_key(event.raw_code, state);
+                    if let Some(text) = event.utf8.as_deref() {
+                        menu.handle_text(text);
+                    }
                     !menu.is_open()
                 }
                 None => true,
             };
-                    if let Some(text) = event.utf8.as_deref() {
-                        menu.handle_text(text);
-                    }
             if closed {
                 *self.open_dropdown.lock().unwrap() = None;
             }

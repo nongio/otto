@@ -88,7 +88,7 @@ where a label should be — and logged, rather than taking the desktop down.
 In priority order:
 
 1. **The compositor's `locales` setting**, a list of tags, most preferred first.
-   This is what the *Preferred languages* row in Settings writes.
+   This is what the *Display language* row in Settings writes.
 2. **The environment**, consulted only when the setting cannot be read or is
    empty: `LC_ALL`, `LC_MESSAGES`, `LANG`, `LANGUAGE`, in that order, with
    `LANGUAGE` read as a colon-separated priority list and the others as single
@@ -119,6 +119,30 @@ overruling the `LANG` of every user who never opened the language row.
 
 Language is resolved once, before the first string is looked up and before
 anything is drawn. The first resolution wins for the life of the process.
+
+### Picking a language
+
+The *Display language* row is a pop-up button listing the languages Otto has a
+catalogue for, plus a *System language* entry at the top whose value is the
+empty list — the absence of a preference described above, and a real choice
+rather than a blank row.
+
+Each language is named in itself: *Deutsch*, *Русский*, *简体中文*, never
+*German*, *Russian*, *Chinese (Simplified)*. A language list is the one list in
+a desktop that has to be readable by someone who cannot read the language it is
+currently drawn in, which is exactly the person about to change it, so the names
+are endonyms and are not translated. The list is derived from the compiled-in
+catalogues and checked against them by a test in both crates that hold a copy:
+a catalogue nobody can pick, or a language offered that falls straight back to
+English, fails the build rather than the user.
+
+A dropdown offers one language where the setting holds a chain. The first entry
+is the choice, matched to a catalogue rather than compared literally — a
+configuration that says `zh_CN`, `zh_CN.UTF-8` or `zh-Hans` is showing the same
+language the menu calls `zh-CN`, and a picker that showed no selection for a
+setting that is working perfectly would be lying about it. Picking a language
+writes that one tag; the chain to `en-GB` is built at load time and needs no
+help from the setting.
 
 ### Drawing a language
 
@@ -312,7 +336,9 @@ point the string is drawn.
    keeping every variable each English string uses.
 2. Rewrite the three format keys to the locale's convention rather than
    translating them.
-3. Register the catalogue so it is compiled in.
+3. Register the catalogue so it is compiled in, with the language's name for
+   itself beside it, and offer the tag in the settings schema's language
+   picker. Two lists in two crates have to agree; a test in each says so.
 4. If the language's conventional region is not already known to the POSIX
    mapping, add it, or the clock's weekday and month names stay in English. A
    catalogue named by script rather than region needs its territory there too.

@@ -97,7 +97,7 @@ settings-group-window-switcher = 窗口切换器
 settings-follow-cursor = 在指针所在的显示器上显示
 
 settings-group-language = 语言
-settings-preferred-languages = 首选语言
+settings-display-language = 显示语言
 
 settings-group-configuration = 配置
 settings-configuration-file = 配置文件
@@ -600,6 +600,7 @@ schema-appswitcher-colorize-icons-description = 让 Dock 的图标色调延伸�
 
 # The auto-detect entry in a theme pop-up, offered when no theme is set.
 settings-choice-automatic = 自动
+settings-choice-system-language = 系统语言
 
 
 ## Accent colour names

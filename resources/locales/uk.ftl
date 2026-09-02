@@ -98,7 +98,7 @@ settings-group-window-switcher = Перемикач вікон
 settings-follow-cursor = Показувати на дисплеї з вказівником
 
 settings-group-language = Мова
-settings-preferred-languages = Бажані мови
+settings-display-language = Мова інтерфейсу
 
 settings-group-configuration = Налаштування
 settings-configuration-file = Файл налаштувань
@@ -611,6 +611,7 @@ schema-appswitcher-colorize-icons-description = Застосовувати то�
 
 # The auto-detect entry in a theme pop-up, offered when no theme is set.
 settings-choice-automatic = Автоматично
+settings-choice-system-language = Системна мова
 
 
 ## Accent colour names

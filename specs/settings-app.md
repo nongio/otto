@@ -263,11 +263,17 @@ are:
 
 - **General** — appearance (light/dark), accent colour, rounded corners, which
   end of a title bar the window controls sit at, font family, background
-  colour and image, cursor theme and size, icon theme, and the preferred
-  languages, which are what every part of Otto localises itself against. That
+  colour and image, cursor theme and size, icon theme, and the display
+  language, which is what every part of Otto localises itself against. That
   setting requires a restart to take effect, and the app says so like any
-  other; an empty list asks Otto to take the language from the environment
-  instead ([localisation.md](./localisation.md)).
+  other; its *System language* entry asks Otto to take the language from the
+  environment instead ([localisation.md](./localisation.md)).
+
+  The font family and the display language are pop-up buttons rather than text
+  fields. Both list more values than a menu can show at once — every family
+  fontconfig knows of, in the first case — so both are menus that cap their
+  height, scroll, and are walked by typing the start of a name
+  ([context-menus.md](./context-menus.md)).
 
   The accent is a `color` setting rather than an enumeration: the colour well
   offers the palette's named accents as swatches, and picking one sends the
