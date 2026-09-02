@@ -1,6 +1,15 @@
 [Desktop Entry]
 Name=Otto
 Comment=A visually-focused Wayland compositor with smooth animations and gestures
+Comment[de]=Ein visuell ausgerichteter Wayland-Compositor mit weichen Animationen und Gesten
+Comment[es]=Un compositor Wayland centrado en lo visual, con animaciones y gestos fluidos
+Comment[fr]=Un compositeur Wayland axé sur le visuel, aux animations et gestes fluides
+Comment[it]=Un compositor Wayland attento all’aspetto, con animazioni e gesti fluidi
+Comment[pl]=Kompozytor Wayland stawiający na wygląd, z płynnymi animacjami i gestami
+Comment[pt_BR]=Um compositor Wayland focado no visual, com animações e gestos suaves
+Comment[ru]=Wayland-композитор с упором на визуальность, плавные анимации и жесты
+Comment[uk]=Wayland-композитор із наголосом на візуальність, плавні анімації та жести
+Comment[zh_CN]=注重视觉呈现的 Wayland 合成器，动画与手势流畅
 Exec=/usr/bin/otto
 Type=Application
 DesktopNames=Otto
