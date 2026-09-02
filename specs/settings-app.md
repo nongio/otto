@@ -176,6 +176,20 @@ Cancelling changes nothing. A request that fails is reported, and the setting
 keeps the value it had; the app never writes an empty path because a dialog
 went wrong.
 
+### Clearing a file
+
+A file setting can also be emptied, which for the wallpaper is how the desktop
+goes back to its background colour. The affordance belongs to the preview, not
+to the row: a small round button on the thumbnail's top-right corner, revealed
+only while the pointer is over the picture and pressed like any other button —
+armed on press, acting on release, taken back by sliding off. Hidden at rest
+because a wallpaper is worth seeing whole, and a control parked on it
+permanently covers the one thing the row exists to show.
+
+It writes an empty path rather than resetting the setting: a reset restores
+whatever the defaults carry, which for a wallpaper may well be another image,
+and "none" is what was asked for.
+
 ### Showing what a value looks like
 
 Some settings are chosen by eye, and their value — a path, a theme name — is
@@ -186,8 +200,9 @@ accounts for it and nothing else has to move out of the way.
 Three rows have one:
 
 - **Background image** shows the chosen file as a thumbnail, in the image's own
-  aspect. A row with nothing chosen has no preview and reserves no space for
-  one.
+  aspect, and carries the remove button described above. A row with nothing
+  chosen has no preview and reserves no space for one — and so nothing to
+  hover, either.
 - **Cursor theme** and **icon theme** show a few sample images from the selected
   theme — the pointer, the text cursor, the hand, help and busy; a folder, home,
   a document, a terminal, a browser — on a light card. The card is light rather

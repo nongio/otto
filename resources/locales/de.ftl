@@ -28,6 +28,7 @@ common-copy = Kopieren
 common-paste = Einfügen
 common-rename = Umbenennen
 common-delete = Löschen
+common-replace = Ersetzen
 common-move = Verschieben
 
 
@@ -269,6 +270,15 @@ files-move-count-to-trash =
         [one] { $count } Objekt in den Papierkorb legen
        *[other] { $count } Objekte in den Papierkorb legen
     }
+files-put-back = Zurücklegen
+files-empty-trash = Papierkorb leeren
+files-delete-immediately = Sofort löschen
+# $count ist immer zwei oder mehr; für ein einzelnes Objekt gilt files-delete-immediately.
+files-delete-count-immediately =
+    { $count ->
+        [one] { $count } Objekt sofort löschen
+       *[other] { $count } Objekte sofort löschen
+    }
 
 
 ## Files — sidebar and columns
@@ -287,6 +297,9 @@ files-column-name = Name
 files-column-size = Größe
 files-column-kind = Art
 files-column-date-modified = Änderungsdatum
+# Die Überschrift der Spalte „Art“ im Papierkorb-Fenster, wo wichtiger ist,
+# woher eine Datei kam, als um welche Art von Datei es sich handelt.
+files-column-original-location = Ursprünglicher Ort
 
 
 ## Files — kinds
@@ -342,6 +355,11 @@ files-new-window-failed = Neues Fenster konnte nicht geöffnet werden: { $error 
 ## Files — the listing
 
 files-folder-empty = Dieser Ordner ist leer.
+files-trash-empty = Der Papierkorb ist leer.
+# Eine Datei im Papierkorb zu öffnen würde eine Anwendung auf etwas starten,
+# das weggeworfen wurde; angeboten wird stattdessen, sie zurückzulegen.
+files-trash-cant-open = Objekte im Papierkorb können nicht geöffnet werden. Erst zurücklegen.
+files-trash-cant-rename = Objekte im Papierkorb können nicht umbenannt werden.
 files-folder-denied = Keine Berechtigung, den Inhalt dieses Ordners anzuzeigen.
 files-folder-gone = Dieser Ordner existiert nicht mehr.
 files-folder-open-failed = Dieser Ordner konnte nicht geöffnet werden: { $error }
@@ -394,6 +412,15 @@ files-replace-one = „{ $name }“ existiert bereits. Ersetzen?
 files-replace-one-detail = Beim Ersetzen wird der aktuelle Inhalt überschrieben.
 files-replace-many = { $count } dieser Dateien existieren bereits. Ersetzen?
 files-replace-many-detail = Beim Ersetzen werden die aktuellen Inhalte überschrieben.
+files-delete-forever-one = „{ $name }“ endgültig löschen?
+files-delete-forever-many = { $count } Objekte endgültig löschen?
+files-delete-forever-detail = Das lässt sich nicht rückgängig machen.
+files-empty-trash-confirm = Papierkorb leeren?
+files-empty-trash-detail =
+    { $count ->
+        [one] { $count } Objekt wird endgültig gelöscht. Das lässt sich nicht rückgängig machen.
+       *[other] { $count } Objekte werden endgültig gelöscht. Das lässt sich nicht rückgängig machen.
+    }
 
 
 ## Files — sizes

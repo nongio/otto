@@ -821,6 +821,7 @@ impl Otto<UdevData> {
                 crtc,
                 (mode.size.w, mode.size.h),
                 self.workspaces.dock.position(),
+                self.workspaces.dock.plane_strip_thickness_px(),
             );
         }
 
@@ -968,8 +969,11 @@ impl Otto<UdevData> {
             .unwrap_or(false);
         // The switcher, unlike the dock, can be shown on any output (see
         // `appswitcher.follow_cursor`) — only its host output pushes the plane.
-        let switcher_active =
-            self.workspaces.app_switcher.alive() && self.workspaces.is_app_switcher_output(&output);
+        // Visibility, not `alive()`: that flag drops the moment a hide starts,
+        // and gating the plane on it pulled the panel off the display on the
+        // first frame of its fade-out.
+        let switcher_active = self.workspaces.app_switcher.is_visible()
+            && self.workspaces.is_app_switcher_output(&output);
         let overlay_active =
             self.workspaces.is_overlay_ui_active(&output) || self.dnd_icon.is_some();
         {

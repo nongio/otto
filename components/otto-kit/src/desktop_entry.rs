@@ -23,6 +23,21 @@ pub struct AppInfo {
     pub app_id: String,
     /// Categories (from `Categories=`).
     pub categories: Vec<String>,
+    /// The entry's actions (`Actions=`, one `[Desktop Action …]` group each),
+    /// in the order the file lists them. These are the app's own menu — what
+    /// the dock offers on a right-click besides opening and quitting it.
+    pub actions: Vec<AppAction>,
+}
+
+/// One `[Desktop Action …]` group: a label and the command it runs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AppAction {
+    /// The group's id, as listed in `Actions=`.
+    pub id: String,
+    /// Localized `Name=` of the action group.
+    pub name: String,
+    /// Its `Exec=` line, still holding any `%` field codes.
+    pub exec: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -121,6 +136,26 @@ fn load_app_info(app_id: &str) -> Option<AppInfo> {
         .map(|cats| cats.into_iter().map(|c| c.to_string()).collect())
         .unwrap_or_default();
 
+    let actions: Vec<AppAction> = entry
+        .actions()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|id| {
+            // An action with no command is not something that can be offered:
+            // the menu entry would be a label that does nothing.
+            let exec = entry.action_exec(id)?.to_string();
+            let name = entry
+                .action_name(id, &locales)
+                .map(|name| name.to_string())
+                .unwrap_or_else(|| id.to_string());
+            Some(AppAction {
+                id: id.to_string(),
+                name,
+                exec,
+            })
+        })
+        .collect();
+
     Some(AppInfo {
         name,
         icon_name,
@@ -128,6 +163,7 @@ fn load_app_info(app_id: &str) -> Option<AppInfo> {
         desktop_file_id,
         app_id: app_id.to_string(),
         categories,
+        actions,
     })
 }
 

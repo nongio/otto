@@ -98,6 +98,10 @@ struct SettingsApp {
     /// press has to be remembered in between — and drawn, which is the whole
     /// point of remembering it.
     pressed: Arc<Mutex<Option<view::Pressed>>>,
+    /// The file row whose preview the pointer is over, if any. The preview
+    /// only shows its remove button while it is hovered, so the pane has to
+    /// know where the pointer is even when nothing is being pressed.
+    hovered_preview: Arc<Mutex<Option<&'static str>>>,
     /// Modifier state, kept from `on_modifiers` so a key press can be read
     /// with the modifiers that were down when it arrived.
     modifiers: Arc<Mutex<Mods>>,
@@ -352,6 +356,7 @@ fn current_settings(
     toggle_flips: &Arc<Mutex<HashMap<&'static str, toggle::Flip>>>,
     editing: &Arc<Mutex<Option<Editing>>>,
     pressed: &Arc<Mutex<Option<view::Pressed>>>,
+    hovered_preview: &Arc<Mutex<Option<&'static str>>>,
 ) -> Settings {
     let (w, h) = *size.lock().unwrap();
     let flips = toggle_flips
@@ -367,6 +372,7 @@ fn current_settings(
     .with_size(w, h)
     .with_toggle_flips(flips)
     .with_pressed(*pressed.lock().unwrap())
+    .with_hovered_preview(*hovered_preview.lock().unwrap())
     .with_editing(
         editing
             .lock()
@@ -609,6 +615,9 @@ fn released_on(settings: &Settings, held: view::Pressed, x: f32, y: f32, offset:
             .button_hit(x, y, offset)
             .is_some_and(|hit| hit.row == row && hit.button == button),
         view::Pressed::Choose(id) => settings.file_hit(x, y, offset) == Some(id),
+        view::Pressed::RemoveFile(id) => settings
+            .preview_hit(x, y, offset)
+            .is_some_and(|preview| preview.remove && preview.id == id),
         view::Pressed::Remove(index) => matches!(
             settings.shortcut_hit(x, y, offset),
             Some(view::ShortcutHit::Remove(hit)) if hit == index
@@ -631,6 +640,11 @@ fn activate(held: view::Pressed) {
             panes::general::press(row, button);
         }
         view::Pressed::Choose(id) => open_file_picker(id),
+        // An empty path is what "no file" is in the schema, so clearing the
+        // setting is an ordinary `Set` rather than a reset: a reset would put
+        // back whatever the defaults carry, which for a wallpaper may well be
+        // another image.
+        view::Pressed::RemoveFile(id) => apply(id, settings_client::Value::Text(String::new())),
         view::Pressed::Remove(index) => keyboard::remove(index),
         view::Pressed::Add => keyboard::add(),
     }
@@ -983,6 +997,7 @@ impl SettingsApp {
             &self.toggle_flips,
             &self.editing,
             &self.pressed,
+            &self.hovered_preview,
         )
         .with_open_dropdown(*self.open_dropdown.lock().unwrap())
         .with_open_picker(*self.open_picker.lock().unwrap());
@@ -1057,6 +1072,7 @@ impl SettingsApp {
             &self.toggle_flips,
             &self.editing,
             &self.pressed,
+            &self.hovered_preview,
         );
         let offset = self.scroll.lock().unwrap().state.offset();
         let rows: Vec<(FocusId, Rect)> = settings
@@ -1130,6 +1146,7 @@ impl SettingsApp {
             &self.toggle_flips,
             &self.editing,
             &self.pressed,
+            &self.hovered_preview,
         );
         let (width, height) = *self.size.lock().unwrap();
         let viewport = view::pane_viewport(width, height);
@@ -1171,6 +1188,7 @@ impl SettingsApp {
             &self.toggle_flips,
             &self.editing,
             &self.pressed,
+            &self.hovered_preview,
         );
         let offset = self.scroll.lock().unwrap().state.offset();
         settings
@@ -1549,6 +1567,7 @@ impl App for SettingsApp {
         let size_hit = self.size.clone();
         let editing_hit = self.editing.clone();
         let pressed_hit = self.pressed.clone();
+        let hovered_preview = self.hovered_preview.clone();
         let redraw = window.clone();
         AppContext::register_pointer_callback(move |events| {
             for event in events {
@@ -1620,6 +1639,7 @@ impl App for SettingsApp {
                             &toggle_flips,
                             &editing_hit,
                             &pressed_hit,
+                            &hovered_preview,
                         );
 
                         // A press anywhere but on the field being edited is
@@ -1726,6 +1746,15 @@ impl App for SettingsApp {
                                 false,
                             );
                             mark_pane_dirty(&pane_dirty);
+                        } else if let Some(preview) = settings
+                            .preview_hit(x, y, offset)
+                            .filter(|preview| preview.remove)
+                        {
+                            // Acts on release, like every other button — see
+                            // `view::Pressed`.
+                            *pressed_hit.lock().unwrap() =
+                                Some(view::Pressed::RemoveFile(preview.id));
+                            mark_pane_dirty(&pane_dirty);
                         } else if let Some(id) = settings.file_hit(x, y, offset) {
                             *pressed_hit.lock().unwrap() = Some(view::Pressed::Choose(id));
                             mark_pane_dirty(&pane_dirty);
@@ -1815,6 +1844,7 @@ impl App for SettingsApp {
                                 &toggle_flips,
                                 &editing_hit,
                                 &pressed_hit,
+                                &hovered_preview,
                             );
                             let offset = scroll.lock().unwrap().offset();
                             if released_on(&settings, held, x, y, offset) {
@@ -1837,6 +1867,29 @@ impl App for SettingsApp {
                             scroll.on_pointer_move(px, py);
                             scroll.on_pointer_drag(px, py);
                         }
+
+                        // A preview shows its remove button only while the
+                        // pointer is on the picture, so the pane repaints when
+                        // the pointer moves onto one and when it leaves.
+                        {
+                            let settings = current_settings(
+                                &selected,
+                                &size_hit,
+                                &toggle_flips,
+                                &editing_hit,
+                                &pressed_hit,
+                                &hovered_preview,
+                            );
+                            let offset = scroll.lock().unwrap().offset();
+                            let over = settings.preview_hit(x, y, offset).map(|preview| preview.id);
+                            let mut current = hovered_preview.lock().unwrap();
+                            if *current != over {
+                                *current = over;
+                                drop(current);
+                                mark_pane_dirty(&pane_dirty);
+                                redraw.request_frame();
+                            }
+                        }
                         // Sliding off a held button un-presses it, and back
                         // on presses it again, so the highlight always says
                         // what letting go now would do.
@@ -1848,6 +1901,7 @@ impl App for SettingsApp {
                                 &toggle_flips,
                                 &editing_hit,
                                 &pressed_hit,
+                                &hovered_preview,
                             );
                             let offset = scroll.lock().unwrap().offset();
                             if !released_on(&settings, held, x, y, offset) {
@@ -1865,6 +1919,7 @@ impl App for SettingsApp {
                                 &toggle_flips,
                                 &editing_hit,
                                 &pressed_hit,
+                                &hovered_preview,
                             );
                             if let Some(value) = settings.drag_value(&id, x) {
                                 apply(&id, value);
@@ -1875,6 +1930,13 @@ impl App for SettingsApp {
                     PointerEventKind::Axis { vertical, .. } => handle_wheel(&scroll, vertical),
                     PointerEventKind::Leave { .. } => {
                         scroll.lock().unwrap().on_pointer_leave();
+                        // The pointer is off the pane, so no preview is
+                        // hovered — without this the button stays drawn on a
+                        // picture nobody is pointing at.
+                        if hovered_preview.lock().unwrap().take().is_some() {
+                            mark_pane_dirty(&pane_dirty);
+                            redraw.request_frame();
+                        }
                     }
                 }
             }
@@ -2037,14 +2099,16 @@ impl App for SettingsApp {
         if let Some(id) = open {
             let closed = match self.dropdowns.get(id) {
                 Some(menu) => {
-                    // The raw keycode, which is what the menu's own key table
-                    // is written against. The text goes over separately: a
-                    // menu long enough to need typing through — every font on
-                    // the machine — cannot work out what a keycode means
-                    // under this layout, and the keyboard already has.
-                    menu.handle_key(event.raw_code, state);
-                    if let Some(text) = event.utf8.as_deref() {
-                        menu.handle_text(text);
+                    // Navigation comes off the raw keycode, which is what the
+                    // menu's own key table is written against; the text the
+                    // key carries is type-ahead, jumping the highlight to the
+                    // value being spelled. A chord is nobody's letter, so it
+                    // never reaches the buffer.
+                    let ctrl = self.modifiers.lock().unwrap().ctrl;
+                    if ctrl {
+                        menu.handle_key(event.raw_code, state);
+                    } else {
+                        menu.handle_key_event(event, state);
                     }
                     !menu.is_open()
                 }
@@ -2210,6 +2274,7 @@ impl App for SettingsApp {
             &self.toggle_flips,
             &self.editing,
             &self.pressed,
+            &self.hovered_preview,
         );
         let offset = self.scroll.lock().unwrap().state.offset();
         let (width, height) = *self.size.lock().unwrap();
@@ -2268,6 +2333,7 @@ impl App for SettingsApp {
             &self.toggle_flips,
             &self.editing,
             &self.pressed,
+            &self.hovered_preview,
         );
         let offset = self.scroll.lock().unwrap().state.offset();
         let target = settings
@@ -2380,6 +2446,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         controls: Arc::new(Mutex::new(WindowControlsState::new())),
         editing: Arc::new(Mutex::new(None)),
         pressed: Arc::new(Mutex::new(None)),
+        hovered_preview: Arc::new(Mutex::new(None)),
         modifiers: Arc::new(Mutex::new(Mods::default())),
         frosted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     })

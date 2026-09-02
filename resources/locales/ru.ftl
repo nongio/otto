@@ -27,6 +27,7 @@ common-copy = Копировать
 common-paste = Вставить
 common-rename = Переименовать
 common-delete = Удалить
+common-replace = Заменить
 common-move = Переместить
 
 
@@ -272,6 +273,17 @@ files-move-count-to-trash =
         [many] Переместить { $count } элементов в корзину
        *[other] Переместить { $count } элемента в корзину
     }
+files-put-back = Вернуть на место
+files-empty-trash = Очистить корзину
+files-delete-immediately = Удалить немедленно
+# $count всегда два или больше; для одного элемента используется files-delete-immediately.
+files-delete-count-immediately =
+    { $count ->
+        [one] Удалить { $count } элемент немедленно
+        [few] Удалить { $count } элемента немедленно
+        [many] Удалить { $count } элементов немедленно
+       *[other] Удалить { $count } элемента немедленно
+    }
 
 
 ## Files — sidebar and columns
@@ -290,6 +302,9 @@ files-column-name = Имя
 files-column-size = Размер
 files-column-kind = Тип
 files-column-date-modified = Дата изменения
+# Заголовок столбца «Тип» в окне корзины, где важнее, откуда файл попал сюда,
+# чем какого он типа.
+files-column-original-location = Исходное расположение
 
 
 ## Files — kinds
@@ -347,6 +362,11 @@ files-new-window-failed = Не удалось открыть новое окно
 ## Files — the listing
 
 files-folder-empty = Эта папка пуста.
+files-trash-empty = Корзина пуста.
+# Открыть файл из корзины — значит запустить приложение над тем, что уже
+# выброшено; вместо этого предлагается сначала вернуть его на место.
+files-trash-cant-open = Элементы в корзине нельзя открыть. Сначала верните их на место.
+files-trash-cant-rename = Элементы в корзине нельзя переименовать.
 files-folder-denied = Нет прав на просмотр содержимого этой папки.
 files-folder-gone = Этой папки больше не существует.
 files-folder-open-failed = Не удалось открыть эту папку: { $error }
@@ -399,6 +419,17 @@ files-replace-one = «{ $name }» уже существует. Заменить?
 files-replace-one-detail = Замена перезапишет текущее содержимое файла.
 files-replace-many = { $count } из этих файлов уже существуют. Заменить?
 files-replace-many-detail = Замена перезапишет текущее содержимое файлов.
+files-delete-forever-one = Удалить «{ $name }» безвозвратно?
+files-delete-forever-many = Удалить { $count } элементов безвозвратно?
+files-delete-forever-detail = Это действие нельзя отменить.
+files-empty-trash-confirm = Очистить корзину?
+files-empty-trash-detail =
+    { $count ->
+        [one] { $count } элемент будет удалён безвозвратно. Это действие нельзя отменить.
+        [few] { $count } элемента будут удалены безвозвратно. Это действие нельзя отменить.
+        [many] { $count } элементов будут удалены безвозвратно. Это действие нельзя отменить.
+       *[other] { $count } элемента будут удалены безвозвратно. Это действие нельзя отменить.
+    }
 
 
 ## Files — sizes

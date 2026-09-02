@@ -28,6 +28,7 @@ common-copy = Copiar
 common-paste = Pegar
 common-rename = Cambiar nombre
 common-delete = Eliminar
+common-replace = Reemplazar
 common-move = Mover
 
 
@@ -271,6 +272,16 @@ files-move-count-to-trash =
         [many] Mover { $count } elementos a la papelera
        *[other] Mover { $count } elementos a la papelera
     }
+files-put-back = Devolver
+files-empty-trash = Vaciar papelera
+files-delete-immediately = Eliminar de inmediato
+# $count siempre es dos o más; para un solo elemento se usa files-delete-immediately.
+files-delete-count-immediately =
+    { $count ->
+        [one] Eliminar { $count } elemento de inmediato
+        [many] Eliminar { $count } elementos de inmediato
+       *[other] Eliminar { $count } elementos de inmediato
+    }
 
 
 ## Files — sidebar and columns
@@ -289,6 +300,9 @@ files-column-name = Nombre
 files-column-size = Tamaño
 files-column-kind = Tipo
 files-column-date-modified = Fecha de modificación
+# El encabezado de la columna «Tipo» en la ventana de la papelera, donde
+# importa más de dónde viene un archivo que qué tipo de archivo es.
+files-column-original-location = Ubicación original
 
 
 ## Files — kinds
@@ -345,6 +359,11 @@ files-new-window-failed = No se pudo abrir una nueva ventana: { $error }
 ## Files — the listing
 
 files-folder-empty = Esta carpeta está vacía.
+files-trash-empty = La papelera está vacía.
+# Abrir un archivo de la papelera lanzaría una aplicación sobre algo que se ha
+# tirado; lo que se ofrece es devolverlo primero.
+files-trash-cant-open = Los elementos de la papelera no se pueden abrir. Devuélvelo primero.
+files-trash-cant-rename = Los elementos de la papelera no se pueden renombrar.
 files-folder-denied = No hay permisos para ver el contenido de esta carpeta.
 files-folder-gone = Esta carpeta ya no existe.
 files-folder-open-failed = No se pudo abrir esta carpeta: { $error }
@@ -397,6 +416,16 @@ files-replace-one = «{ $name }» ya existe. ¿Reemplazar?
 files-replace-one-detail = Al reemplazarlo se sobrescribe su contenido actual.
 files-replace-many = { $count } de estos archivos ya existen. ¿Reemplazarlos?
 files-replace-many-detail = Al reemplazarlos se sobrescribe su contenido actual.
+files-delete-forever-one = ¿Eliminar «{ $name }» permanentemente?
+files-delete-forever-many = ¿Eliminar { $count } elementos permanentemente?
+files-delete-forever-detail = Esto no se puede deshacer.
+files-empty-trash-confirm = ¿Vaciar la papelera?
+files-empty-trash-detail =
+    { $count ->
+        [one] { $count } elemento se eliminará permanentemente. Esto no se puede deshacer.
+        [many] { $count } elementos se eliminarán permanentemente. Esto no se puede deshacer.
+       *[other] { $count } elementos se eliminarán permanentemente. Esto no se puede deshacer.
+    }
 
 
 ## Files — sizes

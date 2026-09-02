@@ -145,10 +145,24 @@ impl AppSwitcherView {
     }
 
     pub fn hide(&self) -> layers::engine::TransactionRef {
+        self.hide_over(0.05)
+    }
+
+    /// Take the panel away because there is nothing left to switch to — the
+    /// last app just quit — rather than because the user committed a choice.
+    ///
+    /// The commit path's 50 ms blink reads as instantaneous, which is right
+    /// when a window is arriving in front behind it and wrong when what it
+    /// uncovers is an empty desktop. Fade over a duration you can see instead.
+    pub fn hide_dismissed(&self) -> layers::engine::TransactionRef {
+        self.hide_over(0.25)
+    }
+
+    fn hide_over(&self, duration: f32) -> layers::engine::TransactionRef {
         self.active.store(false, Ordering::Relaxed);
         let tr = self
             .wrap_layer
-            .set_opacity(0.0_f32, Some(Transition::ease_in_quad(0.05)));
+            .set_opacity(0.0_f32, Some(Transition::ease_in_quad(duration)));
         tr.on_finish(
             move |l: &layers::prelude::Layer, _p: f32| {
                 l.set_hidden(true);
@@ -173,6 +187,15 @@ impl AppSwitcherView {
         let mut state = self.view.get_state();
         state.current_app = 0;
         self.view.update_state(&state);
+    }
+
+    /// Whether the panel has anything on screen — including a panel that is
+    /// fading out. `alive()` is the *interactive* state and drops the moment
+    /// a hide begins; anything deciding whether to draw the panel (the
+    /// switcher plane, scanout gating, occlusion) has to use this instead,
+    /// or the exit animation is taken off the display on its first frame.
+    pub fn is_visible(&self) -> bool {
+        !self.wrap_layer.hidden()
     }
 
     pub fn get_current_app_id(&self) -> Option<String> {
@@ -268,9 +291,22 @@ impl AppSwitcherView {
                             s.current_app
                         }
                     };
+                    let empty = apps.is_empty();
                     let new_state =
                         this.build_model_with_stacks(apps, current_app, workspace.width);
                     this.update_state(new_state);
+                    // Nothing left to switch to — the last app quit while the
+                    // panel was up. The model change above already plays the
+                    // panel's spring resize (the quit app's slot collapsing);
+                    // let that settle, then take the panel away — its layout
+                    // has no zero-app case and would otherwise sit on the
+                    // desktop as a sliver until the modifier is released.
+                    if empty && this.active.load(Ordering::Relaxed) {
+                        tokio::time::sleep(Duration::from_millis(450)).await;
+                        if this.active.load(Ordering::Relaxed) {
+                            this.hide_dismissed();
+                        }
+                    }
                 }
             }
         });

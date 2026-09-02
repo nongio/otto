@@ -63,6 +63,9 @@ package() {
     # Install desktop files
     install -Dm644 resources/otto.desktop "$pkgdir/usr/share/wayland-sessions/otto.desktop"
     install -Dm644 resources/otto-files.desktop "$pkgdir/usr/share/applications/otto-files.desktop"
+    # The Trash window: the same binary behind its own entry, so it gets its
+    # own icon in the dock and the applications list.
+    install -Dm644 resources/otto-trash.desktop "$pkgdir/usr/share/applications/otto-trash.desktop"
     install -Dm644 resources/otto-settings.desktop "$pkgdir/usr/share/applications/otto-settings.desktop"
 
     # Install icons

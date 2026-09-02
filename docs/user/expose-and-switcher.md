@@ -85,7 +85,9 @@ backdrop.
 
 The switcher stays up as long as you **hold the modifier** that opened it. Any
 of `Ctrl`, `Alt`, `Logo` or `Shift` works as the hold key, depending on what you
-bound the action to; release it and the switcher commits and disappears.
+bound the action to; release it and the switcher commits and disappears. It also
+closes on its own if you quit the last app from it — there is nothing left to
+switch to.
 
 Applications are ordered most-recently-used first, so a single `Ctrl+Tab` press
 and release flips between the last two apps.

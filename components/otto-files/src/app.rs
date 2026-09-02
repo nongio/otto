@@ -314,6 +314,22 @@ struct Browser {
     /// slow PDF must not land on top of a file the user moved off three keys
     /// ago.
     quickview_generation: u64,
+    /// The cursor moved on its own — a delete landing its selection on the
+    /// survivor — rather than through an arrow key. Quick View follows the
+    /// cursor, so it has to re-decode for those moves too, and the deleted
+    /// file's preview must not be left up over a file that no longer exists.
+    /// Drained by the host, which owns the decode; see [`FilesApp::follow_quickview`].
+    quickview_follow: bool,
+    /// This window is the Trash: one flat listing of the trash can, with Put
+    /// Back and Empty Trash in place of the view switcher, and every command
+    /// that would move, rename or open a file suppressed.
+    ///
+    /// A shell, not a place. The browser reaching the same directory through
+    /// a path would still be the browser; this is set once, at startup, by
+    /// the entry point that opened the window.
+    trash: bool,
+    /// Which of the Trash header's two buttons is held down.
+    trash_pressed: Option<view::TrashAction>,
     /// The Get Info panel, when one is open. Not modal: it is a window of its
     /// own that floats over the browser, and the browser goes on working
     /// underneath it.
@@ -365,6 +381,10 @@ struct Browser {
     /// those reads finish, so it is re-derived — and scrolled into view —
     /// once they do.
     pending_restore: bool,
+    /// Ask the Empty Trash question as soon as there is a listing to ask it
+    /// about. Set by `--empty-trash`, whose window opens on a directory that
+    /// has not been read yet — and the question carries the count.
+    pending_empty_ask: bool,
     /// A row to land the selection on once the reload that removed the old one
     /// has landed: which pane, and the name to look for. Set by a delete —
     /// the successor is chosen from the listing that is still on screen, and
@@ -512,9 +532,28 @@ struct ConfirmSheet {
     /// The question, already worded for the number of files involved.
     message: String,
     detail: String,
-    /// What accepting answers with.
-    paths: Vec<PathBuf>,
+    /// The affirmative button's words. Spelled for the question rather than
+    /// fixed, since the sheet now asks three of them.
+    accept_label: String,
+    /// What accepting does.
+    action: ConfirmAction,
     pressed: Option<view::ConfirmButton>,
+}
+
+/// What the sheet's affirmative button carries out.
+///
+/// Each holds the paths it is about to act on rather than a promise to work
+/// them out again: between the sheet appearing and the button being pressed
+/// the directory may change underneath, and acting on what the user was
+/// actually shown is the honest thing.
+enum ConfirmAction {
+    /// Answer the picker's save request with these paths. Creates nothing —
+    /// the application does the writing.
+    Answer(Vec<PathBuf>),
+    /// Destroy these trashed items outright.
+    DeleteForever(Vec<PathBuf>),
+    /// Destroy everything in the Trash.
+    EmptyTrash,
 }
 
 /// The byte range an in-place rename should start with selected: the stem,
@@ -557,6 +596,7 @@ impl Browser {
             path_entry: None,
             typeahead: None,
             pending_restore: false,
+            pending_empty_ask: false,
             pending_pick: None,
             back: Vec::new(),
             forward: Vec::new(),
@@ -580,6 +620,9 @@ impl Browser {
             quickview_closing: None,
             quickview_auto: std::env::var_os("OTTO_FILES_QV_AUTO").is_some(),
             quickview_generation: 0,
+            quickview_follow: false,
+            trash: false,
+            trash_pressed: None,
             status: None,
             undo: Vec::new(),
             info: None,
@@ -605,6 +648,38 @@ impl Browser {
 
     /// A picker window serving `session`, opened at the directory the request
     /// asks for.
+    /// The Trash window: the trash can's own directory, and nothing around it.
+    ///
+    /// The sidebar, the nav pair and the view switcher are dropped in the view
+    /// layer (see [`view::Shell`]) rather than here — they are chrome, and the
+    /// browser's geometry is written against where the file area starts. What
+    /// is set here is only what the *listing* is.
+    fn for_trash() -> Self {
+        // Two things are set, and this is the only place either is: the view
+        // layer's shell, which decides the chrome and is process-wide because
+        // a window does not change shell, and this browser's own flag, which
+        // decides what the commands do. Nothing else may set the global —
+        // that is what keeps the window's behaviour and its chrome agreeing.
+        view::set_shell(view::Shell::Trash);
+        Self::listing_the_trash()
+    }
+
+    /// The Trash window's listing and commands, without the process-wide
+    /// chrome switch [`Browser::for_trash`] throws. Split out so tests can
+    /// exercise the behaviour without the geometry of every other test in the
+    /// binary changing underneath them.
+    fn listing_the_trash() -> Self {
+        let root = model::trash_files_dir().unwrap_or_else(|| PathBuf::from("/"));
+        let mut browser = Self::new(root);
+        // One directory, listed flat, with a column saying where each row came
+        // from — the Miller stack has nothing to descend into that the user
+        // put there, and the grid has nowhere to show an origin.
+        browser.set_mode(ViewMode::List);
+        browser.trash = true;
+        browser.places = Vec::new();
+        browser
+    }
+
     fn for_picker(session: picker::Session, start: PathBuf) -> Self {
         let mut browser = Self::new(start);
         // The picker is a dialog, not a document window: one directory at a
@@ -1399,6 +1474,12 @@ impl Browser {
         if self.rename.is_some() {
             return;
         }
+        // Renaming a trashed file would rewrite the name its sidecar is
+        // keyed on, and Put Back would then have nothing to read.
+        if self.trash {
+            self.refuse(otto_kit::t_owned!("files-trash-cant-rename"));
+            return;
+        }
         let depth = self.active;
         let Some(index) = self.columns[depth].cursor else {
             return;
@@ -1695,6 +1776,15 @@ impl Browser {
             return;
         };
 
+        // Handing a trashed file to an application would launch it on
+        // something the user threw away, and let it be edited in place in the
+        // can. Put Back first; the message says so. A trashed *folder* can
+        // still be opened — looking inside it is how you decide.
+        if self.trash && !entry.is_dir {
+            self.refuse(otto_kit::t_owned!("files-trash-cant-open"));
+            return;
+        }
+
         // Say that the open was heard, before doing it: handing a file to
         // another process can take long enough that a double-click with no
         // answer reads as one that did not land. In every view — the gesture
@@ -1949,7 +2039,8 @@ impl Browser {
                 self.confirm = Some(ConfirmSheet {
                     message: otto_kit::t_owned!("files-replace-one", name = name.as_str()),
                     detail: otto_kit::t_owned!("files-replace-one-detail"),
-                    paths: vec![target],
+                    accept_label: otto_kit::t_owned!("common-replace"),
+                    action: ConfirmAction::Answer(vec![target]),
                     pressed: None,
                 });
                 self.dirty = true;
@@ -2021,7 +2112,8 @@ impl Browser {
         self.confirm = Some(ConfirmSheet {
             message,
             detail: otto_kit::t_owned!("files-replace-many-detail"),
-            paths: targets,
+            accept_label: otto_kit::t_owned!("common-replace"),
+            action: ConfirmAction::Answer(targets),
             pressed: None,
         });
         self.dirty = true;
@@ -2035,13 +2127,22 @@ impl Browser {
         self.dirty = true;
     }
 
-    /// Replace, from the confirmation sheet: answer with what the sheet was
-    /// showing. The picker still creates nothing — the application writes.
-    fn confirm_replace(&mut self) {
+    /// The affirmative answer: carry out whatever the sheet was asking about,
+    /// against the paths it was showing.
+    fn confirm_accept(&mut self) {
         let Some(sheet) = self.confirm.take() else {
             return;
         };
-        self.answer_with(sheet.paths);
+        match sheet.action {
+            ConfirmAction::Answer(paths) => self.answer_with(paths),
+            ConfirmAction::DeleteForever(paths) => self.destroy(paths),
+            ConfirmAction::EmptyTrash => {
+                let result = model::empty_trash();
+                self.report(&result);
+                self.reload_all();
+            }
+        }
+        self.dirty = true;
     }
 
     /// Dismiss the sheet without answering. The request stays open and the
@@ -2180,6 +2281,17 @@ impl Browser {
     /// otherwise leave the keyboard one row off from the highlight. Then the
     /// restored row is scrolled back into view, which needs the metrics of
     /// the listing that just landed.
+    /// Ask the Empty Trash question once the listing it counts has landed.
+    fn settle_empty_ask(&mut self) {
+        if !self.pending_empty_ask || self.loading() {
+            return;
+        }
+        self.pending_empty_ask = false;
+        // An already-empty can has nothing to ask about: the window is left
+        // open saying so, which is the answer.
+        self.ask_empty_trash();
+    }
+
     fn settle_restore(&mut self) {
         if !self.pending_restore || self.loading() {
             return;
@@ -2202,6 +2314,19 @@ impl Browser {
     /// The nav arrow under `(x, y)`, and only when it has somewhere to go: a
     /// half with an empty history is drawn dimmed, and a dimmed control must
     /// not light up under a press either.
+    /// Which Trash header action is under `(x, y)`, if this is the Trash
+    /// window and that button has anything to act on.
+    fn trash_action_at(&self, x: f32, y: f32) -> Option<view::TrashAction> {
+        let chrome = view::TrashChrome {
+            can_put_back: !self.columns[0].selection.is_empty(),
+            can_empty: !self.visible(0).is_empty(),
+            pressed: None,
+        };
+        self.trash
+            .then(|| view::trash_action_at(x, y, self.size.0, &chrome))
+            .flatten()
+    }
+
     fn nav_button_at(&self, x: f32, y: f32) -> Option<view::NavButton> {
         let button = view::nav_button_at(x, y)?;
         let live = match button {
@@ -2671,7 +2796,20 @@ impl Browser {
     ///
     /// `serial` must be from a real input event — the compositor refuses a
     /// selection claimed without one.
+    /// Turn down a command the Trash does not have, saying why in the status
+    /// line. Refusing silently would read as the window being broken.
+    fn refuse(&mut self, why: String) {
+        self.status = Some(why);
+        self.dirty = true;
+    }
+
     fn copy_selection(&mut self, cut: bool, serial: u32) {
+        // A cut in the Trash would offer a paste that moves a file out of it
+        // without dropping its sidecar, leaving a phantom row behind. Put
+        // Back is the way out of the Trash.
+        if self.trash {
+            return;
+        }
         let paths: Vec<PathBuf> = self
             .selected_entries()
             .into_iter()
@@ -2717,6 +2855,12 @@ impl Browser {
     /// pool with progress and cancellation, and that is the next change; the
     /// `OpResult` it returns is already the shape that path reports.
     fn paste(&mut self) {
+        // Pasting into the Trash would put files there with no sidecar
+        // saying where they came from — items that can never be put back.
+        // Trashing is how a file gets in; that path writes the sidecar.
+        if self.trash {
+            return;
+        }
         // The system clipboard wins over our own copy: if another application
         // has copied since, that is what the user means by "paste", and our
         // local clipboard is stale.
@@ -2823,7 +2967,7 @@ impl Browser {
             });
         }
         // The rest of the sidebar takes nothing: it is chrome, not a place.
-        if x < view::SIDEBAR_W {
+        if x < view::sidebar_w() {
             return None;
         }
 
@@ -2891,6 +3035,19 @@ impl Browser {
         };
         self.dirty = true;
         let dest = target.path().clone();
+
+        // A drop onto the Trash window is a delete, not a move into a
+        // directory that happens to be the trash: pasting there would leave
+        // items with no sidecar, which can never be put back. This is the
+        // one thing the Trash window accepts being dropped on it, and it is
+        // what a bin is for.
+        if self.trash {
+            let result = model::move_to_trash(&paths);
+            self.report(&result);
+            self.record_undo(otto_kit::t!("files-undo-delete"), result.changes);
+            self.reload_all();
+            return;
+        }
 
         // Files dragged back into the directory they already live in: a move
         // there is a no-op, and doing it through `paste` would rename them
@@ -3082,6 +3239,44 @@ impl Browser {
         let entries = self.selected_entries();
         let mut items = Vec::new();
 
+        // The Trash's own menu. Nothing it shares with the browser applies:
+        // a trashed file cannot be opened, renamed, copied or trashed again,
+        // and pasting into the trash would be a way of putting files there
+        // without a sidecar saying where they came from.
+        if self.trash {
+            if !entries.is_empty() {
+                items.push(
+                    MenuItem::action(otto_kit::t!("files-put-back")).with_action_id("put_back"),
+                );
+                if let [only] = entries.as_slice() {
+                    let _ = only;
+                    items.push(
+                        MenuItem::action(otto_kit::t!("files-get-info")).with_action_id("get_info"),
+                    );
+                }
+                let label = if entries.len() == 1 {
+                    otto_kit::t_owned!("files-delete-immediately")
+                } else {
+                    otto_kit::t_owned!(
+                        "files-delete-count-immediately",
+                        count = entries.len() as f64
+                    )
+                };
+                items.push(MenuItem::separator());
+                items.push(MenuItem::action(label).with_action_id("delete_forever"));
+            }
+            if !self.visible(0).is_empty() {
+                if !items.is_empty() {
+                    items.push(MenuItem::separator());
+                }
+                items.push(
+                    MenuItem::action(otto_kit::t!("files-empty-trash"))
+                        .with_action_id("empty_trash"),
+                );
+            }
+            return items;
+        }
+
         if let [only] = entries.as_slice() {
             if only.is_dir {
                 items.push(MenuItem::action(otto_kit::t!("common-open")).with_action_id("open"));
@@ -3189,15 +3384,120 @@ impl Browser {
         }
         let successor = self.successor_after_delete(depth);
         let result = model::move_to_trash(&paths);
-        let summary = result.summary();
-        self.status = (!summary.is_empty()).then_some(summary);
-        Self::play_op_sound(&result);
+        self.report(&result);
         self.record_undo(otto_kit::t!("files-undo-delete"), result.changes);
-
         // By name, before the re-read: the selection is held by name, so this
         // is already the right answer for `resync_cursors` when the listing
         // lands. `settle_pick` then does the rest — the child column a newly
         // selected directory wants, or the walk out of a folder left empty.
+        self.hand_selection_to(successor);
+    }
+
+    /// Say what an operation did and play its sound. The one place a result
+    /// turns into something the user can see, so no operation can quietly
+    /// half-fail.
+    fn report(&mut self, result: &model::OpResult) {
+        let summary = result.summary();
+        self.status = (!summary.is_empty()).then_some(summary);
+        Self::play_op_sound(result);
+        self.dirty = true;
+    }
+
+    /// What Delete means here.
+    ///
+    /// In the browser it is a trip to the Trash, which is undoable and so
+    /// needs no question. In the Trash there is nowhere further to send a
+    /// file, so the same key destroys it — and that one is asked about first,
+    /// every time, because nothing can put it back.
+    fn delete_key(&mut self) {
+        if self.trash {
+            self.ask_delete_forever();
+        } else {
+            self.move_selected_to_trash();
+        }
+    }
+
+    /// Put the Trash selection back where each item came from.
+    ///
+    /// The selection moves on exactly the way a delete's does: restoring is a
+    /// row leaving the listing, and holding the button down through a run of
+    /// them should not need the mouse between each.
+    fn put_back_selection(&mut self) {
+        if !self.trash {
+            return;
+        }
+        let paths: Vec<PathBuf> = self
+            .selected_entries()
+            .into_iter()
+            .map(|e| e.path)
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        let successor = self.successor_after_delete(0);
+        let result = model::restore_from_trash(&paths);
+        self.report(&result);
+        self.record_undo(otto_kit::t!("files-put-back"), result.changes);
+        self.hand_selection_to(successor);
+    }
+
+    /// Ask before destroying the Trash selection. Nothing happens here — the
+    /// sheet's affirmative button is what deletes.
+    fn ask_delete_forever(&mut self) {
+        if !self.trash {
+            return;
+        }
+        let entries = self.selected_entries();
+        if entries.is_empty() {
+            return;
+        }
+        let message = if entries.len() == 1 {
+            otto_kit::t_owned!("files-delete-forever-one", name = entries[0].name.as_str())
+        } else {
+            otto_kit::t_owned!("files-delete-forever-many", count = entries.len() as i64)
+        };
+        self.confirm = Some(ConfirmSheet {
+            message,
+            detail: otto_kit::t_owned!("files-delete-forever-detail"),
+            accept_label: otto_kit::t_owned!("common-delete"),
+            action: ConfirmAction::DeleteForever(entries.into_iter().map(|e| e.path).collect()),
+            pressed: None,
+        });
+        self.dirty = true;
+    }
+
+    /// Carry out a confirmed permanent delete.
+    fn destroy(&mut self, paths: Vec<PathBuf>) {
+        let successor = self.successor_after_delete(0);
+        let result = model::delete_forever(&paths);
+        self.report(&result);
+        // Deliberately not recorded: there is nothing to put back.
+        self.hand_selection_to(successor);
+    }
+
+    /// Ask before emptying the Trash.
+    fn ask_empty_trash(&mut self) {
+        let count = self.visible(0).len();
+        if !self.trash || count == 0 {
+            return;
+        }
+        self.confirm = Some(ConfirmSheet {
+            message: otto_kit::t_owned!("files-empty-trash-confirm"),
+            detail: otto_kit::t_owned!("files-empty-trash-detail", count = count as i64),
+            accept_label: otto_kit::t_owned!("files-empty-trash"),
+            action: ConfirmAction::EmptyTrash,
+            pressed: None,
+        });
+        self.dirty = true;
+    }
+
+    /// Hand the selection to `successor` once the re-read lands, and start it.
+    ///
+    /// Shared by every operation that takes rows out of the listing — a
+    /// trash, a Put Back, a permanent delete — so all three leave the cursor
+    /// in the same place and carry Quick View along in the same way.
+    fn hand_selection_to(&mut self, successor: Option<String>) {
+        let depth = self.active.min(self.columns.len().saturating_sub(1));
         let column = &mut self.columns[depth];
         column.selection.clear();
         column.cursor = None;
@@ -3248,6 +3548,11 @@ impl Browser {
         if depth >= self.columns.len() {
             return;
         }
+        // Quick View is anchored to the cursor, and the cursor is about to
+        // move off a file that no longer exists. Whichever way this lands —
+        // on the survivor, or on nothing at all — the panel has to be told.
+        self.quickview_follow = self.quickview.is_some();
+
         let index = name
             .as_deref()
             .and_then(|name| self.visible(depth).iter().position(|e| e.name == name));
@@ -3275,6 +3580,9 @@ impl Browser {
     /// Create "untitled folder" in the active pane and start renaming it in
     /// place, the way Finder and Explorer's New Folder both do.
     fn new_folder(&mut self) {
+        if self.trash {
+            return;
+        }
         let dest = self.columns[self.active].path.clone();
         match model::create_folder(&dest) {
             Ok(path) => {
@@ -3352,6 +3660,24 @@ impl Browser {
             self.pan.offset(),
             self.miller_w,
         )
+    }
+
+    /// Drain the follow flag a delete raised.
+    ///
+    /// Returns whether the host still owes a decode. It does not when the
+    /// delete emptied the pane outright: there is no row left to preview, so
+    /// the panel is dismissed here rather than left up over the gap. The
+    /// choice belongs to the browser — it is the one that knows what the
+    /// cursor is on — and the host only runs the decode.
+    fn take_quickview_follow(&mut self) -> bool {
+        if !std::mem::take(&mut self.quickview_follow) || self.quickview.is_none() {
+            return false;
+        }
+        if self.selected_entry().is_none() {
+            self.close_quickview();
+            return false;
+        }
+        true
     }
 
     /// Start previewing the cursor's file, replacing whatever is open.
@@ -3725,6 +4051,11 @@ impl Browser {
     }
 
     fn title(&self) -> String {
+        // The trash can's directory on disk is called "files", which is not
+        // what this window is.
+        if self.trash {
+            return otto_kit::t_owned!("files-trash");
+        }
         let path = if self.mode == ViewMode::Columns {
             self.columns[self.active].path.clone()
         } else {
@@ -3891,6 +4222,14 @@ impl Browser {
             drop_target: self.drop_target.as_ref().map(DropTarget::highlight),
             marquee: self.marquee_band(),
             path_entry: self.path_entry.is_some(),
+            trash: self.trash.then(|| view::TrashChrome {
+                // Put Back acts on the selection; Empty Trash acts on the can.
+                // Each is dead when there is nothing for it to do, which is
+                // what an empty Trash looks like.
+                can_put_back: !self.columns[0].selection.is_empty(),
+                can_empty: !self.visible(0).is_empty(),
+                pressed: self.trash_pressed,
+            }),
         }
     }
 }
@@ -4001,9 +4340,11 @@ impl App for FilesApp {
         // switcher find `otto-files.desktop` — and its file-manager icon —
         // directly. Without an app_id the compositor has to guess from the
         // client's pid and executable name, which lands on the same entry only
-        // because the `Exec=` line happens to match.
+        // because the `Exec=` line happens to match. The Trash is its own
+        // entry with its own icon, out of the same executable, so guessing
+        // would land it on the file manager's.
         if let Some(surface) = window.surface() {
-            surface.xdg_window().set_app_id("otto-files".to_string());
+            surface.xdg_window().set_app_id(app_id().to_string());
         }
 
         if let Some(style) = window.surface_style() {
@@ -4066,6 +4407,7 @@ impl App for FilesApp {
             // Same reason, and after it: a Back step and a delete never land
             // in the same frame, and both want the metrics that just landed.
             browser.settle_pick();
+            browser.settle_empty_ask();
             perf::mark(perf::Stage::Prep, t_prep);
             let t_frame = perf::now();
             let frame = browser.frame(&theme, &title);
@@ -4167,6 +4509,7 @@ impl App for FilesApp {
                     &view::ConfirmData {
                         message: &sheet.message,
                         detail: &sheet.detail,
+                        accept_label: &sheet.accept_label,
                         pressed: sheet.pressed,
                     },
                 );
@@ -4444,6 +4787,7 @@ impl App for FilesApp {
             let mut browser = self.state.lock().unwrap();
             self.start_quickview(&mut browser);
         }
+        self.follow_quickview();
 
         // With the columns in their own surfaces, a scroll is repainted there
         // and the window is left alone — which is the whole point, so the
@@ -4625,7 +4969,7 @@ impl App for FilesApp {
             // out of it. Nothing else reaches the window behind it.
             if browser.confirm.is_some() {
                 match event.keysym {
-                    Keysym::Return | Keysym::KP_Enter => browser.confirm_replace(),
+                    Keysym::Return | Keysym::KP_Enter => browser.confirm_accept(),
                     Keysym::Escape => browser.confirm_dismiss(),
                     _ => {}
                 }
@@ -4865,10 +5209,10 @@ impl App for FilesApp {
                 // mean it", so the chord does nothing until it does the right
                 // thing.
                 Keysym::Delete | Keysym::KP_Delete if !shift && browser.picker.is_none() => {
-                    browser.move_selected_to_trash()
+                    browser.delete_key()
                 }
                 Keysym::BackSpace if ctrl && !shift && browser.picker.is_none() => {
-                    browser.move_selected_to_trash()
+                    browser.delete_key()
                 }
                 Keysym::BackSpace => browser.go_up(),
                 Keysym::Home => browser.move_cursor(-100_000, shift),
@@ -5098,6 +5442,22 @@ impl FilesApp {
             // to wake the loop. Asking for one more turn is what makes a
             // repaint requested off the input path actually appear.
             AppContext::request_wakeup();
+        }
+    }
+
+    /// Move an open Quick View onto whatever the cursor landed on after a
+    /// delete.
+    ///
+    /// A delete cannot do this itself: the successor is only known once the
+    /// re-read lands, which is [`Browser::settle_pick`], and that runs deep
+    /// inside the draw closure where a decode cannot be spawned. It raises a
+    /// flag instead and this drains it on the next pass — one frame of a
+    /// stale panel, against a panel that would otherwise sit there showing a
+    /// file that is now in the Trash.
+    fn follow_quickview(&self) {
+        let mut browser = self.state.lock().unwrap();
+        if browser.take_quickview_follow() {
+            self.start_quickview(&mut browser);
         }
     }
 
@@ -5370,10 +5730,10 @@ impl FilesApp {
         // shadows the surface around it.
         window.set_background(skia_safe::Color::TRANSPARENT);
         if let Some(surface) = window.surface() {
-            // The browser's own app_id: this is another window of the file
+            // The window's own app_id: this is another window of the file
             // manager, not another application, and the dock and the app
             // switcher should both read it that way.
-            surface.xdg_window().set_app_id("otto-files".to_string());
+            surface.xdg_window().set_app_id(app_id().to_string());
         }
         if let Some(style) = window.surface_style() {
             style.set_corner_radius(otto_kit::corners::radius(14.0) as f64);
@@ -5679,8 +6039,8 @@ impl FilesApp {
                                 .and_then(|sheet| sheet.pressed.take());
                             if armed.is_some() && armed == hit {
                                 match armed {
-                                    Some(view::ConfirmButton::Replace) => {
-                                        browser.confirm_replace()
+                                    Some(view::ConfirmButton::Accept) => {
+                                        browser.confirm_accept()
                                     }
                                     Some(view::ConfirmButton::Cancel) => browser.confirm_dismiss(),
                                     None => {}
@@ -5944,6 +6304,16 @@ impl FilesApp {
                             }
                         }
 
+                        if let Some(armed) = browser.trash_pressed.take() {
+                            browser.dirty = true;
+                            if browser.trash_action_at(x, y) == Some(armed) {
+                                match armed {
+                                    view::TrashAction::PutBack => browser.put_back_selection(),
+                                    view::TrashAction::Empty => browser.ask_empty_trash(),
+                                }
+                            }
+                        }
+
                         // A control fires on release, and only over the dot
                         // the press landed on.
                         let control = view::control_at(x, y, browser.size.0);
@@ -6024,6 +6394,9 @@ impl FilesApp {
                                 "copy" => browser.copy_selection(false, serial),
                                 "paste" => browser.paste(),
                                 "trash" => browser.move_selected_to_trash(),
+                                "put_back" => browser.put_back_selection(),
+                                "delete_forever" => browser.ask_delete_forever(),
+                                "empty_trash" => browser.ask_empty_trash(),
                                 "new_folder" => browser.new_folder(),
                                 _ => {}
                             }
@@ -6101,14 +6474,23 @@ impl FilesApp {
                             browser.drag_armed = Some((x, y, serial));
                         }
 
-                        if let Some(button) = browser.nav_button_at(x, y) {
+                        if let Some(action) = browser.trash_action_at(x, y) {
+                            // Armed and decided on release, the way a nav
+                            // arrow is: both of these destroy or move files,
+                            // and a press dragged off the button is a
+                            // cancelled click rather than a confirmation.
+                            browser.trash_pressed = Some(action);
+                            browser.dirty = true;
+                        } else if let Some(button) = browser.nav_button_at(x, y) {
                             // Armed, not acted on: the step happens on
                             // release, over the same half, so the arrow can
                             // sit visibly pressed in the meantime.
                             browser.nav_pressed = Some(button);
                             browser.dirty = true;
-                        } else if let Some(mode) = view::switcher_at(x, y, width) {
-                            browser.set_mode(mode);
+                        } else if !browser.trash && view::switcher_at(x, y, width).is_some() {
+                            if let Some(mode) = view::switcher_at(x, y, width) {
+                                browser.set_mode(mode);
+                            }
                         } else if let Some(index) = view::place_at(x, y, browser.places.len()) {
                             let path = browser.places[index].path.clone();
                             browser.navigate_to(&path);
@@ -6362,9 +6744,38 @@ fn preview_info(entry: &Entry) -> Vec<String> {
     info
 }
 
+/// The desktop entry this window belongs to, which is also its `app_id`.
+fn app_id() -> &'static str {
+    match view::shell() {
+        view::Shell::Browser => "otto-files",
+        view::Shell::Trash => "otto-trash",
+    }
+}
+
 /// Open a browser window at `start` and run until it is closed.
 pub fn run_browser(start: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     run_app(Browser::new(start), None)
+}
+
+/// Open the Trash window and run until it is closed.
+///
+/// The third shell over this view layer, beside the browser and the picker —
+/// its own window and its own entry in the applications list, out of the same
+/// binary, because a listing of the trash is a listing.
+pub fn run_trash() -> Result<(), Box<dyn std::error::Error>> {
+    run_app(Browser::for_trash(), None)
+}
+
+/// The Trash window with the Empty Trash question already up.
+///
+/// What the dock's *Empty Trash* runs. It is the window rather than a bare
+/// confirmation because the question is about a listing, and showing what is
+/// being destroyed is the point of asking; the operation, the wording and the
+/// count are the window's own, so the two routes cannot drift.
+pub fn run_empty_trash() -> Result<(), Box<dyn std::error::Error>> {
+    let mut browser = Browser::for_trash();
+    browser.pending_empty_ask = true;
+    run_app(browser, None)
 }
 
 /// Serve `org.otto.FilePicker1` until there is nothing left to serve.
@@ -6875,7 +7286,7 @@ mod dnd_tests {
     /// The middle of row `index` in list view.
     fn row_point(index: usize) -> (f32, f32) {
         (
-            view::SIDEBAR_W + 100.0,
+            view::sidebar_w() + 100.0,
             view::HEADER_H + view::COLUMNS_H + view::ROW_H * index as f32 + view::ROW_H / 2.0,
         )
     }
@@ -7003,12 +7414,12 @@ mod dnd_tests {
         // the last pane's right edge is flush with the window's own — the
         // ordinary resting state once a preview column has been revealed.
         let panes = browser.columns.len();
-        browser.size.0 = view::SIDEBAR_W + browser.miller_w - 50.0;
+        browser.size.0 = view::sidebar_w() + browser.miller_w - 50.0;
         browser.sync_scroll_metrics();
         browser
             .pan
             .state
-            .set_offset(view::SIDEBAR_W + panes as f32 * browser.miller_w - browser.size.0);
+            .set_offset(view::sidebar_w() + panes as f32 * browser.miller_w - browser.size.0);
         let (w, h) = browser.size;
         let y = view::HEADER_H + 80.0;
         let edge_x = w - 1.0;
@@ -7043,7 +7454,7 @@ mod dnd_tests {
         // nowhere else.
         let flush = browser.pan.offset();
         browser.pan.state.set_offset(flush + 40.0);
-        let inside = view::SIDEBAR_W + panes as f32 * browser.miller_w - browser.pan.offset();
+        let inside = view::sidebar_w() + panes as f32 * browser.miller_w - browser.pan.offset();
         assert_eq!(
             browser.hover_shape(inside, y),
             CursorShape::ColResize,
@@ -7809,6 +8220,45 @@ mod delete_tests {
         assert_eq!(browser.columns[0].cursor, Some(row_of(&browser, "c.txt")));
     }
 
+    /// Quick View is anchored to the cursor, so a delete has to carry it over
+    /// to the row that takes the deleted one's place — otherwise the panel
+    /// sits there previewing a file that is now in the Trash.
+    #[test]
+    fn quick_view_follows_the_delete_to_the_next_row() {
+        let (mut browser, _dir) = browser_over(&["a.txt", "b.txt", "c.txt"]);
+        browser.select(0, row_of(&browser, "b.txt"));
+        browser.begin_quickview().expect("a file to preview");
+
+        browser.move_selected_to_trash();
+        settle(&mut browser);
+
+        assert!(
+            browser.take_quickview_follow(),
+            "the host is asked for a fresh decode"
+        );
+        assert!(browser.quickview.is_some(), "the panel stays up");
+        assert_eq!(
+            browser.selected_entry().map(|e| e.name),
+            Some("c.txt".to_string()),
+            "and it is the survivor that gets decoded"
+        );
+    }
+
+    /// Deleting the only file leaves no row to stand on, so the panel goes
+    /// away rather than hanging over an empty pane.
+    #[test]
+    fn quick_view_closes_when_the_delete_leaves_nothing() {
+        let (mut browser, _dir) = browser_over(&["only.txt"]);
+        browser.select(0, 0);
+        browser.begin_quickview().expect("a file to preview");
+
+        browser.move_selected_to_trash();
+        settle(&mut browser);
+
+        assert!(!browser.take_quickview_follow(), "nothing left to decode");
+        assert!(browser.quickview.is_none(), "the panel is dismissed");
+    }
+
     /// Nothing below the deleted row, so the selection steps back up rather
     /// than being left nowhere.
     #[test]
@@ -8181,5 +8631,202 @@ mod path_entry_tests {
         assert_eq!(common_prefix(&["ab".into(), "zz".into()]), "");
         // Whole characters, never half of one.
         assert_eq!(common_prefix(&["éa".into(), "éb".into()]), "é");
+    }
+}
+
+/// The Trash window: its own shell over the browser's view layer.
+///
+/// These build the listing with [`Browser::listing_the_trash`] rather than
+/// `for_trash`, so the process-wide chrome switch is left alone — the trash
+/// can itself is already shared with every other test in this binary, and
+/// flipping the sidebar out from under the geometry tests would be one shared
+/// thing too many. Nothing here empties the can for the same reason.
+#[cfg(test)]
+mod trash_tests {
+    use super::*;
+
+    struct Tmp(PathBuf);
+
+    impl Tmp {
+        fn new(tag: &str) -> Self {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "otto-files-{tag}-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).expect("temp dir");
+            Self(path)
+        }
+    }
+
+    impl Drop for Tmp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn settle(browser: &mut Browser) {
+        for _ in 0..1000 {
+            browser.poll();
+            if !browser.loading() {
+                browser.settle_pick();
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        panic!("the listing never landed");
+    }
+
+    /// Throw `name` away and open the Trash window on it, with that row
+    /// selected. Returns the window and the path the file came from.
+    fn trashed(tag: &str) -> (Browser, Tmp, PathBuf) {
+        let _ = model::test_data_home();
+        let dir = Tmp::new(tag);
+        // Named after the test. The can is shared with every other test in
+        // this binary, and two of them trashing a file of the same name race
+        // for it: `first_free_name` checks and then moves, so both can pick
+        // the plain name and the second's sidecar wins.
+        let origin = dir.0.join(format!("{tag}.txt"));
+        std::fs::write(&origin, b"body").unwrap();
+
+        let result = model::move_to_trash(std::slice::from_ref(&origin));
+        assert_eq!(result.trashed, 1, "{:?}", result.errors);
+        let Some(model::Change::Trashed { to, .. }) = result.changes.first() else {
+            panic!("nothing was trashed");
+        };
+        let name = to.file_name().unwrap().to_string_lossy().into_owned();
+
+        let mut browser = Browser::listing_the_trash();
+        settle(&mut browser);
+        let index = browser
+            .visible(0)
+            .iter()
+            .position(|e| e.name == name)
+            .expect("the trashed file is listed");
+        browser.select(0, index);
+        (browser, dir, origin)
+    }
+
+    #[test]
+    fn put_back_returns_the_row_to_where_it_came_from() {
+        let (mut browser, _dir, origin) = trashed("trashwin-putback");
+
+        browser.put_back_selection();
+        settle(&mut browser);
+
+        assert!(origin.exists(), "the file is back: {:?}", browser.status);
+        assert_eq!(std::fs::read_to_string(&origin).unwrap(), "body");
+    }
+
+    /// The origin is what the Trash's third column reads out, in place of the
+    /// Kind the browser shows there.
+    #[test]
+    fn a_row_carries_where_it_came_from() {
+        let (browser, _dir, origin) = trashed("trashwin-origin");
+
+        let entry = browser.selected_entry().expect("a selected row");
+        assert_eq!(
+            entry.origin.as_deref(),
+            Some(origin.as_path()),
+            "the sidecar was read back"
+        );
+    }
+
+    /// Opening would hand a thrown-away file to an application, and editing
+    /// it there would edit it inside the can.
+    #[test]
+    fn a_trashed_file_cannot_be_opened() {
+        let (mut browser, _dir, _origin) = trashed("trashwin-open");
+
+        browser.open_selection();
+
+        assert!(browser.opening.is_none(), "nothing was launched");
+        assert!(browser.status.is_some(), "and it says why");
+    }
+
+    /// Renaming would rewrite the name the sidecar is keyed on, and Put Back
+    /// would then have nothing to read.
+    #[test]
+    fn a_trashed_file_cannot_be_renamed() {
+        let (mut browser, _dir, _origin) = trashed("trashwin-rename");
+
+        browser.start_rename();
+
+        assert!(browser.rename.is_none(), "no rename field opened");
+        assert!(browser.status.is_some(), "and it says why");
+    }
+
+    /// A paste would put files in the can with no sidecar — rows that could
+    /// never be put back.
+    #[test]
+    fn nothing_can_be_pasted_into_the_trash() {
+        let (mut browser, dir, _origin) = trashed("trashwin-paste");
+        let stray = dir.0.join("stray.txt");
+        std::fs::write(&stray, b"x").unwrap();
+        browser.clipboard = model::Clipboard {
+            paths: vec![stray],
+            cut: false,
+        };
+
+        browser.paste();
+        settle(&mut browser);
+
+        assert!(
+            !browser.visible(0).iter().any(|e| e.name == "stray.txt"),
+            "the can took nothing"
+        );
+    }
+
+    /// Delete in the Trash destroys, so it asks first — every time, because
+    /// nothing can put the file back afterwards.
+    #[test]
+    fn delete_asks_before_it_destroys() {
+        let (mut browser, _dir, _origin) = trashed("trashwin-delete");
+        let victim = browser.selected_entry().expect("a row").path;
+
+        browser.delete_key();
+
+        let sheet = browser.confirm.as_ref().expect("a confirmation went up");
+        assert!(
+            matches!(&sheet.action, ConfirmAction::DeleteForever(paths) if paths == std::slice::from_ref(&victim)),
+            "it is about the selected row"
+        );
+        assert!(victim.exists(), "and nothing has happened yet");
+    }
+
+    /// Emptying is the same question about the whole can.
+    #[test]
+    fn emptying_asks_before_it_destroys() {
+        let (mut browser, _dir, _origin) = trashed("trashwin-empty");
+
+        browser.ask_empty_trash();
+
+        let sheet = browser.confirm.as_ref().expect("a confirmation went up");
+        assert!(matches!(sheet.action, ConfirmAction::EmptyTrash));
+        assert!(
+            !browser.visible(0).is_empty(),
+            "and nothing has happened yet"
+        );
+    }
+
+    /// The browser's Delete is a trip to the Trash, which is undoable and so
+    /// asks nothing. Only the Trash's own Delete puts a question up.
+    #[test]
+    fn the_browser_still_deletes_without_asking() {
+        let _ = model::test_data_home();
+        let dir = Tmp::new("trashwin-browser-delete");
+        std::fs::write(dir.0.join("a.txt"), b"x").unwrap();
+
+        let mut browser = Browser::new(dir.0.clone());
+        browser.mode = ViewMode::List;
+        settle(&mut browser);
+        browser.select(0, 0);
+
+        browser.delete_key();
+
+        assert!(browser.confirm.is_none(), "no question for a trip to Trash");
+        assert!(!dir.0.join("a.txt").exists());
     }
 }

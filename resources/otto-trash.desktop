@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Name=Trash
+GenericName=Deleted Items
+Comment=Files waiting to be put back or deleted
+Exec=otto-files --trash %u
+TryExec=otto-files
+Icon=user-trash
+Terminal=false
+Categories=System;FileTools;
+MimeType=x-scheme-handler/trash;
+Keywords=trash;bin;wastebasket;rubbish;deleted;recycle;otto;
+StartupNotify=true
+StartupWMClass=otto-trash
+Actions=empty;
+
+[Desktop Action empty]
+Name=Empty Trash
+Exec=otto-files --empty-trash

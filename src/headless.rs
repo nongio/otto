@@ -945,6 +945,11 @@ impl HeadlessHandle {
         self.with_state(|state| state.handle_app_switcher_prev());
     }
 
+    /// Whether the switcher panel is up.
+    pub fn app_switcher_is_open(&self) -> bool {
+        self.query(|state| smithay::utils::IsAlive::alive(state.workspaces.app_switcher.as_ref()))
+    }
+
     /// Release the modifier: hide the panel and focus the selected app.
     pub fn app_switcher_commit(&self) {
         self.with_state(|state| state.dismiss_app_switcher());

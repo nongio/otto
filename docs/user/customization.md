@@ -116,6 +116,7 @@ so what a light tint has to work with is the source icon's luminance.
 | `dock.size`, `dock.magnification` | [Dock](dock.md#size) | How big, and whether icons grow under the pointer |
 | `dock.colorize_*` | [Dock](dock.md#icon-colorization) | Tints every dock and switcher icon to one colour |
 | `workspaces.names` | [Workspaces](workspaces.md) | What the workspace strip is labelled with |
+| `workspaces.switch_duration`, `workspaces.switch_bounce` | [Workspaces](workspaces.md#configuring) | How fast, and how springy, the scroll between workspaces is |
 
 The wallpaper, the accent colour and every `dock.*` setting apply live. The
 rest — colour scheme, fonts, icon and cursor themes, corners, controls side and

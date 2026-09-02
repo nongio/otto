@@ -188,6 +188,178 @@ pub fn find_icon(icon_name: &str, size: i32, scale: i32) -> Option<String> {
     find_icon_in_theme(icon_name, size, scale, theme.as_deref())
 }
 
+/// Whether the configured icon theme has already been found unparseable.
+///
+/// One flag for the process: a session has one icon theme, and once the crate
+/// has choked on it there is nothing to be gained by handing it the same file
+/// again for every icon on screen — it was 37 panics in the first 15 seconds.
+static THEME_IS_BROKEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Run a `freedesktop-icons` lookup, surviving a theme it cannot parse.
+///
+/// The crate `.expect`s its way through `index.theme`: a directory section that
+/// declares no `Size=` panics with "Size not found for icon", and themes in the
+/// wild ship exactly that (Mkos-Big-Sur has two such sections). An icon is
+/// wanted from whatever thread happens to want it — the compositor looks one up
+/// while it builds the dock — so left alone a malformed theme is not a missing
+/// icon but a dead session.
+///
+/// A theme that panics once is not handed to the crate again. It is still the
+/// user's theme, though, and two bad sections out of thirty-six are no reason
+/// to repaint the desktop: the files are looked for in it by hand instead, and
+/// only a name it really does not have falls through to the default theme.
+fn guarded_lookup(
+    icon_name: &str,
+    size: i32,
+    scale: i32,
+    theme_name: Option<&str>,
+) -> Option<String> {
+    use std::sync::atomic::Ordering;
+
+    let find = |theme: Option<&str>| {
+        let mut lookup = freedesktop_icons::lookup(icon_name)
+            .with_size(size.clamp(1, i32::from(u16::MAX)) as u16)
+            .with_scale(scale.clamp(1, i32::from(u16::MAX)) as u16);
+        if let Some(theme) = theme {
+            lookup = lookup.with_theme(theme);
+        }
+        lookup
+            .with_cache()
+            .find()
+            .map(|path| path.to_string_lossy().into_owned())
+    };
+
+    let broken = THEME_IS_BROKEN.load(Ordering::Relaxed);
+    if let Some(theme) = theme_name.filter(|_| broken) {
+        return by_hand(icon_name, theme, size).or_else(|| find(None));
+    }
+
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| find(theme_name))) {
+        Ok(found) => found,
+        Err(_) => {
+            let Some(theme) = theme_name else {
+                // The default theme itself is the broken one: there is nothing
+                // left to fall back to.
+                return None;
+            };
+            if !THEME_IS_BROKEN.swap(true, Ordering::Relaxed) {
+                tracing::warn!(
+                    theme,
+                    "icon theme could not be parsed (a directory in its index.theme \
+                     declares no Size=); looking its icons up by hand instead"
+                );
+            }
+            by_hand(icon_name, theme, size).or_else(|| {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| find(None)))
+                    .ok()
+                    .flatten()
+            })
+        }
+    }
+}
+
+/// The directories a theme may live in, most specific first.
+fn icon_search_roots() -> Vec<std::path::PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(home) = std::env::var_os("HOME") {
+        roots.push(std::path::PathBuf::from(&home).join(".icons"));
+    }
+    match std::env::var_os("XDG_DATA_HOME") {
+        Some(data) if !data.is_empty() => roots.push(std::path::PathBuf::from(data).join("icons")),
+        _ => {
+            if let Some(home) = std::env::var_os("HOME") {
+                roots.push(std::path::PathBuf::from(home).join(".local/share/icons"));
+            }
+        }
+    }
+    let data_dirs = std::env::var("XDG_DATA_DIRS")
+        .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
+    roots.extend(
+        data_dirs
+            .split(':')
+            .filter(|dir| !dir.is_empty())
+            .map(|dir| std::path::Path::new(dir).join("icons")),
+    );
+    roots
+}
+
+/// Find `icon_name` in `theme` without the lookup crate.
+///
+/// A hand-rolled read of `index.theme`, used only for a theme the crate has
+/// already refused: every section is a directory, its `Size=` is a hint, and a
+/// section that has none — the very thing that panics — falls back to the size
+/// in its own name (`16x16/places`) or is simply tried last. That is the whole
+/// difference: a missing size costs this lookup its ordering, not the session.
+fn by_hand(icon_name: &str, theme: &str, size: i32) -> Option<String> {
+    // A name with a path in it is not a themed icon.
+    if icon_name.contains('/') {
+        return None;
+    }
+    let theme_dir = icon_search_roots()
+        .into_iter()
+        .map(|root| root.join(theme))
+        .find(|dir| dir.join("index.theme").is_file())?;
+    let index = std::fs::read_to_string(theme_dir.join("index.theme")).ok()?;
+
+    let mut best: Option<(i32, bool, String)> = None;
+    let mut section: Option<&str> = None;
+    let mut declared: Option<i32> = None;
+    // `+ [""]` so the last section is considered like every other one.
+    for line in index.lines().chain(std::iter::once("[]")) {
+        let line = line.trim();
+        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            if let Some(directory) = section.filter(|d| *d != "Icon Theme") {
+                let hinted = declared.or_else(|| size_from_directory_name(directory));
+                consider_directory(&theme_dir, directory, hinted, icon_name, size, &mut best);
+            }
+            section = Some(name);
+            declared = None;
+        } else if let Some(value) = line.strip_prefix("Size=") {
+            declared = value.trim().parse().ok();
+        }
+    }
+    best.map(|(_, _, path)| path)
+}
+
+/// The size in a directory name like `16x16/places` or `scalable/apps`.
+fn size_from_directory_name(directory: &str) -> Option<i32> {
+    let head = directory.split('/').next()?;
+    head.split(['x', '@']).next()?.parse().ok()
+}
+
+/// Keep whichever of this directory's files is the better answer so far.
+///
+/// Better is: a size at least as big as the one asked for, then the closest to
+/// it, then SVG over a bitmap — the dock asks for 512 and wants the largest
+/// thing the theme has rather than a 16px icon blown up.
+fn consider_directory(
+    theme_dir: &std::path::Path,
+    directory: &str,
+    directory_size: Option<i32>,
+    icon_name: &str,
+    wanted: i32,
+    best: &mut Option<(i32, bool, String)>,
+) {
+    for extension in ["svg", "png", "xpm"] {
+        let candidate = theme_dir
+            .join(directory)
+            .join(format!("{icon_name}.{extension}"));
+        if !candidate.is_file() {
+            continue;
+        }
+        let size = directory_size.unwrap_or(0);
+        let is_svg = extension == "svg";
+        let score = |size: i32, is_svg: bool| (size.min(wanted), size == wanted, is_svg);
+        let replace = best
+            .as_ref()
+            .is_none_or(|(had, had_svg, _)| score(size, is_svg) > score(*had, *had_svg));
+        if replace {
+            *best = Some((size, is_svg, candidate.to_string_lossy().into_owned()));
+        }
+        break;
+    }
+}
+
 /// Look up exactly this icon name, with no generic substitution on a miss.
 ///
 /// [`find_icon_in_theme`] deliberately falls back to a generic icon so a
@@ -200,16 +372,7 @@ pub fn exact_icon_in_theme(icon_name: &str, size: i32, theme_name: Option<&str>)
             .is_file()
             .then(|| icon_name.to_string());
     }
-    let mut lookup = freedesktop_icons::lookup(icon_name)
-        .with_size(size.clamp(1, i32::from(u16::MAX)) as u16)
-        .with_scale(1);
-    if let Some(theme) = theme_name {
-        lookup = lookup.with_theme(theme);
-    }
-    lookup
-        .with_cache()
-        .find()
-        .map(|path| path.to_string_lossy().into_owned())
+    guarded_lookup(icon_name, size, 1, theme_name)
 }
 
 /// Find an icon in a specific theme (or the default one if `theme_name` is
@@ -226,18 +389,7 @@ pub fn find_icon_in_theme(
     scale: i32,
     theme_name: Option<&str>,
 ) -> Option<String> {
-    let lookup = |name: &str| {
-        let mut lookup = freedesktop_icons::lookup(name)
-            .with_size(size.clamp(1, i32::from(u16::MAX)) as u16)
-            .with_scale(scale.clamp(1, i32::from(u16::MAX)) as u16);
-        if let Some(theme) = theme_name {
-            lookup = lookup.with_theme(theme);
-        }
-        lookup
-            .with_cache()
-            .find()
-            .map(|path| path.to_string_lossy().into_owned())
-    };
+    let lookup = |name: &str| guarded_lookup(name, size, scale, theme_name);
 
     lookup(icon_name).or_else(|| {
         // A generic icon is better than an empty square — but only for names

@@ -773,6 +773,53 @@ pub struct DockConfig {
         deserialize_with = "deserialize_dock_bookmarks"
     )]
     pub bookmarks: Vec<DockBookmark>,
+    /// The dock's *places*: the second strip, past the divider, for the things
+    /// that are locations rather than applications. The Trash is the one that
+    /// ships; folders will join it. Written the same way bookmarks are — a
+    /// desktop id, or a table with a label — because a place is still a
+    /// desktop entry, it just is not an app.
+    #[serde(
+        default = "default_dock_places",
+        serialize_with = "serialize_dock_bookmarks",
+        deserialize_with = "deserialize_dock_bookmarks"
+    )]
+    pub places: Vec<DockBookmark>,
+    /// Which place is the wastebasket: the desktop id of the entry whose icon
+    /// follows the can. Everything about that place — what a click opens, and
+    /// what its menu offers — is that desktop entry's own `Exec` and
+    /// `Actions=`, so pointing this at another file manager's entry is how a
+    /// desktop that prefers one uses it.
+    #[serde(default = "default_trash_desktop_id")]
+    pub trash_desktop_id: String,
+    /// Which directory decides whether the Trash icon shows a full bin. The
+    /// freedesktop location by default, which is where Otto itself puts what
+    /// it throws away; change it alongside `trash_desktop_id` for a file
+    /// manager that keeps its trash somewhere else. `~`, `$HOME` and
+    /// `$XDG_DATA_HOME` are expanded.
+    #[serde(default = "default_trash_path")]
+    pub trash_path: String,
+}
+
+/// Otto's own Trash entry. Named rather than left empty so the setting reads
+/// as something to point elsewhere rather than something to fill in.
+fn default_trash_desktop_id() -> String {
+    "otto-trash.desktop".to_string()
+}
+
+/// The freedesktop trash. Written with the variable in it, so the default says
+/// where it actually looks rather than hardcoding one user's home.
+fn default_trash_path() -> String {
+    "$XDG_DATA_HOME/Trash/files".to_string()
+}
+
+/// The Trash, and nothing else. A place the user removed stays removed — the
+/// default only seeds a config that has never said anything about places.
+fn default_dock_places() -> Vec<DockBookmark> {
+    vec![DockBookmark {
+        desktop_id: "otto-trash.desktop".to_string(),
+        label: None,
+        exec_args: Vec::new(),
+    }]
 }
 
 /// Must stay in sync with the `#[serde(default = ...)]` functions above:
@@ -792,6 +839,9 @@ impl Default for DockConfig {
             autohide: false,
             magnification: default_magnification(),
             bookmarks: Vec::new(),
+            places: default_dock_places(),
+            trash_desktop_id: default_trash_desktop_id(),
+            trash_path: default_trash_path(),
         }
     }
 }
@@ -852,15 +902,54 @@ impl Default for LoginConfig {
     }
 }
 
-/// Workspace settings. Only holds the names the user typed in the workspace
-/// selector so far — everything else about a workspace is runtime state.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Workspace settings: the names the user typed in the workspace selector, and
+/// how long the scroll between two workspaces takes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WorkspacesConfig {
     /// Custom workspace names, keyed by `"<output name>:<position>"` — see
     /// [`workspace_name_key`]. Workspaces are per output, and positions shift
     /// when one is removed, so this is a best-effort restore, not an identity.
     pub names: BTreeMap<String, String>,
+    /// Duration in seconds of the spring that scrolls from one workspace to the
+    /// next — the animation a shortcut, an app switcher commit or the workspace
+    /// selector plays. A swipe keeps its own, shorter spring, since it starts
+    /// from wherever the fingers left the workspaces.
+    #[serde(default = "default_workspace_switch_duration")]
+    pub switch_duration: f32,
+    /// Bounce of that same spring: `0.0` settles without overshoot, higher
+    /// values overshoot the target and spring back. Clamped to `0.0..1.0`.
+    #[serde(default = "default_workspace_switch_bounce")]
+    pub switch_bounce: f32,
+}
+
+fn default_workspace_switch_duration() -> f32 {
+    0.6
+}
+
+fn default_workspace_switch_bounce() -> f32 {
+    0.1
+}
+
+impl Default for WorkspacesConfig {
+    fn default() -> Self {
+        Self {
+            names: BTreeMap::new(),
+            switch_duration: default_workspace_switch_duration(),
+            switch_bounce: default_workspace_switch_bounce(),
+        }
+    }
+}
+
+impl WorkspacesConfig {
+    /// The spring the workspace scroll animates with, with the configured
+    /// values pulled into the range the spring solver accepts.
+    pub fn switch_spring(&self) -> layers::prelude::Spring {
+        layers::prelude::Spring::with_duration_and_bounce(
+            self.switch_duration.clamp(0.0, 10.0),
+            self.switch_bounce.clamp(0.0, 1.0),
+        )
+    }
 }
 
 /// Key under which the name of workspace `position` on `output` is stored.

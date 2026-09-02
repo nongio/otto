@@ -42,6 +42,26 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         return otto_files::app::run_picker().await;
     }
 
+    // `--trash` is the Trash window: the same view layer with none of the
+    // browser's chrome. Its own .desktop entry launches us this way.
+    //
+    // `trash:///` opens it too. The rest of the desktop says "the trash" with
+    // that URI — it is how every other file manager is asked for it, and what
+    // `xdg-open` hands a scheme handler — and refusing it would make Otto the
+    // one file manager that cannot be asked. It is accepted as a way in, not
+    // as a location: the Trash is a shell, not somewhere the browser can
+    // navigate to (see `specs/file-browser.md`), so both spellings land in the
+    // same window and neither becomes a path in the location bar.
+    if std::env::args().any(|a| a == "--trash" || is_trash_uri(&a)) {
+        return otto_files::app::run_trash();
+    }
+
+    // The Trash window with its Empty Trash question already asked — the
+    // desktop entry's `empty` action, which the dock offers on the Trash icon.
+    if std::env::args().any(|a| a == "--empty-trash") {
+        return otto_files::app::run_empty_trash();
+    }
+
     let start = std::env::args()
         .nth(1)
         .map(PathBuf::from)
@@ -50,4 +70,35 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| PathBuf::from("/"));
 
     otto_files::app::run_browser(start)
+}
+
+/// Whether `arg` is the freedesktop trash URI, in any of the spellings that
+/// reach a scheme handler: `trash:`, `trash://`, `trash:///` and a path under
+/// it. The scheme is compared without case, as URI schemes are.
+fn is_trash_uri(arg: &str) -> bool {
+    let Some(rest) = arg.get(..6) else {
+        return false;
+    };
+    rest.eq_ignore_ascii_case("trash:")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_trash_uri;
+
+    #[test]
+    fn the_trash_uri_is_recognised_however_it_is_spelled() {
+        for uri in [
+            "trash:",
+            "trash://",
+            "trash:///",
+            "TRASH:///",
+            "trash:///sub",
+        ] {
+            assert!(is_trash_uri(uri), "{uri} should open the Trash");
+        }
+        for other in ["file:///home", "--trash", "trash", "/home/trash"] {
+            assert!(!is_trash_uri(other), "{other} should not open the Trash");
+        }
+    }
 }

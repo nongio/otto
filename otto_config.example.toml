@@ -325,6 +325,27 @@ bookmarks = [
   { desktop_id = "firefox.desktop" },
   { desktop_id = "otto-settings.desktop" }
 ]
+
+# Places: the strip past the dock's divider, for the things that are locations
+# rather than applications. Written like bookmarks, and holding the Trash
+# unless you say otherwise — set it to [] for a dock without one.
+places = [
+  { desktop_id = "otto-trash.desktop" }
+]
+
+# Which place is the wastebasket: the desktop entry whose icon follows the can.
+# Everything about it — what a click opens, and what its right-click menu
+# offers — comes from that entry's own Exec and Actions, so pointing this at
+# another file manager's entry (or one of your own in
+# ~/.local/share/applications) is how you use that one instead. Remember to put
+# the same entry in `places` above.
+trash_desktop_id = "otto-trash.desktop"
+
+# Which directory decides whether the Trash icon shows a full bin. The
+# freedesktop location by default, which is where Otto puts what it throws
+# away. `~`, `$HOME` and `$XDG_DATA_HOME` are expanded. Change it only
+# alongside trash_desktop_id, for a file manager that keeps its trash there.
+trash_path = "$XDG_DATA_HOME/Trash/files"
 # Bookmarks can also carry a label and extra arguments:
 # { desktop_id = "firefox.desktop", label = "Private", exec_args = ["--private-window"] }
 
@@ -344,3 +365,12 @@ colorize_icons = true
 # "<output>:<position>", position counting from 0. Workspaces with no entry here
 # are labelled "Workspace N".
 # names = { "eDP-1:0" = "Mail", "eDP-1:2" = "Code" }
+
+# How long the desktop takes to scroll from one workspace to the next, in
+# seconds, and how much the scroll overshoots before it settles (0.0 = no
+# overshoot, 1.0 = very bouncy). This is the animation a keyboard shortcut, an
+# app switcher (Cmd+Tab) selection that lives on another workspace, or the
+# workspace selector plays. A trackpad swipe keeps its own shorter spring,
+# because it starts from wherever your fingers left the workspaces.
+# switch_duration = 0.6
+# switch_bounce = 0.1

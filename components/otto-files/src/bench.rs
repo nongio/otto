@@ -55,6 +55,7 @@ fn entries(count: usize) -> Vec<Entry> {
                 kind: Kind::Other,
                 size: Some((i as u64 * 7919) % 4_000_000),
                 modified: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(i as u64 * 3600)),
+                origin: None,
                 name,
             }
         })

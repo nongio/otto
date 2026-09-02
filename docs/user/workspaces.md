@@ -129,6 +129,20 @@ monitor starts with one.
 Wallpaper and background colour are set globally under
 [Theming](theming.md).
 
+What you can tune is how the desktop scrolls between them:
+
+```toml
+[workspaces]
+switch_duration = 0.6   # seconds the scroll takes
+switch_bounce = 0.1     # 0.0 settles flat, higher overshoots and springs back
+```
+
+That spring is what a keyboard shortcut, the workspace selector, and an app
+switcher (`Cmd+Tab`) selection whose window lives on another workspace all
+animate with — lower `switch_duration` for a snappier switch. A trackpad swipe
+keeps its own shorter spring, because it starts from wherever your fingers left
+the workspaces.
+
 ## Not yet supported
 
 - Dragging a workspace from one monitor to another

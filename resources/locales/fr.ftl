@@ -28,6 +28,7 @@ common-copy = Copier
 common-paste = Coller
 common-rename = Renommer
 common-delete = Supprimer
+common-replace = Remplacer
 common-move = Déplacer
 
 
@@ -271,6 +272,16 @@ files-move-count-to-trash =
         [many] Mettre { $count } éléments à la corbeille
        *[other] Mettre { $count } éléments à la corbeille
     }
+files-put-back = Remettre
+files-empty-trash = Vider la corbeille
+files-delete-immediately = Supprimer immédiatement
+# $count vaut toujours deux ou plus ; le cas d’un seul élément utilise files-delete-immediately.
+files-delete-count-immediately =
+    { $count ->
+        [one] Supprimer { $count } élément immédiatement
+        [many] Supprimer { $count } éléments immédiatement
+       *[other] Supprimer { $count } éléments immédiatement
+    }
 
 
 ## Files — sidebar and columns
@@ -289,6 +300,9 @@ files-column-name = Nom
 files-column-size = Taille
 files-column-kind = Genre
 files-column-date-modified = Date de modification
+# L’en-tête de la colonne « Type » dans la fenêtre de la corbeille, où la
+# provenance d’un fichier compte plus que son type.
+files-column-original-location = Emplacement d’origine
 
 
 ## Files — kinds
@@ -345,6 +359,11 @@ files-new-window-failed = Impossible d’ouvrir une nouvelle fenêtre : { $err
 ## Files — the listing
 
 files-folder-empty = Ce dossier est vide.
+files-trash-empty = La corbeille est vide.
+# Ouvrir un fichier de la corbeille lancerait une application sur quelque chose
+# qui a été jeté ; ce qui est proposé, c’est de le remettre d’abord.
+files-trash-cant-open = Les éléments de la corbeille ne peuvent pas être ouverts. Les remettre d’abord.
+files-trash-cant-rename = Les éléments de la corbeille ne peuvent pas être renommés.
 files-folder-denied = Aucune autorisation pour afficher le contenu de ce dossier.
 files-folder-gone = Ce dossier n’existe plus.
 files-folder-open-failed = Impossible d’ouvrir ce dossier : { $error }
@@ -397,6 +416,16 @@ files-replace-one = « { $name } » existe déjà. Remplacer ?
 files-replace-one-detail = Le remplacer écrase son contenu actuel.
 files-replace-many = { $count } de ces fichiers existent déjà. Les remplacer ?
 files-replace-many-detail = Les remplacer écrase leur contenu actuel.
+files-delete-forever-one = Supprimer définitivement « { $name } » ?
+files-delete-forever-many = Supprimer définitivement { $count } éléments ?
+files-delete-forever-detail = Cette action est irréversible.
+files-empty-trash-confirm = Vider la corbeille ?
+files-empty-trash-detail =
+    { $count ->
+        [one] { $count } élément sera supprimé définitivement. Cette action est irréversible.
+        [many] { $count } éléments seront supprimés définitivement. Cette action est irréversible.
+       *[other] { $count } éléments seront supprimés définitivement. Cette action est irréversible.
+    }
 
 
 ## Files — sizes

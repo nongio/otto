@@ -28,6 +28,7 @@ common-copy = Copy
 common-paste = Paste
 common-rename = Rename
 common-delete = Delete
+common-replace = Replace
 common-move = Move
 
 
@@ -269,6 +270,15 @@ files-move-count-to-trash =
         [one] Move { $count } Item to Trash
        *[other] Move { $count } Items to Trash
     }
+files-put-back = Put Back
+files-empty-trash = Empty Trash
+files-delete-immediately = Delete Immediately
+# $count is always two or more; the single-item case uses files-delete-immediately.
+files-delete-count-immediately =
+    { $count ->
+        [one] Delete { $count } Item Immediately
+       *[other] Delete { $count } Items Immediately
+    }
 
 
 ## Files — sidebar and columns
@@ -287,6 +297,9 @@ files-column-name = Name
 files-column-size = Size
 files-column-kind = Kind
 files-column-date-modified = Date Modified
+# The Kind column's heading in the Trash window, where where a file came from
+# matters more than what kind of file it is.
+files-column-original-location = Original Location
 
 
 ## Files — kinds
@@ -342,6 +355,11 @@ files-new-window-failed = Couldn’t open a new window: { $error }
 ## Files — the listing
 
 files-folder-empty = This folder is empty.
+files-trash-empty = The Trash is empty.
+# Opening a trashed file would launch an application on a file the user has
+# thrown away; the offer is to put it back first.
+files-trash-cant-open = Items in the Trash can’t be opened. Put it back first.
+files-trash-cant-rename = Items in the Trash can’t be renamed.
 files-folder-denied = You do not have permission to see this folder's contents.
 files-folder-gone = This folder no longer exists.
 files-folder-open-failed = This folder could not be opened: { $error }
@@ -395,6 +413,15 @@ files-replace-one = “{ $name }” already exists. Replace it?
 files-replace-one-detail = Replacing it overwrites its current contents.
 files-replace-many = { $count } of these files already exist. Replace them?
 files-replace-many-detail = Replacing them overwrites their current contents.
+files-delete-forever-one = Delete “{ $name }” permanently?
+files-delete-forever-many = Delete { $count } items permanently?
+files-delete-forever-detail = This cannot be undone.
+files-empty-trash-confirm = Empty the Trash?
+files-empty-trash-detail =
+    { $count ->
+        [one] { $count } item will be deleted permanently. This cannot be undone.
+       *[other] { $count } items will be deleted permanently. This cannot be undone.
+    }
 
 
 ## Files — sizes

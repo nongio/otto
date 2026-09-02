@@ -242,4 +242,40 @@ mod app_switcher_tests {
 
         handle.stop();
     }
+
+    /// Quitting the last app while the switcher is up takes the panel away.
+    /// Its layout has no zero-app case — the width collapses to a sliver the
+    /// full height of the panel — so leaving it on screen until the modifier
+    /// is released puts a stray bar on an empty desktop.
+    #[test]
+    #[serial]
+    fn the_switcher_closes_when_the_last_app_quits() {
+        let handle = start();
+        let mut only = TestClient::connect(&handle.socket_name).expect("client");
+        map_window(&handle, &mut only, "Only");
+        wait_for_apps(&handle, &["Only"]);
+
+        handle.app_switcher_next();
+        handle.settle(300);
+        assert!(handle.app_switcher_is_open(), "alt-tab opens the panel");
+
+        // The app quits: the client goes away and its window is unmapped.
+        drop(only);
+        wait_for_apps(&handle, &[]);
+
+        let mut closed = false;
+        for _ in 0..30 {
+            if !handle.app_switcher_is_open() {
+                closed = true;
+                break;
+            }
+            handle.wait(Duration::from_millis(100));
+        }
+        assert!(
+            closed,
+            "the panel is still up with no apps left to switch to"
+        );
+
+        handle.stop();
+    }
 }

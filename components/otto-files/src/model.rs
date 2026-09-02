@@ -28,6 +28,10 @@ pub struct Entry {
     pub kind: Kind,
     pub size: Option<u64>,
     pub modified: Option<SystemTime>,
+    /// Where this came from before it was trashed, read from the entry's
+    /// `.trashinfo` sidecar. `None` for everything outside the trash, which
+    /// is what the Trash shell's Original-location column keys off.
+    pub origin: Option<PathBuf>,
 }
 
 impl Entry {
@@ -370,6 +374,16 @@ impl Directory {
 fn read_directory(path: &Path) -> Snapshot {
     let read = match std::fs::read_dir(path) {
         Ok(read) => read,
+        // A trash can that has never been used has no directory on disk yet.
+        // That is an empty Trash, not a folder that has gone missing, and the
+        // window must say so rather than showing a read error.
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound && is_trash_root(path) => {
+            return Snapshot {
+                path: path.to_path_buf(),
+                entries: Vec::new(),
+                error: None,
+            }
+        }
         Err(err) => {
             return Snapshot {
                 path: path.to_path_buf(),
@@ -378,6 +392,12 @@ fn read_directory(path: &Path) -> Snapshot {
             }
         }
     };
+
+    // The sidecars, once for the whole listing rather than once per entry:
+    // the info directory is a single readdir, and reading it per file would
+    // be one open() per row on the pane's critical path. Empty for every
+    // directory that is not the trash, which costs nothing.
+    let origins = is_trash_root(path).then(read_trash_origins);
 
     let mut entries = Vec::new();
     for entry in read.flatten() {
@@ -407,6 +427,7 @@ fn read_directory(path: &Path) -> Snapshot {
             kind,
             size: meta.as_ref().map(|m| m.len()),
             modified: meta.as_ref().and_then(|m| m.modified().ok()),
+            origin: origins.as_ref().and_then(|o| o.get(&name).cloned()),
             name,
             path,
             is_dir,
@@ -550,6 +571,22 @@ fn user_dirs(home: &Path) -> Vec<(String, PathBuf)> {
             Some((key.trim().to_string(), expanded))
         })
         .collect()
+}
+
+/// A path written the way a person would say it: `~/Documents` rather than
+/// `/home/someone/Documents`. Used for the Trash's Original-location column,
+/// where the leading `/home/<login>/` is the same on every row and pushes the
+/// part that differs off the end of the cell.
+pub fn abbreviate_home(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    match home_dir() {
+        Some(home) if path == home => "~".to_string(),
+        Some(home) => match path.strip_prefix(&home) {
+            Ok(rest) => format!("~/{}", rest.display()),
+            Err(_) => text.into_owned(),
+        },
+        None => text.into_owned(),
+    }
 }
 
 pub fn home_dir() -> Option<PathBuf> {
@@ -1111,6 +1148,10 @@ pub struct OpResult {
     /// Items moved to Trash — kept apart from `moved` since it reads as a
     /// different sentence in [`Self::summary`].
     pub trashed: usize,
+    /// Items put back where they came from, out of the Trash.
+    pub restored: usize,
+    /// Items destroyed outright. The one counter here that is not undoable.
+    pub deleted: usize,
     /// One message per file that failed. A failure stops that file, not the
     /// whole operation.
     pub errors: Vec<String>,
@@ -1127,6 +1168,12 @@ impl OpResult {
                 self.trashed,
                 plural(self.trashed)
             );
+        }
+        if self.restored > 0 {
+            return format!("Put {} item{} back", self.restored, plural(self.restored));
+        }
+        if self.deleted > 0 {
+            return format!("Deleted {} item{}", self.deleted, plural(self.deleted));
         }
         match (self.moved, self.copied, self.skipped) {
             (0, 0, 0) => String::new(),
@@ -1268,20 +1315,10 @@ pub fn undo(changes: &[Change]) -> OpResult {
                 result.errors.extend(trashed.errors);
             }
             Change::Trashed { from, to, info } => {
-                if from.exists() {
-                    result.errors.push(format!(
-                        "Can\u{2019}t restore \u{201c}{}\u{201d} \u{2014} something is there now.",
-                        name_of(from)
-                    ));
-                    continue;
-                }
-                match move_entry(to, from) {
-                    Ok(()) => {
-                        // The sidecar describes an item that is no longer in
-                        // the trash; leaving it would show a phantom there.
-                        std::fs::remove_file(info).ok();
-                        result.moved += 1;
-                    }
+                // The same operation the Trash window's Put Back runs, and
+                // the same code, so a Ctrl+Z and a Put Back cannot drift.
+                match restore_one(to, from, info) {
+                    Ok(()) => result.moved += 1,
                     Err(err) => result
                         .errors
                         .push(format!("\u{201c}{}\u{201d}: {err}", name_of(to))),
@@ -1504,6 +1541,199 @@ pub(crate) fn test_data_home() -> &'static Path {
         std::env::set_var("XDG_DATA_HOME", &path);
         path
     })
+}
+
+/// The directory the trash's items live in: `$XDG_DATA_HOME/Trash/files`.
+///
+/// This is what the Trash shell browses, so it is an ordinary path and the
+/// ordinary listing machinery reads it. Everything that makes the trash
+/// special — the origins, and what may be done to a row — hangs off
+/// [`is_trash_root`] rather than off a separate kind of column.
+pub fn trash_files_dir() -> Option<PathBuf> {
+    trash_dir().map(|t| t.join("files"))
+}
+
+/// The sidecar directory: `$XDG_DATA_HOME/Trash/info`.
+pub fn trash_info_dir() -> Option<PathBuf> {
+    trash_dir().map(|t| t.join("info"))
+}
+
+/// Is `path` the trash's own directory — the one the Trash shell opens on?
+///
+/// Only the top of it. A trashed folder browsed into is still inside the
+/// trash, but its contents have no sidecars of their own and cannot be put
+/// back one at a time, so they are not treated as trash rows.
+pub fn is_trash_root(path: &Path) -> bool {
+    trash_files_dir().is_some_and(|trash| path == trash)
+}
+
+/// Every sidecar in the info directory, as trashed-name → original path.
+///
+/// A sidecar that cannot be read, or that carries no `Path=`, is skipped: an
+/// item whose origin is unknown is still an item in the trash, and dropping
+/// the whole listing over one unreadable file would be the wrong trade.
+fn read_trash_origins() -> std::collections::HashMap<String, PathBuf> {
+    let mut origins = std::collections::HashMap::new();
+    let Some(info_dir) = trash_info_dir() else {
+        return origins;
+    };
+    let Ok(read) = std::fs::read_dir(&info_dir) else {
+        return origins;
+    };
+    for entry in read.flatten() {
+        let file = entry.file_name();
+        let Some(name) = file.to_str().and_then(|n| n.strip_suffix(".trashinfo")) else {
+            continue;
+        };
+        let Ok(body) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        if let Some(path) = parse_trashinfo(&body) {
+            origins.insert(name.to_string(), path);
+        }
+    }
+    origins
+}
+
+/// The `Path=` key out of a `.trashinfo` body, percent-decoded.
+fn parse_trashinfo(body: &str) -> Option<PathBuf> {
+    body.lines()
+        .find_map(|line| line.strip_prefix("Path="))
+        .map(|encoded| PathBuf::from(percent_decode(encoded.trim())))
+}
+
+/// Undo [`percent_encode_path`]. A stray `%` that is not followed by two hex
+/// digits is kept as itself rather than dropped — the name is what matters,
+/// and a malformed sidecar should still point somewhere recognisable.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok();
+            if let Some(byte) = hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                out.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Put trashed items back where they came from.
+///
+/// Each path is one of the trash's own rows; its origin comes from the
+/// sidecar, which is dropped once the item is back. An item whose origin is
+/// unknown cannot be put back — there is nowhere to put it — and says so
+/// rather than being moved somewhere invented.
+pub fn restore_from_trash(paths: &[PathBuf]) -> OpResult {
+    let mut result = OpResult::default();
+    let Some(info_dir) = trash_info_dir() else {
+        result.errors.push("No trash to restore from.".to_string());
+        return result;
+    };
+
+    for path in paths {
+        let name = name_of(path);
+        let info = info_dir.join(format!("{name}.trashinfo"));
+        let origin = std::fs::read_to_string(&info)
+            .ok()
+            .as_deref()
+            .and_then(parse_trashinfo);
+        let Some(origin) = origin else {
+            result.errors.push(format!(
+                "Can\u{2019}t put \u{201c}{name}\u{201d} back \u{2014} where it came from is not recorded."
+            ));
+            continue;
+        };
+        match restore_one(path, &origin, &info) {
+            Ok(()) => {
+                result.restored += 1;
+                // The inverse of a restore is a trash, and `Change::Moved` is
+                // undone by moving back — which for these is back into the
+                // trash directory, without a sidecar. Recorded as the plain
+                // move it became rather than as a second kind of trashing.
+                result.changes.push(Change::Moved {
+                    from: path.clone(),
+                    to: origin,
+                });
+            }
+            Err(err) => result.errors.push(format!("\u{201c}{name}\u{201d}: {err}")),
+        }
+    }
+    result
+}
+
+/// Move one trashed item back to `origin` and drop its sidecar.
+///
+/// Shared with [`undo`], which is the same operation reached from Ctrl+Z.
+/// The origin's parent is recreated if it has gone: a file whose folder was
+/// deleted after it was trashed still has somewhere it belongs, and refusing
+/// the restore over a missing directory would strand it in the trash.
+fn restore_one(from: &Path, origin: &Path, info: &Path) -> Result<(), String> {
+    if origin.exists() {
+        return Err("something is there now".to_string());
+    }
+    if let Some(parent) = origin.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    move_entry(from, origin)?;
+    // The sidecar describes an item that is no longer in the trash; leaving
+    // it would show a phantom there.
+    std::fs::remove_file(info).ok();
+    Ok(())
+}
+
+/// Delete trashed items outright, with their sidecars.
+///
+/// Not undoable, and the only thing in this file that destroys data. The
+/// caller is responsible for having asked first.
+pub fn delete_forever(paths: &[PathBuf]) -> OpResult {
+    let mut result = OpResult::default();
+    let info_dir = trash_info_dir();
+    for path in paths {
+        let name = name_of(path);
+        match remove_entry(path) {
+            Ok(()) => {
+                result.deleted += 1;
+                if let Some(dir) = info_dir.as_ref() {
+                    std::fs::remove_file(dir.join(format!("{name}.trashinfo"))).ok();
+                }
+            }
+            Err(err) => result.errors.push(format!("\u{201c}{name}\u{201d}: {err}")),
+        }
+    }
+    result
+}
+
+/// Delete everything in the trash.
+///
+/// Listed and then deleted item by item rather than by removing the whole
+/// directory: one unremovable file must fail on its own and leave the rest
+/// emptied, and the trash's own directories have to survive so the next
+/// delete still has somewhere to go.
+pub fn empty_trash() -> OpResult {
+    let mut result = OpResult::default();
+    let Some(files_dir) = trash_files_dir() else {
+        result.errors.push("No trash to empty.".to_string());
+        return result;
+    };
+    let paths: Vec<PathBuf> = match std::fs::read_dir(&files_dir) {
+        Ok(read) => read.flatten().map(|e| e.path()).collect(),
+        // Never used, so already empty.
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return result,
+        Err(err) => {
+            result
+                .errors
+                .push(format!("Couldn\u{2019}t read Trash: {err}"));
+            return result;
+        }
+    };
+    delete_forever(&paths)
 }
 
 /// `$XDG_DATA_HOME/Trash`, falling back to `~/.local/share/Trash` — the
@@ -1885,5 +2115,116 @@ mod paste_tests {
         let contents = std::fs::read_to_string(info).unwrap();
         assert!(contents.starts_with("[Trash Info]\n"));
         assert!(contents.contains("DeletionDate="));
+    }
+
+    /// A round trip through the trash: the sidecar says where it came from,
+    /// and Put Back reads it and lands the file exactly there.
+    #[test]
+    fn put_back_returns_the_file_to_where_it_came_from() {
+        let _home = test_data_home();
+        let t = Tmp::new("restore");
+        let victim = t.file("paper.txt", "body");
+
+        let trashed = move_to_trash(std::slice::from_ref(&victim));
+        assert_eq!(trashed.trashed, 1, "{:?}", trashed.errors);
+        let Some(Change::Trashed { to, info, .. }) = trashed.changes.first() else {
+            panic!("no trashed change recorded");
+        };
+        let (to, info) = (to.clone(), info.clone());
+
+        let result = restore_from_trash(std::slice::from_ref(&to));
+
+        assert_eq!(result.restored, 1, "{:?}", result.errors);
+        assert!(victim.exists(), "the file is back where it started");
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "body");
+        assert!(!to.exists(), "and gone from the trash");
+        assert!(!info.exists(), "with its sidecar dropped");
+    }
+
+    /// The folder a file came from can be deleted while the file sits in the
+    /// trash. Put Back rebuilds the path rather than refusing.
+    #[test]
+    fn put_back_recreates_a_folder_that_has_gone() {
+        let _home = test_data_home();
+        let t = Tmp::new("restore-gone");
+        let nested = t.dir("holder");
+        let victim = nested.join("paper.txt");
+        std::fs::write(&victim, "body").unwrap();
+
+        let trashed = move_to_trash(std::slice::from_ref(&victim));
+        let Some(Change::Trashed { to, .. }) = trashed.changes.first() else {
+            panic!("no trashed change recorded");
+        };
+        std::fs::remove_dir_all(&nested).unwrap();
+
+        let result = restore_from_trash(std::slice::from_ref(to));
+
+        assert_eq!(result.restored, 1, "{:?}", result.errors);
+        assert!(victim.exists(), "the folder was rebuilt under it");
+    }
+
+    /// Something else has taken the name since. The file stays in the trash
+    /// rather than overwriting whatever is there now.
+    #[test]
+    fn put_back_refuses_to_overwrite_what_took_the_name() {
+        let _home = test_data_home();
+        let t = Tmp::new("restore-clash");
+        let victim = t.file("paper.txt", "old");
+
+        let trashed = move_to_trash(std::slice::from_ref(&victim));
+        let Some(Change::Trashed { to, .. }) = trashed.changes.first() else {
+            panic!("no trashed change recorded");
+        };
+        let to = to.clone();
+        std::fs::write(&victim, "new").unwrap();
+
+        let result = restore_from_trash(std::slice::from_ref(&to));
+
+        assert_eq!(result.restored, 0);
+        assert_eq!(result.errors.len(), 1, "and it says why");
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "new");
+        assert!(to.exists(), "still in the trash, not lost");
+    }
+
+    #[test]
+    fn delete_forever_takes_the_sidecar_with_it() {
+        let _home = test_data_home();
+        let t = Tmp::new("forever");
+        let victim = t.file("paper.txt", "body");
+
+        let trashed = move_to_trash(std::slice::from_ref(&victim));
+        let Some(Change::Trashed { to, info, .. }) = trashed.changes.first() else {
+            panic!("no trashed change recorded");
+        };
+        let (to, info) = (to.clone(), info.clone());
+
+        let result = delete_forever(std::slice::from_ref(&to));
+
+        assert_eq!(result.deleted, 1, "{:?}", result.errors);
+        assert!(!to.exists());
+        assert!(!info.exists(), "no phantom left in the listing");
+        assert!(
+            result.changes.is_empty(),
+            "nothing is recorded — this one cannot be undone"
+        );
+    }
+
+    /// A non-UTF-8 name survives the sidecar's percent encoding, which is the
+    /// only place a name is rewritten on the way into the trash.
+    #[test]
+    fn a_path_survives_the_round_trip_through_percent_encoding() {
+        let path = Path::new("/home/u/Documents/a b&c%d — é.txt");
+        let encoded = percent_encode_path(path);
+        assert!(!encoded.contains(' '), "spaces are encoded: {encoded}");
+        assert_eq!(PathBuf::from(percent_decode(&encoded)), path);
+    }
+
+    #[test]
+    fn a_sidecar_without_a_path_is_skipped_rather_than_guessed() {
+        assert_eq!(parse_trashinfo("[Trash Info]\nDeletionDate=x\n"), None);
+        assert_eq!(
+            parse_trashinfo("[Trash Info]\nPath=/tmp/a%20b\nDeletionDate=x\n"),
+            Some(PathBuf::from("/tmp/a b"))
+        );
     }
 }

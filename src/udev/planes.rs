@@ -56,6 +56,7 @@ pub(super) fn ensure_plane_elements(
     crtc: crtc::Handle,
     mode_size: (i32, i32),
     dock_position: DockPosition,
+    dock_reach: i32,
 ) {
     let (w, h) = mode_size;
     let render_node = surface.render_node;
@@ -150,21 +151,25 @@ pub(super) fn ensure_plane_elements(
     // mean dock/switcher animations no longer redraw a full-screen
     // plane, and the KMS watermark cost scales with plane size.
     let switcher_strip_h = (h / 2).min(960);
-    // The dock strip follows the dock: a bottom band, or a side column.
+    // The dock strip follows the dock: a bottom band, or a side column. It is
+    // at least a fixed fraction of the output, and grows to the dock's own
+    // reach — a big dock, fully magnified, at the top of a launch bounce with
+    // its label open, would otherwise hop straight out of the strip and be
+    // cropped mid-air.
     let (dock_size, dock_origin) = match dock_position {
         DockPosition::Bottom => {
-            let strip_h = (h / 4).min(480);
+            let strip_h = (h / 4).min(480).max(dock_reach).min(h);
             ((w, strip_h), (0, h - strip_h))
         }
         // Wider than the bottom band is tall: a side dock's tooltips and
         // context menus open *across* the strip, and anything that reaches past
         // its edge is cropped away.
         DockPosition::Left => {
-            let strip_w = (w / 2).min(960);
+            let strip_w = (w / 2).min(960).max(dock_reach).min(w);
             ((strip_w, h), (0, 0))
         }
         DockPosition::Right => {
-            let strip_w = (w / 2).min(960);
+            let strip_w = (w / 2).min(960).max(dock_reach).min(w);
             ((strip_w, h), (w - strip_w, 0))
         }
     };
@@ -180,6 +185,14 @@ pub(super) fn ensure_plane_elements(
         "dock",
         Some(dock_origin),
     );
+    // The dock's reach changes with its configuration (size, magnification):
+    // follow it. `resize` is a no-op at the same size, and this runs before
+    // the frame renders, so a re-allocation never costs the plane a frame.
+    if let Some(el) = surface.dock_dmabuf_element.as_mut() {
+        if el.resize(dock_size) {
+            el.set_origin(dock_origin);
+        }
+    }
     ensure_plane(
         &mut surface.switcher_dmabuf_element,
         engine,

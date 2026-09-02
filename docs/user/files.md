@@ -86,7 +86,7 @@ selected. Clicking empty space selects nothing.
 |-----|--------|
 | `Return` or `F2` | Rename, inline, with the extension left out of the selection |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste |
-| `Delete`, `Ctrl+Delete`, `Ctrl+Backspace` | Move to trash |
+| `Delete`, `Ctrl+Delete`, `Ctrl+Backspace` | Move to trash (in the Trash window, delete permanently — it asks first) |
 | `Ctrl+Z` | Undo the last operation |
 | `Ctrl+I` | Show info for the selection |
 | `Space` | Quick view (see below) |
@@ -136,6 +136,30 @@ Move to trash follows the freedesktop trash specification: the file goes to
 another filesystem than your home directory are trashed by copying them into
 the trash directory and removing the original, since a rename cannot cross
 filesystems. The original is unlinked only once the copy is fully written.
+
+### The Trash window
+
+Trash is an application of its own, in the dock and the applications list. It
+is the same program as Files behind a different window — `otto-files --trash`
+if you are launching it by hand, or `otto-files trash:///`, the URI the rest of
+the desktop uses — showing one flat listing of everything you have thrown away,
+with an **Original Location** column saying where each item came from. Otto
+registers as the handler for `trash:///`, so `xdg-open trash:///` and anything
+else asking the desktop for the trash lands here.
+
+| Action | What it does |
+|--------|--------------|
+| **Put Back** | Returns the selection to where it came from. If the folder it lived in has since been deleted, it is recreated; if something else has taken the name, the item stays in the Trash and says so |
+| **Empty Trash** | Deletes everything, after asking |
+| `Delete` | Deletes the selection permanently, after asking. There is nowhere further to send it, so this is what the key means here |
+| Dropping files on the window | Throws them away, the same as Move to Trash |
+
+`Ctrl+Z` in the Files window undoes a delete the same way Put Back does — they
+are the same operation reached from two places.
+
+Items in the Trash cannot be opened, renamed, copied or pasted into. Put one
+back first and it is an ordinary file again. Trashed *folders* can be opened,
+so you can look inside before deciding.
 
 ## Not there yet
 

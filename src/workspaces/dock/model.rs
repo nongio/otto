@@ -7,6 +7,10 @@ use crate::workspaces::Application;
 #[derive(Debug, Clone, Default)]
 pub struct DockModel {
     pub launchers: Vec<Application>,
+    /// The places strip, past the divider: locations rather than applications.
+    /// Loaded from `[dock] places`, and never mixed into `launchers` — a place
+    /// keeps its own strip whether or not anything of it is running.
+    pub places: Vec<Application>,
     pub running_apps: Vec<Application>,
     pub minimized_windows: Vec<(ObjectId, String)>,
     pub width: i32,
@@ -16,6 +20,7 @@ pub struct DockModel {
 impl Hash for DockModel {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.launchers.hash(state);
+        self.places.hash(state);
         self.running_apps.hash(state);
         self.minimized_windows.hash(state);
         self.width.hash(state);
@@ -42,6 +47,12 @@ impl DockModel {
             .collect();
 
         for running in self.running_apps.iter() {
+            // A running place belongs to the places strip. Without this the
+            // open Trash window would be appended here as well, and the dock
+            // would show two wastebaskets.
+            if self.places.iter().any(|p| p.match_id == running.match_id) {
+                continue;
+            }
             if let Some(entry) = entries
                 .iter_mut()
                 .find(|(app, _)| app.match_id == running.match_id)
@@ -59,6 +70,21 @@ impl DockModel {
         }
 
         entries
+    }
+
+    /// The places strip, each with whether its window is open — the same pair
+    /// [`Self::display_entries`] returns, so both strips draw through one path.
+    pub fn display_places(&self) -> Vec<(Application, bool)> {
+        self.places
+            .iter()
+            .map(|place| {
+                let running = self
+                    .running_apps
+                    .iter()
+                    .any(|app| app.match_id == place.match_id);
+                (place.clone(), running)
+            })
+            .collect()
     }
 }
 

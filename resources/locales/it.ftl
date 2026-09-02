@@ -28,6 +28,7 @@ common-copy = Copia
 common-paste = Incolla
 common-rename = Rinomina
 common-delete = Elimina
+common-replace = Sostituisci
 common-move = Sposta
 
 
@@ -271,6 +272,16 @@ files-move-count-to-trash =
         [many] Sposta { $count } elementi nel Cestino
        *[other] Sposta { $count } elementi nel Cestino
     }
+files-put-back = Rimetti a posto
+files-empty-trash = Svuota il Cestino
+files-delete-immediately = Elimina subito
+# $count è sempre due o più; il caso di un solo elemento usa files-delete-immediately.
+files-delete-count-immediately =
+    { $count ->
+        [one] Elimina subito { $count } elemento
+        [many] Elimina subito { $count } elementi
+       *[other] Elimina subito { $count } elementi
+    }
 
 
 ## Files — sidebar and columns
@@ -289,6 +300,9 @@ files-column-name = Nome
 files-column-size = Dimensione
 files-column-kind = Tipo
 files-column-date-modified = Data di modifica
+# L’intestazione della colonna “Tipo” nella finestra del Cestino, dove conta
+# più da dove viene un file che di che tipo di file si tratta.
+files-column-original-location = Posizione originale
 
 
 ## Files — kinds
@@ -345,6 +359,11 @@ files-new-window-failed = Impossibile aprire una nuova finestra: { $error }
 ## Files — the listing
 
 files-folder-empty = Questa cartella è vuota.
+files-trash-empty = Il Cestino è vuoto.
+# Aprire un file nel Cestino avvierebbe un’applicazione su qualcosa che è stato
+# buttato via; quello che si offre è rimetterlo a posto prima.
+files-trash-cant-open = Gli elementi nel Cestino non si possono aprire. Rimettili a posto prima.
+files-trash-cant-rename = Gli elementi nel Cestino non si possono rinominare.
 files-folder-denied = Permessi non sufficienti per vedere il contenuto di questa cartella.
 files-folder-gone = Questa cartella non esiste più.
 files-folder-open-failed = Impossibile aprire questa cartella: { $error }
@@ -397,6 +416,16 @@ files-replace-one = “{ $name }” esiste già. Sostituire?
 files-replace-one-detail = Sostituendolo, il contenuto attuale viene sovrascritto.
 files-replace-many = { $count } di questi file esistono già. Sostituirli?
 files-replace-many-detail = Sostituendoli, i contenuti attuali vengono sovrascritti.
+files-delete-forever-one = Eliminare “{ $name }” definitivamente?
+files-delete-forever-many = Eliminare { $count } elementi definitivamente?
+files-delete-forever-detail = L’operazione non può essere annullata.
+files-empty-trash-confirm = Svuotare il Cestino?
+files-empty-trash-detail =
+    { $count ->
+        [one] { $count } elemento verrà eliminato definitivamente. L’operazione non può essere annullata.
+        [many] { $count } elementi verranno eliminati definitivamente. L’operazione non può essere annullata.
+       *[other] { $count } elementi verranno eliminati definitivamente. L’operazione non può essere annullata.
+    }
 
 
 ## Files — sizes

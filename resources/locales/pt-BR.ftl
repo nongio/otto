@@ -28,6 +28,7 @@ common-copy = Copiar
 common-paste = Colar
 common-rename = Renomear
 common-delete = Excluir
+common-replace = Substituir
 common-move = Mover
 
 
@@ -271,6 +272,16 @@ files-move-count-to-trash =
         [many] Mover { $count } itens para o lixo
        *[other] Mover { $count } itens para o lixo
     }
+files-put-back = Colocar de volta
+files-empty-trash = Esvaziar lixo
+files-delete-immediately = Excluir imediatamente
+# $count é sempre dois ou mais; um único item usa files-delete-immediately.
+files-delete-count-immediately =
+    { $count ->
+        [one] Excluir { $count } item imediatamente
+        [many] Excluir { $count } itens imediatamente
+       *[other] Excluir { $count } itens imediatamente
+    }
 
 
 ## Files — sidebar and columns
@@ -289,6 +300,9 @@ files-column-name = Nome
 files-column-size = Tamanho
 files-column-kind = Tipo
 files-column-date-modified = Data de modificação
+# O cabeçalho da coluna “Tipo” na janela do lixo, onde importa mais de onde um
+# arquivo veio do que que tipo de arquivo ele é.
+files-column-original-location = Local original
 
 
 ## Files — kinds
@@ -345,6 +359,11 @@ files-new-window-failed = Não foi possível abrir uma nova janela: { $error }
 ## Files — the listing
 
 files-folder-empty = Esta pasta está vazia.
+files-trash-empty = O lixo está vazio.
+# Abrir um arquivo do lixo lançaria um aplicativo sobre algo que foi jogado
+# fora; o que se oferece é colocá-lo de volta primeiro.
+files-trash-cant-open = Os itens no lixo não podem ser abertos. Coloque de volta primeiro.
+files-trash-cant-rename = Os itens no lixo não podem ser renomeados.
 files-folder-denied = Sem permissão para ver o conteúdo desta pasta.
 files-folder-gone = Esta pasta não existe mais.
 files-folder-open-failed = Não foi possível abrir esta pasta: { $error }
@@ -397,6 +416,16 @@ files-replace-one = “{ $name }” já existe. Substituir?
 files-replace-one-detail = Substituí-lo sobrescreve o conteúdo atual.
 files-replace-many = { $count } destes arquivos já existem. Substituí-los?
 files-replace-many-detail = Substituí-los sobrescreve o conteúdo atual.
+files-delete-forever-one = Excluir “{ $name }” permanentemente?
+files-delete-forever-many = Excluir { $count } itens permanentemente?
+files-delete-forever-detail = Isso não pode ser desfeito.
+files-empty-trash-confirm = Esvaziar o lixo?
+files-empty-trash-detail =
+    { $count ->
+        [one] { $count } item será excluído permanentemente. Isso não pode ser desfeito.
+        [many] { $count } itens serão excluídos permanentemente. Isso não pode ser desfeito.
+       *[other] { $count } itens serão excluídos permanentemente. Isso não pode ser desfeito.
+    }
 
 
 ## Files — sizes

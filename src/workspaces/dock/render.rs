@@ -308,6 +308,24 @@ pub fn setup_miniwindow_icon(layer: &Layer, inner_layer: &Layer, icon_width: f32
 /// Widest a tooltip balloon may get, in logical points, arrow excluded.
 const MAX_LABEL_BODY_WIDTH: f32 = 280.0;
 
+/// How far the label balloon reaches past the edge of the slot it hangs off,
+/// towards the screen interior, in physical pixels. Mirrors the balloon
+/// geometry in [`setup_label`]: the body, the arrow that points back at the
+/// icon, and the gap between arrow tip and slot. Sized for the widest balloon
+/// a side dock can show, since the reach is the largest it can ever be.
+pub(crate) fn label_reach(position: DockPosition, scale: f32) -> f32 {
+    let text_size = 13.0 * scale;
+    let text_padding_v = 7.0 * scale;
+    let arrow_height = 10.0 * scale;
+    let gap = 5.0 * scale;
+    let body = if position.is_vertical() {
+        MAX_LABEL_BODY_WIDTH * scale
+    } else {
+        text_size + text_padding_v * 2.0
+    };
+    body + arrow_height + gap
+}
+
 /// Shorten `text` until it fits `max_width`, appending an ellipsis.
 ///
 /// Measured with the same font and paint the balloon draws with, so what fits
@@ -508,9 +526,29 @@ pub fn setup_label(new_layer: &Layer, label_text: String, position: DockPosition
     new_layer.build_layer_tree(&label_tree);
 }
 
+/// What an icon draw needs: the image, and the placeholder picture used when
+/// there is none.
+struct IconContent {
+    icon: Option<layers::skia::Image>,
+    picture: Option<layers::skia::Picture>,
+}
+
 /// Draw the app icon image only (no running indicator — that is a separate layer).
 pub fn draw_app_icon(application: &Application) -> ContentDrawFunction {
-    let application = application.clone();
+    draw_icon_image(application.icon.clone(), application.picture.clone())
+}
+
+/// The icon draw itself, over a bare image rather than an [`Application`].
+///
+/// Split out because an icon does not always come from the desktop entry: the
+/// Trash's swaps between an empty and a full wastebasket as its directory
+/// changes, and it is drawn — shadow, resampling and all — exactly like every
+/// other icon in the strip.
+pub fn draw_icon_image(
+    icon: Option<layers::skia::Image>,
+    picture: Option<layers::skia::Picture>,
+) -> ContentDrawFunction {
+    let application = IconContent { icon, picture };
     let draw_picture = move |canvas: &layers::skia::Canvas, w: f32, h: f32| -> layers::skia::Rect {
         // Fill the entire layer with the icon.
         let icon_size = w;

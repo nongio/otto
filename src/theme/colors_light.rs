@@ -64,7 +64,11 @@ define_colors!(COLORS, {
     materials_controls_selection_focused => "#0A82FFBF",
     materials_controls_selection_unfocused => "#0000001A",
     materials_controls_header_view => "#FFFFFFCC",
-    materials_controls_tooltip => "#9c9c9cd1",
+    // A dock label is dark text on this, floating over whatever the desktop
+    // happens to be showing: the mid grey it used to be left the text barely
+    // readable, so the light scheme's tooltip is the same near-white frost the
+    // other light materials are, a shade more opaque for a balloon this small.
+    materials_controls_tooltip => "#F6F6F6E6",
     materials_controls_under_window_background => "#F6F6F6D6",
     materials_controls_fullscreen => "#28282880",
     materials_controls_hud => "#28282880",

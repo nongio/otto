@@ -41,8 +41,34 @@ impl Application {
         }
         self.app_info.as_ref().map(|info| info.name.clone())
     }
+    /// The desktop entry's own actions (`Actions=`), in file order. These are
+    /// the app's contribution to its dock menu.
+    pub fn actions(&self) -> Vec<otto_kit::desktop_entry::AppAction> {
+        self.app_info
+            .as_ref()
+            .map(|info| info.actions.clone())
+            .unwrap_or_default()
+    }
+
+    /// The command one of those actions runs.
+    pub fn action_command(&self, action_id: &str) -> Option<(String, Vec<String>)> {
+        let action = self
+            .app_info
+            .as_ref()?
+            .actions
+            .iter()
+            .find(|action| action.id == action_id)?;
+        Self::split_exec(&action.exec, &[])
+    }
+
     pub fn command(&self, extra_args: &[String]) -> Option<(String, Vec<String>)> {
         let exec = self.app_info.as_ref()?.exec.as_ref()?;
+        Self::split_exec(exec, extra_args)
+    }
+
+    /// Split an `Exec=` line into a program and its arguments, dropping the
+    /// `%` field codes nothing here fills in.
+    fn split_exec(exec: &str, extra_args: &[String]) -> Option<(String, Vec<String>)> {
         let mut parts = shell_words::split(exec).ok()?;
         if parts.is_empty() {
             return None;

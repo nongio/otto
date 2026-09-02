@@ -6,13 +6,15 @@ island, it is part of the compositor — there is nothing to start.
 
 ## What it shows
 
-Three groups, in order along the dock (left to right, or top to bottom on a
+Four groups, in order along the dock (left to right, or top to bottom on a
 side dock):
 
 1. **Bookmarks** — launchers you pinned in the config.
 2. **Running applications** — one icon each, with a dot beside it on the
    screen-edge side.
-3. **Minimized windows** — a thumbnail per minimized window, in a drawer that
+3. **Places** — past the divider: the things that are locations rather than
+   applications. The Trash is there by default.
+4. **Minimized windows** — a thumbnail per minimized window, in a drawer that
    opens when the first one arrives.
 
 Icons and names come from the application's `.desktop` entry, loaded in the
@@ -27,11 +29,12 @@ background so a slow icon theme never stalls the compositor.
 | Click it again | Cycle to that app's next window |
 | Click a bookmark | Focus the running instance, or launch it |
 | Click a minimized window | Restore it with the genie animation |
-| Right-click an icon | Context menu: Open, Keep in Dock, Quit |
+| Right-click an icon | Context menu: the app's own actions, then Open, Keep in Dock, Quit |
 | Drag an icon along the dock | Reorder it; neighbours move out of the way |
 
 While a launch is in flight the icon **bounces**, so you know the click landed
-before the window shows up.
+before the window shows up. The jump is measured against the icon, so one
+magnified under the pointer clears the dock by as much as a small one does.
 
 The dock takes pointer priority over windows underneath it, so clicks near its
 screen edge always reach the dock rather than the window behind.
@@ -71,6 +74,55 @@ does not move still launches or focuses the app.
 
 Both are written back to `bookmarks` in your config, so the dock comes back the
 same way next login.
+
+## Places and the Trash
+
+Past the divider sits the **places** strip: things that are locations rather
+than applications. It holds the Trash, and is configured the same way
+bookmarks are:
+
+```toml
+[dock]
+places = [{ desktop_id = "otto-trash.desktop" }]
+```
+
+Set it to `[]` for a dock without a Trash.
+
+The Trash icon shows a **full wastebasket whenever the trash has anything in
+it**, and an empty one when it does not — whether or not the Trash window is
+open, and whichever application did the deleting. Click it to open the Trash
+window; right-click it for **Empty Trash**, which opens that window with the
+question already asked.
+
+### Another file manager's trash
+
+The Trash is a place like any other: a bookmark pointing at a desktop entry.
+Everything about it comes from that entry — the command a click runs, and the
+actions in its right-click menu. So using another file manager's wastebasket is
+a matter of pointing the place at its desktop entry:
+
+```toml
+[dock]
+places = [{ desktop_id = "org.gnome.Nautilus.desktop", exec_args = ["trash:///"] }]
+trash_desktop_id = "org.gnome.Nautilus.desktop"
+trash_path = "$XDG_DATA_HOME/Trash/files"
+```
+
+`trash_desktop_id` says which place is the wastebasket, so its icon follows the
+can. `trash_path` says which directory that icon watches — it expands `~`,
+`$HOME` and `$XDG_DATA_HOME`, and only affects the icon: Otto itself always
+throws files away to the freedesktop location.
+
+If the entry you point at has no *Empty Trash* of its own, write a small
+desktop file in `~/.local/share/applications` with the `Exec=` and `Actions=`
+you want, and name that. The dock offers whatever that file declares.
+
+### An application's own actions
+
+The entries an application declares in its desktop file (`Actions=`) are
+offered at the top of its dock menu — a private window for a browser, Empty
+Trash for the Trash. Nothing has to be configured for this: if the desktop
+entry has them, the dock shows them.
 
 ## Appearance and behaviour
 

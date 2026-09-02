@@ -39,13 +39,26 @@ const PADDING: f32 = 12.0;
 const SWITCHER_HEIGHT: f32 = 26.0;
 const SECTION_GAP: f32 = 12.0;
 
-const SWATCH_SIZE: f32 = 28.0;
-const SWATCH_GAP: f32 = 10.0;
-const SWATCH_COLS: usize = 6;
+/// Width of everything below the panel's padding — the switcher, the
+/// swatch grid and the HSV square plus hue strip all span exactly this, so
+/// every mode lines up on both edges.
+const CONTENT_WIDTH: f32 = WIDTH - PADDING * 2.0;
 
-const SQUARE_SIZE: f32 = WIDTH - PADDING * 2.0 - HUE_STRIP_GAP - HUE_STRIP_WIDTH;
+const SWATCH_SIZE: f32 = 28.0;
+const SWATCH_COLS: usize = 6;
+/// Derived, not tuned: whatever is left over after the swatches themselves,
+/// split between the gaps. Hardcoding it let the grid run past the right
+/// padding — see `swatch_grid_fits_the_content_width`.
+const SWATCH_GAP: f32 =
+    (CONTENT_WIDTH - SWATCH_SIZE * SWATCH_COLS as f32) / (SWATCH_COLS as f32 - 1.0);
+
 const HUE_STRIP_WIDTH: f32 = 18.0;
 const HUE_STRIP_GAP: f32 = 10.0;
+/// The hue indicator is drawn 2px proud of the strip on each side, so the
+/// strip stops that far short of the content edge to keep the whole control
+/// inside the padding.
+const HUE_INDICATOR_OVERHANG: f32 = 2.0;
+const SQUARE_SIZE: f32 = CONTENT_WIDTH - HUE_STRIP_GAP - HUE_STRIP_WIDTH - HUE_INDICATOR_OVERHANG;
 const PREVIEW_ROW_HEIGHT: f32 = 24.0;
 
 const FIELD_ROW_HEIGHT: f32 = 24.0;
@@ -436,9 +449,9 @@ fn draw_hsv(canvas: &Canvas, rect: Rect, color: Color, theme: &Theme) {
 
     let indicator_y = strip.top + (h / 360.0) * strip.height();
     let indicator = Rect::from_xywh(
-        strip.left - 2.0,
+        strip.left - HUE_INDICATOR_OVERHANG,
         indicator_y - 2.0,
-        strip.width() + 4.0,
+        strip.width() + HUE_INDICATOR_OVERHANG * 2.0,
         4.0,
     );
     canvas.draw_rrect(
@@ -603,6 +616,28 @@ mod tests {
         let second_row_first = swatch_rect(r, SWATCH_COLS);
         assert!(second_row_first.top > first_row_last.top);
         assert_eq!(second_row_first.left, swatch_rect(r, 0).left);
+    }
+
+    #[test]
+    fn swatch_grid_fits_the_content_width() {
+        let r = rect(presets().len());
+        let c = content_rect(r);
+        let last_col = swatch_rect(r, SWATCH_COLS - 1);
+        assert_eq!(swatch_rect(r, 0).left, c.left);
+        assert!(
+            last_col.right <= c.right + f32::EPSILON,
+            "swatch grid runs {}px past the content edge",
+            last_col.right - c.right
+        );
+    }
+
+    #[test]
+    fn hsv_controls_fit_the_content_width() {
+        let r = rect(presets().len());
+        let c = content_rect(r);
+        assert_eq!(hsv_square_rect(r).left, c.left);
+        // The hue indicator, not the strip, is the rightmost thing drawn.
+        assert!(hsv_hue_rect(r).right + HUE_INDICATOR_OVERHANG <= c.right + f32::EPSILON);
     }
 
     #[test]
