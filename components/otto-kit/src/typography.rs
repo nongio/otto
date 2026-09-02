@@ -48,6 +48,7 @@ impl FontCache {
 
         // Create new font
         let typeface = self.font_mgr.match_family_style(family, style)?;
+        let typeface = self.covering(typeface, family, style);
         let mut font = Font::from_typeface(typeface, size);
         font.set_subpixel(true);
         font.set_edging(skia::font::Edging::SubpixelAntiAlias);
@@ -57,6 +58,49 @@ impl FontCache {
         Some(font)
     }
 
+    /// This cache's own [`covering_typeface`].
+    fn covering(&self, typeface: skia::Typeface, family: &str, style: FontStyle) -> skia::Typeface {
+        covering_typeface(&self.font_mgr, typeface, family, style)
+    }
+}
+
+/// The typeface to actually draw with: the one asked for, or one that can
+/// draw the language the interface is in.
+///
+/// Skia draws a string with exactly one typeface and no per-glyph fallback of
+/// its own — a run it has no glyph for comes out as empty boxes, not as the
+/// same text in another face the way fontconfig would arrange it. Otto's
+/// interface is set in Inter, which carries no CJK, so a desktop in Chinese
+/// drew every one of its own strings as boxes.
+///
+/// The substitution is whole-interface rather than per-run: the language is
+/// fixed for the life of the process, and a desktop drawn in one language
+/// wants one face for its chrome rather than two disagreeing about weight and
+/// metrics halfway along a label. The families this picks (Source Han Sans and
+/// its Noto siblings) carry Latin as well, so the Latin that remains — a file
+/// name, a version number — stays in a face that matches the rest.
+///
+/// Shared with the compositor, which keeps its own font cache over the same
+/// `skia_safe` and would otherwise draw its dock and its window titles in
+/// boxes while every application above it was legible.
+pub fn covering_typeface(
+    font_mgr: &FontMgr,
+    typeface: skia::Typeface,
+    family: &str,
+    style: FontStyle,
+) -> skia::Typeface {
+    let Some((bcp47, sample)) = script_sample() else {
+        return typeface;
+    };
+    if typeface.unichar_to_glyph(sample) != 0 {
+        return typeface;
+    }
+    font_mgr
+        .match_family_style_character(family, style, &[bcp47], sample)
+        .unwrap_or(typeface)
+}
+
+impl FontCache {
     /// Get font with fallback to system default
     pub fn get_font_with_fallback(&self, family: &str, style: FontStyle, size: f32) -> Font {
         if let Some(font) = self.get_font(family, style, size) {
@@ -80,11 +124,43 @@ impl FontCache {
             .font_mgr
             .legacy_make_typeface(None, style)
             .expect("Failed to create default typeface");
+        let typeface = self.covering(typeface, "sans-serif", style);
         let mut font = Font::from_typeface(typeface, size);
         font.set_subpixel(true);
         font.set_edging(skia::font::Edging::SubpixelAntiAlias);
         font
     }
+}
+
+/// A character out of the script the interface is currently drawn in, with the
+/// language tag to disambiguate it, or `None` when the Latin families the
+/// design is built on already cover the language.
+///
+/// One character is enough: a family that has the Han ideograph has the script.
+/// Han is shared between Chinese, Japanese and Korean and drawn differently in
+/// each, which is what the tag is for — it decides which regional face the
+/// font manager hands back for the same code point.
+fn script_sample() -> Option<(&'static str, skia::Unichar)> {
+    let locale = crate::i18n::current_locale();
+    let language = locale.split('-').next().unwrap_or(&locale).to_string();
+    match language.as_str() {
+        // U+6F22 漢, the character both Chinese and Japanese name their own
+        // script with.
+        "zh" | "ja" => Some((leak_locale(locale), 0x6F22)),
+        // U+D55C 한, the first syllable of the Korean script's own name.
+        "ko" => Some((leak_locale(locale), 0xD55C)),
+        _ => None,
+    }
+}
+
+/// The current locale as a `&'static str`.
+///
+/// Resolved once and never changed for the life of the process — the language
+/// is fixed before the first string is looked up — so one leak per process is
+/// the whole cost, and it saves threading an owned tag through the font cache.
+fn leak_locale(locale: String) -> &'static str {
+    static CURRENT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    CURRENT.get_or_init(|| locale).as_str()
 }
 
 thread_local! {

@@ -120,6 +120,31 @@ overruling the `LANG` of every user who never opened the language row.
 Language is resolved once, before the first string is looked up and before
 anything is drawn. The first resolution wins for the life of the process.
 
+### Drawing a language
+
+A catalogue is not enough to see a language. Skia draws a string with exactly
+one typeface and does no per-glyph fallback of its own: a run it has no glyph
+for comes out as empty boxes rather than falling through to another face the
+way fontconfig would arrange it. Otto's interface is set in Inter, which
+carries no CJK, so shipping the Chinese catalogue drew the entire desktop —
+compositor chrome, bar, dock, every component — in boxes.
+
+So the interface font is resolved against the language: where the family the
+user asked for cannot draw the script the interface is in, the font manager is
+asked for one that can, and that is what the whole interface is set in. The
+substitution is per-interface rather than per-run — the language is fixed for
+the life of the process, and one face for the chrome reads better than two
+disagreeing about weight and metrics halfway along a label. The families this
+reaches (Source Han Sans, the Noto CJK siblings) carry Latin as well, so the
+Latin that remains inside a Chinese interface — a file name, a version number —
+stays in a face that matches the rest.
+
+It is the language that decides, not the string. Text in a script the interface
+is not in — a Chinese file name on an English desktop — is still drawn in the
+interface font and still comes out as boxes. Per-glyph fallback is what would
+fix that, and it belongs at the point text is drawn rather than at the point a
+font is chosen; see Open Questions.
+
 ### Not hot-reloadable
 
 `locales` is a restart-required setting. Changing it is validated, persisted
@@ -403,10 +428,12 @@ which operation the undo stack recorded, which month `civil_from_days` landed on
 
 - The POSIX mapping knows `ja`, but no Japanese catalogue ships. Either one
   follows or the mapping is speculative.
-- The settings pane labels the row *Preferred languages* while the schema calls
-  the setting *Locales*. One name should win.
-- Whether the language preference should also drive `LANG` for applications the
-  user launches, so a translated Otto does not sit around untranslated apps.
+- Text in a script the interface is not set in — a Chinese file name on an
+  English desktop, a Greek window title — still draws as boxes. The fix is
+  per-glyph fallback at the point text is drawn, which means every `draw_str`
+  and every width measurement in the toolkit goes through a run-splitting
+  helper rather than straight at a `Font`. Worth doing; larger than choosing a
+  face by locale, and it changes measurement everywhere.
 - Whether a region preference separate from the language is worth having — a
   user who wants an English interface with European dates has no way to say so
   short of an overlay catalogue.
