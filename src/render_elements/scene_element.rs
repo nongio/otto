@@ -41,6 +41,10 @@ pub struct SceneElement {
     perf_stats: Rc<RefCell<ScenePerfStats>>,
 }
 
+/// Longest step the engine clock advances per tick — two frames at 60 Hz.
+/// See `SceneElement::update`.
+const MAX_ENGINE_STEP_SECS: f32 = 1.0 / 30.0;
+
 impl SceneElement {
     pub fn with_engine(engine: Arc<Engine>) -> Self {
         Self {
@@ -82,7 +86,20 @@ impl SceneElement {
     }
     #[profiling::function]
     pub fn update(&mut self) -> bool {
-        let dt = self.last_update.elapsed().as_secs_f32();
+        // The engine clock is the sum of the `dt`s handed to it, and a
+        // transition is scheduled against that clock as of the *last* tick.
+        // On udev the loop goes idle when nothing changes, so an animation
+        // started from idle (a key press after a quiet hold, a background
+        // task) would be timestamped hundreds of milliseconds in the past and
+        // the next tick would carry it straight past its end — the switcher
+        // snapped instead of fading. Idle time is not animation time: cap the
+        // step at a couple of frame periods so the first tick after a gap
+        // advances the clock like any other frame.
+        let dt = self
+            .last_update
+            .elapsed()
+            .as_secs_f32()
+            .min(MAX_ENGINE_STEP_SECS);
         self.last_update = Instant::now();
 
         #[cfg(feature = "perf-counters")]

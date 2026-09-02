@@ -1037,7 +1037,7 @@ impl Workspaces {
 
         // Check if the app switcher is visible on THIS output — the panel
         // follows the pointer, so one on another screen is irrelevant here.
-        if self.app_switcher.alive() && self.is_app_switcher_output(output) {
+        if self.app_switcher.is_visible() && self.is_app_switcher_output(output) {
             return false;
         }
 
@@ -5106,7 +5106,7 @@ impl Workspaces {
             }
         }
         // The switcher, unlike the dock, follows the pointer across outputs.
-        if self.app_switcher.alive() && self.is_app_switcher_output(output) {
+        if self.app_switcher.is_visible() && self.is_app_switcher_output(output) {
             if let Some(layer) = self.app_switcher.view.layer.read().unwrap().as_ref() {
                 occluders.extend(layer_rect(layer));
             }

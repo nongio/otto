@@ -722,7 +722,17 @@ pub fn run_udev() {
                 .backend_data
                 .render_requested
                 .swap(false, Ordering::AcqRel);
-            if was_requested {
+            // Scene animations wake the loop too. A transaction scheduled from
+            // a background thread (the app switcher's model poller, say) sets
+            // no redraw flag, so with nothing else committing — the last app
+            // just quit — the loop stays idle, the transaction never ticks,
+            // and the next input event snaps the layer to its end state with
+            // no animation at all. Re-read after the dispatch: the task may
+            // have scheduled during it. Once a render lands, `render_surface`
+            // holds `idle_countdown` at 3 for as long as animations are
+            // pending, so the normal reschedule chain takes it from here.
+            let animations_pending = state.scene_element.has_pending_animations();
+            if was_requested || animations_pending {
                 // Idle is a PER-SURFACE property: with multiple outputs one
                 // can be idle (no timer, no VBlank pending) while another is
                 // mid-loop. Kick exactly the idle ones — resetting a busy
