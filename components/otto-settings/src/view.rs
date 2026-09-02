@@ -54,6 +54,11 @@ const ARRANGEMENT_HEIGHT: f32 = ARRANGEMENT_CANVAS_H + 30.0;
 const PREVIEW_H: f32 = 108.0;
 const PREVIEW_W: f32 = 192.0;
 const PREVIEW_GAP: f32 = 10.0;
+/// The button that clears a file setting, revealed on the preview's top-right
+/// corner while the pointer is over the picture: its diameter, and how far it
+/// is inset from that corner.
+const PREVIEW_REMOVE_D: f32 = 22.0;
+const PREVIEW_REMOVE_INSET: f32 = 6.0;
 
 /// A theme row's preview: a light card with one slot per sample image. The
 /// card is a fixed size whatever the theme carries, so choosing a different
@@ -475,6 +480,8 @@ pub enum Pressed {
     },
     /// A file row's "Choose…", by the setting it edits.
     Choose(&'static str),
+    /// The button on a file row's preview that clears the setting.
+    RemoveFile(&'static str),
     /// A shortcut line's remove button.
     Remove(usize),
     /// The button that adds a shortcut line.
@@ -497,6 +504,14 @@ pub enum ShortcutHit {
     Remove(usize),
     /// The "+" button: append one.
     Add,
+}
+
+/// The pointer over a file row's preview.
+pub struct PreviewHit {
+    pub id: &'static str,
+    /// Whether it is over the button that clears the setting, rather than
+    /// just over the picture that reveals it.
+    pub remove: bool,
 }
 
 /// A click that landed on a control bound to a setting.
@@ -588,6 +603,36 @@ fn decode_preview(path: &str) -> Option<skia_safe::Image> {
     Some(surface.image_snapshot())
 }
 
+/// The box a file row's thumbnail occupies: at most [`PREVIEW_W`]x[`PREVIEW_H`],
+/// keeping the image's own aspect inside it, centred on `cx` and starting at
+/// `y`. A file that cannot be decoded gets the empty 16:9 frame that
+/// [`Settings::render_preview`] draws in its place.
+///
+/// Drawing and hit-testing both come through here: the box's width follows the
+/// image, so a rect measured any other way would put the remove button
+/// somewhere the picture is not.
+fn preview_box(path: &str, cx: f32, y: f32) -> Rect {
+    let (w, h) = match preview_image(path) {
+        Some(image) => {
+            let (iw, ih) = (image.width() as f32, image.height() as f32);
+            let scale = (PREVIEW_W / iw).min(PREVIEW_H / ih);
+            (iw * scale, ih * scale)
+        }
+        None => (PREVIEW_H * 16.0 / 9.0, PREVIEW_H),
+    };
+    Rect::from_xywh(cx - w / 2.0, y, w, h)
+}
+
+/// Where the remove button sits on a thumbnail.
+fn preview_remove_rect(box_rect: Rect) -> Rect {
+    Rect::from_xywh(
+        box_rect.right - PREVIEW_REMOVE_INSET - PREVIEW_REMOVE_D,
+        box_rect.top + PREVIEW_REMOVE_INSET,
+        PREVIEW_REMOVE_D,
+        PREVIEW_REMOVE_D,
+    )
+}
+
 /// Which theme a row previews, where it previews one at all.
 ///
 /// Keyed by the setting identifier rather than the label: these two rows are
@@ -641,6 +686,11 @@ pub struct Settings {
     pub blurred: bool,
     /// The button under a held pointer, drawn pressed. See [`Pressed`].
     pub pressed: Option<Pressed>,
+    /// The file row whose preview the pointer is over, so that preview can
+    /// show the button that clears it. Hidden otherwise: a wallpaper is worth
+    /// seeing whole, and a control parked on it permanently is one more thing
+    /// covering the picture than the row needs.
+    pub hovered_preview: Option<&'static str>,
     /// Pointer state of the traffic lights: the app draws its own decoration,
     /// so revealing the glyphs on hover is the app's job too.
     pub controls: WindowControlsState,
@@ -666,6 +716,7 @@ impl Settings {
             toggle_flips: HashMap::new(),
             blurred: false,
             pressed: None,
+            hovered_preview: None,
             controls: WindowControlsState::new(),
             editing: None,
         }
@@ -694,6 +745,12 @@ impl Settings {
 
     pub fn with_pressed(mut self, pressed: Option<Pressed>) -> Self {
         self.pressed = pressed;
+        self
+    }
+
+    /// Carry which file row's preview is hovered into this frame.
+    pub fn with_hovered_preview(mut self, id: Option<&'static str>) -> Self {
+        self.hovered_preview = id;
         self
     }
 
@@ -1053,6 +1110,44 @@ impl Settings {
         widgets::choose_rect(rect.right - 14.0, Self::control_band(row, rect).center_y())
             .contains(local)
             .then_some(id)
+    }
+
+    /// The file row whose preview a point falls on, and whether it falls on
+    /// that preview's remove button.
+    ///
+    /// Serves both the hover — which is what reveals the button — and the
+    /// press that clears the setting, so the button can never be armed by a
+    /// press on a row that is not showing it.
+    pub fn preview_hit(&self, x: f32, y: f32, scroll_offset: f32) -> Option<PreviewHit> {
+        let viewport = self.viewport();
+        if !viewport.contains(Point::new(x, y)) {
+            return None;
+        }
+
+        let content_width = self.width - SIDEBAR_W;
+        let local = Point::new(x - viewport.left, y - viewport.top + scroll_offset);
+
+        let (row, rect) = self
+            .row_rects(content_width)
+            .into_iter()
+            .find(|(_, rect)| rect.contains(local))?;
+        let id = row.id?;
+        let Control::File(path) = &row.control else {
+            return None;
+        };
+        if path.is_empty() {
+            return None;
+        }
+
+        let box_rect = preview_box(
+            path,
+            rect.center_x(),
+            rect.top + Self::control_height(row) + PREVIEW_GAP,
+        );
+        box_rect.contains(local).then(|| PreviewHit {
+            id,
+            remove: preview_remove_rect(box_rect).contains(local),
+        })
     }
 
     /// The text field a click lands on, with the field's rect in content-local
@@ -1564,17 +1659,9 @@ impl Settings {
     /// letterbox. A file that cannot be decoded — gone, or not an image —
     /// draws the empty frame with a line saying so rather than nothing at all,
     /// which would read as a preview still loading.
-    fn render_preview(&self, canvas: &Canvas, path: &str, cx: f32, y: f32) {
+    fn render_preview(&self, canvas: &Canvas, row: &Row, path: &str, cx: f32, y: f32) {
         let image = preview_image(path);
-        let (w, h) = match &image {
-            Some(image) => {
-                let (iw, ih) = (image.width() as f32, image.height() as f32);
-                let scale = (PREVIEW_W / iw).min(PREVIEW_H / ih);
-                (iw * scale, ih * scale)
-            }
-            None => (PREVIEW_H * 16.0 / 9.0, PREVIEW_H),
-        };
-        let box_rect = Rect::from_xywh(cx - w / 2.0, y, w, h);
+        let box_rect = preview_box(path, cx, y);
         let rrect = RRect::new_rect_xy(box_rect, 6.0, 6.0);
 
         canvas.save();
@@ -1609,6 +1696,22 @@ impl Settings {
         border.set_stroke_width(1.0);
         border.set_color(self.theme.fill_secondary);
         canvas.draw_rrect(rrect, &border);
+
+        // Clearing the setting is the picture's own affordance: the row has
+        // one control and it chooses a file, so "no wallpaper" would otherwise
+        // need a path typed by hand.
+        if self.hovered_preview == row.id || self.removing_file(row.id) {
+            widgets::preview_remove(
+                canvas,
+                preview_remove_rect(box_rect),
+                self.removing_file(row.id),
+            );
+        }
+    }
+
+    /// Whether the remove button on this row's preview is being held.
+    fn removing_file(&self, id: Option<&'static str>) -> bool {
+        matches!(self.pressed, Some(Pressed::RemoveFile(held)) if Some(held) == id)
     }
 
     /// A card of sample images from `theme`: a few icons, or a few pointers.
@@ -1977,6 +2080,7 @@ impl Settings {
             if !path.is_empty() {
                 self.render_preview(
                     canvas,
+                    row,
                     path,
                     (x0 + x1) / 2.0,
                     y + Self::control_height(row) + PREVIEW_GAP,
@@ -2275,6 +2379,79 @@ mod tests {
         let right = content_width - CONTENT_PAD - 14.0;
         let (room, _) = Settings::text_room(row, label_x, right, cy);
         Settings::crop(row.label, styles::BODY, room)
+    }
+
+    /// The pane holding the file row, with `path` chosen in it.
+    ///
+    /// The path is deliberately one that cannot be decoded: the preview then
+    /// draws its fixed 16:9 "cannot be shown" frame, so the test knows the
+    /// thumbnail's size without shipping an image to read.
+    fn settings_with_wallpaper(path: &str) -> (Settings, Rect) {
+        let mut settings = (0..model::panes().len())
+            .map(|i| Settings::new(i, false))
+            .find(|s| {
+                s.row_rects(s.width - SIDEBAR_W)
+                    .iter()
+                    .any(|(row, _)| row.id == Some("background_image"))
+            })
+            .expect("a pane carries the wallpaper row");
+
+        for group in &mut settings.panes[settings.selected].groups {
+            for row in &mut group.rows {
+                if row.id == Some("background_image") {
+                    row.control = Control::File(path.into());
+                }
+            }
+        }
+
+        let content_width = settings.width - SIDEBAR_W;
+        let (row, rect) = settings
+            .row_rects(content_width)
+            .into_iter()
+            .find(|(row, _)| row.id == Some("background_image"))
+            .expect("the wallpaper row");
+        let box_rect = preview_box(
+            path,
+            rect.center_x(),
+            rect.top + Settings::control_height(row) + PREVIEW_GAP,
+        );
+        // Back into window coordinates, unscrolled, which is what the hit
+        // tests take.
+        let viewport = settings.viewport();
+        (
+            settings,
+            box_rect.with_offset((viewport.left, viewport.top)),
+        )
+    }
+
+    #[test]
+    fn the_remove_button_is_hit_only_on_its_own_corner_of_the_preview() {
+        let (settings, preview) = settings_with_wallpaper("/nowhere/not-an-image.png");
+        let button = preview_remove_rect(preview);
+
+        let hit = settings
+            .preview_hit(button.center_x(), button.center_y(), 0.0)
+            .expect("the button is on the preview");
+        assert_eq!(hit.id, "background_image");
+        assert!(hit.remove, "the corner does not clear the setting");
+
+        // The rest of the picture hovers the preview without arming anything:
+        // a click there must not throw the wallpaper away.
+        let elsewhere = settings
+            .preview_hit(button.left - 6.0, button.center_y(), 0.0)
+            .expect("the picture is hovered");
+        assert!(!elsewhere.remove, "the picture itself clears the setting");
+    }
+
+    #[test]
+    fn a_row_with_no_file_chosen_has_nothing_to_hover() {
+        // Nothing is drawn, so nothing may be hit: the rows below it are where
+        // that space belongs.
+        let (settings, preview) = settings_with_wallpaper("");
+        let button = preview_remove_rect(preview);
+        assert!(settings
+            .preview_hit(button.center_x(), button.center_y(), 0.0)
+            .is_none());
     }
 
     #[test]

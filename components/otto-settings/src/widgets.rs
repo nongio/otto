@@ -502,3 +502,40 @@ pub fn dashed_rect(canvas: &Canvas, rect: Rect, color: Color) {
     paint.set_path_effect(PathEffect::dash(&[4.0, 4.0], 0.0));
     canvas.draw_rect(rect, &paint);
 }
+
+/// The button that clears a file setting, drawn on the corner of its preview
+/// while the pointer is over the picture.
+///
+/// It sits *on* the thumbnail rather than in the row, so it cannot take its
+/// colours from the theme: the pixels behind it are whatever the wallpaper
+/// happens to be. A dark scrim with a white cross reads on both, which is
+/// what every other control drawn over arbitrary content does.
+pub fn preview_remove(canvas: &Canvas, rect: Rect, pressed: bool) {
+    let (cx, cy) = (rect.center_x(), rect.center_y());
+    let radius = rect.width() / 2.0;
+
+    canvas.draw_circle(
+        Point::new(cx, cy),
+        radius,
+        &fill(Color::from_argb(if pressed { 235 } else { 190 }, 0, 0, 0)),
+    );
+    canvas.draw_circle(
+        Point::new(cx, cy),
+        radius - 0.5,
+        &stroke(Color::from_argb(60, 255, 255, 255), 1.0),
+    );
+
+    let mut cross = stroke(Color::WHITE, 1.6);
+    cross.set_stroke_cap(skia_safe::paint::Cap::Round);
+    let arm = radius * 0.36;
+    canvas.draw_line(
+        Point::new(cx - arm, cy - arm),
+        Point::new(cx + arm, cy + arm),
+        &cross,
+    );
+    canvas.draw_line(
+        Point::new(cx + arm, cy - arm),
+        Point::new(cx - arm, cy + arm),
+        &cross,
+    );
+}
