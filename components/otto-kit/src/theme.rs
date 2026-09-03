@@ -57,9 +57,40 @@ pub struct Theme {
 
     // Shadow
     pub shadow: Color,
+
+    /// The hairline around a floating surface. See [`Theme::hairline`].
+    pub hairline: Color,
 }
 
 impl Theme {
+    /// The hairline that separates a floating surface — a menu, a window, a
+    /// panel — from whatever it happens to sit over.
+    ///
+    /// One token for all of them, so the frame around a menu and the frame
+    /// around the window it opened from are the same line — and the same one
+    /// the compositor's own chrome draws, which is why it is a token of its
+    /// own rather than `fill_secondary`: the two schemes need different
+    /// alphas to land at the same weight — 10% black carries about as far on
+    /// a bright backdrop as 8% white does on a dark one — and a window edged
+    /// differently from the dock beside it reads as two lines, not one.
+    ///
+    /// Deliberately faint either way: the edge is there to close the shape,
+    /// not to outline it, and anything stronger rings the surface once it
+    /// lands on busy content.
+    pub fn hairline(&self) -> Color {
+        self.hairline
+    }
+
+    /// Width of that hairline.
+    ///
+    /// One logical point, which is what a hairline is meant to be. A
+    /// surface-style border is scaled by the compositor like the corner
+    /// radius, so this is the same line whatever the output scale — asking
+    /// for one device pixel instead left HiDPI windows edged half as thickly
+    /// as the dock beside them. Client-side draws (a panel painting its own
+    /// body) are in the same units as the rest of their canvas.
+    pub const HAIRLINE_WIDTH: f32 = 1.0;
+
     /// Light theme, with the user's accent folded in.
     pub fn light() -> Self {
         Self::light_palette().with_system_accent()
@@ -99,6 +130,8 @@ impl Theme {
             material_selection_focused: Color::from_argb(0xBF, 0x0A, 0x82, 0xFF),
 
             shadow: Color::from_argb(0x66, 0x1B, 0x1B, 0x1B),
+
+            hairline: Color::from_argb(0x1A, 0x00, 0x00, 0x00),
         }
     }
 
@@ -128,6 +161,8 @@ impl Theme {
             material_selection_focused: Color::from_argb(0xBF, 0x0A, 0x82, 0xFF),
 
             shadow: Color::from_argb(0x99, 0x00, 0x00, 0x00),
+
+            hairline: Color::from_argb(0x14, 0xFF, 0xFF, 0xFF),
         }
     }
 

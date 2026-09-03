@@ -290,10 +290,11 @@ pub fn draw(
     selected_field: Option<HexField>,
     theme: &Theme,
 ) {
-    canvas.draw_rrect(
-        RRect::new_rect_xy(rect, CORNER_RADIUS, CORNER_RADIUS),
-        &fill(theme.material_popup),
-    );
+    let body = RRect::new_rect_xy(rect, CORNER_RADIUS, CORNER_RADIUS);
+    canvas.draw_rrect(body, &fill(theme.material_popup));
+    // The same hairline a menu and a window carry: the panel floats over
+    // arbitrary content and needs its shape closed against it.
+    canvas.draw_rrect(body, &stroke(theme.hairline(), Theme::HAIRLINE_WIDTH));
 
     draw_switcher(canvas, rect, mode, theme);
 

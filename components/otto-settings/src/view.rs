@@ -684,6 +684,10 @@ pub struct Settings {
     /// Whether the surface carries compositor background blur, so the sidebar
     /// can be painted as a translucent material rather than a flat fill.
     pub blurred: bool,
+    /// Whether this is the focused window. A background one steps back: its
+    /// traffic lights go grey, its title drops a shade, and the accent drains
+    /// out of everything that follows it — see [`Self::with_active`].
+    pub active: bool,
     /// The button under a held pointer, drawn pressed. See [`Pressed`].
     pub pressed: Option<Pressed>,
     /// The file row whose preview the pointer is over, so that preview can
@@ -715,6 +719,7 @@ impl Settings {
             open_picker: None,
             toggle_flips: HashMap::new(),
             blurred: false,
+            active: true,
             pressed: None,
             hovered_preview: None,
             controls: WindowControlsState::new(),
@@ -740,6 +745,19 @@ impl Settings {
     /// The surface has compositor blur behind it.
     pub fn with_blur(mut self, blurred: bool) -> Self {
         self.blurred = blurred;
+        self
+    }
+
+    /// Whether the window is the focused one.
+    ///
+    /// A window in the background mutes its accent, so the selected sidebar
+    /// row, the switches that are on and every other accented control stop
+    /// competing with the window the user is actually working in.
+    pub fn with_active(mut self, active: bool) -> Self {
+        self.active = active;
+        if !active {
+            self.theme.with_muted_accent();
+        }
         self
     }
 
@@ -1452,8 +1470,11 @@ impl Settings {
         // controls at the trailing edge, over the far end of the pane. The
         // pane name titles the bar either way.
         let group = TitlebarGroup::new().add(
-            self.controls
-                .apply(window_controls().with_active(true).with_dark(self.dark)),
+            self.controls.apply(
+                window_controls()
+                    .with_active(self.active)
+                    .with_dark(self.dark),
+            ),
         );
         let bar = Titlebar::new()
             .at(0.0, 0.0)
@@ -1477,7 +1498,11 @@ impl Settings {
             SIDEBAR_W + CONTENT_PAD,
             TITLEBAR_H / 2.0,
             styles::TITLE_3_EMPHASIZED,
-            self.theme.text_primary,
+            if self.active {
+                self.theme.text_primary
+            } else {
+                self.theme.text_secondary
+            },
         );
 
         // Hairline under the bar, separating it from the pane. Like the

@@ -298,8 +298,9 @@ impl DockView {
             })
             .blend_mode(BlendMode::BackgroundBlur)
             .background_color(theme_colors().materials_medium)
-            .border_width((1.0 * draw_scale, None))
-            .border_color(theme_colors().materials_highlight)
+            // The same hairline the menus and the labels carry.
+            .border_width((otto_kit::theme::Theme::HAIRLINE_WIDTH * draw_scale, None))
+            .border_color(theme_colors().hairline)
             .shadow_color(theme_colors().shadow_color)
             .shadow_offset(((0.0, 0.0).into(), None))
             .shadow_radius((20.0, None))

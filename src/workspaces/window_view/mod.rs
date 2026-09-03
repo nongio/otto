@@ -229,3 +229,69 @@ mod drag_damage_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod shadow_coverage_tests {
+    use super::render::{paint_window_shadow, SAFE_AREA};
+
+    /// Darkness the shadow lays down at `(x, y)` of the band, 0.0-1.0.
+    fn shadow_at(surface: &mut layers::skia::Surface, x: i32, y: i32) -> f32 {
+        let image = surface.image_snapshot();
+        let mut pixels = vec![0u8; 4];
+        let info = layers::skia::ImageInfo::new(
+            (1, 1),
+            layers::skia::ColorType::RGBA8888,
+            layers::skia::AlphaType::Premul,
+            None,
+        );
+        assert!(
+            image.read_pixels(
+                &info,
+                &mut pixels,
+                4,
+                (x, y),
+                layers::skia::image::CachingHint::Allow
+            ),
+            "no pixel at ({x}, {y})"
+        );
+        pixels[3] as f32 / 255.0
+    }
+
+    /// The window's top corners have to sit in shadow like every other corner.
+    ///
+    /// The outer pass is offset downwards to read as a light from above, which
+    /// once left the top of the window with nothing but a 3px inner line — on
+    /// a bright wallpaper the top corners looked cut out rather than lit. The
+    /// ambient pass is what closes that, so hold it here: a point just outside
+    /// the top-left corner must be within a third of the shadow the matching
+    /// point outside the bottom-left corner gets.
+    #[test]
+    fn top_corners_are_reached_by_the_shadow() {
+        let (w, h) = (600.0_f32, 400.0_f32);
+        let mut surface = layers::skia::surfaces::raster_n32_premul((
+            (w + SAFE_AREA * 2.0) as i32,
+            (h + SAFE_AREA * 2.0) as i32,
+        ))
+        .unwrap();
+        paint_window_shadow(
+            surface.canvas(),
+            w + SAFE_AREA * 2.0,
+            h + SAFE_AREA * 2.0,
+            true,
+            1.0,
+        );
+
+        // 6px diagonally out from each corner of the window box, which starts
+        // at (SAFE_AREA, SAFE_AREA) and is inset by the 24px corner radius.
+        let inset = 24.0 - 24.0 * std::f32::consts::FRAC_1_SQRT_2;
+        let out = (SAFE_AREA + inset - 6.0) as i32;
+        let top = shadow_at(&mut surface, out, out);
+        let bottom = shadow_at(&mut surface, out, (SAFE_AREA + h - inset + 6.0) as i32);
+
+        assert!(bottom > 0.0, "bottom corner has no shadow at all");
+        assert!(
+            top > bottom / 3.0,
+            "top corner is barely in shadow: {top:.3} against {bottom:.3} at the bottom"
+        );
+    }
+}

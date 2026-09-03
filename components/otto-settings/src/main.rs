@@ -113,6 +113,14 @@ struct SettingsApp {
     /// desktop showing sharp through the sidebar. Shared with the draw
     /// closure, which is why it is an atomic rather than a plain flag.
     frosted: Arc<std::sync::atomic::AtomicBool>,
+    /// Whether this is the focused window.
+    ///
+    /// Activation arrives on a configure, and everything the chrome draws in
+    /// the accent — the selected sidebar row, the switches, the traffic
+    /// lights — steps back with it. Kept apart from `frosted` because a
+    /// window with no blur at all still has to draw its background state.
+    /// Shared with the draw closure, hence the atomic.
+    active: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// A text field with the keyboard: what it edits, and the live editor.
@@ -1000,7 +1008,8 @@ impl SettingsApp {
             &self.hovered_preview,
         )
         .with_open_dropdown(*self.open_dropdown.lock().unwrap())
-        .with_open_picker(*self.open_picker.lock().unwrap());
+        .with_open_picker(*self.open_picker.lock().unwrap())
+        .with_active(self.active.load(std::sync::atomic::Ordering::Relaxed));
 
         let mut scroll = self.scroll.lock().unwrap();
         // The scroll view drives surfaces that live inside the pane, so its
@@ -1409,12 +1418,14 @@ impl App for SettingsApp {
         let size = self.size.clone();
         let controls = self.controls.clone();
         let frosted = self.frosted.clone();
+        let active = self.active.clone();
         window.on_draw(move |canvas| {
             let index = *selected.lock().unwrap();
             let (w, h) = *size.lock().unwrap();
             Settings::new(index, current_color_scheme() == ColorScheme::Dark)
                 .with_size(w, h)
                 .with_blur(frosted.load(std::sync::atomic::Ordering::Relaxed))
+                .with_active(active.load(std::sync::atomic::Ordering::Relaxed))
                 .with_controls(*controls.lock().unwrap())
                 .render_chrome(canvas);
         });
@@ -1971,12 +1982,24 @@ impl App for SettingsApp {
         // is a frost behind its materials. A configure that changes nothing
         // else still has to repaint the sidebar, which is why this runs before
         // the size early-out below.
-        let frosted = window.background_blur() && window.is_activated();
-        if self
+        let activated = window.is_activated();
+        let frosted = window.background_blur() && activated;
+        let mut repaint = self
             .frosted
             .swap(frosted, std::sync::atomic::Ordering::Relaxed)
-            != frosted
+            != frosted;
+        if self
+            .active
+            .swap(activated, std::sync::atomic::Ordering::Relaxed)
+            != activated
         {
+            // The pane draws in the accent too — a switch that is on, a
+            // slider's fill — so losing focus repaints the band as well as
+            // the chrome.
+            mark_pane_dirty(&self.pane_dirty);
+            repaint = true;
+        }
+        if repaint {
             window.request_frame();
         }
         // A configure with no size is the compositor letting the client
@@ -2449,6 +2472,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         hovered_preview: Arc::new(Mutex::new(None)),
         modifiers: Arc::new(Mutex::new(Mods::default())),
         frosted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        active: Arc::new(std::sync::atomic::AtomicBool::new(true)),
     })
     .run()?;
     Ok(())

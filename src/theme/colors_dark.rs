@@ -65,4 +65,5 @@ define_colors!(COLORS, {
     materials_controls_fullscreen => "#28282880",
     materials_controls_hud => "#28282880",
     shadow_color => "#0e0e0e88",
+    hairline => "#FFFFFF14",
 });

@@ -38,7 +38,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
    - **Drop shadow**: `set_shadow` with a soft downward offset to lift the bar off the desktop.
    - **Border**: `set_border` with a subtle 1 logical-point separator at the bottom edge using a theme-adaptive color.
 5. The bar's background fill color (drawn by Skia onto the surface before compositing) uses a semi-transparent material color from otto-kit's `Theme`, chosen based on the active color scheme.
-6. The bar adapts to system light/dark mode by reading `org.freedesktop.appearance color-scheme` from the XDG Settings portal (`org.freedesktop.portal.Settings`). It listens for `SettingChanged` signals and re-applies theme colors within one second. Color scheme values: `0` = no preference (follow otto-kit `Theme` default), `1` = prefer dark, `2` = prefer light.
+6. The bar adapts to system light/dark mode by reading `org.freedesktop.appearance color-scheme` from the XDG Settings portal (`org.freedesktop.portal.Settings`). It listens for `SettingChanged` signals and re-applies theme colors within one second. Color scheme values: `0` = no preference (follow otto-kit `Theme` default), `1` = prefer dark, `2` = prefer light. Bar item highlights (hover and open-menu) follow the same scheme: a dark translucent pill in light mode, a translucent white one in dark mode, so the highlight stays legible against the blurred wallpaper either way. Labels and icons stay white on the pill in both.
 
 ### Layout: Three Zones
 

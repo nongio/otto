@@ -500,6 +500,9 @@ pub fn setup_label(new_layer: &Layer, label_text: String, position: DockPosition
         // The palette's tooltip material, so the balloon follows the scheme
         // like the rest of the chrome instead of sitting on one fixed grey.
         .background_color(theme_colors().materials_controls_tooltip)
+        // The hairline follows the balloon path, arrow included.
+        .border_width((otto_kit::theme::Theme::HAIRLINE_WIDTH * scale, None))
+        .border_color(theme_colors().hairline)
         .position(match arrow {
             BalloonArrow::Bottom => Point {
                 x: -label_size_width / 2.0,

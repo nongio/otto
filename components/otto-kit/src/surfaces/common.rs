@@ -9,6 +9,29 @@ pub use crate::protocols::{otto_surface_style_manager_v1, otto_surface_style_v1}
 
 use crate::{rendering::SkiaSurface, AppContext};
 
+/// Frame a styled surface with the palette's hairline.
+///
+/// The compositor strokes it inside the surface bounds, so it follows the
+/// corner radius and costs the client nothing to draw — and it is the same
+/// line [`crate::theme::Theme::hairline`] puts around a menu, so a window and the
+/// menu it opens are edged alike.
+pub fn apply_hairline_border(style: &otto_surface_style_v1::OttoSurfaceStyleV1) {
+    let color = AppContext::current_theme().hairline();
+    let width = crate::theme::Theme::HAIRLINE_WIDTH;
+    // Doubled on the way out: the compositor strokes the border centred on the
+    // surface bounds, and every window that asks for this also clips itself to
+    // them (`set_masks_to_bounds`), so the outer half is thrown away. Asking
+    // for twice the width is what makes the surviving inner half the hairline
+    // that was asked for.
+    style.set_border(
+        (width * 2.0) as f64,
+        color.r() as f64 / 255.0,
+        color.g() as f64 / 255.0,
+        color.b() as f64 / 255.0,
+        color.a() as f64 / 255.0,
+    );
+}
+
 /// Core surface with all rendering functionality built-in
 ///
 /// This struct contains the common fields and methods used by
