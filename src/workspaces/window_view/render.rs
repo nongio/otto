@@ -101,6 +101,87 @@ pub fn view_window_decoration(
         .unwrap()
 }
 
+/// How far the shadow band reaches outside the window box on every side.
+pub(crate) const SAFE_AREA: f32 = 100.0;
+
+/// Paint the shadow band a window sits in, into a canvas `SAFE_AREA` larger
+/// than the window on every side.
+///
+/// Split out of the view so a test can look at the pixels: the passes below
+/// are the only thing that decides whether a corner is reached.
+pub(crate) fn paint_window_shadow(
+    canvas: &layers::skia::Canvas,
+    w: f32,
+    h: f32,
+    is_active: bool,
+    draw_scale: f32,
+) {
+    // draw shadow with different opacity based on activation state
+    let window_corner_radius = 24.0 * draw_scale;
+    let rect = layers::skia::Rect::from_xywh(
+        SAFE_AREA,
+        SAFE_AREA,
+        w - SAFE_AREA * 2.0,
+        h - SAFE_AREA * 2.0,
+    );
+
+    let rrect = layers::skia::RRect::new_rect_xy(rect, window_corner_radius, window_corner_radius);
+    canvas.clip_rrect(rrect, layers::skia::ClipOp::Difference, false);
+
+    // Inner shadow - lighter for active, very light for inactive
+    let inner_opacity = if is_active { 0.25 } else { 0.08 };
+    let mut shadow_paint = layers::skia::Paint::new(
+        layers::skia::Color4f::new(0.0, 0.0, 0.0, inner_opacity),
+        None,
+    );
+    shadow_paint.set_mask_filter(layers::skia::MaskFilter::blur(
+        layers::skia::BlurStyle::Normal,
+        3.0,
+        false,
+    ));
+    canvas.draw_rrect(rrect, &shadow_paint);
+
+    // Ambient shadow - no offset, so the top edge and the two top corners
+    // get a falloff of their own. The outer pass below is pushed down to
+    // read as a light from above, which leaves everything above the window
+    // with nothing but the 3px inner line: the corners came out bare
+    // against a bright wallpaper.
+    let ambient_opacity = if is_active { 0.18 } else { 0.07 };
+    shadow_paint.set_mask_filter(layers::skia::MaskFilter::blur(
+        layers::skia::BlurStyle::Normal,
+        14.0 * draw_scale,
+        false,
+    ));
+    shadow_paint.set_color4f(
+        layers::skia::Color4f::new(0.0, 0.0, 0.0, ambient_opacity),
+        None,
+    );
+    canvas.draw_rrect(rrect, &shadow_paint);
+
+    // Outer shadow - stronger for active, very light for inactive
+    let rect = layers::skia::Rect::from_xywh(
+        SAFE_AREA,
+        SAFE_AREA + 20.0 * draw_scale,
+        w - SAFE_AREA * 2.0,
+        h - SAFE_AREA * 2.0,
+    );
+    let rrect = layers::skia::RRect::new_rect_xy(rect, window_corner_radius, window_corner_radius);
+    shadow_paint.set_mask_filter(layers::skia::MaskFilter::blur(
+        layers::skia::BlurStyle::Normal,
+        30.0,
+        false,
+    ));
+
+    // Active: darker shadow (0.35), Inactive: very light shadow (0.12)
+    let outer_opacity = if is_active { 0.35 } else { 0.12 };
+    shadow_paint.set_color4f(
+        layers::skia::Color4f::new(0.1, 0.1, 0.1, outer_opacity),
+        None,
+    );
+
+    canvas.draw_rrect(rrect, &shadow_paint);
+}
+
 #[profiling::function]
 pub fn view_window_shadow(
     state: &WindowViewBaseModel,
@@ -109,58 +190,9 @@ pub fn view_window_shadow(
     let w = state.w;
     let h = state.h;
     let is_active = state.active;
-    const SAFE_AREA: f32 = 100.0;
     let draw_scale = Config::with(|config| config.screen_scale) as f32;
     let draw_shadow = move |canvas: &layers::skia::Canvas, w: f32, h: f32| {
-        // draw shadow with different opacity based on activation state
-        let window_corner_radius = 24.0 * draw_scale;
-        let rect = layers::skia::Rect::from_xywh(
-            SAFE_AREA,
-            SAFE_AREA,
-            w - SAFE_AREA * 2.0,
-            h - SAFE_AREA * 2.0,
-        );
-
-        let rrect =
-            layers::skia::RRect::new_rect_xy(rect, window_corner_radius, window_corner_radius);
-        canvas.clip_rrect(rrect, layers::skia::ClipOp::Difference, false);
-
-        // Inner shadow - lighter for active, very light for inactive
-        let inner_opacity = if is_active { 0.25 } else { 0.08 };
-        let mut shadow_paint = layers::skia::Paint::new(
-            layers::skia::Color4f::new(0.0, 0.0, 0.0, inner_opacity),
-            None,
-        );
-        shadow_paint.set_mask_filter(layers::skia::MaskFilter::blur(
-            layers::skia::BlurStyle::Normal,
-            3.0,
-            false,
-        ));
-        canvas.draw_rrect(rrect, &shadow_paint);
-
-        // Outer shadow - stronger for active, very light for inactive
-        let rect = layers::skia::Rect::from_xywh(
-            SAFE_AREA,
-            SAFE_AREA + 20.0 * draw_scale,
-            w - SAFE_AREA * 2.0,
-            h - SAFE_AREA * 2.0,
-        );
-        let rrect =
-            layers::skia::RRect::new_rect_xy(rect, window_corner_radius, window_corner_radius);
-        shadow_paint.set_mask_filter(layers::skia::MaskFilter::blur(
-            layers::skia::BlurStyle::Normal,
-            30.0,
-            false,
-        ));
-
-        // Active: darker shadow (0.35), Inactive: very light shadow (0.12)
-        let outer_opacity = if is_active { 0.35 } else { 0.12 };
-        shadow_paint.set_color4f(
-            layers::skia::Color4f::new(0.1, 0.1, 0.1, outer_opacity),
-            None,
-        );
-
-        canvas.draw_rrect(rrect, &shadow_paint);
+        paint_window_shadow(canvas, w, h, is_active, draw_scale);
         layers::skia::Rect::from_xywh(0.0, 0.0, w, h)
     };
     LayerTreeBuilder::default()
