@@ -639,17 +639,33 @@ browser sounds like part of the desktop rather than like an application with
 opinions about audio. Otto publishes the theme name over the settings portal
 (`org.gnome.desktop.sound theme-name`) and otto-kit plays through it.
 
-The sound follows the **effect**, not the command:
+The sound follows the **effect**, not the command, and the outcomes a user
+tells apart by ear get sounds of their own:
 
 | Outcome | Sound |
 | --- | --- |
-| files arrived — a paste, a drop, a restore | `drag-accept`, else `device-added`, else `complete` |
-| files went away — a delete, or an undo that took a copy back | `trash-empty`, else `device-removed` |
+| files were destroyed — the Trash emptied, or a Delete Forever | `trash-empty`, else `item-deleted`, else `device-removed` |
+| files went to the Trash, or an undo took a copy back | `file-trash`, else `item-deleted`, else `device-removed` |
+| files came back out of the Trash — a put-back | `complete`, else `device-added` |
+| files arrived — a paste, a drop | `drag-accept`, else `device-added`, else `complete` |
 | nothing happened | silence |
 
+The rows are tried in that order, so a mixed outcome is named by the part that
+cannot be undone.
+
+Destroying is heard apart from deleting because one can be taken back and the
+other cannot, and a put-back is heard apart from a paste because it is the
+answer to a delete rather than one more arrival. `trash-empty` is reserved for
+the bin actually being emptied, which is what the naming spec means by it.
+
+`file-trash` and `item-deleted` lead their rows as the spec's own names for
+those effects even though the common themes ship neither — a theme that has
+them should win, and the fallbacks are what cover the ones that do not. The
+spec has no name at all for a put-back, so that row is borrowed throughout.
+
 Choosing from the outcome is what makes undo sound right with no special case:
-undoing a delete is a restore, so it gets the arriving sound; undoing a copy
-takes files away, so it gets the other one.
+undoing a delete is a restore, so it gets the put-back sound; undoing a copy
+takes files away, so it gets the removal one.
 
 The preference order exists because the sound naming spec is thinner than a
 desktop needs — there is no "paste" event — and theme coverage of the drag

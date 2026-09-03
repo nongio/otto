@@ -73,8 +73,23 @@ const DRAG_THRESHOLD: f32 = 6.0;
 /// installed theme actually has is the one that plays.
 const SOUND_ARRIVED: [&str; 3] = ["drag-accept", "device-added", "complete"];
 
-/// Files went away — a delete, or an undo that took a copy back.
-const SOUND_REMOVED: [&str; 2] = ["trash-empty", "device-removed"];
+/// Files went away — a move to the Trash, or an undo that took a copy back.
+///
+/// `file-trash` is the naming spec's own name for this and comes first even
+/// though no theme here ships it: a theme that does should win, and the
+/// fallbacks are what cover the ones that do not. Deliberately not
+/// `trash-empty`, which the spec reserves for the bin actually being emptied.
+const SOUND_REMOVED: [&str; 3] = ["file-trash", "item-deleted", "device-removed"];
+
+/// Files were destroyed — the Trash emptied, or a Delete Forever.
+const SOUND_DESTROYED: [&str; 3] = ["trash-empty", "item-deleted", "device-removed"];
+
+/// Files came back out of the Trash.
+///
+/// Its own sound rather than the arriving one: a put-back is the answer to a
+/// delete, and hearing the delete undone is worth more than hearing it as one
+/// more paste. The naming spec has nothing for it, so this is borrowed.
+const SOUND_RESTORED: [&str; 2] = ["complete", "device-added"];
 
 /// One undoable operation: what to call it, and everything it did.
 ///
@@ -3320,9 +3335,22 @@ impl Browser {
     /// restore, and a restore moves files back into place, so it gets the
     /// arriving sound. Undoing a copy takes files away, and gets the other
     /// one. An operation that did nothing stays quiet.
+    ///
+    /// Destroying is heard apart from deleting, and putting back apart from
+    /// pasting, because those are the pairs a user tells apart by ear: the
+    /// delete that can be taken back sounds different from the one that
+    /// cannot, and the sound that answers a delete is the put-back.
+    ///
+    /// Ordered most specific first. An operation counts under one heading in
+    /// practice, but a mixed outcome should be named by the part that cannot
+    /// be undone.
     fn play_op_sound(result: &model::OpResult) {
-        if result.trashed > 0 {
+        if result.deleted > 0 {
+            otto_kit::sound::play_first(&SOUND_DESTROYED);
+        } else if result.trashed > 0 {
             otto_kit::sound::play_first(&SOUND_REMOVED);
+        } else if result.restored > 0 {
+            otto_kit::sound::play_first(&SOUND_RESTORED);
         } else if result.moved + result.copied > 0 {
             otto_kit::sound::play_first(&SOUND_ARRIVED);
         }
@@ -6868,6 +6896,18 @@ fn run_app(
     picker_queue: Option<crate::dbus::SharedQueue>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let state = Arc::new(Mutex::new(browser));
+
+    // Resolve the file-operation sounds off the main thread now, so the first
+    // delete of the session does not pay for a walk of every theme directory
+    // at the moment it wants to make a noise.
+    let sounds: Vec<&str> = SOUND_DESTROYED
+        .iter()
+        .chain(SOUND_REMOVED.iter())
+        .chain(SOUND_RESTORED.iter())
+        .chain(SOUND_ARRIVED.iter())
+        .copied()
+        .collect();
+    otto_kit::sound::prewarm(&sounds);
 
     let app = FilesApp {
         pane_surfaces: None,
