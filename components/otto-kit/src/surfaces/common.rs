@@ -9,6 +9,48 @@ pub use crate::protocols::{otto_surface_style_manager_v1, otto_surface_style_v1}
 
 use crate::{rendering::SkiaSurface, AppContext};
 
+/// Frame a styled surface with the palette's hairline.
+///
+/// The compositor strokes it inside the surface bounds, so it follows the
+/// corner radius and costs the client nothing to draw — and it is the same
+/// line [`crate::theme::Theme::hairline`] puts around a menu, so a window and the
+/// menu it opens are edged alike.
+///
+/// `OTTO_KIT_HAIRLINE` overrides the line while the look is being tuned:
+/// `#RRGGBBAA` for a colour, or a bare number for a width in device pixels
+/// (`#00000040` / `2`). Unset, or unparseable, leaves the palette alone.
+pub fn apply_hairline_border(style: &otto_surface_style_v1::OttoSurfaceStyleV1) {
+    let mut color = AppContext::current_theme().hairline();
+    let mut width = crate::theme::Theme::HAIRLINE_WIDTH;
+    if let Ok(spec) = std::env::var("OTTO_KIT_HAIRLINE") {
+        if let Some(hex) = spec.strip_prefix('#') {
+            if let Ok(argb) = u32::from_str_radix(hex, 16) {
+                let (r, g, b, a) = (
+                    argb >> 24,
+                    (argb >> 16) & 0xFF,
+                    (argb >> 8) & 0xFF,
+                    argb & 0xFF,
+                );
+                color = skia_safe::Color::from_argb(a as u8, r as u8, g as u8, b as u8);
+            }
+        } else if let Ok(w) = spec.parse::<f32>() {
+            width = w;
+        }
+    }
+    // Doubled on the way out: the compositor strokes the border centred on the
+    // surface bounds, and every window that asks for this also clips itself to
+    // them (`set_masks_to_bounds`), so the outer half is thrown away. Asking
+    // for twice the width is what makes the surviving inner half the hairline
+    // that was asked for.
+    style.set_border(
+        (width * 2.0) as f64,
+        color.r() as f64 / 255.0,
+        color.g() as f64 / 255.0,
+        color.b() as f64 / 255.0,
+        color.a() as f64 / 255.0,
+    );
+}
+
 /// Core surface with all rendering functionality built-in
 ///
 /// This struct contains the common fields and methods used by

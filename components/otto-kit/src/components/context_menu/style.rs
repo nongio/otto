@@ -221,8 +221,15 @@ impl ContextMenuStyle {
         self.theme.material_popup
     }
 
-    /// Get the border color from theme — lighter than the background for definition
+    /// Get the border color from theme.
+    ///
+    /// The edge is only there to separate the popup from whatever it floats
+    /// over: `fill_primary` (0x35 black in the light scheme) drew a hairline
+    /// dark enough to read as a deliberate outline once the menu landed on
+    /// busy content. The shared [`Theme::hairline`] — `fill_secondary` — still
+    /// defines the shape against a light backdrop without ringing it, and is
+    /// the same line windows and panels are framed with.
     pub fn border_color(&self) -> skia_safe::Color {
-        self.theme.fill_primary
+        self.theme.hairline()
     }
 }

@@ -112,6 +112,10 @@ pub struct ThemeColors {
     pub materials_controls_fullscreen: Color,
     pub materials_controls_hud: Color,
     pub shadow_color: Color,
+    /// The line that closes the edge of a floating surface — the dock bar, a
+    /// label balloon, a menu. Matches otto-kit's `Theme::hairline`, so a
+    /// window the compositor frames and the dock beside it draw the same line.
+    pub hairline: Color,
 }
 
 mod colors_dark;

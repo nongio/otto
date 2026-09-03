@@ -288,7 +288,12 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleV1, OttoLayerUserData> for O
                 blue,
                 alpha,
             } => {
-                let width = wl_fixed_to_f32(width);
+                // Logical points on the wire, like the corner radius: a
+                // client asking for a one-point hairline was getting a single
+                // device pixel, which on a 2x output is half the line the
+                // compositor's own chrome draws beside it.
+                let screen_scale = Config::with(|c| c.screen_scale) as f32;
+                let width = wl_fixed_to_f32(width) * screen_scale;
                 let red = wl_fixed_to_f32(red);
                 let green = wl_fixed_to_f32(green);
                 let blue = wl_fixed_to_f32(blue);

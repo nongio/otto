@@ -25,8 +25,41 @@ pub struct RightPanel {
     pub height: f32,
 }
 
+/// Colours for a highlighted bar item (hover and active/open).
+///
+/// The bar sits over the wallpaper blur: a black scrim disappears against a
+/// dark backdrop, so in dark mode the pill is a translucent white veil — light
+/// enough to read as selected, sheer enough that the blur still shows through
+/// and the label stays white.
+struct HighlightColors {
+    hover: skia_safe::Color,
+    active: skia_safe::Color,
+    on_active: skia_safe::Color,
+}
+
+fn highlight_colors() -> HighlightColors {
+    let dark = matches!(
+        otto_kit::color_scheme::current_color_scheme(),
+        otto_kit::theme::ColorScheme::Dark
+    );
+    if dark {
+        HighlightColors {
+            hover: skia_safe::Color::from_argb(0x1A, 255, 255, 255),
+            active: skia_safe::Color::from_argb(0x40, 255, 255, 255),
+            on_active: skia_safe::Color::from_argb(0xF2, 255, 255, 255),
+        }
+    } else {
+        HighlightColors {
+            hover: skia_safe::Color::from_argb(30, 0, 0, 0),
+            active: skia_safe::Color::from_argb(80, 0, 0, 0),
+            on_active: skia_safe::Color::WHITE,
+        }
+    }
+}
+
 fn tray_menu_style() -> MenuBarStyle {
     let theme = AppContext::current_theme();
+    let hl = highlight_colors();
     MenuBarStyle {
         height: BAR_HEIGHT as f32,
         item_padding_horizontal: 3.0,
@@ -36,11 +69,11 @@ fn tray_menu_style() -> MenuBarStyle {
         icon_text_gap: 0.0,
         background_color: skia_safe::Color::TRANSPARENT,
         text_color: theme.text_primary,
-        text_active_color: skia_safe::Color::WHITE,
-        hover_color: skia_safe::Color::from_argb(30, 0, 0, 0),
-        active_color: skia_safe::Color::from_argb(80, 0, 0, 0),
+        text_active_color: hl.on_active,
+        hover_color: hl.hover,
+        active_color: hl.active,
         icon_tint: theme.text_primary,
-        icon_active_tint: skia_safe::Color::WHITE,
+        icon_active_tint: hl.on_active,
         font_size: 13.0,
         font_weight: skia_safe::font_style::Weight::SEMI_BOLD,
         item_corner_radius: 4.0,
@@ -49,6 +82,7 @@ fn tray_menu_style() -> MenuBarStyle {
 
 fn left_menu_style() -> MenuBarStyle {
     let theme = AppContext::current_theme();
+    let hl = highlight_colors();
     MenuBarStyle {
         height: BAR_HEIGHT as f32,
         item_padding_horizontal: 8.0,
@@ -58,11 +92,11 @@ fn left_menu_style() -> MenuBarStyle {
         icon_text_gap: 6.0,
         background_color: skia_safe::Color::TRANSPARENT,
         text_color: theme.text_primary,
-        text_active_color: skia_safe::Color::WHITE,
-        hover_color: skia_safe::Color::from_argb(30, 0, 0, 0),
-        active_color: skia_safe::Color::from_argb(80, 0, 0, 0),
+        text_active_color: hl.on_active,
+        hover_color: hl.hover,
+        active_color: hl.active,
         icon_tint: theme.text_primary,
-        icon_active_tint: skia_safe::Color::WHITE,
+        icon_active_tint: hl.on_active,
         font_size: 13.0,
         font_weight: skia_safe::font_style::Weight::BOLD,
         item_corner_radius: 4.0,

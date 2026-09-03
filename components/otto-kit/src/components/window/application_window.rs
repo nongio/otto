@@ -76,7 +76,10 @@ impl ApplicationWindow {
         if let Some(layer) = surface.surface_style() {
             // layer.set_background_color(0.6, 0.6, 0.6, 0.0);
             // layer.set_blend_mode(BlendMode::BackgroundBlur);
-            layer.set_border(2.0, 1.0, 1.0, 1.0, 0.6);
+            // The window is edged with the same hairline as a menu or a panel
+            // rather than the flat white 2px it used to carry, which read as a
+            // frame of its own on a light desktop.
+            crate::surfaces::apply_hairline_border(layer);
             layer.set_corner_radius(crate::corners::radius(36.0) as f64);
             layer.set_masks_to_bounds(otto_surface_style_v1::ClipMode::Enabled);
         }
