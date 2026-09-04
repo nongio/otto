@@ -968,6 +968,20 @@ impl HeadlessHandle {
         })
     }
 
+    /// The headless output's fractional scale. Comes from the effective
+    /// `screen_scale` setting, so a test whose expectation depends on the
+    /// physical pixel grid has to derive it rather than assume 1.0.
+    pub fn output_scale(&self) -> f64 {
+        self.query(|state| {
+            state
+                .workspaces
+                .outputs()
+                .find(|o| o.name() == OUTPUT_NAME)
+                .map(|o| o.current_scale().fractional_scale())
+                .unwrap_or(1.0)
+        })
+    }
+
     /// Where the visible popups are drawn, in logical points, as
     /// `(x, y, width, height)`.
     pub fn popup_logical_rects(&self) -> Vec<(f32, f32, f32, f32)> {
