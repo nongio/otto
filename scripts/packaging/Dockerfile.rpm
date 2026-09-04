@@ -11,6 +11,12 @@ FROM ${BASE}
 
 ARG SKIP_RUN=0
 
+# The Fedora image sets tsflags=nodocs to stay small, which throws away
+# every %doc file on install — the README, the licence and
+# portals.conf.example. Left in place the check below blames the package
+# for the image's diet, the same trap as dpkg's excludes on the Debian
+# images and NoExtract on the Arch one.
+RUN sed -i '/^tsflags=nodocs/d' /etc/dnf/dnf.conf
 RUN dnf install -y desktop-file-utils && dnf clean all
 
 COPY target/generate-rpm/*.rpm /tmp/pkg/
