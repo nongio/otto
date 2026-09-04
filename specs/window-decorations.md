@@ -64,15 +64,17 @@ appears, and discarded if the surface dies first.
   double click on the bar zooms the window either way. With it off the group is
   narrower by one dot and one gap, and the point the dot used to occupy hits
   nothing. The setting travels the same way `window_controls_side` does, so it
-  applies to a client-drawn otto-kit title bar as well, and changing it takes a
-  restart.
+  applies to a client-drawn otto-kit title bar as well, and changing it takes
+  effect at once.
 - The controls sit at the leading end of the bar by default. The
   `window_controls_side` setting moves them to the trailing end, and they swap
   order when it does, so close stays the outermost one. The screencast
-  badge always takes the other end. The setting is read at startup and
-  published to the components in the environment, so it applies to a
-  client-drawn otto-kit title bar as well as to a server-drawn one, and
-  changing it takes a restart.
+  badge always takes the other end. The setting is published to the components
+  in the environment, which is where a process reads it at startup, and over
+  the Settings portal, which is what reaches a window already on screen — so it
+  applies to a client-drawn otto-kit title bar as well as to a server-drawn
+  one, and changing it takes effect at once. See
+  [settings-app.md](./settings-app.md).
 - The window frame's corners are rounded unless `rounded_corners` is off, in
   which case the bar and the frame square off — as they already do while the
   window is maximized.

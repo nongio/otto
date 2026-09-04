@@ -71,7 +71,8 @@ show_maximize_button = false     # the default; set true for the zoom dot
 
 `window_controls_side` picks which end of the title bar the controls sit at. On
 the right the three swap order, so close stays the outermost one. Both settings
-are read at startup, so changing them takes a restart.
+apply immediately: Otto rebuilds the title bars it draws itself, and tells the
+applications drawing their own through the desktop portal.
 
 Clients that explicitly ask for *client-side* are honoured. GTK and Electron
 apps request it and keep drawing their own title bars, so those look like

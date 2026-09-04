@@ -159,6 +159,17 @@ impl ApplicationsInfo {
         app
     }
 
+    /// Drop every resolved application.
+    ///
+    /// An `Application` carries a decoded icon and the path it came from, and
+    /// nothing in the key says which icon theme resolved it — the process only
+    /// ever had one. So the whole map answers for the old theme the moment the
+    /// user picks a new one, and the cheapest correct thing is to forget it and
+    /// let the next lookup go back to the desktop entries.
+    pub async fn forget_all() {
+        applications_info().write().await.clear();
+    }
+
     async fn load_app_info(app_id: &str) -> Option<Application> {
         tracing::trace!(app_id = %app_id, "[load_app_info] start");
 

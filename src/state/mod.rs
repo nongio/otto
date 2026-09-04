@@ -2136,6 +2136,52 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         }
     }
 
+    /// Rebuild every server-side titlebar from the current configuration.
+    ///
+    /// The colour scheme, corner rounding, the side the controls sit at and
+    /// whether the zoom dot is drawn are all read while a bar is built, so a
+    /// change to any of them has to reach the bars that are already up. The
+    /// model is recomputed rather than nudged, because two of those four live
+    /// in it (`dark`, `corner_radius`) and two do not — and a model that hashed
+    /// the same would skip the repaint the other two need.
+    pub fn refresh_window_decorations(&mut self) {
+        let scale_factor = Config::with(|c| c.screen_scale);
+        let windows: Vec<_> = self.workspaces.spaces_elements().cloned().collect();
+        for window in windows {
+            if !window.is_decorated() {
+                continue;
+            }
+            let Some(id) = window.wl_surface().map(|s| s.id()) else {
+                continue;
+            };
+            let Some(window_view) = self.workspaces.get_window_view(&id) else {
+                continue;
+            };
+            let base = window_view.view_base.get_state();
+            let width_px = self
+                .workspaces
+                .element_geometry(&window)
+                .unwrap_or_default()
+                .to_f64()
+                .to_physical(scale_factor)
+                .size
+                .w as f32;
+            let model = self.decoration_model_for(
+                &window,
+                &window_view,
+                width_px,
+                base.active,
+                base.fullscreen,
+                scale_factor,
+            );
+            window_view.update_decoration(model);
+            // The controls' side and the zoom dot are read inside the render
+            // function rather than carried in the model, so a bar whose model
+            // did not move still has to be redrawn.
+            window_view.rerender_decoration();
+        }
+    }
+
     /// Refresh the chrome Otto draws around a window — its drop shadow and its
     /// server-side titlebar — from the window's geometry, without re-importing
     /// its surface tree.

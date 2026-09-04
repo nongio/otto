@@ -50,7 +50,7 @@ pub fn side() -> ControlsSide {
                 .ok()
                 .and_then(|text| ControlsSide::parse(&text))
                 .unwrap_or_default();
-            store(value);
+            set(value);
             value
         }
         2 => ControlsSide::Right,
@@ -58,7 +58,9 @@ pub fn side() -> ControlsSide {
     }
 }
 
-fn store(value: ControlsSide) {
+/// Update the answer without touching the environment — see
+/// [`crate::corners::set`].
+pub fn set(value: ControlsSide) {
     SIDE.store(
         match value {
             ControlsSide::Left => 1,
@@ -72,7 +74,7 @@ fn store(value: ControlsSide) {
 /// assignment for the session's activation environments. See
 /// [`crate::corners::export`].
 pub fn export(value: ControlsSide) -> String {
-    store(value);
+    set(value);
     std::env::set_var(ENV, value.as_str());
     format!("{ENV}={}", value.as_str())
 }

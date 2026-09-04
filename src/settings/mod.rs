@@ -709,11 +709,11 @@ mod tests {
 
     #[test]
     fn a_restart_setting_is_reported_as_pending_but_left_out_of_the_running_config() {
-        let spec = schema::lookup("cursor_theme").expect("exists");
+        let spec = schema::lookup("font_family").expect("exists");
         assert_eq!(spec.apply, Apply::Restart);
         let running = config_toml(&Config::default());
         let was = value_in(&running, spec);
-        let wanted = SettingValue::Str("Adwaita-pending".into());
+        let wanted = SettingValue::Str("Pending Sans".into());
 
         note_pending(spec, &wanted, &was);
         assert_eq!(reported_in(&running, spec), wanted);
@@ -738,9 +738,9 @@ mod tests {
             with_restart_settings_of(&next, &config_toml(&previous)).expect("valid config");
         // Restart settings go back to the running values.
         assert_eq!(restored.screen_scale, previous.screen_scale);
-        assert_eq!(restored.icon_theme, previous.icon_theme);
-        // A live setting is left as reloaded.
+        // Live settings are left as reloaded.
         assert!(restored.dock.autohide);
+        assert_eq!(restored.icon_theme, next.icon_theme);
     }
 
     #[test]

@@ -77,6 +77,9 @@ async fn run_watcher() -> Result<(), zbus::Error> {
             if let Some(theme) = extract_string(val) {
                 tracing::debug!("icon-theme initial value: {theme}");
                 *ICON_THEME.write().unwrap() = theme;
+                // Anything resolved before the portal answered was looked up
+                // in whatever theme the lookup crate picked for itself.
+                crate::icons::clear_cache();
                 crate::portal_runtime::theme_changed();
             }
         }
@@ -95,6 +98,9 @@ async fn run_watcher() -> Result<(), zbus::Error> {
             if let Some(theme) = extract_string(args.value) {
                 tracing::debug!("icon-theme changed to: {theme}");
                 *ICON_THEME.write().unwrap() = theme;
+                // Every cached icon — and every cached miss — answers for the
+                // theme that has just been replaced.
+                crate::icons::clear_cache();
                 crate::portal_runtime::theme_changed();
             }
         }

@@ -1,10 +1,11 @@
 //! Reconciling the running compositor with a changed configuration.
 //!
-//! `dock.*`, `input.*` and the switcher's tint opt-out are reconciled today,
-//! and the schema says so: a setting marked `live` here must genuinely take
-//! effect, and everything else is marked `restart` rather than being quietly
-//! accepted and ignored.
+//! The appearance settings, the dock, the switcher, the pointer, the icon
+//! theme and `input.*` are reconciled today, and the schema says so: a setting
+//! marked `live` here must genuinely take effect, and everything else is
+//! marked `restart` rather than being quietly accepted and ignored.
 
+use crate::config::Config;
 use crate::state::{Backend, Otto};
 
 /// Whether `apply_live` knows how to apply this identifier.
@@ -25,9 +26,17 @@ pub fn is_applied_live(id: &str) -> bool {
             | "dock.colorize_color"
             | "dock.colorize_intensity"
             | "appswitcher.colorize_icons"
+            | "appswitcher.follow_cursor"
             | "accent_color"
             | "background_image"
             | "background_color"
+            | "theme_scheme"
+            | "rounded_corners"
+            | "window_controls_side"
+            | "show_maximize_button"
+            | "cursor_theme"
+            | "cursor_size"
+            | "icon_theme"
     ) || is_input_id(id)
 }
 
@@ -113,6 +122,74 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
         // the colour is the gradient behind a wallpaper that is absent or
         // unreadable, so changing either one is the same reconciliation.
         "background_image" | "background_color" => state.workspaces.reload_background(),
+        // Light against dark changes the palette every render function reads,
+        // so all of Otto's own chrome is repainted. The accent is republished
+        // first: it is usually a palette *name*, and the colour that name
+        // stands for is different under the other scheme.
+        //
+        // Client applications hear about it from the Settings portal, which
+        // relays Otto's `Changed` signal as `color-scheme`; the environment is
+        // updated too, so a process started after this point agrees with the
+        // ones already running even where no portal is answering.
+        "theme_scheme" => {
+            crate::export_color_scheme();
+            crate::theme::publish_accent();
+            state.workspaces.rerender_chrome();
+            state.refresh_window_decorations();
+            Ok(())
+        }
+        // Corner rounding is read through `otto_kit::corners` by every draw
+        // routine, in this process and in the ones drawing the bar and their
+        // own titlebars. Publishing updates this process and the session
+        // environment; the portal's `org.otto.desktop` namespace is what
+        // carries it to the windows already on screen.
+        "rounded_corners" => {
+            crate::export_rounded_corners();
+            state.workspaces.rerender_chrome();
+            state.refresh_window_decorations();
+            Ok(())
+        }
+        // Both travel the same way, and both are read while a titlebar is
+        // drawn rather than being held in its model — so only the bars have to
+        // be rebuilt, not the rest of the chrome.
+        "window_controls_side" => {
+            crate::export_window_controls_side();
+            state.refresh_window_decorations();
+            Ok(())
+        }
+        "show_maximize_button" => {
+            crate::export_maximize_button();
+            state.refresh_window_decorations();
+            Ok(())
+        }
+        // The pointer's own theme and size. `reload` drops the loaded theme
+        // and every cursor resolved from it; the texture cache is keyed by
+        // icon and scale rather than by theme, so it has to go as well or the
+        // old bitmaps are re-uploaded for the new names.
+        "cursor_theme" | "cursor_size" => {
+            let (theme, size) = Config::with(|c| (c.cursor_theme.clone(), c.cursor_size));
+            state
+                .cursor_manager
+                .reload(&theme, size.clamp(1, 255) as u8);
+            state.cursor_texture_cache.clear();
+            // Nothing else invalidates on a pointer that is not moving.
+            state.backend_data.request_redraw();
+            Ok(())
+        }
+        // Icons are decoded once and kept, so the theme reaches nothing until
+        // the caches are dropped and the dock's applications are looked up
+        // again. Chrome icons (the workspace selector's) come out of the same
+        // otto-kit cache, so they are repainted here too; the app switcher
+        // resolves its applications when it is next opened.
+        "icon_theme" => {
+            state.workspaces.dock.reload_icons();
+            state.workspaces.rerender_chrome();
+            Ok(())
+        }
+        // Read from the live configuration each time the switcher is shown
+        // (`Workspaces::app_switcher_output_for`), so the next Alt-Tab already
+        // uses the new value.
+        "appswitcher.follow_cursor" => Ok(()),
         // Otto's own scroll handling multiplies by the live configuration on
         // every axis event (`input::pointer`), so there is nothing to push
         // anywhere — the next scroll already uses the new value.
@@ -150,6 +227,39 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The appearance settings a user changes in the settings app and expects
+    /// to see at once, plus the dock's magnification numbers. Each of these
+    /// needed an apply path written for it, and putting one back on `Restart`
+    /// would silently reintroduce "log out for this to take effect".
+    #[test]
+    fn the_appearance_settings_apply_live() {
+        for id in [
+            "theme_scheme",
+            "rounded_corners",
+            "window_controls_side",
+            "show_maximize_button",
+            "cursor_theme",
+            "cursor_size",
+            "icon_theme",
+            "appswitcher.follow_cursor",
+            "dock.genie_scale",
+            "dock.genie_span",
+        ] {
+            assert_eq!(
+                schema::lookup(id).expect("in schema").apply,
+                Apply::Live,
+                "`{id}` should apply live"
+            );
+        }
+        // The display scale is deliberately not among them: nothing
+        // reconciles the outputs, the bar and maximized geometry against a new
+        // one, so the schema says so rather than half-applying it.
+        assert_eq!(
+            schema::lookup("screen_scale").expect("in schema").apply,
+            Apply::Restart
+        );
     }
 
     #[test]

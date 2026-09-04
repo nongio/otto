@@ -596,6 +596,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         crate::color_scheme::spawn_color_scheme_watcher();
         crate::accent::spawn_accent_watcher();
         crate::icon_theme::spawn_icon_theme_watcher();
+        crate::desktop_appearance::spawn_desktop_appearance_watcher();
         crate::sound::spawn_theme_watcher();
 
         // Call the app's ready callback
@@ -656,6 +657,11 @@ impl<A: App + 'static> AppRunnerInitialized<A> {
             let generation = crate::portal_runtime::theme_generation();
             if generation != theme_generation_seen {
                 theme_generation_seen = generation;
+                // Before the app hears about it: the corner radius and the
+                // hairline live on the compositor's side of the surface, and
+                // an application that only repaints its own content would
+                // leave both at the values it started with.
+                AppContext::refresh_window_styles();
                 self.app_data.app.on_theme_changed(&ctx);
             }
             self.app_data.app.on_update(&ctx);

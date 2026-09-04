@@ -38,6 +38,13 @@ trait OttoSettings {
     /// shape `org.freedesktop.appearance accent-color` calls for.
     async fn get_accent_color(&self) -> Result<(f64, f64, f64)>;
 
+    /// The current effective value of one setting, by its Otto identifier.
+    ///
+    /// Used for the settings that have no getter of their own: a key served
+    /// only under Otto's own namespace has no freedesktop shape to convert to,
+    /// so the schema's own variant is what goes out.
+    async fn get(&self, id: &str) -> Result<OwnedValue>;
+
     /// Emitted whenever any setting's effective value changes.
     ///
     /// Carries the changed identifiers; the values are re-read rather than

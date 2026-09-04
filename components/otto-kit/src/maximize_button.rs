@@ -24,7 +24,7 @@ pub fn enabled() -> bool {
                 Ok(text) => matches!(text.trim(), "1" | "true" | "yes" | "on"),
                 Err(_) => false,
             };
-            store(value);
+            set(value);
             value
         }
         2 => true,
@@ -32,7 +32,9 @@ pub fn enabled() -> bool {
     }
 }
 
-fn store(value: bool) {
+/// Update the answer without touching the environment — see
+/// [`crate::corners::set`].
+pub fn set(value: bool) {
     SHOWN.store(if value { 2 } else { 1 }, Ordering::Relaxed);
 }
 
@@ -40,7 +42,7 @@ fn store(value: bool) {
 /// assignment for the session's activation environments. See
 /// [`crate::corners::export`].
 pub fn export(value: bool) -> String {
-    store(value);
+    set(value);
     let text = if value { "1" } else { "0" };
     std::env::set_var(ENV, text);
     format!("{ENV}={text}")

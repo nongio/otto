@@ -22,6 +22,21 @@ fn icon_cache() -> IconCache {
         .clone()
 }
 
+/// Forget every resolved icon, including the misses.
+///
+/// The cache is keyed by name and size, never by theme, because a process only
+/// ever had one theme — so the moment the desktop's icon theme changes, every
+/// entry in it answers for the theme that is gone. Called from the icon-theme
+/// watcher; nothing else has any reason to.
+///
+/// The unparseable-theme flag goes with it: the theme that panicked is not the
+/// theme in force any more, and leaving the flag set would keep a perfectly
+/// good new theme on the by-hand path for the rest of the session.
+pub fn clear_cache() {
+    icon_cache().write().unwrap().clear();
+    THEME_IS_BROKEN.store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Look up an icon by name from the icon theme, with caching.
 ///
 /// Searches the system icon theme directories for the given icon name,

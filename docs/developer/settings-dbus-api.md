@@ -9,7 +9,7 @@ and the contract a settings client can build against.
 > interface they build against. Behavioural requirements live in
 > [specs/settings-app.md](../../specs/settings-app.md); this is the wire.
 >
-> What the compositor serves today: 51 settings, of which 24 are `live` and 27
+> What the compositor serves today: 51 settings, of which 32 are `live` and 19
 > are `restart`. The nine `dock.*` ones — `size`, `position`, `autohide`,
 > `magnification`, `genie_scale`, `genie_span`, `colorize_icons`,
 > `colorize_color`, `colorize_intensity` — reconfigure the dock in place. The
@@ -19,10 +19,16 @@ and the contract a settings client can build against.
 > `touchpad_middle_emulation_enabled`, `scroll_speed`, `pointer_accel_speed`,
 > `pointer_accel_profile` — reconfigure the connected libinput devices (or, for
 > `scroll_speed`, take effect on the next scroll event, since Otto reads the
-> live config per event rather than caching it). The remaining four are
-> `accent_color`, `background_color`, `background_image` and
-> `appswitcher.colorize_icons`. The keyboard `input.xkb_*` settings still need a
-> restart. No setting is `unsupported` yet. Values that
+> live config per event rather than caching it). Ten are appearance:
+> `theme_scheme`, `accent_color`, `rounded_corners`, `window_controls_side`,
+> `show_maximize_button`, `cursor_theme`, `cursor_size`, `icon_theme`,
+> `background_color` and `background_image` — the compositor's own chrome and
+> its window decorations are rebuilt, the cursor and icon caches dropped, and
+> the change relayed to other processes through the Settings portal. The
+> remaining two are `appswitcher.colorize_icons` and
+> `appswitcher.follow_cursor`. `screen_scale`, the display language,
+> `font_family` and the keyboard `input.xkb_*` settings still need a restart.
+> No setting is `unsupported` yet. Values that
 > are lists rather than scalars (dock bookmarks, shortcuts, display profiles)
 > have no identifier and are not in the schema.
 

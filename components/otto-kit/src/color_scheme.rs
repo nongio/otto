@@ -12,9 +12,9 @@
 //! answer, so a later, more authoritative reply is never clobbered by the
 //! value a process inherited when it started.
 //!
-//! The environment half is read once and never changes — `theme_scheme` only
-//! takes effect at startup (the settings schema marks it `Restart`). Live
-//! switching comes from the portal alone.
+//! The environment half is read once and never changes: it is the value this
+//! process was started with. `theme_scheme` does apply live, and a change to it
+//! reaches a running application over the portal alone.
 //!
 //! Any otto-kit app gets light/dark via `AppContext::current_theme()`.
 

@@ -6,8 +6,10 @@
 //! every child and every bus-activated helper already inherits — and this
 //! module is where the rest of otto-kit reads it back.
 //!
-//! Read once, on first use: the value comes from the configuration file and
-//! only takes effect at startup, so nothing here has to follow a change.
+//! Read once, on first use: the environment is what a process is *started*
+//! with, so it can only ever answer for the moment it launched. A change while
+//! it is running arrives instead over the Settings portal, under Otto's own
+//! namespace, and [`crate::desktop_appearance`] stores it here with [`set`].
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -34,6 +36,16 @@ pub fn rounded() -> bool {
     }
 }
 
+/// Update the answer without touching the environment.
+///
+/// The compositor publishes with [`export`]; a client hears about a change
+/// from the Settings portal instead, off its main thread, where `setenv` is
+/// neither safe to call nor of any use — the environment only ever reached
+/// processes that had not started yet.
+pub fn set(value: bool) {
+    ROUNDED.store(if value { 2 } else { 1 }, Ordering::Relaxed);
+}
+
 /// `radius` where the desktop rounds its corners, and 0 where it does not.
 ///
 /// Every drawing routine keeps its own radius — the numbers differ, and the
@@ -57,7 +69,7 @@ pub fn radius(radius: f32) -> f32 {
 /// that have to be told separately — a bus-activated helper is not a child of
 /// the compositor and inherits nothing from it.
 pub fn export(value: bool) -> String {
-    ROUNDED.store(if value { 2 } else { 1 }, Ordering::Relaxed);
+    set(value);
     let text = if value { "1" } else { "0" };
     std::env::set_var(ENV, text);
     format!("{ENV}={text}")

@@ -138,6 +138,54 @@ pub fn draw_progress(value: f64) -> ContentDrawFunction {
     draw_fn.into()
 }
 
+/// The running indicator under an icon: one dot in the palette's primary text
+/// colour, so it follows the colour scheme like the rest of the strip.
+///
+/// A layer's drawing is a cached picture, so the colour it was first drawn
+/// with stays until the content is set again — which is why this is a
+/// function both the slot's creation and [`DockView::refresh_theme`] call
+/// rather than a closure written where the dot is built.
+///
+/// [`DockView::refresh_theme`]: super::view::DockView::refresh_theme
+pub fn setup_running_dot(layer: &Layer, dot_radius: f32) {
+    layer.set_draw_content(move |canvas: &layers::skia::Canvas, w: f32, h: f32| {
+        let color = theme_colors().text_primary.opacity(0.9).c4f();
+        let mut paint = layers::skia::Paint::new(color, None);
+        paint.set_anti_alias(true);
+        canvas.draw_circle((w / 2.0, h / 2.0), dot_radius, &paint);
+        layers::skia::Rect::from_xywh(0.0, 0.0, w, h)
+    });
+}
+
+/// The grip on the dock's resize handle, in the palette's tertiary text
+/// colour. Same reasoning as [`setup_running_dot`].
+///
+/// The grip runs along the dock's long axis, so it follows the handle's own
+/// aspect: a tall narrow handle (bottom dock) gets a vertical bar, a short
+/// wide one (side dock) a horizontal bar.
+pub fn setup_resize_grip(layer: &Layer, draw_scale: f32, dock_size_multiplier: f32) {
+    layer.set_draw_content(move |canvas: &layers::skia::Canvas, w: f32, h: f32| {
+        let paint = layers::skia::Paint::new(theme_colors().text_tertiary.c4f(), None);
+
+        let line_width: f32 = 3.0 * draw_scale;
+        let end_margin = 18.0 * draw_scale * dock_size_multiplier;
+        let (margin_h, margin_v) = if w <= h {
+            ((w - line_width) / 2.0, end_margin)
+        } else {
+            (end_margin, (h - line_width) / 2.0)
+        };
+        let rect = layers::skia::Rect::from_xywh(
+            margin_h,
+            margin_v,
+            w - 2.0 * margin_h,
+            h - 2.0 * margin_v,
+        );
+        let rrect = layers::skia::RRect::new_rect_xy(rect, 3.0, 3.0);
+        canvas.draw_rrect(rrect, &paint);
+        layers::skia::Rect::from_xywh(0.0, 0.0, w, h)
+    });
+}
+
 /// Configure a badge overlay layer (initially hidden; caller must call set_opacity to show it).
 /// The layer is positioned to float at the top-right corner of the icon content area.
 pub fn setup_badge_layer(layer: &Layer, icon_width: f32) {

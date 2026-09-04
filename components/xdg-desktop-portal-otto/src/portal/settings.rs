@@ -13,6 +13,25 @@ use crate::otto_client::settings::OttoSettingsProxy;
 use crate::otto_client::OttoClient;
 use crate::portal::desktop_path;
 
+/// The settings served under `org.otto.desktop` that are read straight from
+/// the compositor's schema: the portal key, and Otto's identifier for it.
+///
+/// `locales` is not here — it has a getter of its own on the compositor
+/// interface, from before the generic one existed.
+const OTTO_DESKTOP_KEYS: &[(&str, &str)] = &[
+    ("rounded-corners", "rounded_corners"),
+    ("window-controls-side", "window_controls_side"),
+    ("maximize-button", "show_maximize_button"),
+];
+
+/// Otto's identifier for a key in the `org.otto.desktop` namespace.
+fn otto_desktop_id(key: &str) -> Option<&'static str> {
+    OTTO_DESKTOP_KEYS
+        .iter()
+        .find(|(portal_key, _)| *portal_key == key)
+        .map(|(_, id)| *id)
+}
+
 /// Settings portal implementing org.freedesktop.impl.portal.Settings.
 #[derive(Clone)]
 pub struct SettingsPortal {
@@ -63,6 +82,21 @@ impl SettingsPortal {
             "locales".to_string(),
             Value::from(locales).try_into().unwrap(),
         );
+        // Corner rounding, the window controls' side and the zoom dot have no
+        // freedesktop key either, and unlike the locale they have to reach
+        // Otto's own windows *live*: they are seeded from the environment,
+        // which a running process cannot be told about. Same namespace, same
+        // reason. Each is served as the schema's own variant, so a setting the
+        // compositor does not know about is simply absent rather than served
+        // as a guess.
+        for (key, id) in OTTO_DESKTOP_KEYS {
+            match self.read_setting(id).await {
+                Ok(value) => {
+                    desktop.insert((*key).to_string(), value);
+                }
+                Err(err) => debug!(key, ?err, "compositor has no value for this key"),
+            }
+        }
         namespaces.insert("org.otto.desktop".to_string(), desktop);
 
         Ok(namespaces)
@@ -84,6 +118,12 @@ impl SettingsPortal {
                 let locales = self.read_locales().await?;
                 Ok(Value::from(locales).try_into().unwrap())
             }
+            ("org.otto.desktop", key) => match otto_desktop_id(key) {
+                Some(id) => self.read_setting(id).await,
+                None => Err(fdo::Error::Failed(format!(
+                    "Unknown setting: {namespace}.{key}"
+                ))),
+            },
             ("org.gnome.desktop.sound", "theme-name") => {
                 let sound_theme = self.read_sound_theme().await?;
                 Ok(Value::from(sound_theme).try_into().unwrap())
@@ -157,6 +197,16 @@ impl SettingsPortal {
         })
     }
 
+    /// Reads one setting from the compositor by its Otto identifier, as the
+    /// variant the schema declares for it.
+    async fn read_setting(&self, id: &str) -> fdo::Result<OwnedValue> {
+        let proxy = self.get_settings_proxy().await?;
+        proxy.get(id).await.map_err(|err| {
+            error!(?err, id, "Failed to read setting from compositor");
+            fdo::Error::Failed(format!("Failed to read `{id}`: {err}"))
+        })
+    }
+
     /// Helper to match namespace patterns (supports trailing wildcard).
     fn matches_namespace(namespace: &str, pattern: &str) -> bool {
         if let Some(prefix) = pattern.strip_suffix(".*") {
@@ -219,6 +269,30 @@ impl SettingsPortal {
     }
 }
 
+/// The portal keys one Otto identifier moves, in the order they go out.
+///
+/// Usually one, sometimes none — Otto's identifiers are not the portal's keys,
+/// and only the ones with a counterpart here are forwarded. The colour scheme
+/// moves two: the accent is normally a *palette name*, and the sRGB triple
+/// that name stands for is a different colour under the other scheme, so a
+/// client that only watched `accent-color` would keep painting the light
+/// accent on a dark desktop.
+fn portal_keys_for(id: &str) -> &'static [(&'static str, &'static str)] {
+    match id {
+        "accent_color" => &[("org.freedesktop.appearance", "accent-color")],
+        "theme_scheme" => &[
+            ("org.freedesktop.appearance", "color-scheme"),
+            ("org.freedesktop.appearance", "accent-color"),
+        ],
+        "icon_theme" => &[("org.freedesktop.appearance", "icon-theme")],
+        "audio.sound_theme" => &[("org.gnome.desktop.sound", "theme-name")],
+        "rounded_corners" => &[("org.otto.desktop", "rounded-corners")],
+        "window_controls_side" => &[("org.otto.desktop", "window-controls-side")],
+        "show_maximize_button" => &[("org.otto.desktop", "maximize-button")],
+        _ => &[],
+    }
+}
+
 /// Watches `org.otto.Settings` and re-emits the settings this portal serves as
 /// `SettingChanged`.
 ///
@@ -232,37 +306,30 @@ pub async fn spawn_change_relay(connection: Connection, client: OttoClient) -> z
         let portal = SettingsPortal::new(client);
         while let Some(change) = changes.next().await {
             let Ok(args) = change.args() else { continue };
-            // Otto's identifiers are not the portal's keys, so only the ones
-            // with a counterpart here are forwarded.
             for id in args.values.keys() {
-                let (namespace, key) = match id.as_str() {
-                    "accent_color" => ("org.freedesktop.appearance", "accent-color"),
-                    "theme_scheme" => ("org.freedesktop.appearance", "color-scheme"),
-                    "icon_theme" => ("org.freedesktop.appearance", "icon-theme"),
-                    "audio.sound_theme" => ("org.gnome.desktop.sound", "theme-name"),
-                    _ => continue,
-                };
-                let Ok(value) = portal.get_setting(namespace, key).await else {
-                    continue;
-                };
-                let iface = connection
-                    .object_server()
-                    .interface::<_, SettingsPortal>(desktop_path())
-                    .await;
-                match iface {
-                    Ok(iface) => {
-                        if let Err(err) = SettingsPortal::setting_changed(
-                            iface.signal_context(),
-                            namespace,
-                            key,
-                            Value::from(value),
-                        )
-                        .await
-                        {
-                            error!(?err, key, "Failed to emit SettingChanged");
+                for (namespace, key) in portal_keys_for(id) {
+                    let Ok(value) = portal.get_setting(namespace, key).await else {
+                        continue;
+                    };
+                    let iface = connection
+                        .object_server()
+                        .interface::<_, SettingsPortal>(desktop_path())
+                        .await;
+                    match iface {
+                        Ok(iface) => {
+                            if let Err(err) = SettingsPortal::setting_changed(
+                                iface.signal_context(),
+                                namespace,
+                                key,
+                                Value::from(value),
+                            )
+                            .await
+                            {
+                                error!(?err, key, "Failed to emit SettingChanged");
+                            }
                         }
+                        Err(err) => error!(?err, "Settings portal interface went away"),
                     }
-                    Err(err) => error!(?err, "Settings portal interface went away"),
                 }
             }
         }

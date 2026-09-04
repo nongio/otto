@@ -32,7 +32,10 @@ use crate::{
 
 use super::{
     model::DockModel,
-    render::{icon_color_filter, label_reach, setup_app_icon, setup_label, setup_miniwindow_icon},
+    render::{
+        icon_color_filter, label_reach, setup_app_icon, setup_label, setup_miniwindow_icon,
+        setup_resize_grip, setup_running_dot,
+    },
 };
 
 pub const BASE_ICON_SIZE: f32 = 300.0;
@@ -351,32 +354,10 @@ impl DockView {
                 height: taffy::Dimension::Length(initial_bar_height),
             })
             // .background_color(Color::new_rgba(0.0, 0.0, 0.0, 0.0     ))
-            // The grip runs along the dock's long axis, so it follows the
-            // handle's own aspect: a tall narrow handle (bottom dock) gets a
-            // vertical bar, a short wide one (side dock) a horizontal bar.
-            .content(Some(move |canvas: &skia::Canvas, w, h| {
-                let paint = layers::skia::Paint::new(theme_colors().text_tertiary.c4f(), None);
-
-                let line_width: f32 = 3.0 * draw_scale;
-                let end_margin = 18.0 * draw_scale * dock_size_multiplier;
-                let (margin_h, margin_v) = if w <= h {
-                    ((w - line_width) / 2.0, end_margin)
-                } else {
-                    (end_margin, (h - line_width) / 2.0)
-                };
-                let rect = layers::skia::Rect::from_xywh(
-                    margin_h,
-                    margin_v,
-                    w - 2.0 * margin_h,
-                    h - 2.0 * margin_v,
-                );
-                let rrect = layers::skia::RRect::new_rect_xy(rect, 3.0, 3.0);
-                canvas.draw_rrect(rrect, &paint);
-                skia::Rect::from_xywh(0.0, 0.0, w, h)
-            }))
             .build()
             .unwrap();
         resize_handle.build_layer_tree(&handle_tree);
+        setup_resize_grip(&resize_handle, draw_scale, dock_size_multiplier);
 
         let dock_places_container = layers_engine.new_layer();
         let _ = view_layer.add_sublayer(&dock_places_container);
@@ -490,7 +471,7 @@ impl DockView {
             bouncing: Arc::new(RwLock::new(HashMap::new())),
             app_icons_manager,
         };
-        dock.render_dock();
+        dock.refresh_theme();
         dock.notification_handler(notify_rx);
         dock.load_configured_bookmarks();
         dock.load_configured_places();
@@ -533,6 +514,53 @@ impl DockView {
         );
         self.app_icons_manager
             .set_icon_override(&trash, image, place.as_ref());
+    }
+
+    /// Re-resolve every icon in the strip against the icon theme in force now.
+    ///
+    /// Icons are decoded once and kept — in otto-kit's own cache, in
+    /// [`ApplicationsInfo`], and in the layer each app's stack draws from — so
+    /// a new icon theme reaches nothing until all three are dropped. The
+    /// caches go first, then every application in the model is looked up
+    /// again; a bookmark's or a place's user-given label is carried across, so
+    /// re-resolving does not rename anything.
+    pub fn reload_icons(&self) {
+        otto_kit::icons::clear_cache();
+        let dock = self.clone();
+        tokio::spawn(async move {
+            ApplicationsInfo::forget_all().await;
+
+            let state = dock.get_state();
+            let running = Self::reresolved(&state.running_apps).await;
+            let launchers = Self::reresolved(&state.launchers).await;
+            let places = Self::reresolved(&state.places).await;
+            dock.update_state(&DockModel {
+                running_apps: running,
+                launchers,
+                places,
+                ..state
+            });
+            // The Trash's icon is an override rather than the desktop entry's
+            // own, so it is not in the model and has to be re-read separately.
+            dock.set_trash_full(crate::workspaces::trash::has_content());
+        });
+    }
+
+    /// Look every application up again, keeping the label it was given.
+    async fn reresolved(apps: &[Application]) -> Vec<Application> {
+        let mut resolved = Vec::with_capacity(apps.len());
+        for app in apps {
+            match ApplicationsInfo::get_app_info_by_id(app.identifier.clone()).await {
+                Some(mut fresh) => {
+                    fresh.override_name = app.override_name.clone();
+                    resolved.push(fresh);
+                }
+                // Nothing to replace it with: an entry that has gone missing
+                // is a worse dock than a stale icon.
+                None => resolved.push(app.clone()),
+            }
+        }
+        resolved
     }
 
     /// Load `[dock] places` into the places strip. Same shape as
@@ -1019,13 +1047,7 @@ impl DockView {
                             .unwrap();
                         dot_layer.build_layer_tree(&dot_tree);
                     }
-                    dot_layer.set_draw_content(move |canvas: &skia::Canvas, w: f32, h: f32| {
-                        let color = theme_colors().text_primary.opacity(0.9).c4f();
-                        let mut paint = layers::skia::Paint::new(color, None);
-                        paint.set_anti_alias(true);
-                        canvas.draw_circle((w / 2.0, h / 2.0), dot_radius, &paint);
-                        layers::skia::Rect::from_xywh(0.0, 0.0, w, h)
-                    });
+                    setup_running_dot(&dot_layer, dot_radius);
                     dot_layer.set_hidden(!*running);
 
                     let _ = container.add_sublayer(&new_layer);
@@ -1179,6 +1201,46 @@ impl DockView {
     /// The per-icon layers that bake the orientation in (the running dot and the
     /// tooltip balloon) are rebuilt here rather than on every render: they only
     /// ever change when the dock moves.
+    /// Draw everything the dock took from the palette again.
+    ///
+    /// The strip's material, its hairline and its shadow are layer properties
+    /// set once, when the dock was built, and the grip, the running dots and
+    /// the labels are cached pictures — a re-render moves none of them, so a
+    /// change of colour scheme would leave the whole dock in the old palette
+    /// while every icon around it followed. Same shape as
+    /// [`Self::apply_dock_position`]: the layers stay where they are, what was
+    /// baked into them is drawn again.
+    pub(crate) fn refresh_theme(&self) {
+        let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
+        let dock_size_multiplier = Config::with(|config| config.dock.size.clamp(0.5, 2.0)) as f32;
+
+        self.bar_layer
+            .set_background_color(theme_colors().materials_medium, None);
+        self.bar_layer
+            .set_border_color(theme_colors().hairline, None);
+        self.bar_layer
+            .set_shadow_color(theme_colors().shadow_color, None);
+        setup_resize_grip(&self.resize_handle, draw_scale, dock_size_multiplier);
+
+        let position = self.position();
+        let dot_radius = 2.0 * draw_scale;
+        {
+            let app_layers = self.app_layers.read().unwrap();
+            for entry in app_layers.values() {
+                setup_running_dot(&entry.dot_layer, dot_radius);
+                setup_label(&entry.label_layer, entry.label_text.clone(), position);
+            }
+        }
+        {
+            let miniwindows = self.miniwindow_layers.read().unwrap();
+            for (win, title) in self.get_state().minimized_windows {
+                if let Some((_, _, label_layer, ..)) = miniwindows.get(&win) {
+                    setup_label(label_layer, title, position);
+                }
+            }
+        }
+    }
+
     pub(crate) fn apply_dock_position(&self) {
         let position = self.position();
         self.wrap_layer
@@ -3209,6 +3271,40 @@ mod tests {
         dock.update_state(&state);
         settle(&engine);
         (engine, dock)
+    }
+
+    /// The strip's material and a label's balloon are set on their layers when
+    /// the dock is built, not derived from its model, so nothing about a
+    /// re-render moves them: switching the desktop from light to dark used to
+    /// leave the dock painted in the light palette until the session was
+    /// restarted.
+    #[test]
+    #[serial]
+    fn the_dock_repaints_itself_in_the_new_colour_scheme() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        let _ = Config::update(|c| c.theme_scheme = crate::theme::ThemeScheme::Light);
+        let (engine, dock) = dock_at_with_launchers(DockPosition::Bottom, &["calculator"]);
+
+        let light_bar = dock.bar_layer.render_layer().background_color;
+        let light_label = first_entry(&dock).1.render_layer().background_color;
+
+        let _ = Config::update(|c| c.theme_scheme = crate::theme::ThemeScheme::Dark);
+        dock.refresh_theme();
+        settle(&engine);
+
+        assert_ne!(
+            dock.bar_layer.render_layer().background_color,
+            light_bar,
+            "the strip should be drawn in the dark palette's material"
+        );
+        assert_ne!(
+            first_entry(&dock).1.render_layer().background_color,
+            light_label,
+            "a label balloon should be drawn in the dark palette's material"
+        );
+
+        let _ = Config::update(|c| c.theme_scheme = crate::theme::ThemeScheme::Light);
     }
 
     /// A place's slot lands in the places strip, not among the applications:

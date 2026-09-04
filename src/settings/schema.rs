@@ -296,7 +296,7 @@ pub static SETTINGS: &[SettingSpec] = &[
         "theme_scheme",
         "Colour scheme",
         "Light or dark colour scheme.",
-        Restart,
+        Live,
         &["Light", "Dark"],
         &["settings-choice-light", "settings-choice-dark"],
     ),
@@ -315,14 +315,14 @@ pub static SETTINGS: &[SettingSpec] = &[
         "Rounded corners",
         "The dock, the top bar, window decorations and the desktop's own \
          panels.",
-        Restart,
+        Live,
     ),
     labelled_choice(
         "window_controls_side",
         "Window controls",
         "Which end of a window's titlebar the close, minimize and zoom \
          controls sit at.",
-        Restart,
+        Live,
         &["left", "right"],
         &[
             "settings-choice-controls-left",
@@ -335,7 +335,7 @@ pub static SETTINGS: &[SettingSpec] = &[
         "Maximize button",
         "Show the zoom control in a window's titlebar. Off by default: a \
          double click on the titlebar zooms a window either way.",
-        Restart,
+        Live,
     ),
     spec(
         "font_family",
@@ -363,7 +363,7 @@ pub static SETTINGS: &[SettingSpec] = &[
         Str,
         "Cursor theme",
         "Name of the XCursor theme.",
-        Restart,
+        Live,
     ),
     // XCursor themes ship a fixed set of sizes (24, 32, 48, 64 are the usual
     // ones) and scale between them, so a slider that stops on every second
@@ -375,7 +375,7 @@ pub static SETTINGS: &[SettingSpec] = &[
         Int,
         "Cursor size",
         "Cursor size in logical pixels.",
-        Restart,
+        Live,
         16.0,
         96.0,
         8.0,
@@ -385,7 +385,7 @@ pub static SETTINGS: &[SettingSpec] = &[
         Str,
         "Icon theme",
         "Name of the icon theme. Empty auto-detects.",
-        Restart,
+        Live,
     ),
     spec(
         "gtk_theme",
@@ -711,7 +711,7 @@ pub static SETTINGS: &[SettingSpec] = &[
         Bool,
         "Switcher follows the pointer",
         "Show the app switcher on the output the pointer is on.",
-        Restart,
+        Live,
     ),
     spec(
         "appswitcher.colorize_icons",

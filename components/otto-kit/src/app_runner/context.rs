@@ -1556,6 +1556,24 @@ impl<'a> AppContext<'a> {
         })
     }
 
+    /// Re-send every window's appearance-dependent style.
+    ///
+    /// The corner radius and the hairline are surface state the compositor
+    /// holds, not something the application redraws, so a change to either
+    /// only reaches the windows already up if they are sent again — see
+    /// [`crate::components::window::Window::refresh_style`].
+    pub fn refresh_window_styles() {
+        WINDOWS.with(|windows| {
+            for window in windows.borrow().iter() {
+                window.refresh_style();
+                // Style is double-buffered like the rest of the surface's
+                // state, so it reaches the screen on the next commit — which
+                // is a frame the application has to be asked for.
+                window.request_frame();
+            }
+        });
+    }
+
     pub fn update_windows() {
         WINDOWS.with(|windows| {
             let mut windows = windows.borrow_mut();

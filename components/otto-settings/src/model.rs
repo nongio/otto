@@ -113,9 +113,9 @@ impl Row {
             self.control = self.control.with_value(&value, step);
         }
         // Only badge a setting that has actually been changed and is waiting
-        // on a restart. Almost everything is `Apply::Restart` today, so
-        // badging from the schema alone would put a pill on every row and say
-        // nothing.
+        // on a restart. Badging from the schema alone would put a pill on
+        // every restart-required row whether or not the user has touched it,
+        // which says nothing about this session.
         self.restart_required = settings_client::is_pending_restart(id);
 
         // Help text comes from the schema so there is one source of truth: the

@@ -440,6 +440,26 @@ impl Workspaces {
         Ok(())
     }
 
+    /// Repaint every piece of chrome the compositor draws itself.
+    ///
+    /// For the settings that no view carries in its state — the colour
+    /// scheme's palette, corner rounding — which is exactly why they cannot be
+    /// pushed with `update_state`: the state hash would be unchanged and the
+    /// render skipped. The layer trees are rebuilt instead.
+    ///
+    /// Window decorations are not here: their model *does* carry the scheme
+    /// and the corner radius, so they are rebuilt from the configuration by
+    /// `Otto::refresh_window_decorations`, which can see the windows.
+    pub fn rerender_chrome(&self) {
+        // The dock's colours are on its layers and in its cached pictures
+        // rather than in its model, so a re-render alone leaves the old
+        // palette on the strip, the grip, the dots and the labels.
+        self.dock.refresh_theme();
+        self.dock.render_dock();
+        self.app_switcher.rerender();
+        self.rerender_accent_colored_views();
+    }
+
     pub fn rerender_accent_colored_views(&self) {
         for output in self.output_workspaces.values() {
             let selector = &output.workspace_selector;

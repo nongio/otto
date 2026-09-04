@@ -142,17 +142,77 @@ are lists rather than scalars — dock bookmarks, keyboard shortcuts, display
 profiles — have no identifier and are not settable through this interface.
 
 Whether a setting applies live is a property of the compositor, not of the
-setting: today all of `dock.*` (size, position, autohide, magnification,
-magnification amount and spread, icon tint, tint colour and tint strength),
-`appswitcher.colorize_icons`, `accent_color`, `background_image` and
-`background_color`, and the
-touchpad/pointer half of `input.*` (tap, tap-drag,
-drag lock, click method, disable-while-typing, natural scroll, left-handed,
-middle-click emulation, scroll speed, pointer acceleration speed and profile)
-are reconciled with a changed configuration, and every other setting — including the keyboard
-`input.xkb_*` settings — is described as requiring a restart. Marking a
-setting `live` is a promise that it takes effect, so the schema is widened
-only as apply paths are written.
+setting. Today these are reconciled with a changed configuration:
+
+- all of `dock.*` — size, position, autohide, magnification, magnification
+  amount and spread, icon tint, tint colour and tint strength;
+- `appswitcher.colorize_icons` and `appswitcher.follow_cursor`;
+- the appearance settings: `theme_scheme`, `accent_color`, `rounded_corners`,
+  `window_controls_side`, `show_maximize_button`, `cursor_theme`,
+  `cursor_size`, `icon_theme`, `background_image` and `background_color`;
+- the touchpad/pointer half of `input.*` — tap, tap-drag, drag lock, click
+  method, disable-while-typing, natural scroll, left-handed, middle-click
+  emulation, scroll speed, pointer acceleration speed and profile.
+
+Every other setting — including `screen_scale`, the display language,
+`font_family` and the keyboard `input.xkb_*` settings — is described as
+requiring a restart. Marking a setting `live` is a promise that it takes
+effect, so the schema is widened only as apply paths are written.
+
+### Reaching what already holds the value
+
+Applying a setting live means pushing it to whatever is already holding the old
+one, and that is different work for each of them:
+
+- **The compositor's own chrome** — the dock, the app switcher, the workspace
+  and window selectors, the OSD — reads the palette and the corner radius
+  inside its render functions rather than carrying them in view state. An
+  unchanged state hash would skip the repaint, so these layer trees are
+  rebuilt directly.
+- **The dock** is the exception among them: its strip's material, hairline and
+  shadow are layer properties set when the dock is built, and its grip, its
+  running dots and its label balloons are cached pictures. None of them move
+  on a re-render, so each is set again from the palette in force before the
+  strip is laid out afresh.
+- **Window decorations** are rebuilt from the configuration rather than
+  nudged: the scheme and the corner radius live in a titlebar's model, while
+  the controls' side and the zoom dot are read while it is drawn, so both a
+  model update and a forced repaint are needed.
+- **The pointer** drops the loaded XCursor theme and every cursor resolved
+  from it. The backend's cursor texture cache is keyed by icon and scale
+  rather than by theme, so it is cleared too, and a redraw is asked for —
+  nothing else invalidates while the pointer is still.
+- **Icons** are decoded once and kept, in the toolkit's own cache and in the
+  compositor's resolved-application map. Neither key mentions the theme,
+  because a process only ever had one, so both are dropped and the dock's
+  applications are looked up again; a bookmark's or a place's user-given label
+  survives that.
+- **A toolkit window's own frame** — its corner radius and its hairline — is
+  surface state the compositor holds, pushed once when the window is built and
+  never redrawn by the application. So the toolkit sends every open window's
+  style again whenever a watcher reports the appearance changed, and asks each
+  for the frame that commits it.
+- **Other processes** — the bar, the settings app itself, anything drawing its
+  own titlebar — learn from the Settings portal, which relays Otto's `Changed`
+  signal. `theme_scheme`, `accent_color` and `icon_theme` have freedesktop
+  keys (`color-scheme`, `accent-color`, `icon-theme`). `rounded_corners`,
+  `window_controls_side` and `show_maximize_button` have none, so they go out
+  under Otto's own namespace, `org.otto.desktop`, beside `locales`.
+
+  Otto's own applications do not depend on that relay for those three: the
+  toolkit also follows `org.otto.Settings` itself, reading each identifier
+  back when the compositor says it moved. An otto-kit window is talking to
+  Otto by definition, so the shorter path is available to it — and it is the
+  one that still works in a session with no portal installed, or with a portal
+  older than the compositor it is answering for. Both channels write the same
+  values from the same source, so whichever arrives first wins.
+
+  Those three, and the colour scheme, are also published in the session
+  environment, which is how a process learns them at startup and the only
+  channel that works with no portal running. The environment is a value a
+  process was *started* with, so it is what a new window gets and the portal is
+  what a window already on screen gets; the compositor updates both, and they
+  cannot disagree.
 
 ### Choosing a file
 

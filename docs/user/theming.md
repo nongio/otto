@@ -64,7 +64,10 @@ rounded_corners = true
 
 Rounds the corners of the dock, the top bar, Otto-drawn window decorations and
 the desktop's own panels. Set it to `false` for square corners throughout. It
-takes effect after a restart.
+takes effect immediately: Otto repaints its own chrome, and the applications
+drawing their own — the top bar, and anything built on otto-kit — are told
+through the portal's `org.otto.desktop rounded-corners`, the same door
+`color-scheme` comes through.
 
 ## Wallpaper
 

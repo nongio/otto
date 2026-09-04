@@ -252,6 +252,20 @@ impl Window {
         self.surface.read().ok()?.as_ref()?.surface_style().cloned()
     }
 
+    /// Send the styling that follows the desktop's appearance again.
+    ///
+    /// Corner rounding and the hairline's colour are pushed to the
+    /// compositor once, when the window is built — a style the surface then
+    /// keeps. Neither is redrawn by the application, so a desktop that stops
+    /// rounding its corners while the window is up would leave it rounded
+    /// until it was restarted. [`AppContext::refresh_window_styles`] calls
+    /// this on every window when a watcher reports the appearance changed.
+    pub fn refresh_style(&self) {
+        if let Some(style) = self.surface_style() {
+            default_layer_augmentation(&style);
+        }
+    }
+
     /// Ask the compositor to blur what is behind this window.
     ///
     /// The blur is dropped while the window is unfocused and restored when it
