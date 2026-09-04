@@ -743,12 +743,14 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 let transition = Transition::ease_in_out_quad(1.4);
 
                 // Fade out layer_shell_overlay when entering fullscreen — the
-                // layer-shell chrome lives on the primary output only.
+                // layer-shell chrome lives on the primary output only. A modal
+                // overlay dialog keeps it up: it is the only thing drawing the
+                // prompt the user has to answer.
                 let is_primary = self
                     .workspaces
                     .primary_output()
                     .is_some_and(|p| p.name() == output.name());
-                if is_primary {
+                if is_primary && !self.modal_overlay_shown {
                     self.workspaces.set_fullscreen_overlay_visibility(true);
                 }
 

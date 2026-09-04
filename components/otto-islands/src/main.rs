@@ -19,7 +19,8 @@ use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
 use wayland_client::protocol::wl_keyboard::KeyState;
 use wayland_client::Proxy;
 use wayland_protocols_wlr::layer_shell::v1::client::{
-    zwlr_layer_shell_v1::Layer, zwlr_layer_surface_v1::Anchor,
+    zwlr_layer_shell_v1::Layer,
+    zwlr_layer_surface_v1::{Anchor, KeyboardInteractivity},
 };
 
 use crate::activity::{Activity, Priority};
@@ -169,6 +170,9 @@ struct IslandApp {
     last_input_region: Option<Vec<(i32, i32, i32, i32)>>,
     /// The currently-presented Access-style dialog, if any.
     dialog: Option<DialogPanel>,
+    /// Whether the layer surface currently holds exclusive keyboard
+    /// interactivity for a modal dialog — see `sync_dialog_modality`.
+    dialog_modal_active: bool,
     /// Unread-notification counts published onto the dock icons.
     dock_badges: DockBadges,
 }
@@ -191,6 +195,7 @@ impl IslandApp {
             last_layer_size: None,
             last_input_region: None,
             dialog: None,
+            dialog_modal_active: false,
             dock_badges: DockBadges::new(),
         }
     }
@@ -889,9 +894,31 @@ impl IslandApp {
             (None, None) => {}
         }
 
+        self.sync_dialog_modality();
         self.render_dialog();
         let size_changed = self.update_layer_size();
         self.update_input_region(size_changed);
+    }
+
+    /// Ask for exclusive keyboard interactivity while a modal dialog is up.
+    ///
+    /// This is also how the compositor learns a prompt is on screen: fullscreen
+    /// hides the layer-shell chrome and scans the window out directly, and an
+    /// exclusive overlay surface is what makes it keep compositing so the
+    /// dialog is actually visible over a fullscreen window.
+    fn sync_dialog_modality(&mut self) {
+        let modal = self.dialog.as_ref().is_some_and(|p| p.view.modal);
+        if modal == self.dialog_modal_active {
+            return;
+        }
+        self.dialog_modal_active = modal;
+        if let Some(layer) = &self.layer_surface {
+            layer.set_keyboard_interactivity(if modal {
+                KeyboardInteractivity::Exclusive
+            } else {
+                KeyboardInteractivity::OnDemand
+            });
+        }
     }
 
     fn create_dialog_panel(&self, view: DialogView) -> Option<DialogPanel> {
@@ -1027,9 +1054,7 @@ impl App for IslandApp {
         layer_surface.set_anchor(Anchor::Top);
         layer_surface.set_margin(2, 0, 0, 0);
         layer_surface.set_exclusive_zone(0);
-        layer_surface.set_keyboard_interactivity(
-            wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::KeyboardInteractivity::OnDemand,
-        );
+        layer_surface.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
 
         if let Some(style) = layer_surface.base_surface().surface_style() {
             style.set_masks_to_bounds(ClipMode::Enabled);

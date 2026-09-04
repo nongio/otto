@@ -27,8 +27,8 @@ use smithay::{
         dmabuf::get_dmabuf,
         shell::{
             wlr_layer::{
-                Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler,
-                WlrLayerShellState,
+                KeyboardInteractivity, Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData,
+                WlrLayerShellHandler, WlrLayerShellState,
             },
             xdg::{PopupSurface, XdgPopupSurfaceData, XdgToplevelSurfaceData},
         },
@@ -603,6 +603,35 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
     }
 
+    /// Is a modal overlay layer-shell surface on screen?
+    ///
+    /// A client on the overlay layer that asks for *exclusive* keyboard
+    /// interactivity is presenting something the user has to answer — the
+    /// portal Access dialog otto-islands draws, for one. Fullscreen otherwise
+    /// hides the layer-shell chrome and scans the window out on the primary
+    /// plane alone, so such a dialog would never be seen.
+    pub fn has_modal_overlay_layer(&self) -> bool {
+        self.layer_surfaces.values().any(|s| {
+            s.wlr_layer() == Layer::Overlay
+                && matches!(s.keyboard_interactivity(), KeyboardInteractivity::Exclusive)
+        })
+    }
+
+    /// Bring the fullscreen chrome back while a modal overlay dialog is up,
+    /// and hide it again once the dialog is answered. A no-op when nothing is
+    /// fullscreen — the chrome is visible anyway.
+    pub fn refresh_modal_overlay(&mut self) {
+        let modal = self.has_modal_overlay_layer();
+        if modal == self.modal_overlay_shown {
+            return;
+        }
+        self.modal_overlay_shown = modal;
+        if self.workspaces.get_fullscreen_window().is_some() {
+            // `set_fullscreen_overlay_visibility(true)` HIDES the chrome.
+            self.workspaces.set_fullscreen_overlay_visibility(!modal);
+        }
+    }
+
     fn update_layer_shell_surface(
         &mut self,
         surface_id: &smithay::reexports::wayland_server::backend::ObjectId,
@@ -717,6 +746,9 @@ impl<BackendData: Backend> Otto<BackendData> {
             layer.set_size(layers::types::Size::points(container_w, container_h), None);
         }
         layer.set_hidden(false);
+
+        // A dialog may have just opened (or closed) on this surface.
+        self.refresh_modal_overlay();
 
         // For layer shells, the workspace layer IS the surface layer
         // Don't try to append it to itself - it's already added in create_layer_shell_layer
@@ -853,6 +885,8 @@ impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
             );
             // Recalculate exclusive zones after removal
             self.recalculate_exclusive_zones(&output);
+            // The dialog may have gone away with the surface.
+            self.refresh_modal_overlay();
         }
 
         if held_focus {

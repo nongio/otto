@@ -175,6 +175,12 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub layer_surfaces: HashMap<ObjectId, LayerShellSurface>,
     /// Tracked exclusive zones per output (reserved space on each edge)
     pub exclusive_zones: HashMap<String, ExclusiveZones>,
+    /// Whether the fullscreen chrome is currently held visible for a modal
+    /// overlay layer surface (a portal Access dialog, say). Fullscreen hides
+    /// the layer-shell top/overlay layers and scans the window out directly,
+    /// so a dialog that appears afterwards has to undo both — see
+    /// `Otto::refresh_modal_overlay`.
+    pub modal_overlay_shown: bool,
     /// Session lock state — see `src/lock.rs`. Locked-ness lives here rather
     /// than with the client, so a locker that dies leaves the session locked.
     pub lock_state: crate::lock::LockState,
@@ -925,6 +931,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             popup_root_cache: HashMap::new(),
             layer_surfaces: HashMap::new(),
             exclusive_zones: HashMap::new(),
+            modal_overlay_shown: false,
             compositor_state,
             data_device_state,
             layer_shell_state,

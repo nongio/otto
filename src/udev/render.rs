@@ -399,7 +399,10 @@ impl Otto<UdevData> {
                 .map(|o| self.workspaces.is_fullscreen_and_stable_on_output(o))
                 .unwrap_or(false)
             && !self.swipe_gesture.is_active()
-            && !capture_active;
+            && !capture_active
+            // A modal overlay layer surface (the portal Access dialog) draws
+            // in the overlay layer, which fullscreen scanout drops entirely.
+            && !self.has_modal_overlay_layer();
         let fullscreen_window = if allow_fullscreen_scanout {
             this_output
                 .as_ref()
@@ -445,7 +448,11 @@ impl Otto<UdevData> {
         // screen, and it costs nothing worth counting on a screen whose only
         // job is to wait for a password. It holds a little past the unlock
         // too, while the blank slides back off the top.
-        let composite_now = self.workspaces.has_minimizing_window() || self.lock_blank_on_screen();
+        // A modal overlay dialog, for the same reason as the lock plane: the
+        // prompt lives in a subtree the plane decomposition never scans out.
+        let composite_now = self.workspaces.has_minimizing_window()
+            || self.lock_blank_on_screen()
+            || self.has_modal_overlay_layer();
         let composite_active = if let Some(surf) = self
             .backend_data
             .backends

@@ -626,7 +626,11 @@ impl<BackendData: Backend> Otto<BackendData> {
             .primary_output()
             .is_some_and(|p| p.name() == output_name);
         if is_primary {
-            self.workspaces.set_fullscreen_overlay_visibility(true);
+            // A modal overlay dialog keeps the chrome up — see
+            // `Otto::refresh_modal_overlay`.
+            if !self.modal_overlay_shown {
+                self.workspaces.set_fullscreen_overlay_visibility(true);
+            }
             self.workspaces.dock.hide(None);
         }
 

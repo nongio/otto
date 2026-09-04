@@ -179,6 +179,24 @@ Stages 1–3 implemented (compiling; runtime verification pending):
 - Internal selection callers (screencast today) call `org.otto.Dialog1`
   directly rather than round-tripping through the portal's own Access interface.
 
+### Fullscreen windows
+
+A fullscreen window normally takes the screen alone: the compositor fades out
+the layer-shell top and overlay layers, and — on the udev backend — scans the
+window out on the primary plane with all chrome planes dropped. Both would make
+the dialog invisible, which is how a screenshare prompt raised behind a
+fullscreen capture app went unanswered.
+
+So while a modal dialog is presented, the renderer requests **exclusive**
+keyboard interactivity on its overlay layer surface. The compositor treats an
+overlay layer surface with exclusive interactivity as a modal prompt on screen
+and, for as long as it is up:
+
+- keeps (or brings back) the layer-shell chrome that fullscreen hides, and
+  hides it again once the dialog is answered, if still fullscreen;
+- forces a full composite for the frame, disabling fullscreen direct scanout
+  and plane promotion — the same treatment the lock plane gets.
+
 ## Open Questions
 
 - "Trusted-internal" caller distinction: how the broker decides a caller may
