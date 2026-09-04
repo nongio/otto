@@ -318,7 +318,7 @@ pipewire-gstreamer = "*"
 [package.metadata.generate-rpm.requires]
 libdrm = "*"
 systemd-libs = "*"
-libgbm = "*"
+mesa-libgbm = "*"
 libxkbcommon = "*"
 mesa-libEGL = "*"
 libwayland-client = "*"

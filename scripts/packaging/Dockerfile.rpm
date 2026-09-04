@@ -29,9 +29,15 @@ RUN set -eux; \
     cat /tmp/requires.txt; \
     fail=0; \
     while read -r r; do \
-        dnf -q list --available "$r" >/dev/null 2>&1 \
-            || dnf -q list --installed "$r" >/dev/null 2>&1 \
-            || { echo "NO SUCH PACKAGE: $r"; fail=1; }; \
+        case "$r" in \
+            # A path is a file requirement, satisfied by whichever package
+            # owns it, so it is resolved with `provides` rather than by name.
+            /*) dnf -q provides "$r" >/dev/null 2>&1 \
+                    || { echo "NO SUCH FILE PROVIDER: $r"; fail=1; };; \
+            *)  dnf -q list --available "$r" >/dev/null 2>&1 \
+                    || dnf -q list --installed "$r" >/dev/null 2>&1 \
+                    || { echo "NO SUCH PACKAGE: $r"; fail=1; };; \
+        esac; \
     done < /tmp/requires.txt; \
     [ "$fail" = 0 ]
 

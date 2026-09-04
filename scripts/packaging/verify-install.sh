@@ -196,4 +196,8 @@ if (( fail )); then
     echo "FAILED: $flavour install is incomplete"
     exit 1
 fi
-echo "PASS: $flavour install complete, linked and runnable"
+if [[ "${OTTO_SKIP_RUN:-0}" == 1 ]]; then
+    echo "PASS: $flavour layout complete (linkage and run checks skipped)"
+else
+    echo "PASS: $flavour install complete, linked and runnable"
+fi
