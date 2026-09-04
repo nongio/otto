@@ -901,26 +901,6 @@ impl HeadlessHandle {
         });
     }
 
-    /// Ask the compositor to make this window fullscreen, the way a client
-    /// calling `xdg_toplevel.set_fullscreen` does. Drives the real
-    /// `XdgShellHandler` path, animation and all.
-    pub fn fullscreen_window(&self, title: &str) {
-        let title = title.to_string();
-        self.with_state(move |state| {
-            use smithay::wayland::shell::xdg::XdgShellHandler;
-            let Some(toplevel) = state
-                .workspaces
-                .spaces_elements()
-                .find(|w| w.xdg_title() == title)
-                .and_then(|w| w.toplevel())
-                .cloned()
-            else {
-                return;
-            };
-            state.fullscreen_request(toplevel, None);
-        });
-    }
-
     /// The reverse: `xdg_toplevel.unset_fullscreen`.
     pub fn unfullscreen_window(&self, title: &str) {
         let title = title.to_string();
