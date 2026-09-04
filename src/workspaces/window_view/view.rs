@@ -136,6 +136,15 @@ impl WindowView {
         self.decoration_layer.set_hidden(!decorated);
     }
 
+    /// Show or hide the drop shadow the window sits in.
+    ///
+    /// A fullscreen window has no frame standing off the desktop, so it casts
+    /// no shadow — and the band is a 100pt blurred skirt around a window the
+    /// size of the output, which is pure cost with nothing to show for it.
+    pub fn set_shadow_hidden(&self, hidden: bool) {
+        self.shadow_layer.set_hidden(hidden);
+    }
+
     /// Fade the titlebar's material between its frosted and its opaque form.
     ///
     /// The bar is translucent over a blurred backdrop while the window is

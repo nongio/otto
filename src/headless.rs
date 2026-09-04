@@ -861,6 +861,75 @@ impl HeadlessHandle {
         });
     }
 
+    /// Ask the compositor to make this window fullscreen, the way a client
+    /// calling `xdg_toplevel.set_fullscreen` does. Drives the real
+    /// `XdgShellHandler` path, animation and all.
+    pub fn fullscreen_window(&self, title: &str) {
+        let title = title.to_string();
+        self.with_state(move |state| {
+            use smithay::wayland::shell::xdg::XdgShellHandler;
+            let Some(toplevel) = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .and_then(|w| w.toplevel())
+                .cloned()
+            else {
+                return;
+            };
+            state.fullscreen_request(toplevel, None);
+        });
+    }
+
+    /// The reverse: `xdg_toplevel.unset_fullscreen`.
+    pub fn unfullscreen_window(&self, title: &str) {
+        let title = title.to_string();
+        self.with_state(move |state| {
+            use smithay::wayland::shell::xdg::XdgShellHandler;
+            let Some(toplevel) = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .and_then(|w| w.toplevel())
+                .cloned()
+            else {
+                return;
+            };
+            state.unfullscreen_request(toplevel);
+        });
+    }
+
+    /// Whether Otto currently draws a titlebar for this window — the window
+    /// state, not the scene.
+    pub fn window_is_decorated(&self, title: &str) -> bool {
+        let title = title.to_string();
+        self.query(move |state| {
+            state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .map(|w| w.is_decorated())
+                .unwrap_or(false)
+        })
+    }
+
+    /// Whether the window's chrome layers are visible in the scene:
+    /// `(titlebar, shadow)`. `None` when the window has no view.
+    pub fn window_chrome_visible(&self, title: &str) -> Option<(bool, bool)> {
+        let title = title.to_string();
+        self.query(move |state| {
+            let window = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .cloned()?;
+            state
+                .workspaces
+                .get_window_view(&window.id())
+                .map(|view| (!view.decoration_layer.hidden(), !view.shadow_layer.hidden()))
+        })
+    }
+
     /// Width of the server-side titlebar as the scene has it, in logical
     /// points — what the bar is actually drawn at, not what the window
     /// geometry says it should be.

@@ -22,6 +22,8 @@ one of them can still be decorated.
   cooperation from the client.
 - A window's layout geometry accounts for the title bar when it has one, and
   reclaims that space when it loses it.
+- A fullscreen window is undecorated, whatever it negotiated, and gets its
+  decoration back when it leaves fullscreen.
 
 ## Non-Goals
 
@@ -73,7 +75,7 @@ appears, and discarded if the surface dies first.
   changing it takes a restart.
 - The window frame's corners are rounded unless `rounded_corners` is off, in
   which case the bar and the frame square off — as they already do while the
-  window is maximized or fullscreen.
+  window is maximized.
 - The strip is hit-tested ahead of the client's own surfaces. A press on the
   bar away from the controls starts a window move; a press on a control acts on
   release, as a button does.
@@ -96,6 +98,25 @@ appears, and discarded if the surface dies first.
   and rounded from the same value, so the bar's bottom edge is a crisp hairline
   and the client's surfaces still begin exactly where it ends. See
   [rendering.md](../docs/developer/rendering.md#sizes-not-just-origins).
+
+**Fullscreen.** A fullscreen window covers its whole output, and a surface
+that covers the output has no frame: it is drawn with no title bar, no drop
+shadow and no resize border, however it negotiated its decoration. The
+negotiated mode is remembered rather than overwritten — going fullscreen is a
+window state, not a renegotiation — so the bar comes back by itself when the
+window leaves fullscreen, without the client asking for it again.
+
+This is not only what it looks like. The bar's height is part of the window's
+layout geometry and is taken off the size the client is configured with, so a
+decorated window that kept its bar in fullscreen would be handed the output
+height minus 34 points and left with a strip of compositor chrome over a
+surface that was promised the whole screen. Dropping the decoration for the
+duration gives the fullscreen surface the output exactly.
+
+The chrome goes at the *request*, not at the end of the grow-to-fullscreen
+animation: a title bar riding the window up to the top of the screen and
+vanishing there reads as a glitch. Coming back out, it returns at the start of
+the shrink for the same reason.
 
 **Resize borders.** A server-decorated client has no frame of its own to grab,
 and never asks the compositor to resize it — so Otto offers the border itself:
@@ -179,6 +200,9 @@ that has negotiated one, and windows that have not are left alone.
   the mode event before deciding whether to draw their own bar.
 - Showing or hiding the bar changes window geometry, so it must re-run layout,
   not just repaint.
+- A decoration mode negotiated while a window is fullscreen has nothing to show
+  for it until the window comes back out, but it must still be recorded: the
+  bar that appears then is the one the client asked for.
 - The compositor-owned strip must not steal input from layer-shell surfaces or
   the dock stacked above the window.
 

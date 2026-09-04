@@ -104,11 +104,29 @@ impl WindowElement {
     /// by that shared component, so the two must agree.
     pub const DECORATION_HEIGHT: i32 = 34;
 
-    /// Whether Otto draws this window's titlebar.
-    pub fn is_decorated(&self) -> bool {
+    /// Whether the client negotiated a server-side decoration at all.
+    ///
+    /// This is the raw protocol answer and it survives every window state: a
+    /// window that goes fullscreen keeps it, which is what lets the titlebar
+    /// come back on its own when it leaves fullscreen again. Ask
+    /// [`is_decorated`](Self::is_decorated) for whether a bar is actually
+    /// drawn right now.
+    pub fn wants_decoration(&self) -> bool {
         self.0
             .is_decorated
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Whether Otto draws this window's titlebar right now.
+    ///
+    /// A fullscreen window covers its whole output and is not a frame the
+    /// user can grab: it gets no titlebar, no shadow and no resize border,
+    /// however the client negotiated its decoration. Everything the bar costs
+    /// the geometry — [`decoration_height`](Self::decoration_height), the
+    /// input-region offset, the client size — falls out of this, so the
+    /// fullscreen surface really does get the whole output.
+    pub fn is_decorated(&self) -> bool {
+        self.wants_decoration() && !self.is_fullscreen()
     }
 
     /// Mark the window server-side decorated. Returns the previous value so

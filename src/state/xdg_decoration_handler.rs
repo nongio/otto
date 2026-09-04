@@ -60,7 +60,10 @@ impl<BackendData: Backend> Otto<BackendData> {
         if changed {
             if let Some(window) = self.workspaces.get_window_for_surface(&id).cloned() {
                 if let Some(view) = self.workspaces.get_window_view(&id) {
-                    view.set_decorated(server_side);
+                    // Not `server_side`: a fullscreen window wears no bar
+                    // whatever it just negotiated, and gets it when it
+                    // leaves fullscreen.
+                    view.set_decorated(window.is_decorated());
                 }
                 self.update_window_view(&window);
                 self.workspaces.update_workspace_model();

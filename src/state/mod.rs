@@ -2013,6 +2013,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 // of the window and the client's surfaces start below it.
                 let decoration_height = window.decoration_height();
                 window_view.set_decorated(window.is_decorated());
+                // A fullscreen window covers the output: no bar, no shadow.
+                window_view.set_shadow_hidden(fullscreen);
                 if window.is_decorated() {
                     let model = self.decoration_model_for(
                         window,
@@ -2182,6 +2184,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             // The bar is sized from the same geometry, and it is drawn in the
             // scene even while the client's content scans out.
             window_view.set_decorated(window.is_decorated());
+            window_view.set_shadow_hidden(current.fullscreen);
             if window.is_decorated() {
                 let decoration = self.decoration_model_for(
                     window,

@@ -732,6 +732,14 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
             let id = window.id();
             if let Some(view) = self.workspaces.get_window_view(&id) {
+                // Drop the chrome up front, so the bar and the shadow are
+                // gone for the whole grow-to-fullscreen animation rather
+                // than riding it up to the top of the screen. The window's
+                // negotiated decoration mode is untouched — `is_decorated`
+                // simply answers `false` while it is fullscreen.
+                view.set_decorated(false);
+                view.set_shadow_hidden(true);
+
                 let transition = Transition::ease_in_out_quad(1.4);
 
                 // Fade out layer_shell_overlay when entering fullscreen — the
@@ -880,6 +888,11 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 }
 
                 we.set_fullscreen(false, 0);
+                // Fullscreen is off now, so `is_decorated` speaks for the
+                // client's negotiated mode again: bring the chrome back for
+                // the shrink animation.
+                view.set_decorated(we.is_decorated());
+                view.set_shadow_hidden(false);
                 let scale = output.current_scale().fractional_scale();
 
                 // Scene layer positions are output-local physical pixels.
