@@ -103,6 +103,15 @@ impl Backend for UdevData {
         self.session.seat()
     }
 
+    fn update_keyboard_leds(&mut self, led_state: smithay::input::keyboard::LedState) {
+        use smithay::reexports::input::DeviceCapability;
+        for device in &mut self.input_devices {
+            if device.has_capability(DeviceCapability::Keyboard) {
+                device.led_update(led_state.into());
+            }
+        }
+    }
+
     fn backend_name(&self) -> &'static str {
         "udev"
     }
