@@ -48,6 +48,26 @@ const WORKSPACE_ENTER_SECS: f32 = 0.5;
 /// Grace period after a workspace appears during which the post-render hook
 /// leaves its width alone, so re-renders can't cut the enter animation short.
 const WORKSPACE_ENTER_SETTLE: Duration = Duration::from_millis(700);
+/// The distance from one workspace slot to the next along the strip, in scene
+/// (physical) pixels — every item occupies exactly one of these, which is what
+/// lets a reorder drag be a matter of counting slots.
+const WORKSPACE_SLOT_PITCH: f32 = WORKSPACE_SELECTOR_PREVIEW_WIDTH + WORKSPACE_SELECTOR_GAP;
+/// Scene (physical) pixels the pointer has to travel along the strip before a
+/// press on a workspace becomes a reorder drag rather than a click.
+const WORKSPACE_DRAG_THRESHOLD_PX: f32 = 10.0;
+/// Key of the lifted copy of the workspace being dragged.
+const WORKSPACE_DRAG_GHOST_KEY: &str = "workspace_selector_drag_ghost";
+/// Key of the lifted copy's preview box — the part that must actually show the
+/// workspace, and so the thing a test can measure.
+const WORKSPACE_DRAG_GHOST_CONTENT_KEY: &str = "workspace_selector_drag_ghost_content";
+/// How much bigger the dragged workspace is than the ones it is passing, so it
+/// reads as lifted off the strip rather than sliding along it.
+const WORKSPACE_DRAG_GHOST_SCALE: f32 = 1.025;
+
+/// A workspace displaced by the drag sliding into the place the drag freed.
+fn workspace_shift_transition() -> Transition {
+    Transition::ease_out_quad(0.16)
+}
 
 /// The width every workspace item occupies in the strip once settled.
 fn workspace_item_size() -> layers::types::Size {
@@ -73,6 +93,83 @@ fn workspace_item_collapsed_size() -> layers::types::Size {
 /// re-lays the row out against this width every frame.
 fn workspace_collapse_transition() -> Transition {
     Transition::spring(0.5, 0.1)
+}
+
+/// A press on a workspace preview that may become a reorder drag.
+///
+/// Modelled on the dock's icon drag ([`crate::workspaces::dock`]): a press is
+/// only a drag once the pointer has travelled, the strip is measured in whole
+/// slots, and the order is committed to the compositor on drop.
+#[derive(Clone, Debug)]
+struct WorkspaceDrag {
+    /// Stable id of the workspace under the press — what the item layers are
+    /// keyed by, and what survives the strip being permuted underneath it.
+    index: usize,
+    /// Pointer x when the press landed, in this output's scene space.
+    grab_x: f32,
+    /// The line of the row the lifted copy rides along, in scene space. The
+    /// pointer only carries it sideways: a drag towards the desktop must not
+    /// pull the preview out of the strip.
+    ghost_y: f32,
+    /// Whether the pointer has travelled far enough for this to be a drag.
+    active: bool,
+    /// Position in the strip the drag started from.
+    start_pos: usize,
+    /// Position it currently occupies.
+    pos: usize,
+    /// Stable ids in the order the strip currently shows them.
+    order: Vec<usize>,
+}
+
+/// How a press on a workspace ended.
+pub(crate) enum WorkspaceDragEnd {
+    /// The press never travelled far enough — it is a click.
+    NotADrag,
+    /// A real drag was dropped, moving the workspace from one position to
+    /// another. `from == to` when it was put back where it started; the click
+    /// is swallowed either way.
+    Dropped { from: usize, to: usize },
+}
+
+/// The lifted copy of the workspace being dragged. Rendered as the last child
+/// of the strip, so it paints over the workspaces it passes.
+///
+/// It mirrors the *workspace's own* scene nodes — the very nodes the preview
+/// in the strip mirrors — and not the preview itself. Mirroring the preview
+/// would be a mirror of a mirror, which lay-rs does not follow: the copy comes
+/// out empty, and since the slot it was lifted out of is blanked at the same
+/// time, the workspace simply vanishes for the length of the drag.
+#[derive(Clone, Debug)]
+struct WorkspaceGhostState {
+    /// Stable id of the workspace it stands in for.
+    index: usize,
+    /// The workspace's windows subtree, mirrored live.
+    workspace_node: Option<NodeRef>,
+    /// Its wallpaper, which lives in a different plane and so is a second
+    /// mirror — exactly as in the preview.
+    background_node: Option<NodeRef>,
+    /// The workspace at full size, which is what the mirrors are scaled down
+    /// from.
+    workspace_width: f32,
+    workspace_height: f32,
+    /// The label under the preview, so the lifted copy is legible as the
+    /// workspace it is rather than an anonymous rectangle.
+    name: String,
+    /// Whether the workspace being carried is the one the user is on, which
+    /// keeps its accent border while it travels.
+    current: bool,
+}
+
+impl Hash for WorkspaceGhostState {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.index.hash(state);
+        self.workspace_node.hash(state);
+        self.background_node.hash(state);
+        self.workspace_width.to_bits().hash(state);
+        self.workspace_height.to_bits().hash(state);
+        self.name.hash(state);
+        self.current.hash(state);
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -139,6 +236,8 @@ pub struct WorkspaceSelectorViewState {
     /// Workspaces (by global index) collapsing out of the strip. They stay in
     /// the tree until the compositor drops them, so the row can animate.
     removing: Vec<usize>,
+    /// The lifted copy of the workspace being dragged, if one is in flight.
+    drag_ghost: Option<WorkspaceGhostState>,
 }
 
 impl Hash for WorkspaceSelectorViewState {
@@ -149,6 +248,7 @@ impl Hash for WorkspaceSelectorViewState {
         self.scale.to_bits().hash(state);
         self.editing.hash(state);
         self.removing.hash(state);
+        self.drag_ghost.hash(state);
     }
 }
 
@@ -196,6 +296,8 @@ pub struct WorkspaceSelectorView {
     /// Carries `(output_name, workspace_index, name)` for a rename that ends
     /// without a `&mut Otto` at hand — losing keyboard focus mid-edit.
     rename_sender: CalloopSender<(String, usize, String)>,
+    /// The press or reorder drag currently in flight on a workspace preview.
+    drag: Arc<RwLock<Option<WorkspaceDrag>>>,
 }
 
 /// # WorkspaceSelectorView Layer Structure
@@ -233,6 +335,7 @@ impl WorkspaceSelectorView {
             scale: 1.0,
             editing: None,
             removing: Vec::new(),
+            drag_ghost: None,
         };
         let view = View::new(
             "workspace_selector_view",
@@ -380,6 +483,7 @@ impl WorkspaceSelectorView {
             last_click: Arc::new(RwLock::new(None)),
             modifiers: Arc::new(RwLock::new(ModifiersState::default())),
             rename_sender,
+            drag: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -399,9 +503,8 @@ impl WorkspaceSelectorView {
             let mut known = self.known_indices.write().unwrap();
             state.workspaces = workspaces
                 .iter()
-                .enumerate()
-                .map(|(i, w)| WorkspaceViewState {
-                    name: w.display_name(i),
+                .map(|w| WorkspaceViewState {
+                    name: w.display_name(),
                     index: w.index,
                     workspace_node: Some(w.windows_layer.id()),
                     background_node: Some(w.wallpaper_group.id()),
@@ -428,7 +531,27 @@ impl WorkspaceSelectorView {
         }
         state.current = current;
         state.scale = scale;
+        // A reorder in flight owns the order of the strip: the compositor is
+        // still holding the old one and would otherwise snap the workspaces
+        // back under the drag every time anything else refreshes the selector.
+        self.apply_drag_order(&mut state);
         self.view.update_state(&state);
+    }
+
+    /// Re-sort `state` into the order the drag has the strip in, if one is in
+    /// flight.
+    fn apply_drag_order(&self, state: &mut WorkspaceSelectorViewState) {
+        let Some(order) = self
+            .drag
+            .read()
+            .unwrap()
+            .as_ref()
+            .filter(|drag| drag.active)
+            .map(|drag| drag.order.clone())
+        else {
+            return;
+        };
+        sort_state_to(state, &order);
     }
 
     /// Start collapsing `index` out of the strip. The compositor-side removal
@@ -612,6 +735,282 @@ impl WorkspaceSelectorView {
         }
     }
 
+    // ── Reorder drag ────────────────────────────────────────────────────
+    //
+    // Dragging a workspace along the strip changes its place in it. The shape
+    // is the dock's icon reorder: a press is only a drag once the pointer has
+    // travelled, the workspace it passes shift out of its way as it goes so
+    // the drop target is visible before the button comes up, and the order is
+    // written back to the compositor on drop.
+
+    /// Is a workspace being dragged along this strip right now?
+    #[cfg(test)]
+    fn is_dragging(&self) -> bool {
+        self.drag
+            .read()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|drag| drag.active)
+    }
+
+    /// Record a press on the workspace `index`. Nothing happens yet: the press
+    /// only becomes a drag once the pointer has moved
+    /// [`WORKSPACE_DRAG_THRESHOLD_PX`] along the strip, so a plain click still
+    /// switches workspace (and a double click still renames).
+    fn begin_drag(&self, index: usize, grab_x: f32) {
+        if self.is_removing(index) {
+            return;
+        }
+        *self.drag.write().unwrap() = Some(WorkspaceDrag {
+            index,
+            grab_x,
+            ghost_y: 0.0,
+            active: false,
+            start_pos: 0,
+            pos: 0,
+            order: Vec::new(),
+        });
+    }
+
+    /// Drop a press that never became a drag.
+    fn cancel_drag(&self) {
+        *self.drag.write().unwrap() = None;
+    }
+
+    /// Advance an in-flight drag. Returns whether the drag has taken over the
+    /// pointer, in which case the caller must not treat the motion as hovering.
+    fn drag_update(&self, location: Point) -> bool {
+        let Some(mut drag) = self.drag.read().unwrap().clone() else {
+            return false;
+        };
+        let x = location.x;
+        if !drag.active {
+            if (x - drag.grab_x).abs() < WORKSPACE_DRAG_THRESHOLD_PX {
+                return false;
+            }
+            if !self.activate_drag(&mut drag) {
+                // Nothing draggable under the press after all — forget it, so
+                // the release still counts as a click.
+                *self.drag.write().unwrap() = None;
+                return false;
+            }
+        }
+
+        // Clamp to the strip: a workspace cannot be pushed off either end.
+        let last = drag.order.len().saturating_sub(1);
+        let min = -(drag.start_pos as f32) * WORKSPACE_SLOT_PITCH;
+        let max = last.saturating_sub(drag.start_pos) as f32 * WORKSPACE_SLOT_PITCH;
+        let travel = (x - drag.grab_x).clamp(min, max);
+        self.place_ghost(drag.grab_x + travel, drag.ghost_y);
+
+        // Round to the nearest slot, so the workspace changes places once it
+        // has covered half of one.
+        let target = (drag.start_pos as f32 + travel / WORKSPACE_SLOT_PITCH).round() as isize;
+        let target = target.clamp(0, last as isize) as usize;
+        if target != drag.pos {
+            self.move_dragged_workspace(&mut drag, target);
+        }
+
+        *self.drag.write().unwrap() = Some(drag);
+        true
+    }
+
+    /// Turn a press that has moved far enough into a real drag: lift the
+    /// workspace out of the strip into a copy that paints over its neighbours,
+    /// and leave its slot standing empty.
+    ///
+    /// Returns `false` when there is nothing to lift (the workspace went away
+    /// under the press), leaving the strip untouched.
+    fn activate_drag(&self, drag: &mut WorkspaceDrag) -> bool {
+        let state = self.view.get_state();
+        let order: Vec<usize> = state.workspaces.iter().map(|w| w.index).collect();
+        let Some(pos) = order.iter().position(|index| *index == drag.index) else {
+            return false;
+        };
+        let wrap_key = format!("workspace_selector_desktop_wrap_{}", drag.index);
+        let Some(wrap) = self.view.layer_by_key(&wrap_key) else {
+            return false;
+        };
+        let bounds = wrap.render_bounds_transformed();
+        if bounds.width() <= 0.0 || bounds.height() <= 0.0 {
+            return false;
+        }
+
+        drag.active = true;
+        drag.start_pos = pos;
+        drag.pos = pos;
+        drag.order = order;
+        drag.ghost_y = bounds.center_y();
+
+        // The slot keeps its place in the strip — it is the gap the workspace
+        // leaves behind — but shows nothing while the lifted copy has it.
+        if let Some(item) = self
+            .view
+            .layer_by_key(&format!("workspace_selector_desktop_{}", drag.index))
+        {
+            item.set_opacity(0.0_f32, None);
+        }
+        // The pointer stops hovering the moment the drag takes it over, so a
+        // button revealed before the lift would otherwise stay frozen on. Every
+        // preview's, not just the dragged one's: the button showing when the
+        // drag starts belongs to whichever workspace the pointer was over.
+        for index in &drag.order {
+            if let Some(button) = self
+                .view
+                .layer_by_key(&format!("workspace_selector_desktop_remove_{index}"))
+            {
+                button.set_opacity(0.0_f32, None);
+                button.set_scale(Point::new(0.8, 0.8), None);
+            }
+        }
+
+        let mut state = self.view.get_state();
+        let Some(w) = state
+            .workspaces
+            .iter()
+            .find(|w| w.index == drag.index)
+            .cloned()
+        else {
+            return false;
+        };
+        state.drag_ghost = Some(WorkspaceGhostState {
+            index: drag.index,
+            workspace_node: w.workspace_node,
+            background_node: w.background_node,
+            workspace_width: w.workspace_width,
+            workspace_height: w.workspace_height,
+            name: w.name.clone(),
+            current: pos == state.current,
+        });
+        self.view.update_state(&state);
+
+        // The copy takes the pointer with it from the first frame, and grows
+        // into the lift rather than appearing already raised.
+        self.place_ghost(drag.grab_x, drag.ghost_y);
+        if let Some(ghost) = self.view.layer_by_key(WORKSPACE_DRAG_GHOST_KEY) {
+            ghost.set_scale(Point::new(1.0, 1.0), None);
+            ghost.set_scale(
+                Point::new(WORKSPACE_DRAG_GHOST_SCALE, WORKSPACE_DRAG_GHOST_SCALE),
+                Some(Transition::ease_out_quad(0.15)),
+            );
+        }
+        true
+    }
+
+    /// Centre the lifted copy on `(centre_x, centre_y)`, in this output's scene
+    /// space. The ghost is an absolutely-positioned child of the strip anchored
+    /// at its own centre, so its offset is simply the distance from the strip's
+    /// origin — read live, since the strip slides in and out with expose.
+    fn place_ghost(&self, centre_x: f32, centre_y: f32) {
+        let Some(ghost) = self.view.layer_by_key(WORKSPACE_DRAG_GHOST_KEY) else {
+            return;
+        };
+        let root = self.layer.render_bounds_transformed();
+        ghost.set_position(Point::new(centre_x - root.x(), centre_y - root.y()), None);
+    }
+
+    /// Move the dragged workspace to `new_pos` in the strip and slide every
+    /// workspace it displaced one slot the other way.
+    fn move_dragged_workspace(&self, drag: &mut WorkspaceDrag, new_pos: usize) {
+        let old_pos = drag.pos;
+        if new_pos == old_pos || old_pos >= drag.order.len() || new_pos >= drag.order.len() {
+            return;
+        }
+        let displaced: Vec<usize> = if new_pos > old_pos {
+            drag.order[old_pos + 1..=new_pos].to_vec()
+        } else {
+            drag.order[new_pos..old_pos].to_vec()
+        };
+        let index = drag.order.remove(old_pos);
+        drag.order.insert(new_pos, index);
+        drag.pos = new_pos;
+
+        let mut state = self.view.get_state();
+        // Sorted against the drag's own order, not the one recorded on `self`:
+        // the caller is holding the updated drag and has not written it back yet.
+        sort_state_to(&mut state, &drag.order);
+        self.view.update_state(&state);
+
+        // The displaced workspaces have just been re-laid-out one slot along.
+        // Put them back where they were and let them slide into the new place,
+        // or the reorder reads as a jump and the drop target is never visible.
+        let shift = if new_pos > old_pos {
+            WORKSPACE_SLOT_PITCH
+        } else {
+            -WORKSPACE_SLOT_PITCH
+        };
+        for index in displaced {
+            if let Some(item) = self
+                .view
+                .layer_by_key(&format!("workspace_selector_desktop_{index}"))
+            {
+                item.set_position(Point::new(shift, 0.0), None);
+                item.set_position(Point::new(0.0, 0.0), Some(workspace_shift_transition()));
+            }
+        }
+    }
+
+    /// Finish whatever the press turned into: a real drag drops the workspace
+    /// into the slot it landed on and reports the move for the compositor to
+    /// commit, anything else is a click.
+    pub(crate) fn end_drag(&self) -> WorkspaceDragEnd {
+        let Some(drag) = self.drag.write().unwrap().take() else {
+            return WorkspaceDragEnd::NotADrag;
+        };
+        if !drag.active {
+            return WorkspaceDragEnd::NotADrag;
+        }
+
+        // The strip has been flat and still for the length of the drag, so the
+        // slot the workspace landed in can simply be measured.
+        let target = self
+            .view
+            .layer_by_key(&format!("workspace_selector_desktop_wrap_{}", drag.index))
+            .map(|wrap| {
+                let bounds = wrap.render_bounds_transformed();
+                (bounds.center_x(), bounds.center_y())
+            });
+
+        let selector = self.clone();
+        let index = drag.index;
+        let land = move || {
+            if let Some(item) = selector
+                .view
+                .layer_by_key(&format!("workspace_selector_desktop_{index}"))
+            {
+                item.set_opacity(1.0_f32, None);
+            }
+            let mut state = selector.view.get_state();
+            if state
+                .drag_ghost
+                .as_ref()
+                .is_some_and(|ghost| ghost.index == index)
+            {
+                state.drag_ghost = None;
+                selector.view.update_state(&state);
+            }
+        };
+
+        match (self.view.layer_by_key(WORKSPACE_DRAG_GHOST_KEY), target) {
+            (Some(ghost), Some((x, y))) => {
+                let root = self.layer.render_bounds_transformed();
+                ghost.set_scale(Point::new(1.0, 1.0), Some(Transition::ease_out_quad(0.18)));
+                ghost
+                    .set_position(
+                        Point::new(x - root.x(), y - root.y()),
+                        Some(Transition::ease_out_quad(0.18)),
+                    )
+                    .on_finish(move |_: &Layer, _| land(), true);
+            }
+            _ => land(),
+        }
+
+        WorkspaceDragEnd::Dropped {
+            from: drag.start_pos,
+            to: drag.pos,
+        }
+    }
+
     /// Count this press as part of a click run on `key`.
     fn register_click(&self, key: &str) -> u32 {
         let mut last = self.last_click.write().unwrap();
@@ -660,6 +1059,33 @@ fn draw_rename_field(edit: LabelEditState) -> Option<ContentDrawFunction> {
         layers::skia::Rect::from_xywh(0.0, 0.0, w, h)
     };
     Some(draw.into())
+}
+
+/// Re-sort the strip into `order` (stable workspace ids). `current` is a
+/// position, so it has to be re-resolved through the workspace it was pointing
+/// at, or the selected border stays behind on whatever slid into that slot.
+fn sort_state_to(state: &mut WorkspaceSelectorViewState, order: &[usize]) {
+    let current_index = state.workspaces.get(state.current).map(|w| w.index);
+    state.workspaces.sort_by_key(|w| {
+        order
+            .iter()
+            .position(|index| *index == w.index)
+            .unwrap_or(usize::MAX)
+    });
+    if let Some(index) = current_index {
+        if let Some(pos) = state.workspaces.iter().position(|w| w.index == index) {
+            state.current = pos;
+        }
+    }
+}
+
+/// The workspace a hovered layer key belongs to, for the keys a reorder drag
+/// may start from. The remove button and the add button are not among them:
+/// pressing those is never the start of a drag.
+fn workspace_index_of_key(key: &str) -> Option<usize> {
+    key.strip_prefix("workspace_selector_desktop_label_")
+        .or_else(|| key.strip_prefix("workspace_selector_desktop_"))
+        .and_then(|index| index.parse::<usize>().ok())
 }
 
 /// Is the scene-space point `(x, y)` inside this layer's transformed bounds?
@@ -800,6 +1226,14 @@ fn render_workspace_selector_view(
                 .on_pointer_move({
                     let view_ref = view.clone();
                     move |_layer: &Layer, _x, _y| {
+                        // A drag sweeps the pointer across every preview it
+                        // passes, and the release leaves it parked on one.
+                        // None of that is hovering — the pointer is carrying a
+                        // workspace, not pointing at one — so no close button
+                        // may appear for as long as the lifted copy is out.
+                        if view_ref.get_state().drag_ghost.is_some() {
+                            return;
+                        }
                         let key = format!("workspace_selector_desktop_remove_{}", workspace_index);
                         if let Some(remove_button) = view_ref.layer_by_key(key.as_str()) {
                             remove_button.set_opacity(1.0_f32, Transition::spring(0.3, 0.1));
@@ -1049,53 +1483,274 @@ fn render_workspace_selector_view(
         .shadow_color(theme_colors().shadow_color)
         .shadow_offset(((0.0, -5.0).into(), None))
         .shadow_radius((20.0, None))
+        .children({
+            let mut children = vec![
+                LayerTreeBuilder::with_key("workspace_selector_view_content")
+                    .layout_style(taffy::Style {
+                        display: taffy::Display::Flex,
+                        flex_direction: taffy::FlexDirection::Row,
+                        align_items: Some(taffy::AlignItems::Center),
+                        justify_content: Some(taffy::AlignContent::Center),
+                        gap: taffy::length(0.0_f32),
+                        padding: taffy::Rect {
+                            bottom: taffy::length(20.0_f32),
+                            top: taffy::length(30.0_f32),
+                            left: taffy::length(10.0_f32),
+                            right: taffy::length(10.0_f32),
+                        },
+                        ..Default::default()
+                    })
+                    .size((
+                        layers::types::Size {
+                            width: layers::taffy::style::Dimension::Percent(1.0),
+                            height: layers::taffy::style::Dimension::Length(wh + 50.0),
+                        },
+                        None,
+                    ))
+                    .children(workspaces_tree)
+                    .build()
+                    .unwrap(),
+                LayerTreeBuilder::default()
+                    .key("workspace_selector_desktop_add")
+                    .layout_style(taffy::Style {
+                        ..Default::default()
+                    })
+                    .size((
+                        layers::types::Size {
+                            width: layers::taffy::style::Dimension::Length(80.0),
+                            height: layers::taffy::style::Dimension::Length(80.0),
+                        },
+                        None,
+                    ))
+                    .content(draw_named_icon_any(&["plus-symbolic", "list-add-symbolic"]))
+                    .image_cache(true)
+                    .on_pointer_press(button_press_scale(0.9))
+                    .on_pointer_release(button_release_scale())
+                    .build()
+                    .unwrap(),
+            ];
+            // The workspace being dragged, mirrored as the LAST child of the
+            // strip so it paints over the ones it passes — it is the thing
+            // being moved, not one more preview sliding among them.
+            //
+            // Neither its position nor its scale is declared here: the drag
+            // drives both imperatively, and a re-render (a window opening in a
+            // preview, say) must not yank the copy back off the pointer.
+            if let Some(ghost) = state.drag_ghost.as_ref() {
+                children.push(drag_ghost_tree(ghost, state.scale));
+            }
+            children
+        })
+        .build()
+        .unwrap()
+}
+
+/// Build the lifted copy of the workspace being dragged.
+///
+/// A self-contained preview rather than a mirror of the one in the strip:
+/// same two source nodes, same scale, same rounded crop, plus the label — so
+/// what the user picks up looks like the workspace they pressed. It takes no
+/// pointer events; the drag owns the pointer until the button comes up.
+fn drag_ghost_tree(ghost: &WorkspaceGhostState, ui_scale: f32) -> LayerTree {
+    let workspace_width_px = ghost.workspace_width.max(1.0);
+    let workspace_height_px = ghost.workspace_height.max(1.0);
+    let preview_width_px = WORKSPACE_SELECTOR_PREVIEW_WIDTH;
+    // A ratio, not a length: how far down the full-size workspace is
+    // squeezed to fit the preview box.
+    let preview_ratio = preview_width_px / workspace_width_px;
+    let preview_height_px = workspace_height_px * preview_ratio;
+    let label_height_px = 30.0 * ui_scale;
+
+    let mirror = |key: &str, node: Option<NodeRef>| {
+        LayerTreeBuilder::with_key(key.to_string())
+            .layout_style(taffy::Style {
+                position: taffy::Position::Absolute,
+                ..Default::default()
+            })
+            .size((
+                layers::types::Size {
+                    width: layers::taffy::style::Dimension::Length(workspace_width_px),
+                    height: layers::taffy::style::Dimension::Length(workspace_height_px),
+                },
+                None,
+            ))
+            .scale(Point::new(preview_ratio, preview_ratio))
+            .replicate_node(node)
+            .picture_cached(true)
+            .image_cache(true)
+            .border_corner_radius(BorderRadius::new_single(otto_kit::corners::radius(
+                20.0 / preview_ratio,
+            )))
+            .clip_children(true)
+            .clip_content(true)
+            .pointer_events(false)
+            .build()
+            .unwrap()
+    };
+
+    LayerTreeBuilder::with_key(WORKSPACE_DRAG_GHOST_KEY)
+        .layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            display: taffy::Display::Flex,
+            flex_direction: taffy::FlexDirection::Column,
+            align_items: Some(taffy::AlignItems::Center),
+            inset: taffy::Rect {
+                left: taffy::LengthPercentageAuto::Length(0.0),
+                top: taffy::LengthPercentageAuto::Length(0.0),
+                right: taffy::LengthPercentageAuto::Auto,
+                bottom: taffy::LengthPercentageAuto::Auto,
+            },
+            ..Default::default()
+        })
+        .size((
+            layers::types::Size {
+                width: layers::taffy::style::Dimension::Length(preview_width_px),
+                height: layers::taffy::style::Dimension::Length(
+                    preview_height_px + label_height_px,
+                ),
+            },
+            None,
+        ))
+        // Anchored at its own centre, so the position the drag writes is where
+        // the pointer is, and the lift scales about the middle instead of
+        // walking off to the right.
+        .anchor_point(Point::new(0.5, 0.5))
+        .pointer_events(false)
         .children(vec![
-            LayerTreeBuilder::with_key("workspace_selector_view_content")
+            LayerTreeBuilder::with_key(WORKSPACE_DRAG_GHOST_CONTENT_KEY)
                 .layout_style(taffy::Style {
-                    display: taffy::Display::Flex,
-                    flex_direction: taffy::FlexDirection::Row,
-                    align_items: Some(taffy::AlignItems::Center),
-                    justify_content: Some(taffy::AlignContent::Center),
-                    gap: taffy::length(0.0_f32),
-                    padding: taffy::Rect {
-                        bottom: taffy::length(20.0_f32),
-                        top: taffy::length(30.0_f32),
-                        left: taffy::length(10.0_f32),
-                        right: taffy::length(10.0_f32),
-                    },
+                    position: taffy::Position::Relative,
                     ..Default::default()
                 })
                 .size((
                     layers::types::Size {
-                        width: layers::taffy::style::Dimension::Percent(1.0),
-                        height: layers::taffy::style::Dimension::Length(wh + 50.0),
+                        width: layers::taffy::style::Dimension::Length(preview_width_px),
+                        height: layers::taffy::style::Dimension::Length(preview_height_px),
                     },
                     None,
                 ))
-                .children(workspaces_tree)
+                .pointer_events(false)
+                .children(vec![
+                    mirror(
+                        "workspace_selector_drag_ghost_bg_mirror",
+                        ghost.background_node,
+                    ),
+                    mirror(
+                        "workspace_selector_drag_ghost_content_mirror",
+                        ghost.workspace_node,
+                    ),
+                    LayerTreeBuilder::with_key("workspace_selector_drag_ghost_border")
+                        .layout_style(taffy::Style {
+                            position: taffy::Position::Absolute,
+                            ..Default::default()
+                        })
+                        .position(Point::new(0.0, 0.0))
+                        .size((
+                            layers::types::Size {
+                                width: layers::taffy::style::Dimension::Percent(1.0),
+                                height: layers::taffy::style::Dimension::Percent(1.0),
+                            },
+                            None,
+                        ))
+                        .border_width((if ghost.current { 8.0 } else { 0.0 }, None))
+                        .border_color(crate::theme::accent_color())
+                        .border_corner_radius(BorderRadius::new_single(otto_kit::corners::radius(
+                            20.0,
+                        )))
+                        .pointer_events(false)
+                        .build()
+                        .unwrap(),
+                ])
                 .build()
                 .unwrap(),
-            LayerTreeBuilder::default()
-                .key("workspace_selector_desktop_add")
+            LayerTreeBuilder::with_key("workspace_selector_drag_ghost_label")
                 .layout_style(taffy::Style {
+                    position: taffy::Position::Relative,
                     ..Default::default()
                 })
                 .size((
                     layers::types::Size {
-                        width: layers::taffy::style::Dimension::Length(80.0),
-                        height: layers::taffy::style::Dimension::Length(80.0),
+                        width: layers::taffy::style::Dimension::Length(preview_width_px),
+                        height: layers::taffy::style::Dimension::Length(label_height_px),
                     },
                     None,
                 ))
-                .content(draw_named_icon_any(&["plus-symbolic", "list-add-symbolic"]))
-                .image_cache(true)
-                .on_pointer_press(button_press_scale(0.9))
-                .on_pointer_release(button_release_scale())
+                .content(draw_carried_label(&ghost.name, ui_scale))
+                .pointer_events(false)
                 .build()
                 .unwrap(),
         ])
         .build()
         .unwrap()
+}
+
+/// The name under the workspace being carried, on a plate of its own.
+///
+/// Free-floating text over whatever the drag is passing — other workspace
+/// names, the windows inside the previews — runs together with it. The plate
+/// is drawn to the width of the text rather than the width of the label box,
+/// so it reads as a tag on the thing being carried and not as a bar across it.
+///
+/// Geometry matches exposé's window-title plate (see
+/// [`crate::workspaces::window_selector`]): the same padding, the same corner
+/// radius, both taken times the scale, and the corner routed through
+/// [`otto_kit::corners::radius`] so a desktop configured with square corners
+/// gets square ones here too.
+///
+/// `ui_scale` is the scale of the output this selector is on — every length
+/// below is in physical pixels, which is the space the draw canvas is in.
+fn draw_carried_label(text: &str, ui_scale: f32) -> Option<ContentDrawFunction> {
+    let text = text.to_string();
+    let mut text_style = theme::text_styles::title_3_regular();
+    let foreground_paint = layers::skia::Paint::new(theme_colors().text_primary.c4f(), None);
+    text_style.set_foreground_paint(&foreground_paint);
+    let family = crate::config::Config::with(|c| c.font_family.clone());
+    text_style.set_font_families(&[family]);
+
+    let mut paragraph_style = layers::skia::textlayout::ParagraphStyle::new();
+    paragraph_style.set_text_direction(layers::skia::textlayout::TextDirection::LTR);
+    paragraph_style.set_text_style(&text_style);
+    paragraph_style.set_text_align(layers::skia::textlayout::TextAlign::Center);
+    paragraph_style.set_max_lines(1);
+    paragraph_style.set_ellipsis("…");
+
+    // The same material the selector's own surfaces use, so the plate is light
+    // on a light theme and dark on a dark one without asking which is on.
+    let plate_color = theme_colors().materials_medium;
+    let pad_x_px = 10.0 * ui_scale;
+    let pad_y_px = 5.0 * ui_scale;
+    let radius_px = otto_kit::corners::radius(8.0 * ui_scale);
+
+    let draw = move |canvas: &layers::skia::Canvas, w: f32, h: f32| -> layers::skia::Rect {
+        let mut builder = crate::workspaces::utils::FONT_CACHE.with(|font_cache| {
+            layers::skia::textlayout::ParagraphBuilder::new(
+                &paragraph_style,
+                font_cache.font_collection.clone(),
+            )
+        });
+        let mut paragraph = builder.add_text(&text).build();
+        paragraph.layout(w);
+
+        // `max_intrinsic_width` is the width the line wants; clamped to the box
+        // so a long name gives a full-width plate rather than one running off
+        // the sides, and the ellipsis does the rest.
+        let text_width_px = paragraph.max_intrinsic_width().min(w);
+        let plate_width_px = (text_width_px + pad_x_px * 2.0).min(w);
+        let plate_height_px = (paragraph.height() + pad_y_px * 2.0).min(h);
+        let plate = layers::skia::Rect::from_xywh(
+            (w - plate_width_px) / 2.0,
+            (h - plate_height_px) / 2.0,
+            plate_width_px,
+            plate_height_px,
+        );
+        let mut paint = layers::skia::Paint::new(plate_color.c4f(), None);
+        paint.set_anti_alias(true);
+        canvas.draw_round_rect(plate, radius_px, radius_px, &paint);
+
+        paragraph.paint(canvas, (0.0, (h - paragraph.height()) / 2.0));
+        layers::skia::Rect::from_xywh(0.0, 0.0, w, h)
+    };
+    Some(draw.into())
 }
 
 /// How long the caret stays on (and off) while renaming.
@@ -1253,6 +1908,13 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
     ) {
         let state = self.view.get_state().clone();
         let location = self.scene_location(event.location);
+        // A reorder drag owns the pointer until it is released — nothing on the
+        // strip is being hovered while a workspace is riding the cursor.
+        if self.drag_update(location) {
+            data.set_cursor(&CursorImageStatus::Named(CursorIcon::Grabbing));
+            *self.cursor_location.write().unwrap() = location;
+            return;
+        }
         // A drag inside the rename field extends the selection, and the cursor
         // stays an I-beam over it.
         if let Some(edit_index) = self.editing_index() {
@@ -1367,10 +2029,30 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
                 if let Some(key) = key.as_deref() {
                     self.register_click(key);
                 }
+                // A press on a workspace may turn into a reorder; it only does
+                // once the pointer travels, so the click still switches to it.
+                if let Some(index) = key.as_deref().and_then(workspace_index_of_key) {
+                    self.begin_drag(index, location.x);
+                }
                 let mut pressed = self.pressed_action.write().unwrap();
                 *pressed = key;
             }
             ButtonState::Released => {
+                // Dropping a workspace commits the new order and eats the
+                // click: the release that ends a drag must not also switch to
+                // the workspace it happened to land on.
+                match self.end_drag() {
+                    WorkspaceDragEnd::Dropped { from, to } => {
+                        *self.pressed_action.write().unwrap() = None;
+                        if from != to {
+                            let output = self.output_name.read().unwrap().clone();
+                            otto.workspaces
+                                .reorder_workspace_on_output(&output, from, to);
+                        }
+                        return;
+                    }
+                    WorkspaceDragEnd::NotADrag => self.cancel_drag(),
+                }
                 let release_key = hovered_key(&location);
 
                 if self.is_editing() {
@@ -1471,5 +2153,313 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
             let output = self.output_name.read().unwrap().clone();
             let _ = self.rename_sender.send((output, index, value));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workspaces::workspace::WorkspaceView;
+    use smithay::reexports::calloop::channel::channel;
+
+    /// A selector strip holding `count` workspaces on a 2000×1000 output,
+    /// settled into its layout. The channel receivers are handed back with it:
+    /// dropping them would break the senders the selector holds.
+    #[allow(clippy::type_complexity)]
+    fn selector_with(
+        count: usize,
+    ) -> (
+        Arc<Engine>,
+        WorkspaceSelectorView,
+        Vec<Arc<WorkspaceView>>,
+        (
+            smithay::reexports::calloop::channel::Channel<(Option<String>, usize)>,
+            smithay::reexports::calloop::channel::Channel<(String, usize, String)>,
+        ),
+    ) {
+        let engine = Engine::create(2000.0, 1000.0);
+        let root = engine.new_layer();
+        root.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        root.set_size(layers::types::Size::points(2000.0, 1000.0), None);
+        let _ = engine.add_layer(&root);
+
+        let workspaces_layer = engine.new_layer();
+        let _ = root.add_sublayer(&workspaces_layer);
+        let overlay_layer = engine.new_layer();
+        let _ = root.add_sublayer(&overlay_layer);
+        let background = engine.new_layer();
+        let bottom = engine.new_layer();
+
+        let selector_layer = engine.new_layer();
+        let _ = root.add_sublayer(&selector_layer);
+
+        let (remove_tx, remove_rx) = channel::<(Option<String>, usize)>();
+        let (rename_tx, rename_rx) = channel::<(String, usize, String)>();
+        let selector = WorkspaceSelectorView::new(
+            engine.clone(),
+            selector_layer,
+            remove_tx,
+            Arc::new(AtomicBool::new(false)),
+            rename_tx,
+        );
+
+        let workspaces: Vec<Arc<WorkspaceView>> = (0..count)
+            .map(|i| {
+                Arc::new(WorkspaceView::new(
+                    i + 1,
+                    engine.clone(),
+                    &workspaces_layer,
+                    overlay_layer.clone(),
+                    &background,
+                    &bottom,
+                ))
+            })
+            .collect();
+        selector.set_workspaces(&workspaces, 0, 1000.0, 600.0, 1.0);
+        // The strip is parked off screen until expose slides it in; put it on
+        // screen so the previews have real bounds to measure against.
+        selector.layer.set_position((0.0, 0.0), None);
+        settle(&engine);
+        (engine, selector, workspaces, (remove_rx, rename_rx))
+    }
+
+    /// Run the engine until the strip's spring animations land.
+    fn settle(engine: &Arc<Engine>) {
+        for _ in 0..200 {
+            engine.update(0.016);
+        }
+    }
+
+    /// The workspaces in the order the strip currently shows them.
+    fn strip_order(selector: &WorkspaceSelectorView) -> Vec<usize> {
+        selector
+            .view
+            .get_state()
+            .workspaces
+            .iter()
+            .map(|w| w.index)
+            .collect()
+    }
+
+    /// The scene-space centre of a workspace's preview.
+    fn preview_centre(selector: &WorkspaceSelectorView, index: usize) -> Point {
+        let bounds = selector
+            .view
+            .layer_by_key(&format!("workspace_selector_desktop_wrap_{index}"))
+            .expect("the workspace should be laid out")
+            .render_bounds_transformed();
+        Point::new(bounds.center_x(), bounds.center_y())
+    }
+
+    /// A pointer `slots` slots along the strip from `grab`.
+    fn drag_to(grab: Point, slots: f32) -> Point {
+        Point::new(grab.x + WORKSPACE_SLOT_PITCH * slots, grab.y)
+    }
+
+    #[test]
+    fn dragging_a_workspace_past_its_neighbour_swaps_them() {
+        let (_engine, selector, _ws, _rx) = selector_with(3);
+        let order = strip_order(&selector);
+        let grab = preview_centre(&selector, order[0]);
+
+        selector.begin_drag(order[0], grab.x);
+        assert!(selector.drag_update(drag_to(grab, 1.0)));
+        assert!(selector.is_dragging());
+        assert_eq!(
+            strip_order(&selector),
+            vec![order[1], order[0], order[2]],
+            "the neighbour should have moved out of the way"
+        );
+    }
+
+    #[test]
+    fn half_a_slot_is_not_enough_to_swap() {
+        let (_engine, selector, _ws, _rx) = selector_with(3);
+        let order = strip_order(&selector);
+        let grab = preview_centre(&selector, order[0]);
+
+        selector.begin_drag(order[0], grab.x);
+        assert!(selector.drag_update(drag_to(grab, 0.45)));
+        assert_eq!(strip_order(&selector), order);
+        assert!(selector.drag_update(drag_to(grab, 0.55)));
+        assert_eq!(strip_order(&selector), vec![order[1], order[0], order[2]]);
+    }
+
+    #[test]
+    fn a_short_press_is_a_click_not_a_drag() {
+        let (_engine, selector, _ws, _rx) = selector_with(3);
+        let order = strip_order(&selector);
+        let grab = preview_centre(&selector, order[0]);
+
+        selector.begin_drag(order[0], grab.x);
+        // A hand that wobbles is still clicking.
+        assert!(!selector.drag_update(Point::new(grab.x + 4.0, grab.y)));
+        assert!(!selector.is_dragging());
+        assert!(
+            matches!(selector.end_drag(), WorkspaceDragEnd::NotADrag),
+            "the click must not be swallowed"
+        );
+        assert_eq!(strip_order(&selector), order);
+    }
+
+    #[test]
+    fn a_drag_carries_a_workspace_all_the_way_across_and_back() {
+        let (_engine, selector, _ws, _rx) = selector_with(4);
+        let order = strip_order(&selector);
+        let grab = preview_centre(&selector, order[0]);
+
+        selector.begin_drag(order[0], grab.x);
+        assert!(selector.drag_update(drag_to(grab, 3.0)));
+        assert_eq!(
+            strip_order(&selector),
+            vec![order[1], order[2], order[3], order[0]]
+        );
+
+        // And back again in one motion: everything it passed shifts the other way.
+        assert!(selector.drag_update(drag_to(grab, 0.0)));
+        assert_eq!(strip_order(&selector), order);
+    }
+
+    #[test]
+    fn a_drag_cannot_push_a_workspace_off_the_end() {
+        let (_engine, selector, _ws, _rx) = selector_with(3);
+        let order = strip_order(&selector);
+        let grab = preview_centre(&selector, order[2]);
+
+        selector.begin_drag(order[2], grab.x);
+        assert!(selector.drag_update(drag_to(grab, 12.0)));
+        assert_eq!(
+            strip_order(&selector),
+            order,
+            "the last workspace has nowhere further to go"
+        );
+    }
+
+    #[test]
+    fn dropping_reports_the_move_and_swallows_the_click() {
+        let (engine, selector, _ws, _rx) = selector_with(3);
+        let order = strip_order(&selector);
+        let grab = preview_centre(&selector, order[0]);
+
+        selector.begin_drag(order[0], grab.x);
+        assert!(selector.drag_update(drag_to(grab, 2.0)));
+        match selector.end_drag() {
+            WorkspaceDragEnd::Dropped { from, to } => assert_eq!((from, to), (0, 2)),
+            WorkspaceDragEnd::NotADrag => panic!("the drop should have reported the move"),
+        }
+        assert!(!selector.is_dragging());
+        settle(&engine);
+        // The workspace is handed back to its slot once the copy has landed.
+        let item = selector
+            .view
+            .layer_by_key(&format!("workspace_selector_desktop_{}", order[0]))
+            .unwrap();
+        assert_eq!(item.opacity(), 1.0);
+        assert!(
+            selector
+                .view
+                .layer_by_key(WORKSPACE_DRAG_GHOST_KEY)
+                .is_none(),
+            "the lifted copy should be gone once it has landed"
+        );
+    }
+
+    #[test]
+    fn the_dragged_workspace_rides_above_the_others() {
+        let (engine, selector, _ws, _rx) = selector_with(3);
+        let order = strip_order(&selector);
+        let grab = preview_centre(&selector, order[0]);
+
+        selector.begin_drag(order[0], grab.x);
+        let pointer = drag_to(grab, 0.7);
+        assert!(selector.drag_update(pointer));
+        engine.update(0.0);
+
+        let item = selector
+            .view
+            .layer_by_key(&format!("workspace_selector_desktop_{}", order[0]))
+            .unwrap();
+        assert_eq!(
+            item.opacity(),
+            0.0,
+            "the slot stands empty while the copy has the workspace"
+        );
+
+        let ghost = selector
+            .view
+            .layer_by_key(WORKSPACE_DRAG_GHOST_KEY)
+            .expect("the workspace has to be somewhere while its slot is empty");
+        let bounds = ghost.render_bounds_transformed();
+        assert!(
+            (bounds.center_x() - pointer.x).abs() < 2.0,
+            "the copy must ride the pointer: {} against {}",
+            bounds.center_x(),
+            pointer.x
+        );
+        assert!(
+            (bounds.center_y() - grab.y).abs() < 2.0,
+            "the copy must stay in line with the row: {} against {}",
+            bounds.center_y(),
+            grab.y
+        );
+
+        // Painting order is child order, so being last in the strip is what
+        // puts it over the workspaces it passes.
+        let snapshot = engine.scene().snapshot();
+        let strip = find_node(&snapshot.nodes, "workspace_selector_view")
+            .expect("the strip should be in the scene");
+        assert_eq!(
+            strip.children.last().map(|n| n.key.as_str()),
+            Some(WORKSPACE_DRAG_GHOST_KEY),
+            "the dragged workspace must paint over its neighbours"
+        );
+    }
+
+    #[test]
+    fn the_displaced_workspaces_slide_rather_than_jump() {
+        let (engine, selector, _ws, _rx) = selector_with(3);
+        let order = strip_order(&selector);
+        let grab = preview_centre(&selector, order[0]);
+        let before = preview_centre(&selector, order[1]);
+
+        selector.begin_drag(order[0], grab.x);
+        assert!(selector.drag_update(drag_to(grab, 1.0)));
+        engine.update(0.0);
+
+        // The neighbour has been re-laid-out one slot to the left, but is held
+        // back where it was so it can slide there.
+        let displaced = preview_centre(&selector, order[1]);
+        assert!(
+            (displaced.x - before.x).abs() < 2.0,
+            "the displaced workspace jumped instead of sliding: {} against {}",
+            displaced.x,
+            before.x
+        );
+
+        settle(&engine);
+        let landed = preview_centre(&selector, order[1]);
+        assert!(
+            (landed.x - (before.x - WORKSPACE_SLOT_PITCH)).abs() < 2.0,
+            "the displaced workspace should settle one slot along, got {}",
+            landed.x
+        );
+    }
+
+    fn find_node<'a>(
+        nodes: &'a [layers::engine::scene::SceneNodeSnapshot],
+        key: &str,
+    ) -> Option<&'a layers::engine::scene::SceneNodeSnapshot> {
+        for node in nodes {
+            if node.key == key {
+                return Some(node);
+            }
+            if let Some(found) = find_node(&node.children, key) {
+                return Some(found);
+            }
+        }
+        None
     }
 }

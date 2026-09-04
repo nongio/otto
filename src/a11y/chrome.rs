@@ -497,8 +497,7 @@ impl ShellAccessibility {
         let workspaces = model
             .workspaces
             .iter()
-            .enumerate()
-            .map(|(position, workspace)| workspace.display_name(position))
+            .map(|workspace| workspace.display_name())
             .collect();
 
         // The overview, when it is up. Windows come from the workspace on

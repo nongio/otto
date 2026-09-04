@@ -365,6 +365,37 @@ fn persisted_workspace_name(output: &str, position: usize) -> Option<String> {
     })
 }
 
+/// Where the item at old position `i` ends up once the item at `from` is moved
+/// to `to`. The moved item lands on `to`; everything the move stepped over
+/// shifts one place the other way.
+pub(super) fn shift_index_for_move(i: usize, from: usize, to: usize) -> usize {
+    if i == from {
+        to
+    } else if from < to && i > from && i <= to {
+        i - 1
+    } else if from > to && i >= to && i < from {
+        i + 1
+    } else {
+        i
+    }
+}
+
+/// The lowest workspace number not already in use on an output.
+///
+/// Numbers are the default labels, and a label belongs to its workspace — so
+/// a new workspace takes the lowest number that is free rather than the next
+/// one ever handed out. Close the second of three workspaces and the next one
+/// added is `Workspace 2` again.
+fn next_display_number(used: impl Iterator<Item = usize>) -> usize {
+    let used: std::collections::BTreeSet<usize> = used.collect();
+    (1..).find(|n| !used.contains(n)).unwrap_or(1)
+}
+
+/// The numbers an output's workspaces are already using.
+fn display_numbers(existing: &[Arc<WorkspaceView>]) -> impl Iterator<Item = usize> + '_ {
+    existing.iter().map(|w| w.display_number())
+}
+
 /// The outcome of one promotion pass over an output's windows.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct PlaneCandidates {
@@ -2302,6 +2333,19 @@ impl Workspaces {
                 if current_workspace.get_fullscreen_mode() {
                     start_position = 250.0;
                     end_position = 250.0;
+                } else if !show_all {
+                    // Coming back to a workspace that is not fullscreen, so the
+                    // dock belongs on screen — and it may be more than slid
+                    // away. Going fullscreen calls `Dock::hide`, which both
+                    // clears the active flag and marks the layer hidden, and
+                    // the workspace switch that would undo that is skipped
+                    // while exposé is up. Open exposé on a fullscreen
+                    // workspace, cross to an ordinary one and close: nothing
+                    // ever puts those two flags back, and sliding a hidden
+                    // layer to the right place animates something nobody can
+                    // see.
+                    self.dock.view_layer.set_hidden(false);
+                    self.dock.set_active_flag(true);
                 }
                 let dock_slide = start_position.interpolate(&end_position, delta);
                 let dock_slide = dock_slide.clamp(0.0, 250.0);
@@ -4379,6 +4423,7 @@ impl Workspaces {
             if let Some(name) = persisted_workspace_name(&output.name(), i) {
                 workspace.set_custom_name(Some(name));
             }
+            workspace.set_display_number(next_display_number(display_numbers(&workspace_views)));
             workspace_views.push(workspace);
         }
 
@@ -4553,6 +4598,8 @@ impl Workspaces {
                 if let Some(custom) = persisted_workspace_name(name, index) {
                     workspace.set_custom_name(Some(custom));
                 }
+                workspace
+                    .set_display_number(next_display_number(display_numbers(&ows.workspace_views)));
                 ows.workspace_views.push(workspace.clone());
 
                 if primary_name.as_deref() == Some(name.as_str()) {
@@ -4632,6 +4679,8 @@ impl Workspaces {
             if let Some(name) = persisted_workspace_name(output_name, index) {
                 workspace.set_custom_name(Some(name));
             }
+            workspace
+                .set_display_number(next_display_number(display_numbers(&ows.workspace_views)));
             ows.workspace_views.push(workspace.clone());
             (index, workspace)
         };
@@ -4769,6 +4818,102 @@ impl Workspaces {
             );
         }
         self.with_model(|m| self.notify_observers(m));
+    }
+
+    /// Move the workspace at position `from` to position `to` in a SINGLE
+    /// output's strip. Workspaces are independent per output, so a reorder is
+    /// scoped to the output whose selector the drag happened in and leaves
+    /// every other display's strip alone.
+    ///
+    /// A workspace's place along the scroll axis comes from its position in
+    /// `workspace_views` (see [`WorkspaceView::update_layout`]), so the windows
+    /// in its `windows_layer` travel with it for free. What does not travel for
+    /// free is every workspace *position* held somewhere else: the output's
+    /// current workspace, and the positions each [`WindowElement`] caches. Those
+    /// are remapped through [`shift_index_for_move`], the one function that
+    /// says where a position ends up after this move.
+    ///
+    /// Returns whether anything moved.
+    pub fn reorder_workspace_on_output(
+        &mut self,
+        output_name: &str,
+        from: usize,
+        to: usize,
+    ) -> bool {
+        {
+            let Some(ows) = self.output_workspaces.get_mut(output_name) else {
+                return false;
+            };
+            let len = ows.workspace_views.len().min(ows.spaces.len());
+            if from >= len || to >= len || from == to {
+                return false;
+            }
+
+            // The view and the space of one workspace are two halves of the
+            // same thing — they must be permuted in lockstep, or a workspace
+            // ends up drawing one desktop and holding another's windows.
+            let view = ows.workspace_views.remove(from);
+            ows.workspace_views.insert(to, view);
+            let space = ows.spaces.remove(from);
+            ows.spaces.insert(to, space);
+
+            // The workspace the user is on is a position too: it has to follow
+            // whatever it was pointing at, or the drop scrolls the desktop to
+            // someone else's workspace.
+            ows.current_workspace = shift_index_for_move(ows.current_workspace, from, to);
+
+            // Every workspace position a window remembers is remapped through
+            // the same move. Note it is a *remap*, not a re-derivation from
+            // the space the window sits in: a fullscreen window is parked on a
+            // temporary workspace of its own while `get_workspace` still holds
+            // the workspace it will be restored to, and re-deriving would
+            // overwrite that with where it is now — unfullscreen would then
+            // drop it on whatever workspace happened to be in that slot.
+            for space in ows.spaces.iter() {
+                for window in space.elements() {
+                    window.set_workspace(shift_index_for_move(window.get_workspace(), from, to));
+                    if window.is_fullscreen() {
+                        window.set_fullscreen(
+                            true,
+                            shift_index_for_move(window.get_fullscreen_workspace(), from, to),
+                        );
+                    }
+                }
+            }
+        }
+
+        self.sync_model_from_primary();
+        self.update_workspaces_layout();
+        // Names are stored by position, so the strip comes back in the order it
+        // was dragged into rather than the order it was created in.
+        self.save_workspace_names();
+        self.refresh_output_selectors();
+
+        // Put the scroll back on the workspace the user is on — it is at a new
+        // offset now. Instantly: the strip has already animated the move, and a
+        // spring here would slide the desktop underneath it.
+        if let Some(output) = self
+            .outputs
+            .iter()
+            .find(|o| o.name() == output_name)
+            .cloned()
+        {
+            let dest = self
+                .output_workspaces
+                .get(output_name)
+                .map(|ows| ows.current_workspace)
+                .unwrap_or(0);
+            self.set_workspace_for_output(
+                &output,
+                dest,
+                Some(Transition {
+                    delay: 0.0,
+                    timing: TimingFunction::linear(0.0),
+                }),
+            );
+        }
+        self.with_model(|m| self.notify_observers(m));
+        true
     }
 
     pub fn get_next_free_workspace(&mut self) -> (usize, Arc<WorkspaceView>) {
@@ -6877,5 +7022,52 @@ mod dock_zone_tests {
             &mut zone,
         );
         assert_eq!(zone, screen());
+    }
+}
+
+#[cfg(test)]
+mod reorder_tests {
+    use super::{next_display_number, shift_index_for_move};
+
+    /// Moving one item over another drags every index it stepped over one
+    /// place the other way — the arithmetic the current workspace, and every
+    /// window's cached workspace position, are remapped through.
+    #[test]
+    fn an_index_follows_the_item_a_move_stepped_over() {
+        // Moving 0 to 2: [a b c d] -> [b c a d]
+        assert_eq!(
+            shift_index_for_move(0, 0, 2),
+            2,
+            "the moved item lands on to"
+        );
+        assert_eq!(shift_index_for_move(1, 0, 2), 0);
+        assert_eq!(shift_index_for_move(2, 0, 2), 1);
+        assert_eq!(shift_index_for_move(3, 0, 2), 3, "past the move, untouched");
+
+        // And back the other way — moving 2 to 0: [b c a d] -> [a b c d]
+        assert_eq!(shift_index_for_move(2, 2, 0), 0);
+        assert_eq!(shift_index_for_move(0, 2, 0), 1);
+        assert_eq!(shift_index_for_move(1, 2, 0), 2);
+        assert_eq!(shift_index_for_move(3, 2, 0), 3);
+
+        // A move to where it already is changes nothing.
+        for i in 0..4 {
+            assert_eq!(shift_index_for_move(i, 1, 1), i);
+        }
+    }
+
+    /// Default labels are numbers a workspace keeps, so a new one takes the
+    /// lowest number that is free rather than counting the strip.
+    #[test]
+    fn a_new_workspace_takes_the_lowest_free_number() {
+        let free = |used: &[usize]| next_display_number(used.iter().copied());
+        assert_eq!(free(&[]), 1);
+        assert_eq!(free(&[1, 2, 3]), 4);
+        assert_eq!(free(&[1, 3, 4]), 2, "the gap a removal left is reused");
+        assert_eq!(
+            free(&[3, 1, 2]),
+            4,
+            "the numbers are a set, not an order — a reordered strip is no different"
+        );
     }
 }

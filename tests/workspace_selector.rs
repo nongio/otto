@@ -230,6 +230,582 @@ mod workspace_selector_tests {
         handle.stop();
     }
 
+    // ── Reordering ───────────────────────────────────────────────────────
+
+    /// The width one workspace occupies in the strip, in scene (physical)
+    /// pixels — `WORKSPACE_SELECTOR_PREVIEW_WIDTH + WORKSPACE_SELECTOR_GAP`.
+    const SLOT_PITCH: f32 = 350.0;
+
+    /// The centre of a workspace's preview, in logical coordinates — where the
+    /// pointer has to be to have grabbed it.
+    fn preview_centre(handle: &HeadlessHandle, index: usize) -> (f64, f64) {
+        let scale = output_scale(handle);
+        let snapshot = handle.scene_snapshot();
+        let key = format!("workspace_selector_desktop_wrap_{index}");
+        let bounds = find(&snapshot.nodes, &key)
+            .unwrap_or_else(|| panic!("layer {key} not in scene"))
+            .global_bounds
+            .clone();
+        (
+            ((bounds.x + bounds.width / 2.0) / scale) as f64,
+            ((bounds.y + bounds.height / 2.0) / scale) as f64,
+        )
+    }
+
+    /// Drag the workspace `index` `slots` places along the strip and hold it
+    /// there, button still down. Returns where the pointer ended up.
+    fn drag_workspace_holding(handle: &HeadlessHandle, index: usize, slots: f32) -> (f64, f64) {
+        let scale = output_scale(handle);
+        let (x, y) = preview_centre(handle, index);
+        handle.pointer_move(x, y);
+        handle.settle(60);
+        handle.pointer_press();
+        handle.settle(10);
+        // A few steps rather than one jump, so the drag crosses each slot the
+        // way a hand would — and so the first step clears the threshold.
+        let total = (SLOT_PITCH * slots / scale) as f64;
+        for step in 1..=8 {
+            handle.pointer_move(x + total * step as f64 / 8.0, y);
+            handle.settle(10);
+        }
+        (x + total, y)
+    }
+
+    /// Drag the workspace `index` `slots` places along the strip and drop it.
+    fn drag_workspace(handle: &HeadlessHandle, index: usize, slots: f32) {
+        drag_workspace_holding(handle, index, slots);
+        handle.pointer_release();
+        handle.settle(400);
+    }
+
+    /// Dragging a workspace past its neighbour puts it there, and the drop is
+    /// not also read as a click on whatever the pointer landed over.
+    #[test]
+    #[serial]
+    fn dragging_a_workspace_reorders_the_strip() {
+        let handle = open_selector_with_workspaces();
+        let before = workspace_indices(&handle);
+        assert!(before.len() >= 2, "expected at least two workspaces");
+        let current = handle.current_workspace_index();
+
+        drag_workspace(&handle, before[0], 1.0);
+
+        let after = workspace_indices(&handle);
+        let mut expected = before.clone();
+        expected.swap(0, 1);
+        assert_eq!(
+            after, expected,
+            "the compositor should hold the order the strip was dragged into"
+        );
+        assert_eq!(
+            handle.current_workspace_index(),
+            if current == 0 { 1 } else { 0 },
+            "the workspace the user is on should have followed its own move"
+        );
+
+        handle.stop();
+    }
+
+    /// A press that never travels is still a click: it switches workspace
+    /// rather than being swallowed by a reorder that did not happen.
+    #[test]
+    #[serial]
+    fn a_press_without_travel_still_switches_workspace() {
+        let handle = open_selector_with_workspaces();
+        let before = workspace_indices(&handle);
+        let target_pos = before.len() - 1;
+        assert_ne!(handle.current_workspace_index(), target_pos);
+
+        let (x, y) = preview_centre(&handle, before[target_pos]);
+        handle.pointer_move(x, y);
+        handle.settle(60);
+        handle.pointer_click();
+        handle.settle(400);
+
+        assert_eq!(
+            workspace_indices(&handle),
+            before,
+            "a click must not reorder anything"
+        );
+        assert_eq!(handle.current_workspace_index(), target_pos);
+
+        handle.stop();
+    }
+
+    /// The windows go with their workspace. A workspace's place along the
+    /// scroll axis is a function of its position, so a reorder that did not
+    /// carry the windows would strand them at another workspace's coordinates.
+    #[test]
+    #[serial]
+    fn windows_travel_with_the_workspace_they_are_on() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let mut client = TestClient::connect(&handle.socket_name).expect("client");
+        map_window(&handle, &mut client, "Passenger");
+        handle.with_state(|state| {
+            state.workspaces.add_workspace_to_output("headless");
+        });
+        handle.settle(300);
+        let geometry = handle
+            .window_logical_geometry("Passenger")
+            .expect("window mapped");
+
+        handle.toggle_expose();
+        handle.settle(400);
+        let before = workspace_indices(&handle);
+        let counts = handle.workspace_preview_window_counts();
+        assert_eq!(counts[0].1, 1, "the window starts on the first workspace");
+
+        // Drag the workspace holding the window one place to the right.
+        drag_workspace(&handle, before[0], 1.0);
+
+        let counts = handle.workspace_preview_window_counts();
+        assert_eq!(
+            counts[1].0, before[0],
+            "the dragged workspace should now be second"
+        );
+        assert_eq!(
+            (counts[0].1, counts[1].1),
+            (0, 1),
+            "the window should have moved with its workspace: {counts:?}"
+        );
+
+        // Closing expose leaves the window where it always was: it changed
+        // workspace *position*, not workspace, and not its place on screen.
+        handle.toggle_expose();
+        handle.settle(500);
+        assert_eq!(handle.window_logical_geometry("Passenger"), Some(geometry));
+        assert_eq!(handle.window_stack_titles(), vec!["Passenger".to_string()]);
+
+        handle.stop();
+    }
+
+    /// Every key in the subtree rooted at `node`.
+    fn keys_under(node: &layers::engine::scene::SceneNodeSnapshot) -> Vec<String> {
+        let mut out = vec![node.key.clone()];
+        for child in &node.children {
+            out.extend(keys_under(child));
+        }
+        out
+    }
+
+    /// The node whose children include `key`.
+    fn parent_of<'a>(
+        nodes: &'a [layers::engine::scene::SceneNodeSnapshot],
+        key: &str,
+    ) -> Option<&'a layers::engine::scene::SceneNodeSnapshot> {
+        for n in nodes {
+            if n.children.iter().any(|c| c.key == key) {
+                return Some(n);
+            }
+            if let Some(found) = parent_of(&n.children, key) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    /// The workspace being dragged has to be *visible* while it is dragged.
+    ///
+    /// The slot it came out of is blanked, so if the lifted copy does not draw
+    /// the workspace simply disappears for the length of the gesture. The copy
+    /// therefore has to live in the selector's own tree (which is what exposé
+    /// shows) and mirror the workspace's own nodes — a mirror of the preview
+    /// would be a mirror of a mirror, and draws nothing.
+    #[test]
+    #[serial]
+    fn the_dragged_workspace_stays_visible_while_it_is_carried() {
+        let handle = open_selector_with_workspaces();
+        let order = workspace_indices(&handle);
+        assert!(order.len() >= 2, "expected at least two workspaces");
+
+        let (x, y) = drag_workspace_holding(&handle, order[0], 1.0);
+
+        let snapshot = handle.scene_snapshot();
+        let ghost = find(&snapshot.nodes, "workspace_selector_drag_ghost")
+            .expect("nothing was lifted out of the strip");
+        assert!(!ghost.hidden, "the lifted workspace is hidden");
+        assert!(
+            ghost.opacity > 0.9,
+            "the lifted workspace is transparent: {}",
+            ghost.opacity
+        );
+        let content = find(&snapshot.nodes, "workspace_selector_drag_ghost_content")
+            .expect("the lifted copy has no preview box");
+        assert!(
+            content.global_bounds.width > 1.0 && content.global_bounds.height > 1.0,
+            "the lifted preview has no area: {:?}",
+            content.global_bounds
+        );
+
+        // It mirrors the workspace itself. A copy of the strip's preview would
+        // sit under one of the preview wraps; this one must not.
+        let under_ghost = keys_under(ghost);
+        for mirror in [
+            "workspace_selector_drag_ghost_bg_mirror",
+            "workspace_selector_drag_ghost_content_mirror",
+        ] {
+            assert!(
+                under_ghost.iter().any(|k| k == mirror),
+                "the lifted copy is missing {mirror}: {under_ghost:?}"
+            );
+            let owner = parent_of(&snapshot.nodes, mirror).expect("mirror has no parent");
+            assert!(
+                !owner.key.starts_with("workspace_selector_desktop_wrap_"),
+                "the lifted copy mirrors a preview, not the workspace: parent {}",
+                owner.key
+            );
+        }
+
+        // It is in the selector's own subtree — the thing exposé puts on
+        // screen — and it is the last child there, so it paints over the
+        // workspaces it is passing rather than under them.
+        let parent = parent_of(&snapshot.nodes, "workspace_selector_drag_ghost")
+            .expect("the lifted copy is not parented anywhere");
+        assert_eq!(
+            parent.key, "workspace_selector_view",
+            "the lifted copy must ride in the selector, not on some other layer"
+        );
+        assert!(!parent.hidden, "the selector itself is hidden");
+        assert_eq!(
+            parent.children.last().map(|c| c.key.as_str()),
+            Some("workspace_selector_drag_ghost"),
+            "the lifted copy must be painted last, over the strip"
+        );
+
+        // And it is carried: move the pointer and it comes along.
+        let before = content.global_bounds.x;
+        handle.pointer_move(x - 40.0, y);
+        handle.settle(30);
+        let snapshot = handle.scene_snapshot();
+        let after = find(&snapshot.nodes, "workspace_selector_drag_ghost_content")
+            .expect("the lifted copy vanished mid-drag")
+            .global_bounds
+            .x;
+        assert!(
+            after < before - 1.0,
+            "the lifted copy did not follow the pointer: {before} -> {after}"
+        );
+
+        // Dropping puts it away and gives the slot its preview back.
+        handle.pointer_release();
+        handle.settle(400);
+        let snapshot = handle.scene_snapshot();
+        assert!(
+            find(&snapshot.nodes, "workspace_selector_drag_ghost").is_none(),
+            "the lifted copy outlived the drop"
+        );
+        assert_eq!(
+            handle.layer_opacity(&format!("workspace_selector_desktop_{}", order[0])),
+            Some(1.0),
+            "the slot the workspace was lifted out of stayed blank"
+        );
+
+        handle.stop();
+    }
+
+    /// Leaving a fullscreen workspace through exposé must bring the dock back.
+    ///
+    /// Going fullscreen hides the dock outright — the layer is marked hidden
+    /// and the dock inactive, not merely slid off. The workspace switch that
+    /// would undo that is deliberately skipped while exposé is up, so crossing
+    /// to an ordinary workspace inside exposé and closing it used to leave the
+    /// desktop with no dock at all.
+    #[test]
+    #[serial]
+    fn the_dock_comes_back_when_expose_leaves_a_fullscreen_workspace() {
+        let handle = open_selector_with_workspaces();
+        handle.toggle_expose();
+        handle.settle(400);
+        let order = workspace_indices(&handle);
+        assert!(order.len() >= 2, "expected at least two workspaces");
+        let current = handle.current_workspace_index();
+        let other = if current == 0 { 1 } else { 0 };
+
+        // The state a fullscreen window leaves behind on the workspace the
+        // user is on: the workspace is in fullscreen mode and the dock is not
+        // just parked off screen, it is hidden and inactive.
+        handle.with_state(move |state| {
+            let workspace = state
+                .workspaces
+                .get_workspace_at(current)
+                .expect("current workspace");
+            workspace.set_fullscreen_mode(true);
+            state.workspaces.dock.hide(None);
+        });
+        handle.settle(200);
+        assert_eq!(
+            handle.is_layer_hidden("dock_layout"),
+            Some(true),
+            "the dock should start out hidden, as fullscreen leaves it"
+        );
+
+        // Into exposé, across to a workspace that is not fullscreen, and out.
+        handle.toggle_expose();
+        handle.settle(400);
+        handle.set_workspace(other);
+        handle.settle(400);
+        handle.toggle_expose();
+        handle.settle(600);
+
+        assert_eq!(
+            handle.current_workspace_index(),
+            other,
+            "the switch inside exposé should have stuck"
+        );
+        assert_eq!(
+            handle.is_layer_hidden("dock_layout"),
+            Some(false),
+            "the dock never came back after exposé left the fullscreen workspace"
+        );
+        assert!(
+            handle.query(|state| !state.workspaces.dock.is_hidden()),
+            "the dock is on screen but still marked inactive"
+        );
+
+        handle.stop();
+    }
+
+    /// A drag drives the pointer across every preview it passes and parks it
+    /// on one at the end. None of that is hovering, so no close button may
+    /// appear for the length of the gesture — and the release must not leave
+    /// one lit under the pointer either.
+    #[test]
+    #[serial]
+    fn no_close_buttons_appear_while_a_workspace_is_being_dragged() {
+        let handle = open_selector_with_workspaces();
+        let order = workspace_indices(&handle);
+        assert!(order.len() >= 2, "expected at least two workspaces");
+
+        let visible_buttons = |handle: &HeadlessHandle| -> Vec<(usize, f32)> {
+            order
+                .iter()
+                .filter_map(|index| {
+                    handle
+                        .layer_opacity(&format!("workspace_selector_desktop_remove_{index}"))
+                        .filter(|opacity| *opacity > 0.05)
+                        .map(|opacity| (*index, opacity))
+                })
+                .collect()
+        };
+
+        // The current workspace has no close button, so drag one that does.
+        let dragged = *order.last().expect("a workspace");
+        assert_ne!(
+            dragged,
+            order[handle.current_workspace_index()],
+            "the workspace to drag must not be the current one"
+        );
+
+        // Start from a preview whose button is showing, so the drag has one to
+        // suppress rather than merely never raising one.
+        hover_layer_centre(
+            &handle,
+            &format!("workspace_selector_desktop_content_{dragged}"),
+        );
+        assert!(
+            !visible_buttons(&handle).is_empty(),
+            "the hover should have revealed a close button to begin with"
+        );
+
+        let (x, y) = drag_workspace_holding(&handle, dragged, -1.0);
+        assert_eq!(
+            visible_buttons(&handle),
+            vec![],
+            "a close button is showing mid-drag"
+        );
+
+        // Keep sweeping: the pointer crosses the previews it is passing.
+        for step in 1..=4 {
+            handle.pointer_move(x + 20.0 * step as f64, y);
+            handle.settle(20);
+            assert_eq!(
+                visible_buttons(&handle),
+                vec![],
+                "a close button lit up as the drag swept over it"
+            );
+        }
+
+        // The release parks the pointer on whatever it landed over.
+        handle.pointer_release();
+        handle.settle(400);
+        assert_eq!(
+            visible_buttons(&handle),
+            vec![],
+            "the drop left a close button lit under the pointer"
+        );
+
+        // And hovering works again once the gesture is over.
+        hover_layer_centre(
+            &handle,
+            &format!("workspace_selector_desktop_content_{dragged}"),
+        );
+        assert!(
+            !visible_buttons(&handle).is_empty(),
+            "hovering stopped revealing close buttons after a drag"
+        );
+
+        handle.stop();
+    }
+
+    /// A window's remembered workspace is a *position*, and a reorder moves
+    /// positions around — so the reorder has to move the remembered one too.
+    ///
+    /// The case that matters is a window whose remembered workspace is not the
+    /// one it is currently sitting in, which is exactly what fullscreen does:
+    /// it parks the window on a temporary workspace of its own and keeps the
+    /// workspace to restore it to. Re-deriving that from where the window
+    /// currently is would throw the restore target away, and unfullscreening
+    /// after a reorder would drop the window on a stranger's workspace.
+    #[test]
+    #[serial]
+    fn a_window_remembers_the_right_workspace_across_a_reorder() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let mut client = TestClient::connect(&handle.socket_name).expect("client");
+        map_window(&handle, &mut client, "Restorer");
+        handle.with_state(|state| {
+            state.workspaces.add_workspace_to_output("headless");
+            state.workspaces.add_workspace_to_output("headless");
+        });
+        handle.settle(300);
+
+        // The window sits on workspace 0 but remembers workspace 2 — the shape
+        // fullscreen leaves behind.
+        handle.with_state(|state| {
+            let window = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == "Restorer")
+                .expect("window mapped");
+            window.set_workspace(2);
+        });
+        handle.settle(100);
+
+        handle.toggle_expose();
+        handle.settle(400);
+        let order = workspace_indices(&handle);
+        assert!(
+            order.len() >= 3,
+            "expected at least three workspaces: {order:?}"
+        );
+
+        // Drag workspace 2 to the front. Everything else shifts one along, and
+        // the window's remembered workspace has to follow the workspace it
+        // named, not stay on the number.
+        drag_workspace(&handle, order[2], -2.0);
+        let mut expected = order.clone();
+        let moved = expected.remove(2);
+        expected.insert(0, moved);
+        assert_eq!(
+            workspace_indices(&handle),
+            expected,
+            "the drag did not put the third workspace first"
+        );
+
+        let remembered = handle.query(|state| {
+            state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == "Restorer")
+                .map(|w| w.get_workspace())
+        });
+        assert_eq!(
+            remembered,
+            Some(0),
+            "the window should still remember the workspace that is now first"
+        );
+
+        handle.stop();
+    }
+
+    /// Forget every custom workspace name.
+    ///
+    /// Names are persisted in the user's config, which is process-global and
+    /// outlives a single test, so a test about names has to start from a known
+    /// slate and leave one behind.
+    fn clear_workspace_names(handle: &HeadlessHandle) {
+        let indices = workspace_indices(handle);
+        handle.with_state(move |state| {
+            for index in &indices {
+                state.workspaces.rename_workspace("headless", *index, None);
+            }
+        });
+        handle.settle(100);
+    }
+
+    /// The name each workspace shows, in strip order.
+    fn workspace_names(handle: &HeadlessHandle) -> Vec<String> {
+        handle.query(|state| {
+            (0..8)
+                .filter_map(|i| {
+                    state
+                        .workspaces
+                        .get_workspace_at(i)
+                        .map(|w| w.display_name())
+                })
+                .collect()
+        })
+    }
+
+    /// A name belongs to the workspace, not to the slot it happens to be in:
+    /// drag a named workspace along the strip and its name goes with it.
+    ///
+    /// Both kinds of name are checked, because they fail differently: a name
+    /// the user typed is stored on the workspace, while the default
+    /// `Workspace N` is a number that must be the workspace's own and not its
+    /// position, or the labels stay behind while the previews move.
+    #[test]
+    #[serial]
+    fn a_workspace_keeps_its_name_when_it_is_dragged_elsewhere() {
+        let handle = open_selector_with_workspaces();
+        clear_workspace_names(&handle);
+        let order = workspace_indices(&handle);
+        assert!(order.len() >= 2, "expected at least two workspaces");
+
+        // The default names first: whatever the first workspace is called, it
+        // must still be called that after it has been dragged.
+        let before = workspace_names(&handle);
+        drag_workspace(&handle, order[0], 1.0);
+        let after = workspace_names(&handle);
+        assert_eq!(
+            after[1], before[0],
+            "the dragged workspace kept its slot's name instead of its own: \
+             {before:?} -> {after:?}"
+        );
+        assert_eq!(
+            after[0], before[1],
+            "the workspace that was displaced should have brought its name \
+             along too: {before:?} -> {after:?}"
+        );
+
+        // And a name the user typed travels the same way.
+        let renamed = order[0];
+        handle.with_state(move |state| {
+            state
+                .workspaces
+                .rename_workspace("headless", renamed, Some("Correspondence".into()));
+        });
+        handle.settle(200);
+        assert_eq!(
+            workspace_names(&handle)[1],
+            "Correspondence",
+            "the rename should land on the workspace, at its current position"
+        );
+
+        drag_workspace(&handle, order[0], -1.0);
+        let after = workspace_names(&handle);
+        assert_eq!(
+            after[0], "Correspondence",
+            "a typed name must follow its workspace back: {after:?}"
+        );
+        assert_ne!(
+            after[1], "Correspondence",
+            "and must not be left behind in the slot it came from: {after:?}"
+        );
+
+        clear_workspace_names(&handle);
+        handle.stop();
+    }
+
     // ── Preview layout ───────────────────────────────────────────────────
 
     fn map_window(handle: &HeadlessHandle, client: &mut TestClient, title: &str) {

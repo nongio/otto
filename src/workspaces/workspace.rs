@@ -48,6 +48,11 @@ pub struct WorkspaceView {
     /// `name` (which the fullscreen path sets to the app's name) and over the
     /// positional fallback.
     custom_name: Arc<RwLock<Option<String>>>,
+    /// The number this workspace answers to when nobody has named it — the
+    /// `N` in `Workspace N`. It belongs to the workspace, not to the slot the
+    /// workspace is sitting in, so dragging a workspace along the strip takes
+    /// its label with it. Assigned when the workspace joins an output.
+    display_number: Arc<RwLock<usize>>,
     window_base_layers: Arc<RwLock<HashMap<ObjectId, Layer>>>,
     /// Stacking order (bottom→top ObjectIds) saved when expose opens,
     /// so it can be restored verbatim when expose closes without selection.
@@ -220,6 +225,7 @@ impl WorkspaceView {
             is_fullscreen_animating: Arc::new(AtomicBool::new(false)),
             name: Arc::new(RwLock::new(None)),
             custom_name: Arc::new(RwLock::new(None)),
+            display_number: Arc::new(RwLock::new(index)),
             window_base_layers: Arc::new(RwLock::new(HashMap::new())),
             pre_expose_order: Arc::new(RwLock::new(Vec::new())),
         }
@@ -414,17 +420,32 @@ impl WorkspaceView {
         self.custom_name.read().unwrap().clone()
     }
 
+    /// The number in this workspace's default label.
+    pub fn display_number(&self) -> usize {
+        *self.display_number.read().unwrap()
+    }
+
+    /// Set the number in the default label. Called once, when the workspace
+    /// joins an output's strip; reordering the strip must NOT touch it, since
+    /// the whole point is that the number travels with the workspace.
+    pub fn set_display_number(&self, number: usize) {
+        *self.display_number.write().unwrap() = number;
+    }
+
     /// What the workspace is called in the UI: the user's name, else the
-    /// fullscreen app name, else a numbered default.
+    /// fullscreen app name, else its number.
     ///
     /// Only the fallback is translated. The other two are a name someone
     /// chose and a name an application gave itself, and neither is ours to
     /// restate in another language.
-    pub fn display_name(&self, position: usize) -> String {
+    ///
+    /// None of the three depends on where the workspace currently sits, so a
+    /// workspace dragged to a new place in the strip keeps the label it had.
+    pub fn display_name(&self) -> String {
         self.get_custom_name()
             .or_else(|| self.get_name())
             .unwrap_or_else(|| {
-                otto_kit::t_owned!("workspace-numbered", number = (position + 1) as f64)
+                otto_kit::t_owned!("workspace-numbered", number = self.display_number() as f64)
             })
     }
 

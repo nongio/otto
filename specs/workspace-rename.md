@@ -1,7 +1,8 @@
 # Workspace Rename
 
 **Status:** draft
-**Related specs:** [workspaces-multi-output.md](./workspaces-multi-output.md)
+**Related specs:** [workspaces-multi-output.md](./workspaces-multi-output.md),
+[workspace-reorder.md](./workspace-reorder.md)
 
 ## Summary
 
@@ -19,7 +20,9 @@ everywhere the workspace appears, and survives a restart.
   keyboard focus keeps it.
 - While editing, no keystroke reaches a window or triggers a compositor
   shortcut.
-- An empty name falls back to the default `Workspace N`.
+- An empty name falls back to the default `Workspace N`, where `N` is the
+  workspace's own number — the one it was given when it was created, not its
+  current place in the strip.
 - Names survive a compositor restart.
 - Each output's workspaces are named independently.
 
@@ -30,7 +33,11 @@ everywhere the workspace appears, and survives a restart.
 - Clipboard copy/paste inside the field — the field supports it, but the
   compositor does not yet wire a data device into the editor.
 - Naming a workspace by its identity rather than its position: names are stored
-  per position, so removing a workspace shifts the names after it.
+  per position, so removing a workspace shifts the names after it. Dragging a
+  workspace to a new place in the strip does carry its name with it: the name
+  is held by the workspace, and the whole strip's names are rewritten against
+  the new positions on drop (see
+  [workspace-reorder.md](./workspace-reorder.md)).
 
 ## Behavior
 
