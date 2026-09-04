@@ -118,23 +118,42 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
     }
 
+    /// The fullscreen self-managing X11 game (Globally-Active / No-Input —
+    /// Proton/Unity titles such as Cuphead) that is currently ON SCREEN, if
+    /// any: fullscreen *and* on the workspace its output is displaying.
+    ///
+    /// These clients freeze or quit when the compositor takes focus or
+    /// `_NET_ACTIVE_WINDOW` away from them, so Otto pins both to them while
+    /// they are fullscreen. That pin has to end at the edge of their own
+    /// workspace — a game parked on a workspace you scrolled away from would
+    /// otherwise keep swallowing the keyboard of the desktop you are using.
+    #[cfg(feature = "xwayland")]
+    fn visible_fullscreen_x11_game(&self) -> Option<ObjectId> {
+        self.workspaces
+            .windows_map
+            .values()
+            .find(|w| {
+                w.is_fullscreen()
+                    && w.x11_self_manages_focus()
+                    && self.workspaces.is_window_on_visible_workspace(w)
+            })
+            .map(|w| w.id())
+    }
+
     /// Focus the top (non-minimised) window of the given workspace, or clear
     /// keyboard focus when the workspace is empty.  Used by every code-path that
     /// lands on a workspace (gesture swipe, selector click, expose close, …).
     pub fn focus_top_window_or_clear(&mut self, workspace_index: usize) {
-        // While a self-managing X11 game (Cuphead) is fullscreen, keep keyboard
-        // focus ON IT across workspace switches. Moving focus to another window —
-        // or clearing it to None on an empty workspace — makes XWayland send the
-        // game an X11 `FocusOut`, and Unity games with "Run In Background = false"
-        // PAUSE rendering on FocusOut (the workspace-switch freeze). Holding focus
-        // on the game means it never sees FocusOut. Released once it unfullscreens.
+        // While a self-managing X11 game (Cuphead) is fullscreen AND VISIBLE,
+        // keep keyboard focus ON IT. Moving focus to another window — or
+        // clearing it to None on an empty workspace — makes XWayland send the
+        // game an X11 `FocusOut`, and Unity games with "Run In Background =
+        // false" PAUSE rendering on FocusOut. Holding focus on the game means
+        // it never sees FocusOut while you are on its workspace. Once its
+        // workspace scrolls away the stickiness is dropped: the desktop you
+        // ARE looking at owns the keyboard.
         #[cfg(feature = "xwayland")]
-        if self
-            .workspaces
-            .windows_map
-            .values()
-            .any(|w| w.is_fullscreen() && w.x11_self_manages_focus())
-        {
+        if self.visible_fullscreen_x11_game().is_some() {
             return;
         }
         // Read the focused output's space, not the primary output's — each
@@ -310,22 +329,19 @@ impl<BackendData: Backend> Otto<BackendData> {
             return;
         }
 
-        // While a self-managing X11 game (Cuphead) is fullscreen, never move focus
-        // to a DIFFERENT window (pointer, dock, self-activation by Steam Big
-        // Picture, …). XWayland would send the game an X11 `FocusOut` and Unity
-        // ("Run In Background = false") pauses rendering on it. Focusing the game
-        // itself is allowed (target == game).
+        // While a self-managing X11 game (Cuphead) is fullscreen on the VISIBLE
+        // workspace, never move focus to a DIFFERENT window (pointer, dock,
+        // self-activation by Steam Big Picture, …). XWayland would send the
+        // game an X11 `FocusOut` and Unity ("Run In Background = false") pauses
+        // rendering on it. Focusing the game itself is allowed (target ==
+        // game), and so is focusing anything at all once the game's workspace
+        // is no longer the one on screen.
         #[cfg(feature = "xwayland")]
+        if self
+            .visible_fullscreen_x11_game()
+            .is_some_and(|game_id| game_id != window.id())
         {
-            let target_id = window.id();
-            if self
-                .workspaces
-                .windows_map
-                .values()
-                .any(|w| w.is_fullscreen() && w.x11_self_manages_focus() && w.id() != target_id)
-            {
-                return;
-            }
+            return;
         }
 
         // Cross-workspace navigation (app switcher, cycle-windows) needs to know
@@ -394,21 +410,18 @@ impl<BackendData: Backend> Otto<BackendData> {
         use smithay::desktop::WindowSurface;
 
         // Never hand `_NET_ACTIVE_WINDOW` to another window while a self-managing
-        // X11 game is fullscreen. Unity/Proton games (Cuphead) QUIT when they lose
-        // active-window status while fullscreen — losing it to Steam Big Picture on
-        // a focus flap, or to another workspace's top window on swipe, makes Cuphead
-        // tear down its X11 window (observed: unmap + ReparentWindow BadWindow).
-        // Keep the game `_NET_ACTIVE_WINDOW` until it's unfullscreened/closed.
+        // X11 game is fullscreen on the visible workspace. Unity/Proton games
+        // (Cuphead) QUIT when they lose active-window status while fullscreen —
+        // losing it to Steam Big Picture on a focus flap makes Cuphead tear down
+        // its X11 window (observed: unmap + ReparentWindow BadWindow). Once the
+        // game's workspace is scrolled away the user has deliberately left it,
+        // and the window they switched to must become the active one.
         #[cfg(feature = "xwayland")]
+        if self
+            .visible_fullscreen_x11_game()
+            .is_some_and(|game_id| game_id != window.id())
         {
-            let target_id = window.id();
-            let game_is_fullscreen =
-                self.workspaces.windows_map.values().any(|w| {
-                    w.is_fullscreen() && w.x11_self_manages_focus() && w.id() != target_id
-                });
-            if game_is_fullscreen {
-                return;
-            }
+            return;
         }
 
         let WindowSurface::X11(surface) = window.underlying_surface() else {

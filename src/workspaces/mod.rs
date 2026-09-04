@@ -1124,6 +1124,23 @@ impl Workspaces {
             .cloned()
     }
 
+    /// Is this window on the workspace its output is currently showing?
+    ///
+    /// Windows parked on a workspace that has scrolled away are still mapped
+    /// in their output's `spaces`, just not in the one being displayed — so
+    /// membership of `windows_map` says nothing about visibility. Anything
+    /// that reacts to "there is a fullscreen window" (input routing, focus
+    /// stickiness) has to ask this first, or an off-screen window keeps
+    /// answering for the visible desktop.
+    pub fn is_window_on_visible_workspace(&self, window: &WindowElement) -> bool {
+        let id = window.id();
+        self.output_workspaces.values().any(|ows| {
+            ows.spaces
+                .get(ows.current_workspace)
+                .is_some_and(|space| space.elements().any(|e| e.id() == id))
+        })
+    }
+
     /// Return if we are in window selection mode
     pub fn get_show_all(&self) -> bool {
         self.show_all.load(std::sync::atomic::Ordering::Relaxed)

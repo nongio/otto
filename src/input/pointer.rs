@@ -153,10 +153,19 @@ impl<BackendData: Backend> Otto<BackendData> {
                 .cloned();
             if let Some(output) = output.as_ref() {
                 let output_geo = self.workspaces.output_geometry(output).unwrap();
+                // The output's `FullscreenSurface` registration outlives the
+                // workspace switch that scrolls the fullscreen window away —
+                // it is cleared on unfullscreen, not on a workspace change. So
+                // gate it on the window actually being on the workspace this
+                // output is showing; otherwise a fullscreen window parked on
+                // another workspace hit-tests over the whole output and
+                // swallows every click on the visible desktop (stealing the
+                // keyboard focus with it).
                 if let Some(window) = output
                     .user_data()
                     .get::<FullscreenSurface>()
                     .and_then(|f| f.get())
+                    .filter(|w| self.workspaces.is_window_on_visible_workspace(w))
                 {
                     if let Some((_, _)) = window.surface_under::<BackendData>(
                         self.pointer.current_location() - output_geo.loc.to_f64(),

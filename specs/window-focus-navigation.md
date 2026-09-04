@@ -73,7 +73,10 @@ work when an application's windows are spread across several workspaces.
 - Minimised windows are skipped by cycling and by the app-switcher target. An
   application whose only window is minimised is unminimised instead.
 - A fullscreen self-managing X11 window keeps focus across these paths (see
-  the focus-out rationale in the XWayland handling).
+  the focus-out rationale in the XWayland handling) — but only while its own
+  workspace is the one its output is showing. Once the user scrolls to another
+  workspace the stickiness ends and focus follows the visible desktop; a game
+  parked off-screen must never hold the keyboard.
 
 ## Rationale
 

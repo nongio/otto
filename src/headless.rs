@@ -708,6 +708,46 @@ impl HeadlessHandle {
         });
     }
 
+    /// Title of the window that currently holds the seat's keyboard focus.
+    pub fn focused_window_title(&self) -> Option<String> {
+        self.query(|state| {
+            let keyboard = state.seat.get_keyboard()?;
+            match keyboard.current_focus()? {
+                crate::focus::KeyboardFocusTarget::Window(w) => Some(w.xdg_title()),
+                _ => None,
+            }
+        })
+    }
+
+    /// Fullscreen the window with this title through the same xdg-shell entry
+    /// point a client's `set_fullscreen` request lands on.
+    pub fn fullscreen_window(&self, title: &str) {
+        let title = title.to_string();
+        self.with_state(move |state| {
+            use smithay::wayland::shell::xdg::XdgShellHandler;
+            let Some(toplevel) = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .and_then(|w| w.toplevel().cloned())
+            else {
+                return;
+            };
+            state.fullscreen_request(toplevel, None);
+        });
+    }
+
+    /// Is the window with this title fullscreen?
+    pub fn window_is_fullscreen(&self, title: &str) -> bool {
+        let title = title.to_string();
+        self.query(move |state| {
+            state
+                .workspaces
+                .spaces_elements()
+                .any(|w| w.xdg_title() == title && w.is_fullscreen())
+        })
+    }
+
     /// Fire the tile shortcut for `zone` at the focused window — the same
     /// entry point the `TileWindowLeft` / `TileWindowRight` bindings use,
     /// toggle semantics included.
