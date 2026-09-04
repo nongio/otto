@@ -2075,7 +2075,13 @@ impl<BackendData: Backend> Otto<BackendData> {
 
             let mut target = outputs_geo;
             target.loc -= get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));
+            // `target` has to end up in the popup's own space, which is the
+            // client's *window geometry* — one titlebar below the decorated
+            // frame `element_geometry` reports. Subtracting only the frame
+            // origin leaves the pass believing there is a bar's worth of room
+            // below the output that isn't there.
             target.loc -= window_geo.loc;
+            target.loc -= smithay::utils::Point::from((0, window.decoration_height()));
 
             popup.with_pending_state(|state| {
                 state.geometry = state.positioner.get_unconstrained_geometry(target);

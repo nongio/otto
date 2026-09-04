@@ -1730,6 +1730,18 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 .to_physical(scale_factor);
             let title = window.xdg_title();
             let fullscreen = window.is_fullscreen();
+            // Otto owns the titlebar, so the client's surface tree starts one
+            // bar below the window's frame origin — `content_layer` is offset
+            // by exactly this. A popup's offset is measured from the client's
+            // window geometry, so it has to be lifted by the same amount or it
+            // is painted a bar too high, while the hit test (which lifts the
+            // point through `WindowElement::surface_under`) still resolves it
+            // where it belongs. Snapped from the same value as the bar itself
+            // so the two stay on the same pixel at a fractional scale.
+            let decoration_offset_px = crate::workspaces::utils::snap_extent_px(
+                0.0,
+                window.decoration_height() as f32 * scale_factor as f32,
+            );
 
             let mut render_elements = VecDeque::new();
 
@@ -1772,13 +1784,18 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     continue;
                 }
 
+                // Smithay resolves a click on a popup against
+                // `window_geometry_origin + popup_location - popup.geometry().loc`
+                // (`Window::surface_under`), and the scene lays the popup's
+                // surface tree out from the layer's origin — so the layer has
+                // to sit where that surface origin is, shadow margin and all.
                 let offset: smithay::utils::Point<f64, smithay::utils::Physical> =
-                    popup_offset.to_physical_precise_round(scale_factor);
+                    (popup_offset - popup.geometry().loc).to_physical_precise_round(scale_factor);
 
                 // Calculate absolute popup position (window position + popup offset)
                 let popup_position = layers::types::Point {
                     x: location.x as f32 + offset.x as f32,
-                    y: location.y as f32 + offset.y as f32,
+                    y: location.y as f32 + decoration_offset_px + offset.y as f32,
                 };
 
                 // Nothing to do unless this popup itself committed or moved —

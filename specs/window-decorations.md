@@ -142,6 +142,16 @@ would then appear to do nothing. A window that asked to be maximized before it
 ever had a size of its own restores to a default rect (two thirds of the
 usable zone, centred) rather than to an empty one.
 
+**Popups under a titlebar.** A popup's offset is measured from its parent's
+*window geometry* — the client's own content — while a decorated window's frame
+origin is one titlebar higher. So a popup belongs at `frame origin + titlebar +
+offset`, and where the client sets a geometry of its own on the popup (the
+shadow margin around a menu), at that offset less the popup's geometry origin,
+which is where its surface actually starts. Both the painted position and the
+pointer hit test resolve to that same point: a popup that responds anywhere
+other than where it is drawn is a bug, and the titlebar's height is the offset
+it shows up as.
+
 **Popups across a geometry change.** A popup is placed once, against the
 parent window as it stood when the popup mapped. Moving or resizing the window
 afterwards moves that parent out from under it, and the popup — which keeps its

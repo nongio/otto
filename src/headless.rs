@@ -948,6 +948,45 @@ impl HeadlessHandle {
         })
     }
 
+    /// Where the visible popups are drawn, in logical points, as
+    /// `(x, y, width, height)`.
+    pub fn popup_logical_rects(&self) -> Vec<(f32, f32, f32, f32)> {
+        self.query(|state| {
+            let scale = state
+                .workspaces
+                .outputs()
+                .find(|o| o.name() == OUTPUT_NAME)
+                .map(|o| o.current_scale().fractional_scale() as f32)
+                .unwrap_or(1.0);
+            state
+                .workspaces
+                .popup_overlay
+                .visible_popup_rects()
+                .into_iter()
+                .map(|(x, y, w, h)| (x / scale, y / scale, w / scale, h / scale))
+                .collect()
+        })
+    }
+
+    /// Whether a click at this logical point would land on a popup surface —
+    /// the pointer focus Otto resolves, run through the real hit test.
+    pub fn point_hits_popup(&self, x: f64, y: f64) -> bool {
+        self.query(move |state| {
+            let Some((focus, _)) = state.surface_under((x, y).into()) else {
+                return false;
+            };
+            let crate::focus::PointerFocusTarget::WlSurface(surface) = focus else {
+                return false;
+            };
+            let mut root = surface;
+            while let Some(parent) = smithay::wayland::compositor::get_parent(&root) {
+                root = parent;
+            }
+            use smithay::reexports::wayland_server::Resource;
+            state.workspaces.popup_overlay.has_popup(&root.id())
+        })
+    }
+
     /// Whether this window is currently maximized.
     pub fn window_is_maximized(&self, title: &str) -> bool {
         let title = title.to_string();

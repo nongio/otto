@@ -309,6 +309,26 @@ impl PopupOverlayView {
         self.structure_generation
     }
 
+    /// Whether a popup with this surface id currently has a layer.
+    pub fn has_popup(&self, popup_id: &ObjectId) -> bool {
+        self.popup_layers.contains_key(popup_id)
+    }
+
+    /// Where the visible popups are drawn, in physical pixels, as
+    /// `(x, y, width, height)`. Introspection for tests: the drawn rect is
+    /// the one a click has to agree with.
+    pub fn visible_popup_rects(&self) -> Vec<(f32, f32, f32, f32)> {
+        self.popup_layers
+            .values()
+            .filter(|p| !p.layer.hidden())
+            .map(|p| {
+                let pos = p.layer.render_position();
+                let size = p.layer.render_size();
+                (pos.x, pos.y, size.x, size.y)
+            })
+            .collect()
+    }
+
     /// How many popups are currently in the scene. Non-zero means the plane
     /// hosting them carries `blur_include_content` layers, whose blur samples
     /// content painted earlier in the same pass — see the full-render guard in
