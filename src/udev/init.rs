@@ -192,6 +192,14 @@ pub fn run_udev() {
                     crate::config::Config::with(|config| {
                         super::input_config::apply_device_config(&mut device, &config.input);
                     });
+                    // A keyboard plugged in while Caps Lock is on must light up
+                    // too: the LED state only changes on key events.
+                    if device.has_capability(smithay::reexports::input::DeviceCapability::Keyboard)
+                    {
+                        if let Some(led_state) = data.seat.get_keyboard().map(|k| k.led_state()) {
+                            device.led_update(led_state.into());
+                        }
+                    }
                     data.backend_data.input_devices.push(device);
                 }
                 smithay::backend::input::InputEvent::DeviceRemoved { device } => {
