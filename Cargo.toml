@@ -205,7 +205,7 @@ laye-rs = { git = "https://github.com/nongio/layers", tag = "v1.15.0", features 
 ] }
 
 [workspace.package]
-version = "1.0.4"
+version = "1.1.0"
 edition = "2021"
 authors = ["Riccardo Canalicchio <riccardo.canalicchio@gmail.com>"]
 license = "MIT"
@@ -273,7 +273,7 @@ assets = [
 [package.metadata.generate-rpm]
 # RPM forbids a hyphen in Version; "~rc1" is the RPM idiom and sorts
 # before 1.0.0, which "1.0.0-rc.1" would not.
-version = "1.0.4"
+version = "1.1.0"
 assets = [
     { source = "target/release/otto", dest = "/usr/bin/otto", mode = "755" },
     { source = "target/release/otto-bar", dest = "/usr/bin/otto-bar", mode = "755" },
