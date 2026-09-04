@@ -47,9 +47,9 @@ impl<BackendData: Backend> SeatHandler for Otto<BackendData> {
     fn led_state_changed(
         &mut self,
         _seat: &smithay::input::Seat<Self>,
-        _led_state: smithay::input::keyboard::LedState,
+        led_state: smithay::input::keyboard::LedState,
     ) {
-        println!("keyboard led_state_changed {:?}", _led_state);
+        self.backend_data.update_keyboard_leds(led_state);
     }
 }
 

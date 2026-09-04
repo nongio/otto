@@ -2779,6 +2779,10 @@ pub trait Backend {
     fn set_cursor(&mut self, image: &CursorImageStatus); //, renderer: &mut SkiaRenderer);
     fn renderer_context(&mut self) -> Option<layers::skia::gpu::DirectContext>;
     fn request_redraw(&mut self) {}
+    /// Push the keyboard LED state (Caps/Num/Scroll Lock) to the hardware.
+    /// Only a backend that owns the input devices has anything to do; under
+    /// a host compositor the host owns the LEDs.
+    fn update_keyboard_leds(&mut self, _led_state: smithay::input::keyboard::LedState) {}
     /// Invalidate any pre-computed (vblank-prefetched) scene update. Called
     /// on client commits: a commit can create scene layers (e.g. a popup)
     /// AFTER the prefetch ran, and drawing from the stale prefetch renders
