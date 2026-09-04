@@ -1,0 +1,57 @@
+# Build and install the binary Arch package the way a user does, from the
+# published release tarball.
+#
+#   docker build -f scripts/packaging/Dockerfile.arch-bin .
+#
+# This is the only test that exercises the *release tarball* rather than the
+# working tree: PKGBUILD's package() installs files out of the tarball CI
+# assembles, so a file the PKGBUILD installs but the tarball omits fails here
+# and nowhere else. That is exactly the break this image exists to catch.
+#
+# PKGBUILD_FILE selects the variant — PKGBUILD (otto-bin, a tagged release) or
+# PKGBUILD-nightly-bin (the rolling nightly tarball).
+ARG BASE=archlinux:base-devel
+FROM ${BASE}
+
+ARG PKGBUILD_FILE=PKGBUILD
+
+# The Arch container image sets NoExtract for /usr/share/doc and man pages to
+# shrink itself. Left in place pacman silently drops the README and
+# portals.conf.example, and the check below blames the package for the
+# image's diet — the same trap as dpkg's excludes on the Debian images.
+RUN sed -i '/^ *NoExtract/d' /etc/pacman.conf \
+    && pacman -Syu --noconfirm git desktop-file-utils sudo \
+    && rm -rf /var/cache/pacman/pkg/*
+
+# makepkg refuses to run as root, and `makepkg -s` shells out to sudo to
+# install the declared dependencies — without the sudoers line it fails at
+# dependency resolution and never reaches package(), which looks exactly like
+# a broken depends() array.
+RUN useradd -m builder \
+    && echo 'builder ALL=(ALL) NOPASSWD: /usr/bin/pacman' > /etc/sudoers.d/builder \
+    && install -d -o builder /build
+WORKDIR /build
+
+COPY ${PKGBUILD_FILE} /build/PKGBUILD
+COPY scripts/packaging/verify-install.sh /usr/local/bin/verify-install.sh
+# A locally assembled tarball, when the context has one (the arch-local
+# target). makepkg prefers a source file already in the build directory over
+# downloading it, so its presence alone redirects the build at the working
+# tree. The glob keeps this a no-op when there is none.
+COPY *.tar.g[z] /build/
+RUN chown -R builder:builder /build
+
+# -s installs the declared dependencies from the repositories, so a
+# dependency that has been renamed or dropped upstream fails here.
+USER builder
+RUN makepkg -s --noconfirm
+
+USER root
+RUN pacman -U --noconfirm /build/*.pkg.tar.zst && rm -rf /var/cache/pacman/pkg/*
+
+ARG SKIP_RUN=0
+RUN OTTO_SKIP_RUN=$SKIP_RUN bash /usr/local/bin/verify-install.sh arch
+
+# Removal must leave nothing behind; config.toml and otto-lock.pam are in
+# backup(), so pacman saves them as .pacsave rather than deleting them.
+RUN pacman -R --noconfirm otto-bin 2>/dev/null || pacman -R --noconfirm otto-nightly-bin

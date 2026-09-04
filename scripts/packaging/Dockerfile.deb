@@ -1,0 +1,43 @@
+# Install the built .deb on a clean Debian-family image and check the result.
+#
+# A successful `docker build` is a passing test: apt resolves the declared
+# dependencies against the real archive, then verify-install.sh asserts the
+# installed layout. Build from the repo root with the .deb already in
+# target/debian:
+#
+#   docker build -f scripts/packaging/Dockerfile.deb .
+#
+# BASE picks the distribution under test — the dependency names in
+# [package.metadata.deb] have to exist on every release we claim to support.
+ARG BASE=ubuntu:24.04
+FROM ${BASE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# desktop-file-utils is for the validation step, not a runtime dependency of
+# Otto: installing it here keeps it out of the package's own dependency set.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates desktop-file-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# The Debian/Ubuntu container images ship a dpkg config that throws away
+# /usr/share/doc to shrink the image. Left in place it silently drops the
+# README, the licence, portals.conf.example and the PAM example, and the
+# check below then blames the package for the image's diet.
+RUN rm -f /etc/dpkg/dpkg.cfg.d/excludes /etc/dpkg/dpkg.cfg.d/docker*
+
+COPY target/debian/*.deb /tmp/pkg/
+COPY scripts/packaging/verify-install.sh /usr/local/bin/verify-install.sh
+
+# `apt-get install ./file.deb` (not `dpkg -i`) so a missing or misnamed
+# dependency fails here instead of leaving a half-configured package behind.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends /tmp/pkg/*.deb \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG SKIP_RUN=0
+RUN OTTO_SKIP_RUN=$SKIP_RUN bash /usr/local/bin/verify-install.sh deb
+
+# Removal has to be clean too — a conffile or a directory left behind turns
+# an upgrade into a conflict.
+RUN apt-get purge -y otto && echo "purge ok"

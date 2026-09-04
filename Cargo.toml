@@ -221,7 +221,7 @@ extended-description = """\
 Otto is a modern Wayland compositor built with Smithay and Skia.\
 Featuring a custom scene graph engine (laye-rs) for layout management,\
 multi-workspace support, and integrated screen sharing capabilities."""
-depends = "$auto, libdrm2, libudev1, libgbm1, libxkbcommon0, libegl1, libwayland-server0, libinput10, libdbus-1-3, libsystemd0, libseat1, libpipewire-0.3-0, libfreetype6, libfontconfig1, libpixman-1-0, fonts-inter, wireplumber"
+depends = "$auto, libdrm2, libudev1, libgbm1, libxkbcommon0, libegl1, libwayland-client0, libwayland-egl1, libinput10, libdbus-1-3, libsystemd0, libseat1, libpipewire-0.3-0, libfreetype6, libfontconfig1, libpixman-1-0, fonts-inter, wireplumber"
 section = "x11"
 priority = "optional"
 # otto-rdp loads these at runtime (pipewiresrc, and the VA-API H.264 encoder
@@ -246,6 +246,9 @@ assets = [
     ["resources/otto.desktop", "usr/share/wayland-sessions/", "644"],
     ["resources/otto-files.desktop", "usr/share/applications/", "644"],
     ["resources/otto-settings.desktop", "usr/share/applications/", "644"],
+    # The Trash window: otto-files behind its own entry, so it gets its own
+    # icon in the dock and the applications list.
+    ["resources/otto-trash.desktop", "usr/share/applications/", "644"],
     # otto-files app icon (hicolor theme)
     ["components/otto-files/resources/icons/hicolor/16x16/apps/otto-files.png", "usr/share/icons/hicolor/16x16/apps/otto-files.png", "644"],
     ["components/otto-files/resources/icons/hicolor/24x24/apps/otto-files.png", "usr/share/icons/hicolor/24x24/apps/otto-files.png", "644"],
@@ -280,6 +283,7 @@ assets = [
     { source = "target/release/otto-quickview", dest = "/usr/bin/otto-quickview", mode = "755" },
     { source = "resources/otto-files.desktop", dest = "/usr/share/applications/otto-files.desktop", mode = "644" },
     { source = "resources/otto-settings.desktop", dest = "/usr/share/applications/otto-settings.desktop", mode = "644" },
+    { source = "resources/otto-trash.desktop", dest = "/usr/share/applications/otto-trash.desktop", mode = "644" },
     # otto-files app icon (hicolor theme)
     { source = "components/otto-files/resources/icons/hicolor/16x16/apps/otto-files.png", dest = "/usr/share/icons/hicolor/16x16/apps/otto-files.png", mode = "644" },
     { source = "components/otto-files/resources/icons/hicolor/24x24/apps/otto-files.png", dest = "/usr/share/icons/hicolor/24x24/apps/otto-files.png", mode = "644" },
@@ -317,7 +321,8 @@ systemd-libs = "*"
 libgbm = "*"
 libxkbcommon = "*"
 mesa-libEGL = "*"
-wayland = "*"
+libwayland-client = "*"
+libwayland-egl = "*"
 libinput = "*"
 dbus-libs = "*"
 libseat = "*"
@@ -370,6 +375,7 @@ files = [
     ["resources/otto.desktop", "/usr/share/wayland-sessions/otto.desktop", "644"],
     ["resources/otto-files.desktop", "/usr/share/applications/otto-files.desktop", "644"],
     ["resources/otto-settings.desktop", "/usr/share/applications/otto-settings.desktop", "644"],
+    ["resources/otto-trash.desktop", "/usr/share/applications/otto-trash.desktop", "644"],
     # otto-files app icon (hicolor theme)
     ["components/otto-files/resources/icons/hicolor/16x16/apps/otto-files.png", "/usr/share/icons/hicolor/16x16/apps/otto-files.png", "644"],
     ["components/otto-files/resources/icons/hicolor/24x24/apps/otto-files.png", "/usr/share/icons/hicolor/24x24/apps/otto-files.png", "644"],

@@ -14,7 +14,7 @@ icon_theme = "Adwaita"  # Icon theme under /usr/share/icons (e.g. "Papirus", "Wh
 theme_scheme = "Light"  # "Light" or "Dark" - exposed via XDG Desktop Portal Settings
 # gtk_theme = "Adwaita"  # Optional: for documentation/reference only
 # background_image = "/usr/share/otto/background.jpg"
-background_color = "#2c2ca0"  # Fallback gradient color (bottom) when background_image is unavailable
+background_color = "#40C8E0"  # Fallback gradient color (bottom) when background_image is unavailable; the top is generated 30% toward white
 
 # Rounded corners on Otto's own chrome: the dock's background, the top bar,
 # window decorations, and the panels the desktop draws itself — the workspace
@@ -259,11 +259,8 @@ sound_enabled = true
 # Logo+Q, Ctrl+Alt+Backspace (quit), Ctrl+Alt+Escape (lock) and Ctrl+Alt+F<n>
 # (VT switch) are always on and need no entry here.
 [keyboard_shortcuts]
-# Terminal: whatever mimeapps.list names as the default, else the fallback.
-"Ctrl+Return" = { open_default = { role = "terminal", fallback = "xdg-terminal-exec" } }
 # App launcher (Otto's own launcher; --windows lists open windows instead of apps)
 "Ctrl+Space" = { run = { cmd = "otto-launcher", args = [] } }
-"Ctrl+Shift+P" = { run = { cmd = "otto-launcher", args = ["--windows"] } }
 # "Logo+Space" = { run = { cmd = "dolphin", args = [] } }
 # "Logo+Shift+B" = { run = { cmd = "firefox", args = [] } }
 
@@ -322,7 +319,6 @@ magnification = true
 # skipped with a warning, so listing apps you may not have is harmless.
 bookmarks = [
   { desktop_id = "otto-files.desktop" },
-  { desktop_id = "firefox.desktop" },
   { desktop_id = "otto-settings.desktop" }
 ]
 

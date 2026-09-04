@@ -339,54 +339,10 @@ jobs:
       - name: Restore executable bits
         run: chmod +x target/release/*
       - name: Build Arch tarball
-        run: |
-          # Read the version out of [workspace.package]. Not `head -1` on the
-          # first `version = ` line: the crate inherits with
-          # `version.workspace = true`, so the first such line in the file
-          # belongs to a [dependencies.*] table and names that dependency.
-          PKGVER=$(sed -n '/^\[workspace.package\]/,/^\[/p' Cargo.toml | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
-          if [ -z "$PKGVER" ]; then
-              echo "no [workspace.package] version found in Cargo.toml" >&2
-              exit 1
-          fi
-          TARBALL="otto-${PKGVER}-x86_64.tar.gz"
-          tmpdir=$(mktemp -d)
-          PKGDIR="otto-${PKGVER}"
-          install -Dm755 target/release/otto "$tmpdir/$PKGDIR/target/release/otto"
-          install -Dm755 target/release/otto-bar "$tmpdir/$PKGDIR/target/release/otto-bar"
-          install -Dm755 target/release/otto-islands "$tmpdir/$PKGDIR/target/release/otto-islands"
-          install -Dm755 target/release/otto-lock "$tmpdir/$PKGDIR/target/release/otto-lock"
-          install -Dm755 target/release/otto-greeter "$tmpdir/$PKGDIR/target/release/otto-greeter"
-          install -Dm755 target/release/otto-rdp "$tmpdir/$PKGDIR/target/release/otto-rdp"
-          install -Dm755 target/release/otto-settings "$tmpdir/$PKGDIR/target/release/otto-settings"
-          install -Dm755 target/release/otto-files "$tmpdir/$PKGDIR/target/release/otto-files"
-          install -Dm755 target/release/otto-launcher "$tmpdir/$PKGDIR/target/release/otto-launcher"
-          install -Dm755 target/release/otto-quickview "$tmpdir/$PKGDIR/target/release/otto-quickview"
-          install -Dm755 target/release/xdg-desktop-portal-otto "$tmpdir/$PKGDIR/target/release/xdg-desktop-portal-otto"
-          install -m644 LICENSE "$tmpdir/$PKGDIR/LICENSE"
-          install -m644 README.md "$tmpdir/$PKGDIR/README.md"
-          install -m644 otto_config.example.toml "$tmpdir/$PKGDIR/otto_config.example.toml"
-          install -Dm644 resources/otto.desktop "$tmpdir/$PKGDIR/resources/otto.desktop"
-          install -Dm644 resources/otto-files.desktop "$tmpdir/$PKGDIR/resources/otto-files.desktop"
-          install -Dm644 resources/otto-settings.desktop "$tmpdir/$PKGDIR/resources/otto-settings.desktop"
-
-          for px in 16 24 32 48 64 128 256 512; do
-            install -Dm644 "components/otto-files/resources/icons/hicolor/${px}x${px}/apps/otto-files.png" "$tmpdir/$PKGDIR/components/otto-files/resources/icons/hicolor/${px}x${px}/apps/otto-files.png"
-          done
-          install -Dm644 components/otto-files/resources/icons/hicolor/scalable/apps/otto-files.svg "$tmpdir/$PKGDIR/components/otto-files/resources/icons/hicolor/scalable/apps/otto-files.svg"
-          install -Dm644 components/xdg-desktop-portal-otto/otto.portal "$tmpdir/$PKGDIR/components/xdg-desktop-portal-otto/otto.portal"
-          install -Dm644 components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service "$tmpdir/$PKGDIR/components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service"
-          install -Dm644 components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service "$tmpdir/$PKGDIR/components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service"
-          install -Dm644 components/xdg-desktop-portal-otto/portals.conf.example "$tmpdir/$PKGDIR/components/xdg-desktop-portal-otto/portals.conf.example"
-          install -Dm644 components/otto-lock/otto-lock.pam "$tmpdir/$PKGDIR/components/otto-lock/otto-lock.pam"
-          install -m644 PKGBUILD-git "$tmpdir/$PKGDIR/PKGBUILD-git"
-          install -m644 PKGBUILD-nightly-bin "$tmpdir/$PKGDIR/PKGBUILD-nightly-bin"
-          # VERSION file for PKGBUILD-nightly-bin pkgver()
-          echo "${PKGVER}.r$(git rev-list --count HEAD).$(git rev-parse --short HEAD)" > "$tmpdir/$PKGDIR/VERSION"
-          tar -czf "$TARBALL" -C "$tmpdir" "$PKGDIR"
-          # Also produce a fixed-name copy for the nightly release
-          cp "$TARBALL" otto-nightly-x86_64.tar.gz
-          rm -rf "$tmpdir"
+        # The file list lives in the script, not here, so the packaging
+        # test can assemble the same tarball and check it against the
+        # PKGBUILDs that install out of it.
+        run: scripts/packaging/make-arch-tarball.sh
       - name: Upload Arch tarball
         uses: actions/upload-artifact@v4
         with:

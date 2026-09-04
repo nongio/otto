@@ -8,7 +8,6 @@ You can try it inside your current session in about a minute — [jump to Try it
 
 **Documentation:** [User Guide](https://nongio.github.io/otto/) · [Developer Guide](https://nongio.github.io/otto/developer/)
 
-> **Testing phase.** Many features are ready for daily use, but Otto is not finished and not yet fully stable. Playing with it, breaking it and telling us about it is genuinely the most useful thing you can do right now.
 > Feedback and questions: [Discord](https://discord.gg/AdXkrYKuz) or Matrix [`#otto-compositor:matrix.org`](https://matrix.to/#/#otto-compositor:matrix.org).
 
 ## See it
